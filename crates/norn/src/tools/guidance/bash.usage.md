@@ -1,0 +1,1 @@
+Use for commands that do not have a dedicated tool. Prefer dedicated tools over shell equivalents — use read instead of cat, search instead of grep or find. Commands are risk-classified: destructive operations may be blocked or require confirmation. Set a timeout for long-running commands. Use working_dir to execute in a specific directory without changing global state.

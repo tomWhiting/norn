@@ -1,0 +1,35 @@
+[package]
+name = "norn-tui"
+description = "Terminal user interface for the Norn agent runtime — DECSTBM scroll regions, per-tool renderers, streaming markdown."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[dependencies]
+chrono = { workspace = true }
+comfy-table = { version = "7.2", features = ["custom_styling"] }
+diffy = { workspace = true }
+dirs = { workspace = true }
+futures-core = "0.3"
+ignore = { workspace = true }
+norn = { path = "../norn" }
+nucleo-matcher = "0.3"
+parking_lot = "0.12"
+pulldown-cmark = "0.13.3"
+regex = { workspace = true }
+serde_json = { workspace = true }
+syntect = "5"
+termina = { version = "0.3", features = ["event-stream"] }
+thiserror = { workspace = true }
+tokio = { workspace = true }
+tokio-stream = "0.1"
+tracing = { workspace = true }
+unicode-width = "0.2"
+uuid = { workspace = true }
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

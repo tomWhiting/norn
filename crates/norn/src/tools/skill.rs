@@ -1,0 +1,914 @@
+//! Skill activation tool.
+//!
+//! Loads a `SKILL.md` (or `<name>.md`) prompt template from a configurable
+//! list of search directories, parses its frontmatter via
+//! [`crate::skill::loader`], expands the body via
+//! [`crate::skill::template`], and returns the expanded text together with
+//! the skill directory path and a bundled-resource listing so the model
+//! can load companion files on demand.
+//!
+//! The active list of directories is published on the [`ToolContext`] via
+//! the [`SkillSearchPaths`] extension; tools that depend on lookup paths
+//! must never read from a global.
+
+use std::ffi::OsStr;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Instant;
+
+use async_trait::async_trait;
+use serde::Deserialize;
+
+use crate::error::ToolError;
+use crate::skill::{SkillShell, TemplateInputs, expand, load_skill_from_path};
+use crate::tool::context::ToolContext;
+use crate::tool::envelope::ToolEnvelope;
+use crate::tool::scheduling::ToolEffect;
+use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
+
+/// Maximum number of bundled-resource file names included in the tool
+/// activation result (per DESIGN.md §D13 — progressive disclosure tier 3).
+const MAX_RESOURCE_ENTRIES: usize = 20;
+
+/// Search paths inspected for skill files, in order.
+///
+/// The first directory containing `<name>/SKILL.md` or `<name>.md` wins.
+pub struct SkillSearchPaths(pub Vec<PathBuf>);
+
+/// Loads a `SKILL.md` template by name.
+pub struct SkillTool;
+
+impl SkillTool {
+    /// Constructs the tool.
+    #[must_use]
+    pub fn new() -> Self {
+        Self
+    }
+}
+
+impl Default for SkillTool {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct SkillArgs {
+    name: String,
+    #[serde(default)]
+    arguments: Option<String>,
+}
+
+fn enumerate_available(dirs: &[PathBuf]) -> Vec<String> {
+    let mut names = std::collections::BTreeSet::new();
+    for dir in dirs {
+        let Ok(entries) = std::fs::read_dir(dir) else {
+            continue;
+        };
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let Ok(file_type) = entry.file_type() else {
+                continue;
+            };
+            if file_type.is_dir()
+                && path.join("SKILL.md").is_file()
+                && let Some(name) = path.file_name().and_then(OsStr::to_str)
+            {
+                names.insert(name.to_string());
+            } else if file_type.is_file()
+                && path.extension().and_then(OsStr::to_str) == Some("md")
+                && let Some(stem) = path.file_stem().and_then(OsStr::to_str)
+            {
+                names.insert(stem.to_string());
+            }
+        }
+    }
+    names.into_iter().collect()
+}
+
+/// Tokenise a free-form arguments string into positional arguments using
+/// shell-style quoting.
+///
+/// - Whitespace separates tokens in unquoted regions.
+/// - `"…"` and `'…'` group their contents into one token; the delimiters
+///   are stripped.
+/// - Inside a quoted region, `\"`, `\'`, and `\\` escape the matching
+///   delimiter or a literal backslash. Other backslashes pass through
+///   verbatim. Unquoted backslashes always pass through.
+/// - An unterminated quote flushes its accumulator as the final token so
+///   nothing is silently dropped.
+fn parse_shell_args(input: &str) -> Vec<String> {
+    enum State {
+        Unquoted,
+        DoubleQuoted,
+        SingleQuoted,
+    }
+
+    let mut tokens: Vec<String> = Vec::new();
+    let mut current = String::new();
+    let mut in_token = false;
+    let mut state = State::Unquoted;
+    let mut chars = input.chars().peekable();
+
+    while let Some(c) = chars.next() {
+        match state {
+            State::Unquoted => match c {
+                ' ' | '\t' | '\n' | '\r' => {
+                    if in_token {
+                        tokens.push(std::mem::take(&mut current));
+                        in_token = false;
+                    }
+                }
+                '"' => {
+                    state = State::DoubleQuoted;
+                    in_token = true;
+                }
+                '\'' => {
+                    state = State::SingleQuoted;
+                    in_token = true;
+                }
+                _ => {
+                    current.push(c);
+                    in_token = true;
+                }
+            },
+            State::DoubleQuoted => match c {
+                '"' => state = State::Unquoted,
+                '\\' => match chars.peek() {
+                    Some(&next) if next == '"' || next == '\\' => {
+                        current.push(next);
+                        chars.next();
+                    }
+                    _ => current.push(c),
+                },
+                _ => current.push(c),
+            },
+            State::SingleQuoted => match c {
+                '\'' => state = State::Unquoted,
+                '\\' => match chars.peek() {
+                    Some(&next) if next == '\'' || next == '\\' => {
+                        current.push(next);
+                        chars.next();
+                    }
+                    _ => current.push(c),
+                },
+                _ => current.push(c),
+            },
+        }
+    }
+
+    if in_token {
+        tokens.push(current);
+    }
+
+    tokens
+}
+
+/// List bundled resources in a skill directory.
+///
+/// Returns file names (not full paths), sorted for deterministic output,
+/// truncated to [`MAX_RESOURCE_ENTRIES`]. Always excludes `SKILL.md` and
+/// the loaded skill file itself (which matters for flat-form skills where
+/// `skill_dir` is the search directory and the loaded file sits alongside
+/// other skills).
+fn list_resources(skill_dir: &Path, skill_path: &Path) -> Vec<String> {
+    let Ok(entries) = std::fs::read_dir(skill_dir) else {
+        return Vec::new();
+    };
+    let loaded_file_name = skill_path.file_name();
+
+    let mut names: Vec<String> = Vec::new();
+    for entry in entries.flatten() {
+        let Ok(file_type) = entry.file_type() else {
+            continue;
+        };
+        if !file_type.is_file() {
+            continue;
+        }
+        let entry_name = entry.file_name();
+        if entry_name == OsStr::new("SKILL.md") {
+            continue;
+        }
+        if Some(entry_name.as_os_str()) == loaded_file_name {
+            continue;
+        }
+        if let Some(s) = entry_name.to_str() {
+            names.push(s.to_owned());
+        }
+    }
+
+    names.sort();
+    names.truncate(MAX_RESOURCE_ENTRIES);
+    names
+}
+
+#[async_trait]
+impl Tool for SkillTool {
+    fn name(&self) -> &'static str {
+        "skill"
+    }
+
+    fn description(&self) -> &'static str {
+        include_str!("guidance/skill.description.md")
+    }
+
+    fn category(&self) -> ToolCategory {
+        ToolCategory::Skills
+    }
+
+    fn usage_guidance(&self) -> Option<&str> {
+        Some(include_str!("guidance/skill.usage.md"))
+    }
+
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({
+            "type": "object",
+            "required": ["name"],
+            "properties": {
+                "name": {
+                    "type": "string",
+                    "description": "Name of the skill to load. Matches a <name>/SKILL.md or <name>.md file in the configured skill directories."
+                },
+                "arguments": {
+                    "type": "string",
+                    "description": "Optional free-form argument string. Parsed with shell-style quoting (double-quoted and single-quoted strings group, backslash escapes inside quotes). Tokens are mapped positionally to named arguments declared in the skill's frontmatter."
+                }
+            },
+            "additionalProperties": false
+        })
+    }
+
+    fn effect(&self) -> ToolEffect {
+        ToolEffect::ReadOnly
+    }
+
+    async fn execute(
+        &self,
+        envelope: &ToolEnvelope,
+        ctx: &ToolContext,
+    ) -> Result<ToolOutput, ToolError> {
+        let started = Instant::now();
+        let args: SkillArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
+            ToolError::ExecutionFailed {
+                reason: format!("invalid arguments: {e}"),
+            }
+        })?;
+        let paths: Arc<SkillSearchPaths> =
+            ctx.get_extension::<SkillSearchPaths>()
+                .ok_or_else(|| ToolError::ExecutionFailed {
+                    reason: "skill search paths not configured in tool context".to_string(),
+                })?;
+
+        let arguments_raw = args.arguments.unwrap_or_default();
+        let positional = parse_shell_args(&arguments_raw);
+
+        let working_dir = ctx.working_dir();
+        for dir in &paths.0 {
+            let candidate = dir.join(&args.name).join("SKILL.md");
+            if candidate.is_file() {
+                return activate(
+                    &args.name,
+                    &candidate,
+                    &arguments_raw,
+                    &positional,
+                    started,
+                    &working_dir,
+                )
+                .await;
+            }
+            let candidate = dir.join(format!("{}.md", args.name));
+            if candidate.is_file() {
+                return activate(
+                    &args.name,
+                    &candidate,
+                    &arguments_raw,
+                    &positional,
+                    started,
+                    &working_dir,
+                )
+                .await;
+            }
+        }
+
+        let available = enumerate_available(&paths.0);
+        Err(ToolError::ExecutionFailed {
+            reason: format!(
+                "skill \"{}\" not found. Available: {:?}",
+                args.name, available
+            ),
+        })
+    }
+}
+
+/// Load, expand, and package a skill into a [`ToolOutput`].
+///
+/// Auto-appends `\nARGUMENTS: <raw>` when the source body did not mention
+/// `$ARGUMENTS` and a non-empty argument string was supplied
+/// (Claude Code parity, NS-004 R4).
+async fn activate(
+    requested_name: &str,
+    skill_path: &Path,
+    arguments_raw: &str,
+    positional: &[String],
+    started: Instant,
+    working_dir: &Path,
+) -> Result<ToolOutput, ToolError> {
+    let loaded = load_skill_from_path(skill_path).map_err(|diags| {
+        let reason = diags.first().map_or_else(
+            || format!("failed to load skill at {}", skill_path.display()),
+            |d| d.message.clone(),
+        );
+        ToolError::ExecutionFailed { reason }
+    })?;
+
+    let body_uses_args = loaded.body.contains("$ARGUMENTS")
+        || loaded
+            .metadata
+            .arguments
+            .as_slice()
+            .iter()
+            .any(|name| loaded.body.contains(&format!("${name}")));
+    let auto_append_arguments = !body_uses_args && !arguments_raw.is_empty();
+
+    let skill_dir = skill_path.parent().unwrap_or(skill_path);
+
+    let inputs = TemplateInputs {
+        body: &loaded.body,
+        shell: loaded.metadata.shell.unwrap_or(SkillShell::Bash),
+        cwd: working_dir,
+        skill_dir,
+        disable_shell: false,
+        arguments_raw,
+        arguments_positional: positional,
+        argument_names: loaded.metadata.arguments.as_slice(),
+        session_id: "",
+        effort: "",
+        variables: None,
+    };
+    let mut expanded = expand(&inputs).await;
+
+    if auto_append_arguments {
+        expanded.push('\n');
+        expanded.push_str("ARGUMENTS: ");
+        expanded.push_str(arguments_raw);
+    }
+
+    let resources = list_resources(skill_dir, skill_path);
+
+    let payload = serde_json::json!({
+        "name": requested_name,
+        "path": skill_path.display().to_string(),
+        "content": expanded,
+        "skill_dir": skill_dir.display().to_string(),
+        "resources": resources,
+    });
+
+    Ok(ToolOutput {
+        content: payload,
+        is_error: false,
+        duration: started.elapsed(),
+    })
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::clone_on_ref_ptr,
+    clippy::no_effect_underscore_binding,
+    clippy::useless_vec,
+    clippy::missing_const_for_fn,
+    clippy::duration_suboptimal_units,
+    clippy::needless_pass_by_value,
+    clippy::similar_names,
+    clippy::redundant_closure_for_method_calls,
+    clippy::used_underscore_items,
+    clippy::unnecessary_literal_bound,
+    clippy::items_after_statements,
+    clippy::err_expect,
+    clippy::get_unwrap,
+    clippy::doc_markdown,
+    clippy::unnecessary_trailing_comma,
+    clippy::uninlined_format_args,
+    clippy::wildcard_enum_match_arm,
+    clippy::collapsible_if,
+    clippy::match_wildcard_for_single_variants,
+    clippy::too_many_lines
+)]
+mod tests {
+    use serde_json::json;
+    use tempfile::tempdir;
+
+    use super::*;
+    use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+
+    fn envelope_for(args: serde_json::Value) -> ToolEnvelope {
+        ToolEnvelope {
+            tool_call_id: "call-1".to_string(),
+            tool_name: "skill".to_string(),
+            model_args: args,
+            runtime_inputs: RuntimeInputs::default(),
+            metadata: serde_json::Value::Null,
+        }
+    }
+
+    // ---------------- parse_shell_args ----------------
+
+    #[test]
+    fn parse_shell_args_splits_on_whitespace() {
+        assert_eq!(parse_shell_args("hello world"), vec!["hello", "world"]);
+    }
+
+    #[test]
+    fn parse_shell_args_double_quoted_groups() {
+        assert_eq!(
+            parse_shell_args("\"hello world\" second"),
+            vec!["hello world", "second"]
+        );
+    }
+
+    #[test]
+    fn parse_shell_args_single_quoted_groups() {
+        assert_eq!(
+            parse_shell_args("'hello world' second"),
+            vec!["hello world", "second"]
+        );
+    }
+
+    #[test]
+    fn parse_shell_args_empty_input_is_empty_vec() {
+        let parsed: Vec<String> = parse_shell_args("");
+        assert!(parsed.is_empty());
+    }
+
+    #[test]
+    fn parse_shell_args_collapses_repeated_whitespace() {
+        assert_eq!(
+            parse_shell_args("  a   b\tc\n d "),
+            vec!["a", "b", "c", "d"]
+        );
+    }
+
+    #[test]
+    fn parse_shell_args_mixed_quoted_and_unquoted() {
+        assert_eq!(parse_shell_args("\"a\" b 'c d'"), vec!["a", "b", "c d"]);
+    }
+
+    #[test]
+    fn parse_shell_args_backslash_escapes_inside_double_quotes() {
+        assert_eq!(
+            parse_shell_args("\"he said \\\"hi\\\"\""),
+            vec!["he said \"hi\""]
+        );
+    }
+
+    #[test]
+    fn parse_shell_args_backslash_escapes_inside_single_quotes() {
+        assert_eq!(parse_shell_args("'it\\'s'"), vec!["it's"]);
+    }
+
+    #[test]
+    fn parse_shell_args_escaped_backslash_in_double_quotes() {
+        assert_eq!(parse_shell_args("\"a\\\\b\""), vec!["a\\b"]);
+    }
+
+    #[test]
+    fn parse_shell_args_unterminated_quote_flushes_accumulator() {
+        // Visible failure rather than silent token loss: the accumulator
+        // is emitted as the final token.
+        assert_eq!(parse_shell_args("\"unterminated"), vec!["unterminated"]);
+    }
+
+    // ---------------- list_resources ----------------
+
+    #[test]
+    fn list_resources_excludes_skill_md_and_caps_at_twenty() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("with-resources");
+        std::fs::create_dir(&skill_dir).unwrap();
+        let skill_path = skill_dir.join("SKILL.md");
+        std::fs::write(&skill_path, "---\ndescription: r\n---\n").unwrap();
+        for i in 0..25 {
+            std::fs::write(skill_dir.join(format!("ref-{i:02}.md")), "ref").unwrap();
+        }
+
+        let names = list_resources(&skill_dir, &skill_path);
+        assert_eq!(names.len(), 20);
+        assert!(!names.iter().any(|n| n == "SKILL.md"));
+        // Sorted: the first should be ref-00 with a leading zero.
+        assert_eq!(names[0], "ref-00.md");
+    }
+
+    #[test]
+    fn list_resources_excludes_loaded_flat_file() {
+        let dir = tempdir().unwrap();
+        let skill_path = dir.path().join("alias.md");
+        std::fs::write(&skill_path, "---\ndescription: a\n---\n").unwrap();
+        std::fs::write(dir.path().join("README.md"), "readme").unwrap();
+        std::fs::write(dir.path().join("data.json"), "{}").unwrap();
+
+        let names = list_resources(dir.path(), &skill_path);
+        assert!(!names.iter().any(|n| n == "alias.md"));
+        assert!(names.iter().any(|n| n == "README.md"));
+        assert!(names.iter().any(|n| n == "data.json"));
+    }
+
+    #[test]
+    fn list_resources_missing_dir_returns_empty() {
+        let names = list_resources(
+            Path::new("/nonexistent/path"),
+            Path::new("/nonexistent/SKILL.md"),
+        );
+        assert!(names.is_empty());
+    }
+
+    // ---------------- existing behaviour, fixtures with frontmatter ----------------
+
+    #[tokio::test]
+    async fn loads_skill_md_from_directory() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("my-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: do the thing\n---\nDo the thing.",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(&envelope_for(json!({"name": "my-skill"})), &ctx)
+            .await
+            .unwrap();
+        assert!(!out.is_error);
+        assert_eq!(out.content["content"], "Do the thing.");
+        assert_eq!(out.content["name"], "my-skill");
+        // R5: skill_dir + resources are present.
+        assert!(out.content["skill_dir"].is_string());
+        assert!(out.content["resources"].is_array());
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_flat_md_file() {
+        let dir = tempdir().unwrap();
+        tokio::fs::write(
+            dir.path().join("alias.md"),
+            "---\ndescription: alias\n---\nalias body",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(&envelope_for(json!({"name": "alias"})), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(out.content["content"], "alias body");
+    }
+
+    #[tokio::test]
+    async fn missing_skill_lists_available_choices() {
+        let dir = tempdir().unwrap();
+        let s1 = dir.path().join("one");
+        std::fs::create_dir(&s1).unwrap();
+        tokio::fs::write(s1.join("SKILL.md"), "---\ndescription: one\n---\none body")
+            .await
+            .unwrap();
+        tokio::fs::write(
+            dir.path().join("two.md"),
+            "---\ndescription: two\n---\ntwo body",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let err = tool
+            .execute(&envelope_for(json!({"name": "missing"})), &ctx)
+            .await
+            .expect_err("missing");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(reason.contains("missing"));
+                assert!(reason.contains("one"));
+                assert!(reason.contains("two"));
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn missing_search_paths_returns_execution_failed() {
+        let tool = SkillTool::new();
+        let ctx = ToolContext::empty();
+        let err = tool
+            .execute(&envelope_for(json!({"name": "anything"})), &ctx)
+            .await
+            .expect_err("no paths");
+        assert!(matches!(err, ToolError::ExecutionFailed { .. }));
+    }
+
+    // ---------------- R1: arguments parameter ----------------
+
+    #[tokio::test]
+    async fn r1_input_schema_advertises_optional_arguments() {
+        let tool = SkillTool::new();
+        let schema = tool.input_schema();
+        let props = schema
+            .get("properties")
+            .and_then(|p| p.as_object())
+            .expect("properties");
+        assert!(props.contains_key("arguments"));
+        assert_eq!(
+            props["arguments"]["type"].as_str(),
+            Some("string"),
+            "arguments must be typed as string"
+        );
+        let required = schema
+            .get("required")
+            .and_then(|r| r.as_array())
+            .expect("required array");
+        let required_names: Vec<&str> = required.iter().filter_map(|v| v.as_str()).collect();
+        assert!(!required_names.contains(&"arguments"));
+        assert!(required_names.contains(&"name"));
+    }
+
+    #[tokio::test]
+    async fn r1_arguments_passes_through_to_template() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("deploy");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: deploy\n---\nDeploy to $ARGUMENTS now.",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"name": "deploy", "arguments": "prod"})),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.content["content"], "Deploy to prod now.");
+    }
+
+    // ---------------- R3: named argument mapping ----------------
+
+    #[tokio::test]
+    async fn r3_positional_args_map_to_named_arguments() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("fix");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: fix\narguments: [issue, branch]\n---\nFix $issue on $branch.",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"name": "fix", "arguments": "123 main"})),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.content["content"], "Fix 123 on main.");
+    }
+
+    #[tokio::test]
+    async fn r3_excess_names_resolve_to_empty_string() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("fix");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: fix\narguments: [issue, branch]\n---\nFix [$issue][$branch].",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"name": "fix", "arguments": "123"})),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.content["content"], "Fix [123][].");
+    }
+
+    #[tokio::test]
+    async fn r3_excess_args_only_reachable_via_positional() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("fix");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: fix\narguments: [issue]\n---\n$issue and $1.",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"name": "fix", "arguments": "123 main"})),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.content["content"], "123 and main.");
+    }
+
+    // ---------------- R4: $ARGUMENTS auto-append ----------------
+
+    #[tokio::test]
+    async fn r4_no_auto_append_when_body_mentions_arguments() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("mentions");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: m\n---\nuse $ARGUMENTS",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"name": "mentions", "arguments": "hello"})),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        // The substring was expanded inline; no trailing ARGUMENTS: line.
+        let content = out.content["content"].as_str().unwrap();
+        assert_eq!(content, "use hello");
+        assert!(!content.contains("\nARGUMENTS:"));
+    }
+
+    #[tokio::test]
+    async fn r4_auto_append_when_body_lacks_arguments_with_value() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("plain");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(skill_dir.join("SKILL.md"), "---\ndescription: p\n---\nbody")
+            .await
+            .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"name": "plain", "arguments": "hello"})),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert_eq!(out.content["content"], "body\nARGUMENTS: hello");
+    }
+
+    #[tokio::test]
+    async fn r4_no_auto_append_when_no_arguments_supplied() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("plain");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(skill_dir.join("SKILL.md"), "---\ndescription: p\n---\nbody")
+            .await
+            .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(&envelope_for(json!({"name": "plain"})), &ctx)
+            .await
+            .unwrap();
+        let content = out.content["content"].as_str().unwrap();
+        assert_eq!(content, "body");
+        assert!(!content.contains("ARGUMENTS:"));
+    }
+
+    // ---------------- R5: JSON payload contract ----------------
+
+    #[tokio::test]
+    async fn r5_returned_payload_has_five_documented_fields() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("with-refs");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: r\n---\nthe body",
+        )
+        .await
+        .unwrap();
+        std::fs::write(skill_dir.join("notes.md"), "notes").unwrap();
+        std::fs::write(skill_dir.join("data.json"), "{}").unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(&envelope_for(json!({"name": "with-refs"})), &ctx)
+            .await
+            .unwrap();
+
+        let obj = out.content.as_object().expect("object");
+        let keys: std::collections::BTreeSet<&str> = obj.keys().map(String::as_str).collect();
+        let expected: std::collections::BTreeSet<&str> =
+            ["name", "path", "content", "skill_dir", "resources"]
+                .iter()
+                .copied()
+                .collect();
+        assert_eq!(keys, expected);
+
+        assert_eq!(out.content["content"], "the body");
+        // Frontmatter must be stripped — content never contains the
+        // delimiter or YAML field syntax.
+        let content_str = out.content["content"].as_str().unwrap();
+        assert!(!content_str.contains("---"));
+        assert!(!content_str.contains("description:"));
+
+        let resources = out.content["resources"].as_array().expect("array");
+        let names: Vec<&str> = resources.iter().filter_map(|v| v.as_str()).collect();
+        assert!(names.contains(&"notes.md"));
+        assert!(names.contains(&"data.json"));
+        assert!(!names.contains(&"SKILL.md"));
+        assert!(names.len() <= 20);
+    }
+
+    #[tokio::test]
+    async fn r5_skill_dir_matches_parent_for_dir_form() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("with-dir");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(skill_dir.join("SKILL.md"), "---\ndescription: d\n---\nbody")
+            .await
+            .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let out = tool
+            .execute(&envelope_for(json!({"name": "with-dir"})), &ctx)
+            .await
+            .unwrap();
+        assert_eq!(
+            out.content["skill_dir"].as_str().unwrap(),
+            skill_dir.display().to_string()
+        );
+    }
+
+    #[tokio::test]
+    async fn r5_skill_with_missing_description_surfaces_diagnostic() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("broken");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(skill_dir.join("SKILL.md"), "---\nname: broken\n---\nbody")
+            .await
+            .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        let err = tool
+            .execute(&envelope_for(json!({"name": "broken"})), &ctx)
+            .await
+            .expect_err("missing description");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(
+                    reason.contains("description"),
+                    "expected diagnostic message, got: {reason}"
+                );
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+    }
+}

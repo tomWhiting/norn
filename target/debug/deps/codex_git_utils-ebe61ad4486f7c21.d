@@ -1,0 +1,12 @@
+/Users/tom/Developer/ablative/norn/target/debug/deps/codex_git_utils-ebe61ad4486f7c21.d: /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/lib.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/apply.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/baseline.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/branch.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/errors.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/info.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/operations.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/platform.rs
+
+/Users/tom/Developer/ablative/norn/target/debug/deps/libcodex_git_utils-ebe61ad4486f7c21.rmeta: /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/lib.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/apply.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/baseline.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/branch.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/errors.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/info.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/operations.rs /Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/platform.rs
+
+/Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/lib.rs:
+/Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/apply.rs:
+/Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/baseline.rs:
+/Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/branch.rs:
+/Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/errors.rs:
+/Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/info.rs:
+/Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/operations.rs:
+/Users/tom/.cargo/git/checkouts/codex-9eee5d47a939c68c/85915a2/codex-rs/git-utils/src/platform.rs:

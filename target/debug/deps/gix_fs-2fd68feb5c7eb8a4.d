@@ -1,0 +1,13 @@
+/Users/tom/Developer/ablative/norn/target/debug/deps/gix_fs-2fd68feb5c7eb8a4.d: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/capabilities.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/snapshot.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/symlink.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/read_dir.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/dir/mod.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/dir/create.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/dir/remove.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/stack.rs
+
+/Users/tom/Developer/ablative/norn/target/debug/deps/libgix_fs-2fd68feb5c7eb8a4.rmeta: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/capabilities.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/snapshot.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/symlink.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/read_dir.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/dir/mod.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/dir/create.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/dir/remove.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/stack.rs
+
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/lib.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/capabilities.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/snapshot.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/symlink.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/read_dir.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/dir/mod.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/dir/create.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/dir/remove.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-fs-0.21.2/src/stack.rs:

@@ -1,0 +1,121 @@
+//! Streaming event types emitted by providers.
+
+use super::request::ToolCallKind;
+use super::usage::Usage;
+use crate::error::ProviderError;
+
+/// Reason the model stopped generating.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StopReason {
+    /// The model finished its turn naturally.
+    EndTurn,
+    /// The model wants to call one or more tools.
+    ToolUse,
+    /// The model hit the maximum token limit.
+    MaxTokens,
+    /// The model's output was filtered by a content policy.
+    ContentFilter,
+}
+
+/// A single streaming event from a provider response.
+///
+/// Each variant carries only delta data, not accumulated state.
+#[derive(Clone, Debug)]
+pub enum ProviderEvent {
+    /// A chunk of text content from the model.
+    TextDelta {
+        /// The text fragment.
+        text: String,
+    },
+
+    /// A chunk of thinking/reasoning content.
+    ThinkingDelta {
+        /// The reasoning text fragment.
+        text: String,
+    },
+
+    /// A partial tool call being assembled.
+    ToolCallDelta {
+        /// Streaming item identifier used to merge deltas of the same call
+        /// (the `fc_*` `item_id` on the wire). This is NOT the `call_id` the
+        /// model expects on `function_call_output` echoes — that arrives on
+        /// [`ProviderEvent::ToolCallComplete`].
+        item_id: String,
+        /// Tool name (present in the first delta for this call).
+        name: Option<String>,
+        /// Incremental arguments fragment. For
+        /// [`ToolCallKind::Function`](crate::provider::request::ToolCallKind::Function)
+        /// deltas this is partial JSON; for
+        /// [`ToolCallKind::Custom`](crate::provider::request::ToolCallKind::Custom)
+        /// deltas this is a freeform `input` fragment.
+        arguments_delta: String,
+        /// Which surface kind this delta belongs to. Derived from the SSE
+        /// event type (`response.function_call_arguments.delta` vs
+        /// `response.custom_tool_call_input.delta`).
+        kind: ToolCallKind,
+    },
+
+    /// Complete text content from a `.done` SSE event.
+    TextComplete {
+        /// The full accumulated text.
+        text: String,
+    },
+
+    /// Complete thinking/reasoning content from a `.done` SSE event.
+    ThinkingComplete {
+        /// The full accumulated reasoning text.
+        text: String,
+    },
+
+    /// A fully assembled tool call from an `output_item.done` SSE event.
+    ToolCallComplete {
+        /// Provider-assigned correlation identifier (the `call_*` `call_id`
+        /// on the wire). This is the only identifier the model accepts on a
+        /// subsequent `function_call_output` echo — the streaming `item_id`
+        /// MUST NOT be substituted here.
+        call_id: String,
+        /// Tool name.
+        name: String,
+        /// Complete arguments (`function_call`) or freeform input
+        /// (`custom_tool_call`) string, disambiguated by `kind`.
+        arguments: String,
+        /// Which surface kind this completion is for.
+        kind: ToolCallKind,
+    },
+
+    /// A tool execution result, broadcast after tool dispatch completes.
+    ToolResult {
+        /// The tool call this result is for.
+        tool_call_id: String,
+        /// Name of the tool that was executed.
+        tool_name: String,
+        /// Serialized output from the tool.
+        output: serde_json::Value,
+        /// Wall-clock execution time in milliseconds.
+        duration_ms: u64,
+    },
+
+    /// Opaque provider-side compaction item.
+    Compaction {
+        /// Provider item type that carried the compaction payload.
+        item_type: String,
+        /// Encrypted provider payload, when present.
+        encrypted_content: Option<String>,
+    },
+
+    /// The provider finished this response.
+    Done {
+        /// Why the model stopped.
+        stop_reason: StopReason,
+        /// Token usage for this call.
+        usage: Usage,
+        /// Server-assigned response ID for conversation chaining.
+        response_id: Option<String>,
+    },
+
+    /// The provider reported an error during streaming.
+    Error {
+        /// The error details.
+        error: ProviderError,
+    },
+}

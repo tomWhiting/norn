@@ -1,0 +1,10 @@
+/Users/tom/Developer/ablative/norn/target/debug/deps/gix_config_value-c59b945a4ac1f90a.d: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/boolean.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/color.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/integer.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/path.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/types.rs
+
+/Users/tom/Developer/ablative/norn/target/debug/deps/libgix_config_value-c59b945a4ac1f90a.rmeta: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/boolean.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/color.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/integer.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/path.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/types.rs
+
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/lib.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/boolean.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/color.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/integer.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/path.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-config-value-0.18.0/src/types.rs:

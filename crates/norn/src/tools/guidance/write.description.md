@@ -1,0 +1,1 @@
+Write a file to disk, creating parent directories as needed. Existing files must be read first. The written content is parsed with tree-sitter and any syntax errors or file-length violations are reported in the result.

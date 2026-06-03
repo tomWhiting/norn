@@ -1,0 +1,1 @@
+Edit a file by replacing a single exact occurrence of old_string with new_string. The file must have been read first. Edits that introduce syntax errors are rolled back unless AllowBrokenAst is set.

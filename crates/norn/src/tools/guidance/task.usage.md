@@ -1,0 +1,5 @@
+Use to plan and track progress on multi-step work. Create tasks at the start, update status to in_progress when starting each one, and complete when done. List with a status filter to see what remains. Dependencies (depends_on) record ordering constraints between tasks; metadata is free-form JSON for attaching context.
+
+Break large work into a hierarchy: create_subtask requires parent_task_id and description and links the new task under its parent. children requires parent_task_id and returns the direct children, each with an effective status rolled up from its own children — a parent shows in_progress when any child is active and completed only when all children are done; a failed or blocked child takes priority. ancestors requires task_id and returns the chain from that task up to the root.
+
+When multiple agents share a task tree, claim a task with task_id and agent_path to atomically take ownership — a second claim on an already-claimed task fails. create_group with a group_slug names a task group so collaborating agents can read and write the same tree; list_groups returns all known group slugs.

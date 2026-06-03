@@ -1,0 +1,1 @@
+Use to discover available tools when unsure which tool fits a task. Search by keyword to find tools matching a capability. An empty query returns the full catalogue. Results include tool names, descriptions, and relevance scores. Do not call repeatedly for the same query — cache the results within a conversation turn.

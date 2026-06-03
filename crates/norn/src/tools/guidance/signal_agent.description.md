@@ -1,0 +1,1 @@
+Send a signal to another running agent. Signals are ephemeral intra-session communication. With trigger_turn enabled, the recipient reacts at its next tool boundary.

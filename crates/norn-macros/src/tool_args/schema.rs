@@ -1,0 +1,505 @@
+//! Maps Rust field types to JSON Schema fragments and emits the inherent
+//! `json_schema()` implementation block for structs.
+//!
+//! The type mapping is a closed positive list — String, bool, the numerics,
+//! `Option<T>`, `Vec<T>`, `HashMap<String, T>` and `serde_json::Value`. Any
+//! other path type falls through to `<T>::json_schema()` delegation so nested
+//! structs that themselves derive `ToolArgs` compose transparently. A small
+//! negative list catches well-known stdlib types (`PathBuf`, Box, Arc, ...) that
+//! cannot reasonably delegate, producing a spanned compile error with the
+//! suggested `#[tool_args(schema = {...})]` override.
+//!
+//! Generated code references `serde_json` exclusively by the absolute
+//! `::serde_json` path so it resolves in any consuming crate (CO1).
+
+use proc_macro2::{Span, TokenStream};
+use quote::quote;
+use syn::{Error, GenericArgument, PathArguments, Type, TypePath};
+
+use super::parse::{ParsedField, ParsedStruct};
+use super::rename::RenameRule;
+
+/// Emits the full `impl` block exposing `json_schema()` for the parsed struct.
+///
+/// The object is assembled imperatively rather than as a single `json!` literal
+/// so that `#[serde(flatten)]` fields can merge a nested schema's `properties`
+/// and `required` into the parent at runtime, while keeping the property order
+/// of declaration (`serde_json`'s `preserve_order` is enabled workspace-wide).
+pub(super) fn build_struct_impl(parsed: &ParsedStruct) -> syn::Result<TokenStream> {
+    let struct_name = &parsed.ident;
+    let mut statements = Vec::new();
+    let mut mutates_properties = false;
+    let mut mutates_required = false;
+
+    for field in &parsed.fields {
+        if !field_is_schema_visible(field) {
+            continue;
+        }
+        if field.flatten {
+            validate_flatten_target(&field.ty, field.flatten_span)?;
+            let ty = &field.ty;
+            statements.push(quote! {
+                {
+                    let __nested: ::serde_json::Value = <#ty>::json_schema();
+                    if let Some(__props) = __nested.get("properties").and_then(|__v| __v.as_object()) {
+                        for (__key, __value) in __props {
+                            __properties.insert(__key.clone(), __value.clone());
+                        }
+                    }
+                    if let Some(__req) = __nested.get("required").and_then(|__v| __v.as_array()) {
+                        for __entry in __req {
+                            __required.push(__entry.clone());
+                        }
+                    }
+                }
+            });
+            mutates_properties = true;
+            mutates_required = true;
+            continue;
+        }
+
+        let name = resolve_wire_name(field, parsed.rename_all);
+        let schema = field_schema_tokens(field)?;
+        statements.push(quote! {
+            __properties.insert(#name.to_string(), #schema);
+        });
+        mutates_properties = true;
+        if field_is_required(field) {
+            statements.push(quote! {
+                __required.push(::serde_json::Value::String(#name.to_string()));
+            });
+            mutates_required = true;
+        }
+    }
+
+    let properties_mut = if mutates_properties {
+        quote!(mut)
+    } else {
+        quote!()
+    };
+    let required_mut = if mutates_required {
+        quote!(mut)
+    } else {
+        quote!()
+    };
+
+    Ok(quote! {
+        impl #struct_name {
+            pub fn json_schema() -> ::serde_json::Value {
+                let #properties_mut __properties = ::serde_json::Map::new();
+                let #required_mut __required: ::std::vec::Vec<::serde_json::Value> =
+                    ::std::vec::Vec::new();
+                #( #statements )*
+                let mut __schema = ::serde_json::Map::new();
+                __schema.insert(
+                    "type".to_string(),
+                    ::serde_json::Value::String("object".to_string()),
+                );
+                __schema.insert("required".to_string(), ::serde_json::Value::Array(__required));
+                __schema.insert(
+                    "properties".to_string(),
+                    ::serde_json::Value::Object(__properties),
+                );
+                __schema.insert(
+                    "additionalProperties".to_string(),
+                    ::serde_json::Value::Bool(false),
+                );
+                ::serde_json::Value::Object(__schema)
+            }
+        }
+    })
+}
+
+/// Walks `fields` once, producing the parallel vectors `json!({...})` needs:
+/// property names, property-schema token streams, and the required-name list.
+/// Used by the enum schema builder for named-variant payloads.
+///
+/// Fields excluded from the schema (`#[serde(skip)]`,
+/// `#[serde(skip_deserializing)]`, `#[tool_args(skip)]`) are dropped from every
+/// output; `#[serde(skip_serializing)]` fields stay. Optional and
+/// serde-defaulted fields are excluded from `required` unless
+/// `#[tool_args(required)]` forces them back. Wire names honour
+/// `#[serde(rename = "...")]`. `#[serde(flatten)]` is rejected here because
+/// merging is only modelled for top-level structs.
+pub(super) fn build_field_props(
+    fields: &[ParsedField],
+) -> syn::Result<(Vec<String>, Vec<TokenStream>, Vec<String>)> {
+    let mut prop_names = Vec::new();
+    let mut prop_schemas = Vec::new();
+    let mut required_names = Vec::new();
+    for field in fields {
+        if !field_is_schema_visible(field) {
+            continue;
+        }
+        if field.flatten {
+            let span = field.flatten_span.unwrap_or_else(|| field.ident.span());
+            return Err(Error::new(
+                span,
+                "ToolArgs: #[serde(flatten)] is only supported on top-level struct fields, \
+                 not enum-variant fields",
+            ));
+        }
+        let name = resolve_wire_name(field, None);
+        let schema = field_schema_tokens(field)?;
+        if field_is_required(field) {
+            required_names.push(name.clone());
+        }
+        prop_names.push(name);
+        prop_schemas.push(schema);
+    }
+    Ok((prop_names, prop_schemas, required_names))
+}
+
+/// Resolves a field's wire name. Precedence: `#[serde(rename = "x")]` →
+/// container `#[serde(rename_all = "...")]` → the raw Rust ident.
+fn resolve_wire_name(field: &ParsedField, rename_all: Option<RenameRule>) -> String {
+    if let Some(name) = &field.serde_rename {
+        return name.clone();
+    }
+    let raw = field.ident.to_string();
+    match rename_all {
+        Some(rule) => rule.apply(&raw),
+        None => raw,
+    }
+}
+
+/// Whether the field appears as a named property in the generated schema.
+///
+/// `#[tool_args(skip)]` removes the field regardless of serde. Schema
+/// visibility otherwise tracks the *deserialization* surface: of serde's three
+/// skip flags, `#[serde(skip)]` and `#[serde(skip_deserializing)]` drop the
+/// field from input (and thus the schema), whereas `#[serde(skip_serializing)]`
+/// affects output only and keeps the field as a valid input the model may send.
+fn field_is_schema_visible(field: &ParsedField) -> bool {
+    !field.tool_args_skip && !field.serde_skip && !field.serde_skip_deserializing
+}
+
+/// Whether the field belongs in the `required` array. `#[tool_args(required)]`
+/// forces inclusion even with `#[serde(default)]`; otherwise optionals and
+/// serde-defaulted fields are excluded.
+fn field_is_required(field: &ParsedField) -> bool {
+    if field.tool_args_required {
+        return true;
+    }
+    !field.has_default && !is_option(&field.ty)
+}
+
+/// Builds the property schema for one field, layering the `#[tool_args(...)]`
+/// overrides on top of the inferred type schema:
+///
+/// * `schema = {...}` replaces the generated schema entirely.
+/// * `description = "..."` overrides the doc-comment description.
+/// * `additional_properties` sets `additionalProperties: true` on the field's
+///   own object schema (mutated at runtime so it composes with any base).
+fn field_schema_tokens(field: &ParsedField) -> syn::Result<TokenStream> {
+    let base = if let Some(schema) = &field.tool_args_schema {
+        quote! { ::serde_json::json!(#schema) }
+    } else {
+        let description = field
+            .tool_args_description
+            .as_deref()
+            .filter(|d| !d.is_empty())
+            .unwrap_or(field.description.as_str());
+        field_type_schema(&field.ty, description)?
+    };
+
+    if field.tool_args_additional_properties {
+        Ok(quote! {
+            {
+                let mut __field_schema: ::serde_json::Value = #base;
+                if let Some(__obj) = __field_schema.as_object_mut() {
+                    __obj.insert(
+                        "additionalProperties".to_string(),
+                        ::serde_json::Value::Bool(true),
+                    );
+                }
+                __field_schema
+            }
+        })
+    } else {
+        Ok(base)
+    }
+}
+
+/// Rejects `#[serde(flatten)]` on a type that cannot contribute a nested object
+/// schema — scalars, `Option`/`Vec`/`HashMap`, `serde_json::Value`, and the
+/// known-unsupported stdlib types. Any other path type is assumed to be a
+/// struct that derives `ToolArgs`; if it does not, the generated
+/// `<T>::json_schema()` call fails to resolve at the use site. The error is
+/// anchored to the captured `flatten` keyword span when available.
+fn validate_flatten_target(ty: &Type, flatten_span: Option<Span>) -> syn::Result<()> {
+    let make_error = |message: String| match flatten_span {
+        Some(span) => Error::new(span, message),
+        None => Error::new_spanned(ty, message),
+    };
+
+    let Type::Path(TypePath { qself: None, path }) = ty else {
+        return Err(make_error(
+            "ToolArgs: #[serde(flatten)] requires a struct type".to_string(),
+        ));
+    };
+    let Some(segment) = path.segments.last() else {
+        return Err(make_error(
+            "ToolArgs: #[serde(flatten)] requires a struct type".to_string(),
+        ));
+    };
+    let ident = segment.ident.to_string();
+    let rejected = scalar_schema_body(&ident).is_some()
+        || is_known_unsupported(&ident)
+        || matches!(ident.as_str(), "Option" | "Vec" | "HashMap")
+        || is_serde_json_value(path);
+    if rejected {
+        return Err(make_error(format!(
+            "ToolArgs: #[serde(flatten)] requires a struct type, found `{}`",
+            quote!(#ty)
+        )));
+    }
+    Ok(())
+}
+
+/// Builds the JSON Schema fragment for one Rust type, attaching the supplied
+/// description (when non-empty) to whichever schema layer is the natural
+/// carrier for it.
+///
+/// For `Option<T>` the description rides T's schema, since `Option` is purely
+/// presence/absence sugar. For `Vec<T>` and `HashMap<String, T>` the
+/// description sits on the outer array/object — `items` and
+/// `additionalProperties` carry no description of their own. For a nested
+/// struct that derives `ToolArgs`, we delegate to `<T>::json_schema()` and
+/// patch the description in at runtime when present.
+pub(super) fn field_type_schema(ty: &Type, description: &str) -> syn::Result<TokenStream> {
+    let Type::Path(TypePath { qself: None, path }) = ty else {
+        return Err(unsupported_type_error(ty));
+    };
+    let Some(segment) = path.segments.last() else {
+        return Err(unsupported_type_error(ty));
+    };
+    let ident = segment.ident.to_string();
+
+    // Handle the wrapper / container types before the closed scalar match —
+    // those need access to the segment's generic arguments.
+    match ident.as_str() {
+        "Option" => {
+            let inner = single_generic_type(segment, ty)?;
+            return field_type_schema(inner, description);
+        }
+        "Vec" => {
+            let inner = single_generic_type(segment, ty)?;
+            let inner_schema = field_type_schema(inner, "")?;
+            let body = quote! { "type": "array", "items": #inner_schema };
+            return Ok(literal_schema(&body, description));
+        }
+        "HashMap" => {
+            let (key, value) = pair_generic_types(segment, ty)?;
+            require_string_key(key)?;
+            let value_schema = field_type_schema(value, "")?;
+            let body = quote! { "type": "object", "additionalProperties": #value_schema };
+            return Ok(literal_schema(&body, description));
+        }
+        _ => {}
+    }
+
+    if is_serde_json_value(path) {
+        let empty = quote! {};
+        return Ok(literal_schema(&empty, description));
+    }
+
+    if let Some(scalar) = scalar_schema_body(&ident) {
+        return Ok(literal_schema(&scalar, description));
+    }
+
+    if is_known_unsupported(&ident) {
+        return Err(unsupported_type_error(ty));
+    }
+
+    // Fallthrough: delegate to the user's own `json_schema()` impl. If the
+    // type does not derive `ToolArgs`, rustc reports a `no method named
+    // json_schema` error against the generated call site.
+    Ok(nested_struct_schema(ty, description))
+}
+
+/// Emits `::serde_json::json!({ <body> })` with an optional `description`
+/// field merged in. `body` may be empty (for `serde_json::Value`'s "any"
+/// schema), in which case the resulting schema is `{}` or `{"description":
+/// "..."}`.
+fn literal_schema(body: &TokenStream, description: &str) -> TokenStream {
+    let needs_comma = !body.is_empty();
+    if description.is_empty() {
+        quote! { ::serde_json::json!({ #body }) }
+    } else if needs_comma {
+        quote! { ::serde_json::json!({ #body, "description": #description }) }
+    } else {
+        quote! { ::serde_json::json!({ "description": #description }) }
+    }
+}
+
+/// Emits the runtime-patching block used when a nested struct schema needs a
+/// description attached. When the description is empty we fall through to a
+/// bare `<T>::json_schema()` call to keep the expansion minimal.
+///
+/// The block is wrapped in parens so the `serde_json::json!` macro parses it
+/// as an expression rather than matching the leading `{` as a sub-object.
+fn nested_struct_schema(ty: &Type, description: &str) -> TokenStream {
+    if description.is_empty() {
+        quote! { <#ty>::json_schema() }
+    } else {
+        quote! {
+            ({
+                let mut __s: ::serde_json::Value = <#ty>::json_schema();
+                if let Some(__o) = __s.as_object_mut() {
+                    __o.insert(
+                        "description".into(),
+                        ::serde_json::Value::String(#description.into()),
+                    );
+                }
+                __s
+            })
+        }
+    }
+}
+
+/// Returns the body tokens for a scalar JSON Schema, e.g. `"type": "string"`
+/// or `"type": "integer", "minimum": 0` for unsigned integers. `None` means
+/// this identifier is not a recognised scalar — the caller decides whether to
+/// fall through to nested-struct delegation or report an unsupported type.
+fn scalar_schema_body(ident: &str) -> Option<TokenStream> {
+    match ident {
+        "String" | "str" => Some(quote! { "type": "string" }),
+        "bool" => Some(quote! { "type": "boolean" }),
+        "i8" | "i16" | "i32" | "i64" | "isize" => Some(quote! { "type": "integer" }),
+        "u8" | "u16" | "u32" | "u64" | "usize" => Some(quote! { "type": "integer", "minimum": 0 }),
+        "f32" | "f64" => Some(quote! { "type": "number" }),
+        _ => None,
+    }
+}
+
+/// Detects `serde_json::Value` written as `Value`, `serde_json::Value`, or
+/// `::serde_json::Value`. We cannot resolve `use` aliases at macro time, so the
+/// bare `Value` form is accepted optimistically — if it resolves to a different
+/// type at compile time the user gets a schema that does not match their
+/// deserialization shape, which is the same risk as any unqualified path.
+fn is_serde_json_value(path: &syn::Path) -> bool {
+    let segs: Vec<_> = path.segments.iter().map(|s| s.ident.to_string()).collect();
+    match segs.as_slice() {
+        [last] => last == "Value",
+        [first, last] => first == "serde_json" && last == "Value",
+        _ => false,
+    }
+}
+
+/// Negative list of common stdlib types that almost certainly should not
+/// delegate to a `json_schema()` method on themselves. Catching them here
+/// keeps the failure message specific to the user's choice instead of letting
+/// rustc complain about a missing method on a foreign type.
+fn is_known_unsupported(ident: &str) -> bool {
+    matches!(
+        ident,
+        "PathBuf"
+            | "Path"
+            | "Box"
+            | "Rc"
+            | "Arc"
+            | "Cow"
+            | "OsString"
+            | "OsStr"
+            | "HashSet"
+            | "BTreeSet"
+            | "BTreeMap"
+            | "PhantomData"
+            | "Cell"
+            | "RefCell"
+            | "Mutex"
+            | "RwLock"
+    )
+}
+
+/// Reports whether the type is `Option<...>`, used to omit optionals from the
+/// `required` array.
+pub(super) fn is_option(ty: &Type) -> bool {
+    if let Type::Path(TypePath { qself: None, path }) = ty
+        && let Some(segment) = path.segments.last()
+    {
+        return segment.ident == "Option";
+    }
+    false
+}
+
+/// Pulls the single `T` out of `Wrapper<T>`. Errors point at the wrapper type
+/// when the generic position is missing or has the wrong shape.
+fn single_generic_type<'a>(segment: &'a syn::PathSegment, ty: &Type) -> syn::Result<&'a Type> {
+    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return Err(Error::new_spanned(
+            ty,
+            "ToolArgs: expected a single generic type argument",
+        ));
+    };
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        GenericArgument::Type(t) => Some(t),
+        _ => None,
+    });
+    let Some(first) = types.next() else {
+        return Err(Error::new_spanned(
+            ty,
+            "ToolArgs: expected a single generic type argument",
+        ));
+    };
+    if types.next().is_some() {
+        return Err(Error::new_spanned(
+            ty,
+            "ToolArgs: expected exactly one generic type argument",
+        ));
+    }
+    Ok(first)
+}
+
+/// Pulls `(K, V)` out of `Container<K, V>`. Used for `HashMap<String, T>`.
+fn pair_generic_types<'a>(
+    segment: &'a syn::PathSegment,
+    ty: &Type,
+) -> syn::Result<(&'a Type, &'a Type)> {
+    let PathArguments::AngleBracketed(args) = &segment.arguments else {
+        return Err(Error::new_spanned(
+            ty,
+            "ToolArgs: expected two generic type arguments",
+        ));
+    };
+    let mut types = args.args.iter().filter_map(|arg| match arg {
+        GenericArgument::Type(t) => Some(t),
+        _ => None,
+    });
+    let key = types
+        .next()
+        .ok_or_else(|| Error::new_spanned(ty, "ToolArgs: expected two generic type arguments"))?;
+    let value = types
+        .next()
+        .ok_or_else(|| Error::new_spanned(ty, "ToolArgs: expected two generic type arguments"))?;
+    Ok((key, value))
+}
+
+/// Enforces the JSON-object constraint that `HashMap` keys must be String for
+/// schema purposes. Other key types deserialize but cannot be expressed in
+/// JSON Schema's `additionalProperties` shape.
+fn require_string_key(key: &Type) -> syn::Result<()> {
+    if let Type::Path(TypePath { qself: None, path }) = key
+        && let Some(segment) = path.segments.last()
+        && segment.ident == "String"
+    {
+        return Ok(());
+    }
+    Err(Error::new_spanned(
+        key,
+        "ToolArgs: HashMap keys must be `String` for schema generation \
+         (String key requirement); use #[tool_args(schema = {...})] for other key types",
+    ))
+}
+
+/// Standard error returned for any unsupported scalar / container type.
+fn unsupported_type_error(ty: &Type) -> Error {
+    Error::new_spanned(
+        ty,
+        format!(
+            "ToolArgs: unsupported type `{}`. Use #[tool_args(schema = {{...}})] to provide a manual schema.",
+            quote!(#ty)
+        ),
+    )
+}

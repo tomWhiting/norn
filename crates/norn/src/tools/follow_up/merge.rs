@@ -1,0 +1,166 @@
+//! Shallow argument merge for follow-up dispatch.
+//!
+//! A registered [`FollowUpAction`](crate::tool::follow_up::FollowUpAction)
+//! carries pre-populated `args` that override the original call's arguments
+//! at execution time: fields present in the overrides replace the matching
+//! fields in the original, fields absent from the overrides are inherited,
+//! and fields only in the overrides are added. The merge is shallow (one
+//! level deep — nested objects are replaced wholesale, not merged) and
+//! deterministic.
+
+use serde_json::Value;
+use thiserror::Error;
+
+/// Failure merging follow-up overrides onto the original arguments.
+///
+/// Both operands must be JSON objects. A non-object operand is a malformed
+/// reference (a corrupt action log entry or a tool that recorded a non-object
+/// argument value) and is surfaced rather than silently coerced, so the
+/// follow-up tool never dispatches a target with nonsense arguments.
+#[derive(Debug, Error)]
+pub enum MergeArgsError {
+    /// The original call's stored arguments were not a JSON object.
+    #[error("original arguments must be a JSON object, got {got}")]
+    OriginalNotObject {
+        /// The JSON type that was found instead of an object.
+        got: &'static str,
+    },
+    /// The follow-up action's override arguments were not a JSON object.
+    #[error("override arguments must be a JSON object, got {got}")]
+    OverridesNotObject {
+        /// The JSON type that was found instead of an object.
+        got: &'static str,
+    },
+}
+
+/// The JSON type name of `value`, for error messages.
+fn json_type_name(value: &Value) -> &'static str {
+    match value {
+        Value::Null => "null",
+        Value::Bool(_) => "boolean",
+        Value::Number(_) => "number",
+        Value::String(_) => "string",
+        Value::Array(_) => "array",
+        Value::Object(_) => "object",
+    }
+}
+
+/// Shallowly merge `overrides` onto `original`, returning a new JSON object.
+///
+/// Every key in `original` is preserved unless `overrides` carries the same
+/// key, in which case the override value replaces it. Keys only in
+/// `overrides` are added. Both operands must be JSON objects; otherwise a
+/// [`MergeArgsError`] is returned.
+///
+/// # Errors
+///
+/// Returns [`MergeArgsError::OriginalNotObject`] or
+/// [`MergeArgsError::OverridesNotObject`] when the respective operand is not a
+/// JSON object.
+pub fn merge_args(original: &Value, overrides: &Value) -> Result<Value, MergeArgsError> {
+    let original_map = original
+        .as_object()
+        .ok_or(MergeArgsError::OriginalNotObject {
+            got: json_type_name(original),
+        })?;
+    let override_map = overrides
+        .as_object()
+        .ok_or(MergeArgsError::OverridesNotObject {
+            got: json_type_name(overrides),
+        })?;
+
+    let mut merged = original_map.clone();
+    for (key, value) in override_map {
+        merged.insert(key.clone(), value.clone());
+    }
+    Ok(Value::Object(merged))
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn override_replaces_existing_key() {
+        let original = json!({ "a": 1, "b": 2 });
+        let overrides = json!({ "b": 3 });
+        let merged = merge_args(&original, &overrides).expect("merge succeeds");
+        assert_eq!(merged, json!({ "a": 1, "b": 3 }));
+    }
+
+    #[test]
+    fn override_adds_new_key() {
+        let original = json!({ "a": 1 });
+        let overrides = json!({ "b": 2 });
+        let merged = merge_args(&original, &overrides).expect("merge succeeds");
+        assert_eq!(merged, json!({ "a": 1, "b": 2 }));
+    }
+
+    #[test]
+    fn empty_overrides_preserve_original() {
+        let original = json!({ "a": 1, "b": 2 });
+        let overrides = json!({});
+        let merged = merge_args(&original, &overrides).expect("merge succeeds");
+        assert_eq!(merged, json!({ "a": 1, "b": 2 }));
+    }
+
+    #[test]
+    fn empty_original_takes_overrides() {
+        let original = json!({});
+        let overrides = json!({ "a": 1 });
+        let merged = merge_args(&original, &overrides).expect("merge succeeds");
+        assert_eq!(merged, json!({ "a": 1 }));
+    }
+
+    #[test]
+    fn merge_is_deterministic() {
+        let original = json!({ "a": 1, "b": 2, "c": 3 });
+        let overrides = json!({ "b": 20, "d": 40 });
+        let first = merge_args(&original, &overrides).expect("merge succeeds");
+        let second = merge_args(&original, &overrides).expect("merge succeeds");
+        assert_eq!(first, second);
+        assert_eq!(first, json!({ "a": 1, "b": 20, "c": 3, "d": 40 }));
+    }
+
+    #[test]
+    fn override_replaces_nested_object_wholesale() {
+        // Shallow merge: a nested object override replaces, not deep-merges.
+        let original = json!({ "opts": { "x": 1, "y": 2 } });
+        let overrides = json!({ "opts": { "x": 9 } });
+        let merged = merge_args(&original, &overrides).expect("merge succeeds");
+        assert_eq!(merged, json!({ "opts": { "x": 9 } }));
+    }
+
+    #[test]
+    fn non_object_original_errors() {
+        let original = json!("not an object");
+        let overrides = json!({ "a": 1 });
+        let err = merge_args(&original, &overrides).expect_err("must error");
+        assert!(matches!(
+            err,
+            MergeArgsError::OriginalNotObject { got: "string" }
+        ));
+    }
+
+    #[test]
+    fn non_object_overrides_errors() {
+        let original = json!({ "a": 1 });
+        let overrides = json!([1, 2, 3]);
+        let err = merge_args(&original, &overrides).expect_err("must error");
+        assert!(matches!(
+            err,
+            MergeArgsError::OverridesNotObject { got: "array" }
+        ));
+    }
+
+    #[test]
+    fn null_original_errors() {
+        let err = merge_args(&Value::Null, &json!({})).expect_err("must error");
+        assert!(matches!(
+            err,
+            MergeArgsError::OriginalNotObject { got: "null" }
+        ));
+    }
+}

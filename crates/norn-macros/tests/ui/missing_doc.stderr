@@ -1,0 +1,5 @@
+error: ToolArgs: field `undocumented` has no doc comment. Add a /// comment to provide the schema description.
+ --> tests/ui/missing_doc.rs:9:5
+  |
+9 |     undocumented: String,
+  |     ^^^^^^^^^^^^

@@ -1,0 +1,1 @@
+Request that the named agent wrap up by transitioning its registry status to Completing. The agent's loop observes the status change and concludes at its next check.

@@ -1,0 +1,1 @@
+cargo:rerun-if-changed=lint_data/clippy_lints.json

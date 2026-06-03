@@ -1,0 +1,13 @@
+/Users/tom/Developer/ablative/norn/target/debug/deps/smartstring-c8fcf7e43f2aa8b9.d: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/config.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/marker_byte.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/inline.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/boxed.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/casts.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/iter.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/ops.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/serde.rs
+
+/Users/tom/Developer/ablative/norn/target/debug/deps/libsmartstring-c8fcf7e43f2aa8b9.rmeta: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/config.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/marker_byte.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/inline.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/boxed.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/casts.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/iter.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/ops.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/serde.rs
+
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/lib.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/config.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/marker_byte.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/inline.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/boxed.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/casts.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/iter.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/ops.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/smartstring-1.0.1/src/serde.rs:

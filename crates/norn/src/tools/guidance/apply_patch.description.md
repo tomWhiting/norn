@@ -1,0 +1,1 @@
+Apply a unified-diff patch to one or more files. Each target file must have been read this session. Patches that introduce syntax errors are rolled back unless AllowBrokenAst is set.

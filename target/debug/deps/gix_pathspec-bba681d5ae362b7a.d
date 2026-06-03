@@ -1,0 +1,11 @@
+/Users/tom/Developer/ablative/norn/target/debug/deps/gix_pathspec-bba681d5ae362b7a.d: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/pattern.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/search/mod.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/search/init.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/search/matching.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/parse.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/defaults.rs
+
+/Users/tom/Developer/ablative/norn/target/debug/deps/libgix_pathspec-bba681d5ae362b7a.rmeta: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/pattern.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/search/mod.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/search/init.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/search/matching.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/parse.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/defaults.rs
+
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/lib.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/pattern.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/search/mod.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/search/init.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/search/matching.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/parse.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-pathspec-0.18.0/src/defaults.rs:

@@ -1,0 +1,1 @@
+Perform language-server operations on a source file. Actions: hover (type info at a position), definition (go-to-definition), references (find all references), symbols (list file symbols), diagnostics (compiler warnings and errors).

@@ -1,0 +1,1 @@
+Use to find external information, documentation, or answers not available in the local codebase. Returns up to 20 results (default 8). Keep queries specific and concise for better ranking. Do not use for fetching page content — use web_fetch to retrieve a specific URL after finding it via search.

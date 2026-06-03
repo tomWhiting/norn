@@ -1,0 +1,1 @@
+Read a file from disk and return its content with one-based line numbers. Supports offset and limit for partial reads. Detects binary and image files.

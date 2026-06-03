@@ -1,0 +1,1 @@
+Fork your session at the current point in time. The fork inherits your full conversation history and all available tools. Returns immediately with a fork_id while the fork runs asynchronously. On completion, the structured result is delivered back to you automatically.

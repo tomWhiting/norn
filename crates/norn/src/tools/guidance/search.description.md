@@ -1,0 +1,1 @@
+Search across files using four modes: content (regex line search), files (glob matching), fuzzy (nucleo-scored path ranking), or ast (tree-sitter S-expression queries over parsed syntax trees).

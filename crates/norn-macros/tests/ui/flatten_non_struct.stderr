@@ -1,0 +1,5 @@
+error: ToolArgs: #[serde(flatten)] requires a struct type, found `String`
+ --> tests/ui/flatten_non_struct.rs:9:13
+  |
+9 |     #[serde(flatten)]
+  |             ^^^^^^^

@@ -1,0 +1,1 @@
+Always read a file before editing or writing to it. Use offset and limit for large files rather than reading the entire content. Binary and image files are detected automatically and reported without dumping raw bytes. File paths must be absolute.

@@ -1,0 +1,54 @@
+[package]
+name = "norn-cli"
+description = "Norn CLI — interactive REPL and headless agent invocation on top of the norn runtime."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+
+[lib]
+name = "norn_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "norn"
+path = "src/main.rs"
+
+[features]
+default = ["libyggd-ast"]
+# Forwards to `norn/libyggd-ast`, enabling libyggd-backed tier-1 entity
+# resolution in `apply_patch`. Exposed as a local feature so CLI source can
+# gate the extractor construction with `#[cfg(feature = "libyggd-ast")]`.
+libyggd-ast = ["norn/libyggd-ast"]
+
+[dependencies]
+chrono = { workspace = true, features = ["serde"] }
+clap = { workspace = true }
+clap_complete = "4.6"
+codex-login = { git = "https://github.com/openai/codex", rev = "85915a2a2119d1da143dea6a236c5dee8fe9af04" }
+diagnostics = { workspace = true }
+dirs = { workspace = true }
+glob.workspace = true
+humantime = "2.3.0"
+norn = { path = "../norn" }
+norn-tui = { path = "../norn-tui" }
+parking_lot = "0.12.5"
+reqwest = { workspace = true, features = ["json"] }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+termina = { version = "0.3", features = ["event-stream"] }
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["rt-multi-thread", "macros"] }
+toml.workspace = true
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+uuid = { version = "1", features = ["v7", "serde"] }
+
+[dev-dependencies]
+async-trait = { workspace = true }
+serial_test = { workspace = true }
+temp-env = { workspace = true }
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

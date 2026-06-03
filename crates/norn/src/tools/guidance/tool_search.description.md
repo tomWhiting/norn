@@ -1,0 +1,1 @@
+Search the available tool catalogue using BM25 keyword ranking over tool names and descriptions. Returns matched tools sorted by relevance. An empty query returns all tools sorted alphabetically.

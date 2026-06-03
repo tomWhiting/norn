@@ -1,0 +1,66 @@
+[package]
+name = "norn"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Headless agent runtime for Yggdrasil — orchestratable AI agent infrastructure with schema-validated structured output, tool lifecycle validation, and surgical context control."
+
+[features]
+test-utils = []
+libyggd-ast = ["dep:libyggd"]
+
+[dependencies]
+async-trait = { workspace = true }
+chrono = { workspace = true, features = ["serde"] }
+futures-util = { workspace = true }
+glob = { workspace = true }
+indexmap = { version = "2", features = ["serde"] }
+libyggd = { workspace = true, optional = true }
+lsp = { workspace = true }
+lsp-types = { workspace = true }
+norn-macros = { path = "../norn-macros" }
+parking_lot = "0.12"
+regex = { workspace = true }
+reqwest = { workspace = true, features = ["stream"] }
+serde = { workspace = true, features = ["derive"] }
+jsonschema = "0.28"
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+serde_yaml = "0.9"
+thiserror = { workspace = true }
+tokio = { workspace = true, features = ["io-std"] }
+tokio-stream = "0.1"
+tokio-util = { workspace = true }
+tracing = { workspace = true }
+tree-sitter = { workspace = true }
+tree-sitter-json = "0.24"
+tree-sitter-javascript = "0.25"
+tree-sitter-python = "0.25"
+tree-sitter-rust = { workspace = true }
+tree-sitter-typescript = { workspace = true }
+uuid = { version = "1", features = ["v4", "v7", "serde"] }
+croner = { workspace = true }
+rhai = { workspace = true, features = ["serde"] }
+bm25 = "2.3"
+diffy.workspace = true
+claude_runner = { workspace = true }
+diagnostics = { workspace = true }
+codex-login = { git = "https://github.com/openai/codex", rev = "85915a2a2119d1da143dea6a236c5dee8fe9af04" }
+dirs.workspace = true
+toml.workspace = true
+nucleo-matcher = "0.3"
+tokei.workspace = true
+url = { workspace = true }
+humantime = "2.3.0"
+globset.workspace = true
+html-to-markdown-rs = "3.5.4"
+
+[dev-dependencies]
+serial_test.workspace = true
+tempfile = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
+tracing-subscriber = { workspace = true }
+wiremock.workspace = true
+
+[lints]
+workspace = true

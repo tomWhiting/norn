@@ -1,0 +1,1 @@
+Execute a shell command via sh -c. Returns combined exit code, stdout, and stderr. Commands are classified into a risk tier before execution.

@@ -1,0 +1,1 @@
+Launches a sub-agent in the background and returns immediately with the agent_id. The child runs asynchronously on its own task; the orchestrator receives the result automatically when the child completes. Accepts an optional profile name to configure the child's system instructions, tool access, and reasoning config.

@@ -1,0 +1,152 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/norn",
+    "crates/norn-cli",
+    "crates/norn-macros",
+    "crates/norn-tui",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+authors = ["Yggdrasil Contributors"]
+
+[workspace.dependencies]
+# Extracted crates — external references
+claude_runner = { path = "/Users/tom/Developer/ablative/claude-runner" }
+diagnostics = { path = "/Users/tom/Developer/ablative/chiron/crates/diagnostics" }
+lsp = { path = "/Users/tom/Developer/ablative/chiron/crates/lsp" }
+syntax = { path = "/Users/tom/Developer/ablative/chiron/crates/syntax" }
+libyggd = { path = "/Users/tom/Developer/ablative/yggdrasil/crates/libyggd" }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+serde_yaml = "0.9"
+
+# CLI
+clap = { version = "4", features = ["derive", "env"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+# Error handling
+thiserror = "2"
+
+# Async
+tokio = { version = "1", features = [
+    "rt-multi-thread",
+    "macros",
+    "io-util",
+    "sync",
+    "process",
+    "net",
+    "time",
+    "fs",
+    "signal",
+] }
+async-trait = "0.1"
+futures-util = { version = "0.3", features = ["sink"] }
+tokio-util = { version = "0.7", features = ["rt"] }
+
+# LSP
+lsp-types = "0.97.0"
+url = "2"
+
+# Utilities
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+glob = "0.3"
+globset = "0.4"
+sha2 = "0.10"
+regex = "1"
+tempfile = "3"
+toml = "0.8"
+dirs = "6"
+diffy = "0.5.0"
+ignore = "0.4"
+croner = "2"
+nucleo-matcher = "0.3"
+tokei = "14.0.0"
+
+# Rhai
+rhai = { version = "1.24.0", features = ["serde"] }
+
+# HTTP
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "http2",
+    "charset",
+    "rustls-tls",
+    "rustls-tls-native-roots",
+    "rustls-tls-webpki-roots",
+] }
+
+# Tree-sitter
+tree-sitter = "0.25.10"
+tree-sitter-rust = "0.24.2"
+tree-sitter-typescript = "0.23.2"
+
+# Dev/Test
+serial_test = "3"
+temp-env = { version = "0.3", features = ["async_closure"] }
+wiremock = "0.6"
+
+[workspace.lints.rust]
+unsafe_code = "deny"
+missing_docs = "warn"
+rust_2018_idioms = { level = "warn", priority = -1 }
+
+[workspace.lints.clippy]
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+unimplemented = "warn"
+todo = "warn"
+unreachable = "warn"
+clone_on_ref_ptr = "warn"
+redundant_clone = "warn"
+cloned_instead_of_copied = "warn"
+flat_map_option = "warn"
+str_to_string = "allow"
+inefficient_to_string = "warn"
+string_lit_as_bytes = "warn"
+result_large_err = "warn"
+map_err_ignore = "warn"
+large_futures = "warn"
+large_stack_arrays = "warn"
+large_types_passed_by_value = "warn"
+boxed_local = "warn"
+vec_box = "warn"
+rc_buffer = "warn"
+implicit_clone = "warn"
+explicit_deref_methods = "warn"
+explicit_into_iter_loop = "warn"
+explicit_iter_loop = "warn"
+manual_let_else = "warn"
+match_bool = "warn"
+match_same_arms = "warn"
+match_wild_err_arm = "warn"
+needless_pass_by_value = "warn"
+trivially_copy_pass_by_ref = "warn"
+unnecessary_wraps = "warn"
+used_underscore_binding = "warn"
+get_unwrap = "warn"
+future_not_send = "warn"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_inception = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+too_many_lines = "allow"
+struct_excessive_bools = "allow"
+
+# codex-login pulls in codex-otel, whose tokio-tungstenite dependency
+# requires the openai-oss-forks fork.
+[patch.crates-io]
+tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
+tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }

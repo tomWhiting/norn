@@ -1,0 +1,1 @@
+Use when a task matches an available skill template. The tool searches configured directories for <name>/SKILL.md or <name>.md and returns the template content. If the skill is not found, available skill names are listed in the error response. Do not guess skill names — use the listed names or ask the user which skill to invoke.

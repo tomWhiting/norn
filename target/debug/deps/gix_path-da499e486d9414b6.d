@@ -1,0 +1,12 @@
+/Users/tom/Developer/ablative/norn/target/debug/deps/gix_path-da499e486d9414b6.d: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/convert.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/util.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/realpath.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/env/mod.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/env/auxiliary.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/env/git/mod.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/relative_path.rs
+
+/Users/tom/Developer/ablative/norn/target/debug/deps/libgix_path-da499e486d9414b6.rmeta: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/convert.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/util.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/realpath.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/env/mod.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/env/auxiliary.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/env/git/mod.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/relative_path.rs
+
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/lib.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/convert.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/util.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/realpath.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/env/mod.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/env/auxiliary.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/env/git/mod.rs:
+/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/gix-path-0.11.3/src/relative_path.rs:

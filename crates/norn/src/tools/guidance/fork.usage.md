@@ -1,0 +1,5 @@
+Fork splits your session at the current point in time. The fork inherits your complete conversation history and all available tools — it knows everything you know. It runs asynchronously and returns a structured result automatically when it completes.
+
+Provide a requirements array to define what the fork must deliver. Each requirement gets a completion record in the structured output.
+
+Do not fork for work that is independent of your conversation context — use spawn_agent instead.

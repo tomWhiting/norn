@@ -1,0 +1,1 @@
+Load a skill prompt template by name. Searches configured skill directories for a matching SKILL.md or named markdown file and returns its content for the agent to follow.
