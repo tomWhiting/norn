@@ -55,7 +55,7 @@ impl OpenAiProvider {
     ///
     /// Builds the [`AuthProvider`] from `config.auth_source`. For
     /// `AuthSource::OAuth`, this initialises the underlying
-    /// `codex-login` `AuthManager`, which may read from disk.
+    /// local OAuth `AuthManager`, which may read from disk.
     ///
     /// # Errors
     ///

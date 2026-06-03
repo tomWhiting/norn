@@ -8,7 +8,7 @@
 //! Two backends are supported:
 //!
 //! - [`norn::provider::openai::OpenAiProvider`] — default, OAuth via
-//!   codex-login. Async constructor.
+//!   `OpenAI` `ChatGPT` auth. Async constructor.
 //! - [`norn::integration::ClaudeRunnerAdapter`] — selected via
 //!   `--provider claude-runner`. Synchronous constructor.
 //!

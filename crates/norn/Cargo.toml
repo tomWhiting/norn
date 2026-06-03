@@ -11,6 +11,7 @@ libyggd-ast = ["dep:libyggd"]
 
 [dependencies]
 async-trait = { workspace = true }
+base64 = "0.22"
 chrono = { workspace = true, features = ["serde"] }
 futures-util = { workspace = true }
 glob = { workspace = true }
@@ -45,7 +46,6 @@ bm25 = "2.3"
 diffy.workspace = true
 claude_runner = { workspace = true }
 diagnostics = { workspace = true }
-codex-login = { git = "https://github.com/openai/codex", rev = "85915a2a2119d1da143dea6a236c5dee8fe9af04" }
 dirs.workspace = true
 toml.workspace = true
 nucleo-matcher = "0.3"
@@ -54,6 +54,9 @@ url = { workspace = true }
 humantime = "2.3.0"
 globset.workspace = true
 html-to-markdown-rs = "3.5.4"
+rand = "0.9"
+tiny_http = "0.12"
+webbrowser = "1.2"
 
 [dev-dependencies]
 serial_test.workspace = true

@@ -13,9 +13,9 @@
 
 use std::path::{Path, PathBuf};
 
-use codex_login::token_data::parse_jwt_expiration;
-use codex_login::{AuthCredentialsStoreMode, AuthDotJson, load_auth_dot_json};
 use norn::provider::auth::{LoginConfig, login, logout};
+use norn::provider::openai_oauth::jwt::parse_jwt_expiration;
+use norn::provider::openai_oauth::{AuthCredentialsStoreMode, AuthDotJson, load_auth_dot_json};
 
 use crate::cli::AuthCmd;
 use crate::cli::ExitCode;

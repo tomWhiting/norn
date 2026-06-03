@@ -25,7 +25,6 @@ libyggd-ast = ["norn/libyggd-ast"]
 chrono = { workspace = true, features = ["serde"] }
 clap = { workspace = true }
 clap_complete = "4.6"
-codex-login = { git = "https://github.com/openai/codex", rev = "85915a2a2119d1da143dea6a236c5dee8fe9af04" }
 diagnostics = { workspace = true }
 dirs = { workspace = true }
 glob.workspace = true

@@ -193,7 +193,7 @@ pub enum OutputFormat {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 #[value(rename_all = "kebab-case")]
 pub enum ProviderKind {
-    /// `OpenAiProvider` — OAuth via codex-login, Responses API (default).
+    /// `OpenAiProvider` — OAuth via `OpenAI` `ChatGPT`, Responses API (default).
     Openai,
     /// `ClaudeRunnerAdapter` — routes through Claude Code CLI.
     ClaudeRunner,

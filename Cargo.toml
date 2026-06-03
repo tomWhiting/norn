@@ -144,9 +144,3 @@ module_name_repetitions = "allow"
 must_use_candidate = "allow"
 too_many_lines = "allow"
 struct_excessive_bools = "allow"
-
-# codex-login pulls in codex-otel, whose tokio-tungstenite dependency
-# requires the openai-oss-forks fork.
-[patch.crates-io]
-tokio-tungstenite = { git = "https://github.com/openai-oss-forks/tokio-tungstenite", rev = "132f5b39c862e3a970f731d709608b3e6276d5f6" }
-tungstenite = { git = "https://github.com/openai-oss-forks/tungstenite-rs", rev = "9200079d3b54a1ff51072e24d81fd354f085156f" }

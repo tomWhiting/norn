@@ -25,6 +25,7 @@ pub mod debug;
 pub mod events;
 pub mod mock;
 pub mod openai;
+pub mod openai_oauth;
 pub mod request;
 pub mod tools;
 pub mod traits;

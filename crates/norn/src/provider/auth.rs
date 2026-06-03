@@ -3,7 +3,7 @@
 //! Two production paths are exposed:
 //!
 //! - [`OAuthAuthProvider`] — primary path. OAuth 2.0 Authorization Code
-//!   with PKCE against `auth.openai.com` via the `codex-login` crate.
+//!   with PKCE against `auth.openai.com`.
 //!   Tokens persist at `$CODEX_HOME/auth.json` (default
 //!   `~/.codex/auth.json`), shared with the Codex CLI.
 //! - [`ApiKeyAuthProvider`] — testing only. Used by env-gated
@@ -15,10 +15,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use async_trait::async_trait;
-use codex_login::{
+use super::openai_oauth::{
     AuthCredentialsStoreMode, AuthManager, CLIENT_ID, RefreshTokenError, ServerOptions,
 };
+use async_trait::async_trait;
 
 use super::request::SecretString;
 use crate::error::{ConfigError, NornError, ProviderError};
@@ -29,7 +29,7 @@ use crate::error::{ConfigError, NornError, ProviderError};
 /// integration tests; it is not a recommended production path.
 #[derive(Clone, Debug)]
 pub enum AuthSource {
-    /// OAuth via the `codex-login` crate. Reads and refreshes tokens
+    /// OAuth via `OpenAI` `ChatGPT` auth. Reads and refreshes tokens
     /// stored at `$CODEX_HOME/auth.json`.
     OAuth {
         /// Optional override for the Codex home directory. `None`
@@ -87,7 +87,7 @@ pub trait AuthProvider: Send + Sync {
     async fn on_unauthorized(&self) -> Result<bool, ProviderError>;
 }
 
-/// OAuth-backed [`AuthProvider`] wrapping `codex-login`'s `AuthManager`.
+/// OAuth-backed [`AuthProvider`] wrapping an `OpenAI` OAuth [`AuthManager`].
 ///
 /// Proactive refresh is performed inside `AuthManager::auth()` so each
 /// call to [`apply_auth`](AuthProvider::apply_auth) sees a fresh token
@@ -243,7 +243,7 @@ pub struct LoginConfig {
     pub device_code: bool,
 }
 
-/// Triggers the OAuth PKCE login flow via `codex-login`.
+/// Triggers the OAuth PKCE login flow.
 ///
 /// Opens a browser, runs a local callback server, and persists tokens
 /// to `auth.json` on success.
@@ -267,7 +267,7 @@ pub async fn login(config: LoginConfig) -> Result<(), NornError> {
         None,
         AuthCredentialsStoreMode::File,
     );
-    let server = codex_login::run_login_server(opts).map_err(|e| {
+    let server = super::openai_oauth::run_login_server(opts).map_err(|e| {
         NornError::Provider(ProviderError::AuthenticationFailed {
             reason: format!("login server start failed: {e}"),
         })
@@ -288,7 +288,7 @@ pub async fn login(config: LoginConfig) -> Result<(), NornError> {
 /// call fails.
 pub async fn logout(config: LoginConfig) -> Result<(), NornError> {
     let codex_home = resolve_codex_home(config.codex_home)?;
-    codex_login::logout_with_revoke(&codex_home, AuthCredentialsStoreMode::File)
+    super::openai_oauth::logout_with_revoke(&codex_home, AuthCredentialsStoreMode::File)
         .await
         .map_err(|e| {
             NornError::Provider(ProviderError::AuthenticationFailed {
@@ -597,8 +597,8 @@ mod tests {
         // `create_dummy_chatgpt_auth_for_testing` produces a CodexAuth
         // with access_token = "Access Token" and
         // account_id = Some("account_id").
-        let auth = codex_login::CodexAuth::create_dummy_chatgpt_auth_for_testing();
-        let manager = codex_login::AuthManager::from_auth_for_testing(auth);
+        let auth = super::super::openai_oauth::CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let manager = super::super::openai_oauth::AuthManager::from_auth_for_testing(auth);
         let provider = OAuthAuthProvider::from_manager(manager);
 
         let client = reqwest::Client::new();
@@ -634,8 +634,8 @@ mod tests {
     /// `chatgpt-account-id` header must not be set.
     #[tokio::test]
     async fn oauth_provider_omits_account_id_when_absent() {
-        let auth = codex_login::CodexAuth::from_api_key("test-api-key-value");
-        let manager = codex_login::AuthManager::from_auth_for_testing(auth);
+        let auth = super::super::openai_oauth::CodexAuth::from_api_key("test-api-key-value");
+        let manager = super::super::openai_oauth::AuthManager::from_auth_for_testing(auth);
         let provider = OAuthAuthProvider::from_manager(manager);
 
         let client = reqwest::Client::new();
