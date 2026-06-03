@@ -8,6 +8,7 @@ use crate::provider::usage::Usage;
 use crate::session::events::SessionEvent;
 use chrono::Utc;
 use serde::Serialize;
+use uuid::Uuid;
 
 use super::types::{SessionIndexEntry, SessionPersistError};
 
@@ -21,11 +22,6 @@ pub fn session_file_path(data_dir: &Path, session_id: &str) -> PathBuf {
 #[must_use]
 pub fn index_file_path(data_dir: &Path) -> PathBuf {
     data_dir.join("index.jsonl")
-}
-
-#[doc(hidden)]
-pub fn index_tmp_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("index.jsonl.tmp")
 }
 
 /// Read every [`SessionEvent`] from `{data_dir}/{session_id}.jsonl`.
@@ -192,17 +188,18 @@ pub fn read_index(data_dir: &Path) -> Result<Vec<SessionIndexEntry>, SessionPers
 
 /// Atomically rewrite `{data_dir}/index.jsonl` with `entries`.
 ///
-/// Writes go to `index.jsonl.tmp` first, are flushed and `fsync`-ed, then
-/// renamed over the canonical path. On any failure between write and
-/// rename the tmp file is removed before the original error is
-/// propagated, so a partial write never leaves a stale `.tmp` behind.
+/// Writes go to a unique `index.jsonl.tmp.UUID` file first, are flushed
+/// and `fsync`-ed, then renamed over the canonical path. On any failure
+/// between write and rename the tmp file is removed before the original
+/// error is propagated, so a partial write never leaves a stale `.tmp`
+/// behind.
 pub fn write_index_atomic(
     data_dir: &Path,
     entries: &[SessionIndexEntry],
 ) -> Result<(), SessionPersistError> {
     fs::create_dir_all(data_dir)?;
     let final_path = index_file_path(data_dir);
-    let tmp_path = index_tmp_path(data_dir);
+    let tmp_path = data_dir.join(format!("index.jsonl.tmp.{}", Uuid::new_v4()));
 
     if let Err(err) = write_jsonl_atomic(&tmp_path, entries) {
         let _ = fs::remove_file(&tmp_path);
@@ -237,14 +234,24 @@ fn write_jsonl_atomic<T: Serialize>(
     Ok(())
 }
 
-/// Append `entry` to the session index, rewriting it atomically.
+/// Append `entry` to the session index using direct append mode.
 pub fn append_index_entry(
     data_dir: &Path,
     entry: SessionIndexEntry,
 ) -> Result<(), SessionPersistError> {
-    let mut entries = read_index(data_dir)?;
-    entries.push(entry);
-    write_index_atomic(data_dir, &entries)
+    fs::create_dir_all(data_dir)?;
+    let path = index_file_path(data_dir);
+    let file = OpenOptions::new().create(true).append(true).open(&path)?;
+    let mut writer = BufWriter::new(file);
+    serde_json::to_writer(&mut writer, &entry)?;
+    drop(entry);
+    writer.write_all(b"\n")?;
+    writer.flush()?;
+    let file = writer
+        .into_inner()
+        .map_err(std::io::IntoInnerError::into_error)?;
+    file.sync_all()?;
+    Ok(())
 }
 
 /// Mutate the index entry matching `session_id` via `mutator`, then

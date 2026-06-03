@@ -225,11 +225,20 @@ fn index_jsonl_each_line_parses() {
 }
 
 #[test]
-fn tmp_file_removed_after_successful_atomic_write() {
+fn no_stale_tmp_files_after_successful_atomic_write() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
     append_events(tmp.path(), &entry.id, &one_of_each(), false).unwrap();
-    assert!(!index_tmp_path(tmp.path()).exists());
+    let stale: Vec<_> = fs::read_dir(tmp.path())
+        .unwrap()
+        .filter_map(Result::ok)
+        .filter(|e| {
+            e.file_name()
+                .to_string_lossy()
+                .starts_with("index.jsonl.tmp")
+        })
+        .collect();
+    assert!(stale.is_empty(), "stale tmp files remain: {stale:?}");
 }
 
 #[test]
@@ -238,7 +247,7 @@ fn stray_tmp_file_does_not_corrupt_canonical_index() {
     let entry = fresh_session(tmp.path());
     let canonical_before = fs::read(index_file_path(tmp.path())).unwrap();
     // Drop a bogus .tmp file to mimic a previous crash mid-write.
-    fs::write(index_tmp_path(tmp.path()), "garbage\n").unwrap();
+    fs::write(tmp.path().join("index.jsonl.tmp.stale"), "garbage\n").unwrap();
     // Canonical file is unaffected; subsequent reads still succeed.
     let index = read_index(tmp.path()).unwrap();
     assert_eq!(index.len(), 1);
