@@ -54,8 +54,8 @@ use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::retry::RetryPolicy;
 use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
 use crate::r#loop::tokens::SimpleTokenEstimator;
-use crate::profile::{Profile, default_scan_dirs, from_profile, resolve_profile};
-use crate::provider::request::ToolDefinition;
+use crate::profile::{Capability, Profile, default_scan_dirs, from_profile, resolve_profile};
+use crate::provider::request::{ReasoningEffort, ToolDefinition};
 use crate::provider::traits::Provider;
 use crate::provider::{AgentEvent, AgentEventSender};
 use crate::rules::engine::RuleEngine;
@@ -96,7 +96,11 @@ pub struct AgentBuilder {
     profile_name: Option<String>,
     model: Option<String>,
     system_prompt: Option<String>,
+    append_system_prompt: Option<String>,
+    reasoning_effort: Option<ReasoningEffort>,
+    capabilities: Vec<Capability>,
     working_dir: Option<PathBuf>,
+    allowed_tools: Option<Vec<String>>,
     extra_tools: Vec<Box<dyn Tool + Send + Sync>>,
     without_tools: Vec<String>,
     lsp_backend: Option<Arc<dyn LspBackend>>,
@@ -132,7 +136,11 @@ impl AgentBuilder {
             profile_name: None,
             model: None,
             system_prompt: None,
+            append_system_prompt: None,
+            reasoning_effort: None,
+            capabilities: Vec::new(),
             working_dir: None,
+            allowed_tools: None,
             extra_tools: Vec::new(),
             without_tools: Vec::new(),
             lsp_backend: None,
@@ -207,12 +215,43 @@ impl AgentBuilder {
         self
     }
 
+    /// Append additional instructions after the resolved profile instructions
+    /// or caller-supplied [`Self::system_prompt`] override.
+    #[must_use]
+    pub fn append_system_prompt(mut self, prompt: impl Into<String>) -> Self {
+        self.append_system_prompt = Some(prompt.into());
+        self
+    }
+
+    /// Override the profile's reasoning-effort hint.
+    #[must_use]
+    pub fn reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
+        self.reasoning_effort = Some(effort);
+        self
+    }
+
+    /// Add capability bundles to the resolved profile before tool gating and
+    /// prompt construction.
+    #[must_use]
+    pub fn capabilities(mut self, capabilities: Vec<Capability>) -> Self {
+        self.capabilities.extend(capabilities);
+        self
+    }
+
     /// Set the agent's working directory. Defaults to the process current
     /// directory when unset. All filesystem tools resolve relative paths
     /// against this, and `bash` `cd` directives update it.
     #[must_use]
     pub fn working_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.working_dir = Some(dir.into());
+        self
+    }
+
+    /// Restrict the default/profile tool set to the named tools.
+    #[must_use]
+    pub fn allowed_tools(mut self, names: &[&str]) -> Self {
+        self.allowed_tools
+            .replace(names.iter().map(|s| (*s).to_string()).collect());
         self
     }
 
@@ -471,6 +510,15 @@ impl AgentBuilder {
         } else {
             None
         };
+        if let Some(reasoning_effort) = self.reasoning_effort {
+            profile.reasoning_effort = Some(reasoning_effort);
+        }
+        if let Some(allowed_tools) = self.allowed_tools {
+            profile.tools = Some(allowed_tools);
+        }
+        if !self.capabilities.is_empty() {
+            profile.capabilities.extend(self.capabilities);
+        }
         let model = profile.model.clone();
         if model.is_empty() {
             return Err(NornError::Config(ConfigError::InvalidConfig {
@@ -557,6 +605,7 @@ impl AgentBuilder {
             self.execution_mode,
             self.output_schema.is_some(),
             self.system_prompt,
+            self.append_system_prompt,
             has_auto_compact,
         );
 
@@ -813,6 +862,7 @@ fn install_system_prompt(
     mode: ExecutionMode,
     has_output_schema: bool,
     system_prompt_override: Option<String>,
+    append_system_prompt: Option<String>,
     has_auto_compact: bool,
 ) {
     let inputs = SystemPromptInputs {
@@ -826,8 +876,13 @@ fn install_system_prompt(
     let base_prompt = build_system_prompt(&inputs);
 
     let profile_prefix = std::mem::take(&mut loop_context.system_sections);
-    let instructions = system_prompt_override
+    let mut instructions = system_prompt_override
         .unwrap_or_else(|| profile_prefix.into_iter().next().unwrap_or_default());
+    if let Some(append) = append_system_prompt
+        && !append.is_empty()
+    {
+        append_prompt(&mut instructions, &append);
+    }
 
     loop_context.base_prefix = if instructions.is_empty() {
         base_prompt
@@ -835,6 +890,15 @@ fn install_system_prompt(
         format!("{base_prompt}\n\n{instructions}")
     };
     loop_context.rebuild_base_section();
+}
+
+fn append_prompt(prompt: &mut String, fragment: &str) {
+    if prompt.is_empty() {
+        *prompt = fragment.to_string();
+    } else {
+        prompt.push_str("\n\n");
+        prompt.push_str(fragment);
+    }
 }
 
 /// Snapshot a shared event store's events into a fresh owned store. Used only
@@ -1045,6 +1109,49 @@ mod tests {
             1,
             "runtime base plus diagnostic override must install exactly one diagnostics post-check",
         );
+    }
+
+    #[test]
+    fn build_applies_embedding_profile_overrides() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let capability = Capability {
+            name: "extra".to_owned(),
+            tools: vec!["bash".to_owned()],
+            system_instructions: vec!["Capability instruction.".to_owned()],
+            disallowed_patterns: Vec::new(),
+        };
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .profile(Profile {
+                name: "base".to_owned(),
+                model: "test-model".to_owned(),
+                tools: Some(vec!["read".to_owned(), "write".to_owned()]),
+                system_instructions: vec!["Base instruction.".to_owned()],
+                ..Profile::default()
+            })
+            .working_dir(temp.path())
+            .reasoning_effort(ReasoningEffort::High)
+            .allowed_tools(&["read"])
+            .without_tools(&["write"])
+            .capabilities(vec![capability])
+            .append_system_prompt("Appended instruction.")
+            .build()
+            .expect("build succeeds");
+
+        assert_eq!(
+            agent.loop_context.reasoning_effort,
+            Some(ReasoningEffort::High)
+        );
+        assert!(agent.registry.get("read").is_some());
+        assert!(
+            agent.registry.get("bash").is_some(),
+            "capability tools remain additive"
+        );
+        assert!(agent.registry.get("write").is_none());
+        let base = agent.loop_context.base_system_instruction();
+        assert!(base.contains("Base instruction."));
+        assert!(base.contains("Capability instruction."));
+        assert!(base.contains("Appended instruction."));
     }
 
     #[test]
