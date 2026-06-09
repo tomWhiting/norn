@@ -1,1 +1,0 @@
-cargo:rustc-env=MIME_TYPES_GENERATED_PATH=/Users/tom/Developer/ablative/norn/target/debug/build/mime_guess-850c526c8f364b0a/out/mime_types_generated.rs

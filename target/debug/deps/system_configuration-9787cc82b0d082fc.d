@@ -1,9 +1,0 @@
-/Users/tom/Developer/ablative/norn/target/debug/deps/system_configuration-9787cc82b0d082fc.d: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/dynamic_store.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_configuration.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_reachability.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/preferences.rs
-
-/Users/tom/Developer/ablative/norn/target/debug/deps/libsystem_configuration-9787cc82b0d082fc.rmeta: /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/lib.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/dynamic_store.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_configuration.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_reachability.rs /Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/preferences.rs
-
-/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/lib.rs:
-/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/dynamic_store.rs:
-/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_configuration.rs:
-/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/network_reachability.rs:
-/Users/tom/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/system-configuration-0.7.0/src/preferences.rs:

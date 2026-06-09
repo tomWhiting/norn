@@ -2,6 +2,7 @@
 
 use std::any::{Any, TypeId};
 use std::collections::{HashMap, HashSet};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -81,6 +82,14 @@ impl Default for SharedWorkingDir {
         Self::new(std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")))
     }
 }
+
+/// Runtime-supplied environment variables for subprocess-spawning tools.
+///
+/// Embedders publish this through [`ToolContext::insert_extension`]. Tools such
+/// as `bash` merge it into child process environments without mutating the
+/// process-wide environment.
+#[derive(Clone, Debug, Default)]
+pub struct ProcessEnv(pub HashMap<OsString, OsString>);
 
 /// Context provided by the orchestrator for a tool invocation.
 ///

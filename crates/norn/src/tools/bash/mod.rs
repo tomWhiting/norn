@@ -18,7 +18,7 @@ use tokio::process::Command;
 
 use crate::error::ToolError;
 use crate::tool::ToolArgs;
-use crate::tool::context::ToolContext;
+use crate::tool::context::{ProcessEnv, ToolContext};
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::follow_up::{Confidence, ExpiryCondition, FollowUpAction};
 use crate::tool::lifecycle::PreValidateOutcome;
@@ -146,6 +146,11 @@ impl Tool for BashTool {
             .stderr(Stdio::piped())
             .kill_on_drop(true)
             .current_dir(&child_cwd);
+        if let Some(process_env) = ctx.get_extension::<ProcessEnv>() {
+            for (key, value) in &process_env.0 {
+                cmd.env(key, value);
+            }
+        }
 
         let mut child = cmd.spawn().map_err(|e| ToolError::ExecutionFailed {
             reason: format!("failed to spawn `sh`: {e}"),
