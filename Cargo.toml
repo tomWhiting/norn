@@ -14,12 +14,12 @@ license = "MIT"
 authors = ["Yggdrasil Contributors"]
 
 [workspace.dependencies]
-# Extracted crates — external references
-claude_runner = { path = "/Users/tom/Developer/ablative/claude-runner" }
-diagnostics = { path = "/Users/tom/Developer/ablative/chiron/crates/diagnostics" }
-lsp = { path = "/Users/tom/Developer/ablative/chiron/crates/lsp" }
-syntax = { path = "/Users/tom/Developer/ablative/chiron/crates/syntax" }
-libyggd = { path = "/Users/tom/Developer/ablative/yggdrasil/crates/libyggd" }
+# Extracted crates — GitHub references
+claude_runner = { git = "https://github.com/tomWhiting/claude-runner" }
+diagnostics = { git = "https://github.com/tomWhiting/chiron", package = "diagnostics" }
+lsp = { git = "https://github.com/tomWhiting/chiron", package = "lsp" }
+syntax = { git = "https://github.com/tomWhiting/chiron", package = "syntax" }
+libyggd = { git = "https://github.com/tomWhiting/yggdrasil", package = "libyggd" }
 
 # Serialization
 serde = { version = "1", features = ["derive"] }
