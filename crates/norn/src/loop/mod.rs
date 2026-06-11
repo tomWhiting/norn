@@ -6,7 +6,10 @@ pub use crate::r#loop::commands::{
     CustomSlashHandler, PreprocessResult, SlashCommand, SlashCommandHandler, SlashCommandRegistry,
     preprocess_input,
 };
-pub use crate::r#loop::compaction::{CompactionState, TimeoutState, maybe_auto_compact};
+pub use crate::r#loop::compaction::{
+    AutoCompactArgs, AutoCompactionRun, CompactionState, CompactionSummarySource, TimeoutState,
+    maybe_auto_compact,
+};
 pub use crate::r#loop::iteration::{
     IterationMonitorConfig, IterationMonitorState, IterationSignal, QualitySignal,
 };
@@ -24,21 +27,26 @@ pub mod compaction;
 pub mod config;
 pub mod context;
 mod conversation_state;
+mod dev_context;
 pub mod event_schemas;
 pub mod events;
 
 pub mod expansion;
+mod failure_tracking;
 mod helpers;
+mod inflight_compaction;
 pub use helpers::ensure_tool_results_complete;
 pub mod inbound;
 pub mod iteration;
 pub mod loop_context;
 pub mod notifications;
+mod numeric;
 
 pub mod retry;
 mod rule_wiring;
 pub mod runner;
 pub mod schema;
+mod summarization;
 mod tool_dispatch;
 
 pub mod tokens;

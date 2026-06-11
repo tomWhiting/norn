@@ -15,9 +15,12 @@
 //!    NC-003 R3 augmentations (diagnostics + iteration monitor).
 //! 5. **Session persistence**: empty store on a fresh run, populated
 //!    when `--resume` / `--fork` is supplied. Events are flushed to disk
-//!    by the attached `JsonlSink` (write-through); after each turn the
-//!    index is reconciled via [`crate::session::update_session_index`]
-//!    unless `--no-session` is set.
+//!    by the attached `JsonlSink` (write-through). The sink is
+//!    index-registered: it accumulates the matching `index.jsonl` delta
+//!    (event count, token totals, `updated_at`) per persisted event and
+//!    flushes it at `EventStore::checkpoint` — which the orchestrator
+//!    calls after the turn and after `/compact` — so the orchestrator
+//!    never hand-reconciles the index.
 //! 6. **Output dispatch**: text / json / stream-json (per
 //!    [`crate::cli::OutputFormat`]).
 //!
@@ -56,7 +59,7 @@ use crate::runtime::{
     RuntimeBundle, RuntimeInputs, apply_system_prompt, install_agent_tool_infra,
     register_standard_tools,
 };
-use crate::session::{SessionPersistError, sum_usage_from_events, update_session_index};
+use crate::session::SessionPersistError;
 use uuid::Uuid;
 
 use super::session::open_session;
@@ -230,7 +233,7 @@ async fn orchestrate(
     prompt: String,
     output_schema: Option<Value>,
 ) -> Result<ExitCode, PrintError> {
-    let (session, data_dir) = open_session(cli, &bundle)?;
+    let session = open_session(cli, &bundle)?;
     crate::runtime::install_action_log(&bundle.registry, &session.store, &mut bundle.loop_context);
     let session_id = session.id().map(str::to_owned);
     bundle.agent_config.cache_key = session_id.clone();
@@ -266,15 +269,12 @@ async fn orchestrate(
     // real `ContextEdits::auto_compact_keeping_recent_turns` against the
     // live store; /clear replaces the in-memory store (the JSONL on
     // disk is unaffected); /exit short-circuits with success.
-    if let Some(outcome) = apply_compact_request(
-        &mut bundle,
-        &session.store,
-        &slash_state,
-        &data_dir,
-        session.id(),
-        cli.no_session,
-    )? {
+    if let Some(outcome) = apply_compact_request(&mut bundle, &session.store, &slash_state)? {
         outcome.log_to_stderr();
+        // Flush the sink's pending index delta so the Compaction event is
+        // reflected in index.jsonl even when this invocation returns
+        // before the post-turn checkpoint (e.g. a bare `/compact` prompt).
+        checkpoint_session(&session.store)?;
     }
     if apply_clear_request(&slash_state) {
         tracing::debug!("conversation cleared via /clear in print mode");
@@ -326,6 +326,12 @@ async fn orchestrate(
         agent_registry,
     );
     crate::runtime::install_child_result_sender(&bundle.registry, child_sender);
+    // Headless reclamation: print mode has no agent status panel, so once
+    // a child's result is delivered through the channel above, its
+    // terminal registry entry and parent-held handle are reclaimed by the
+    // launch wrapper. The TUI driver deliberately does NOT install this —
+    // its status panel owns reclamation through the hold window.
+    crate::runtime::install_headless_reclamation(&bundle.registry);
 
     // NH-006 R8 / C60: fire SessionLifecycleHook::on_session_start once
     // the runtime has been fully assembled and the HookRegistry is live
@@ -372,10 +378,19 @@ async fn orchestrate(
 
         drop(root_sender);
         drop(tx);
+        // REVIEW C1: the registry's shared ToolContext still holds the
+        // SharedAgentEventChannel sender installed above (subagent event
+        // forwarding), so the broadcast channel never closes here.
+        // finish() signals the renderer explicitly; it drains the events
+        // already buffered and exits instead of awaiting closure forever.
+        // A JoinError (renderer panic or cancellation) means the streamed
+        // output on stdout is incomplete or torn — that must not exit 0
+        // with a clean `completed` envelope, so it surfaces on stderr via
+        // the PrintError path and degrades the exit code.
         if let Some(handle) = stream_renderer
-            && let Err(err) = handle.await
+            && let Err(err) = handle.finish().await
         {
-            tracing::error!("stream renderer task panicked: {err}");
+            return Err(renderer_failure(&err));
         }
 
         let result = match result {
@@ -387,19 +402,16 @@ async fn orchestrate(
 
         let diagnostics = drain_diagnostics(&bundle.diagnostics);
         // The attached `JsonlSink` already wrote every event of this turn
-        // through to disk (write-through). Calling `append_events` here
-        // would write them a second time with identical EventIds, which
-        // breaks `resume_session` on the duplicate-ID guard. We only need
-        // to reconcile the index so listings reflect the new events and
-        // token totals.
+        // through to disk (write-through) and — being index-registered —
+        // accumulated the matching index delta (event count, token
+        // totals). Appending or hand-reconciling here would double-write
+        // events (breaking `resume_session` on the duplicate-ID guard) or
+        // double-count the index; the orchestrator only checkpoints the
+        // store so the sink flushes its own pending delta now rather
+        // than at drop. The slice is collected only for the output
+        // envelope.
+        checkpoint_session(&session.store)?;
         let new_events = collect_new_events(&session.store, pre_event_count);
-        if let Some(entry) = session.entry.as_ref()
-            && !cli.no_session
-        {
-            let appended = u64::try_from(new_events.len()).unwrap_or(u64::MAX);
-            let usage_delta = sum_usage_from_events(&new_events);
-            update_session_index(&data_dir, &entry.id, appended, &usage_delta)?;
-        }
 
         let (output, usage) = extract_output_and_usage(&result);
         let label = result_label(&result);
@@ -533,6 +545,26 @@ fn collect_tool_definitions(
         }
     }
     definitions
+}
+
+/// Flush the store's persistence sink: pending durability work and the
+/// sink's accumulated index delta land now instead of at drop. A no-op
+/// for sink-less stores (`--no-session`).
+fn checkpoint_session(store: &EventStore) -> Result<(), PrintError> {
+    store
+        .checkpoint()
+        .map_err(|err| PrintError::Session(err.to_string()))
+}
+
+/// Map a stream-renderer [`tokio::task::JoinError`] (panic or
+/// cancellation) onto the agent-error path: the NDJSON already written to
+/// stdout is incomplete, so the run must surface the failure on stderr
+/// and exit non-zero instead of emitting a clean `completed` envelope.
+fn renderer_failure(err: &tokio::task::JoinError) -> PrintError {
+    PrintError::Agent(format!(
+        "stream renderer task failed ({kind}): {err}; streamed output on stdout is incomplete",
+        kind = if err.is_panic() { "panic" } else { "cancelled" },
+    ))
 }
 
 fn collect_new_events(store: &EventStore, since: usize) -> Vec<SessionEvent> {
@@ -782,6 +814,44 @@ mod tests {
             },
             ExitCode::AgentError
         );
+    }
+
+    /// A renderer `JoinError` (panic) must degrade to the agent-error exit
+    /// path with a stderr-visible message — never a clean exit 0.
+    #[tokio::test]
+    async fn renderer_panic_maps_to_agent_error_exit() {
+        let task = tokio::spawn(async {
+            panic!("renderer blew up");
+        });
+        let join_err = task.await.expect_err("task must panic");
+        let err = renderer_failure(&join_err);
+        match &err {
+            PrintError::Agent(message) => {
+                assert!(message.contains("panic"), "message: {message}");
+                assert!(message.contains("incomplete"), "message: {message}");
+            }
+            other => panic!("expected Agent, got {other:?}"),
+        }
+        assert_eq!(err.exit_code(), ExitCode::AgentError);
+    }
+
+    /// A cancelled renderer task is also a failure (output torn), mapped
+    /// to the same degraded exit path with the cancellation named.
+    #[tokio::test]
+    async fn renderer_cancellation_maps_to_agent_error_exit() {
+        let task = tokio::spawn(async {
+            std::future::pending::<()>().await;
+        });
+        task.abort();
+        let join_err = task.await.expect_err("task must be cancelled");
+        let err = renderer_failure(&join_err);
+        match &err {
+            PrintError::Agent(message) => {
+                assert!(message.contains("cancelled"), "message: {message}");
+            }
+            other => panic!("expected Agent, got {other:?}"),
+        }
+        assert_eq!(err.exit_code(), ExitCode::AgentError);
     }
 
     #[test]

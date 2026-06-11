@@ -42,6 +42,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::session::mutation_ledger::{MutationLedger, MutationLedgerEntry};
 use crate::session::store::EventStore;
+use crate::tool::context::SharedWorkingDir;
 
 use crate::tool::follow_up::{BeforeContentSource, ExpiryCondition, FollowUpAction};
 
@@ -80,8 +81,11 @@ impl ActionLogEntry {
     /// Level 2 detail queries.
     #[must_use]
     pub fn compact_line(&self) -> String {
-        let summary = if self.summary_line.len() > 40 {
-            format!("{}...", &self.summary_line[..37])
+        // Truncation counts characters and cuts on a char boundary —
+        // byte-slicing here panicked on multi-byte UTF-8 summaries.
+        let summary = if self.summary_line.chars().count() > 40 {
+            let head: String = self.summary_line.chars().take(37).collect();
+            format!("{head}...")
         } else {
             self.summary_line.clone()
         };
@@ -274,6 +278,11 @@ pub struct ActionLog {
     inner: RwLock<ActionLogInner>,
     event_store: Arc<EventStore>,
     mutation_ledger: MutationLedger,
+    /// Agent working directory used to resolve model-supplied relative
+    /// paths before they are hashed into the mutation ledger. Shared
+    /// (live handle) with the agent's [`ToolContext`](crate::tool::context::ToolContext)
+    /// so bash `cd` updates are observed.
+    working_dir: SharedWorkingDir,
 }
 
 impl std::fmt::Debug for ActionLog {
@@ -286,6 +295,7 @@ impl std::fmt::Debug for ActionLog {
             .field("original_args", &inner.original_args.len())
             .field("mutations", &self.mutation_ledger.len())
             .field("event_store", &self.event_store)
+            .field("working_dir", &self.working_dir)
             .finish()
     }
 }
@@ -301,6 +311,21 @@ impl ActionLog {
     /// events.
     #[must_use]
     pub fn new(event_store: Arc<EventStore>) -> Self {
+        Self::with_working_dir(event_store, SharedWorkingDir::default())
+    }
+
+    /// Create a fresh action log that resolves model-supplied relative
+    /// paths against `working_dir` (a live handle shared with the
+    /// agent's tool context) before hashing them into the mutation
+    /// ledger.
+    ///
+    /// Prefer this over [`Self::new`] whenever the agent's working
+    /// directory differs from the process CWD — with [`Self::new`]
+    /// relative paths fall back to resolving against the process CWD,
+    /// which is wrong for embedders running multiple agents in one
+    /// process.
+    #[must_use]
+    pub fn with_working_dir(event_store: Arc<EventStore>, working_dir: SharedWorkingDir) -> Self {
         Self {
             inner: RwLock::new(ActionLogInner {
                 entries: IndexMap::new(),
@@ -313,6 +338,7 @@ impl ActionLog {
             }),
             event_store,
             mutation_ledger: MutationLedger::new(),
+            working_dir,
         }
     }
 
@@ -335,11 +361,13 @@ impl ActionLog {
         // any new store, and is fed solely by this instance's completions so
         // it stays session-scoped.
         if matches!(record.outcome, Outcome::Success) {
+            let working_dir = self.working_dir.get();
             for mutation in crate::session::action_log_mutations::extract_mutations(
                 record.tool_name,
                 record.tool_call_id,
                 record.output,
                 &record.follow_ups,
+                &working_dir,
             ) {
                 self.mutation_ledger.record_mutation(mutation);
             }
@@ -480,9 +508,17 @@ impl ActionLog {
     /// Return one mutated file's entry, with `revert_status` evaluated against
     /// the current filesystem state, or `None` when the file was not mutated
     /// this session.
+    ///
+    /// A relative `file_path` is resolved against the agent working
+    /// directory, matching how mutations were recorded.
     #[must_use]
     pub fn mutation_entry(&self, file_path: &Path) -> Option<MutationLedgerEntry> {
-        self.mutation_ledger.entry(file_path)
+        if file_path.is_absolute() {
+            self.mutation_ledger.entry(file_path)
+        } else {
+            self.mutation_ledger
+                .entry(&self.working_dir.get().join(file_path))
+        }
     }
 
     /// Look up a single follow-up action by `tool_call_id` and `action_name`,
@@ -944,6 +980,92 @@ mod tests {
         assert_eq!(fields[1], "tc-1");
         assert_eq!(fields[2], "success");
         assert_eq!(fields[3], "edit committed: src/a.rs +1/-0");
+    }
+
+    /// Regression: truncation used byte slicing at 37/40 and panicked on
+    /// multi-byte UTF-8 summaries. It must cut on char boundaries.
+    #[test]
+    fn compact_line_truncates_multibyte_summary_without_panicking() {
+        let entry = ActionLogEntry {
+            tool_name: "bash".to_owned(),
+            tool_call_id: "tc-utf8".to_owned(),
+            tool_use_description: String::new(),
+            timestamp: Utc::now(),
+            outcome: Outcome::Success,
+            summary_line: "日本語のサマリー".repeat(10),
+        };
+        let line = entry.compact_line();
+        let summary = line.split('|').nth(3).unwrap();
+        assert!(summary.ends_with("..."));
+        assert_eq!(summary.chars().count(), 40, "37 chars + ellipsis");
+    }
+
+    #[test]
+    fn compact_line_keeps_exactly_forty_char_summary() {
+        let entry = ActionLogEntry {
+            tool_name: "bash".to_owned(),
+            tool_call_id: "tc-40".to_owned(),
+            tool_use_description: String::new(),
+            timestamp: Utc::now(),
+            outcome: Outcome::Success,
+            summary_line: "x".repeat(40),
+        };
+        let line = entry.compact_line();
+        assert_eq!(line.split('|').nth(3).unwrap(), &"x".repeat(40));
+    }
+
+    /// Regression: ledger hashing resolved model-supplied relative paths
+    /// against the process CWD instead of the agent working directory,
+    /// so external tampering was invisible (both hashes hit a
+    /// nonexistent CWD-relative path).
+    #[test]
+    fn relative_mutation_paths_resolve_against_agent_working_dir() {
+        use std::fs;
+        use tempfile::tempdir;
+
+        let dir = tempdir().unwrap();
+        let abs = dir.path().join("rel.rs");
+        fs::write(&abs, "agent wrote this\n").unwrap();
+
+        let log = ActionLog::with_working_dir(
+            Arc::new(EventStore::new()),
+            SharedWorkingDir::new(dir.path().to_path_buf()),
+        );
+        log.record_completion(CompletionRecord {
+            tool_name: "edit",
+            tool_call_id: "tc-rel",
+            tool_use_description: "",
+            outcome: Outcome::Success,
+            output: &serde_json::json!({
+                "path": "rel.rs",
+                "blast_radius": { "lines_added": 1, "lines_removed": 0 },
+            }),
+            args: serde_json::json!({}),
+            duration_ms: 0,
+            follow_ups: Vec::new(),
+            post_validate_outcome: None,
+            level_1_only: false,
+        });
+
+        let entries = log.mutation_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(
+            entries[0].file_path, abs,
+            "ledger must store the path resolved against the agent working dir"
+        );
+        // A relative look-up resolves the same way.
+        assert!(log.mutation_entry(Path::new("rel.rs")).is_some());
+
+        // External tampering MUST be visible — with CWD-relative hashing
+        // both baseline and current hash read a nonexistent path and the
+        // tamper went undetected.
+        fs::write(&abs, "tampered\n").unwrap();
+        assert_eq!(
+            log.mutation_entry(Path::new("rel.rs"))
+                .unwrap()
+                .revert_status,
+            RevertStatus::ExternallyReverted,
+        );
     }
 
     #[test]

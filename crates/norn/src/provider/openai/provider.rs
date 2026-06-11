@@ -1,0 +1,438 @@
+//! [`OpenAiProvider`] construction and the [`Provider`] trait impl.
+
+use std::sync::Arc;
+use std::time::Duration;
+
+use super::execute::SenderProvider;
+use super::rate_limiter::RateLimiter;
+use crate::error::ProviderError;
+use crate::provider::auth::{AuthProvider, AuthSource, build_from_auth_source};
+use crate::provider::events::ProviderEvent;
+use crate::provider::request::{ProviderConfig, ProviderRequest};
+use crate::provider::traits::{Provider, ProviderStream};
+
+const DEFAULT_BASE_URL: &str = "https://api.openai.com/v1";
+const CHATGPT_BASE_URL: &str = "https://chatgpt.com/backend-api/codex";
+/// Deliberate, owner-approved default (2026-06-11) used when
+/// [`ProviderConfig::rate_limit`] is `None`: 60 permits per interval.
+const DEFAULT_PERMITS_PER_INTERVAL: u32 = 60;
+/// Deliberate, owner-approved default (2026-06-11) used when
+/// [`ProviderConfig::rate_limit_interval`] is `None`: a 60-second
+/// replenishment window, giving the default permits-per-minute
+/// semantics.
+const DEFAULT_RATE_LIMIT_INTERVAL: Duration = Duration::from_mins(1);
+
+/// `OpenAI` Responses API provider.
+///
+/// Shared across agents via `Arc`. Owns an HTTP client, a
+/// token-bucket rate limiter, and the [`AuthProvider`] that
+/// authenticates each outgoing request.
+pub struct OpenAiProvider {
+    client: reqwest::Client,
+    config: ProviderConfig,
+    rate_limiter: Arc<RateLimiter>,
+    auth_provider: Arc<dyn AuthProvider>,
+}
+
+impl std::fmt::Debug for OpenAiProvider {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("OpenAiProvider")
+            .field("base_url", &self.base_url())
+            .field("timeout", &self.config.timeout)
+            .field("max_retries", &self.config.max_retries)
+            .finish_non_exhaustive()
+    }
+}
+
+impl OpenAiProvider {
+    /// Creates a new `OpenAI` provider from the given configuration.
+    ///
+    /// Builds the [`AuthProvider`] from `config.auth_source`. For
+    /// `AuthSource::OAuth`, this initialises the underlying
+    /// local OAuth `AuthManager`, which may read from disk.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError::ConnectionFailed`] if the HTTP client
+    /// cannot be built, or [`ProviderError::AuthenticationFailed`] if
+    /// the auth provider cannot be initialised.
+    pub async fn new(config: ProviderConfig) -> Result<Self, ProviderError> {
+        let auth_provider = build_from_auth_source(&config.auth_source).await?;
+        Self::with_auth_provider(config, auth_provider)
+    }
+
+    /// Constructs a provider directly from a pre-built
+    /// [`AuthProvider`]. Useful for tests using
+    /// [`crate::provider::auth::MockAuthProvider`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError::ConnectionFailed`] if the HTTP client
+    /// cannot be built.
+    pub fn with_auth_provider(
+        config: ProviderConfig,
+        auth_provider: Arc<dyn AuthProvider>,
+    ) -> Result<Self, ProviderError> {
+        let client = build_http_client(config.timeout)?;
+
+        let rate_limiter = Arc::new(RateLimiter::new(
+            config.rate_limit.unwrap_or(DEFAULT_PERMITS_PER_INTERVAL),
+            config
+                .rate_limit_interval
+                .unwrap_or(DEFAULT_RATE_LIMIT_INTERVAL),
+        ));
+
+        Ok(Self {
+            client,
+            config,
+            rate_limiter,
+            auth_provider,
+        })
+    }
+
+    fn base_url(&self) -> &str {
+        match self.config.base_url.as_deref() {
+            Some(url) => url,
+            None if matches!(self.config.auth_source, AuthSource::OAuth { .. }) => CHATGPT_BASE_URL,
+            None => DEFAULT_BASE_URL,
+        }
+    }
+
+    fn endpoint(&self) -> String {
+        format!("{}/responses", self.base_url())
+    }
+}
+
+/// Builds the shared HTTP client.
+///
+/// `timeout` (from [`ProviderConfig::timeout`]) bounds connection
+/// establishment. No whole-request timeout is set: streamed responses
+/// are legitimately long-lived. Stalls after connect are bounded by the
+/// header/read deadlines applied per request in
+/// [`SenderProvider::execute`](super::execute::SenderProvider).
+fn build_http_client(timeout: Duration) -> Result<reqwest::Client, ProviderError> {
+    reqwest::Client::builder()
+        .connect_timeout(timeout)
+        .tcp_keepalive(std::time::Duration::from_secs(30))
+        .pool_max_idle_per_host(4)
+        .http2_keep_alive_interval(std::time::Duration::from_secs(30))
+        .http2_keep_alive_timeout(std::time::Duration::from_secs(10))
+        .http2_keep_alive_while_idle(true)
+        .build()
+        .map_err(|e| ProviderError::ConnectionFailed {
+            reason: format!("failed to build HTTP client: {e}"),
+        })
+}
+
+impl Provider for OpenAiProvider {
+    fn capabilities(&self) -> crate::provider::tools::ProviderCapabilities {
+        let is_chatgpt_backend = self.config.base_url.is_none()
+            && matches!(self.config.auth_source, AuthSource::OAuth { .. });
+        if is_chatgpt_backend {
+            return crate::provider::tools::ProviderCapabilities {
+                hosted_web_search: true,
+                response_threading: false,
+                server_compaction: false,
+            };
+        }
+        crate::provider::tools::ProviderCapabilities::openai_responses()
+    }
+
+    fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        let sender = SenderProvider {
+            client: self.client.clone(),
+            endpoint: self.endpoint(),
+            timeout: self.config.timeout,
+            max_retries: self.config.max_retries,
+            retry_backoff: self
+                .config
+                .retry_backoff
+                .unwrap_or(super::execute::DEFAULT_RETRY_BACKOFF),
+            retry_after_ceiling: self.config.retry_after_ceiling,
+            rate_limiter: Arc::clone(&self.rate_limiter),
+            auth_provider: Arc::clone(&self.auth_provider),
+            debug_dump_file: self.config.debug_dump_file.clone(),
+        };
+
+        let (tx, rx) = tokio::sync::mpsc::channel::<Result<ProviderEvent, ProviderError>>(64);
+
+        tokio::spawn(async move {
+            if let Err(e) = sender.execute(request, tx.clone()).await {
+                let _ = tx.send(Err(e)).await;
+            }
+        });
+
+        Ok(Box::pin(tokio_stream::wrappers::ReceiverStream::new(rx)))
+    }
+}
+
+const _: fn() = || {
+    fn check<T: Send + Sync>() {}
+    check::<OpenAiProvider>();
+    check::<Arc<OpenAiProvider>>();
+};
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::clone_on_ref_ptr,
+    clippy::no_effect_underscore_binding,
+    clippy::useless_vec,
+    clippy::missing_const_for_fn,
+    clippy::duration_suboptimal_units,
+    clippy::needless_pass_by_value,
+    clippy::similar_names,
+    clippy::redundant_closure_for_method_calls,
+    clippy::used_underscore_items,
+    clippy::unnecessary_literal_bound,
+    clippy::items_after_statements,
+    clippy::err_expect,
+    clippy::get_unwrap,
+    clippy::doc_markdown,
+    clippy::unnecessary_trailing_comma,
+    clippy::uninlined_format_args,
+    clippy::wildcard_enum_match_arm,
+    clippy::collapsible_if,
+    clippy::match_wildcard_for_single_variants
+)]
+mod tests {
+    use super::*;
+    use crate::provider::auth::{AuthSource, MockAuthProvider};
+    use crate::provider::request::SecretString;
+
+    fn test_config() -> ProviderConfig {
+        ProviderConfig {
+            auth_source: AuthSource::ApiKey {
+                key: SecretString::new("test-key"),
+            },
+            base_url: Some("http://localhost:9999/v1".to_string()),
+            timeout: Duration::from_secs(5),
+            max_retries: 2,
+            provider_options: None,
+            debug_dump_file: None,
+            rate_limit: None,
+            rate_limit_interval: None,
+            retry_backoff: None,
+            retry_after_ceiling: None,
+        }
+    }
+
+    fn test_provider() -> OpenAiProvider {
+        let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("test-key"));
+        OpenAiProvider::with_auth_provider(test_config(), mock).expect("create")
+    }
+
+    #[test]
+    fn debug_does_not_expose_api_key() {
+        let provider = test_provider();
+        let debug = format!("{provider:?}");
+        assert!(!debug.contains("test-key"));
+        assert!(debug.contains("OpenAiProvider"));
+    }
+
+    #[test]
+    fn arc_openai_provider_compiles() {
+        let provider = test_provider();
+        let _arc: Arc<OpenAiProvider> = Arc::new(provider);
+    }
+
+    #[test]
+    fn default_base_url() {
+        let mut config = test_config();
+        config.base_url = None;
+        let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("k"));
+        let provider = OpenAiProvider::with_auth_provider(config, mock).expect("create");
+        assert_eq!(provider.base_url(), "https://api.openai.com/v1");
+    }
+
+    #[test]
+    fn custom_base_url() {
+        let provider = test_provider();
+        assert_eq!(provider.base_url(), "http://localhost:9999/v1");
+    }
+
+    #[test]
+    fn chatgpt_oauth_capabilities_do_not_enable_response_threading() {
+        let mut config = test_config();
+        config.auth_source = AuthSource::OAuth { codex_home: None };
+        config.base_url = None;
+        let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("oauth-token"));
+        let provider = OpenAiProvider::with_auth_provider(config, mock).expect("create");
+
+        let capabilities = provider.capabilities();
+
+        assert!(capabilities.hosted_web_search);
+        assert!(!capabilities.response_threading);
+        assert!(!capabilities.server_compaction);
+    }
+
+    #[test]
+    fn api_key_openai_capabilities_keep_responses_state_features() {
+        let mut config = test_config();
+        config.base_url = None;
+        let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("api-key"));
+        let provider = OpenAiProvider::with_auth_provider(config, mock).expect("create");
+
+        let capabilities = provider.capabilities();
+
+        assert!(capabilities.hosted_web_search);
+        assert!(capabilities.response_threading);
+        assert!(capabilities.server_compaction);
+    }
+
+    #[test]
+    fn endpoint_construction() {
+        let provider = test_provider();
+        assert_eq!(provider.endpoint(), "http://localhost:9999/v1/responses");
+    }
+
+    #[test]
+    fn rate_limit_none_uses_default_permits() {
+        let mut config = test_config();
+        config.rate_limit = None;
+        let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("k"));
+        let provider = OpenAiProvider::with_auth_provider(config, mock).expect("create");
+        assert_eq!(
+            provider.rate_limiter.permits_per_interval(),
+            DEFAULT_PERMITS_PER_INTERVAL,
+        );
+    }
+
+    #[test]
+    fn rate_limit_some_overrides_default_permits() {
+        let mut config = test_config();
+        config.rate_limit = Some(120);
+        let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("k"));
+        let provider = OpenAiProvider::with_auth_provider(config, mock).expect("create");
+        assert_eq!(provider.rate_limiter.permits_per_interval(), 120);
+    }
+
+    /// `rate_limit_interval: None` falls back to the deliberate,
+    /// owner-approved 60-second window (permits-per-minute semantics).
+    #[tokio::test]
+    async fn rate_limit_interval_none_uses_default() {
+        let mut config = test_config();
+        config.rate_limit_interval = None;
+        let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("k"));
+        let provider = OpenAiProvider::with_auth_provider(config, mock).expect("create");
+        assert_eq!(
+            provider.rate_limiter.interval().await,
+            DEFAULT_RATE_LIMIT_INTERVAL,
+        );
+    }
+
+    /// `ProviderConfig::rate_limit_interval` overrides the replenishment
+    /// window wired into the limiter.
+    #[tokio::test]
+    async fn rate_limit_interval_some_overrides_default() {
+        let mut config = test_config();
+        config.rate_limit_interval = Some(Duration::from_secs(5));
+        let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("k"));
+        let provider = OpenAiProvider::with_auth_provider(config, mock).expect("create");
+        assert_eq!(
+            provider.rate_limiter.interval().await,
+            Duration::from_secs(5),
+        );
+    }
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::clone_on_ref_ptr,
+    clippy::no_effect_underscore_binding,
+    clippy::useless_vec,
+    clippy::missing_const_for_fn,
+    clippy::duration_suboptimal_units,
+    clippy::needless_pass_by_value,
+    clippy::similar_names,
+    clippy::redundant_closure_for_method_calls,
+    clippy::used_underscore_items,
+    clippy::unnecessary_literal_bound,
+    clippy::items_after_statements,
+    clippy::err_expect,
+    clippy::get_unwrap,
+    clippy::doc_markdown,
+    clippy::unnecessary_trailing_comma,
+    clippy::uninlined_format_args,
+    clippy::wildcard_enum_match_arm,
+    clippy::collapsible_if,
+    clippy::match_wildcard_for_single_variants
+)]
+mod integration_tests {
+    use super::*;
+    use crate::provider::auth::AuthSource;
+    use crate::provider::events::ProviderEvent;
+    use crate::provider::request::{
+        Message, MessageRole, ProviderConfig, ProviderRequest, SecretString,
+    };
+    use futures_util::StreamExt;
+
+    #[tokio::test]
+    async fn openai_integration_test() {
+        let api_key = match std::env::var("OPENAI_TEST_KEY") {
+            Ok(key) if !key.is_empty() => key,
+            _ => {
+                tracing::info!("OPENAI_TEST_KEY not set, skipping");
+                return;
+            }
+        };
+
+        let config = ProviderConfig {
+            auth_source: AuthSource::ApiKey {
+                key: SecretString::new(api_key),
+            },
+            base_url: None,
+            timeout: Duration::from_secs(30),
+            max_retries: 2,
+            provider_options: None,
+            debug_dump_file: None,
+            rate_limit: None,
+            rate_limit_interval: None,
+            retry_backoff: None,
+            retry_after_ceiling: None,
+        };
+
+        let provider = OpenAiProvider::new(config).await.expect("create provider");
+        let request = ProviderRequest {
+            messages: vec![Message {
+                role: MessageRole::User,
+                content: Some("Say hello in exactly one word.".to_string()),
+                thinking: String::new(),
+                tool_calls: vec![],
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+            }],
+            tools: vec![],
+            model: "gpt-4.1-mini".to_string(),
+            reasoning_effort: None,
+            reasoning_summary: None,
+            config: None,
+            cache_key: None,
+            previous_response_id: None,
+            store: false,
+            context_management: None,
+        };
+
+        let mut stream = provider.stream(request).expect("stream");
+        let mut saw_text_delta = false;
+        let mut saw_done = false;
+
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(ProviderEvent::TextDelta { .. }) => saw_text_delta = true,
+                Ok(ProviderEvent::Done { .. }) => saw_done = true,
+                Ok(_) => {}
+                Err(e) => panic!("unexpected error: {e}"),
+            }
+        }
+
+        assert!(saw_text_delta, "expected at least one TextDelta event");
+        assert!(saw_done, "expected a Done event");
+    }
+}

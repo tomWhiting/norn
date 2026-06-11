@@ -48,10 +48,24 @@ pub fn validate_settings(settings: &NornSettings) -> Result<(), ConfigError> {
 // ---------------------------------------------------------------------------
 
 fn validate_durations(settings: &NornSettings) -> Result<(), ConfigError> {
-    if let Some(provider) = settings.provider.as_ref()
-        && let Some(timeout) = provider.timeout.as_deref()
-    {
-        check_duration("provider.timeout", timeout)?;
+    if let Some(provider) = settings.provider.as_ref() {
+        if let Some(timeout) = provider.timeout.as_deref() {
+            check_duration("provider.timeout", timeout)?;
+        }
+        // The three rate/retry knobs are durations that must also be
+        // non-zero: a zero replenishment window or zero backoff degrades
+        // to a busy loop, and a zero Retry-After ceiling would clamp
+        // every server-requested wait to nothing — defeating the rate
+        // limiter entirely.
+        if let Some(interval) = provider.rate_limit_interval.as_deref() {
+            check_nonzero_duration("provider.rate_limit_interval", interval)?;
+        }
+        if let Some(backoff) = provider.retry_backoff.as_deref() {
+            check_nonzero_duration("provider.retry_backoff", backoff)?;
+        }
+        if let Some(ceiling) = provider.retry_after_ceiling.as_deref() {
+            check_nonzero_duration("provider.retry_after_ceiling", ceiling)?;
+        }
     }
     if let Some(agent) = settings.agent.as_ref() {
         if let Some(step) = agent.step_timeout.as_deref() {
@@ -75,6 +89,21 @@ fn check_duration(field: &str, value: &str) -> Result<(), ConfigError> {
         .map_err(|err| ConfigError::InvalidConfig {
             reason: format!("invalid duration for {field}: '{value}' ({err})"),
         })
+}
+
+/// Like [`check_duration`] but additionally rejects a parsed value of
+/// zero. Used by fields whose zero form is semantically a deadlock or a
+/// busy loop rather than a meaningful configuration.
+fn check_nonzero_duration(field: &str, value: &str) -> Result<(), ConfigError> {
+    let parsed = humantime::parse_duration(value).map_err(|err| ConfigError::InvalidConfig {
+        reason: format!("invalid duration for {field}: '{value}' ({err})"),
+    })?;
+    if parsed.is_zero() {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!("invalid value for {field}: '{value}' (must be greater than zero)"),
+        });
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -296,6 +325,131 @@ mod tests {
         assert!(
             reason.contains("not-a-duration"),
             "reason missing value: {reason}"
+        );
+    }
+
+    #[test]
+    fn rate_and_retry_duration_knobs_valid_values_pass() {
+        let s = NornSettings {
+            provider: Some(ProviderSettings {
+                rate_limit_interval: Some("90s".to_owned()),
+                retry_backoff: Some("500ms".to_owned()),
+                retry_after_ceiling: Some("2m".to_owned()),
+                ..ProviderSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        validate_settings(&s).unwrap();
+    }
+
+    #[test]
+    fn invalid_rate_limit_interval_caught() {
+        let s = NornSettings {
+            provider: Some(ProviderSettings {
+                rate_limit_interval: Some("not-a-duration".to_owned()),
+                ..ProviderSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(
+            reason.contains("provider.rate_limit_interval"),
+            "reason missing field: {reason}"
+        );
+    }
+
+    #[test]
+    fn zero_rate_limit_interval_caught() {
+        // A zero replenishment window means permits never accumulate over
+        // a meaningful interval — reject it like rate_limit = 0.
+        let s = NornSettings {
+            provider: Some(ProviderSettings {
+                rate_limit_interval: Some("0s".to_owned()),
+                ..ProviderSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(
+            reason.contains("provider.rate_limit_interval"),
+            "reason missing field: {reason}"
+        );
+        assert!(
+            reason.contains("greater than zero"),
+            "reason missing zero rejection: {reason}"
+        );
+    }
+
+    #[test]
+    fn invalid_retry_backoff_caught() {
+        let s = NornSettings {
+            provider: Some(ProviderSettings {
+                retry_backoff: Some("zzz".to_owned()),
+                ..ProviderSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(
+            reason.contains("provider.retry_backoff"),
+            "reason missing field: {reason}"
+        );
+    }
+
+    #[test]
+    fn zero_retry_backoff_caught() {
+        let s = NornSettings {
+            provider: Some(ProviderSettings {
+                retry_backoff: Some("0ms".to_owned()),
+                ..ProviderSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(
+            reason.contains("provider.retry_backoff"),
+            "reason missing field: {reason}"
+        );
+        assert!(
+            reason.contains("greater than zero"),
+            "reason missing zero rejection: {reason}"
+        );
+    }
+
+    #[test]
+    fn zero_retry_after_ceiling_caught() {
+        // A zero ceiling clamps every server-requested wait to nothing,
+        // defeating the rate limiter entirely.
+        let s = NornSettings {
+            provider: Some(ProviderSettings {
+                retry_after_ceiling: Some("0s".to_owned()),
+                ..ProviderSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(
+            reason.contains("provider.retry_after_ceiling"),
+            "reason missing field: {reason}"
+        );
+        assert!(
+            reason.contains("greater than zero"),
+            "reason missing zero rejection: {reason}"
         );
     }
 

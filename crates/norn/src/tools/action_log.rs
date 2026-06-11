@@ -362,10 +362,15 @@ impl Tool for ActionLogTool {
                 let filtered: Vec<MutationLedgerEntry> =
                     match args.filter.as_ref().and_then(|f| f.file.as_ref()) {
                         Some(file) => {
-                            let wanted = PathBuf::from(file);
+                            // Ledger entries store paths resolved against the
+                            // agent working directory, so resolve a relative
+                            // filter the same way (raw match kept for
+                            // absolute / already-resolved input).
+                            let raw = PathBuf::from(file);
+                            let resolved = ctx.resolve_path(&raw);
                             entries
                                 .into_iter()
-                                .filter(|e| e.file_path == wanted)
+                                .filter(|e| e.file_path == raw || e.file_path == resolved)
                                 .collect()
                         }
                         None => entries,

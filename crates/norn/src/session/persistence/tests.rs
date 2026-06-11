@@ -1,11 +1,12 @@
 //! Tests for the session persistence layer (NC-002 R2--R6).
 
 use std::fs;
+use std::io::Write as _;
 use std::path::Path;
 
 use crate::provider::usage::Usage;
 use crate::session::events::{EventBase, EventId, EventUsage, SessionEvent, ToolCallEvent};
-use crate::session::store::EventStore;
+use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};
 use chrono::Utc;
 
 use super::*;
@@ -120,9 +121,10 @@ fn round_trip_all_nine_variants() {
     let events = one_of_each();
     append_events(tmp.path(), &entry.id, &events, false).unwrap();
 
-    let round_trip = read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(round_trip.len(), events.len());
-    for (a, b) in events.iter().zip(round_trip.iter()) {
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(read.skipped_lines, 0);
+    assert_eq!(read.events.len(), events.len());
+    for (a, b) in events.iter().zip(read.events.iter()) {
         assert_event_eq(a, b);
     }
 }
@@ -133,9 +135,9 @@ fn round_trip_at_least_five_variants() {
     let entry = fresh_session(tmp.path());
     let events: Vec<_> = one_of_each().into_iter().take(5).collect();
     append_events(tmp.path(), &entry.id, &events, false).unwrap();
-    let round_trip = read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(round_trip.len(), 5);
-    for (a, b) in events.iter().zip(round_trip.iter()) {
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(read.events.len(), 5);
+    for (a, b) in events.iter().zip(read.events.iter()) {
         assert_event_eq(a, b);
     }
 }
@@ -147,26 +149,140 @@ fn each_jsonl_line_ends_with_newline() {
     append_events(tmp.path(), &entry.id, &one_of_each(), false).unwrap();
     let content = fs::read_to_string(session_file_path(tmp.path(), &entry.id)).unwrap();
     assert!(content.ends_with('\n'));
+    // First line is the version header, then one line per event.
     let line_count = content.lines().count();
-    assert_eq!(line_count, one_of_each().len());
+    assert_eq!(line_count, one_of_each().len() + 1);
+}
+
+// ----- R4 (review): version header + tolerant reading -----
+
+#[test]
+fn header_written_at_creation_and_surfaced_on_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    append_events(tmp.path(), &entry.id, &[user_msg("hi")], false).unwrap();
+
+    let body = fs::read_to_string(session_file_path(tmp.path(), &entry.id)).unwrap();
+    let first = body.lines().next().unwrap();
+    let header: SessionFileHeader = serde_json::from_str(first).unwrap();
+    assert_eq!(header.version, SESSION_FORMAT_VERSION);
+
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(read.format_version, Some(SESSION_FORMAT_VERSION));
+    assert_eq!(read.events.len(), 1, "header must not be read as an event");
+    assert_eq!(read.skipped_lines, 0);
 }
 
 #[test]
-fn corrupted_line_reports_line_number() {
+fn header_written_once_across_batches() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
-    let head: Vec<_> = one_of_each().into_iter().take(2).collect();
-    append_events(tmp.path(), &entry.id, &head, false).unwrap();
-    let path = session_file_path(tmp.path(), &entry.id);
-    let mut existing = fs::read_to_string(&path).unwrap();
-    existing.push_str("not-json\n");
-    fs::write(&path, existing).unwrap();
+    append_events(tmp.path(), &entry.id, &[user_msg("a")], false).unwrap();
+    append_events(tmp.path(), &entry.id, &[user_msg("b")], false).unwrap();
+    let body = fs::read_to_string(session_file_path(tmp.path(), &entry.id)).unwrap();
+    let headers = body
+        .lines()
+        .filter(|l| l.contains("norn_session_format"))
+        .count();
+    assert_eq!(headers, 1);
+}
 
-    let err = read_session_events(tmp.path(), &entry.id).unwrap_err();
-    match err {
-        SessionPersistError::Parse { line, .. } => assert_eq!(line, 3),
-        other => panic!("expected Parse, got {other:?}"),
+#[test]
+fn pre_header_file_still_loads() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A format-0 file: event lines only, no header.
+    let events = [user_msg("old one"), user_msg("old two")];
+    let mut body = String::new();
+    for event in &events {
+        body.push_str(&serde_json::to_string(event).unwrap());
+        body.push('\n');
     }
+    fs::write(session_file_path(tmp.path(), "legacy"), body).unwrap();
+
+    let read = read_session_events(tmp.path(), "legacy").unwrap();
+    assert_eq!(read.format_version, None, "no header => pre-versioning");
+    assert_eq!(read.events.len(), 2);
+    assert_eq!(read.skipped_lines, 0);
+}
+
+#[test]
+fn create_session_stamps_writer_format_version() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    assert_eq!(entry.format_version, SESSION_FORMAT_VERSION);
+    let index = read_index(tmp.path()).unwrap();
+    assert_eq!(index[0].format_version, SESSION_FORMAT_VERSION);
+}
+
+#[test]
+fn index_entry_without_format_version_defaults_to_zero() {
+    let json = r#"{"id":"s","name":null,"model":"m","working_dir":"/w",
+        "created_at":"2026-01-01T00:00:00Z","updated_at":"2026-01-01T00:00:00Z",
+        "event_count":0,"status":"active"}"#;
+    let entry: SessionIndexEntry = serde_json::from_str(json).unwrap();
+    assert_eq!(entry.format_version, 0);
+}
+
+/// H19 regression: a torn FINAL line (ENOSPC / `kill -9` mid-write) must
+/// be skipped with a count — never brick the whole session.
+#[test]
+fn torn_final_line_is_skipped_and_resume_succeeds() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    let events: Vec<_> = one_of_each().into_iter().take(3).collect();
+    append_events(tmp.path(), &entry.id, &events, false).unwrap();
+
+    // Tear the file: a partial JSON object with no trailing newline.
+    let path = session_file_path(tmp.path(), &entry.id);
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    file.write_all(br#"{"type":"assistant_message","content":"trunc"#)
+        .unwrap();
+    drop(file);
+
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(read.events.len(), 3, "intact events must all load");
+    assert_eq!(read.skipped_lines, 1, "the torn line is counted");
+
+    let (store, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
+    assert_eq!(store.len(), 3);
+    assert_eq!(replayed.len(), 3);
+}
+
+/// R4 regression: an event variant from a newer writer is skipped with a
+/// warning; everything else still loads.
+#[test]
+fn unknown_variant_line_is_skipped() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    append_events(tmp.path(), &entry.id, &[user_msg("known")], false).unwrap();
+
+    let path = session_file_path(tmp.path(), &entry.id);
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    file.write_all(b"{\"type\":\"hologram_sync\",\"data\":42}\n")
+        .unwrap();
+    drop(file);
+    append_events(tmp.path(), &entry.id, &[user_msg("after")], false).unwrap();
+
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(read.events.len(), 2, "events around the unknown line load");
+    assert_eq!(read.skipped_lines, 1);
+}
+
+/// A corrupt MIDDLE line must not lose the events after it.
+#[test]
+fn corrupt_middle_line_is_skipped_with_count() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    append_events(tmp.path(), &entry.id, &[user_msg("first")], false).unwrap();
+    let path = session_file_path(tmp.path(), &entry.id);
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    file.write_all(b"not-json\n").unwrap();
+    drop(file);
+    append_events(tmp.path(), &entry.id, &[user_msg("second")], false).unwrap();
+
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(read.events.len(), 2);
+    assert_eq!(read.skipped_lines, 1);
 }
 
 #[test]
@@ -178,8 +294,9 @@ fn empty_lines_are_skipped() {
     let path = session_file_path(tmp.path(), &entry.id);
     let body = fs::read_to_string(&path).unwrap();
     fs::write(&path, format!("\n   \n{body}\n  \n")).unwrap();
-    let events = read_session_events(tmp.path(), &entry.id).unwrap();
-    assert_eq!(events.len(), 1);
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(read.events.len(), 1);
+    assert_eq!(read.skipped_lines, 0);
 }
 
 #[test]
@@ -188,15 +305,17 @@ fn empty_file_returns_empty_vec() {
     let path = session_file_path(tmp.path(), "missing");
     fs::create_dir_all(path.parent().unwrap()).unwrap();
     fs::write(&path, "").unwrap();
-    let events = read_session_events(tmp.path(), "missing").unwrap();
-    assert!(events.is_empty());
+    let read = read_session_events(tmp.path(), "missing").unwrap();
+    assert!(read.events.is_empty());
+    assert_eq!(read.format_version, None);
 }
 
 #[test]
 fn missing_file_returns_empty_vec() {
     let tmp = tempfile::tempdir().unwrap();
-    let events = read_session_events(tmp.path(), "does-not-exist").unwrap();
-    assert!(events.is_empty());
+    let read = read_session_events(tmp.path(), "does-not-exist").unwrap();
+    assert!(read.events.is_empty());
+    assert_eq!(read.skipped_lines, 0);
 }
 
 // ----- R3: index maintenance -----
@@ -286,7 +405,7 @@ fn two_batches_sum_line_count() {
     append_events(tmp.path(), &entry.id, &second, false).unwrap();
     let body = fs::read_to_string(session_file_path(tmp.path(), &entry.id)).unwrap();
     let line_count = body.lines().filter(|l| !l.trim().is_empty()).count();
-    assert_eq!(line_count, 6);
+    assert_eq!(line_count, 7, "header line + six event lines");
     let index = read_index(tmp.path()).unwrap();
     assert_eq!(index[0].event_count, 6);
 }
@@ -333,6 +452,10 @@ fn append_to_unknown_session_id_is_not_found() {
     let _ = fresh_session(tmp.path());
     let err = append_events(tmp.path(), "ghost", &[user_msg("x")], false).unwrap_err();
     assert!(matches!(err, SessionPersistError::NotFound { .. }));
+    assert!(
+        !session_file_path(tmp.path(), "ghost").exists(),
+        "no event bytes may land for a session the index does not know"
+    );
 }
 
 // ----- R5: resume -----
@@ -406,6 +529,7 @@ fn resume_ambiguous_prefix_returns_error() {
             updated_at: now,
             event_count: 0,
             status: SessionStatus::Active,
+            format_version: SESSION_FORMAT_VERSION,
             total_input_tokens: 0,
             total_output_tokens: 0,
             total_cache_read_tokens: 0,
@@ -466,7 +590,7 @@ fn fork_appends_fork_event_at_tail() {
 
     let body = fs::read_to_string(session_file_path(tmp.path(), &new_entry.id)).unwrap();
     let line_count = body.lines().filter(|l| !l.trim().is_empty()).count();
-    assert_eq!(line_count, 6);
+    assert_eq!(line_count, 7, "header line + six event lines");
 }
 
 #[test]
@@ -630,47 +754,527 @@ fn sum_usage_from_events_empty_is_zero() {
     assert_eq!(total.cache_read_tokens, 0);
 }
 
-/// End-to-end regression for the double-write bug: a write-through
-/// `JsonlSink` plus a post-turn `update_session_index` must leave the
-/// session JSONL at a 1:1 line-to-event ratio (not 2:1) and remain
-/// resumable. Using `append_events` here instead would double-write and
-/// trip the duplicate-ID guard in `resume_session`.
+/// End-to-end regression for the double-write bug and the
+/// agent-maintained index: a write-through `JsonlSink` attached via
+/// `attach_sink` must leave the session JSONL at a 1:1 line-to-event
+/// ratio, bring the index entry in step at the turn-boundary
+/// `checkpoint` **without any manual `update_session_index` call**, and
+/// remain resumable.
 #[test]
-fn sink_plus_update_index_stays_one_to_one_and_resumable() {
+fn registered_sink_maintains_index_and_stays_resumable() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
+    let created_updated_at = read_index(tmp.path()).unwrap()[0].updated_at;
 
-    // Simulate a turn: write events through the sink (write-through).
-    let store = attach_sink(EventStore::new(), tmp.path(), &entry.id);
+    // Simulate a turn: write events through the sink (write-through),
+    // then checkpoint at the turn boundary.
+    let store = attach_sink(
+        EventStore::new(),
+        tmp.path(),
+        &entry.id,
+        DurabilityPolicy::Flush,
+    )
+    .unwrap();
     let turn = vec![user_msg("hello"), assistant_with_usage(12, 8, 4)];
     for event in &turn {
         store.append(event.clone()).unwrap();
     }
+    store.checkpoint().unwrap();
 
-    // Post-turn index reconcile — the fix path.
-    let new_events = store.events();
-    let appended = u64::try_from(new_events.len()).unwrap();
-    let usage = sum_usage_from_events(&new_events);
-    update_session_index(tmp.path(), &entry.id, appended, &usage).unwrap();
-
-    // JSONL holds exactly the turn's events — one line each, no duplicates.
+    // JSONL holds the header plus exactly the turn's events.
     let body = fs::read_to_string(session_file_path(tmp.path(), &entry.id)).unwrap();
     let line_count = body.lines().filter(|l| !l.trim().is_empty()).count();
     assert_eq!(
         line_count,
-        turn.len(),
-        "expected 1:1 lines, got double-write"
+        turn.len() + 1,
+        "expected header + 1:1 lines, got double-write"
     );
 
-    // Index reflects the turn.
+    // Index reflects the turn with NO manual reconcile call.
+    let index = read_index(tmp.path()).unwrap();
+    assert_eq!(index[0].event_count, 2);
+    assert_eq!(index[0].total_input_tokens, 12);
+    assert_eq!(index[0].total_output_tokens, 8);
+    assert_eq!(index[0].total_cache_read_tokens, 4);
+    assert!(
+        index[0].updated_at > created_updated_at,
+        "updated_at must advance on append"
+    );
+
+    // The session resumes cleanly — the duplicate-ID guard never fires.
+    let (resumed, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
+    assert_eq!(resumed.len(), 2);
+    assert_eq!(replayed.len(), 2);
+}
+
+/// `attach_sink` must surface open failures instead of silently
+/// degrading to memory-only persistence.
+#[test]
+fn attach_sink_open_failure_returns_error() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    // Occupy the session file path with a directory so the open fails.
+    fs::create_dir_all(session_file_path(tmp.path(), &entry.id)).unwrap();
+
+    let result = attach_sink(
+        EventStore::new(),
+        tmp.path(),
+        &entry.id,
+        DurabilityPolicy::Flush,
+    );
+    assert!(result.is_err(), "open failure must not be swallowed");
+}
+
+/// Exercise the explicit durability policies through a raw sink.
+#[test]
+fn durability_policies_persist_every_event() {
+    let tmp = tempfile::tempdir().unwrap();
+    for (name, durability) in [
+        ("flush", DurabilityPolicy::Flush),
+        ("per-event", DurabilityPolicy::FsyncPerEvent),
+        (
+            "every-2",
+            DurabilityPolicy::FsyncEveryEvents(std::num::NonZeroU64::new(2).unwrap()),
+        ),
+    ] {
+        let path = session_file_path(tmp.path(), name);
+        let mut sink = JsonlSink::open_with(&path, durability).unwrap();
+        for i in 0..3 {
+            sink.persist(&user_msg(&format!("{name}-{i}"))).unwrap();
+        }
+        drop(sink);
+        let body = fs::read_to_string(&path).unwrap();
+        assert_eq!(body.lines().count(), 4, "{name}: header + 3 events");
+    }
+}
+
+// ----- Torn-line healing across reopen (H19, reopen half) -----
+
+/// A torn final line (crash mid-write) must be healed when the file is
+/// reopened for appending via the batch path: the next appended event
+/// must land on its own line, never concatenated onto the torn bytes.
+#[test]
+fn torn_final_line_is_healed_on_batch_reopen() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    append_events(
+        tmp.path(),
+        &entry.id,
+        &[user_msg("one"), user_msg("two")],
+        false,
+    )
+    .unwrap();
+
+    // Tear the file the way ENOSPC / `kill -9` would: partial JSON, no
+    // trailing newline.
+    let path = session_file_path(tmp.path(), &entry.id);
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    file.write_all(br#"{"type":"user_message","content":"torn"#)
+        .unwrap();
+    drop(file);
+
+    // "Next process" appends after the crash.
+    append_events(tmp.path(), &entry.id, &[user_msg("after-crash")], false).unwrap();
+
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(
+        read.events.len(),
+        3,
+        "the post-crash append must parse — the torn line must not absorb it"
+    );
+    assert_eq!(
+        read.skipped_lines, 1,
+        "the torn line is exactly one skipped line"
+    );
+    match read.events.last().unwrap() {
+        SessionEvent::UserMessage { content, .. } => assert_eq!(content, "after-crash"),
+        other => panic!("expected the post-crash user message last, got {other:?}"),
+    }
+}
+
+/// Same crash scenario through the live-sink path: resume + `attach_sink`
+/// after a torn final line must heal the tear before the first
+/// write-through append.
+#[test]
+fn torn_final_line_is_healed_on_sink_reopen() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    append_events(tmp.path(), &entry.id, &[user_msg("one")], false).unwrap();
+
+    let path = session_file_path(tmp.path(), &entry.id);
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    file.write_all(br#"{"type":"assistant_message","content":"tor"#)
+        .unwrap();
+    drop(file);
+
+    let (store, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
+    assert_eq!(replayed.len(), 1, "torn line skipped on resume");
+    let store = attach_sink(store, tmp.path(), &entry.id, DurabilityPolicy::Flush).unwrap();
+    store.append(user_msg("after-crash")).unwrap();
+    drop(store);
+
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(
+        read.events.len(),
+        2,
+        "sink reopen must heal the tear so the new event parses"
+    );
+    assert_eq!(read.skipped_lines, 1);
+}
+
+// ----- Duplicate EventId tolerance (crash-retry artifacts) -----
+
+/// A duplicated event line (the documented-safe retry after a failure
+/// that actually persisted the first attempt) must be skipped on read:
+/// first occurrence kept, later occurrences counted like other skipped
+/// lines.
+#[test]
+fn duplicate_event_lines_are_skipped_on_read() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    let a = user_msg("a");
+    append_events(tmp.path(), &entry.id, std::slice::from_ref(&a), false).unwrap();
+    // Retry artifact: the exact same event appended again.
+    append_events(tmp.path(), &entry.id, std::slice::from_ref(&a), false).unwrap();
+    append_events(tmp.path(), &entry.id, &[user_msg("b")], false).unwrap();
+
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(
+        read.events.len(),
+        2,
+        "duplicate must be dropped, first kept"
+    );
+    assert_eq!(
+        read.skipped_lines, 1,
+        "duplicate accounted like a skipped line"
+    );
+    assert_event_eq(&read.events[0], &a);
+}
+
+/// Resume and fork must both survive a duplicated event line instead of
+/// hard-failing on the `EventStore` duplicate-ID guard (which made a
+/// transient hiccup permanently brick the session).
+#[test]
+fn resume_and_fork_tolerate_duplicate_event_lines() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    let a = user_msg("a");
+    append_events(tmp.path(), &entry.id, std::slice::from_ref(&a), false).unwrap();
+    append_events(tmp.path(), &entry.id, std::slice::from_ref(&a), false).unwrap();
+    append_events(tmp.path(), &entry.id, &[user_msg("b")], false).unwrap();
+
+    let (store, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
+    assert_eq!(store.len(), 2);
+    assert_eq!(replayed.len(), 2);
+
+    let (_, fork_store, all_events) =
+        fork_session(tmp.path(), &entry.id, "gpt".to_owned(), "/w".to_owned()).unwrap();
+    assert_eq!(all_events.len(), 3, "2 deduplicated events + Fork tail");
+    assert_eq!(fork_store.len(), 3);
+}
+
+// ----- Index failure after a durable event write (retry-safety) -----
+
+/// When the event bytes are already durable, a failure to update the
+/// index must NOT fail the append (the documented-safe retry would write
+/// a duplicate line). The index goes stale and is repaired on resume.
+#[cfg(unix)]
+#[test]
+fn append_events_index_failure_is_durable_and_nonfatal() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    append_events(tmp.path(), &entry.id, &[user_msg("one")], false).unwrap();
+
+    // Make the data dir read-only: the session file and index.lock
+    // already exist (writable), but the atomic index rewrite cannot
+    // create its tmp file.
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let result = append_events(tmp.path(), &entry.id, &[user_msg("two")], false);
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o755)).unwrap();
+
+    result.expect("append must report success: the event IS durable");
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(
+        read.events.len(),
+        2,
+        "the event landed despite the index failure"
+    );
+
+    // The index is stale (still 1) until resume repairs it.
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 1);
+    let (_, _, resolved) = resume_session(tmp.path(), &entry.id).unwrap();
+    assert_eq!(
+        resolved.event_count, 2,
+        "resume must repair the stale entry"
+    );
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 2);
+}
+
+/// Sink path: an index failure after a durable write-through append must
+/// not fail the append; the delta is retained and lands at the next
+/// checkpoint.
+#[cfg(unix)]
+#[test]
+fn sink_index_failure_retains_delta_and_recovers_on_checkpoint() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    let store = attach_sink(
+        EventStore::new(),
+        tmp.path(),
+        &entry.id,
+        DurabilityPolicy::FsyncPerEvent,
+    )
+    .unwrap();
+
+    store.append(user_msg("one")).unwrap();
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 1);
+
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o555)).unwrap();
+    let result = store.append(user_msg("two"));
+    fs::set_permissions(tmp.path(), fs::Permissions::from_mode(0o755)).unwrap();
+    result.expect("append must succeed: the event is durable, only the index lagged");
+    assert_eq!(store.len(), 2, "event must be visible in memory");
+    assert_eq!(
+        read_index(tmp.path()).unwrap()[0].event_count,
+        1,
+        "index is stale after the failure"
+    );
+
+    store
+        .checkpoint()
+        .expect("checkpoint retries the retained delta");
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 2);
+}
+
+// ----- Index batching at durability boundaries -----
+
+/// Under `DurabilityPolicy::Flush` the index delta is deferred: no index
+/// rewrite (and no fsync) per event. `checkpoint()` and `Drop` are the
+/// flush points.
+#[test]
+fn flush_policy_defers_index_updates_to_checkpoint_and_drop() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    let store = attach_sink(
+        EventStore::new(),
+        tmp.path(),
+        &entry.id,
+        DurabilityPolicy::Flush,
+    )
+    .unwrap();
+
+    store.append(user_msg("one")).unwrap();
+    store.append(assistant_with_usage(12, 8, 4)).unwrap();
+    assert_eq!(
+        read_index(tmp.path()).unwrap()[0].event_count,
+        0,
+        "Flush must not rewrite the index per event"
+    );
+
+    store.checkpoint().unwrap();
     let index = read_index(tmp.path()).unwrap();
     assert_eq!(index[0].event_count, 2);
     assert_eq!(index[0].total_input_tokens, 12);
     assert_eq!(index[0].total_output_tokens, 8);
     assert_eq!(index[0].total_cache_read_tokens, 4);
 
-    // The session resumes cleanly — the duplicate-ID guard never fires.
-    let (resumed, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
-    assert_eq!(resumed.len(), 2);
-    assert_eq!(replayed.len(), 2);
+    store.append(user_msg("three")).unwrap();
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 2);
+    drop(store);
+    assert_eq!(
+        read_index(tmp.path()).unwrap()[0].event_count,
+        3,
+        "drop (clean shutdown) must flush the pending delta"
+    );
+}
+
+/// `FsyncEveryEvents(n)`: the index catches up exactly at each event
+/// fsync boundary, and any tail delta lands on drop.
+#[test]
+fn fsync_every_n_flushes_index_at_durability_boundary() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    let store = attach_sink(
+        EventStore::new(),
+        tmp.path(),
+        &entry.id,
+        DurabilityPolicy::FsyncEveryEvents(std::num::NonZeroU64::new(2).unwrap()),
+    )
+    .unwrap();
+
+    store.append(user_msg("one")).unwrap();
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 0);
+    store.append(user_msg("two")).unwrap();
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 2);
+    store.append(user_msg("three")).unwrap();
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 2);
+    drop(store);
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 3);
+}
+
+/// `FsyncPerEvent`: every event is a durability boundary, so the index
+/// stays current per event.
+#[test]
+fn fsync_per_event_keeps_index_current() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    let store = attach_sink(
+        EventStore::new(),
+        tmp.path(),
+        &entry.id,
+        DurabilityPolicy::FsyncPerEvent,
+    )
+    .unwrap();
+    store.append(user_msg("one")).unwrap();
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 1);
+    store.append(user_msg("two")).unwrap();
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 2);
+}
+
+// ----- Resume-time index self-maintenance -----
+
+/// A crash with deferred index deltas (or a lost delta after an index
+/// failure) leaves the entry stale; resume must recompute `event_count`
+/// and usage totals from the event file and repair the entry.
+#[test]
+fn resume_repairs_stale_index_entry() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    let events = vec![
+        user_msg("one"),
+        assistant_with_usage(10, 5, 2),
+        user_msg("two"),
+    ];
+    append_events(tmp.path(), &entry.id, &events, false).unwrap();
+
+    // Simulate crash staleness: zero the entry behind persistence's back.
+    update_index_entry(tmp.path(), &entry.id, |e| {
+        e.event_count = 0;
+        e.total_input_tokens = 0;
+        e.total_output_tokens = 0;
+        e.total_cache_read_tokens = 0;
+    })
+    .unwrap();
+
+    let (_, _, resolved) = resume_session(tmp.path(), &entry.id).unwrap();
+    assert_eq!(
+        resolved.event_count, 3,
+        "resolved entry carries repaired count"
+    );
+    assert_eq!(resolved.total_input_tokens, 10);
+    assert_eq!(resolved.total_output_tokens, 5);
+    assert_eq!(resolved.total_cache_read_tokens, 2);
+
+    let index = read_index(tmp.path()).unwrap();
+    assert_eq!(index[0].event_count, 3, "repair is persisted to the index");
+    assert_eq!(index[0].total_input_tokens, 10);
+    assert_eq!(index[0].total_output_tokens, 5);
+    assert_eq!(index[0].total_cache_read_tokens, 2);
+}
+
+// ----- H18: inter-process index locking -----
+
+/// Regression for H18: concurrent `O_APPEND` creates racing
+/// read-modify-rewrite updates must never drop an index entry. Without
+/// the advisory lock, an update working from a stale snapshot rewrote
+/// the index minus concurrently created sessions, making them
+/// permanently unresumable.
+#[test]
+fn concurrent_creates_and_updates_drop_no_index_entries() {
+    let tmp = tempfile::tempdir().unwrap();
+    let seed = fresh_session(tmp.path());
+    let dir = tmp.path().to_path_buf();
+
+    let updater = {
+        let dir = dir.clone();
+        let id = seed.id.clone();
+        std::thread::spawn(move || {
+            for _ in 0..40 {
+                update_session_index(&dir, &id, 1, &Usage::default()).unwrap();
+            }
+        })
+    };
+
+    let creators: Vec<_> = (0..4)
+        .map(|_| {
+            let dir = dir.clone();
+            std::thread::spawn(move || {
+                (0..10)
+                    .map(|_| {
+                        create_session(&dir, "gpt-x".to_owned(), "/w".to_owned(), None)
+                            .unwrap()
+                            .id
+                    })
+                    .collect::<Vec<String>>()
+            })
+        })
+        .collect();
+
+    let mut created: Vec<String> = vec![seed.id.clone()];
+    for handle in creators {
+        created.extend(handle.join().unwrap());
+    }
+    updater.join().unwrap();
+
+    let index = read_index(tmp.path()).unwrap();
+    let ids: std::collections::HashSet<&str> = index.iter().map(|e| e.id.as_str()).collect();
+    for id in &created {
+        assert!(
+            ids.contains(id.as_str()),
+            "index entry for {id} was dropped by a concurrent rewrite"
+        );
+    }
+    assert_eq!(index.len(), created.len());
+    let seed_entry = index.iter().find(|e| e.id == seed.id).unwrap();
+    assert_eq!(seed_entry.event_count, 40, "no update was lost either");
+}
+
+/// Concurrent registered sinks (two stores, same data dir — the
+/// multi-process topology meridian runs, simulated in-process) must keep
+/// both index entries intact and correctly counted.
+#[test]
+fn two_sink_backed_stores_same_dir_do_not_corrupt_index() {
+    let tmp = tempfile::tempdir().unwrap();
+    let a = fresh_session(tmp.path());
+    let b = fresh_session(tmp.path());
+
+    let store_a = attach_sink(
+        EventStore::new(),
+        tmp.path(),
+        &a.id,
+        DurabilityPolicy::Flush,
+    )
+    .unwrap();
+    let store_b = attach_sink(
+        EventStore::new(),
+        tmp.path(),
+        &b.id,
+        DurabilityPolicy::Flush,
+    )
+    .unwrap();
+
+    let writer_a = std::thread::spawn(move || {
+        for i in 0..25 {
+            store_a.append(user_msg(&format!("a{i}"))).unwrap();
+        }
+    });
+    let writer_b = std::thread::spawn(move || {
+        for i in 0..25 {
+            store_b.append(user_msg(&format!("b{i}"))).unwrap();
+        }
+    });
+    writer_a.join().unwrap();
+    writer_b.join().unwrap();
+
+    let index = read_index(tmp.path()).unwrap();
+    assert_eq!(index.len(), 2);
+    for entry in &index {
+        assert_eq!(entry.event_count, 25, "entry {} miscounted", entry.id);
+    }
+    let (resumed_a, _, _) = resume_session(tmp.path(), &a.id).unwrap();
+    let (resumed_b, _, _) = resume_session(tmp.path(), &b.id).unwrap();
+    assert_eq!(resumed_a.len(), 25);
+    assert_eq!(resumed_b.len(), 25);
 }

@@ -51,6 +51,113 @@ mod tests {
         );
     }
 
+    /// Regression for the resume/working-dir `ActionLog` bug: the log must
+    /// be constructed with the loop context's LIVE `SharedWorkingDir`
+    /// (the handle bash's `cd` updates), not `ActionLog::new`'s
+    /// process-CWD default — otherwise model-supplied relative paths
+    /// hash into the mutation ledger against the wrong directory.
+    #[test]
+    fn install_action_log_resolves_paths_against_live_working_dir() {
+        use norn::session::action_log::{CompletionRecord, Outcome};
+        use norn::tool::context::SharedWorkingDir;
+
+        let agent_dir = tempfile::tempdir().unwrap();
+        assert_ne!(
+            std::env::current_dir().unwrap(),
+            agent_dir.path(),
+            "precondition: agent working dir must differ from process CWD",
+        );
+
+        let registry = ToolRegistry::new();
+        let mut loop_context = norn::r#loop::loop_context::LoopContext {
+            working_dir: SharedWorkingDir::new(agent_dir.path().to_path_buf()),
+            ..Default::default()
+        };
+
+        let store = Arc::new(EventStore::new());
+        crate::runtime::install_action_log(&registry, &store, &mut loop_context);
+
+        let log = loop_context
+            .action_log
+            .as_ref()
+            .expect("install_action_log must set LoopContext::action_log");
+        log.record_completion(CompletionRecord {
+            tool_name: "write",
+            tool_call_id: "tc-1",
+            tool_use_description: "",
+            outcome: Outcome::Success,
+            output: &json!({"path": "rel.txt"}),
+            args: json!({"path": "rel.txt"}),
+            duration_ms: 1,
+            follow_ups: Vec::new(),
+            post_validate_outcome: None,
+            level_1_only: false,
+        });
+
+        let entries = log.mutation_entries();
+        assert_eq!(entries.len(), 1, "write completion must hit the ledger");
+        assert!(
+            entries[0].file_path.starts_with(agent_dir.path()),
+            "relative path must resolve against the live agent working dir \
+             {}, got {}",
+            agent_dir.path().display(),
+            entries[0].file_path.display(),
+        );
+    }
+
+    /// Regression for the empty-ledger-on-resume bug: a store that
+    /// already carries replayed events (the `--resume` path) must yield
+    /// an [`ActionLog`](norn::session::action_log::ActionLog) with the
+    /// historical tool calls reconstructed, not an empty ledger.
+    #[test]
+    fn install_action_log_rebuilds_ledger_from_replayed_events() {
+        use norn::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+
+        let store = Arc::new(EventStore::new());
+        store
+            .append(SessionEvent::AssistantMessage {
+                base: EventBase::new(None),
+                content: String::new(),
+                thinking: String::new(),
+                tool_calls: vec![ToolCallEvent {
+                    call_id: "tc-resumed".to_owned(),
+                    name: "read".to_owned(),
+                    arguments: json!({"path": "a.txt"}),
+                    kind: norn::provider::request::ToolCallKind::Function,
+                }],
+                usage: EventUsage::default(),
+                stop_reason: String::new(),
+                response_id: None,
+            })
+            .unwrap();
+        store
+            .append(SessionEvent::ToolResult {
+                base: EventBase::new(None),
+                tool_call_id: "tc-resumed".to_owned(),
+                tool_name: "read".to_owned(),
+                output: json!({"content": "hello"}),
+                duration_ms: 3,
+            })
+            .unwrap();
+
+        let registry = ToolRegistry::new();
+        let mut loop_context = norn::r#loop::loop_context::LoopContext::default();
+        crate::runtime::install_action_log(&registry, &store, &mut loop_context);
+
+        let log = loop_context
+            .action_log
+            .as_ref()
+            .expect("install_action_log must set LoopContext::action_log");
+        let entries = log.entries();
+        assert_eq!(
+            entries.len(),
+            1,
+            "the replayed tool call must be reconstructed on resume",
+        );
+        assert_eq!(entries[0].tool_call_id, "tc-resumed");
+        assert_eq!(entries[0].tool_name, "read");
+    }
+
     fn empty_profile() -> Profile {
         Profile::default()
     }

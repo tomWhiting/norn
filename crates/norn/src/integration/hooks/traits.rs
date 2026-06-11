@@ -196,6 +196,42 @@ impl HookRegistry {
         }
     }
 
+    /// Append every hook from `other` onto `self`, preserving `other`'s
+    /// internal registration order.
+    ///
+    /// Hooks already registered on `self` keep their earlier positions, so
+    /// on conflicting outcomes (first-`Block`-wins) the hooks already
+    /// present take precedence over the merged-in ones. See
+    /// [`Self::merge_shared`] (in [`super::merge`]) for folding in a shared
+    /// `Arc<HookRegistry>` without consuming it.
+    pub fn merge(&mut self, other: Self) {
+        let Self {
+            pre_tool,
+            post_tool,
+            pre_llm,
+            post_llm,
+            session_event,
+            user_prompt,
+            stop,
+            subagent,
+            session_lifecycle,
+            compaction,
+            post_tool_failure,
+            dispatching_session_events: _,
+        } = other;
+        self.pre_tool.extend(pre_tool);
+        self.post_tool.extend(post_tool);
+        self.pre_llm.extend(pre_llm);
+        self.post_llm.extend(post_llm);
+        self.session_event.extend(session_event);
+        self.user_prompt.extend(user_prompt);
+        self.stop.extend(stop);
+        self.subagent.extend(subagent);
+        self.session_lifecycle.extend(session_lifecycle);
+        self.compaction.extend(compaction);
+        self.post_tool_failure.extend(post_tool_failure);
+    }
+
     /// Number of pre-tool hooks registered.
     #[must_use]
     pub fn pre_tool_len(&self) -> usize {

@@ -15,15 +15,20 @@
 //!   hook-extend, MCP-by-name, tool-deep-merge).
 //! - [`validate`] — semantic validation of a merged settings value:
 //!   duration strings, permission patterns, MCP server shape.
+//! - [`permissions`] — compiled [`PermissionPolicy`] evaluating tool
+//!   calls against the merged allow/deny/ask patterns; consumed by tool
+//!   dispatch as the runtime consent boundary.
 
 pub mod loader;
 pub mod merge;
 pub mod paths;
+pub mod permissions;
 pub mod types;
 pub mod validate;
 
 pub use loader::{LoadedSettings, load_settings, local_settings_path, project_settings_path};
 pub use merge::merge_settings;
+pub use permissions::{PermissionDecision, PermissionPolicy};
 pub use types::{
     AgentSettings, ContextSettings, HookEntry, HookSettings, LengthOverrideEntry,
     McpServerSettings, NornSettings, PermissionSettings, ProviderSettings, RetrySettings,

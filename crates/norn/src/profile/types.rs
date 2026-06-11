@@ -25,16 +25,56 @@ use crate::provider::request::{ReasoningEffort, ReasoningSummary};
 /// `cache_ttl` controls how long a successful run is reused. `None` means
 /// re-run every iteration; `Some(_)` re-uses the cached stdout until the TTL
 /// elapses.
+///
+/// Serialisation goes through [`PromptCommandRepr`] so TOML/JSON config
+/// files can write `cache_ttl = 30` (integer seconds) instead of
+/// struct-of-fields [`Duration`] syntax.
 #[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(from = "PromptCommandRepr", into = "PromptCommandRepr")]
 pub struct PromptCommand {
     /// Human-readable name used as the section heading.
     pub name: String,
     /// Shell command executed via `sh -c`.
     pub command: String,
     /// Optional time-to-live for the cached stdout. When `None` the command
-    /// runs every iteration.
-    #[serde(default, with = "duration_secs")]
+    /// runs every iteration. Represented on the wire as an integer number
+    /// of seconds.
     pub cache_ttl: Option<Duration>,
+}
+
+/// Wire representation of [`PromptCommand`]: `cache_ttl` is an integer
+/// number of seconds, so config files can write `cache_ttl = 30`.
+///
+/// Conversion in both directions is infallible, which is what lets the
+/// main struct delegate via `#[serde(from = ..., into = ...)]` instead of
+/// per-field helper functions (whose serde-mandated `&Option<Duration>`
+/// signatures clash with `clippy::ref_option`).
+#[derive(Serialize, Deserialize)]
+struct PromptCommandRepr {
+    name: String,
+    command: String,
+    #[serde(default)]
+    cache_ttl: Option<u64>,
+}
+
+impl From<PromptCommandRepr> for PromptCommand {
+    fn from(repr: PromptCommandRepr) -> Self {
+        Self {
+            name: repr.name,
+            command: repr.command,
+            cache_ttl: repr.cache_ttl.map(Duration::from_secs),
+        }
+    }
+}
+
+impl From<PromptCommand> for PromptCommandRepr {
+    fn from(cmd: PromptCommand) -> Self {
+        Self {
+            name: cmd.name,
+            command: cmd.command,
+            cache_ttl: cmd.cache_ttl.map(|d| d.as_secs()),
+        }
+    }
 }
 
 /// A composable bundle of tools, system instructions, and disallowed
@@ -143,34 +183,6 @@ impl Profile {
     }
 }
 
-mod duration_secs {
-    //! Serde adapter that represents [`Duration`] as an integer number of
-    //! seconds. Used by [`super::PromptCommand::cache_ttl`] so TOML/JSON
-    //! config files can write `cache_ttl = 30` instead of struct-of-fields
-    //! syntax.
-
-    use std::time::Duration;
-
-    use serde::{Deserialize, Deserializer, Serialize, Serializer};
-
-    // Serde `with` modules require `&T` where T is the field type.
-    // The field is `Option<Duration>`, so serde generates `&Option<Duration>`.
-    #[allow(clippy::ref_option)]
-    pub(super) fn serialize<S>(value: &Option<Duration>, ser: S) -> Result<S::Ok, S::Error>
-    where
-        S: Serializer,
-    {
-        value.map(|d| d.as_secs()).serialize(ser)
-    }
-
-    pub(super) fn deserialize<'de, D>(de: D) -> Result<Option<Duration>, D::Error>
-    where
-        D: Deserializer<'de>,
-    {
-        Option::<u64>::deserialize(de).map(|opt| opt.map(Duration::from_secs))
-    }
-}
-
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -256,6 +268,38 @@ mod tests {
             from_toml.prompt_commands[0].cache_ttl,
             Some(Duration::from_secs(30))
         );
+    }
+
+    #[test]
+    fn prompt_command_cache_ttl_absence_round_trips() {
+        let cmd = PromptCommand {
+            name: "cwd".to_owned(),
+            command: "echo cwd".to_owned(),
+            cache_ttl: None,
+        };
+
+        // JSON keeps the historical explicit-null wire shape; TOML has no
+        // null and omits the key. Both are pinned so a future serde change
+        // can't silently alter the format.
+        let json = serde_json::to_string(&cmd).unwrap();
+        assert!(
+            json.contains(r#""cache_ttl":null"#),
+            "unset cache_ttl serializes as an explicit JSON null: {json}"
+        );
+        let from_json: PromptCommand = serde_json::from_str(&json).unwrap();
+        assert_eq!(from_json.cache_ttl, None);
+
+        let toml_str = toml::to_string(&cmd).unwrap();
+        assert!(
+            !toml_str.contains("cache_ttl"),
+            "unset cache_ttl is omitted from TOML: {toml_str}"
+        );
+        let from_toml: PromptCommand = toml::from_str(&toml_str).unwrap();
+        assert_eq!(from_toml.cache_ttl, None);
+
+        let from_missing_key: PromptCommand =
+            serde_json::from_str(r#"{"name":"cwd","command":"echo cwd"}"#).unwrap();
+        assert_eq!(from_missing_key.cache_ttl, None);
     }
 
     #[test]

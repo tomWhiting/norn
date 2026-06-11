@@ -44,34 +44,36 @@ pub(super) struct PatchBlock<'a> {
 }
 
 /// Splits a unified diff string into per-file blocks. The diffy 0.5
-/// `Patch::from_str` parser only handles one block, so we manually split
-/// on every `\n--- ` boundary (including the first line).
+/// `Patch::from_str` parser only handles one block, so we split at every
+/// *file header*: a line starting with `--- ` whose **next line** starts
+/// with `+++ `.
+///
+/// Requiring the `+++` companion line distinguishes real headers from diff
+/// removal lines whose removed content itself starts with `-- ` (SQL/Lua/
+/// Haskell comments): removing `-- legacy comment` renders as
+/// `--- legacy comment`, which a naive `\n--- ` split would misparse as a
+/// new file block.
 pub(super) fn split_blocks(input: &str) -> Vec<&str> {
-    if input.is_empty() {
-        return Vec::new();
+    // Byte offsets of every line that starts a file block.
+    let mut header_offsets: Vec<usize> = Vec::new();
+    let mut prev: Option<(usize, &str)> = None;
+    let mut offset = 0;
+    for line in input.split_inclusive('\n') {
+        let trimmed = line.strip_suffix('\n').unwrap_or(line);
+        if let Some((prev_offset, prev_line)) = prev
+            && prev_line.starts_with("--- ")
+            && trimmed.starts_with("+++ ")
+        {
+            header_offsets.push(prev_offset);
+        }
+        prev = Some((offset, trimmed));
+        offset += line.len();
     }
 
-    let needle = "\n--- ";
-    let mut blocks = Vec::new();
-    let mut start = if input.starts_with("--- ") {
-        0
-    } else {
-        match input.find("--- ") {
-            Some(idx) => idx,
-            None => return Vec::new(),
-        }
-    };
-
-    while start < input.len() {
-        let search_start = start.saturating_add(4).min(input.len());
-        let next = input[search_start..]
-            .find(needle)
-            .map_or(input.len(), |idx| search_start + idx + 1);
-        blocks.push(&input[start..next]);
-        if next >= input.len() {
-            break;
-        }
-        start = next;
+    let mut blocks = Vec::with_capacity(header_offsets.len());
+    for (i, &start) in header_offsets.iter().enumerate() {
+        let end = header_offsets.get(i + 1).copied().unwrap_or(input.len());
+        blocks.push(&input[start..end]);
     }
     blocks
 }
@@ -224,7 +226,9 @@ pub(super) fn collect_unified_additions(raw: &str) -> (String, usize, usize) {
     let mut hunks = 0usize;
     let mut added = 0usize;
     for line in raw.lines() {
-        if line.starts_with("--- ") || line.starts_with("+++ ") {
+        // File headers appear only before the first hunk; after that, a
+        // `+++ x` line is an addition whose content starts with `++ `.
+        if hunks == 0 && (line.starts_with("--- ") || line.starts_with("+++ ")) {
             continue;
         }
         if line.starts_with("@@") {

@@ -17,15 +17,23 @@ pub fn run_export(data_dir: &Path, input: &str, format: Option<SessionExportForm
         Ok(entry) => entry,
         Err(err) => return report_export_error(&err),
     };
-    let events = match read_session_events(data_dir, &entry.id) {
-        Ok(events) => events,
+    let read = match read_session_events(data_dir, &entry.id) {
+        Ok(read) => read,
         Err(err) => return report_export_error(&err),
     };
+    if read.skipped_lines > 0 {
+        // The tolerant reader already logged each skipped line; surface
+        // the count on stderr so a piped export is never silently partial.
+        eprintln!(
+            "norn: warning: {} corrupt/unreadable line(s) skipped while reading session {}",
+            read.skipped_lines, entry.id,
+        );
+    }
 
     match format.unwrap_or(SessionExportFormat::Jsonl) {
-        SessionExportFormat::Jsonl => export_jsonl(&events),
-        SessionExportFormat::Json => export_json(&entry, &events),
-        SessionExportFormat::Markdown => export_markdown(&entry, &events),
+        SessionExportFormat::Jsonl => export_jsonl(&read.events),
+        SessionExportFormat::Json => export_json(&entry, &read.events),
+        SessionExportFormat::Markdown => export_markdown(&entry, &read.events),
     }
 }
 

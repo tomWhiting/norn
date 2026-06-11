@@ -22,11 +22,17 @@
     clippy::collapsible_if,
     clippy::match_wildcard_for_single_variants
 )]
+use super::cd_track::strip_surrounding_quotes;
+use super::tool::BashArgs;
 use super::*;
+use crate::error::ToolError;
 use crate::tool::context::{SessionId, ToolContext};
 use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
-use crate::tool::risk::BashRiskTier;
-use serde_json::json;
+use crate::tool::lifecycle::PreValidateOutcome;
+use crate::tool::risk::{BashRiskTier, classify_risk};
+use crate::tool::scheduling::ToolEffect;
+use crate::tool::traits::Tool;
+use serde_json::{Value, json};
 use std::sync::Arc;
 use uuid::Uuid;
 
@@ -64,7 +70,7 @@ fn bash_args_schema_matches_previous_hand_written_schema() {
             },
             "working_dir": {
                 "type": "string",
-                "description": "Working directory for the subprocess."
+                "description": "Working directory for the subprocess. Resolved like file-tool paths: `~` expands to the home directory and relative paths resolve against the agent's working directory."
             }
         },
         "required": ["command"],
@@ -255,6 +261,170 @@ async fn working_dir_is_applied() {
     );
 }
 
+/// Track B finding 8: `with_drain_grace` overrides the 2s default drain
+/// grace — a backgrounded child holding the output pipes is cut off after
+/// the configured grace and the result is annotated accordingly.
+#[tokio::test]
+async fn with_drain_grace_bounds_background_pipe_holders() {
+    let tool = BashTool::new().with_drain_grace(std::time::Duration::from_millis(200));
+    let started = std::time::Instant::now();
+    let out = tool
+        .execute(
+            &envelope(json!({ "command": "sleep 5 & echo started" })),
+            &ToolContext::empty(),
+        )
+        .await
+        .expect("bash ok");
+    let elapsed = started.elapsed();
+
+    assert!(!out.is_error);
+    assert_eq!(out.content["streams_still_open"].as_bool(), Some(true));
+    assert!(
+        out.content["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("started"),
+        "buffered output before the cutoff is preserved: {}",
+        out.content,
+    );
+    assert!(
+        elapsed < std::time::Duration::from_millis(1500),
+        "a 200ms grace must return well before the 2s default (elapsed: {elapsed:?})",
+    );
+}
+
+/// Track B finding 7 regression: a relative `working_dir` argument must
+/// resolve against the agent's context working directory, not the process
+/// CWD.
+#[tokio::test]
+async fn relative_working_dir_resolves_against_context_working_dir() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("sub")).expect("mkdir sub");
+    let ctx = ToolContext::with_working_dir(crate::tool::context::SharedWorkingDir::new(
+        dir.path().to_path_buf(),
+    ));
+    let out = BashTool::new()
+        .execute(
+            &envelope(json!({ "command": "pwd", "working_dir": "sub" })),
+            &ctx,
+        )
+        .await
+        .expect("bash ok");
+    let stdout = out.content["stdout"].as_str().unwrap_or_default().trim();
+    let expected = dir
+        .path()
+        .join("sub")
+        .canonicalize()
+        .expect("canonicalize sub");
+    assert_eq!(
+        stdout,
+        expected.to_string_lossy(),
+        "relative working_dir must resolve against the context working dir",
+    );
+}
+
+/// Track B finding 7 regression: a `~`-prefixed `working_dir` argument
+/// expands to the home directory, matching the file tools' path semantics.
+#[tokio::test]
+async fn tilde_working_dir_expands_to_home() {
+    let out = BashTool::new()
+        .execute(
+            &envelope(json!({ "command": "pwd", "working_dir": "~" })),
+            &ToolContext::empty(),
+        )
+        .await
+        .expect("bash ok");
+    let stdout = out.content["stdout"].as_str().unwrap_or_default().trim();
+    let home = dirs::home_dir()
+        .expect("home dir")
+        .canonicalize()
+        .expect("canonicalize home");
+    assert_eq!(stdout, home.to_string_lossy());
+}
+
+/// Track B finding 7 regression: a `working_dir` that does not resolve to
+/// an existing directory is refused with a structured pre-validation error
+/// instead of an opaque spawn failure.
+#[tokio::test]
+async fn nonexistent_working_dir_is_rejected_before_spawn() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ctx = ToolContext::with_working_dir(crate::tool::context::SharedWorkingDir::new(
+        dir.path().to_path_buf(),
+    ));
+    let err = BashTool::new()
+        .execute(
+            &envelope(json!({ "command": "pwd", "working_dir": "no-such-dir" })),
+            &ctx,
+        )
+        .await
+        .expect_err("missing working_dir must fail");
+    assert!(
+        matches!(err, ToolError::PreValidationFailed { .. }),
+        "expected PreValidationFailed, got: {err}",
+    );
+    assert!(
+        err.to_string().contains("not an existing directory"),
+        "{err}",
+    );
+}
+
+/// Track B finding 7 regression: a workspace-confined context refuses a
+/// model-supplied `working_dir` outside the confinement root.
+#[tokio::test]
+async fn confined_context_rejects_out_of_root_working_dir() {
+    let outer = tempfile::tempdir().expect("tempdir");
+    let root = outer.path().join("ws");
+    let elsewhere = outer.path().join("elsewhere");
+    std::fs::create_dir(&root).expect("mkdir ws");
+    std::fs::create_dir(&elsewhere).expect("mkdir elsewhere");
+    let mut ctx =
+        ToolContext::with_working_dir(crate::tool::context::SharedWorkingDir::new(root.clone()));
+    ctx.confine_to_workspace(root);
+
+    let err = BashTool::new()
+        .execute(
+            &envelope(json!({
+                "command": "pwd",
+                "working_dir": elsewhere.to_string_lossy(),
+            })),
+            &ctx,
+        )
+        .await
+        .expect_err("out-of-root working_dir must be refused");
+    assert!(
+        matches!(err, ToolError::PreValidationFailed { .. }),
+        "expected PreValidationFailed, got: {err}",
+    );
+    assert!(err.to_string().contains("outside the workspace"), "{err}");
+}
+
+/// Companion to the confinement regression: an in-root `working_dir` still
+/// works on a confined context.
+#[tokio::test]
+async fn confined_context_allows_in_root_working_dir() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    std::fs::create_dir(dir.path().join("inner")).expect("mkdir inner");
+    let mut ctx = ToolContext::with_working_dir(crate::tool::context::SharedWorkingDir::new(
+        dir.path().to_path_buf(),
+    ));
+    ctx.confine_to_workspace(dir.path().to_path_buf());
+
+    let out = BashTool::new()
+        .execute(
+            &envelope(json!({ "command": "pwd", "working_dir": "inner" })),
+            &ctx,
+        )
+        .await
+        .expect("in-root working_dir runs");
+    let stdout = out.content["stdout"].as_str().unwrap_or_default().trim();
+    let expected = dir
+        .path()
+        .join("inner")
+        .canonicalize()
+        .expect("canonicalize inner");
+    assert_eq!(stdout, expected.to_string_lossy());
+}
+
 #[tokio::test]
 async fn critical_risk_tier_appears_in_metadata() {
     // `classify_risk` flags any command line containing the literal
@@ -442,4 +612,111 @@ fn strip_surrounding_quotes_leaves_unquoted_alone() {
     assert_eq!(strip_surrounding_quotes("foo"), "foo");
     assert_eq!(strip_surrounding_quotes("\"unmatched"), "\"unmatched");
     assert_eq!(strip_surrounding_quotes("'mismatched\""), "'mismatched\"");
+}
+
+// --- H12 regressions: process groups and bounded draining -------------------
+
+/// A command that backgrounds a child (which inherits the stdout/stderr
+/// pipes) must return promptly with the buffered output and the
+/// streams-still-open annotation, not block until the grandchild exits.
+#[tokio::test]
+async fn backgrounded_child_returns_promptly_with_buffered_output() {
+    let tool = BashTool::new();
+    let started = std::time::Instant::now();
+    let env = envelope(json!({
+        "command": "echo started; sleep 30 &",
+        "timeout": 60_u64,
+    }));
+    let out = tool
+        .execute(&env, &ToolContext::empty())
+        .await
+        .expect("bash ok");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(20),
+        "tool blocked on the backgrounded child's pipe: {:?}",
+        started.elapsed()
+    );
+    assert!(!out.is_error, "{:?}", out.content);
+    assert_eq!(out.content["exit_code"].as_i64(), Some(0));
+    assert!(
+        out.content["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("started"),
+        "buffered output preserved: {:?}",
+        out.content
+    );
+    assert_eq!(out.content["streams_still_open"].as_bool(), Some(true));
+    assert!(
+        out.content["streams_still_open_note"].as_str().is_some(),
+        "annotation present: {:?}",
+        out.content
+    );
+}
+
+/// A command that finishes cleanly (pipes closed at exit) must not carry
+/// the streams-still-open annotation.
+#[tokio::test]
+async fn clean_exit_reports_streams_closed() {
+    let tool = BashTool::new();
+    let env = envelope(json!({ "command": "echo done" }));
+    let out = tool
+        .execute(&env, &ToolContext::empty())
+        .await
+        .expect("bash ok");
+    assert_eq!(out.content["streams_still_open"].as_bool(), Some(false));
+    assert!(out.content.get("streams_still_open_note").is_none());
+}
+
+/// Returns whether `pid` is still alive, probed via `kill -0` (works on
+/// macOS and Linux without unsafe libc calls).
+#[cfg(unix)]
+fn process_alive(pid: i64) -> bool {
+    std::process::Command::new("kill")
+        .args(["-0", &pid.to_string()])
+        .status()
+        .is_ok_and(|s| s.success())
+}
+
+/// A timeout must kill the entire process tree, not just the `sh`
+/// wrapper: the grandchild `sleep` recorded in the pid file has to be
+/// gone shortly after the tool returns.
+#[cfg(unix)]
+#[tokio::test]
+async fn timeout_kills_the_whole_process_tree() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let pid_file = dir.path().join("grandchild.pid");
+    let tool = BashTool::new();
+    let started = std::time::Instant::now();
+    let env = envelope(json!({
+        "command": format!("sleep 30 & echo $! > '{}'; wait", pid_file.display()),
+        "timeout": 1_u64,
+    }));
+    let out = tool
+        .execute(&env, &ToolContext::empty())
+        .await
+        .expect("bash ok");
+    assert!(out.is_error);
+    assert_eq!(out.content["timed_out"].as_bool(), Some(true));
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(15),
+        "timed-out command did not return promptly: {:?}",
+        started.elapsed()
+    );
+
+    let pid: i64 = std::fs::read_to_string(&pid_file)
+        .expect("grandchild pid recorded")
+        .trim()
+        .parse()
+        .expect("pid parses");
+    // SIGKILL delivery is immediate but reaping by init is asynchronous;
+    // poll briefly before declaring the grandchild a survivor.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while process_alive(pid) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "grandchild sleep (pid {pid}) survived the group kill"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
 }

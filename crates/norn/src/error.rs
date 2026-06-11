@@ -156,6 +156,26 @@ pub enum ProviderError {
         /// Human-readable description of why the request was rejected.
         message: String,
     },
+
+    /// The model stopped deterministically before completing its output:
+    /// it hit its maximum output-token limit (`max_tokens`) or the
+    /// provider's content filter cut the response off (`content_filter`).
+    ///
+    /// Never retryable — re-sending the identical request reproduces the
+    /// same stop. Distinct from [`StreamInterrupted`], which covers
+    /// transient transport disconnections that a retry can resolve.
+    /// (Stopgap classification until truncation is surfaced as a typed
+    /// step outcome in Phase 2.)
+    ///
+    /// [`StreamInterrupted`]: ProviderError::StreamInterrupted
+    #[error("response truncated (stop_reason={stop_reason}): {reason}")]
+    Truncated {
+        /// Which deterministic stop cut the response off
+        /// (`max_tokens` or `content_filter`).
+        stop_reason: String,
+        /// Human-readable description of the truncation.
+        reason: String,
+    },
 }
 
 /// Errors during schema validation and enforcement.

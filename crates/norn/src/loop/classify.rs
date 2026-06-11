@@ -3,13 +3,83 @@
 use futures_util::StreamExt;
 use serde_json::Value;
 
-use crate::error::{NornError, ProviderError};
+use crate::error::{NornError, ProviderError, SessionError};
+use crate::integration::hooks::HookRegistry;
 use crate::r#loop::assembly::{AssembledResponse, assemble_response};
+use crate::r#loop::helpers::append_and_notify;
 use crate::r#loop::schema::validate_against_schema;
 use crate::provider::agent_event::AgentEventSender;
-use crate::provider::events::ProviderEvent;
+use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::request::ProviderRequest;
 use crate::provider::traits::Provider;
+use crate::session::events::{EventBase, SessionEvent};
+use crate::session::store::EventStore;
+
+/// Why a response was cut off before the model finished its turn.
+///
+/// Only the two abnormal [`StopReason`] variants are representable here, so
+/// a [`ResponseClass::Truncated`] can never carry a normal stop.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum TruncationKind {
+    /// The model hit its maximum output-token limit mid-response.
+    MaxTokens,
+    /// The provider's content filter cut the response off.
+    ContentFilter,
+}
+
+impl TruncationKind {
+    /// Stable string form used in session events and error messages.
+    pub(super) const fn as_str(self) -> &'static str {
+        match self {
+            Self::MaxTokens => "max_tokens",
+            Self::ContentFilter => "content_filter",
+        }
+    }
+}
+
+/// Persist a `loop.truncated` Custom event and build the typed error the
+/// runner returns for a truncated no-schema response (REVIEW item 5).
+///
+/// The partial text, per-call usage, and stop reason are already persisted
+/// on the preceding `AssistantMessage` event; the Custom event marks the
+/// abort for observers and the returned [`NornError`] makes the truncation
+/// impossible to mistake for a successful completion. The error is
+/// [`ProviderError::Truncated`], which never classifies as retryable —
+/// truncation and content-filter stops are deterministic, so retrying
+/// the identical request reproduces the same stop.
+///
+/// # Errors
+///
+/// Returns [`SessionError`] if the Custom event cannot be appended.
+pub(super) async fn truncation_failure(
+    store: &EventStore,
+    hooks: Option<&HookRegistry>,
+    kind: TruncationKind,
+    partial_text: &str,
+    iterations: u32,
+) -> Result<NornError, SessionError> {
+    append_and_notify(
+        store,
+        SessionEvent::Custom {
+            base: EventBase::new(store.last_event_id()),
+            event_type: "loop.truncated".to_string(),
+            data: serde_json::json!({
+                "stop_reason": kind.as_str(),
+                "partial_text_chars": partial_text.chars().count(),
+                "iterations": iterations,
+            }),
+        },
+        hooks,
+    )
+    .await?;
+    Ok(NornError::Provider(ProviderError::Truncated {
+        stop_reason: kind.as_str().to_string(),
+        reason: "model output truncated; the response is an incomplete \
+                 fragment — partial text and usage are persisted in the \
+                 session event store"
+            .to_string(),
+    }))
+}
 
 /// Internal classification of a provider response.
 pub(super) enum ResponseClass {
@@ -29,6 +99,15 @@ pub(super) enum ResponseClass {
     /// No tool calls and model stopped (text-only response).
     TextStopNoSchema,
 
+    /// No tool calls and the provider stopped abnormally (`MaxTokens` or
+    /// `ContentFilter`) in no-schema mode: any text is an incomplete
+    /// fragment and must not be returned as successful output (REVIEW
+    /// item 5).
+    Truncated {
+        /// Which abnormal stop cut the response off.
+        kind: TruncationKind,
+    },
+
     /// Tools before schema tool + schema valid. Post-schema tools rejected.
     ToolsAndSchemaValid {
         pre_schema_tools: Vec<usize>,
@@ -44,6 +123,29 @@ pub(super) fn classify_response(
     schema_tool_name: &str,
 ) -> ResponseClass {
     if response.tool_calls.is_empty() {
+        // REVIEW item 5: a tool-call-free response that stopped on
+        // `MaxTokens`/`ContentFilter` is an incomplete fragment. In
+        // no-schema mode the runner previously returned it as successful
+        // `Completed` output, indistinguishable from a clean `EndTurn` —
+        // classify it distinctly so the runner can refuse. With a schema
+        // present the response falls through to `TextStopNoSchema`, whose
+        // nudge path consumes schema budget and terminates in
+        // `SchemaUnreachable` rather than silent success.
+        if output_schema.is_none() {
+            match response.stop_reason {
+                StopReason::MaxTokens => {
+                    return ResponseClass::Truncated {
+                        kind: TruncationKind::MaxTokens,
+                    };
+                }
+                StopReason::ContentFilter => {
+                    return ResponseClass::Truncated {
+                        kind: TruncationKind::ContentFilter,
+                    };
+                }
+                StopReason::EndTurn | StopReason::ToolUse => {}
+            }
+        }
         return ResponseClass::TextStopNoSchema;
     }
 

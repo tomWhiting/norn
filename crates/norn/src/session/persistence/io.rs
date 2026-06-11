@@ -1,16 +1,19 @@
-//! JSONL I/O for sessions and the session index (NC-002 R2–R3).
+//! Session JSONL file I/O (NC-002 R2): versioned header, tolerant read,
+//! append.
+//!
+//! Index maintenance lives in [`super::index`].
 
+use std::collections::HashSet;
 use std::fs::{self, File, OpenOptions};
-use std::io::{BufRead, BufReader, BufWriter, Write};
+use std::io::{BufRead, BufReader, Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::provider::usage::Usage;
-use crate::session::events::SessionEvent;
-use chrono::Utc;
-use serde::Serialize;
-use uuid::Uuid;
+use crate::session::events::{EventId, SessionEvent};
 
-use super::types::{SessionIndexEntry, SessionPersistError};
+use super::index::{read_index, sum_usage_from_events, update_session_index};
+use super::types::{
+    SESSION_FORMAT_VERSION, SessionFileHeader, SessionFileRead, SessionPersistError,
+};
 
 /// Return the JSONL file path for `session_id` under `data_dir`.
 #[must_use]
@@ -18,52 +21,176 @@ pub fn session_file_path(data_dir: &Path, session_id: &str) -> PathBuf {
     data_dir.join(format!("{session_id}.jsonl"))
 }
 
-/// Return the session index file path under `data_dir`.
-#[must_use]
-pub fn index_file_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("index.jsonl")
+/// Open (or create) the session JSONL file at `path` in append mode,
+/// creating parent directories as needed.
+///
+/// When the file is brand new (or empty), a [`SessionFileHeader`] line
+/// stamped with [`SESSION_FORMAT_VERSION`] is written first, so every
+/// file created by this writer is versioned. Pre-versioning files keep
+/// loading without a header.
+///
+/// When the file is non-empty and its last byte is not `\n` — a torn
+/// final line left by a crash (`ENOSPC`, `kill -9`, power loss) in a
+/// previous process — the tear is healed before the handle is returned:
+/// a lone `\n` terminates the partial line so it becomes exactly one
+/// corrupt line for the tolerant reader to skip, and the first append
+/// through this handle starts on a fresh line instead of concatenating
+/// onto the torn bytes (H19, reopen half).
+pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistError> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let mut file = OpenOptions::new()
+        .create(true)
+        .read(true)
+        .append(true)
+        .open(path)?;
+    let len = file.metadata()?.len();
+    if len == 0 {
+        let mut line = serde_json::to_vec(&SessionFileHeader {
+            version: SESSION_FORMAT_VERSION,
+        })?;
+        line.push(b'\n');
+        file.write_all(&line)?;
+    } else {
+        file.seek(SeekFrom::Start(len - 1))?;
+        let mut last = [0_u8; 1];
+        file.read_exact(&mut last)?;
+        if last[0] != b'\n' {
+            // O_APPEND ignores the read cursor: this lands at EOF.
+            file.write_all(b"\n")?;
+            tracing::warn!(
+                path = %path.display(),
+                "healed torn final line in session file on reopen; \
+                 the tolerant reader will skip the corrupt line",
+            );
+        }
+    }
+    Ok(file)
 }
 
-/// Read every [`SessionEvent`] from `{data_dir}/{session_id}.jsonl`.
+/// Tolerantly read `{data_dir}/{session_id}.jsonl` (H19 / R4).
 ///
-/// Returns an empty vector when the file does not exist or is empty.
-/// Empty / whitespace-only lines are skipped. A parse failure reports
-/// the 1-based line number via [`SessionPersistError::Parse`].
+/// Returns an empty [`SessionFileRead`] when the file does not exist.
+/// Line handling:
+///
+/// * an optional [`SessionFileHeader`] first line populates
+///   [`SessionFileRead::format_version`] (absent on pre-versioning
+///   files — they still load);
+/// * empty / whitespace-only lines are skipped silently;
+/// * a non-empty line that is not valid JSON (e.g. a torn final line
+///   from `ENOSPC` or `kill -9` mid-write) or is valid JSON that does
+///   not match the [`SessionEvent`] schema (e.g. an unknown variant from
+///   a newer writer) is skipped with a `tracing::warn!` and counted in
+///   [`SessionFileRead::skipped_lines`];
+/// * a line whose [`EventId`] was already seen earlier in the file (a
+///   crash-retry artifact: the first attempt persisted but reported
+///   failure, so the documented-safe retry wrote the event again) keeps
+///   its first occurrence and skips the duplicate with a
+///   `tracing::warn!`, also counted in
+///   [`SessionFileRead::skipped_lines`].
+///
+/// The call fails only when the file as a whole is unreadable (open or
+/// stream-level I/O error) — a torn final line never prevents resume.
 pub fn read_session_events(
     data_dir: &Path,
     session_id: &str,
-) -> Result<Vec<SessionEvent>, SessionPersistError> {
+) -> Result<SessionFileRead, SessionPersistError> {
     let path = session_file_path(data_dir, session_id);
+    let mut read = SessionFileRead {
+        events: Vec::new(),
+        skipped_lines: 0,
+        format_version: None,
+    };
     if !path.exists() {
-        return Ok(Vec::new());
+        return Ok(read);
     }
     let file = File::open(&path)?;
     let reader = BufReader::new(file);
-    let mut out = Vec::new();
-    for (idx, line) in reader.lines().enumerate() {
-        let line = line?;
-        if line.trim().is_empty() {
+    let mut seen_first_content_line = false;
+    let mut seen_ids: HashSet<EventId> = HashSet::new();
+    for (idx, raw) in reader.split(b'\n').enumerate() {
+        let raw = raw?;
+        if raw.iter().all(u8::is_ascii_whitespace) {
             continue;
         }
-        let event: SessionEvent =
-            serde_json::from_str(&line).map_err(|source| SessionPersistError::Parse {
-                line: idx + 1,
-                source,
-            })?;
-        out.push(event);
+        if !seen_first_content_line {
+            seen_first_content_line = true;
+            if let Ok(header) = serde_json::from_slice::<SessionFileHeader>(&raw) {
+                read.format_version = Some(header.version);
+                if header.version > SESSION_FORMAT_VERSION {
+                    tracing::warn!(
+                        session_id,
+                        file_version = header.version,
+                        reader_version = SESSION_FORMAT_VERSION,
+                        "session file written by a newer norn; \
+                         unknown event variants will be skipped",
+                    );
+                }
+                continue;
+            }
+        }
+        match serde_json::from_slice::<SessionEvent>(&raw) {
+            Ok(event) => {
+                let id = event.base().id.clone();
+                if seen_ids.insert(id.clone()) {
+                    read.events.push(event);
+                } else {
+                    read.skipped_lines = read.skipped_lines.saturating_add(1);
+                    tracing::warn!(
+                        session_id,
+                        line = idx + 1,
+                        event_id = %id,
+                        "skipping duplicate session event line \
+                         (crash-retry artifact); first occurrence kept",
+                    );
+                }
+            }
+            Err(error) => {
+                read.skipped_lines = read.skipped_lines.saturating_add(1);
+                tracing::warn!(
+                    session_id,
+                    line = idx + 1,
+                    %error,
+                    "skipping corrupt or unknown session event line",
+                );
+            }
+        }
     }
-    Ok(out)
+    if read.skipped_lines > 0 {
+        tracing::warn!(
+            session_id,
+            skipped = read.skipped_lines,
+            recovered = read.events.len(),
+            "session file contained unparseable or duplicate lines; \
+             recovered events were loaded, the rest were skipped",
+        );
+    }
+    Ok(read)
 }
 
 /// Append `events` to `{data_dir}/{session_id}.jsonl` and update the
-/// matching index entry's `event_count` and `updated_at`.
+/// matching index entry's `event_count`, usage totals, and `updated_at`.
 ///
 /// `disabled = true` short-circuits the call with `Ok(())` and performs
 /// no filesystem work — this is the `--no-session` path.
 ///
-/// Empty `events` is a no-op. The session JSONL file and its parent
-/// directory are created on first write. The index entry MUST already
-/// exist; missing entries return [`SessionPersistError::NotFound`].
+/// Empty `events` is a no-op. The index entry MUST already exist and is
+/// verified **before** any event bytes are written; a missing entry
+/// returns [`SessionPersistError::NotFound`] with the session file
+/// untouched. The session JSONL file and its parent directory are
+/// created on first write (with a version header line), and the whole
+/// batch is flushed and `fsync`-ed.
+///
+/// `Ok(())` means exactly: the events are durable in the session file.
+/// The index update runs after that point and is best-effort — a
+/// failure there is logged at error level and does **not** fail the
+/// call, because returning an error for an already-durable batch would
+/// invite a retry that duplicates every event. The stale entry is
+/// repaired by the self-maintenance pass in
+/// [`resume_session`](super::ops::resume_session). An error return
+/// therefore always means "nothing from this batch was written", so
+/// retrying the same batch is safe.
 pub fn append_events(
     data_dir: &Path,
     session_id: &str,
@@ -73,263 +200,32 @@ pub fn append_events(
     if disabled || events.is_empty() {
         return Ok(());
     }
-    fs::create_dir_all(data_dir)?;
-    let path = session_file_path(data_dir, session_id);
-    let file = OpenOptions::new().create(true).append(true).open(&path)?;
-    let mut writer = BufWriter::new(file);
-    for event in events {
-        serde_json::to_writer(&mut writer, event)?;
-        writer.write_all(b"\n")?;
+    if !read_index(data_dir)?.iter().any(|e| e.id == session_id) {
+        return Err(SessionPersistError::NotFound {
+            input: session_id.to_owned(),
+        });
     }
-    writer.flush()?;
-    let file = writer
-        .into_inner()
-        .map_err(std::io::IntoInnerError::into_error)?;
+    let path = session_file_path(data_dir, session_id);
+    let mut file = open_session_append(&path)?;
+    let mut buf = Vec::new();
+    for event in events {
+        serde_json::to_writer(&mut buf, event)?;
+        buf.push(b'\n');
+    }
+    file.write_all(&buf)?;
     file.sync_all()?;
 
     let appended = u64::try_from(events.len()).unwrap_or(u64::MAX);
     let usage_delta = sum_usage_from_events(events);
-    update_session_index(data_dir, session_id, appended, &usage_delta)
-}
-
-/// Update the session index entry for `session_id` to reflect newly
-/// persisted events without touching the session JSONL file.
-///
-/// This is the index-update half of [`append_events`] with the JSONL
-/// write skipped. Use it when events were already durably persisted
-/// through a sink (the `JsonlSink` write-through path) and only the
-/// index needs to catch up — calling `append_events` in that case
-/// double-writes every event and breaks resume.
-///
-/// `new_event_count` is the number of events landed since the last
-/// index update. `usage_delta` is the cumulative token usage for those
-/// events; only `input_tokens`, `output_tokens`, and `cache_read_tokens`
-/// are recorded — other [`Usage`] fields are ignored because the index
-/// schema does not store them.
-///
-/// When `new_event_count` is zero AND every relevant Usage field is
-/// zero, the call is a no-op that returns `Ok(())` without touching the
-/// index. The index entry MUST already exist; a missing entry returns
-/// [`SessionPersistError::NotFound`].
-pub fn update_session_index(
-    data_dir: &Path,
-    session_id: &str,
-    new_event_count: u64,
-    usage_delta: &Usage,
-) -> Result<(), SessionPersistError> {
-    if new_event_count == 0
-        && usage_delta.input_tokens == 0
-        && usage_delta.output_tokens == 0
-        && usage_delta.cache_read_tokens == 0
-    {
-        return Ok(());
-    }
-    update_index_entry(data_dir, session_id, |entry| {
-        entry.event_count = entry.event_count.saturating_add(new_event_count);
-        entry.updated_at = Utc::now();
-        entry.total_input_tokens = entry
-            .total_input_tokens
-            .saturating_add(usage_delta.input_tokens);
-        entry.total_output_tokens = entry
-            .total_output_tokens
-            .saturating_add(usage_delta.output_tokens);
-        entry.total_cache_read_tokens = entry
-            .total_cache_read_tokens
-            .saturating_add(usage_delta.cache_read_tokens);
-    })
-}
-
-/// Sum `AssistantMessage` usage fields across `events` into a single
-/// [`Usage`]. Non-assistant events contribute zero. Only the three
-/// fields the session index tracks (`input_tokens`, `output_tokens`,
-/// `cache_read_tokens`) are populated; `cache_write_tokens` and
-/// `cost_usd` are left at their defaults.
-#[must_use]
-pub fn sum_usage_from_events(events: &[SessionEvent]) -> Usage {
-    let mut total = Usage::default();
-    for event in events {
-        if let SessionEvent::AssistantMessage { usage, .. } = event {
-            total.input_tokens = total.input_tokens.saturating_add(usage.input_tokens);
-            total.output_tokens = total.output_tokens.saturating_add(usage.output_tokens);
-            total.cache_read_tokens = total
-                .cache_read_tokens
-                .saturating_add(usage.cache_read_tokens);
-        }
-    }
-    total
-}
-
-/// Read every [`SessionIndexEntry`] from `{data_dir}/index.jsonl`.
-///
-/// Returns an empty vector when the file does not exist. Empty lines are
-/// skipped. Parse failures include the 1-based line number.
-pub fn read_index(data_dir: &Path) -> Result<Vec<SessionIndexEntry>, SessionPersistError> {
-    let path = index_file_path(data_dir);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let file = File::open(&path)?;
-    let reader = BufReader::new(file);
-    let mut out = Vec::new();
-    for (idx, line) in reader.lines().enumerate() {
-        let line = line?;
-        if line.trim().is_empty() {
-            continue;
-        }
-        let entry: SessionIndexEntry =
-            serde_json::from_str(&line).map_err(|source| SessionPersistError::Parse {
-                line: idx + 1,
-                source,
-            })?;
-        out.push(entry);
-    }
-    Ok(out)
-}
-
-/// Atomically rewrite `{data_dir}/index.jsonl` with `entries`.
-///
-/// Writes go to a unique `index.jsonl.tmp.UUID` file first, are flushed
-/// and `fsync`-ed, then renamed over the canonical path. On any failure
-/// between write and rename the tmp file is removed before the original
-/// error is propagated, so a partial write never leaves a stale `.tmp`
-/// behind.
-pub fn write_index_atomic(
-    data_dir: &Path,
-    entries: &[SessionIndexEntry],
-) -> Result<(), SessionPersistError> {
-    fs::create_dir_all(data_dir)?;
-    let final_path = index_file_path(data_dir);
-    let tmp_path = data_dir.join(format!("index.jsonl.tmp.{}", Uuid::new_v4()));
-
-    if let Err(err) = write_jsonl_atomic(&tmp_path, entries) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(err);
-    }
-    if let Err(err) = fs::rename(&tmp_path, &final_path) {
-        let _ = fs::remove_file(&tmp_path);
-        return Err(SessionPersistError::Io(err));
+    if let Err(error) = update_session_index(data_dir, session_id, appended, &usage_delta) {
+        tracing::error!(
+            session_id,
+            %error,
+            appended,
+            "session events are durable but the index entry could not \
+             be updated; the index is stale until the next resume \
+             repairs it",
+        );
     }
     Ok(())
-}
-
-fn write_jsonl_atomic<T: Serialize>(
-    tmp_path: &Path,
-    rows: &[T],
-) -> Result<(), SessionPersistError> {
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(tmp_path)?;
-    let mut writer = BufWriter::new(file);
-    for row in rows {
-        serde_json::to_writer(&mut writer, row)?;
-        writer.write_all(b"\n")?;
-    }
-    writer.flush()?;
-    let file = writer
-        .into_inner()
-        .map_err(std::io::IntoInnerError::into_error)?;
-    file.sync_all()?;
-    Ok(())
-}
-
-/// Append `entry` to the session index using direct append mode.
-pub fn append_index_entry(
-    data_dir: &Path,
-    entry: SessionIndexEntry,
-) -> Result<(), SessionPersistError> {
-    fs::create_dir_all(data_dir)?;
-    let path = index_file_path(data_dir);
-    let file = OpenOptions::new().create(true).append(true).open(&path)?;
-    let mut writer = BufWriter::new(file);
-    serde_json::to_writer(&mut writer, &entry)?;
-    drop(entry);
-    writer.write_all(b"\n")?;
-    writer.flush()?;
-    let file = writer
-        .into_inner()
-        .map_err(std::io::IntoInnerError::into_error)?;
-    file.sync_all()?;
-    Ok(())
-}
-
-/// Mutate the index entry matching `session_id` via `mutator`, then
-/// rewrite the index atomically. Returns [`SessionPersistError::NotFound`]
-/// when no entry matches.
-pub fn update_index_entry(
-    data_dir: &Path,
-    session_id: &str,
-    mutator: impl FnOnce(&mut SessionIndexEntry),
-) -> Result<(), SessionPersistError> {
-    let mut entries = read_index(data_dir)?;
-    let pos = entries
-        .iter()
-        .position(|e| e.id == session_id)
-        .ok_or_else(|| SessionPersistError::NotFound {
-            input: session_id.to_owned(),
-        })?;
-    mutator(&mut entries[pos]);
-    write_index_atomic(data_dir, &entries)
-}
-
-/// Resolve a user-supplied identifier (empty = latest, full ID, name, or
-/// >=8-character ID prefix) against the index.
-pub fn resolve_session(
-    data_dir: &Path,
-    input: &str,
-) -> Result<SessionIndexEntry, SessionPersistError> {
-    let entries = read_index(data_dir)?;
-    let trimmed = input.trim();
-
-    if trimmed.is_empty() {
-        return entries
-            .into_iter()
-            .max_by_key(|e| e.updated_at)
-            .ok_or_else(|| SessionPersistError::NotFound {
-                input: "<no sessions>".to_owned(),
-            });
-    }
-
-    if let Some(entry) = entries.iter().find(|e| e.id == trimmed) {
-        return Ok(entry.clone());
-    }
-    if let Some(entry) = entries.iter().find(|e| e.name.as_deref() == Some(trimmed)) {
-        return Ok(entry.clone());
-    }
-
-    if trimmed.len() < 8 {
-        return Err(SessionPersistError::NotFound {
-            input: trimmed.to_owned(),
-        });
-    }
-
-    let matches: Vec<&SessionIndexEntry> = entries
-        .iter()
-        .filter(|e| e.id.starts_with(trimmed))
-        .collect();
-    match matches.as_slice() {
-        [] => Err(SessionPersistError::NotFound {
-            input: trimmed.to_owned(),
-        }),
-        [only] => Ok((*only).clone()),
-        many => Err(SessionPersistError::AmbiguousPrefix {
-            prefix: trimmed.to_owned(),
-            matches: many.iter().map(|e| e.id.clone()).collect(),
-        }),
-    }
-}
-
-/// Remove the entry with `session_id` from the index. Returns
-/// [`SessionPersistError::NotFound`] when no entry matches.
-pub fn remove_index_entry(data_dir: &Path, session_id: &str) -> Result<(), SessionPersistError> {
-    let mut entries = read_index(data_dir)?;
-    let pos = entries
-        .iter()
-        .position(|e| e.id == session_id)
-        .ok_or_else(|| SessionPersistError::NotFound {
-            input: session_id.to_owned(),
-        })?;
-    entries.remove(pos);
-    write_index_atomic(data_dir, &entries)
 }

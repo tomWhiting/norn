@@ -13,6 +13,7 @@ use std::time::Instant;
 use async_trait::async_trait;
 use serde::Deserialize;
 
+use super::confinement::check_confinement;
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
@@ -110,6 +111,21 @@ impl Tool for ReadTool {
         })?;
 
         let path = ctx.resolve_path(&args.path);
+
+        // Workspace confinement (opt-in): refuse before touching disk so
+        // even metadata of out-of-root paths is never disclosed.
+        if let Err(reason) = check_confinement(ctx, &path) {
+            let payload = serde_json::json!({
+                "path": args.path,
+                "kind": "confinement_refused",
+                "error": format!("read refused: {reason}"),
+            });
+            return Ok(ToolOutput {
+                content: payload,
+                is_error: true,
+                duration: started.elapsed(),
+            });
+        }
 
         // Image extension takes precedence over reading bytes.
         if is_image(&path) {
@@ -449,6 +465,41 @@ mod tests {
         tool.on_success(&out, &ctx).await;
 
         assert!(!ctx.has_read_file(Path::new("/no/such/path.txt")));
+    }
+
+    // --- Workspace confinement -------------------------------------------
+
+    #[tokio::test]
+    async fn confined_context_refuses_path_outside_root() {
+        let dir = tempdir().unwrap();
+        let tool = ReadTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(dir.path().to_path_buf());
+        ctx.set_working_dir(dir.path().to_path_buf());
+
+        let envelope = envelope_for(json!({ "path": "/etc/passwd" }));
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+        assert!(out.is_error);
+        assert_eq!(out.content["kind"], "confinement_refused");
+        // The refused path must not be marked as read.
+        tool.on_success(&out, &ctx).await;
+        assert!(!ctx.has_read_file(Path::new("/etc/passwd")));
+    }
+
+    #[tokio::test]
+    async fn confined_context_allows_path_inside_root() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("inside.txt");
+        tokio::fs::write(&path, "ok\n").await.unwrap();
+        let tool = ReadTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(dir.path().to_path_buf());
+        ctx.set_working_dir(dir.path().to_path_buf());
+
+        let envelope = envelope_for(json!({ "path": path.to_string_lossy() }));
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+        assert_eq!(out.content["kind"], "text");
     }
 
     #[tokio::test]

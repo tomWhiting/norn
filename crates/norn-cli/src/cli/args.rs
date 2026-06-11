@@ -45,12 +45,14 @@ pub struct Cli {
     #[arg(long, value_name = "TEXT")]
     pub append_system_prompt: Option<String>,
 
-    /// Tool allow-list, comma-separated (supports glob patterns).
-    #[arg(long, value_name = "PATTERNS")]
+    /// Tool allow-list: comma-separated exact tool names; only the named
+    /// tools are available to the agent.
+    #[arg(long, value_name = "NAMES")]
     pub allowed_tools: Option<String>,
 
-    /// Tool deny-list, comma-separated (supports glob patterns).
-    #[arg(long, value_name = "PATTERNS")]
+    /// Tool deny-list: comma-separated exact tool names, removed from the
+    /// available set even when `--allowed-tools` names them.
+    #[arg(long, value_name = "NAMES")]
     pub disallowed_tools: Option<String>,
 
     /// Reasoning effort level.
@@ -68,6 +70,12 @@ pub struct Cli {
     /// Working directory for tool execution.
     #[arg(short = 'C', long, value_name = "DIR")]
     pub working_dir: Option<PathBuf>,
+
+    /// Confine the file tools (read/write/edit/patch) to this directory:
+    /// any path resolving outside it after symlink-aware canonicalization
+    /// is refused. When omitted, path resolution is unconfined.
+    #[arg(long, value_name = "DIR")]
+    pub workspace_root: Option<PathBuf>,
 
     /// Runtime config override (`KEY=VALUE`), repeatable.
     #[arg(short = 'c', long = "config", value_name = "KEY=VALUE")]

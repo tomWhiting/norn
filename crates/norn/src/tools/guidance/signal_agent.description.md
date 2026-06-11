@@ -1,1 +1,1 @@
-Send a signal to another running agent. Signals are ephemeral intra-session communication. With trigger_turn enabled, the recipient reacts at its next tool boundary.
+Send a steering signal to a sub-agent you spawned or forked. Delivery goes through the child's inbound channel and drains at its next tool boundary; with trigger_turn enabled the child reacts immediately after its current tool batch. Only agents whose handle you hold (your own children) are reachable — signalling any other agent returns a structured delivery failure.

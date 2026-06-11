@@ -1,3 +1,5 @@
 .DS_Store
 target/
 .meridian/worksites/
+.norn/fetched/
+**/.norn/fetched/

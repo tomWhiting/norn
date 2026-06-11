@@ -3,8 +3,18 @@
 //! Fetches a URL with a hard 5 MiB size cap and a configurable timeout
 //! (default 30s, max 120s). The response body is consumed via
 //! `bytes_stream` so the cap is enforced incrementally without buffering
-//! arbitrarily large responses. HTML responses are converted to markdown
-//! using a parser-backed HTML-to-Markdown converter.
+//! arbitrarily large responses; a body cut off at the cap is surfaced to
+//! the model via the `truncated` flag and a `truncation_note` in the tool
+//! result. HTML responses are converted to markdown using a parser-backed
+//! HTML-to-Markdown converter. The converted page is archived under
+//! `.norn/fetched/` resolved against the session's working directory
+//! (through the tool context), never the process CWD.
+//!
+//! Every request passes the [`super::ssrf`] guard: private/internal
+//! destinations (loopback, link-local/metadata, RFC 1918, IPv6 ULA) are
+//! denied by default for literal and resolved hosts. Redirects are
+//! followed *manually* so the guard re-validates every hop; the opt-out
+//! is [`WebFetchTool::allow_private_hosts`].
 //!
 //! `effect()` is [`ToolEffect::Network`] so the scheduler may run fetches
 //! concurrently with other read-only / network tools.
@@ -37,6 +47,10 @@ const MAX_TIMEOUT: u64 = 120;
 /// User-Agent header sent with every fetch.
 const USER_AGENT: &str = "Mozilla/5.0 (compatible; Norn/1.0)";
 
+/// Maximum redirect hops followed manually (mirrors reqwest's own
+/// default redirect limit). Each hop is re-validated by the SSRF guard.
+const MAX_REDIRECT_HOPS: usize = 10;
+
 /// Model-supplied arguments for [`WebFetchTool`].
 #[derive(Debug, Deserialize)]
 struct WebFetchArgs {
@@ -59,10 +73,16 @@ struct WebFetchArgs {
 /// `WebFetch` tool: bounded streaming HTTP GET with HTML-to-markdown.
 pub struct WebFetchTool {
     client: reqwest::Client,
+    /// SSRF-guard opt-out; see [`Self::allow_private_hosts`].
+    allow_private_hosts: bool,
 }
 
 impl WebFetchTool {
     /// Creates a `WebFetchTool` with a fresh `reqwest::Client`.
+    ///
+    /// Automatic redirect following is disabled on the client: the tool
+    /// follows redirects manually so the SSRF guard re-validates the
+    /// host of every hop.
     ///
     /// # Errors
     ///
@@ -70,17 +90,96 @@ impl WebFetchTool {
     pub fn new() -> Result<Self, ToolError> {
         let client = reqwest::Client::builder()
             .user_agent(USER_AGENT)
+            .redirect(reqwest::redirect::Policy::none())
             .build()
             .map_err(|e| ToolError::ExecutionFailed {
                 reason: format!("failed to build HTTP client: {e}"),
             })?;
-        Ok(Self { client })
+        Ok(Self {
+            client,
+            allow_private_hosts: false,
+        })
     }
 
     /// Constructs a `WebFetchTool` from a pre-built `reqwest::Client`.
+    ///
+    /// The client should be built with
+    /// `reqwest::redirect::Policy::none()`: the tool follows redirects
+    /// manually so the SSRF guard can re-validate every hop. A client
+    /// that follows redirects internally bypasses that per-hop
+    /// validation (only the initial URL is checked).
     #[must_use]
     pub fn with_client(client: reqwest::Client) -> Self {
-        Self { client }
+        Self {
+            client,
+            allow_private_hosts: false,
+        }
+    }
+
+    /// Explicit opt-out from the SSRF guard's default-deny of
+    /// private/internal destinations (loopback, link-local/metadata,
+    /// RFC 1918, IPv6 unique-local). Intended for embedders that
+    /// intentionally fetch from hosts on their own network.
+    #[must_use]
+    pub fn allow_private_hosts(mut self, allow: bool) -> Self {
+        self.allow_private_hosts = allow;
+        self
+    }
+
+    /// Performs the GET for `url`, following up to [`MAX_REDIRECT_HOPS`]
+    /// redirects manually. Every hop — including the initial URL — is
+    /// validated by the SSRF guard and restricted to http(s).
+    async fn fetch_following_redirects(
+        &self,
+        mut current: url::Url,
+        timeout: Duration,
+    ) -> Result<reqwest::Response, ToolError> {
+        for _hop in 0..=MAX_REDIRECT_HOPS {
+            super::ssrf::check_url_host(&current, self.allow_private_hosts).await?;
+
+            let response = self
+                .client
+                .get(current.clone())
+                .header(reqwest::header::USER_AGENT, USER_AGENT)
+                .timeout(timeout)
+                .send()
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("HTTP GET failed: {e}"),
+                })?;
+
+            if !response.status().is_redirection() {
+                return Ok(response);
+            }
+
+            let location = response
+                .headers()
+                .get(reqwest::header::LOCATION)
+                .ok_or_else(|| ToolError::ExecutionFailed {
+                    reason: format!(
+                        "HTTP {} from {current} carried no Location header",
+                        response.status()
+                    ),
+                })?
+                .to_str()
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("redirect Location from {current} is not valid text: {e}"),
+                })?;
+            let next = current
+                .join(location)
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("invalid redirect target `{location}` from {current}: {e}"),
+                })?;
+            if !matches!(next.scheme(), "http" | "https") {
+                return Err(ToolError::ExecutionFailed {
+                    reason: format!("redirect from {current} to non-http(s) URL {next} refused"),
+                });
+            }
+            current = next;
+        }
+        Err(ToolError::ExecutionFailed {
+            reason: format!("too many redirects (limit {MAX_REDIRECT_HOPS})"),
+        })
     }
 }
 
@@ -162,21 +261,18 @@ impl Tool for WebFetchTool {
                 reason: "url must start with http:// or https://".to_owned(),
             });
         }
+        let parsed_url =
+            url::Url::parse(&args.url).map_err(|e| ToolError::PreValidationFailed {
+                reason: format!("invalid url `{}`: {e}", args.url),
+            })?;
 
         let format = parse_format(args.format.as_deref())?;
         let timeout_secs = args.timeout.unwrap_or(DEFAULT_TIMEOUT).min(MAX_TIMEOUT);
         let extraction_detail = parse_detail(args.detail.as_deref())?;
 
         let response = self
-            .client
-            .get(&args.url)
-            .header(reqwest::header::USER_AGENT, USER_AGENT)
-            .timeout(Duration::from_secs(timeout_secs))
-            .send()
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("HTTP GET failed: {e}"),
-            })?;
+            .fetch_following_redirects(parsed_url, Duration::from_secs(timeout_secs))
+            .await?;
 
         let status = response.status();
         if !status.is_success() {
@@ -200,11 +296,11 @@ impl Tool for WebFetchTool {
             .unwrap_or("")
             .to_owned();
 
-        let (body_bytes, _truncated) = read_body_with_cap(response).await?;
+        let (body_bytes, truncated) = read_body_with_cap(response).await?;
         let body = String::from_utf8_lossy(&body_bytes).into_owned();
         let converted = convert(&body, format, &content_type);
 
-        let saved_path = save_fetched_content(&args.url, &converted)?;
+        let saved_path = save_fetched_content(ctx, &args.url, &converted).await?;
 
         let questions = args.questions;
 
@@ -227,14 +323,27 @@ impl Tool for WebFetchTool {
 
         let line_count = converted.lines().count();
 
+        let mut content = json!({
+            "url": args.url,
+            "content_type": content_type,
+            "line_count": line_count,
+            "truncated": truncated,
+            "answers": answers,
+            "saved_to": saved_path.to_string_lossy(),
+        });
+        if truncated && let Some(map) = content.as_object_mut() {
+            map.insert(
+                "truncation_note".to_owned(),
+                Value::String(format!(
+                    "The response body exceeded the {MAX_SIZE}-byte cap and was \
+                     truncated; the answers and the saved file reflect only the \
+                     first {MAX_SIZE} bytes of the page."
+                )),
+            );
+        }
+
         Ok(ToolOutput {
-            content: json!({
-                "url": args.url,
-                "content_type": content_type,
-                "line_count": line_count,
-                "answers": answers,
-                "saved_to": saved_path.to_string_lossy(),
-            }),
+            content,
             is_error: false,
             duration: started.elapsed(),
         })
@@ -248,8 +357,6 @@ enum Format {
     Text,
     Html,
 }
-
-impl Format {}
 
 fn is_http_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
@@ -349,11 +456,20 @@ fn html_to_markdown(html: &str) -> String {
     .unwrap_or_else(|| html.to_owned())
 }
 
-fn save_fetched_content(url: &str, content: &str) -> Result<PathBuf, ToolError> {
-    let dir = PathBuf::from(".norn/fetched");
-    std::fs::create_dir_all(&dir).map_err(|e| ToolError::ExecutionFailed {
-        reason: format!("failed to create .norn/fetched/: {e}"),
-    })?;
+/// Archive the converted page under `.norn/fetched/` resolved against the
+/// session's working directory via [`ToolContext::resolve_path`] — never the
+/// process CWD — using async filesystem calls so the executor is not blocked.
+async fn save_fetched_content(
+    ctx: &ToolContext,
+    url: &str,
+    content: &str,
+) -> Result<PathBuf, ToolError> {
+    let dir = ctx.resolve_path(PathBuf::from(".norn").join("fetched"));
+    tokio::fs::create_dir_all(&dir)
+        .await
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("failed to create {}: {e}", dir.display()),
+        })?;
     let hash = {
         use std::hash::{Hash, Hasher};
         let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -367,9 +483,11 @@ fn save_fetched_content(url: &str, content: &str) -> Result<PathBuf, ToolError> 
         "---\nurl: {url}\nfetched: {}\n---\n\n{body}",
         chrono::Utc::now().to_rfc3339()
     );
-    std::fs::write(&path, &with_frontmatter).map_err(|e| ToolError::ExecutionFailed {
-        reason: format!("failed to write fetched content to {}: {e}", path.display()),
-    })?;
+    tokio::fs::write(&path, &with_frontmatter)
+        .await
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("failed to write fetched content to {}: {e}", path.display()),
+        })?;
     Ok(path)
 }
 
@@ -528,7 +646,12 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = WebFetchTool::new().expect("client builds");
+        // The mock server is loopback, so the SSRF opt-out is required to
+        // reach it; the fetch then succeeds and the missing SharedProvider
+        // is what fails.
+        let tool = WebFetchTool::new()
+            .expect("client builds")
+            .allow_private_hosts(true);
         let env = envelope(json!({
             "url": format!("{}/page", server.uri()),
             "questions": ["What is the answer?"],
@@ -537,7 +660,230 @@ mod tests {
             .execute(&env, &ToolContext::empty())
             .await
             .expect_err("questions require SharedProvider");
-        assert!(matches!(err, ToolError::ExecutionFailed { .. }));
+        assert!(
+            err.to_string().contains("SharedProvider"),
+            "fetch must have succeeded and failed on the provider: {err}"
+        );
+    }
+
+    // --- Artifact placement and truncation surfacing -------------------------
+
+    use std::path::Path;
+    use std::sync::Arc;
+
+    use crate::provider::events::StopReason;
+    use crate::provider::mock::MockProvider;
+    use crate::provider::usage::Usage;
+    use crate::tool::context::SharedWorkingDir;
+
+    /// A context whose working dir is `dir` and whose `SharedProvider` is a
+    /// mock extraction agent returning one fixed answer set.
+    fn ctx_with_extraction_provider(dir: &Path) -> ToolContext {
+        let ctx = ToolContext::with_working_dir(SharedWorkingDir::new(dir.to_path_buf()));
+        let provider: Arc<dyn crate::provider::traits::Provider> =
+            Arc::new(MockProvider::new(vec![vec![
+                crate::provider::events::ProviderEvent::TextDelta {
+                    text: r#"[{"question":"summary","answer":"ok","lines":"1"}]"#.to_owned(),
+                },
+                crate::provider::events::ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    usage: Usage::default(),
+                    response_id: None,
+                },
+            ]]));
+        ctx.insert_extension(Arc::new(SharedProvider(provider)));
+        ctx
+    }
+
+    /// Track B finding 6 regression: the `.norn/fetched` artifact must land
+    /// under the session's working directory (resolved through the tool
+    /// context), not wherever the process happened to start, and an
+    /// untruncated fetch must say so explicitly.
+    #[tokio::test]
+    async fn fetch_artifact_saves_under_context_working_dir() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/page"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string("<h1>Title</h1><p>Body text.</p>"),
+            )
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ctx = ctx_with_extraction_provider(dir.path());
+        let tool = WebFetchTool::new()
+            .expect("client builds")
+            .allow_private_hosts(true);
+        let out = tool
+            .execute(
+                &envelope(json!({ "url": format!("{}/page", server.uri()) })),
+                &ctx,
+            )
+            .await
+            .expect("fetch succeeds");
+
+        let saved = out.content["saved_to"].as_str().expect("saved_to string");
+        let saved_path = Path::new(saved);
+        assert!(
+            saved_path.starts_with(dir.path()),
+            "artifact must land under the context working dir; saved_to = {saved}",
+        );
+        assert!(saved_path.exists(), "artifact file must exist at {saved}");
+        assert_eq!(
+            out.content["truncated"],
+            json!(false),
+            "an untruncated fetch must carry truncated=false",
+        );
+        assert!(
+            out.content.get("truncation_note").is_none(),
+            "no truncation note for an untruncated body",
+        );
+    }
+
+    /// Track B finding 6 regression: a body that exceeds the size cap must
+    /// be flagged as truncated in the tool result — the model must never be
+    /// shown a truncated page as if it were complete.
+    ///
+    /// A declared `Content-Length` over the cap is rejected outright before
+    /// streaming, so this test serves the oversized body over a raw socket
+    /// *without* a `Content-Length` header (connection-close delimited) to
+    /// exercise the incremental cap genuinely.
+    #[tokio::test]
+    async fn truncated_body_is_flagged_in_result() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
+            .await
+            .expect("bind loopback listener");
+        let addr = listener.local_addr().expect("local addr");
+        let server = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.expect("accept connection");
+            // Read the request head; we only ever serve one canned response.
+            let mut buf = vec![0u8; 8192];
+            let _ = socket.read(&mut buf).await.expect("read request");
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\nconnection: close\r\n\r\n",
+                )
+                .await
+                .expect("write headers");
+            let chunk = vec![b'a'; 64 * 1024];
+            let mut written = 0usize;
+            while written < MAX_SIZE + 64 * 1024 {
+                // The client deliberately stops reading once its size cap is
+                // hit, so a write error here just means it hung up — done.
+                if socket.write_all(&chunk).await.is_err() {
+                    return;
+                }
+                written += chunk.len();
+            }
+            let _ = socket.shutdown().await;
+        });
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ctx = ctx_with_extraction_provider(dir.path());
+        let tool = WebFetchTool::new()
+            .expect("client builds")
+            .allow_private_hosts(true);
+        let out = tool
+            .execute(
+                &envelope(json!({ "url": format!("http://{addr}/big") })),
+                &ctx,
+            )
+            .await
+            .expect("fetch succeeds with a capped body");
+        server.abort();
+
+        assert_eq!(
+            out.content["truncated"],
+            json!(true),
+            "an over-cap body must be flagged truncated; content: {}",
+            out.content,
+        );
+        let note = out.content["truncation_note"]
+            .as_str()
+            .expect("truncation note present for a truncated body");
+        assert!(note.contains("truncated"), "{note}");
+    }
+
+    // --- SSRF guard ---------------------------------------------------------
+
+    #[tokio::test]
+    async fn execute_refuses_loopback_by_default() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/secret"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("internal"))
+            .mount(&server)
+            .await;
+
+        let tool = WebFetchTool::new().expect("client builds");
+        let env = envelope(json!({ "url": format!("{}/secret", server.uri()) }));
+        let err = tool
+            .execute(&env, &ToolContext::empty())
+            .await
+            .expect_err("loopback must be denied by default");
+        let msg = err.to_string();
+        assert!(msg.contains("SSRF"), "{msg}");
+        assert!(msg.contains("loopback"), "{msg}");
+    }
+
+    #[tokio::test]
+    async fn redirect_hops_are_validated_for_scheme() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/jump"))
+            .respond_with(
+                ResponseTemplate::new(302).insert_header("location", "ftp://example.com/payload"),
+            )
+            .mount(&server)
+            .await;
+
+        let tool = WebFetchTool::new()
+            .expect("client builds")
+            .allow_private_hosts(true);
+        let env = envelope(json!({ "url": format!("{}/jump", server.uri()) }));
+        let err = tool
+            .execute(&env, &ToolContext::empty())
+            .await
+            .expect_err("non-http(s) redirect must be refused");
+        assert!(err.to_string().contains("non-http(s)"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn redirect_loop_is_bounded() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let loop_url = format!("{}/loop", server.uri());
+        Mock::given(method("GET"))
+            .and(path("/loop"))
+            .respond_with(ResponseTemplate::new(302).insert_header("location", loop_url.as_str()))
+            .mount(&server)
+            .await;
+
+        let tool = WebFetchTool::new()
+            .expect("client builds")
+            .allow_private_hosts(true);
+        let env = envelope(json!({ "url": loop_url }));
+        let err = tool
+            .execute(&env, &ToolContext::empty())
+            .await
+            .expect_err("redirect loop must terminate");
+        assert!(err.to_string().contains("too many redirects"), "{err}");
     }
 
     #[test]

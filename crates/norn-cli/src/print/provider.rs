@@ -32,13 +32,27 @@ use crate::cli::ExitCode;
 use crate::cli::ProviderKind;
 use crate::config::ProviderConfigOverrides;
 
-/// Brief-mandated default HTTP request timeout when `-c request_timeout`
-/// is not supplied. Documented in NC-003 R1 acceptance criteria.
+/// Default HTTP request timeout when neither `settings.provider.timeout`
+/// nor `-c request_timeout` supplies a value.
+///
+/// Owner-approved explicit default (2 minutes, approved 2026-06-11).
+/// Override surfaces, lowest to highest precedence:
+/// `settings.provider.timeout` → `-c request_timeout=<duration>`.
 const DEFAULT_REQUEST_TIMEOUT: Duration = Duration::from_mins(2);
 
-/// Brief-mandated default HTTP retry budget when `-c max_retries` is not
-/// supplied. Documented in NC-003 R1 acceptance criteria.
+/// Default HTTP retry budget when neither `settings.provider.max_retries`
+/// nor `-c max_retries` supplies a value.
+///
+/// Owner-approved explicit default (2 retries, approved 2026-06-11).
+/// Override surfaces, lowest to highest precedence:
+/// `settings.provider.max_retries` → `-c max_retries=<u32>`.
 const DEFAULT_MAX_RETRIES: u32 = 2;
+
+/// Default Claude Runner binary when `settings.provider.runner_path` is
+/// unset: the documented existing behaviour of resolving `claude` on
+/// `PATH`. Kept explicit so the settings override and the fallback are
+/// visible in one place.
+const DEFAULT_RUNNER_PATH: &str = "claude";
 
 /// Concrete provider returned by [`build_provider`]. Holds the backend
 /// behind an [`Arc`] so the caller can both hand a `&dyn Provider` to
@@ -136,13 +150,23 @@ pub async fn build_provider(
                 provider_options: overrides.provider_options.clone(),
                 debug_dump_file: overrides.debug_dump_file.clone(),
                 rate_limit: overrides.rate_limit,
+                rate_limit_interval: overrides.rate_limit_interval,
+                retry_backoff: overrides.retry_backoff,
+                retry_after_ceiling: overrides.retry_after_ceiling,
             };
             let provider = OpenAiProvider::new(config).await?;
             Ok(BuiltProvider::OpenAi(Arc::new(provider)))
         }
         ProviderKind::ClaudeRunner => {
+            // `settings.provider.runner_path` overrides the documented
+            // default lookup of `"claude"` on PATH; the default applies
+            // only when the setting is unset.
+            let runner_path = overrides
+                .runner_path
+                .clone()
+                .unwrap_or_else(|| PathBuf::from(DEFAULT_RUNNER_PATH));
             let config = ClaudeRunnerConfig {
-                runner_path: PathBuf::from("claude"),
+                runner_path,
                 model: model.to_owned(),
                 max_tokens: None,
             };
@@ -200,6 +224,10 @@ mod tests {
             debug_dump_dir: None,
             debug_dump_file: None,
             rate_limit: None,
+            rate_limit_interval: Some(Duration::from_secs(30)),
+            retry_backoff: Some(Duration::from_millis(250)),
+            retry_after_ceiling: Some(Duration::from_secs(90)),
+            runner_path: None,
         };
         let config = ProviderConfig {
             auth_source: AuthSource::OAuth { codex_home: None },
@@ -209,11 +237,17 @@ mod tests {
             provider_options: overrides.provider_options,
             debug_dump_file: None,
             rate_limit: overrides.rate_limit,
+            rate_limit_interval: overrides.rate_limit_interval,
+            retry_backoff: overrides.retry_backoff,
+            retry_after_ceiling: overrides.retry_after_ceiling,
         };
         assert_eq!(config.base_url, Some("http://localhost:8080".to_owned()));
         assert_eq!(config.timeout, Duration::from_secs(30));
         assert_eq!(config.max_retries, 5);
         assert!(config.provider_options.is_some());
+        assert_eq!(config.rate_limit_interval, Some(Duration::from_secs(30)));
+        assert_eq!(config.retry_backoff, Some(Duration::from_millis(250)));
+        assert_eq!(config.retry_after_ceiling, Some(Duration::from_secs(90)));
     }
 
     #[test]
@@ -223,6 +257,41 @@ mod tests {
         let retries = overrides.max_retries.unwrap_or(DEFAULT_MAX_RETRIES);
         assert_eq!(timeout, Duration::from_mins(2));
         assert_eq!(retries, 2);
+    }
+
+    #[tokio::test]
+    async fn claude_runner_honors_settings_runner_path_override() {
+        // Regression for the ignored `settings.provider.runner_path`:
+        // the documented override must reach the constructed adapter.
+        let overrides = ProviderConfigOverrides {
+            runner_path: Some(PathBuf::from("/opt/tools/claude-custom")),
+            ..ProviderConfigOverrides::default()
+        };
+        let built = build_provider(Some(ProviderKind::ClaudeRunner), &overrides, "sonnet")
+            .await
+            .expect("claude-runner construction is infallible");
+        match built {
+            BuiltProvider::ClaudeRunner(adapter) => assert_eq!(
+                adapter.runner_path(),
+                std::path::Path::new("/opt/tools/claude-custom"),
+            ),
+            BuiltProvider::OpenAi(_) => panic!("expected ClaudeRunner variant"),
+        }
+    }
+
+    #[tokio::test]
+    async fn claude_runner_defaults_to_claude_when_runner_path_unset() {
+        let overrides = ProviderConfigOverrides::default();
+        let built = build_provider(Some(ProviderKind::ClaudeRunner), &overrides, "sonnet")
+            .await
+            .expect("claude-runner construction is infallible");
+        match built {
+            BuiltProvider::ClaudeRunner(adapter) => assert_eq!(
+                adapter.runner_path(),
+                std::path::Path::new(DEFAULT_RUNNER_PATH),
+            ),
+            BuiltProvider::OpenAi(_) => panic!("expected ClaudeRunner variant"),
+        }
     }
 
     #[tokio::test]

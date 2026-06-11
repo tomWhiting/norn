@@ -124,6 +124,16 @@ pub struct ToolContext {
     /// so that bash's `cd` parsing and the loop's prompt commands / hooks /
     /// rules all see the same value.
     working_dir: SharedWorkingDir,
+    /// Optional workspace-confinement root for the file tools.
+    ///
+    /// When set (via [`Self::confine_to_workspace`]) the read/write/edit/
+    /// patch tools refuse any resolved path that escapes this directory
+    /// after symlink-aware canonicalization, including escapes through
+    /// `..` traversal, absolute paths, model-supplied `working_dir`
+    /// arguments, and symlinks pointing outside the root. Unset (the
+    /// default) preserves unconfined behaviour for embedders that operate
+    /// across arbitrary directories.
+    workspace_root: Option<PathBuf>,
 }
 
 impl ToolContext {
@@ -143,6 +153,7 @@ impl ToolContext {
             read_files: Mutex::new(HashSet::new()),
             extensions: Mutex::new(HashMap::new()),
             working_dir: SharedWorkingDir::default(),
+            workspace_root: None,
         }
     }
 
@@ -161,7 +172,27 @@ impl ToolContext {
             read_files: Mutex::new(HashSet::new()),
             extensions: Mutex::new(HashMap::new()),
             working_dir,
+            workspace_root: None,
         }
+    }
+
+    /// Confine the file tools (read/write/edit/patch) to `root`.
+    ///
+    /// Opt-in: when set, any path that resolves outside `root` after
+    /// symlink-aware canonicalization is refused by those tools, and
+    /// `apply_patch`'s model-supplied `working_dir` must itself live inside
+    /// the root. When never called, path resolution is unconfined (the
+    /// historical behaviour for embedders working in arbitrary
+    /// directories).
+    pub fn confine_to_workspace(&mut self, root: PathBuf) {
+        self.workspace_root = Some(root);
+    }
+
+    /// Returns the workspace-confinement root, if one was set via
+    /// [`Self::confine_to_workspace`].
+    #[must_use]
+    pub fn workspace_root(&self) -> Option<&Path> {
+        self.workspace_root.as_deref()
     }
 
     /// Returns a clone of the shared working-dir handle.

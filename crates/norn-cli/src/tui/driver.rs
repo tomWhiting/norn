@@ -13,7 +13,7 @@ use std::sync::Arc;
 use norn::agent::registry::AgentRegistry;
 use norn::r#loop::runner::ToolExecutor;
 use norn::provider::request::ToolDefinition;
-use norn::session::store::EventStore;
+use norn::session::store::{DurabilityPolicy, EventStore};
 use norn::tools::lsp::{LspBackend, LspWorkspace, WorkspaceLspBackend};
 use uuid::Uuid;
 
@@ -83,8 +83,14 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mut bundle = build_runtime(cli, inputs)?;
     apply_system_prompt(&mut bundle, norn::system_prompt::ExecutionMode::Interactive);
 
+    // The working directory is recorded in the session index entry, so a
+    // failed cwd read is a startup error — never silently degraded to an
+    // empty string that poisons the index. Propagated as the session
+    // stack's typed I/O error, matching the TUI `/new` path
+    // (`norn_tui::app::slash::create_new_session_store`), which
+    // propagates the same failure instead of defaulting.
     let working_dir = std::env::current_dir()
-        .unwrap_or_default()
+        .map_err(crate::session::SessionPersistError::from)?
         .to_string_lossy()
         .into_owned();
 
@@ -246,7 +252,7 @@ fn open_session(
 
     if let Some(id) = cli.resume.as_deref() {
         let (store, _events, entry) = resume_session(&data_dir, id)?;
-        let store = attach_sink(store, &data_dir, &entry.id);
+        let store = attach_sink(store, &data_dir, &entry.id, DurabilityPolicy::Flush)?;
         return Ok(TuiSessionHandle {
             store: Arc::new(store),
             session_id: entry.id.clone(),
@@ -258,7 +264,7 @@ fn open_session(
     if let Some(id) = cli.fork.as_deref() {
         let (entry, store, _events) =
             fork_session(&data_dir, id, bundle.model.clone(), working_dir)?;
-        let store = attach_sink(store, &data_dir, &entry.id);
+        let store = attach_sink(store, &data_dir, &entry.id, DurabilityPolicy::Flush)?;
         return Ok(TuiSessionHandle {
             store: Arc::new(store),
             session_id: entry.id.clone(),
@@ -273,7 +279,12 @@ fn open_session(
         working_dir,
         cli.session_name.clone(),
     )?;
-    let store = attach_sink(EventStore::new(), &data_dir, &entry.id);
+    let store = attach_sink(
+        EventStore::new(),
+        &data_dir,
+        &entry.id,
+        DurabilityPolicy::Flush,
+    )?;
     Ok(TuiSessionHandle {
         store: Arc::new(store),
         session_id: entry.id.clone(),

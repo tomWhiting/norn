@@ -71,6 +71,14 @@ fn collect_subtree(registry: &AgentRegistry, root: Uuid) -> Vec<Uuid> {
 /// Per-agent shutdown — best-effort steer, abort if a handle is held, and
 /// terminal registry transitions. Failures during these steps are surfaced
 /// in the returned status label rather than panicked on.
+///
+/// An entry that is *already* terminal (the child finished — or failed —
+/// on its own before the close reached it) is treated as reclaim-only:
+/// its recorded outcome is never rewritten (terminal statuses are
+/// immutable; a Failed child must not be resurrected as Completed), the
+/// entry is simply removed. The status check and the transitions run
+/// under one write lock so a concurrently-finishing child cannot slip
+/// between them.
 async fn shutdown_one(
     registry: &parking_lot::RwLock<AgentRegistry>,
     handles: Option<&AgentHandles>,
@@ -95,13 +103,27 @@ async fn shutdown_one(
     }
 
     let mut reg = registry.write();
-    if reg.mark_completing(id).is_err() {
+    let Some(entry) = reg.get(id) else {
         // Agent already gone from the registry — nothing more to do.
         return "missing";
+    };
+    if entry.status.is_terminal() {
+        // Already finished on its own: reclaim without rewriting the
+        // recorded outcome.
+        reg.remove_terminal(id);
+        return "reclaimed";
     }
-    if reg.mark_completed(id).is_err() {
+    if let Err(e) = reg.mark_completing(id) {
+        tracing::warn!(agent_id = %id, error = %e, "close_agent: mark_completing failed");
         return "failed";
     }
+    if let Err(e) = reg.mark_completed(id) {
+        tracing::warn!(agent_id = %id, error = %e, "close_agent: mark_completed failed");
+        return "failed";
+    }
+    // The closer owns this agent's lifecycle end: reclaim the terminal
+    // entry immediately rather than leaving it for a display hold window.
+    reg.remove_terminal(id);
     "completed"
 }
 
@@ -217,7 +239,6 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::agent::registry::AgentStatus;
     use crate::tools::agent::coord::test_support::{
         build_infra, envelope_for, register_agent, synthetic_handle,
     };
@@ -265,16 +286,13 @@ mod tests {
             "root must be the last agent shut down",
         );
 
+        // Terminal cleanup removes closed agents from the registry and frees
+        // their paths.
         let reg = registry.read();
-        assert_eq!(reg.get(root).expect("root").status, AgentStatus::Completed);
-        assert_eq!(
-            reg.get(child_a).expect("child_a").status,
-            AgentStatus::Completed
-        );
-        assert_eq!(
-            reg.get(child_b).expect("child_b").status,
-            AgentStatus::Completed
-        );
+        assert!(reg.get(root).is_none(), "closed root removed");
+        assert!(reg.get(child_a).is_none(), "closed child_a removed");
+        assert!(reg.get(child_b).is_none(), "closed child_b removed");
+        assert!(reg.get_by_path("/root").is_none(), "root path freed");
     }
 
     /// R3 degenerate case: a leaf with no children still transitions
@@ -299,9 +317,47 @@ mod tests {
         assert_eq!(shut_down[0]["agent_id"], leaf.to_string());
         assert_eq!(shut_down[0]["status"], "completed");
 
+        // Terminal cleanup removes the closed leaf from the registry.
+        assert!(registry.read().get(leaf).is_none(), "closed leaf removed");
+    }
+
+    /// Terminal-resurrection regression: closing a child that already
+    /// failed on its own must NOT rewrite its outcome to Completed — the
+    /// close path treats an already-terminal child as reclaim-only.
+    #[tokio::test]
+    async fn close_agent_reclaims_already_failed_child_without_rewriting() {
+        use crate::agent::registry::AgentStatus;
+
+        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let child = register_agent(&registry, "/parent/failed-child", None);
+        registry
+            .write()
+            .mark_failed(child)
+            .expect("mark child failed");
         assert_eq!(
-            registry.read().get(leaf).expect("entry").status,
-            AgentStatus::Completed
+            registry.read().get(child).expect("entry").status,
+            AgentStatus::Failed,
+        );
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+
+        let tool = CloseAgentTool::new();
+        let envelope = envelope_for(
+            "close_agent",
+            json!({"agent_id": child.to_string(), "reason": "sweep"}),
+        );
+        let out = tool.execute(&envelope, &ctx).await.expect("close");
+        assert!(!out.is_error, "{:?}", out.content);
+        let shut_down = out.content["shut_down"].as_array().expect("array");
+        assert_eq!(shut_down.len(), 1);
+        assert_eq!(
+            shut_down[0]["status"], "reclaimed",
+            "an already-terminal child is reclaimed, never re-marked completed",
+        );
+        assert!(
+            registry.read().get(child).is_none(),
+            "the terminal entry is reclaimed from the registry",
         );
     }
 

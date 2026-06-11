@@ -24,6 +24,18 @@ pub const DEFAULT_INITIAL_BACKOFF: Duration = Duration::from_secs(1);
 /// Default exponential backoff multiplier between successive retries.
 pub const DEFAULT_BACKOFF_MULTIPLIER: f64 = 2.0;
 
+/// Saturation bound for backoff math, in whole seconds: `u64::MAX / 2`
+/// (roughly 292 billion years). Overflowing or non-finite backoff
+/// computations clamp here instead of panicking inside
+/// [`Duration::from_secs_f64`].
+const BACKOFF_SATURATION_SECS: u64 = u64::MAX / 2;
+
+/// The exact `f64` that `BACKOFF_SATURATION_SECS` rounds to: 2^63.
+/// Comparing against this exactly-representable literal avoids a lossy
+/// integer-to-float cast while preserving the same comparison the cast
+/// produced (`u64::MAX / 2` rounds up to 2^63 in `f64`).
+const BACKOFF_SATURATION_SECS_F64: f64 = 9_223_372_036_854_775_808.0;
+
 /// Categorisation of provider errors that should be retried automatically.
 ///
 /// The `ServerError` variant carries an optional `status` so callers can
@@ -92,10 +104,11 @@ impl Default for RetryPolicy {
 impl RetryPolicy {
     /// Determine whether an error matches the configured retryable set.
     ///
-    /// `AuthenticationFailed`, `ResponseParseError`, and
-    /// `UnsupportedFeature` are never retryable regardless of the
-    /// configured set: those represent client-side faults that further
-    /// attempts cannot resolve.
+    /// `AuthenticationFailed`, `ResponseParseError`,
+    /// `UnsupportedFeature`, and `Truncated` are never retryable
+    /// regardless of the configured set: those represent client-side
+    /// faults or deterministic stops that further attempts cannot
+    /// resolve.
     #[must_use]
     pub fn classifies_as_retryable(&self, err: &ProviderError) -> bool {
         let category = classify_provider_error(err);
@@ -115,12 +128,6 @@ impl RetryPolicy {
     /// initial_backoff * multiplier^max_retries` and saturating on
     /// overflow.
     #[must_use]
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        clippy::cast_possible_wrap
-    )]
     pub fn total_duration_cap(&self) -> Duration {
         let multiplier = self
             .backoff_multiplier
@@ -129,10 +136,10 @@ impl RetryPolicy {
         let scale = f64::from(self.max_retries).max(1.0) * multiplier;
         let initial_secs = self.initial_backoff.as_secs_f64();
         let total = initial_secs * scale;
-        if total.is_finite() && total < (u64::MAX / 2) as f64 {
+        if total.is_finite() && total < BACKOFF_SATURATION_SECS_F64 {
             Duration::from_secs_f64(total)
         } else {
-            Duration::from_secs(u64::MAX / 2)
+            Duration::from_secs(BACKOFF_SATURATION_SECS)
         }
     }
 }
@@ -164,7 +171,8 @@ fn classify_provider_error(err: &ProviderError) -> Option<RetryableError> {
         | ProviderError::UnsupportedFeature { .. }
         | ProviderError::ContextWindowExceeded
         | ProviderError::QuotaExceeded
-        | ProviderError::InvalidRequest { .. } => None,
+        | ProviderError::InvalidRequest { .. }
+        | ProviderError::Truncated { .. } => None,
     }
 }
 
@@ -224,13 +232,12 @@ where
     }
 }
 
-#[allow(clippy::cast_precision_loss, clippy::cast_sign_loss)]
 fn scale_backoff(current: Duration, multiplier: f64) -> Duration {
     let scaled = current.as_secs_f64() * multiplier.max(1.0);
-    if scaled.is_finite() && scaled < (u64::MAX / 2) as f64 {
+    if scaled.is_finite() && scaled < BACKOFF_SATURATION_SECS_F64 {
         Duration::from_secs_f64(scaled)
     } else {
-        Duration::from_secs(u64::MAX / 2)
+        Duration::from_secs(BACKOFF_SATURATION_SECS)
     }
 }
 
@@ -309,6 +316,27 @@ mod tests {
             reason: "request timed out after 30s".to_string(),
         };
         assert!(policy.classifies_as_retryable(&err));
+    }
+
+    /// Regression test (fix campaign Track V, finding 2): deterministic
+    /// stops — truncation at the token limit or a content-filter cut —
+    /// were previously typed as `StreamInterrupted` and therefore
+    /// classified retryable, so a consumer using the classifier retried
+    /// a deterministic stop forever. The dedicated `Truncated` variant
+    /// must never classify as retryable.
+    #[test]
+    fn truncated_never_retries() {
+        let policy = RetryPolicy::default();
+        for stop_reason in ["max_tokens", "content_filter"] {
+            let err = ProviderError::Truncated {
+                stop_reason: stop_reason.to_string(),
+                reason: "model output truncated".to_string(),
+            };
+            assert!(
+                !policy.classifies_as_retryable(&err),
+                "deterministic stop {stop_reason} must not be retryable"
+            );
+        }
     }
 
     #[test]

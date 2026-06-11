@@ -1848,6 +1848,7 @@ mod server_path_tests {
     use std::sync::Arc;
     use std::time::{Duration, Instant};
 
+    use diagnostics::adapter::registry::AdapterRegistry;
     use diagnostics::conventions::{RemediationDef, ReportDef, ToolTarget};
     use diagnostics::event::{DiagnosticEvent, Severity};
     use diagnostics::policy::{Guidance, PolicyVerdict, Tier};
@@ -1866,7 +1867,32 @@ mod server_path_tests {
     use super::super::findings::Findings;
     use super::super::post_check::DiagnosticsPostCheck;
     use super::super::remediation;
-    use super::{load_conventions, make_output, test_infra, write_file};
+    use super::{EchoDiagnosticAdapter, load_conventions, make_output, test_infra, write_file};
+
+    /// Conventions for the fallback tests: an `echo_diag` activation that
+    /// blocks, dispatched through the server-query path first and then —
+    /// when the server is unreachable, stalls, or errors — through the
+    /// inline adapter registry.
+    const ECHO_DIAG_CONVENTIONS: &str = r#"
+[rust.diagnostics]
+echo_diag = { target = "file", handling = "block" }
+
+[rust-general]
+tools = ["write"]
+paths = ["**/*.rs"]
+echo_diag = { on = "tool", handling = "block" }
+"#;
+
+    /// Registers the [`EchoDiagnosticAdapter`] bound to `true` so the
+    /// inline fallback dispatches a real adapter that exits cleanly and
+    /// emits no diagnostics. Without a registered adapter the hardened
+    /// missing-adapter path emits a blocking "cannot run activated
+    /// diagnostic tool" finding instead of passing.
+    fn install_clean_inline_adapter(infra: &mut DiagnosticInfra) {
+        let mut adapters = AdapterRegistry::new();
+        adapters.register(Box::new(EchoDiagnosticAdapter::new("true".to_owned())));
+        infra.adapters = Arc::new(adapters);
+    }
 
     fn prepare_socket_dir(workspace_root: &std::path::Path) -> PathBuf {
         let socket_path = workspace_root.join(".git/yggdrasil/diag.sock");
@@ -1932,18 +1958,11 @@ mod server_path_tests {
         let file = dir.path().join("src/lib.rs");
         write_file(&file, "fn ok() {}\n");
 
-        let conventions = load_conventions(
-            &dir,
-            r#"
-[rust-general]
-tools = ["write"]
-paths = ["**/*.rs"]
-clippy = { on = "tool", handling = "block" }
-"#,
-        );
+        let conventions = load_conventions(&dir, ECHO_DIAG_CONVENTIONS);
 
         // Default socket path under tempdir's .git/yggdrasil/diag.sock does not exist.
-        let infra = test_infra(dir.path().to_path_buf(), Some(conventions));
+        let mut infra = test_infra(dir.path().to_path_buf(), Some(conventions));
+        install_clean_inline_adapter(&mut infra);
         assert!(
             !infra.socket_path.exists(),
             "test precondition: socket file must not exist"
@@ -1963,6 +1982,8 @@ clippy = { on = "tool", handling = "block" }
             started.elapsed() < Duration::from_secs(1),
             "post-check must short-circuit when socket is missing"
         );
+        // The registered inline adapter runs cleanly (exit 0, no output),
+        // so the fallback produces no findings and the outcome is Pass.
         assert!(matches!(result.outcome, PostValidateOutcome::Pass));
     }
 
@@ -1972,20 +1993,13 @@ clippy = { on = "tool", handling = "block" }
         let file = dir.path().join("src/lib.rs");
         write_file(&file, "fn ok() {}\n");
 
-        let conventions = load_conventions(
-            &dir,
-            r#"
-[rust-general]
-tools = ["write"]
-paths = ["**/*.rs"]
-clippy = { on = "tool", handling = "block" }
-"#,
-        );
+        let conventions = load_conventions(&dir, ECHO_DIAG_CONVENTIONS);
 
         let socket_path = prepare_socket_dir(dir.path());
         std::fs::write(&socket_path, "stale-not-a-real-socket").expect("write stale socket file");
 
-        let infra = infra_with_socket(dir.path().to_path_buf(), socket_path, conventions);
+        let mut infra = infra_with_socket(dir.path().to_path_buf(), socket_path, conventions);
+        install_clean_inline_adapter(&mut infra);
         let ctx = ToolContext::empty();
         ctx.insert_extension(Arc::new(infra));
 
@@ -2000,6 +2014,8 @@ clippy = { on = "tool", handling = "block" }
             started.elapsed() < Duration::from_secs(1),
             "post-check must short-circuit when socket is stale"
         );
+        // The registered inline adapter runs cleanly (exit 0, no output),
+        // so the fallback produces no findings and the outcome is Pass.
         assert!(matches!(result.outcome, PostValidateOutcome::Pass));
     }
 
@@ -2104,15 +2120,7 @@ clippy = { on = "tool", handling = "advise" }
         let file = dir.path().join("src/lib.rs");
         write_file(&file, "fn ok() {}\n");
 
-        let conventions = load_conventions(
-            &dir,
-            r#"
-[rust-general]
-tools = ["write"]
-paths = ["**/*.rs"]
-clippy = { on = "tool", handling = "block" }
-"#,
-        );
+        let conventions = load_conventions(&dir, ECHO_DIAG_CONVENTIONS);
 
         let socket_path = prepare_socket_dir(dir.path());
         let listener = UnixListener::bind(&socket_path).expect("bind listener");
@@ -2123,7 +2131,8 @@ clippy = { on = "tool", handling = "block" }
         };
         let server_task = spawn_server(listener, response);
 
-        let infra = infra_with_socket(dir.path().to_path_buf(), socket_path, conventions);
+        let mut infra = infra_with_socket(dir.path().to_path_buf(), socket_path, conventions);
+        install_clean_inline_adapter(&mut infra);
         let ctx = ToolContext::empty();
         ctx.insert_extension(Arc::new(infra));
 
@@ -2134,7 +2143,8 @@ clippy = { on = "tool", handling = "block" }
 
         let result = DiagnosticsPostCheck.check(&output, &ctx).await;
         server_task.await.expect("join").expect("server io ok");
-        // No adapters installed in test infra, so fallback inline path produces no errors.
+        // The registered inline adapter runs cleanly (exit 0, no output),
+        // so the fallback produces no findings and the outcome is Pass.
         assert!(matches!(result.outcome, PostValidateOutcome::Pass));
     }
 
@@ -2202,8 +2212,8 @@ clippy = { on = "tool", handling = "block" }
     /// LD-003b R2: a server that accepts a connection but never replies must
     /// not be allowed to hang the post-check. The fast path bounds the
     /// `read_frame` wait via `QUERY_RESPONSE_TIMEOUT` (5s) and falls back to
-    /// the inline adapter dispatch path on timeout. With no adapters
-    /// installed in the test infra, the inline fallback returns Pass.
+    /// the inline adapter dispatch path on timeout. The registered inline
+    /// adapter runs cleanly, so the fallback returns Pass.
     ///
     /// The wall-clock budget here is generous — `QUERY_RESPONSE_TIMEOUT`
     /// plus a 2s margin — so the test does not flake on a loaded CI runner.
@@ -2214,15 +2224,7 @@ clippy = { on = "tool", handling = "block" }
         let file = dir.path().join("src/lib.rs");
         write_file(&file, "fn ok() {}\n");
 
-        let conventions = load_conventions(
-            &dir,
-            r#"
-[rust-general]
-tools = ["write"]
-paths = ["**/*.rs"]
-clippy = { on = "tool", handling = "block" }
-"#,
-        );
+        let conventions = load_conventions(&dir, ECHO_DIAG_CONVENTIONS);
 
         let socket_path = prepare_socket_dir(dir.path());
         let listener = UnixListener::bind(&socket_path).expect("bind listener");
@@ -2239,7 +2241,8 @@ clippy = { on = "tool", handling = "block" }
             drop(stream);
         });
 
-        let infra = infra_with_socket(dir.path().to_path_buf(), socket_path, conventions);
+        let mut infra = infra_with_socket(dir.path().to_path_buf(), socket_path, conventions);
+        install_clean_inline_adapter(&mut infra);
         let ctx = ToolContext::empty();
         ctx.insert_extension(Arc::new(infra));
 
@@ -2257,8 +2260,8 @@ clippy = { on = "tool", handling = "block" }
             elapsed < Duration::from_secs(7),
             "post-check must not hang on a stalled server (elapsed: {elapsed:?})"
         );
-        // No adapters installed in test infra, so fallback inline path
-        // produces no errors and the outcome is Pass.
+        // The registered inline adapter runs cleanly (exit 0, no output),
+        // so the fallback produces no findings and the outcome is Pass.
         assert!(matches!(result.outcome, PostValidateOutcome::Pass));
 
         stall_task.abort();

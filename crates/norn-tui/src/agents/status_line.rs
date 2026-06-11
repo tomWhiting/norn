@@ -416,12 +416,21 @@ impl AgentStatusPanel {
             .filter(|(_, deadline)| now >= **deadline)
             .map(|(id, _)| *id)
             .collect();
+        if expired.is_empty() {
+            return;
+        }
+        // The registry retains terminal entries precisely so this panel
+        // can show them through the hold window; once the hold expires
+        // the panel is the reclaimer of record for entries nothing else
+        // (e.g. `close_agent`) removed first.
+        let mut registry = self.registry.write();
         for id in &expired {
             self.holds.remove(id);
             self.activity.remove(id);
             self.tokens.remove(id);
             self.last_change_at.remove(id);
             self.last_status.remove(id);
+            registry.remove_terminal(*id);
         }
     }
 

@@ -48,8 +48,6 @@ use norn::session::store::EventStore;
 use norn::skill::SkillCatalog;
 use norn::tool::registry::ToolRegistry;
 use norn::tools::agent::AgentToolInfra;
-use norn::tools::context_paths::ContextSearchPaths;
-use norn::tools::skill::SkillSearchPaths;
 use norn::tools::write::{LengthLimit, WriteTool};
 use serde::Deserialize;
 use serde_json::Value;
@@ -128,9 +126,40 @@ pub fn install_child_result_sender(registry: &ToolRegistry, sender: ChildResultS
     shared.insert_extension(Arc::new(sender));
 }
 
+/// Declare delivery-anchored reclamation of finished children on the
+/// registry's shared [`norn::tool::context::ToolContext`] — the
+/// **headless** (print / non-TUI) driver's half of the reclamation
+/// ownership split.
+///
+/// Installs the [`norn::tools::agent::ReclaimOnResultDelivery`] marker
+/// via [`norn::runtime_init::install_terminal_reclamation`]: once a
+/// spawned or forked child's result has been delivered through the
+/// child-result channel, the launch wrapper reclaims the child's
+/// terminal registry entry and the parent-held handle, so headless runs
+/// do not pin one event store per finished child.
+///
+/// The TUI driver must **not** call this — its agent status panel
+/// displays terminal entries through a hold window and reclaims them
+/// itself; installing the marker there would race the hold window into
+/// nonexistence. `build_runtime` is shared between both drivers, which
+/// is why this lives in per-driver wiring instead.
+pub fn install_headless_reclamation(registry: &ToolRegistry) {
+    let Some(shared) = registry.shared_context() else {
+        return;
+    };
+    norn::runtime_init::install_terminal_reclamation(&shared);
+}
+
 /// Install the shared agent event broadcast channel on the tool
 /// registry's shared context so fork/spawn tools can create child
 /// [`AgentEventSender`](norn::provider::AgentEventSender) instances.
+///
+/// The extension holds an **owned** `Sender` clone, so the broadcast
+/// channel never closes while the registry's shared context is alive
+/// (REVIEW C1). Consumers must therefore not await channel closure to
+/// detect end-of-stream — the print renderer uses the explicit
+/// [`StreamRendererHandle::finish`](crate::print::StreamRendererHandle::finish)
+/// shutdown signal instead.
 pub fn install_shared_agent_event_channel(
     registry: &ToolRegistry,
     tx: tokio::sync::broadcast::Sender<norn::provider::AgentEvent>,
@@ -241,56 +270,6 @@ pub fn build_skill_search_paths(settings: &NornSettings, cwd: &Path) -> Vec<Path
 #[must_use]
 pub fn build_skill_catalog(paths: &[PathBuf]) -> Arc<SkillCatalog> {
     Arc::new(SkillCatalog::scan(paths))
-}
-
-/// Install both the [`SkillSearchPaths`] list and the
-/// `Arc<SkillCatalog>` extension on the registry's shared
-/// [`norn::tool::context::ToolContext`].
-///
-/// The catalog and the paths come from
-/// [`build_skill_search_paths`] and [`build_skill_catalog`] respectively
-/// — splitting construction from installation lets `build_runtime` use
-/// `SkillCatalog::is_empty()` to decide whether to register the
-/// `SkillTool` *before* the registry is moved into `build_loop_context`.
-pub fn install_skill_infra(
-    registry: &ToolRegistry,
-    paths: Vec<PathBuf>,
-    catalog: Arc<SkillCatalog>,
-) {
-    let Some(shared) = registry.shared_context() else {
-        return;
-    };
-    shared.insert_extension(Arc::new(SkillSearchPaths(paths)));
-    shared.insert_extension(catalog);
-}
-
-/// Install [`ContextSearchPaths`] on the registry's shared
-/// [`norn::tool::context::ToolContext`] when the merged settings declare
-/// any context search paths (NC-005 R2).
-///
-/// Unlike [`install_skill_infra`], this helper installs *only*
-/// when settings supply at least one entry — absence of the extension
-/// signals "no settings-level context paths" to Harry's context cluster,
-/// which is then free to apply its own discovery rules (NG2). Relative
-/// settings entries are joined onto `cwd` in the same way as skills.
-pub fn install_context_search_paths(registry: &ToolRegistry, settings: &NornSettings, cwd: &Path) {
-    let Some(shared) = registry.shared_context() else {
-        return;
-    };
-    let Some(context) = settings.context.as_ref() else {
-        return;
-    };
-    let Some(entries) = context.search_paths.as_ref() else {
-        return;
-    };
-    if entries.is_empty() {
-        return;
-    }
-    let paths: Vec<PathBuf> = entries
-        .iter()
-        .map(|entry| resolve_search_path(cwd, entry))
-        .collect();
-    shared.insert_extension(Arc::new(ContextSearchPaths(paths)));
 }
 
 /// Resolve a settings-supplied path string against the working
@@ -456,18 +435,32 @@ pub fn build_tool_context_with_diagnostics(
     ctx
 }
 
-/// Install an [`ActionLog`] on the registry's shared [`ToolContext`] and
-/// the [`LoopContext`] so the `action_log` tool and the loop's dispatch
-/// recording share one ledger.
+/// Install an [`ActionLog`](norn::session::action_log::ActionLog) on the
+/// registry's shared [`norn::tool::context::ToolContext`] and the
+/// [`norn::r#loop::loop_context::LoopContext`] so the `action_log` tool
+/// and the loop's dispatch recording share one ledger.
+///
+/// The log is constructed with the loop context's **live**
+/// [`norn::tool::context::SharedWorkingDir`] handle (the same one bash's
+/// `cd` parsing updates), so model-supplied relative paths resolve
+/// against the agent's working directory rather than the process CWD.
 ///
 /// Must be called after `open_session` (the event store does not exist at
-/// `build_runtime` time).
+/// `build_runtime` time). On `--resume` / `--fork`, `store` already
+/// contains the replayed events: [`norn::agent::rebuild_action_log`]
+/// replays them so the resumed session's action ledger (and derived
+/// mutation ledger) is queryable instead of starting empty. A fresh
+/// store has no events, making the rebuild a no-op.
 pub fn install_action_log(
     registry: &norn::tool::registry::ToolRegistry,
     store: &Arc<EventStore>,
     loop_context: &mut norn::r#loop::loop_context::LoopContext,
 ) {
-    let action_log = Arc::new(norn::session::action_log::ActionLog::new(Arc::clone(store)));
+    let action_log = Arc::new(norn::session::action_log::ActionLog::with_working_dir(
+        Arc::clone(store),
+        loop_context.working_dir.clone(),
+    ));
+    norn::agent::rebuild_action_log(&action_log, &store.events());
     if let Some(ctx) = registry.shared_context() {
         ctx.insert_extension(Arc::clone(&action_log));
     }

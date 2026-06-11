@@ -134,13 +134,30 @@ where
 
     let join = tokio::spawn(async move {
         let result = task_future.await;
+        // Stop the heartbeat task and wait for it to actually finish BEFORE
+        // publishing the terminal status. `abort` only takes effect at an
+        // await point, so a heartbeat already past its `tick().await` could
+        // otherwise publish `is_complete: false` *after* the terminal status,
+        // overwriting it in the watch channel — and since the monitor task is
+        // then dead, `wait_complete` would hang on a status nobody updates
+        // again.
         monitor_handle.abort();
-        let _ = tx.send(MonitorStatus {
-            summary: "task completed".to_string(),
-            progress_pct: Some(100.0),
-            is_complete: true,
-            last_updated: Utc::now(),
-        });
+        if let Err(err) = monitor_handle.await
+            && !err.is_cancelled()
+        {
+            tracing::warn!(error = %err, "monitor heartbeat task terminated abnormally");
+        }
+        if tx
+            .send(MonitorStatus {
+                summary: "task completed".to_string(),
+                progress_pct: Some(100.0),
+                is_complete: true,
+                last_updated: Utc::now(),
+            })
+            .is_err()
+        {
+            tracing::debug!("monitor status receiver dropped before terminal status was published");
+        }
         result
     });
 
@@ -253,5 +270,46 @@ mod tests {
         assert!(saw_heartbeat, "expected at least one heartbeat update");
 
         join.await.expect("join");
+    }
+
+    /// Regression for the terminal-status race: with an aggressive heartbeat
+    /// and a task that finishes mid-heartbeat, a heartbeat publish landing
+    /// after the terminal publish used to overwrite `is_complete: true` in
+    /// the watch channel, permanently losing completion. The ordering fix
+    /// (abort + join the monitor before publishing) makes the terminal
+    /// status the channel's last word — always.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn terminal_status_never_overwritten_by_racing_heartbeat() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![]));
+        // Many iterations of a deliberately racy configuration: 1ms
+        // heartbeats against a ~1ms task, on a multi-threaded runtime so the
+        // heartbeat and the completion publish genuinely interleave.
+        for round in 0..200 {
+            let config = MonitorConfig {
+                task_description: format!("racy-{round}"),
+                monitor_model: "haiku".to_string(),
+                poll_interval: Duration::from_millis(1),
+            };
+            let task = async {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            };
+            let (join, mut handle) = run_monitored(&config, task, Arc::clone(&provider));
+            join.await.expect("task joins");
+
+            // The task (and therefore the terminal publish) has fully
+            // finished. Whatever the watch channel holds now is final — no
+            // heartbeat may follow. A lost terminal status shows up here as
+            // is_complete == false.
+            let status = handle.query();
+            assert!(
+                status.is_complete,
+                "round {round}: terminal is_complete was overwritten by a racing heartbeat",
+            );
+            // And the reactive path agrees without hanging.
+            let waited = tokio::time::timeout(Duration::from_secs(1), handle.wait_complete())
+                .await
+                .expect("wait_complete must not hang on a lost terminal status");
+            assert!(waited.is_complete);
+        }
     }
 }

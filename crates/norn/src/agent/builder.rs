@@ -32,57 +32,42 @@
 use std::any::Any;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::RwLock;
 use serde_json::Value;
-use tokio::sync::broadcast;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::agent::mailbox::Mailbox;
+use crate::agent::assembly::{
+    AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay, ToolContextParts,
+    apply_base_to_loop_context, assemble_tool_context, build_base_tool_registry,
+    collect_tool_definitions, effective_agent_config, install_agent_infra,
+    install_runtime_base_extensions, install_system_prompt, install_tool_catalog,
+    populate_loop_context, resolve_base_profile, resolve_runtime_overlay, resolve_working_dir,
+    restore_session_state, validate_workspace_root,
+};
+use crate::agent::instance::Agent;
 use crate::agent::output::AgentOutput;
 use crate::agent::registry::AgentRegistry;
 use crate::error::{ConfigError, NornError};
 use crate::integration::DiagnosticCollector;
-use crate::integration::hooks::{Hook, HookRegistry};
-use crate::integration::variables::VariableStore;
-use crate::internal::extraction::SharedProvider;
-use crate::r#loop::config::ToolExecutor;
-use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
+use crate::integration::hooks::HookRegistry;
+use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode, ToolExecutor};
 use crate::r#loop::inbound::InboundChannel;
-use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::retry::RetryPolicy;
-use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
-use crate::r#loop::tokens::SimpleTokenEstimator;
-use crate::profile::{Capability, Profile, default_scan_dirs, from_profile, resolve_profile};
-use crate::provider::request::{ReasoningEffort, ToolDefinition};
+use crate::profile::{Capability, Profile, from_profile};
+use crate::provider::AgentEventSender;
+use crate::provider::request::ReasoningEffort;
 use crate::provider::traits::Provider;
-use crate::provider::{AgentEvent, AgentEventSender};
 use crate::rules::engine::RuleEngine;
-use crate::session::action_log::ActionLog;
-use crate::session::context_edit::ContextEdits;
 use crate::session::store::EventStore;
-use crate::system_prompt::builder::{
-    ExecutionMode, SystemPromptInputs, ToolPromptEntry, build_system_prompt,
-};
-use crate::system_prompt::environment::EnvironmentConfig;
-use crate::tool::context::{SessionId, SharedWorkingDir, ToolContext};
+use crate::system_prompt::builder::ExecutionMode;
+use crate::tool::context::SharedWorkingDir;
 use crate::tool::lifecycle::RuntimePostValidateCheck;
-use crate::tool::registry::ToolRegistry;
 use crate::tool::traits::Tool;
-use crate::tool::wrap_schema_with_envelope;
-use crate::tools::agent::AgentToolInfra;
-use crate::tools::diagnostics::{
-    DiagnosticInfra, DiagnosticStopHook, DiagnosticsPostCheck, build_diagnostic_infra,
-};
+use crate::tools::diagnostics::DiagnosticInfra;
 use crate::tools::lsp::{LspBackend, LspWorkspace};
-use crate::tools::registry_builder::register_standard_tools;
-use crate::tools::tool_search::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
-
-/// A deferred installer that publishes a typed extension on the agent's
-/// shared [`ToolContext`] at build time. Stored by [`AgentBuilder::extension`]
-/// and run during [`AgentBuilder::build`].
-type ExtensionInstaller = Box<dyn FnOnce(&ToolContext) + Send>;
 
 /// Fluent builder for an in-process [`Agent`].
 ///
@@ -100,6 +85,8 @@ pub struct AgentBuilder {
     reasoning_effort: Option<ReasoningEffort>,
     capabilities: Vec<Capability>,
     working_dir: Option<PathBuf>,
+    workspace_root: Option<PathBuf>,
+    bash_drain_grace: Option<Duration>,
     allowed_tools: Option<Vec<String>>,
     extra_tools: Vec<Box<dyn Tool + Send + Sync>>,
     without_tools: Vec<String>,
@@ -140,6 +127,8 @@ impl AgentBuilder {
             reasoning_effort: None,
             capabilities: Vec::new(),
             working_dir: None,
+            workspace_root: None,
+            bash_drain_grace: None,
             allowed_tools: None,
             extra_tools: Vec::new(),
             without_tools: Vec::new(),
@@ -244,6 +233,37 @@ impl AgentBuilder {
     #[must_use]
     pub fn working_dir(mut self, dir: impl Into<PathBuf>) -> Self {
         self.working_dir = Some(dir.into());
+        self
+    }
+
+    /// Confine the file tools (`read` / `write` / `edit` / `apply_patch`)
+    /// to `root`: any path that resolves outside it after symlink-aware
+    /// canonicalization is refused, including `..` traversal, absolute
+    /// paths, and symlink escapes. `bash` checks its model-supplied
+    /// `working_dir` argument against the root but cannot confine what the
+    /// command itself does — a known, documented limitation.
+    ///
+    /// The root must exist and be a directory when [`Self::build`] runs,
+    /// otherwise building fails with a configuration error. Unset (the
+    /// default) leaves path resolution unconfined for embedders that
+    /// operate across arbitrary directories.
+    #[must_use]
+    pub fn workspace_root(mut self, root: impl Into<PathBuf>) -> Self {
+        self.workspace_root = Some(root.into());
+        self
+    }
+
+    /// Override the grace period the `bash` tool grants its output drains
+    /// after the shell exits — the bound on how long a backgrounded child
+    /// (`server &`) can hold the output pipes before the tool returns the
+    /// buffered output annotated with `streams_still_open`.
+    ///
+    /// Defaults to 2 seconds (the owner-approved default) when unset.
+    /// Applies to the standard `bash` tool; building fails when this is
+    /// set but `bash` is excluded from the final tool set.
+    #[must_use]
+    pub fn bash_drain_grace(mut self, grace: Duration) -> Self {
+        self.bash_drain_grace = Some(grace);
         self
     }
 
@@ -450,15 +470,18 @@ impl AgentBuilder {
         self
     }
 
-    /// Publish a typed extension on the agent's shared [`ToolContext`] at build
-    /// time, retrievable inside tools via [`ToolContext::get_extension`].
+    /// Publish a typed extension on the agent's shared
+    /// [`ToolContext`](crate::tool::context::ToolContext) at build time,
+    /// retrievable inside tools via
+    /// [`ToolContext::get_extension`](crate::tool::context::ToolContext::get_extension).
     ///
     /// Extensions are installed after the standard and extra tools are
     /// registered and after profile gating, so embedding consumers can attach
     /// host-supplied infrastructure (identity, service handles, registries)
     /// that individual tools read at execution time. Inserting two values of
     /// the same type keeps only the last, matching
-    /// [`ToolContext::insert_extension`] semantics.
+    /// [`ToolContext::insert_extension`](crate::tool::context::ToolContext::insert_extension)
+    /// semantics.
     #[must_use]
     pub fn extension<T>(mut self, value: Arc<T>) -> Self
     where
@@ -474,35 +497,37 @@ impl AgentBuilder {
     /// # Errors
     ///
     /// - [`NornError::Config`] when the working directory cannot be
-    ///   determined, the named profile cannot be resolved, or no tool remains
-    ///   after exclusions.
+    ///   determined, the workspace root is not an existing directory, the
+    ///   named profile cannot be resolved, no tool remains after
+    ///   exclusions, or [`Self::bash_drain_grace`] is set while `bash` is
+    ///   excluded from the final tool set.
     pub fn build(mut self) -> Result<Agent, NornError> {
-        let working_dir = match self.working_dir {
-            Some(dir) => dir,
-            None => std::env::current_dir().map_err(|e| {
-                NornError::Config(ConfigError::InvalidConfig {
-                    reason: format!("cannot determine working directory: {e}"),
-                })
-            })?,
-        };
+        let working_dir = resolve_working_dir(self.working_dir.take())?;
+        let workspace_root = validate_workspace_root(self.workspace_root.take())?;
         let shared_wd = SharedWorkingDir::new(working_dir.clone());
 
-        let mut profile = match self.profile {
-            Some(profile) => profile,
-            None => match self.profile_name {
-                Some(ref name) => resolve_profile(name, &default_scan_dirs(&working_dir))?,
-                None => Profile::default(),
-            },
-        };
+        let mut profile = resolve_base_profile(
+            self.profile.take(),
+            self.profile_name.as_deref(),
+            &working_dir,
+        )?;
         if let Some(model) = self.model {
             profile.model = model;
         }
+        // H13: the programmatic hook registry is taken exactly once. When the
+        // runtime base is loaded it is *moved* into `load_runtime_base`, which
+        // merges it with the settings-declared shell hooks (programmatic hooks
+        // first, so they win first-`Block` conflicts); the merged registry
+        // comes back as `base.hooks`. Without a runtime base the registry
+        // passes through untouched. Either way nothing is merged twice and
+        // nothing is silently dropped.
+        let mut programmatic_hooks = self.hooks.take();
         let runtime_base = if self.load_runtime_base {
             let mut profile_for_base = profile.clone();
             let base = crate::runtime_init::load_runtime_base(
                 &working_dir,
                 &mut profile_for_base,
-                self.hooks.clone(),
+                programmatic_hooks.take(),
                 self.task_group_slug.as_deref(),
             )?;
             profile = profile_for_base;
@@ -527,34 +552,36 @@ impl AgentBuilder {
             }));
         }
 
-        let mut registry = ToolRegistry::new();
         let lsp_backend = self.lsp_backend.clone();
-        register_standard_tools(&mut registry, lsp_backend.clone());
-        for tool in self.extra_tools {
-            registry.register(tool);
-        }
-        for name in &self.without_tools {
-            registry.remove(name);
-        }
+        let registry = build_base_tool_registry(
+            lsp_backend.clone(),
+            self.extra_tools,
+            &self.without_tools,
+            self.bash_drain_grace,
+        );
 
-        let mut runtime_base = runtime_base;
-        let runtime_rules = runtime_base.as_mut().and_then(|base| base.rules.take());
-        let runtime_hooks = runtime_base.as_mut().and_then(|base| base.hooks.take());
-        let diagnostic_infra = if let Some(infra) = self.diagnostic_infra.take() {
-            Some(infra)
-        } else if runtime_base.is_some() {
-            Some(Arc::new(build_diagnostic_infra(
-                &working_dir,
-                lsp_backend.clone(),
-                self.lsp_workspace.as_deref(),
-            )))
-        } else {
-            None
-        };
-        let rules = self.rules.or(runtime_rules);
-        let hook_source = self.hooks.or(runtime_hooks);
-        let hooks =
-            append_diagnostic_stop_hook(hook_source, diagnostic_infra.as_ref().map(Arc::clone))?;
+        let RuntimeOverlay {
+            runtime_base,
+            diagnostics,
+            diagnostic_infra,
+            rules,
+            hooks,
+        } = resolve_runtime_overlay(
+            runtime_base,
+            OverlayOverrides {
+                diagnostic_infra: self.diagnostic_infra.take(),
+                diagnostics: self.diagnostics.take(),
+                rules: self.rules.take(),
+                hooks: programmatic_hooks,
+                lsp_backend,
+                lsp_workspace: self.lsp_workspace.take(),
+            },
+            &working_dir,
+        );
+        // H14: keep a handle on the final merged registry so it can be
+        // published on the shared tool context — sub-agent tools must observe
+        // exactly the registry the loop dispatches.
+        let hooks_for_ctx = hooks.clone();
         let (mut loop_context, mut registry) = from_profile(&profile, registry, rules, hooks);
 
         if registry.is_empty() {
@@ -563,42 +590,31 @@ impl AgentBuilder {
                     .to_string(),
             }));
         }
-
-        loop_context.retry_policy = self.retry_policy.unwrap_or_else(|| {
-            runtime_base
-                .as_ref()
-                .map_or_else(RetryPolicy::default, |b| b.retry_policy.clone())
-        });
-        loop_context.token_estimator = Some(Arc::new(SimpleTokenEstimator));
-        loop_context.context_edits = Some(ContextEdits::new());
-        loop_context.diagnostics.clone_from(&self.diagnostics);
-        loop_context.working_dir = shared_wd.clone();
-        let variables =
-            Arc::new(VariableStore::with_builtins().with_working_dir(shared_wd.clone()));
-        let session_id = variables.session_id().to_owned();
-        loop_context.variables = Some(Arc::clone(&variables));
-        loop_context.environment = Some(EnvironmentConfig {
-            session_id: Some(session_id.clone()),
-            model: model.clone(),
-        });
-        let explicit_agent_config = self.agent_config.clone();
-        if let Some(base) = runtime_base.as_ref() {
-            loop_context.context_loader = Some(base.context_loader.clone());
-            loop_context.base_suffix = base.skill_catalog.system_prompt_listing();
-            loop_context
-                .iteration_monitor
-                .clone_from(&base.iteration_monitor);
-            loop_context.diagnostics = Some(Arc::clone(&base.diagnostics));
-            self.agent_config = base.agent_config.clone();
+        if self.bash_drain_grace.is_some() && registry.get("bash").is_none() {
+            return Err(NornError::Config(ConfigError::InvalidConfig {
+                reason: "bash_drain_grace is set but the bash tool is not in the final \
+                         tool set — remove the override or include bash"
+                    .to_string(),
+            }));
         }
 
-        let config_override = if runtime_base.is_some() {
-            merge_agent_config(self.agent_config.clone(), explicit_agent_config)
-        } else {
-            explicit_agent_config
-        };
+        let session_id = populate_loop_context(
+            &mut loop_context,
+            self.retry_policy,
+            runtime_base.as_ref(),
+            diagnostics.as_ref(),
+            &shared_wd,
+            &model,
+        );
+        if let Some(base) = runtime_base.as_ref() {
+            apply_base_to_loop_context(&mut loop_context, base);
+        }
+        let config_override = effective_agent_config(runtime_base.as_ref(), self.agent_config);
+        // Both compaction fields are read from the same effective config:
+        // the system prompt's compaction guidance must track exactly the
+        // config the loop will actually compact under.
         let has_auto_compact = config_override.auto_compact_threshold_pct.is_some()
-            && self.agent_config.context_window_limit.is_some();
+            && config_override.context_window_limit.is_some();
         install_system_prompt(
             &mut loop_context,
             &registry,
@@ -611,32 +627,21 @@ impl AgentBuilder {
 
         let tool_defs = collect_tool_definitions(&registry);
 
-        // The event store backs both the loop's `ToolResult` persistence and
-        // the action log's Level 2/3 look-ups, so it must be created before the
-        // `ToolContext` that publishes the action log and shared between them.
-        let event_store = Arc::new(self.session.unwrap_or_default());
-        if let Some(edits) = loop_context.context_edits.as_mut() {
-            edits.apply_persisted_compactions(&event_store);
-        }
-        let action_log = Arc::new(ActionLog::new(Arc::clone(&event_store)));
+        let (event_store, action_log) =
+            restore_session_state(self.session, &mut loop_context, shared_wd.clone());
 
-        let mut ctx = ToolContext::with_working_dir(shared_wd);
-        ctx.insert_extension(Arc::new(SessionId(session_id)));
-        if let Some(diagnostics) = self.diagnostics {
-            ctx.insert_extension(diagnostics);
-        }
-        if let Some(infra) = diagnostic_infra {
-            ctx.insert_extension(infra);
-            ctx.post_checks.push(Box::new(DiagnosticsPostCheck));
-        }
-        ctx.post_checks.extend(self.additional_post_checks);
-        ctx.insert_extension(Arc::new(SharedProvider(Arc::clone(&self.provider))));
-        ctx.insert_extension(Arc::clone(&action_log));
-        // Install consumer-supplied extensions before publishing the tool
-        // catalog so embedding runtimes can contribute subcommand entries.
-        for install in self.extensions {
-            install(&ctx);
-        }
+        let ctx = assemble_tool_context(ToolContextParts {
+            shared_wd,
+            workspace_root,
+            session_id,
+            diagnostics: diagnostics.clone(),
+            diagnostic_infra,
+            hooks: hooks_for_ctx,
+            post_checks: self.additional_post_checks,
+            provider: Arc::clone(&self.provider),
+            action_log: Arc::clone(&action_log),
+            extensions: self.extensions,
+        });
         registry.set_context(Arc::new(ctx));
         let Some(shared) = registry.shared_context() else {
             return Err(NornError::Config(ConfigError::InvalidConfig {
@@ -644,26 +649,14 @@ impl AgentBuilder {
             }));
         };
         if let Some(base) = runtime_base.as_ref() {
-            crate::runtime_init::install_runtime_extensions(
+            install_runtime_base_extensions(
                 shared.as_ref(),
-                &base.shared_task_store,
-                &base.diagnostics,
-                base.hooks.as_ref(),
-            );
-            crate::runtime_init::install_skill_infra(
-                shared.as_ref(),
-                base.skill_paths.clone(),
-                Arc::clone(&base.skill_catalog),
-            );
-            crate::runtime_init::install_context_search_paths(
-                shared.as_ref(),
-                &base.settings,
+                base,
+                diagnostics.as_ref(),
                 &working_dir,
             );
-            crate::runtime_init::install_tool_catalog(&registry);
-        } else {
-            install_tool_catalog(&registry, shared.as_ref());
         }
+        install_tool_catalog(&registry, shared.as_ref());
         let registry = Arc::new(registry);
 
         // Share the same `Arc<ActionLog>` with the loop so dispatch recording
@@ -673,8 +666,9 @@ impl AgentBuilder {
         let agent_id = self.agent_id.unwrap_or_else(Uuid::new_v4);
 
         if let Some(agent_registry) = self.agent_registry {
-            install_agent_infra(
+            let child_rx = install_agent_infra(
                 &registry,
+                shared.as_ref(),
                 AgentInfraParts {
                     registry: agent_registry,
                     provider: Arc::clone(&self.provider),
@@ -682,6 +676,10 @@ impl AgentBuilder {
                     id: agent_id,
                 },
             );
+            // The runner drains child fork/spawn results at iteration
+            // boundaries through this receiver; without it, spawned children
+            // would complete into a channel nothing reads.
+            loop_context.child_result_rx = Some(child_rx);
         }
 
         Ok(Agent {
@@ -722,319 +720,17 @@ impl AgentBuilder {
     }
 }
 
-/// A fully-assembled, single-use agent. Not [`Clone`]: it owns the session
-/// event store and the runtime tool context.
-pub struct Agent {
-    provider: Arc<dyn Provider>,
-    registry: Arc<ToolRegistry>,
-    loop_context: LoopContext,
-    config: AgentLoopConfig,
-    model: String,
-    output_schema: Option<Value>,
-    tool_defs: Vec<ToolDefinition>,
-    event_store: Arc<EventStore>,
-    event_sender: Option<AgentEventSender>,
-    cancel: Option<CancellationToken>,
-    inbound: Option<InboundChannel>,
-    id: Uuid,
-    prompt: Option<String>,
-}
-
-impl Agent {
-    /// Run with the prompt configured on the builder.
-    ///
-    /// # Errors
-    ///
-    /// [`NornError::Config`] when no prompt was set; otherwise any execution
-    /// error from the agent loop.
-    pub async fn run(self) -> Result<AgentOutput, NornError> {
-        let prompt = self.prompt.clone().ok_or_else(|| {
-            NornError::Config(ConfigError::InvalidConfig {
-                reason: "no prompt set; call .prompt(..) or use run_with(prompt)".to_string(),
-            })
-        })?;
-        self.run_with(prompt).await
-    }
-
-    /// Run with an explicit prompt, consuming the agent and returning the
-    /// [`AgentOutput`] (final value, usage, event store, stop reason).
-    ///
-    /// # Errors
-    ///
-    /// Any execution error from the agent loop (provider failure, event-store
-    /// failure, a blocking hook, or an unrecoverable tool error).
-    pub async fn run_with(mut self, prompt: impl Into<String>) -> Result<AgentOutput, NornError> {
-        let prompt = prompt.into();
-        let result = run_agent_step(AgentStepRequest {
-            provider: self.provider.as_ref(),
-            executor: self.registry.as_ref(),
-            store: self.event_store.as_ref(),
-            user_prompt: &prompt,
-            tools: &self.tool_defs,
-            output_schema: self.output_schema.as_ref(),
-            model: &self.model,
-            config: &self.config,
-            event_tx: self.event_sender.as_ref(),
-            inbound: self.inbound.as_mut(),
-            loop_context: &mut self.loop_context,
-            cancel: self.cancel.clone(),
-        })
-        .await?;
-
-        // Drop the registry first so that, in the no-fork/spawn case, its tool
-        // context (and any extension) releases its references and the event
-        // store can be handed back owned. When fork/spawn infra is installed
-        // the registry participates in an Arc cycle (registry -> context ->
-        // infra -> registry) inherited from `AgentToolInfra`, so `try_unwrap`
-        // falls back to a content snapshot.
-        drop(self.registry);
-        // Release the loop's `Arc<ActionLog>` too: it holds the same
-        // `Arc<EventStore>`, so leaving it set would keep a second strong
-        // reference alive and force the snapshot fallback (losing the
-        // persistence sink) even in the no-fork/spawn case.
-        self.loop_context.action_log = None;
-        let event_store = self.event_store;
-        let store = Arc::try_unwrap(event_store).unwrap_or_else(|shared| snapshot_store(&shared));
-        Ok(AgentOutput::from_step_result(result, Some(store)))
-    }
-
-    /// Run with the builder-set prompt while streaming [`AgentEvent`]s.
-    ///
-    /// Installs a fresh broadcast channel of `channel_capacity` as the event
-    /// sink (replacing any [`AgentBuilder::event_sender`]) and returns the
-    /// receiver alongside the run future. Await the future while draining the
-    /// receiver concurrently (e.g. `tokio::join!` or a spawned reader).
-    ///
-    /// `channel_capacity` is explicit rather than defaulted: the right buffer
-    /// depends on how fast the consumer drains relative to the model's output
-    /// rate.
-    pub fn run_stream(
-        mut self,
-        channel_capacity: usize,
-    ) -> (
-        broadcast::Receiver<AgentEvent>,
-        impl std::future::Future<Output = Result<AgentOutput, NornError>>,
-    ) {
-        let (tx, rx) = broadcast::channel(channel_capacity);
-        self.event_sender = Some(AgentEventSender::new(tx, self.id, "root".to_string()));
-        (rx, async move { self.run().await })
-    }
-
-    /// The agent's id.
-    #[must_use]
-    pub fn agent_id(&self) -> Uuid {
-        self.id
-    }
-}
-
-/// Parts needed to install the fork/spawn runtime infrastructure.
-struct AgentInfraParts {
-    registry: Arc<RwLock<AgentRegistry>>,
-    provider: Arc<dyn Provider>,
-    event_store: Arc<EventStore>,
-    id: Uuid,
-}
-
-/// Install [`AgentToolInfra`] on the registry's shared tool context so the
-/// agent-coordination tools resolve their runtime.
-fn install_agent_infra(registry: &Arc<ToolRegistry>, parts: AgentInfraParts) {
-    let Some(shared) = registry.shared_context() else {
-        return;
-    };
-    let infra = AgentToolInfra {
-        registry: parts.registry,
-        mailbox: Arc::new(Mailbox::new()),
-        provider: parts.provider,
-        event_store: parts.event_store,
-        agent_id: parts.id,
-        parent_id: None,
-        tool_registry: Some(Arc::clone(registry)),
-    };
-    shared.insert_extension(Arc::new(infra));
-}
-
-/// Build the Norn base system prompt from the gated registry and layer it
-/// over the profile instructions (or the caller's `system_prompt` override)
-/// into `loop_context.system_sections[0]`.
-fn install_system_prompt(
-    loop_context: &mut LoopContext,
-    registry: &ToolRegistry,
-    mode: ExecutionMode,
-    has_output_schema: bool,
-    system_prompt_override: Option<String>,
-    append_system_prompt: Option<String>,
-    has_auto_compact: bool,
-) {
-    let inputs = SystemPromptInputs {
-        mode,
-        tools: collect_tool_prompt_entries(registry),
-        has_output_schema,
-        event_schema_descriptions: Vec::new(),
-        has_rules_engine: loop_context.rules.is_some(),
-        has_auto_compact,
-    };
-    let base_prompt = build_system_prompt(&inputs);
-
-    let profile_prefix = std::mem::take(&mut loop_context.system_sections);
-    let mut instructions = system_prompt_override
-        .unwrap_or_else(|| profile_prefix.into_iter().next().unwrap_or_default());
-    if let Some(append) = append_system_prompt
-        && !append.is_empty()
-    {
-        append_prompt(&mut instructions, &append);
-    }
-
-    loop_context.base_prefix = if instructions.is_empty() {
-        base_prompt
-    } else {
-        format!("{base_prompt}\n\n{instructions}")
-    };
-    loop_context.rebuild_base_section();
-}
-
-fn append_prompt(prompt: &mut String, fragment: &str) {
-    if prompt.is_empty() {
-        *prompt = fragment.to_string();
-    } else {
-        prompt.push_str("\n\n");
-        prompt.push_str(fragment);
-    }
-}
-
-/// Snapshot a shared event store's events into a fresh owned store. Used only
-/// when the original cannot be reclaimed (fork/spawn Arc cycle). The
-/// persistence sink is not carried over — only the event content, which is
-/// what session resume needs.
-fn snapshot_store(store: &EventStore) -> EventStore {
-    let snapshot = EventStore::new();
-    for event in store.events() {
-        if let Err(err) = snapshot.append(event) {
-            tracing::warn!(error = %err, "snapshotting event store: append failed");
-        }
-    }
-    snapshot
-}
-
-/// Tool metadata for the system prompt builder.
-fn collect_tool_prompt_entries(registry: &ToolRegistry) -> Vec<ToolPromptEntry> {
-    let names: Vec<String> = registry.names().map(str::to_owned).collect();
-    let mut entries = Vec::with_capacity(names.len());
-    for name in names {
-        if let Some(tool) = registry.get(&name) {
-            entries.push(ToolPromptEntry {
-                name: tool.name().to_owned(),
-                category: tool.category(),
-                description: tool.description().to_owned(),
-                usage_guidance: tool.usage_guidance().map(str::to_owned),
-            });
-        }
-    }
-    entries
-}
-
-fn append_diagnostic_stop_hook(
-    hooks: Option<Arc<HookRegistry>>,
-    diagnostic_infra: Option<Arc<DiagnosticInfra>>,
-) -> Result<Option<Arc<HookRegistry>>, NornError> {
-    let Some(infra) = diagnostic_infra else {
-        return Ok(hooks);
-    };
-
-    let mut registry = match hooks {
-        Some(hooks) => match Arc::try_unwrap(hooks) {
-            Ok(registry) => registry,
-            Err(_) => {
-                return Err(NornError::Config(ConfigError::InvalidConfig {
-                    reason:
-                        "diagnostic stop hook cannot be appended because hook registry is shared"
-                            .to_owned(),
-                }));
-            }
-        },
-        None => HookRegistry::new(),
-    };
-    registry.register(Hook::Stop(Box::new(DiagnosticStopHook::new(infra))));
-    Ok(Some(Arc::new(registry)))
-}
-
-fn merge_agent_config(mut base: AgentLoopConfig, explicit: AgentLoopConfig) -> AgentLoopConfig {
-    if explicit.schema_attempt_budget != AgentLoopConfig::default().schema_attempt_budget {
-        base.schema_attempt_budget = explicit.schema_attempt_budget;
-    }
-    if explicit.max_iterations.is_some() {
-        base.max_iterations = explicit.max_iterations;
-    }
-    if explicit.step_timeout.is_some() {
-        base.step_timeout = explicit.step_timeout;
-    }
-    if explicit.context_window_limit.is_some() {
-        base.context_window_limit = explicit.context_window_limit;
-    }
-    if explicit.auto_compact_threshold_pct.is_some() {
-        base.auto_compact_threshold_pct = explicit.auto_compact_threshold_pct;
-    }
-    if explicit.auto_compact_keep_recent_turns
-        != AgentLoopConfig::default().auto_compact_keep_recent_turns
-    {
-        base.auto_compact_keep_recent_turns = explicit.auto_compact_keep_recent_turns;
-    }
-    if explicit.schema_tool_name != AgentLoopConfig::default().schema_tool_name {
-        base.schema_tool_name = explicit.schema_tool_name;
-    }
-    if explicit.cache_key.is_some() {
-        base.cache_key = explicit.cache_key;
-    }
-    if explicit.conversation_state != ConversationStateMode::default() {
-        base.conversation_state = explicit.conversation_state;
-    }
-    if explicit.server_compaction_threshold_tokens.is_some() {
-        base.server_compaction_threshold_tokens = explicit.server_compaction_threshold_tokens;
-    }
-    base
-}
-
-fn install_tool_catalog(registry: &ToolRegistry, ctx: &ToolContext) {
-    let mut entries: Vec<ToolCatalogEntry> = registry
-        .names()
-        .filter_map(|name| {
-            registry
-                .get(name)
-                .map(|tool| ToolCatalogEntry::tool(tool.name(), tool.description()))
-        })
-        .collect();
-
-    if let Some(extras) = ctx.get_extension::<ToolCatalogExtras>() {
-        entries.extend(extras.0.iter().cloned());
-    }
-
-    ctx.insert_extension(Arc::new(SharedToolCatalog(Arc::new(entries))));
-}
-
-/// Tool definitions (envelope-wrapped schemas) for the provider call.
-fn collect_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
-    let names: Vec<String> = registry.names().map(str::to_owned).collect();
-    let mut defs = Vec::with_capacity(names.len());
-    for name in names {
-        if let Some(tool) = registry.get(&name) {
-            defs.push(ToolDefinition {
-                name: tool.name().to_owned(),
-                description: tool.description().to_owned(),
-                parameters: wrap_schema_with_envelope(tool.input_schema()),
-            });
-        }
-    }
-    defs
-}
-
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use crate::agent::output::AgentStopReason;
-    use crate::integration::hooks::{HookOutcome, StopHook};
+    use crate::integration::hooks::{Hook, HookOutcome, StopHook};
     use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::mock::MockProvider;
     use crate::provider::usage::Usage;
+    use crate::tool::context::ToolContext;
+    use crate::tools::diagnostics::build_diagnostic_infra;
 
     fn provider_with(events: Vec<Vec<ProviderEvent>>) -> Arc<dyn Provider> {
         Arc::new(MockProvider::new(events))
@@ -1599,5 +1295,662 @@ mod tests {
                 "spawn_agent must get past infra resolution once agent_registry is wired: {err}",
             );
         }
+    }
+
+    /// H13 regression: a *shared* programmatic hook registry (the caller kept
+    /// an `Arc` clone) plus diagnostic infrastructure used to make `build`
+    /// fail with "hook registry is shared". The merge-based assembly accepts
+    /// it and the caller's stop hook still wins first-`Block` conflicts over
+    /// the diagnostic stop hook.
+    #[tokio::test]
+    async fn shared_hooks_arc_with_diagnostic_infra_keeps_user_hooks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let infra = Arc::new(build_diagnostic_infra(temp.path(), None, None));
+        let mut registry = HookRegistry::new();
+        registry.register(Hook::Stop(Box::new(BlockingStopHook)));
+        let shared_hooks = Arc::new(registry);
+        let outstanding_clone = Arc::clone(&shared_hooks);
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(temp.path())
+            .hooks(shared_hooks)
+            .diagnostic_infra(infra)
+            .build()
+            .expect("a shared hook Arc must not fail the build");
+
+        let hooks = agent
+            .loop_context
+            .hooks
+            .as_ref()
+            .expect("merged hook registry installed");
+        let outcome = hooks.run_stop("done").await;
+        match outcome {
+            HookOutcome::Block { reason } => assert!(
+                reason.starts_with("user-stop-hook"),
+                "the caller's stop hook must keep precedence: {reason}",
+            ),
+            HookOutcome::Proceed | HookOutcome::Modify { .. } => {
+                panic!("the forwarded user stop hook must still block")
+            }
+        }
+        drop(outstanding_clone);
+    }
+
+    /// H14 regression: the *final merged* hook registry is published on the
+    /// shared tool context — same `Arc` the loop dispatches — so sub-agent
+    /// tools can fire subagent hooks.
+    #[tokio::test]
+    async fn build_publishes_final_hook_registry_on_tool_context() {
+        use crate::integration::hooks::SubagentHook;
+
+        struct BlockingSubagentStop;
+
+        #[async_trait::async_trait]
+        impl SubagentHook for BlockingSubagentStop {
+            async fn on_subagent_start(&self, _agent_id: &str, _agent_type: &str) {}
+            async fn on_subagent_stop(&self, _agent_id: &str, _agent_type: &str) -> HookOutcome {
+                HookOutcome::Block {
+                    reason: "subagent-hook-fired".to_owned(),
+                }
+            }
+        }
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let infra = Arc::new(build_diagnostic_infra(temp.path(), None, None));
+        let mut registry = HookRegistry::new();
+        registry.register(Hook::Subagent(Box::new(BlockingSubagentStop)));
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(temp.path())
+            .hooks(Arc::new(registry))
+            .diagnostic_infra(infra)
+            .build()
+            .expect("build succeeds");
+
+        let ctx_hooks = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context")
+            .get_extension::<HookRegistry>()
+            .expect("the merged hook registry must be published on the tool context");
+        let loop_hooks = agent
+            .loop_context
+            .hooks
+            .as_ref()
+            .expect("loop context carries the merged registry");
+        assert!(
+            Arc::ptr_eq(&ctx_hooks, loop_hooks),
+            "tool context and loop must dispatch the same hook registry",
+        );
+        let outcome = ctx_hooks.run_subagent_stop("child-1", "worker").await;
+        assert!(
+            matches!(outcome, HookOutcome::Block { .. }),
+            "subagent hooks must fire through the published extension",
+        );
+    }
+
+    /// A caller-supplied diagnostic collector must never be silently replaced
+    /// by the runtime base's collector — on the loop context or on the tool
+    /// context.
+    #[test]
+    fn caller_diagnostics_collector_survives_runtime_base() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let custom = DiagnosticCollector::shared();
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(temp.path())
+            .load_runtime_base()
+            .diagnostics(Arc::clone(&custom))
+            .build()
+            .expect("build succeeds");
+
+        let loop_diag = agent
+            .loop_context
+            .diagnostics
+            .as_ref()
+            .expect("loop context diagnostics populated");
+        assert!(
+            Arc::ptr_eq(loop_diag, &custom),
+            "loop context must keep the caller's collector",
+        );
+        let ctx_diag = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context")
+            .get_extension::<DiagnosticCollector>()
+            .expect("tool context publishes a diagnostic collector");
+        assert!(
+            Arc::ptr_eq(&ctx_diag, &custom),
+            "tool context must keep the caller's collector",
+        );
+    }
+
+    /// `agent_registry` must wire the *complete* fork/spawn runtime:
+    /// `AgentToolInfra`, `AgentHandles`, `ChildResultSender`, the loop's
+    /// child-result receiver, and — because every builder-assembled agent
+    /// is an embedded/headless runtime with no external status observer —
+    /// the `ReclaimOnResultDelivery` marker.
+    #[test]
+    fn agent_registry_installs_complete_fork_spawn_infra() {
+        use crate::agent::result_channel::ChildResultSender;
+        use crate::tools::agent::{AgentHandles, AgentToolInfra, ReclaimOnResultDelivery};
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(AgentRegistry::shared())
+            .build()
+            .expect("build succeeds");
+
+        let ctx = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context");
+        assert!(
+            ctx.get_extension::<AgentToolInfra>().is_some(),
+            "AgentToolInfra installed",
+        );
+        assert!(
+            ctx.get_extension::<AgentHandles>().is_some(),
+            "AgentHandles installed — spawn_agent refuses to run without it",
+        );
+        assert!(
+            ctx.get_extension::<ChildResultSender>().is_some(),
+            "ChildResultSender installed — child results need a destination",
+        );
+        assert!(
+            ctx.get_extension::<ReclaimOnResultDelivery>().is_some(),
+            "ReclaimOnResultDelivery installed — embedded runtimes reclaim \
+             finished children on result delivery",
+        );
+        assert!(
+            agent.loop_context.child_result_rx.is_some(),
+            "the loop must hold the receiver that drains child results",
+        );
+    }
+
+    /// Complete spawn path through a built agent: the child runs on the
+    /// builder's provider, its result arrives on the loop's child-result
+    /// receiver, and — embedded reclamation — once the result has been
+    /// delivered, the child's registry entry and the parent-held handle
+    /// are reclaimed. Completion is driven via the result receiver (not
+    /// by joining the handle): the wrapper reclaims the handle after
+    /// delivery, so holding it would race the reclamation under test.
+    #[tokio::test]
+    async fn spawned_child_result_reaches_loop_receiver() {
+        use crate::tools::agent::AgentHandles;
+
+        let agent_registry = AgentRegistry::shared();
+        let mut agent = AgentBuilder::new(provider_with(text_completion("child finished")))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(Arc::clone(&agent_registry))
+            .build()
+            .expect("build succeeds");
+
+        let executor: &dyn ToolExecutor = agent.registry.as_ref();
+        let out = executor
+            .execute(
+                "spawn_agent",
+                "spawn-call",
+                serde_json::json!({"task": "report back", "model": "haiku", "role": "worker"}),
+            )
+            .await
+            .expect("spawn_agent dispatches through the built context");
+        let child_id = Uuid::parse_str(out["agent_id"].as_str().expect("agent_id string"))
+            .expect("agent_id is a uuid");
+
+        let rx = agent
+            .loop_context
+            .child_result_rx
+            .as_mut()
+            .expect("loop holds the child result receiver");
+        let result = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("child result must arrive without timing out")
+            .expect("channel open");
+        assert_eq!(result.agent_id, child_id);
+        assert!(result.succeeded, "completed child reports success");
+        assert!(
+            result.formatted_message.contains("child finished"),
+            "the child's output flows through: {}",
+            result.formatted_message,
+        );
+
+        // Delivery-anchored reclamation: the wrapper reclaims after the
+        // send completes, which can land just after `recv` returns —
+        // poll briefly instead of asserting immediately.
+        let ctx = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context");
+        let handles = ctx
+            .get_extension::<AgentHandles>()
+            .expect("AgentHandles installed");
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while agent_registry.read().get(child_id).is_some() || handles.contains(child_id) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for the delivered child's registry entry \
+                 and handle to be reclaimed",
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+        }
+    }
+
+    /// Track B finding 1 (blocker): `workspace_root` must produce a built
+    /// agent whose context denies out-of-root file access through a real
+    /// tool call — previously `confine_to_workspace` had zero production
+    /// callers, so the control could never be switched on.
+    #[tokio::test]
+    async fn workspace_root_confines_file_tools_through_built_context() {
+        use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+
+        let outer = tempfile::tempdir().expect("tempdir");
+        let root = outer.path().join("ws");
+        std::fs::create_dir(&root).expect("mkdir ws");
+        let secret = outer.path().join("secret.txt");
+        std::fs::write(&secret, "outside the workspace").expect("write secret");
+        let inside = root.join("inside.txt");
+        std::fs::write(&inside, "inside the workspace").expect("write inside");
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(&root)
+            .workspace_root(&root)
+            .build()
+            .expect("build succeeds");
+        let ctx = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context");
+        let tool = agent.registry.get("read").expect("read tool present");
+
+        let read_envelope = |path: &std::path::Path| ToolEnvelope {
+            tool_call_id: "tc-confine".to_owned(),
+            tool_name: "read".to_owned(),
+            model_args: serde_json::json!({ "path": path.display().to_string() }),
+            runtime_inputs: RuntimeInputs::default(),
+            metadata: Value::Null,
+        };
+
+        let denied = tool
+            .execute(&read_envelope(&secret), ctx.as_ref())
+            .await
+            .expect("confinement refusal is a structured tool error");
+        assert!(denied.is_error, "out-of-root read must be refused");
+        assert!(
+            denied.content["error"]
+                .as_str()
+                .is_some_and(|m| m.contains("refused")),
+            "refusal must be explicit: {}",
+            denied.content,
+        );
+
+        let allowed = tool
+            .execute(&read_envelope(&inside), ctx.as_ref())
+            .await
+            .expect("in-root read executes");
+        assert!(!allowed.is_error, "in-root read must succeed");
+    }
+
+    /// Finding 1 companion: without `workspace_root` the built context
+    /// stays unconfined — the historical embedder behaviour.
+    #[tokio::test]
+    async fn builder_without_workspace_root_stays_unconfined() {
+        use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+
+        let outer = tempfile::tempdir().expect("tempdir");
+        let root = outer.path().join("ws");
+        std::fs::create_dir(&root).expect("mkdir ws");
+        let elsewhere = outer.path().join("elsewhere.txt");
+        std::fs::write(&elsewhere, "reachable").expect("write file");
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(&root)
+            .build()
+            .expect("build succeeds");
+        let ctx = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context");
+        assert!(
+            ctx.workspace_root().is_none(),
+            "no workspace_root means no confinement root on the context",
+        );
+        let tool = agent.registry.get("read").expect("read tool present");
+        let out = tool
+            .execute(
+                &ToolEnvelope {
+                    tool_call_id: "tc-unconfined".to_owned(),
+                    tool_name: "read".to_owned(),
+                    model_args: serde_json::json!({
+                        "path": elsewhere.display().to_string(),
+                    }),
+                    runtime_inputs: RuntimeInputs::default(),
+                    metadata: Value::Null,
+                },
+                ctx.as_ref(),
+            )
+            .await
+            .expect("unconfined read executes");
+        assert!(!out.is_error, "unconfined context reads anywhere");
+    }
+
+    /// Finding 1: a `workspace_root` that does not exist fails the build
+    /// with a typed configuration error instead of confining nothing.
+    #[test]
+    fn workspace_root_must_exist() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let result = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(temp.path())
+            .workspace_root(temp.path().join("does-not-exist"))
+            .build();
+        match result {
+            Err(NornError::Config(ConfigError::InvalidConfig { reason })) => {
+                assert!(reason.contains("workspace_root"), "{reason}");
+            }
+            Err(other) => panic!("expected a config error, got: {other}"),
+            Ok(_) => panic!("a missing workspace_root must fail the build"),
+        }
+    }
+
+    /// Finding 1: a `workspace_root` that is a file (not a directory) fails
+    /// the build with a typed configuration error.
+    #[test]
+    fn workspace_root_must_be_a_directory() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let file = temp.path().join("a-file.txt");
+        std::fs::write(&file, "not a dir").expect("write file");
+        let result = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(temp.path())
+            .workspace_root(&file)
+            .build();
+        match result {
+            Err(NornError::Config(ConfigError::InvalidConfig { reason })) => {
+                assert!(reason.contains("not a directory"), "{reason}");
+            }
+            Err(other) => panic!("expected a config error, got: {other}"),
+            Ok(_) => panic!("a non-directory workspace_root must fail the build"),
+        }
+    }
+
+    /// Track B finding 8: the builder's `bash_drain_grace` override reaches
+    /// the registered bash tool — a backgrounded child holding the output
+    /// pipes is cut off after the overridden grace, not the 2s default.
+    #[tokio::test]
+    async fn bash_drain_grace_override_reaches_the_bash_tool() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .bash_drain_grace(std::time::Duration::from_millis(200))
+            .build()
+            .expect("build succeeds");
+
+        let executor: &dyn ToolExecutor = agent.registry.as_ref();
+        let started = std::time::Instant::now();
+        let out = executor
+            .execute(
+                "bash",
+                "tc-grace",
+                serde_json::json!({ "command": "sleep 5 & echo started" }),
+            )
+            .await
+            .expect("bash executes");
+        let elapsed = started.elapsed();
+        assert_eq!(
+            out["streams_still_open"],
+            serde_json::json!(true),
+            "the backgrounded sleep holds the pipe past the grace: {out}",
+        );
+        assert!(
+            elapsed < std::time::Duration::from_millis(1500),
+            "a 200ms drain grace must return well before the 2s default \
+             (elapsed: {elapsed:?})",
+        );
+    }
+
+    /// Finding 8: setting `bash_drain_grace` while excluding bash is a
+    /// contradiction and must fail the build rather than be silently inert.
+    #[test]
+    fn bash_drain_grace_with_bash_excluded_fails_build() {
+        let result = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .bash_drain_grace(std::time::Duration::from_secs(1))
+            .without_tools(&["bash"])
+            .build();
+        match result {
+            Err(NornError::Config(ConfigError::InvalidConfig { reason })) => {
+                assert!(reason.contains("bash_drain_grace"), "{reason}");
+            }
+            Err(other) => panic!("expected a config error, got: {other}"),
+            Ok(_) => panic!("bash_drain_grace without bash must fail the build"),
+        }
+    }
+
+    /// Track B finding 3 regression: the compaction guidance in the system
+    /// prompt must consult the *effective* agent config (runtime base merged
+    /// with explicit builder overrides) — not one field from each source.
+    /// Here both compaction fields arrive via the explicit builder config;
+    /// the guidance must be present even when the runtime base sets neither.
+    #[test]
+    fn auto_compact_guidance_follows_effective_config() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(temp.path())
+            .load_runtime_base()
+            .agent_config(AgentLoopConfig {
+                context_window_limit: Some(200_000),
+                auto_compact_threshold_pct: Some(0.8),
+                ..AgentLoopConfig::default()
+            })
+            .build()
+            .expect("build succeeds");
+
+        assert_eq!(agent.config.context_window_limit, Some(200_000));
+        assert!(
+            (agent
+                .config
+                .auto_compact_threshold_pct
+                .expect("threshold set")
+                - 0.8)
+                .abs()
+                < f64::EPSILON
+        );
+        assert!(
+            agent
+                .loop_context
+                .base_system_instruction()
+                .contains("automatically summarised or cleared"),
+            "compaction guidance must be in the system prompt when the \
+             effective config enables auto-compaction",
+        );
+    }
+
+    /// Companion to the finding 3 regression: with no compaction configured
+    /// anywhere, the guidance must stay out of the system prompt.
+    #[test]
+    fn no_auto_compact_guidance_without_compaction_config() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .build()
+            .expect("build succeeds");
+        assert!(
+            !agent
+                .loop_context
+                .base_system_instruction()
+                .contains("automatically summarised or cleared"),
+            "no compaction config means no compaction guidance",
+        );
+    }
+
+    /// Track B finding 2 regression: with the runtime base loaded, the
+    /// merged `settings.permissions` must compile into a
+    /// [`crate::config::PermissionPolicy`] published on the registry's
+    /// shared tool context — the embedded path previously installed
+    /// nothing, so settings-declared deny rules were never enforced.
+    #[test]
+    fn runtime_base_installs_permission_policy_on_tool_context() {
+        use crate::config::{PermissionDecision, PermissionPolicy};
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join(".norn")).expect("mkdir .norn");
+        std::fs::write(
+            temp.path().join(".norn").join("settings.json"),
+            r#"{"permissions": {"deny": ["bash"]}}"#,
+        )
+        .expect("write settings");
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(temp.path())
+            .load_runtime_base()
+            .build()
+            .expect("build succeeds");
+
+        let ctx = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context");
+        let policy = ctx
+            .get_extension::<PermissionPolicy>()
+            .expect("settings.permissions must be installed on the embedded path");
+        assert!(
+            matches!(
+                policy.evaluate("bash", &serde_json::json!({"command": "ls"})),
+                PermissionDecision::Deny { .. }
+            ),
+            "the settings-declared deny rule must be active",
+        );
+    }
+
+    /// Track B finding 2, end to end: a deny rule in the project settings
+    /// blocks the tool through a real embedded dispatch — the loop's gating
+    /// phase refuses the call and records the block as the tool result.
+    #[tokio::test]
+    async fn settings_deny_rule_blocks_tool_through_embedded_dispatch() {
+        use crate::provider::request::ToolCallKind;
+        use crate::session::events::SessionEvent;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        std::fs::create_dir_all(temp.path().join(".norn")).expect("mkdir .norn");
+        std::fs::write(
+            temp.path().join(".norn").join("settings.json"),
+            r#"{"permissions": {"deny": ["bash"]}}"#,
+        )
+        .expect("write settings");
+
+        let provider = provider_with(vec![
+            vec![
+                ProviderEvent::ToolCallComplete {
+                    call_id: "call-denied".to_owned(),
+                    name: "bash".to_owned(),
+                    arguments: r#"{"command": "echo hi"}"#.to_owned(),
+                    kind: ToolCallKind::Function,
+                },
+                ProviderEvent::Done {
+                    stop_reason: StopReason::ToolUse,
+                    usage: Usage::default(),
+                    response_id: None,
+                },
+            ],
+            text_completion("acknowledged")
+                .pop()
+                .expect("one scripted turn"),
+        ]);
+        let output = AgentBuilder::new(provider)
+            .model("test-model")
+            .working_dir(temp.path())
+            .load_runtime_base()
+            .run_with("run a command")
+            .await
+            .expect("run completes");
+
+        let store = output.event_store.expect("event store returned");
+        let blocked = store.events().iter().any(|event| {
+            matches!(
+                event,
+                SessionEvent::ToolResult { tool_name, output, .. }
+                    if tool_name == "bash"
+                        && output
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .is_some_and(|m| m.contains("blocked by permissions"))
+            )
+        });
+        assert!(
+            blocked,
+            "the bash call must be refused by the settings deny rule through \
+             real dispatch; events: {:?}",
+            store.events(),
+        );
+    }
+
+    /// Fix 7 regression: resuming a session rebuilds the action log (and its
+    /// mutation ledger) from the persisted events, restoring the
+    /// session-lifetime queryability contract.
+    #[test]
+    fn resumed_session_rebuilds_action_log() {
+        use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+
+        let store = EventStore::new();
+        store
+            .append(SessionEvent::AssistantMessage {
+                base: EventBase::new(None),
+                content: String::new(),
+                thinking: String::new(),
+                tool_calls: vec![ToolCallEvent {
+                    call_id: "tc-resume".to_owned(),
+                    name: "read".to_owned(),
+                    arguments: serde_json::json!({
+                        "path": "src/lib.rs",
+                        "tool_use_description": "inspect entry point",
+                    }),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                }],
+                usage: EventUsage::default(),
+                stop_reason: "tool_use".to_owned(),
+                response_id: None,
+            })
+            .expect("append assistant message");
+        store
+            .append(SessionEvent::ToolResult {
+                base: EventBase::new(None),
+                tool_call_id: "tc-resume".to_owned(),
+                tool_name: "read".to_owned(),
+                output: serde_json::json!({"lines": 12}),
+                duration_ms: 4,
+            })
+            .expect("append tool result");
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .session(store)
+            .build()
+            .expect("build succeeds");
+
+        let log = agent
+            .loop_context
+            .action_log
+            .as_ref()
+            .expect("action log installed");
+        let entry = log
+            .entry("tc-resume")
+            .expect("resumed tool call must be queryable again");
+        assert_eq!(entry.tool_use_description, "inspect entry point");
+        assert!(matches!(
+            entry.outcome,
+            crate::session::action_log::Outcome::Success
+        ));
     }
 }

@@ -14,7 +14,6 @@
 //! summing each superseded event's content through the bundle's
 //! [`TokenEstimator`](norn::r#loop::tokens::TokenEstimator).
 
-use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
@@ -22,15 +21,16 @@ use norn::session::events::SessionEvent;
 use norn::session::store::EventStore;
 
 use crate::runtime::RuntimeBundle;
-use crate::session::{SessionPersistError, sum_usage_from_events, update_session_index};
+use crate::session::SessionPersistError;
 
 use super::state::SlashState;
 
 /// Outcome of [`apply_compact_request`].
 ///
 /// Surfaced so the orchestrator can report what compaction did. The
-/// `Compaction` event is persisted by the attached write-through sink;
-/// `apply_compact_request` only reconciles the session index afterwards.
+/// `Compaction` event is persisted — and the session index updated — by
+/// the attached index-registered write-through sink; this module touches
+/// neither the JSONL nor the index itself.
 #[must_use]
 pub enum CompactOutcome {
     /// Compaction completed; the slice covers the events newly appended
@@ -72,22 +72,23 @@ impl CompactOutcome {
 
 /// Apply the `/compact` flag if it is set.
 ///
-/// Returns the outcome so the caller can decide what to log or persist.
-/// Clears the flag regardless of outcome — `/compact` is a single-shot
-/// signal even when the store has nothing to do.
+/// Returns the outcome so the caller can decide what to log. Clears the
+/// flag regardless of outcome — `/compact` is a single-shot signal even
+/// when the store has nothing to do.
+///
+/// Persistence is entirely the store's concern: the `Compaction` event
+/// is written through the attached index-registered sink, which also
+/// updates the session's `index.jsonl` entry. Reconciling the index here
+/// on top of that would double-count it (the pre-fix print-mode bug).
 ///
 /// # Errors
 ///
-/// Returns [`SessionPersistError`] when the session index cannot be
-/// reconciled after compaction. The `Compaction` event itself is
-/// persisted by the attached write-through sink, not here.
+/// Returns [`SessionPersistError`] when appending the `Compaction` event
+/// through `auto_compact_keeping_recent_turns` fails.
 pub fn apply_compact_request(
     bundle: &mut RuntimeBundle,
     store: &Arc<EventStore>,
     state: &SlashState,
-    data_dir: &Path,
-    session_id: Option<&str>,
-    no_session: bool,
 ) -> Result<Option<CompactOutcome>, SessionPersistError> {
     if !state.compact_requested.swap(false, Ordering::Relaxed) {
         return Ok(None);
@@ -112,29 +113,11 @@ pub fn apply_compact_request(
         return Ok(Some(CompactOutcome::ContextEditsUnavailable));
     };
 
-    let pre_event_count = store.len();
     match edits.auto_compact_keeping_recent_turns(store, keep, token_estimate_freed) {
-        Ok(Some(_)) => {
-            // The `Compaction` event was written through the attached
-            // `JsonlSink` already; calling `append_events` here would
-            // write it a second time and break resume on the
-            // duplicate-ID guard. Only reconcile the index.
-            if let Some(id) = session_id
-                && !no_session
-            {
-                let all = store.events();
-                if all.len() > pre_event_count {
-                    let new_events = &all[pre_event_count..];
-                    let appended = u64::try_from(new_events.len()).unwrap_or(u64::MAX);
-                    let usage_delta = sum_usage_from_events(new_events);
-                    update_session_index(data_dir, id, appended, &usage_delta)?;
-                }
-            }
-            Ok(Some(CompactOutcome::Performed {
-                compacted_events: event_count,
-                token_estimate_freed,
-            }))
-        }
+        Ok(Some(_)) => Ok(Some(CompactOutcome::Performed {
+            compacted_events: event_count,
+            token_estimate_freed,
+        })),
         Ok(None) => Ok(Some(CompactOutcome::Nothing)),
         Err(err) => Err(err.into()),
     }
@@ -241,9 +224,7 @@ mod tests {
         )
         .unwrap();
         let state = make_state(Arc::clone(&store));
-        let outcome =
-            apply_compact_request(&mut bundle, &store, &state, Path::new("/tmp"), None, true)
-                .unwrap();
+        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
         assert!(outcome.is_none());
     }
 
@@ -257,9 +238,7 @@ mod tests {
         .unwrap();
         let state = make_state(Arc::clone(&store));
         state.compact_requested.store(true, Ordering::Relaxed);
-        let outcome =
-            apply_compact_request(&mut bundle, &store, &state, Path::new("/tmp"), None, true)
-                .unwrap();
+        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
         assert!(matches!(outcome, Some(CompactOutcome::Nothing)));
         assert!(!state.compact_requested.load(Ordering::Relaxed));
     }
@@ -280,9 +259,7 @@ mod tests {
         .unwrap();
         let state = make_state(Arc::clone(&store));
         state.compact_requested.store(true, Ordering::Relaxed);
-        let outcome =
-            apply_compact_request(&mut bundle, &store, &state, Path::new("/tmp"), None, true)
-                .unwrap();
+        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
         match outcome {
             Some(CompactOutcome::Performed {
                 compacted_events, ..
@@ -302,13 +279,21 @@ mod tests {
     #[test]
     fn compact_persists_compaction_once_and_stays_resumable() {
         // Regression for the /compact double-write: the Compaction event
-        // is written through the attached sink, and apply_compact_request
-        // must only reconcile the index — not re-append the event.
+        // is written through the attached sink; apply_compact_request
+        // must not re-append it (nor touch the index).
         let tmp = tempfile::tempdir().unwrap();
         let entry =
             create_session(tmp.path(), "gpt-x".to_owned(), "/work".to_owned(), None).unwrap();
         // Write-through sink: every append lands in the session JSONL.
-        let store = Arc::new(attach_sink(EventStore::new(), tmp.path(), &entry.id));
+        let store = Arc::new(
+            attach_sink(
+                EventStore::new(),
+                tmp.path(),
+                &entry.id,
+                norn::session::DurabilityPolicy::Flush,
+            )
+            .expect("attach sink"),
+        );
         for i in 0..12 {
             store.append(user(&format!("u{i}"))).unwrap();
             store.append(assistant(&format!("a{i}"))).unwrap();
@@ -321,21 +306,19 @@ mod tests {
         let state = make_state(Arc::clone(&store));
         state.compact_requested.store(true, Ordering::Relaxed);
 
-        let outcome = apply_compact_request(
-            &mut bundle,
-            &store,
-            &state,
-            tmp.path(),
-            Some(&entry.id),
-            false,
-        )
-        .unwrap();
+        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
         assert!(matches!(outcome, Some(CompactOutcome::Performed { .. })));
 
-        // 24 turn events + exactly one Compaction event = 25 lines. A
-        // double-write would yield 26 and a duplicate EventId.
+        // 24 turn events + exactly one Compaction event = 25 event
+        // lines (the versioned session file carries one extra
+        // `norn_session_format` header line, excluded here). A
+        // double-write would yield 26 event lines and a duplicate
+        // EventId.
         let body = std::fs::read_to_string(session_file_path(tmp.path(), &entry.id)).unwrap();
-        let line_count = body.lines().filter(|l| !l.trim().is_empty()).count();
+        let line_count = body
+            .lines()
+            .filter(|l| !l.trim().is_empty() && !l.contains("norn_session_format"))
+            .count();
         assert_eq!(
             line_count, 25,
             "compaction event must be persisted once, not double-written"
@@ -345,6 +328,57 @@ mod tests {
         let (resumed, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
         assert_eq!(resumed.len(), 25);
         assert_eq!(replayed.len(), 25);
+    }
+
+    #[test]
+    fn compact_counts_index_events_exactly_once() {
+        // Regression for the /compact index double-count: the registered
+        // write-through sink already updates index.jsonl per persisted
+        // event, so apply_compact_request must NOT hand-reconcile the
+        // index on top. Pre-fix this read 26 (25 sink updates + 1
+        // duplicate reconcile for the Compaction event).
+        let tmp = tempfile::tempdir().unwrap();
+        let entry =
+            create_session(tmp.path(), "gpt-x".to_owned(), "/work".to_owned(), None).unwrap();
+        let store = Arc::new(
+            attach_sink(
+                EventStore::new(),
+                tmp.path(),
+                &entry.id,
+                norn::session::DurabilityPolicy::Flush,
+            )
+            .expect("attach sink"),
+        );
+        for i in 0..12 {
+            store.append(user(&format!("u{i}"))).unwrap();
+            store.append(assistant(&format!("a{i}"))).unwrap();
+        }
+        let mut bundle = build_runtime(
+            &Cli::try_parse_from(["norn"]).unwrap(),
+            RuntimeInputs::default(),
+        )
+        .unwrap();
+        let state = make_state(Arc::clone(&store));
+        state.compact_requested.store(true, Ordering::Relaxed);
+
+        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
+        assert!(matches!(outcome, Some(CompactOutcome::Performed { .. })));
+        // Mirror the orchestrator: checkpoint flushes the sink's pending
+        // index delta (the registered sink batches it until a durability
+        // boundary, checkpoint, or drop).
+        store.checkpoint().unwrap();
+
+        let index = crate::session::read_index(tmp.path()).unwrap();
+        let indexed = index
+            .iter()
+            .find(|e| e.id == entry.id)
+            .expect("session present in index");
+        assert_eq!(
+            indexed.event_count, 25,
+            "index must count each persisted event exactly once (24 turn \
+             events + 1 Compaction event); a hand-reconcile on top of the \
+             registered sink double-counts",
+        );
     }
 
     #[test]

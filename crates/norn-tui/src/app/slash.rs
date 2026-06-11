@@ -21,12 +21,15 @@ use std::sync::Arc;
 
 use norn::session::context_edit::ContextEdits;
 use norn::session::events::SessionEvent;
-use norn::session::store::{EventStore, JsonlSink};
+use norn::session::{
+    DurabilityPolicy, EventStore, SessionPersistError, attach_sink, create_session,
+};
 
 use crate::TuiError;
 use crate::render::scroll_region::write_to_scroll;
 use crate::terminal::setup::TerminalGuard;
 
+use super::dispatch::write_error_line;
 use super::event_loop::RuntimeRefs;
 use super::state::AppState;
 
@@ -184,14 +187,56 @@ fn write_dim_line(message: &str, guard: &mut TerminalGuard) -> Result<(), TuiErr
     Ok(())
 }
 
+/// Create a new persistent session through the full session stack:
+/// [`create_session`] registers the session in the index (so it is
+/// listable and resumable), then [`attach_sink`] equips a fresh store
+/// with an index-registered JSONL sink using
+/// [`DurabilityPolicy::Flush`] — the same durability every other
+/// interactive attach point in the workspace uses.
+///
+/// Returns the new session id and the sink-equipped store. Pure
+/// store-stack work with no terminal I/O, so both the success and the
+/// failure path are unit-testable without a [`TerminalGuard`].
+fn create_new_session_store(
+    data_dir: &std::path::Path,
+    model: &str,
+) -> Result<(String, EventStore), SessionPersistError> {
+    // Same derivation as the CLI driver's startup path, but propagated
+    // instead of defaulted: if the cwd is unreadable the user sees the
+    // error and keeps the current session rather than silently
+    // indexing a session with an empty working directory.
+    let working_dir = std::env::current_dir()?.to_string_lossy().into_owned();
+    let entry = create_session(data_dir, model.to_owned(), working_dir, None)?;
+    let store = attach_sink(
+        EventStore::new(),
+        data_dir,
+        &entry.id,
+        DurabilityPolicy::Flush,
+    )?;
+    Ok((entry.id, store))
+}
+
 /// `/new` (also `/clear`) — rotate to a new session, drop conversation
 /// context, clear the viewport, and reset session-cumulative tokens.
 ///
 /// When persistence is enabled (`runtime.data_dir` and
-/// `runtime.session_id` are `Some`), a new session JSONL file is
-/// created and the store is replaced with a fresh sink-equipped one.
-/// In ephemeral mode, the store is replaced with a plain in-memory
-/// store (no disk I/O).
+/// `runtime.session_id` are `Some`), the new session is created via
+/// [`create_new_session_store`] — indexed, listable, resumable, and
+/// sink-registered. If that fails, the error is written to the scroll
+/// region in the standard error style and the current session is left
+/// fully intact — no app state has been mutated yet, so no
+/// partially-rotated state is reachable: the TUI never silently
+/// degrades a persistent session to an in-memory one. In ephemeral
+/// mode, the store is replaced with a plain in-memory store (no disk
+/// I/O).
+///
+/// Once the fallible session-stack work succeeds, the rotation commits
+/// through [`super::rotation::rotate_store_dependents`], which
+/// checkpoints the old store's final index delta and repoints every
+/// component that captured the old store at driver startup — the
+/// `LoopContext` / tool-context [`norn::session::action_log::ActionLog`]
+/// and the agent tools' `AgentToolInfra` event store — before swapping
+/// `runtime.store`.
 ///
 /// Terminal scrollback retains the previous conversation — the user
 /// can still scroll up. The model's view is what gets reset.
@@ -200,27 +245,44 @@ fn handle_new(
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
 ) -> Result<(), TuiError> {
-    let new_store = if let (Some(data_dir), Some(_old_id)) =
+    // Phase 1 — all fallible work, touching no app state. A failure
+    // here leaves the current session running exactly as it was.
+    let (new_id, new_store) = if let (Some(data_dir), Some(_old_id)) =
         (runtime.data_dir.as_ref(), runtime.session_id.as_ref())
     {
-        let new_id = uuid::Uuid::now_v7().to_string();
-        let path = data_dir.join(format!("{new_id}.jsonl"));
-        match JsonlSink::open(&path) {
-            Ok(sink) => {
-                runtime.session_id = Some(new_id.clone());
-                runtime.agent_config.cache_key = Some(new_id.clone());
-                state.fixed_panel.status_bar_mut().session_name = new_id;
-                EventStore::with_sink(Box::new(sink))
-            }
-            Err(e) => {
-                tracing::error!("failed to open new session sink at {}: {e}", path.display(),);
-                EventStore::new()
+        match create_new_session_store(data_dir, &runtime.model) {
+            Ok((new_id, store)) => (Some(new_id), store),
+            Err(err) => {
+                tracing::error!(
+                    "/new: failed to create session in {}: {err}",
+                    data_dir.display(),
+                );
+                let message = format!("/new failed: {err} — keeping the current session");
+                return write_error_line(state, guard, &message);
             }
         }
     } else {
-        EventStore::new()
+        (None, EventStore::new())
     };
-    runtime.store = Arc::new(new_store);
+
+    // Phase 2 — infallible commit: checkpoint the old store's pending
+    // index delta, repoint the action log and agent-tool infra at the
+    // new store, swap `runtime.store`, then update the session
+    // identity everywhere it is displayed or sent.
+    super::rotation::rotate_store_dependents(
+        runtime.executor.shared_context(),
+        &mut runtime.store,
+        &mut runtime.loop_context,
+        Arc::new(new_store),
+    );
+    if let Some(new_id) = new_id {
+        runtime.session_id = Some(new_id.clone());
+        runtime.agent_config.cache_key = Some(new_id.clone());
+        if let Some(env) = runtime.loop_context.environment.as_mut() {
+            env.session_id = Some(new_id.clone());
+        }
+        state.fixed_panel.status_bar_mut().session_name = new_id;
+    }
 
     if runtime.loop_context.context_edits.is_some() {
         runtime.loop_context.context_edits = Some(ContextEdits::new());
@@ -259,14 +321,10 @@ fn handle_new(
 /// would be a cross-crate dependency violation). Phase 2 will lift
 /// both into a shared layer and remove this duplication.
 fn handle_compact(
-    _state: &AppState,
+    state: &AppState,
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
 ) -> Result<(), TuiError> {
-    // `_state` is reserved for Phase 2 activity-panel feedback —
-    // declared with the leading underscore so the unused-parameter
-    // warning is suppressed at the signature level without a body
-    // lint bypass.
     let keep = runtime.agent_config.auto_compact_keep_recent_turns;
 
     // Count assistant turns. If we don't have more than `keep`,
@@ -300,7 +358,16 @@ fn handle_compact(
             let line = format!(
                 "Compacted older turns, freed ~{token_estimate_freed} tokens (keeping {keep} most recent)."
             );
-            write_dim_line(&line, guard)
+            write_dim_line(&line, guard)?;
+            // The compaction appended a Compaction event through the
+            // sink; flush the sink's pending index delta now so the
+            // session index reflects it even if the TUI aborts before
+            // the next turn-boundary checkpoint. Failure is surfaced
+            // in the error-line style but never undoes the compaction.
+            if let Some(message) = super::helpers::checkpoint_session(&runtime.store) {
+                write_error_line(state, guard, &message)?;
+            }
+            Ok(())
         }
         Ok(None) => write_dim_line("Nothing to compact.", guard),
         Err(err) => {
@@ -454,6 +521,87 @@ fn format_tools_block(tools: &[norn::provider::request::ToolDefinition]) -> Stri
 #[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
+
+    use norn::session::events::EventBase;
+    use norn::session::{read_index, read_session_events, resume_session};
+
+    #[test]
+    fn create_new_session_store_registers_session_in_index() {
+        // Regression for the H20 bug: `/new` previously opened a raw
+        // JsonlSink, so the rotated session never appeared in the
+        // index — unlistable and unresumable. The full stack must
+        // index it.
+        let tmp = tempfile::tempdir().unwrap();
+        let (id, _store) = create_new_session_store(tmp.path(), "test-model").unwrap();
+        let index = read_index(tmp.path()).unwrap();
+        assert!(
+            index.iter().any(|e| e.id == id),
+            "session {id} missing from index: {index:?}",
+        );
+        let entry = index.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(entry.model, "test-model");
+    }
+
+    #[test]
+    fn create_new_session_store_attaches_registered_sink() {
+        // Events appended after rotation must reach disk through the
+        // registered sink, and the index entry must track them — the
+        // raw-sink path bypassed index maintenance entirely.
+        let tmp = tempfile::tempdir().unwrap();
+        let (id, store) = create_new_session_store(tmp.path(), "test-model").unwrap();
+        store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(None),
+                content: "hello after rotation".to_owned(),
+            })
+            .unwrap();
+        let read = read_session_events(tmp.path(), &id).unwrap();
+        assert_eq!(read.events.len(), 1, "appended event must be on disk");
+        assert!(matches!(
+            &read.events[0],
+            SessionEvent::UserMessage { content, .. } if content == "hello after rotation",
+        ));
+        // Drop before the index assertion so any deferred index
+        // maintenance in the sink has flushed.
+        drop(store);
+        let index = read_index(tmp.path()).unwrap();
+        let entry = index.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(
+            entry.event_count, 1,
+            "registered sink must keep the index event count current",
+        );
+    }
+
+    #[test]
+    fn create_new_session_store_session_is_resumable() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (id, store) = create_new_session_store(tmp.path(), "test-model").unwrap();
+        store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(None),
+                content: "persist me".to_owned(),
+            })
+            .unwrap();
+        drop(store);
+        let (_resumed_store, events, entry) = resume_session(tmp.path(), &id).unwrap();
+        assert_eq!(entry.id, id);
+        assert_eq!(events.len(), 1, "resume must replay the appended event");
+    }
+
+    #[test]
+    fn create_new_session_store_propagates_failure() {
+        // The failure path must surface an Err — never silently hand
+        // back an in-memory store. A regular file in place of the data
+        // directory makes every filesystem step fail.
+        let tmp = tempfile::tempdir().unwrap();
+        let bogus_dir = tmp.path().join("not-a-dir");
+        std::fs::write(&bogus_dir, b"occupied").unwrap();
+        let result = create_new_session_store(&bogus_dir, "test-model");
+        assert!(
+            result.is_err(),
+            "creating a session under a file path must fail loudly",
+        );
+    }
 
     #[test]
     fn split_first_word_returns_command_and_arg() {

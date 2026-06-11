@@ -1,6 +1,6 @@
 //! Builder-facing result types: [`AgentOutput`] and [`AgentStopReason`].
 //!
-//! [`Agent::run`](super::builder::Agent::run) maps the runner's
+//! [`Agent::run`](super::instance::Agent::run) maps the runner's
 //! [`AgentStepResult`](crate::r#loop::config::AgentStepResult) into an
 //! [`AgentOutput`] that bundles the final output value, accumulated token
 //! usage, the (optional) event store for session resume, and a public
@@ -60,7 +60,7 @@ pub enum AgentStopReason {
 }
 
 /// The outcome of running an agent step via
-/// [`Agent::run`](super::builder::Agent::run).
+/// [`Agent::run`](super::instance::Agent::run).
 ///
 /// Not [`Clone`]: it owns the session [`EventStore`], which is single-owner
 /// runtime state.

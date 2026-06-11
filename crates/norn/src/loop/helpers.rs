@@ -29,7 +29,9 @@ use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
 // Re-export tool-dispatch functions so runner.rs imports stay unchanged.
-pub(super) use super::tool_dispatch::{append_tool_result, execute_tool_call};
+pub(super) use super::tool_dispatch::{
+    PlannedBatchRequest, ToolResultRecord, append_tool_result, execute_planned_tool_batch,
+};
 
 pub(super) use crate::r#loop::rule_wiring::{
     apply_rule_injections, partition_injections_by_timing,
@@ -43,6 +45,15 @@ pub(super) struct InitialMessages {
     pub(super) prefix_len: usize,
     /// Latest provider response anchor visible in the prompt history.
     pub(super) response_thread_anchor: Option<ResponseThreadAnchor>,
+    /// Index of the managed dynamic-context Developer message when one was
+    /// inserted into the prefix (always `Some(1)` in that case). Seed value
+    /// for the runner's `ManagedDevMessage` tracker (REVIEW H2).
+    pub(super) managed_developer_index: Option<usize>,
+    /// Number of trailing messages the new user input occupies: 1 for a
+    /// literal prompt, N for a slash-command expansion. Used by in-flight
+    /// compaction to map the persisted prompt event onto its local message
+    /// span (REVIEW 6b).
+    pub(super) new_input_len: usize,
 }
 
 /// Build the initial conversation: system prompt, conversation history
@@ -94,7 +105,9 @@ pub(super) fn build_initial_messages(
         tool_name: None,
         tool_call_kind: None,
     });
+    let mut managed_developer_index = None;
     if let Some(dynamic) = loop_context.dynamic_context() {
+        managed_developer_index = Some(messages.len());
         messages.push(Message {
             role: MessageRole::Developer,
             content: Some(dynamic),
@@ -118,6 +131,7 @@ pub(super) fn build_initial_messages(
 
     messages.extend(history);
 
+    let input_start = messages.len();
     if let Some(expansion) = slash_expansion {
         messages.extend(expansion);
     } else {
@@ -131,11 +145,14 @@ pub(super) fn build_initial_messages(
             tool_call_kind: None,
         });
     }
+    let new_input_len = messages.len() - input_start;
 
     Ok(InitialMessages {
         messages,
         prefix_len,
         response_thread_anchor,
+        managed_developer_index,
+        new_input_len,
     })
 }
 
@@ -238,11 +255,13 @@ pub(super) async fn accept_schema_tool_call(
         append_tool_result(
             store,
             messages,
-            &schema_tc.call_id,
-            schema_tool_name,
-            schema_tc.kind,
-            &Value::String("accepted".to_string()),
-            0,
+            ToolResultRecord {
+                tool_call_id: &schema_tc.call_id,
+                tool_name: schema_tool_name,
+                kind: schema_tc.kind,
+                output: &Value::String("accepted".to_string()),
+                duration_ms: 0,
+            },
             hooks,
             event_tx,
         )
@@ -253,6 +272,14 @@ pub(super) async fn accept_schema_tool_call(
 
 /// Reject tool calls that appear after the schema tool by appending error
 /// results without executing them.
+///
+/// The schema tool call itself is deliberately **not** answered here: the
+/// caller appends exactly one result for it — an acceptance via
+/// [`accept_schema_tool_call`] or validation feedback in the
+/// `SchemaInvalid` arm. Appending a second result for the same `call_id`
+/// (the pre-fix behaviour, REVIEW H1) produced a duplicate
+/// `function_call_output` on the next request and permanently poisoned the
+/// persisted session replay.
 pub(super) async fn reject_post_schema_tools(
     store: &EventStore,
     messages: &mut Vec<Message>,
@@ -267,22 +294,7 @@ pub(super) async fn reject_post_schema_tools(
         .position(|tc| tc.name == schema_tool_name);
 
     if let Some(idx) = schema_idx {
-        let schema_tc = &response.tool_calls[idx];
-        append_tool_result(
-            store,
-            messages,
-            &schema_tc.call_id,
-            schema_tool_name,
-            schema_tc.kind,
-            &Value::String("accepted".to_string()),
-            0,
-            hooks,
-            event_tx,
-        )
-        .await?;
-
-        for i in (idx + 1)..response.tool_calls.len() {
-            let tc = &response.tool_calls[i];
+        for tc in &response.tool_calls[idx + 1..] {
             let rejection = serde_json::json!({
                 "error": format!(
                     "rejected: {} tool is terminal; tools after it are not executed",
@@ -292,11 +304,13 @@ pub(super) async fn reject_post_schema_tools(
             append_tool_result(
                 store,
                 messages,
-                &tc.call_id,
-                &tc.name,
-                tc.kind,
-                &rejection,
-                0,
+                ToolResultRecord {
+                    tool_call_id: &tc.call_id,
+                    tool_name: &tc.name,
+                    kind: tc.kind,
+                    output: &rejection,
+                    duration_ms: 0,
+                },
                 hooks,
                 event_tx,
             )
@@ -441,23 +455,21 @@ pub(super) struct ToolBatchRequest<'a> {
 pub(super) async fn execute_tool_batch(
     request: ToolBatchRequest<'_>,
 ) -> Result<Vec<RuleInjection>, NornError> {
-    let mut batch_injections = Vec::new();
-    for tc_index in request.tool_indices {
-        batch_injections.extend(
-            execute_tool_call(
-                request.provider.as_ref().map(Arc::clone),
-                request.executor,
-                request.store,
-                request.messages,
-                request.response,
-                tc_index,
-                request.config,
-                request.loop_context,
-                request.event_tx,
-            )
-            .await?,
-        );
-    }
+    // Dispatch the whole batch through the effect-based scheduling plan:
+    // adjacent ReadOnly/Network calls overlap, Write/Process serialize, and
+    // result ordering always matches call order.
+    let batch_injections = execute_planned_tool_batch(PlannedBatchRequest {
+        provider: request.provider,
+        executor: request.executor,
+        store: request.store,
+        messages: request.messages,
+        response: request.response,
+        tool_indices: request.tool_indices,
+        config: request.config,
+        loop_context: request.loop_context,
+        event_tx: request.event_tx,
+    })
+    .await?;
     let (before, after) = partition_injections_by_timing(batch_injections);
     apply_rule_injections(request.loop_context, after, request.messages, request.store).await?;
     Ok(before)
@@ -486,13 +498,13 @@ pub(super) async fn flush_inbound_messages(
     Ok(true)
 }
 
-/// Drain pending child-agent results and inject them as developer
-/// messages. Returns `true` if any results were injected.
+/// Drain pending child-agent results and inject them into the running
+/// conversation. Returns `true` if any results were injected.
 ///
-/// Child results are formatted as structured developer context so the
-/// model sees them as runtime information, not user input. Each result
-/// is persisted as a `UserMessage` event (for the session record) but
-/// sent to the provider with `MessageRole::Developer`.
+/// Each drained batch is formatted into a single attributed block,
+/// persisted as one `UserMessage` event, and pushed as one user-role
+/// message — keeping the persisted event stream and the live conversation
+/// in 1:1 correspondence (a requirement of in-flight compaction mapping).
 pub(super) async fn drain_child_results(
     store: &EventStore,
     messages: &mut Vec<Message>,

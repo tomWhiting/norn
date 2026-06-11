@@ -11,7 +11,7 @@ use crate::error::ToolError;
 use crate::tool::context::{SessionId, ToolContext};
 use crate::tool::envelope::ToolEnvelope;
 
-use super::INLINE_OUTPUT_THRESHOLD_CHARS;
+use super::tool::INLINE_OUTPUT_THRESHOLD_CHARS;
 
 #[derive(Debug)]
 pub(super) enum CapturedOutput {

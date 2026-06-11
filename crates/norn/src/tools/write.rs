@@ -14,6 +14,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::ast::{AstCheck, SyntaxError, check_syntax};
+use super::confinement::check_confinement;
+use super::file_commit::commit_file_atomic;
 use super::validation::count_code_lines;
 use crate::error::ToolError;
 use crate::tool::context::{ToolContext, ToolFlag};
@@ -170,6 +172,12 @@ impl Tool for WriteTool {
 
         let path = ctx.resolve_path(&args.path);
 
+        if let Err(reason) = check_confinement(ctx, &path) {
+            return PreValidateOutcome::Block {
+                reason: format!("Write blocked: {reason}"),
+            };
+        }
+
         if ctx.has_flag(&ToolFlag::AllowOverwrite) {
             // Override path — execute will record the CheckOverride.
             return PreValidateOutcome::Proceed;
@@ -205,6 +213,14 @@ impl Tool for WriteTool {
         })?;
         let path = ctx.resolve_path(&args.path);
 
+        // Workspace confinement (opt-in): re-checked at execute time so a
+        // direct invocation cannot bypass the pre_validate gate.
+        if let Err(reason) = check_confinement(ctx, &path) {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("write refused: {reason}"),
+            });
+        }
+
         // Record any compile-time check that was overridden by an
         // orchestrator flag. This must happen before the write so the
         // override is captured even if the write fails.
@@ -232,7 +248,10 @@ impl Tool for WriteTool {
             });
         }
 
-        if let Err(e) = tokio::fs::write(&path, args.content.as_bytes()).await {
+        // Atomic commit: temp file in the same directory + rename, keeping
+        // an existing target's permission bits. ENOSPC or a crash
+        // mid-commit leaves the original content untouched.
+        if let Err(e) = commit_file_atomic(&path, args.content.as_bytes()).await {
             return Err(ToolError::ExecutionFailed {
                 reason: format!("failed to write {}: {e}", args.path),
             });
@@ -685,6 +704,110 @@ mod tests {
         assert_eq!(
             limit.limit_for(Path::new("crates/foo/src/lib.rs")),
             Some(500)
+        );
+    }
+
+    // --- Workspace confinement -------------------------------------------
+
+    #[tokio::test]
+    async fn confined_context_refuses_dot_dot_escape() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("ws");
+        tokio::fs::create_dir(&root).await.unwrap();
+        let escape_target = outer.path().join("escape.txt");
+
+        let tool = WriteTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(root.clone());
+        ctx.set_working_dir(root.clone());
+        let envelope = envelope_for(json!({
+            "path": "../escape.txt",
+            "content": "should never land"
+        }));
+
+        match tool.pre_validate(&envelope, &ctx).await {
+            PreValidateOutcome::Block { reason } => {
+                assert!(reason.contains("outside the workspace"), "{reason}");
+            }
+            PreValidateOutcome::Proceed => panic!("expected Block"),
+        }
+        let err = tool.execute(&envelope, &ctx).await.expect_err("refused");
+        assert!(err.to_string().contains("outside the workspace"), "{err}");
+        assert!(!escape_target.exists(), "escape file must not be created");
+    }
+
+    #[tokio::test]
+    async fn confined_context_refuses_absolute_escape() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("ws");
+        tokio::fs::create_dir(&root).await.unwrap();
+        let escape_target = outer.path().join("abs.txt");
+
+        let tool = WriteTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(root.clone());
+        ctx.set_working_dir(root.clone());
+        let envelope = envelope_for(json!({
+            "path": escape_target.to_string_lossy(),
+            "content": "nope"
+        }));
+
+        match tool.pre_validate(&envelope, &ctx).await {
+            PreValidateOutcome::Block { reason } => {
+                assert!(reason.contains("outside the workspace"), "{reason}");
+            }
+            PreValidateOutcome::Proceed => panic!("expected Block"),
+        }
+        assert!(!escape_target.exists());
+    }
+
+    #[tokio::test]
+    async fn confined_context_allows_write_inside_root() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("inside.txt");
+        let tool = WriteTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(dir.path().to_path_buf());
+        ctx.set_working_dir(dir.path().to_path_buf());
+        let envelope = envelope_for(json!({
+            "path": path.to_string_lossy(),
+            "content": "fine"
+        }));
+
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+        assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "fine");
+    }
+
+    // --- Atomic commit ------------------------------------------------------
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn overwrite_preserves_permission_bits() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("script.sh");
+        tokio::fs::write(&path, "#!/bin/sh\n").await.unwrap();
+        let mut perms = tokio::fs::metadata(&path).await.unwrap().permissions();
+        perms.set_mode(0o755);
+        tokio::fs::set_permissions(&path, perms).await.unwrap();
+
+        let tool = WriteTool::new();
+        let ctx = ToolContext::empty();
+        ctx.mark_file_read(&path);
+        let envelope = envelope_for(json!({
+            "path": path.to_string_lossy(),
+            "content": "#!/bin/sh\necho updated\n"
+        }));
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+
+        let mode = tokio::fs::metadata(&path).await.unwrap().permissions();
+        assert_eq!(
+            mode.mode() & 0o7777,
+            0o755,
+            "atomic rename must keep the executable bit"
         );
     }
 }

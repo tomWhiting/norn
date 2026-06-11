@@ -3,8 +3,10 @@
 //! [`ToolRegistry`] stores tool implementations behind trait objects and
 //! supports four operations beyond plain storage:
 //!
-//! 1. **Lookup gating** via [`ToolRegistry::set_available`] — restricts which
-//!    registered tools may be retrieved without removing them.
+//! 1. **Lookup gating** via [`ToolRegistry::set_available`] (allow-list)
+//!    and [`ToolRegistry::set_disallowed`] (deny-list; wins over the
+//!    allow-list) — restricts which registered tools may be retrieved
+//!    without removing them.
 //! 2. **Runtime mutation** via [`ToolRegistry::register`] and
 //!    [`ToolRegistry::remove`] — tools can be added or removed while the
 //!    registry is in use.
@@ -31,6 +33,7 @@ use super::lifecycle::{
     Advisory, CheckOverride, PostCheckResult, PostValidateMode, PostValidateOutcome,
     PreValidateOutcome,
 };
+use super::scheduling::ToolEffectIndex;
 use super::traits::{Tool, ToolOutput};
 use crate::error::ToolError;
 use crate::r#loop::config::{DispatchOutcome, ToolExecutor};
@@ -38,39 +41,51 @@ use crate::r#loop::config::{DispatchOutcome, ToolExecutor};
 /// Stores tools as trait objects and dispatches calls through the full
 /// pre-validate / execute / post-validate / on-success lifecycle.
 pub struct ToolRegistry {
-    tools: HashMap<String, Box<dyn Tool + Send + Sync>>,
+    tools: HashMap<String, Arc<dyn Tool + Send + Sync>>,
     /// When `Some`, restricts [`Self::get`] (and therefore dispatch) to the
     /// named tools. `None` means every registered tool is available.
     available: Option<HashSet<String>>,
+    /// Names gated out unconditionally (e.g. `--disallowed-tools`). A
+    /// disallowed name is unavailable even when it appears in
+    /// [`Self::set_available`]'s allow-list — deny wins.
+    disallowed: HashSet<String>,
     /// Shared orchestrator-supplied context passed to every dispatched tool.
     context: Arc<ToolContext>,
+    /// Name → implementation index published on [`Self::shared_context`]
+    /// so the agent loop's dispatch layer can resolve per-call
+    /// [`ToolEffect`](super::scheduling::ToolEffect)s for scheduling.
+    /// Kept in sync by [`Self::register`] / [`Self::remove`].
+    effects: Arc<ToolEffectIndex>,
 }
 
 impl ToolRegistry {
     /// Creates an empty registry with an empty [`ToolContext`].
     #[must_use]
     pub fn new() -> Self {
-        Self {
-            tools: HashMap::new(),
-            available: None,
-            context: Arc::new(ToolContext::empty()),
-        }
+        Self::with_context(Arc::new(ToolContext::empty()))
     }
 
     /// Creates an empty registry that will share `context` with every
     /// dispatched tool call.
     #[must_use]
     pub fn with_context(context: Arc<ToolContext>) -> Self {
+        let effects = Arc::new(ToolEffectIndex::new());
+        context.insert_extension(Arc::clone(&effects));
         Self {
             tools: HashMap::new(),
             available: None,
+            disallowed: HashSet::new(),
             context,
+            effects,
         }
     }
 
     /// Replaces the orchestrator-supplied [`ToolContext`] shared with every
-    /// subsequent dispatched tool call.
+    /// subsequent dispatched tool call. The registry's
+    /// [`ToolEffectIndex`] extension is re-published on the new context so
+    /// dispatch keeps resolving effects after the swap.
     pub fn set_context(&mut self, context: Arc<ToolContext>) {
+        context.insert_extension(Arc::clone(&self.effects));
         self.context = context;
     }
 
@@ -78,13 +93,17 @@ impl ToolRegistry {
     /// availability set is active, the new tool is gated by it — call
     /// [`Self::set_available`] again to include it.
     pub fn register(&mut self, tool: Box<dyn Tool + Send + Sync>) {
-        self.tools.insert(tool.name().to_string(), tool);
+        let tool: Arc<dyn Tool + Send + Sync> = Arc::from(tool);
+        let name = tool.name().to_string();
+        self.effects.insert(name.clone(), Arc::clone(&tool));
+        self.tools.insert(name, tool);
     }
 
     /// Removes a tool from the registry and from the availability set (if
     /// any), returning the removed implementation when present.
-    pub fn remove(&mut self, name: &str) -> Option<Box<dyn Tool + Send + Sync>> {
+    pub fn remove(&mut self, name: &str) -> Option<Arc<dyn Tool + Send + Sync>> {
         let removed = self.tools.remove(name);
+        self.effects.remove(name);
         if let Some(available) = self.available.as_mut() {
             available.remove(name);
         }
@@ -104,8 +123,18 @@ impl ToolRegistry {
         self.available = None;
     }
 
+    /// Unconditionally gates out the named tools (the `--disallowed-tools`
+    /// surface). Names are exact matches, consistent with
+    /// [`Self::set_available`]. A disallowed name stays unavailable even
+    /// when listed in the availability allow-list — deny wins — and the
+    /// gate also applies to tools registered after this call.
+    pub fn set_disallowed(&mut self, names: Vec<String>) {
+        self.disallowed = names.into_iter().collect();
+    }
+
     /// Looks up a tool by name. Returns `None` for unregistered names and
-    /// for names that have been gated out by [`Self::set_available`].
+    /// for names that have been gated out by [`Self::set_available`] or
+    /// [`Self::set_disallowed`].
     #[must_use]
     pub fn get(&self, name: &str) -> Option<&(dyn Tool + Send + Sync)> {
         if !self.is_name_available(name) {
@@ -132,6 +161,9 @@ impl ToolRegistry {
     }
 
     fn is_name_available(&self, name: &str) -> bool {
+        if self.disallowed.contains(name) {
+            return false;
+        }
         self.available
             .as_ref()
             .is_none_or(|allowed| allowed.contains(name))
@@ -769,6 +801,85 @@ mod tests {
         assert!(reg.get("b").is_some());
         assert!(reg.get("c").is_some());
         assert_eq!(reg.len(), 3);
+    }
+
+    /// H17: `set_disallowed` gates lookups even without an allow-list,
+    /// and continues to gate tools registered after the call.
+    #[test]
+    fn set_disallowed_gates_get_names_and_len() {
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(StubTool::new("read")));
+        reg.register(Box::new(StubTool::new("write")));
+
+        reg.set_disallowed(vec!["write".to_string()]);
+        assert!(reg.get("read").is_some());
+        assert!(reg.get("write").is_none(), "disallowed tool unreachable");
+        assert_eq!(reg.len(), 1);
+        let visible: Vec<&str> = reg.names().collect();
+        assert_eq!(visible, vec!["read"]);
+
+        // Late registration of a disallowed name stays gated.
+        reg.set_disallowed(vec!["write".to_string(), "late-write".to_string()]);
+        reg.register(Box::new(StubTool::new("late-write")));
+        assert!(reg.get("late-write").is_none());
+    }
+
+    /// H17: a name present in both the allow-list and the deny-list is
+    /// unavailable — deny wins.
+    #[test]
+    fn disallowed_wins_over_available() {
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(StubTool::new("read")));
+        reg.register(Box::new(StubTool::new("write")));
+        reg.set_available(vec!["read".to_string(), "write".to_string()]);
+        reg.set_disallowed(vec!["write".to_string()]);
+        assert!(reg.get("read").is_some());
+        assert!(
+            reg.get("write").is_none(),
+            "deny must win over the availability allow-list",
+        );
+    }
+
+    /// The registry publishes a [`ToolEffectIndex`] on its shared
+    /// context and keeps it in sync across register / remove /
+    /// set_context.
+    #[test]
+    fn effect_index_published_and_synced() {
+        use crate::tool::scheduling::ToolEffectIndex;
+
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(StubTool::new("read")));
+
+        let shared = reg.shared_context().expect("registry exposes context");
+        let index = shared
+            .get_extension::<ToolEffectIndex>()
+            .expect("effect index published on shared context");
+        assert_eq!(
+            index.effect_for("read", &serde_json::json!({})),
+            ToolEffect::ReadOnly,
+        );
+        assert_eq!(
+            index.effect_for("ghost", &serde_json::json!({})),
+            ToolEffect::Unknown,
+        );
+
+        reg.remove("read");
+        assert_eq!(
+            index.effect_for("read", &serde_json::json!({})),
+            ToolEffect::Unknown,
+        );
+
+        // Swapping the context re-publishes the same index.
+        reg.register(Box::new(StubTool::new("again")));
+        reg.set_context(Arc::new(ToolContext::empty()));
+        let swapped = reg.shared_context().expect("context after swap");
+        let index = swapped
+            .get_extension::<ToolEffectIndex>()
+            .expect("effect index re-published after set_context");
+        assert_eq!(
+            index.effect_for("again", &serde_json::json!({})),
+            ToolEffect::ReadOnly,
+        );
     }
 
     /// R4 acceptance: unavailable tools return `ToolNotFound` from dispatch.

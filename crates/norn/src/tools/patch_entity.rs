@@ -66,7 +66,20 @@ pub struct LibygdEntityExtractor;
 impl EntityExtractor for LibygdEntityExtractor {
     fn extract(&self, source: &str, path: &Path) -> Option<Vec<ExtractedEntity>> {
         let language = libyggd::ast::detect_language(path)?;
-        let entities = libyggd::ast::extract_entities(source, language).ok()?;
+        let entities = match libyggd::ast::extract_entities(source, language) {
+            Ok(entities) => entities,
+            Err(e) => {
+                // An extraction *error* is not the same as "language not
+                // supported": log it before degrading to the contract's
+                // `None` (the resolver falls through to context tiers).
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %e,
+                    "entity extraction failed; skipping tier-1 anchor resolution for this file",
+                );
+                return None;
+            }
+        };
         Some(
             libyggd::ast::flatten_entities(&entities)
                 .into_iter()
@@ -90,12 +103,11 @@ fn convert_entity(entity: &libyggd::ast::StructuralEntity) -> ExtractedEntity {
 }
 
 #[cfg(all(test, feature = "libyggd-ast"))]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod libyggd_tests {
     use super::*;
 
     #[test]
-    fn extracts_rust_entities_with_fields_converted() {
+    fn extracts_rust_entities_with_fields_converted() -> Result<(), String> {
         let src = "\
 fn alpha() {
     let x = 1;
@@ -107,12 +119,12 @@ struct Beta {
 ";
         let entities = LibygdEntityExtractor
             .extract(src, Path::new("sample.rs"))
-            .expect("rust is a supported language");
+            .ok_or("rust is a supported language")?;
 
         let alpha = entities
             .iter()
             .find(|e| e.name.as_deref() == Some("alpha"))
-            .expect("alpha function extracted");
+            .ok_or("alpha function extracted")?;
         assert_eq!(alpha.kind, "fn");
         assert_eq!(alpha.qualified_name, "alpha");
         assert!(alpha.line_range.start >= 1, "1-indexed line range");
@@ -127,10 +139,11 @@ struct Beta {
                 .any(|e| e.name.as_deref() == Some("Beta") && e.kind == "struct"),
             "struct Beta extracted: {entities:?}",
         );
+        Ok(())
     }
 
     #[test]
-    fn flattens_nested_methods() {
+    fn flattens_nested_methods() -> Result<(), String> {
         let src = "\
 struct Foo;
 
@@ -142,15 +155,16 @@ impl Foo {
 ";
         let entities = LibygdEntityExtractor
             .extract(src, Path::new("nested.rs"))
-            .expect("rust is supported");
+            .ok_or("rust is supported")?;
         assert!(
             entities.iter().any(|e| e.name.as_deref() == Some("bar")),
             "flattening must surface the nested method: {entities:?}",
         );
+        Ok(())
     }
 
     #[test]
-    fn extracts_python_entities() {
+    fn extracts_python_entities() -> Result<(), String> {
         let src = "\
 def greet():
     return 1
@@ -161,7 +175,7 @@ class Widget:
 ";
         let entities = LibygdEntityExtractor
             .extract(src, Path::new("sample.py"))
-            .expect("python is a supported language");
+            .ok_or("python is a supported language")?;
         assert!(
             entities.iter().any(|e| e.name.as_deref() == Some("greet")),
             "top-level function extracted: {entities:?}",
@@ -174,10 +188,11 @@ class Widget:
             entities.iter().any(|e| e.name.as_deref() == Some("method")),
             "flattening must surface the nested method: {entities:?}",
         );
+        Ok(())
     }
 
     #[test]
-    fn extracts_typescript_entities() {
+    fn extracts_typescript_entities() -> Result<(), String> {
         let src = "\
 function compute(): number {
   return 1;
@@ -189,7 +204,7 @@ class Service {
 ";
         let entities = LibygdEntityExtractor
             .extract(src, Path::new("sample.ts"))
-            .expect("typescript is a supported language");
+            .ok_or("typescript is a supported language")?;
         assert!(
             entities
                 .iter()
@@ -202,6 +217,7 @@ class Service {
                 .any(|e| e.name.as_deref() == Some("Service")),
             "class extracted: {entities:?}",
         );
+        Ok(())
     }
 
     #[test]

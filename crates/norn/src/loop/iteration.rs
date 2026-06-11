@@ -10,10 +10,12 @@
 //! every iteration and either inject guidance, emit warnings, or update
 //! profile state in response to the returned signals.
 
+use std::collections::HashMap;
 use std::fmt::Write as _;
 
 use regex::Regex;
 
+use crate::r#loop::numeric::token_count_to_f64;
 use crate::provider::usage::Usage;
 
 /// Hardcoded terminal phrases used by premature-completion detection.
@@ -51,8 +53,18 @@ pub struct IterationMonitorConfig {
     pub handoff_threshold_pct: f64,
     /// Wrap-up guidance text injected when the handoff threshold is crossed.
     pub handoff_guidance: String,
-    /// Number of recent error signatures that must match consecutively to
-    /// trigger [`IterationSignal::RepeatedFailure`].
+    /// Number of **consecutive failing iterations** sharing one
+    /// normalized error signature required to trigger
+    /// [`IterationSignal::RepeatedFailure`].
+    ///
+    /// The window counts iterations (provider round-trips), not raw error
+    /// strings: a single iteration whose tool batch produces N identical
+    /// errors is one failed attempt, because the model has had no chance
+    /// to react yet. The signal therefore means "the model has seen this
+    /// error and re-produced it `failure_repeat_window` iterations in a
+    /// row". After firing, the signal re-arms only once another full
+    /// window of consecutive failing iterations accumulates, and an
+    /// error-free iteration resets every streak.
     pub failure_repeat_window: usize,
     /// Regex patterns used for hedging-language detection. Patterns that
     /// fail to compile are logged at `warn` level and skipped.
@@ -130,12 +142,14 @@ pub enum IterationSignal {
         /// Wrap-up guidance text from config, cloned here for delivery.
         guidance: String,
     },
-    /// The same (normalized) error has appeared in the recent error window
-    /// `failure_repeat_window` times in a row.
+    /// The same (normalized) error has appeared in
+    /// `failure_repeat_window` consecutive failing iterations.
     RepeatedFailure {
-        /// Normalized error signature shared by the consecutive errors.
+        /// Normalized error signature shared by the consecutive
+        /// failing iterations.
         error_signature: String,
-        /// Number of consecutive matching errors detected.
+        /// Length of the consecutive failing-iteration streak for this
+        /// signature at the moment the signal fired.
         consecutive_count: usize,
     },
     /// One or more quality signals were detected in the assistant text.
@@ -150,8 +164,8 @@ pub enum IterationSignal {
 ///
 /// Maintained by the caller across iterations of a single agent step.
 /// The state suppresses duplicate token-budget signals (each fires at most
-/// once per step) and accumulates recent error strings for repeated-
-/// failure detection.
+/// once per step) and tracks, per normalized error signature, how many
+/// consecutive failing iterations have produced it.
 #[derive(Clone, Debug, Default)]
 pub struct IterationMonitorState {
     /// Whether [`IterationSignal::HandoffTriggered`] has already fired
@@ -160,9 +174,23 @@ pub struct IterationMonitorState {
     /// Whether [`IterationSignal::TokenWarning`] has already fired this
     /// step.
     pub warn_fired: bool,
-    /// Accumulated error strings (tool errors and schema-validation
-    /// failures) in arrival order.
-    pub recent_errors: Vec<String>,
+    /// Consecutive failing-iteration streaks keyed by normalized error
+    /// signature. A signature missing from one iteration's error batch
+    /// loses its streak; an error-free iteration clears the map.
+    failure_streaks: HashMap<String, FailureStreak>,
+}
+
+/// One signature's consecutive failing-iteration streak.
+#[derive(Clone, Copy, Debug)]
+struct FailureStreak {
+    /// Consecutive failing iterations that produced this signature.
+    consecutive_iterations: usize,
+    /// Streak length at the last [`IterationSignal::RepeatedFailure`]
+    /// fire for this signature; `0` when it has never fired. A re-fire
+    /// requires another full window of new failing iterations beyond
+    /// this watermark, so sustained failures escalate at window
+    /// boundaries instead of spamming a signal every iteration.
+    fired_at: usize,
 }
 
 /// Check cumulative token usage against the configured thresholds.
@@ -177,13 +205,12 @@ pub struct IterationMonitorState {
 /// tokens are deliberately excluded so that aggressive cache use does not
 /// artificially inflate the budget consumption figure.
 #[must_use]
-#[allow(clippy::cast_precision_loss)]
 pub fn check_token_threshold(usage: &Usage, config: &IterationMonitorConfig) -> IterationSignal {
     if config.context_window_tokens == 0 {
         return IterationSignal::None;
     }
-    let used: u64 = usage.input_tokens + usage.output_tokens;
-    let pct = used as f64 / config.context_window_tokens as f64;
+    let used: u64 = usage.input_tokens.saturating_add(usage.output_tokens);
+    let pct = token_count_to_f64(used) / token_count_to_f64(config.context_window_tokens);
     if pct >= config.handoff_threshold_pct {
         IterationSignal::HandoffTriggered {
             used,
@@ -209,7 +236,6 @@ pub fn check_token_threshold(usage: &Usage, config: &IterationMonitorConfig) -> 
 /// prepare for continuation. For any other variant the function returns an
 /// empty string — callers should only invoke it on `HandoffTriggered`.
 #[must_use]
-#[allow(clippy::cast_precision_loss)]
 pub fn format_handoff_message(signal: &IterationSignal) -> String {
     let IterationSignal::HandoffTriggered {
         used,
@@ -222,7 +248,7 @@ pub fn format_handoff_message(signal: &IterationSignal) -> String {
     let pct_display = if *limit == 0 {
         0.0
     } else {
-        (*used as f64 / *limit as f64) * 100.0
+        (token_count_to_f64(*used) / token_count_to_f64(*limit)) * 100.0
     };
     let mut message = String::new();
     message.push_str(guidance);
@@ -257,32 +283,71 @@ fn normalize_error(error: &str) -> String {
         .collect()
 }
 
-/// Detect when the agent is looping on the same (or structurally similar)
-/// error.
+/// Record one iteration's error batch and detect repeated failures.
 ///
-/// Compares the last `window` entries of `errors` after normalization. If
-/// they all share the same signature, returns
-/// [`IterationSignal::RepeatedFailure`] with that signature and a count of
-/// `window`. Returns [`IterationSignal::None`] when there are fewer than
-/// `window` errors, when `window` is zero, or when the recent entries
-/// disagree.
-#[must_use]
-pub fn check_repeated_failures(errors: &[String], window: usize) -> IterationSignal {
-    if window == 0 || errors.len() < window {
-        return IterationSignal::None;
+/// `errors` is everything the just-completed iteration produced (tool
+/// errors and schema-validation failures). Each distinct normalized
+/// signature in the batch extends its consecutive-iteration streak by
+/// one; signatures absent from the batch lose their streaks, and an
+/// empty batch (a clean iteration) clears every streak.
+///
+/// A [`IterationSignal::RepeatedFailure`] fires for a signature when its
+/// streak reaches `window` consecutive iterations, and re-fires only
+/// after a further full `window` of consecutive failing iterations
+/// accumulates beyond the previous fire (see
+/// [`IterationMonitorConfig::failure_repeat_window`] for the rationale).
+/// Signals are emitted in lexicographic signature order so output is
+/// deterministic when several signatures trip in the same iteration.
+///
+/// A `window` of zero disables detection entirely.
+pub fn observe_failure_iteration(
+    state: &mut IterationMonitorState,
+    errors: &[String],
+    window: usize,
+) -> Vec<IterationSignal> {
+    if window == 0 {
+        return Vec::new();
     }
-    let start = errors.len() - window;
-    let recent = &errors[start..];
-    let first = normalize_error(&recent[0]);
-    for err in &recent[1..] {
-        if normalize_error(err) != first {
-            return IterationSignal::None;
+    if errors.is_empty() {
+        // Recovery: a clean iteration breaks every streak.
+        state.failure_streaks.clear();
+        return Vec::new();
+    }
+
+    let mut signatures: Vec<String> = errors.iter().map(|e| normalize_error(e)).collect();
+    signatures.sort();
+    signatures.dedup();
+
+    let mut next_streaks: HashMap<String, FailureStreak> = HashMap::with_capacity(signatures.len());
+    let mut signals = Vec::new();
+    for signature in signatures {
+        let mut streak = state
+            .failure_streaks
+            .get(&signature)
+            .copied()
+            .unwrap_or(FailureStreak {
+                consecutive_iterations: 0,
+                fired_at: 0,
+            });
+        streak.consecutive_iterations = streak.consecutive_iterations.saturating_add(1);
+        if streak.consecutive_iterations >= window
+            && streak
+                .consecutive_iterations
+                .saturating_sub(streak.fired_at)
+                >= window
+        {
+            streak.fired_at = streak.consecutive_iterations;
+            signals.push(IterationSignal::RepeatedFailure {
+                error_signature: signature.clone(),
+                consecutive_count: streak.consecutive_iterations,
+            });
         }
+        next_streaks.insert(signature, streak);
     }
-    IterationSignal::RepeatedFailure {
-        error_signature: first,
-        consecutive_count: window,
-    }
+    // Signatures not seen this iteration are dropped: streaks are over
+    // *consecutive* iterations.
+    state.failure_streaks = next_streaks;
+    signals
 }
 
 /// Scan assistant text for hedging language and premature-completion patterns.
@@ -373,9 +438,13 @@ fn build_excerpt(text: &str, match_start: usize, match_end: usize) -> String {
 /// iteration. It runs in order: token-threshold check, repeated-failure
 /// check, and quality-signal check. Token-budget signals are suppressed
 /// after their first firing per step (tracked via [`IterationMonitorState::
-/// handoff_fired`] and [`IterationMonitorState::warn_fired`]). Errors
-/// supplied in `latest_errors` are appended to
-/// [`IterationMonitorState::recent_errors`] before failure detection.
+/// handoff_fired`] and [`IterationMonitorState::warn_fired`]).
+///
+/// `latest_errors` carries the just-completed iteration's failures:
+/// `Some(&[..])` records a failing iteration, `Some(&[])` records a clean
+/// iteration (resetting every repeated-failure streak), and `None` means
+/// the caller has no failure information for this iteration, leaving the
+/// streaks untouched.
 pub fn evaluate_iteration(
     state: &mut IterationMonitorState,
     usage: &Usage,
@@ -415,17 +484,11 @@ pub fn evaluate_iteration(
     }
 
     if let Some(errs) = latest_errors {
-        state.recent_errors.extend(errs.iter().cloned());
-    }
-    if let IterationSignal::RepeatedFailure {
-        error_signature,
-        consecutive_count,
-    } = check_repeated_failures(&state.recent_errors, config.failure_repeat_window)
-    {
-        out.push(IterationSignal::RepeatedFailure {
-            error_signature,
-            consecutive_count,
-        });
+        out.extend(observe_failure_iteration(
+            state,
+            errs,
+            config.failure_repeat_window,
+        ));
     }
 
     if let Some(text) = latest_text
@@ -629,34 +692,57 @@ mod tests {
         assert!(msg.contains("0.0%"));
     }
 
-    // --- check_repeated_failures -------------------------------------
+    // --- observe_failure_iteration ------------------------------------
+
+    /// Run `observe_failure_iteration` once per error, treating each
+    /// entry as its own iteration's single-error batch.
+    fn observe_each_as_iteration(
+        state: &mut IterationMonitorState,
+        errors: &[&str],
+        window: usize,
+    ) -> Vec<IterationSignal> {
+        let mut out = Vec::new();
+        for err in errors {
+            out.extend(observe_failure_iteration(
+                state,
+                &[(*err).to_string()],
+                window,
+            ));
+        }
+        out
+    }
 
     #[test]
-    fn repeated_three_identical_window_three_triggers() {
-        let errs = vec![
-            "Error at line 5: foo".to_string(),
-            "Error at line 12: foo".to_string(),
-            "Error at line 99: foo".to_string(),
-        ];
-        match check_repeated_failures(&errs, 3) {
-            IterationSignal::RepeatedFailure {
-                error_signature,
-                consecutive_count,
-            } => {
-                assert_eq!(consecutive_count, 3);
+    fn repeated_three_identical_iterations_window_three_triggers() {
+        let mut state = IterationMonitorState::default();
+        let out = observe_each_as_iteration(
+            &mut state,
+            &[
+                "Error at line 5: foo",
+                "Error at line 12: foo",
+                "Error at line 99: foo",
+            ],
+            3,
+        );
+        match out.as_slice() {
+            [
+                IterationSignal::RepeatedFailure {
+                    error_signature,
+                    consecutive_count,
+                },
+            ] => {
+                assert_eq!(*consecutive_count, 3);
                 assert_eq!(error_signature, "error at line : foo");
             }
-            other => panic!("expected RepeatedFailure, got {other:?}"),
+            other => panic!("expected one RepeatedFailure, got {other:?}"),
         }
     }
 
     #[test]
-    fn repeated_three_identical_window_four_returns_none() {
-        let errs = vec!["e".to_string(), "e".to_string(), "e".to_string()];
-        match check_repeated_failures(&errs, 4) {
-            IterationSignal::None => {}
-            other => panic!("expected None, got {other:?}"),
-        }
+    fn repeated_three_identical_iterations_window_four_returns_none() {
+        let mut state = IterationMonitorState::default();
+        let out = observe_each_as_iteration(&mut state, &["e", "e", "e"], 4);
+        assert!(out.is_empty(), "expected no signal, got {out:?}");
     }
 
     #[test]
@@ -668,54 +754,89 @@ mod tests {
     }
 
     #[test]
-    fn repeated_empty_list_returns_none() {
-        let errs: Vec<String> = Vec::new();
-        match check_repeated_failures(&errs, 3) {
-            IterationSignal::None => {}
-            other => panic!("expected None, got {other:?}"),
-        }
+    fn repeated_empty_batch_resets_streaks() {
+        let mut state = IterationMonitorState::default();
+        observe_each_as_iteration(&mut state, &["e", "e"], 3);
+        let cleared = observe_failure_iteration(&mut state, &[], 3);
+        assert!(cleared.is_empty());
+        // After the reset, two more failing iterations are below the window.
+        let out = observe_each_as_iteration(&mut state, &["e", "e"], 3);
+        assert!(
+            out.is_empty(),
+            "streaks must reset on a clean iteration: {out:?}"
+        );
     }
 
     #[test]
     fn repeated_zero_window_returns_none() {
-        let errs = vec!["e".to_string(), "e".to_string()];
-        match check_repeated_failures(&errs, 0) {
-            IterationSignal::None => {}
-            other => panic!("expected None for zero window, got {other:?}"),
-        }
+        let mut state = IterationMonitorState::default();
+        let out = observe_each_as_iteration(&mut state, &["e", "e", "e", "e"], 0);
+        assert!(out.is_empty(), "window 0 disables detection: {out:?}");
     }
 
     #[test]
-    fn repeated_mixed_errors_returns_none() {
-        let errs = vec![
-            "compile error: missing semicolon".to_string(),
-            "tool error: file not found".to_string(),
-            "schema error: missing field".to_string(),
-        ];
-        match check_repeated_failures(&errs, 3) {
-            IterationSignal::None => {}
-            other => panic!("expected None, got {other:?}"),
-        }
+    fn repeated_mixed_signatures_do_not_chain() {
+        let mut state = IterationMonitorState::default();
+        let out = observe_each_as_iteration(
+            &mut state,
+            &[
+                "compile error: missing semicolon",
+                "tool error: file not found",
+                "schema error: missing field",
+            ],
+            3,
+        );
+        assert!(
+            out.is_empty(),
+            "distinct signatures must not chain: {out:?}"
+        );
     }
 
     #[test]
-    fn repeated_only_last_window_considered() {
-        // First two differ, but the last three match.
-        let errs = vec![
-            "different".to_string(),
-            "also different".to_string(),
-            "Error at line 5: foo".to_string(),
-            "Error at line 12: foo".to_string(),
-            "Error at line 99: foo".to_string(),
-        ];
-        match check_repeated_failures(&errs, 3) {
-            IterationSignal::RepeatedFailure {
-                consecutive_count, ..
-            } => {
-                assert_eq!(consecutive_count, 3);
+    fn repeated_streak_can_start_after_unrelated_failures() {
+        let mut state = IterationMonitorState::default();
+        let out = observe_each_as_iteration(
+            &mut state,
+            &[
+                "different",
+                "also different",
+                "Error at line 5: foo",
+                "Error at line 12: foo",
+                "Error at line 99: foo",
+            ],
+            3,
+        );
+        match out.as_slice() {
+            [
+                IterationSignal::RepeatedFailure {
+                    consecutive_count, ..
+                },
+            ] => {
+                assert_eq!(*consecutive_count, 3);
             }
-            other => panic!("expected RepeatedFailure, got {other:?}"),
+            other => panic!("expected one RepeatedFailure, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn repeated_multi_error_iterations_track_each_signature() {
+        // Both signatures recur across iterations; both trip on the
+        // second iteration, in deterministic (sorted) order.
+        let mut state = IterationMonitorState::default();
+        let batch = vec!["error alpha".to_string(), "error beta".to_string()];
+        let first = observe_failure_iteration(&mut state, &batch, 2);
+        assert!(first.is_empty());
+        let second = observe_failure_iteration(&mut state, &batch, 2);
+        let signatures: Vec<&str> = second
+            .iter()
+            .filter_map(|s| match s {
+                IterationSignal::RepeatedFailure {
+                    error_signature, ..
+                } => Some(error_signature.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(signatures, vec!["error alpha", "error beta"]);
     }
 
     // --- check_quality_signals ---------------------------------------
@@ -960,8 +1081,8 @@ mod tests {
     }
 
     #[test]
-    fn evaluate_appends_errors_across_calls() {
-        let cfg = config();
+    fn evaluate_tracks_failing_iterations_across_calls() {
+        let cfg = config(); // failure_repeat_window: 3
         let mut state = IterationMonitorState::default();
         let u = usage_with(0, 0);
 
@@ -987,7 +1108,6 @@ mod tests {
             &cfg,
         );
 
-        assert_eq!(state.recent_errors.len(), 3);
         let triggered = out
             .iter()
             .any(|s| matches!(s, IterationSignal::RepeatedFailure { .. }));
@@ -1002,8 +1122,7 @@ mod tests {
         let cfg = config();
         let mut state = IterationMonitorState {
             handoff_fired: true,
-            warn_fired: false,
-            recent_errors: Vec::new(),
+            ..IterationMonitorState::default()
         };
         let u = usage_with(500, 350); // 85% — TokenWarning band
         let out = evaluate_iteration(&mut state, &u, None, None, &cfg);
@@ -1011,6 +1130,129 @@ mod tests {
             out.iter()
                 .any(|s| matches!(s, IterationSignal::TokenWarning { .. })),
             "expected TokenWarning to fire independently, got {out:?}",
+        );
+    }
+
+    // --- Fix campaign Track L, finding 3: RepeatedFailure semantics -------
+
+    /// One iteration that produces `window` identical errors in a single
+    /// batch is one failed attempt, not a loop: the signal must not fire.
+    #[test]
+    fn single_iteration_error_batch_does_not_trip() {
+        let mut cfg = config();
+        cfg.failure_repeat_window = 3;
+        let mut state = IterationMonitorState::default();
+        let u = usage_with(0, 0);
+
+        let batch = vec![
+            "Error at line 5: foo".to_string(),
+            "Error at line 12: foo".to_string(),
+            "Error at line 99: foo".to_string(),
+        ];
+        let out = evaluate_iteration(&mut state, &u, None, Some(&batch), &cfg);
+        assert!(
+            !out.iter()
+                .any(|s| matches!(s, IterationSignal::RepeatedFailure { .. })),
+            "a single batch of identical errors is one attempt, not a loop: {out:?}",
+        );
+    }
+
+    /// After the signal trips, it must not re-fire on every subsequent
+    /// failing iteration: a re-fire requires another full window of new
+    /// consecutive failing iterations.
+    #[test]
+    fn sustained_failures_do_not_refire_every_iteration() {
+        let mut cfg = config();
+        cfg.failure_repeat_window = 2;
+        let mut state = IterationMonitorState::default();
+        let u = usage_with(0, 0);
+        let errs = ["same failure".to_string()];
+
+        let fired = |out: &[IterationSignal]| {
+            out.iter()
+                .any(|s| matches!(s, IterationSignal::RepeatedFailure { .. }))
+        };
+
+        let i1 = evaluate_iteration(&mut state, &u, None, Some(&errs), &cfg);
+        assert!(!fired(&i1), "one failing iteration is below the window");
+        let i2 = evaluate_iteration(&mut state, &u, None, Some(&errs), &cfg);
+        assert!(fired(&i2), "window reached: signal fires");
+        let i3 = evaluate_iteration(&mut state, &u, None, Some(&errs), &cfg);
+        assert!(
+            !fired(&i3),
+            "must not re-fire one iteration after the last fire: {i3:?}",
+        );
+        let i4 = evaluate_iteration(&mut state, &u, None, Some(&errs), &cfg);
+        assert!(
+            fired(&i4),
+            "a full new window of failures accumulated: re-fire expected",
+        );
+        if let Some(IterationSignal::RepeatedFailure {
+            consecutive_count, ..
+        }) = i4
+            .iter()
+            .find(|s| matches!(s, IterationSignal::RepeatedFailure { .. }))
+        {
+            assert_eq!(
+                *consecutive_count, 4,
+                "count reports the full consecutive streak",
+            );
+        }
+    }
+
+    /// An error-free iteration breaks every streak; a relapse must again
+    /// accumulate a full window before the signal fires.
+    #[test]
+    fn recovery_then_new_failures_requires_full_window() {
+        let mut cfg = config();
+        cfg.failure_repeat_window = 2;
+        let mut state = IterationMonitorState::default();
+        let u = usage_with(0, 0);
+        let errs = ["same failure".to_string()];
+        let fired = |out: &[IterationSignal]| {
+            out.iter()
+                .any(|s| matches!(s, IterationSignal::RepeatedFailure { .. }))
+        };
+
+        evaluate_iteration(&mut state, &u, None, Some(&errs), &cfg);
+        let trip = evaluate_iteration(&mut state, &u, None, Some(&errs), &cfg);
+        assert!(fired(&trip), "initial trip");
+
+        // Clean iteration: explicit empty error batch = recovery.
+        let clean = evaluate_iteration(&mut state, &u, None, Some(&[]), &cfg);
+        assert!(!fired(&clean));
+
+        let r1 = evaluate_iteration(&mut state, &u, None, Some(&errs), &cfg);
+        assert!(
+            !fired(&r1),
+            "after recovery one failing iteration is below the window: {r1:?}",
+        );
+        let r2 = evaluate_iteration(&mut state, &u, None, Some(&errs), &cfg);
+        assert!(fired(&r2), "relapse reached a full window: fires again");
+    }
+
+    /// A signature that skips an iteration (different error in between)
+    /// loses its streak: matching is over consecutive iterations.
+    #[test]
+    fn interleaved_different_error_breaks_the_streak() {
+        let mut cfg = config();
+        cfg.failure_repeat_window = 2;
+        let mut state = IterationMonitorState::default();
+        let u = usage_with(0, 0);
+        let fired = |out: &[IterationSignal]| {
+            out.iter()
+                .any(|s| matches!(s, IterationSignal::RepeatedFailure { .. }))
+        };
+
+        let a = ["error alpha".to_string()];
+        let b = ["error beta".to_string()];
+        evaluate_iteration(&mut state, &u, None, Some(&a), &cfg);
+        let out = evaluate_iteration(&mut state, &u, None, Some(&b), &cfg);
+        assert!(!fired(&out), "different signatures must not chain: {out:?}");
+        let out = evaluate_iteration(&mut state, &u, None, Some(&a), &cfg);
+        assert!(
+            !fired(&out),
+            "alpha's streak was broken by the beta iteration: {out:?}",
         );
     }
 

@@ -16,7 +16,7 @@ use super::adapters::run_rule_diagnostic_tool;
 use super::findings::Findings;
 use super::infra::DiagnosticInfra;
 use super::loc::run_loc_check;
-use super::lsp_diagnostics::try_lsp_diagnostics_for_rules;
+use super::lsp_diagnostics::{LspDiagnosticsOutcome, try_lsp_diagnostics_for_rules};
 use super::lsp_tests::run_lsp_tests_for_matched_rules;
 use super::remediation::{run_remediation_tool, run_report_tool};
 use super::trigger::{
@@ -171,26 +171,33 @@ async fn check_convention_file(
     }
 
     let mut findings = Findings { errors, advisories };
-    run_rule_activations(
-        file_path,
-        &relative_path,
-        conventions,
-        infra,
-        &activation_rules,
-        trigger,
-        &mut findings,
-    )
-    .await;
 
-    // LSP remains a special rule sub-struct; diagnostic tools and pattern
-    // checks have already run through explicit rule activations above.
+    // LSP is a special rule sub-struct and must run before the rule
+    // activations: when it returns `Used`, the contract on
+    // `LspDiagnosticsOutcome::Used` requires skipping the server-query
+    // and inline-adapter paths, which are exactly the
+    // `ToolRef::Diagnostic` dispatches inside `run_rule_activations`.
     let lsp_tool = tool_name.unwrap_or("write");
-    try_lsp_diagnostics_for_rules(
+    let lsp_outcome = try_lsp_diagnostics_for_rules(
         file_path,
         &relative_path,
         lsp_tool,
         conventions,
         infra,
+        &mut findings,
+    )
+    .await;
+
+    run_rule_activations(
+        &ActivationContext {
+            file_path,
+            relative_path: &relative_path,
+            conventions,
+            infra,
+            trigger,
+            lsp_outcome,
+        },
+        &activation_rules,
         &mut findings,
     )
     .await;
@@ -226,20 +233,26 @@ fn matched_rules_for_loc<'a>(
         .collect()
 }
 
-async fn run_rule_activations(
-    file_path: &Path,
-    relative_path: &Path,
-    conventions: &ConventionsConfig,
-    infra: &DiagnosticInfra,
-    matched_rules: &[(&str, &CompiledRule)],
+/// Shared inputs for dispatching one file's rule activations.
+struct ActivationContext<'a> {
+    file_path: &'a Path,
+    relative_path: &'a Path,
+    conventions: &'a ConventionsConfig,
+    infra: &'a DiagnosticInfra,
     trigger: TestTrigger,
+    lsp_outcome: LspDiagnosticsOutcome,
+}
+
+async fn run_rule_activations(
+    ctx: &ActivationContext<'_>,
+    matched_rules: &[(&str, &CompiledRule)],
     findings: &mut Findings<'_>,
 ) {
     let mut file_content: Option<String> = None;
 
     for (rule_name, compiled) in matched_rules {
         for (tool_name, activation) in &compiled.rule.activations {
-            if !activation.on.contains(&trigger) {
+            if !activation.on.contains(&ctx.trigger) {
                 continue;
             }
             let Some(language) = compiled.language.as_deref() else {
@@ -250,7 +263,7 @@ async fn run_rule_activations(
                 );
                 continue;
             };
-            let Some(tool) = conventions.lookup_tool(language, tool_name) else {
+            let Some(tool) = ctx.conventions.lookup_tool(language, tool_name) else {
                 tracing::warn!(
                     rule = rule_name,
                     language,
@@ -262,25 +275,37 @@ async fn run_rule_activations(
 
             match tool {
                 ToolRef::Diagnostic(def) => {
+                    // `LspDiagnosticsOutcome::Used` means the LSP fast
+                    // path already produced findings for this file; its
+                    // contract requires skipping the server-query and
+                    // inline-adapter dispatch entirely.
+                    if ctx.lsp_outcome == LspDiagnosticsOutcome::Used {
+                        tracing::debug!(
+                            rule = rule_name,
+                            tool = tool_name,
+                            "LSP diagnostics path satisfied this file; skipping diagnostic dispatch"
+                        );
+                        continue;
+                    }
                     run_rule_diagnostic_tool(
-                        file_path,
-                        relative_path,
+                        ctx.file_path,
+                        ctx.relative_path,
                         tool_name,
                         def,
                         activation.handling,
-                        infra,
+                        ctx.infra,
                         findings,
                     )
                     .await;
                 }
                 ToolRef::Pattern(def) => {
                     if file_content.is_none() {
-                        match std::fs::read_to_string(file_path) {
+                        match std::fs::read_to_string(ctx.file_path) {
                             Ok(content) => file_content = Some(content),
                             Err(error) => {
                                 findings.errors.push(format!(
                                     "{} [pattern:{tool_name}] could not read file content: {error}",
-                                    file_path.display()
+                                    ctx.file_path.display()
                                 ));
                                 continue;
                             }
@@ -290,7 +315,7 @@ async fn run_rule_activations(
                         continue;
                     };
                     run_pattern_tool(
-                        file_path,
+                        ctx.file_path,
                         tool_name,
                         def,
                         activation.handling,
@@ -300,10 +325,10 @@ async fn run_rule_activations(
                     );
                 }
                 ToolRef::Remediation(def) => {
-                    run_remediation_tool(file_path, tool_name, def, infra, findings).await;
+                    run_remediation_tool(ctx.file_path, tool_name, def, ctx.infra, findings).await;
                 }
                 ToolRef::Report(def) => {
-                    run_report_tool(file_path, tool_name, def, infra, findings).await;
+                    run_report_tool(ctx.file_path, tool_name, def, ctx.infra, findings).await;
                 }
             }
         }

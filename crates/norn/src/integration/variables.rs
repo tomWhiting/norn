@@ -85,9 +85,14 @@ pub struct VariableStore {
     shell_cache: Mutex<HashMap<String, CachedShell>>,
     session_id: String,
     /// Per-agent working directory used by shell-source variables and the
-    /// `working_dir` builtin. When unset (constructed via [`Self::new`]),
-    /// shell variables inherit the process CWD — legacy behaviour.
-    working_dir: Option<crate::tool::context::SharedWorkingDir>,
+    /// `working_dir` builtin. Shared interior slot (rather than a plain
+    /// field) so the `working_dir` builtin closure registered by
+    /// [`Self::with_builtins`] observes a handle installed *later* via
+    /// [`Self::with_working_dir`] — and tracks every subsequent
+    /// [`crate::tool::context::SharedWorkingDir::set`] (e.g. a `bash` `cd`)
+    /// live. When no handle is installed, shell variables inherit the
+    /// process CWD — legacy behaviour.
+    working_dir: Arc<Mutex<Option<crate::tool::context::SharedWorkingDir>>>,
 }
 
 impl VariableStore {
@@ -98,25 +103,28 @@ impl VariableStore {
             variables: Mutex::new(HashMap::new()),
             shell_cache: Mutex::new(HashMap::new()),
             session_id: Uuid::new_v4().to_string(),
-            working_dir: None,
+            working_dir: Arc::new(Mutex::new(None)),
         }
     }
 
     /// Install the agent's shared working directory. Shell-source variables
     /// then run with this as their child's CWD; the `working_dir` builtin
-    /// returns its current value rather than the process CWD.
+    /// returns its current value rather than the process CWD. Effective
+    /// regardless of whether it is called before or after
+    /// [`Self::with_builtins`] registered the builtin closures.
     #[must_use]
-    pub fn with_working_dir(mut self, working_dir: crate::tool::context::SharedWorkingDir) -> Self {
-        self.working_dir = Some(working_dir);
+    pub fn with_working_dir(self, working_dir: crate::tool::context::SharedWorkingDir) -> Self {
+        *self.working_dir.lock() = Some(working_dir);
         self
     }
 
     /// Construct a store pre-populated with built-in variables:
     /// `session_id`, `working_dir`, and `home_dir`.
     ///
-    /// The `working_dir` builtin reads from this store's installed
-    /// [`crate::tool::context::SharedWorkingDir`] when present; otherwise
-    /// it falls back to the process CWD at resolve time.
+    /// The `working_dir` builtin reads the live value of this store's
+    /// installed [`crate::tool::context::SharedWorkingDir`] at resolve time
+    /// when present; otherwise it falls back to the process CWD at resolve
+    /// time.
     #[must_use]
     pub fn with_builtins() -> Self {
         let store = Self::new();
@@ -125,15 +133,18 @@ impl VariableStore {
             name: BUILTIN_SESSION_ID.to_owned(),
             source: VariableSource::Static { value: session_id },
         });
-        let wd_handle = store.working_dir.clone();
+        let wd_slot = Arc::clone(&store.working_dir);
         store.set(SessionVariable {
             name: BUILTIN_WORKING_DIR.to_owned(),
             source: VariableSource::Computed {
-                func: Arc::new(move || match wd_handle.as_ref() {
-                    Some(handle) => handle.get().to_string_lossy().into_owned(),
-                    None => std::env::current_dir()
-                        .map(|p| p.to_string_lossy().into_owned())
-                        .unwrap_or_default(),
+                func: Arc::new(move || {
+                    let handle = wd_slot.lock().clone();
+                    match handle {
+                        Some(handle) => handle.get().to_string_lossy().into_owned(),
+                        None => std::env::current_dir()
+                            .map(|p| p.to_string_lossy().into_owned())
+                            .unwrap_or_default(),
+                    }
                 }),
             },
         });
@@ -204,7 +215,8 @@ impl VariableStore {
                 if let Some(cached) = self.cached_value(name) {
                     return Ok(cached);
                 }
-                let output = run_shell(command, self.working_dir.as_ref()).await?;
+                let working_dir = self.working_dir.lock().clone();
+                let output = run_shell(command, working_dir.as_ref()).await?;
                 if let Some(ttl) = cache_ttl {
                     self.cache_value(name.to_owned(), output.clone(), Some(*ttl));
                 }
@@ -463,6 +475,60 @@ mod tests {
         // home_dir resolves to $HOME; just assert it resolves at all (may be
         // empty in some CI environments).
         let _home = store.resolve("home_dir").await.unwrap();
+    }
+
+    /// Fix 8 regression: `{{working_dir}}` must resolve from the live
+    /// per-agent [`crate::tool::context::SharedWorkingDir`] — not from the
+    /// process CWD captured at `with_builtins` time. The handle is installed
+    /// *after* `with_builtins`, exactly as `AgentBuilder::build` does, and is
+    /// mutated mid-session (a `bash` `cd`); the builtin must track both.
+    #[tokio::test]
+    async fn builtin_working_dir_tracks_live_shared_working_dir() {
+        use crate::tool::context::SharedWorkingDir;
+
+        let first = tempfile::tempdir().expect("tempdir");
+        let second = tempfile::tempdir().expect("tempdir");
+        let handle = SharedWorkingDir::new(first.path().to_path_buf());
+
+        let store = VariableStore::with_builtins().with_working_dir(handle.clone());
+        assert_eq!(
+            store.resolve("working_dir").await.unwrap(),
+            first.path().to_string_lossy().into_owned(),
+            "the builtin must read the installed handle, not the process CWD",
+        );
+
+        // Mid-session `cd`: the builtin tracks the live value.
+        handle.set(second.path().to_path_buf());
+        assert_eq!(
+            store.resolve("working_dir").await.unwrap(),
+            second.path().to_string_lossy().into_owned(),
+            "the builtin must observe working-dir updates live",
+        );
+    }
+
+    /// Shell-source variables run in the installed working directory.
+    #[tokio::test]
+    async fn shell_variable_runs_in_installed_working_dir() {
+        use crate::tool::context::SharedWorkingDir;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let handle = SharedWorkingDir::new(dir.path().to_path_buf());
+        let store = VariableStore::new().with_working_dir(handle);
+        store.set(SessionVariable {
+            name: "shell_pwd".to_owned(),
+            source: VariableSource::Shell {
+                command: "pwd".to_owned(),
+                cache_ttl: None,
+            },
+        });
+        let resolved = store.resolve("shell_pwd").await.unwrap();
+        let canonical = dir.path().canonicalize().expect("canonicalize");
+        assert_eq!(
+            std::path::PathBuf::from(resolved)
+                .canonicalize()
+                .expect("canonicalize resolved"),
+            canonical,
+        );
     }
 
     #[tokio::test]

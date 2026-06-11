@@ -6,6 +6,6 @@
 pub use norn::session::{
     SessionIndexEntry, SessionPersistError, SessionStatus, append_events, append_index_entry,
     attach_sink, create_session, fork_session, index_file_path, read_index, read_session_events,
-    remove_index_entry, resolve_session, resume_session, session_file_path, sum_usage_from_events,
-    update_index_entry, update_session_index, write_index_atomic,
+    remove_index_entry, resolve_session, resume_session, session_file_path, update_index_entry,
+    write_index_atomic,
 };

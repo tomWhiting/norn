@@ -16,6 +16,8 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::ast::{AstCheck, check_syntax, containing_symbols};
+use super::confinement::check_confinement;
+use super::file_commit::commit_file_atomic;
 use super::write::syntax_error_to_diagnostic;
 use crate::error::ToolError;
 use crate::session::action_log::hash_content;
@@ -110,6 +112,12 @@ impl Tool for EditTool {
 
         let path = ctx.resolve_path(&args.path);
 
+        if let Err(reason) = check_confinement(ctx, &path) {
+            return PreValidateOutcome::Block {
+                reason: format!("Edit blocked: {reason}"),
+            };
+        }
+
         if !ctx.has_read_file(&path) {
             return PreValidateOutcome::Block {
                 reason: "Edit blocked: file has not been read this session".to_string(),
@@ -161,6 +169,14 @@ impl Tool for EditTool {
             }
         })?;
         let path = ctx.resolve_path(&args.path);
+
+        // Workspace confinement (opt-in): re-checked at execute time so a
+        // direct invocation cannot bypass the pre_validate gate.
+        if let Err(reason) = check_confinement(ctx, &path) {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("edit refused: {reason}"),
+            });
+        }
 
         let original =
             tokio::fs::read_to_string(&path)
@@ -288,8 +304,11 @@ impl Tool for EditTool {
             });
         }
 
-        // Commit to disk: AST passed, or AllowBrokenAst is set.
-        tokio::fs::write(&path, staged.as_bytes())
+        // Commit to disk: AST passed, or AllowBrokenAst is set. The commit
+        // is atomic (temp file in the same directory + rename, preserving
+        // the original's permissions) so a crash or ENOSPC mid-write never
+        // destroys the original content.
+        commit_file_atomic(&path, staged.as_bytes())
             .await
             .map_err(|e| ToolError::ExecutionFailed {
                 reason: format!("failed to write edited content to {}: {e}", args.path),
@@ -913,5 +932,72 @@ mod tests {
         assert_eq!(out.content["committed"], true);
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(on_disk, "value = 1\nvalue = 9\n");
+    }
+
+    // --- Workspace confinement -------------------------------------------
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn confined_context_refuses_symlink_escape() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("ws");
+        let elsewhere = outer.path().join("elsewhere");
+        tokio::fs::create_dir(&root).await.unwrap();
+        tokio::fs::create_dir(&elsewhere).await.unwrap();
+        let target = elsewhere.join("target.txt");
+        tokio::fs::write(&target, "secret = 1\n").await.unwrap();
+        std::os::unix::fs::symlink(&elsewhere, root.join("link")).unwrap();
+
+        let tool = EditTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(root.clone());
+        ctx.set_working_dir(root.clone());
+        // Even a previously-read file must be refused when reached through
+        // an escaping symlink.
+        ctx.mark_file_read(&root.join("link/target.txt"));
+        let envelope = envelope_for(json!({
+            "path": root.join("link/target.txt").to_string_lossy(),
+            "old_string": "secret = 1",
+            "new_string": "secret = 2",
+        }));
+
+        match tool.pre_validate(&envelope, &ctx).await {
+            PreValidateOutcome::Block { reason } => {
+                assert!(reason.contains("outside the workspace"), "{reason}");
+            }
+            PreValidateOutcome::Proceed => panic!("expected Block"),
+        }
+        let err = tool.execute(&envelope, &ctx).await.expect_err("refused");
+        assert!(err.to_string().contains("outside the workspace"), "{err}");
+        assert_eq!(
+            tokio::fs::read_to_string(&target).await.unwrap(),
+            "secret = 1\n",
+            "target outside the root untouched"
+        );
+    }
+
+    #[tokio::test]
+    async fn confined_context_allows_edit_inside_root() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("inside.txt");
+        tokio::fs::write(&path, "value = 1\n").await.unwrap();
+
+        let tool = EditTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(dir.path().to_path_buf());
+        ctx.set_working_dir(dir.path().to_path_buf());
+        ctx.mark_file_read(&path);
+        let envelope = envelope_for(json!({
+            "path": path.to_string_lossy(),
+            "old_string": "value = 1",
+            "new_string": "value = 2",
+        }));
+
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+        assert_eq!(out.content["committed"], true);
+        assert_eq!(
+            tokio::fs::read_to_string(&path).await.unwrap(),
+            "value = 2\n"
+        );
     }
 }

@@ -70,7 +70,8 @@ pub struct RuntimeBundle {
     /// effort, prompt commands, rules, hooks, event schemas, variables,
     /// retry policy, token estimator, and context edits.
     pub loop_context: LoopContext,
-    /// Tool registry gated by the resolved tool allow-list.
+    /// Tool registry gated by the resolved tool allow-list and the
+    /// `--disallowed-tools` deny-list (deny wins).
     ///
     /// Wrapped in [`Arc`] so the same registry can be shared with
     /// [`norn::tools::agent::AgentToolInfra::tool_registry`] — spawned
@@ -88,8 +89,11 @@ pub struct RuntimeBundle {
     /// MCP extension URIs collected from `--extension`. Connection lives
     /// in a later brief.
     pub extension_uris: Vec<String>,
-    /// Disallowed tool patterns from `--disallowed-tools`. Carried for
-    /// downstream filters (bash refusal, audit), not used for gating.
+    /// Disallowed tool names from `--disallowed-tools` (exact names).
+    /// Already applied to [`Self::registry`] via
+    /// [`norn::tool::registry::ToolRegistry::set_disallowed`] — deny wins
+    /// over the `--allowed-tools` allow-list — and carried here for
+    /// downstream audit surfaces.
     pub disallowed_tools: Vec<String>,
     /// Diagnostic collector retained for draining after `run_agent_step`.
     ///

@@ -23,26 +23,31 @@ use uuid::Uuid;
 
 use super::handle::{AgentHandle, AgentHandles, ChildBranchMetadata, SharedSessionTree};
 use super::infra::{AgentToolInfra, SubAgentExecutor, infra_from};
+use super::reclaim::{
+    ReclaimOnResultDelivery, entry_terminal_or_reclaimed, reclaim_delivered_child,
+};
+use super::spawn_outcome::{extract_outcome_summary, mark_terminal_in_registry};
 use crate::agent::fork::ContextFilter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::ChildResultSender;
-use crate::error::{NornError, ToolError};
+use crate::config::permissions::PermissionPolicy;
+use crate::error::ToolError;
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::{HookOutcome, HookRegistry};
 use crate::internal::extraction::SharedProvider;
 use crate::r#loop::inbound::inbound_channel;
 use crate::r#loop::loop_context::LoopContext;
-use crate::r#loop::runner::{AgentLoopConfig, AgentStepRequest, AgentStepResult, run_agent_step};
+use crate::r#loop::runner::{AgentLoopConfig, AgentStepRequest, run_agent_step};
 use crate::profile::{default_scan_dirs, from_profile, resolve_profile};
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
 use crate::session::store::EventStore;
 use crate::session::tree::{BranchConfig, SessionMetadata, SessionStatus};
-use crate::tool::context::ToolContext;
+use crate::tool::context::{SharedWorkingDir, ToolContext};
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::registry::ToolRegistry;
-use crate::tool::scheduling::ToolEffect;
+use crate::tool::scheduling::{ToolEffect, ToolEffectIndex};
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 use crate::tools::task::SharedTaskStore;
 use crate::tools::tool_search::SharedToolCatalog;
@@ -155,6 +160,29 @@ fn build_tool_definitions(
 /// [`crate::agent::mailbox::Mailbox`] is shared by design, so a child's
 /// send to its `parent_id` routes back to the same mailbox.
 ///
+/// The consent-boundary [`PermissionPolicy`] and the scheduling
+/// [`ToolEffectIndex`] are likewise forwarded: the child's agent loop
+/// resolves both from *its own* executor's shared context, so omitting
+/// them here would let a child evade every deny/ask rule the parent is
+/// subject to (and lose effect-based batch scheduling).
+///
+/// The parent's workspace-confinement root (a plain [`ToolContext`] field,
+/// not an extension) is forwarded via
+/// [`ToolContext::confine_to_workspace`] for the same reason: the child's
+/// file tools check confinement against the *child's* dispatch context, so
+/// dropping the root would let a confined parent escape its sandbox simply
+/// by spawning a child. The child's working dir is its **own**
+/// [`SharedWorkingDir`] handle seeded from the parent's *current* working
+/// dir — snapshot semantics, matching [`SharedWorkingDir`]'s documented
+/// fork contract: children run concurrently with the parent, so sharing
+/// the live handle would let a child's bash `cd` move the parent's (and
+/// every sibling's) working dir mid-turn.
+///
+/// The parent's shared [`HookRegistry`] extension is forwarded so the
+/// child's own spawn/fork sites (grandchildren) observe the same operator
+/// hooks; the caller separately installs the registry on the child's
+/// [`LoopContext`] so pre/post-tool hooks fire for the child's own calls.
+///
 /// When `child_tree` is `Some` — i.e. an orchestrator published a
 /// [`SharedSessionTree`] on the parent context — it is installed on the
 /// child context keyed to the *child's* `SessionId`, so a grandchild spawn
@@ -176,7 +204,11 @@ fn build_child_context(
         tool_registry: parent_infra.tool_registry.as_ref().map(Arc::clone),
     };
 
-    let child_ctx = ToolContext::empty();
+    let mut child_ctx =
+        ToolContext::with_working_dir(SharedWorkingDir::new(parent_ctx.working_dir()));
+    if let Some(root) = parent_ctx.workspace_root() {
+        child_ctx.confine_to_workspace(root.to_path_buf());
+    }
     child_ctx.insert_extension(Arc::new(child_infra));
     child_ctx.insert_extension(Arc::new(AgentHandles::new()));
     if let Some(task_store) = parent_ctx.get_extension::<SharedTaskStore>() {
@@ -190,6 +222,15 @@ fn build_child_context(
     }
     if let Some(sp) = parent_ctx.get_extension::<SharedProvider>() {
         child_ctx.insert_extension(sp);
+    }
+    if let Some(policy) = parent_ctx.get_extension::<PermissionPolicy>() {
+        child_ctx.insert_extension(policy);
+    }
+    if let Some(effects) = parent_ctx.get_extension::<ToolEffectIndex>() {
+        child_ctx.insert_extension(effects);
+    }
+    if let Some(hooks) = parent_ctx.get_extension::<HookRegistry>() {
+        child_ctx.insert_extension(hooks);
     }
     if let Some(ch) =
         parent_ctx.get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
@@ -258,87 +299,6 @@ fn resolve_child_store(
     Ok((store, Some(child_tree)))
 }
 
-/// Mark the child's terminal registry status without touching the
-/// outcome. Split from [`extract_outcome_summary`] (NH-006 R5) so a
-/// [`SubagentHook`](crate::integration::hooks::SubagentHook) returning
-/// [`HookOutcome::Block`](crate::integration::hooks::HookOutcome::Block)
-/// can suppress the registry transition while the outcome summary
-/// still surfaces on the result channel.
-fn mark_terminal_in_registry(
-    registry: &RwLock<AgentRegistry>,
-    child_id: Uuid,
-    outcome: &Result<AgentStepResult, NornError>,
-) {
-    match outcome {
-        Ok(_) => {
-            let mut reg = registry.write();
-            if let Err(e) = reg.mark_completing(child_id) {
-                tracing::warn!(
-                    child_id = %child_id,
-                    error = %e,
-                    "spawn_agent: mark_completing failed",
-                );
-            }
-            if let Err(e) = reg.mark_completed(child_id) {
-                tracing::warn!(
-                    child_id = %child_id,
-                    error = %e,
-                    "spawn_agent: mark_completed failed",
-                );
-            }
-        }
-        Err(_) => {
-            if let Err(mark_err) = registry.write().mark_failed(child_id) {
-                tracing::warn!(
-                    child_id = %child_id,
-                    error = %mark_err,
-                    "spawn_agent: mark_failed failed after sub-agent error",
-                );
-            }
-        }
-    }
-}
-
-/// Pure projection of an [`AgentStepResult`] outcome into the
-/// (`status`, `output_text`, `error`) triple consumed by the spawn
-/// result-channel sender. Carries no registry side effects so callers
-/// can decide whether to also call [`mark_terminal_in_registry`].
-fn extract_outcome_summary(
-    outcome: Result<AgentStepResult, NornError>,
-) -> (AgentStatus, Option<String>, Option<String>) {
-    match outcome {
-        Ok(result) => {
-            let output_text = match result {
-                AgentStepResult::Completed { output, .. } => output
-                    .as_str()
-                    .map(str::to_owned)
-                    .or_else(|| serde_json::to_string_pretty(&output).ok()),
-                AgentStepResult::SchemaUnreachable { best_attempt, .. } => {
-                    best_attempt.and_then(|v| {
-                        v.as_str()
-                            .map(str::to_owned)
-                            .or_else(|| serde_json::to_string_pretty(&v).ok())
-                    })
-                }
-                // Operator-initiated cancellation produces no model output,
-                // same as a max-iterations bail-out; the AgentStatus stays
-                // Completed because the spawn call itself succeeded — the
-                // caller inspects the structured Cancelled variant if they
-                // need to distinguish.
-                AgentStepResult::MaxIterationsReached { .. }
-                | AgentStepResult::Cancelled { .. } => None,
-                AgentStepResult::TimedOut { partial_output, .. } => partial_output.and_then(|v| {
-                    v.as_str()
-                        .map(str::to_owned)
-                        .or_else(|| serde_json::to_string_pretty(&v).ok())
-                }),
-            };
-            (AgentStatus::Completed, output_text, None)
-        }
-        Err(err) => (AgentStatus::Failed, None, Some(err.to_string())),
-    }
-}
-
 /// Resources moved into a spawned child's `tokio` task.
 struct ChildLaunch {
     /// Provider shared with the parent — children use the same provider.
@@ -378,6 +338,12 @@ struct ChildLaunch {
     /// on the shared channel so the TUI activity panel shows child
     /// tool calls in real time.
     event_sender: Option<AgentEventSender>,
+    /// `Some` when the runtime declared [`ReclaimOnResultDelivery`] and
+    /// a result channel exists: after delivering the child's result the
+    /// wrapper reclaims the registry entry and drops the parent-held
+    /// handle (see [`super::reclaim`] for the ownership rule). `None`
+    /// leaves both for an external observer or the handle holder.
+    reclaim_handles: Option<Arc<AgentHandles>>,
 }
 
 /// Launch the child on its own `tokio` task and return the [`AgentHandle`]
@@ -402,6 +368,7 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
         hooks,
         role_label,
         event_sender,
+        reclaim_handles,
     } = launch;
 
     let handle_store = Arc::clone(&store);
@@ -444,11 +411,11 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
             false
         };
 
-        if !stop_blocked {
-            mark_terminal_in_registry(&agent_registry, child_id, &outcome);
-        }
-
         let (terminal_status, output_text, error) = extract_outcome_summary(outcome);
+
+        if !stop_blocked {
+            mark_terminal_in_registry(&agent_registry, child_id, terminal_status);
+        }
 
         if let Some(sender) = result_sender {
             let succeeded = terminal_status == AgentStatus::Completed;
@@ -482,6 +449,20 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
         }
 
         let _ = status_tx.send_replace(terminal_status);
+
+        // Delivery-anchored reclamation (embedded/headless runtimes):
+        // the parent's record of this child is now the delivered result,
+        // so the registry entry and the parent-held handle can go. Runs
+        // after the terminal status broadcast so the spawning tool's
+        // post-insert check (`entry_terminal_or_reclaimed`) observes a
+        // consistent order; skipped when a stop hook suppressed the
+        // terminal transition (the child is then deliberately left
+        // observable and non-terminal). A failed result send means the
+        // receiver is gone — reclaiming is still correct, nothing can
+        // observe the entry through the channel anymore.
+        if !stop_blocked && let Some(parent_handles) = reclaim_handles {
+            reclaim_delivered_child(&agent_registry, &parent_handles, child_id);
+        }
     });
 
     AgentHandle {
@@ -589,10 +570,11 @@ impl Tool for SpawnAgentTool {
 
         // Build the child's loop context and resolve the profile's tool
         // list. The profile scanner walks the same directories the CLI uses
-        // for top-level agents, rooted at the current working directory.
-        let cwd = std::env::current_dir().unwrap_or_default();
-        let scan_dirs = default_scan_dirs(&cwd);
-        let (child_loop_ctx, profile_tools) =
+        // for top-level agents, rooted at the parent agent's working
+        // directory (not the process CWD, which can diverge from the
+        // agent's working dir in embedded runtimes).
+        let scan_dirs = default_scan_dirs(&ctx.working_dir());
+        let (mut child_loop_ctx, profile_tools) =
             build_child_loop_context(args.profile.as_deref(), &args.task, &scan_dirs)?;
 
         // The explicit `tools` argument wins; otherwise fall back to the
@@ -645,12 +627,21 @@ impl Tool for SpawnAgentTool {
         // infrastructure forwarded from the parent.
         let child_ctx =
             build_child_context(&infra, child_id, Arc::clone(&child_store), ctx, child_tree);
-        let child_executor =
-            SubAgentExecutor::new(Arc::clone(parent_registry), allow_list, child_ctx);
+        let child_executor = SubAgentExecutor::new(
+            Arc::clone(parent_registry),
+            allow_list,
+            Arc::clone(&child_ctx),
+        );
 
         // Launch the child on its own task and register the handle so the
         // parent can observe and steer it.
         let result_sender = ctx.get_extension::<ChildResultSender>();
+
+        // Delivery-anchored reclamation is enabled only when the runtime
+        // declared it (no external status observer) AND a result channel
+        // exists to anchor "delivered" to. See `super::reclaim`.
+        let reclaim_on_delivery =
+            result_sender.is_some() && ctx.get_extension::<ReclaimOnResultDelivery>().is_some();
 
         // NH-006 R5 / C56: fire SubagentHook::on_subagent_start before
         // launching the child. The hook is observational — Block has no
@@ -665,6 +656,18 @@ impl Tool for SpawnAgentTool {
                 .run_subagent_start(&child_id.to_string(), &role_label)
                 .await;
         }
+
+        // Hook coverage (parent → child): the child's loop dispatches
+        // pre/post-tool hooks from its *own* LoopContext, so the parent's
+        // shared registry must be installed here — otherwise operator
+        // policy/observability hooks silently never see child tool calls.
+        child_loop_ctx.hooks = hooks.as_ref().map(Arc::clone);
+        // The child's loop and its ToolContext share one working-dir
+        // handle (seeded from the parent's current dir by
+        // `build_child_context`), so the child's bash `cd` moves its
+        // loop-level command execution and its tool path resolution
+        // together — mirroring the fork pipeline and `build_runtime`.
+        child_loop_ctx.working_dir = child_ctx.shared_working_dir();
 
         let child_event_sender = ctx
             .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
@@ -687,8 +690,21 @@ impl Tool for SpawnAgentTool {
             hooks,
             role_label,
             event_sender: child_event_sender,
+            reclaim_handles: reclaim_on_delivery.then(|| Arc::clone(&handles)),
         });
         handles.insert(handle);
+
+        // Close the insert/finish race in reclaim-on-delivery mode: a
+        // fast child may have finished — and the wrapper's reclamation
+        // may have run — before the insert above stored the handle. The
+        // wrapper marks the registry terminal before it reclaims, so
+        // "terminal or already reclaimed" here means the wrapper's
+        // reclamation pass cannot still be ahead of us with the handle
+        // unstored; both sides reclaim idempotently. A hook-suppressed
+        // (still Active) child never satisfies the check.
+        if reclaim_on_delivery && entry_terminal_or_reclaimed(&infra.registry, child_id) {
+            reclaim_delivered_child(&infra.registry, &handles, child_id);
+        }
 
         Ok(ToolOutput {
             content: serde_json::json!({
@@ -982,11 +998,19 @@ mod tests {
             .unwrap()
             .remove(child_id)
             .expect("handle");
+        let mut status_rx = handle.status_rx.clone();
         handle.join_handle.await.expect("join");
+        // Terminal transition retains the entry (status displays hold it)
+        // with terminal status; the watch channel carries it too.
         assert_eq!(
-            agent_registry.read().get(child_id).expect("entry").status,
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("completed child entry stays observable until reclaimed")
+                .status,
             AgentStatus::Completed,
         );
+        assert_eq!(*status_rx.borrow_and_update(), AgentStatus::Completed);
     }
 
     #[tokio::test]
@@ -1256,8 +1280,14 @@ mod tests {
         )
         .await;
 
+        // Terminal transition retains the entry with Failed status; the
+        // result channel carries the failure.
         assert_eq!(
-            agent_registry.read().get(child_id).expect("entry").status,
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("failed child entry stays observable until reclaimed")
+                .status,
             AgentStatus::Failed,
         );
         let result = rx.try_recv().expect("failure result on the channel");
@@ -1311,8 +1341,14 @@ mod tests {
             json!({"task": "try bash", "model": "haiku", "role": "worker", "tools": ["search"]}),
         )
         .await;
+        // The child completed — the disallowed tool call did not fail the
+        // run. The entry stays observable with Completed status.
         assert_eq!(
-            agent_registry.read().get(child_id).expect("entry").status,
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("completed child entry stays observable until reclaimed")
+                .status,
             AgentStatus::Completed,
         );
     }
@@ -1384,6 +1420,157 @@ mod tests {
         let mut names: Vec<&str> = defs.iter().map(|d| d.name.as_str()).collect();
         names.sort_unstable();
         assert_eq!(names, vec!["edit", "read"]);
+    }
+
+    /// Stub tool counting how many times it actually executed, so a test
+    /// can prove a denied tool never ran inside a child.
+    struct CountingStubTool {
+        tool_name: &'static str,
+        executions: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    #[async_trait]
+    impl TestTool for CountingStubTool {
+        fn name(&self) -> &'static str {
+            self.tool_name
+        }
+        fn description(&self) -> &'static str {
+            "counts executions"
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn effect(&self) -> ToolEffect {
+            ToolEffect::ReadOnly
+        }
+        async fn execute(
+            &self,
+            _envelope: &ToolEnvelope,
+            _ctx: &ToolContext,
+        ) -> Result<TestToolOutput, ToolError> {
+            self.executions
+                .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Ok(TestToolOutput {
+                content: serde_json::json!({"ok": true}),
+                is_error: false,
+                duration: Duration::ZERO,
+            })
+        }
+    }
+
+    /// Permission-escape regression (blocker): the consent-boundary
+    /// [`PermissionPolicy`] and the scheduling [`ToolEffectIndex`] must be
+    /// forwarded from the parent's context into the child's context —
+    /// the child loop resolves both from its own executor's shared
+    /// context, so a missing forward disables enforcement entirely.
+    #[tokio::test]
+    async fn child_context_forwards_permission_policy_and_effect_index() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let infra = AgentToolInfra {
+            registry: AgentRegistry::shared(),
+            mailbox: Arc::new(Mailbox::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id: Uuid::new_v4(),
+            parent_id: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+        };
+        let parent_ctx = ToolContext::empty();
+        let policy = Arc::new(crate::config::permissions::PermissionPolicy::from_patterns(
+            &["bash"],
+            &[],
+            &[],
+        ));
+        let effects = Arc::new(ToolEffectIndex::new());
+        parent_ctx.insert_extension(Arc::clone(&policy));
+        parent_ctx.insert_extension(Arc::clone(&effects));
+
+        let child_ctx = build_child_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+        );
+
+        let forwarded_policy = child_ctx
+            .get_extension::<crate::config::permissions::PermissionPolicy>()
+            .expect("PermissionPolicy must be forwarded to the child context");
+        assert!(
+            Arc::ptr_eq(&forwarded_policy, &policy),
+            "the child must share the parent's policy instance",
+        );
+        let forwarded_effects = child_ctx
+            .get_extension::<ToolEffectIndex>()
+            .expect("ToolEffectIndex must be forwarded to the child context");
+        assert!(
+            Arc::ptr_eq(&forwarded_effects, &effects),
+            "the child must share the parent's effect index instance",
+        );
+    }
+
+    /// Permission-escape regression (blocker), end to end: a tool denied
+    /// by the parent's policy must stay denied inside a spawned child —
+    /// the child model calls it, dispatch blocks it, and the tool body
+    /// never executes.
+    #[tokio::test]
+    async fn denied_tool_stays_denied_inside_spawned_child() {
+        let turn1 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "tc1".to_string(),
+                name: Some("victim".to_string()),
+                arguments_delta: r#"{"command": "rm -rf /"}"#.to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let turn2 = vec![
+            ProviderEvent::TextDelta {
+                text: "gave up".to_string(),
+            },
+            done_event(),
+        ];
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![turn1, turn2]));
+
+        let executions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(CountingStubTool {
+            tool_name: "victim",
+            executions: Arc::clone(&executions),
+        }));
+        let registry = Arc::new(registry);
+
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            registry,
+            Arc::new(Mailbox::new()),
+        );
+        ctx.insert_extension(Arc::new(
+            crate::config::permissions::PermissionPolicy::from_patterns(&["victim"], &[], &[]),
+        ));
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "try the denied tool", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+
+        assert_eq!(
+            executions.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a tool denied in the parent must never execute inside a spawned child",
+        );
+        // The child itself still finishes (the deny surfaces as a blocked
+        // tool result, not a child crash).
+        assert_eq!(
+            agent_registry.read().get(child_id).expect("entry").status,
+            AgentStatus::Completed,
+        );
     }
 
     /// R2: a child tool call carrying a `tool_use_description` envelope field
@@ -1667,6 +1854,257 @@ mod tests {
         );
     }
 
+    /// Awaits `cond` becoming true within 5 seconds, polling. Used where
+    /// the asserted state is produced by the child wrapper task *after*
+    /// the observable result delivery (so there is no handle left to
+    /// join on).
+    async fn wait_for_condition<F: Fn() -> bool>(cond: F, what: &str) {
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while !cond() {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for: {what}",
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// Unbounded-retention regression: with [`ReclaimOnResultDelivery`]
+    /// installed and a result channel present, a naturally-completed
+    /// child's registry entry AND parent-held handle are reclaimed once
+    /// its result has been delivered — nothing pins the child's
+    /// EventStore forever in embedded/headless runs.
+    #[tokio::test]
+    async fn delivered_result_reclaims_registry_and_handle_when_marker_present() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "child done".to_string(),
+            },
+            done_event(),
+        ]]));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+        ctx.insert_extension(Arc::new(super::ReclaimOnResultDelivery));
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"task": "finish", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect("spawn");
+        let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
+
+        let result = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("result within timeout")
+            .expect("channel open");
+        assert_eq!(result.agent_id, child_id);
+        assert!(result.succeeded);
+
+        let handles = ctx.get_extension::<AgentHandles>().unwrap();
+        wait_for_condition(
+            || agent_registry.read().get(child_id).is_none() && !handles.contains(child_id),
+            "registry entry and handle reclaimed after result delivery",
+        )
+        .await;
+    }
+
+    /// Reclamation ownership: with the marker installed but NO result
+    /// channel, the wrapper must not reclaim — the handle holder owns
+    /// the end of life (there is no delivery to anchor reclamation to).
+    #[tokio::test]
+    async fn no_reclamation_without_result_channel_even_with_marker() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "child done".to_string(),
+            },
+            done_event(),
+        ]]));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        ctx.insert_extension(Arc::new(super::ReclaimOnResultDelivery));
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"task": "finish", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect("spawn");
+        let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
+
+        let handles = ctx.get_extension::<AgentHandles>().unwrap();
+        let mut status_rx = handles.status_rx(child_id).expect("status_rx tracked");
+        status_rx
+            .wait_for(|s| s.is_terminal())
+            .await
+            .expect("child reaches terminal status");
+
+        assert!(
+            handles.contains(child_id),
+            "without a result channel the handle holder owns reclamation",
+        );
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("entry stays observable")
+                .status,
+            AgentStatus::Completed,
+        );
+    }
+
+    /// TUI-mode regression: without the marker (default), a delivered
+    /// result must NOT reclaim — terminal entries stay observable for
+    /// the external observer's hold window.
+    #[tokio::test]
+    async fn no_reclamation_without_marker_even_with_result_channel() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "child done".to_string(),
+            },
+            done_event(),
+        ]]));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"task": "finish", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect("spawn");
+        let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
+
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("result within timeout")
+            .expect("channel open");
+
+        let handles = ctx.get_extension::<AgentHandles>().unwrap();
+        let mut status_rx = handles.status_rx(child_id).expect("status_rx tracked");
+        status_rx
+            .wait_for(|s| s.is_terminal())
+            .await
+            .expect("child reaches terminal status");
+        assert!(
+            handles.contains(child_id),
+            "without the marker the external observer owns reclamation",
+        );
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("terminal entry stays observable for the hold window")
+                .status,
+            AgentStatus::Completed,
+        );
+    }
+
+    /// A stop hook's Block suppresses the terminal transition — and must
+    /// also suppress reclamation: a deliberately-held-open child is
+    /// never swept away.
+    #[tokio::test]
+    async fn hook_block_suppresses_reclamation() {
+        use crate::integration::hooks::{Hook, HookOutcome, HookRegistry, SubagentHook};
+
+        struct BlockOnStop;
+
+        #[async_trait]
+        impl SubagentHook for BlockOnStop {
+            async fn on_subagent_start(&self, _agent_id: &str, _agent_type: &str) {}
+            async fn on_subagent_stop(&self, _agent_id: &str, _agent_type: &str) -> HookOutcome {
+                HookOutcome::Block {
+                    reason: "child has more to do".to_owned(),
+                }
+            }
+        }
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_string(),
+            },
+            done_event(),
+        ]]));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+        ctx.insert_extension(Arc::new(super::ReclaimOnResultDelivery));
+        let mut hook_registry = HookRegistry::new();
+        hook_registry.register(Hook::Subagent(Box::new(BlockOnStop)));
+        ctx.insert_extension(Arc::new(hook_registry));
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"task": "finish", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect("spawn");
+        let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
+
+        tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("result within timeout")
+            .expect("channel open");
+
+        let handles = ctx.get_extension::<AgentHandles>().unwrap();
+        let mut status_rx = handles.status_rx(child_id).expect("status_rx tracked");
+        status_rx
+            .wait_for(|s| s.is_terminal())
+            .await
+            .expect("watch reaches terminal status");
+
+        assert!(
+            handles.contains(child_id),
+            "a hook-blocked child's handle must not be reclaimed",
+        );
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("hook-blocked child stays registered")
+                .status,
+            AgentStatus::Active,
+            "Block suppresses the terminal transition, so the entry stays Active",
+        );
+    }
+
     // NH-006 R5: SubagentHook::on_subagent_stop returning Block must
     // suppress the registry's terminal transition. The child stays in
     // whatever pre-terminal state it reached (Active here, since the
@@ -1719,6 +2157,344 @@ mod tests {
             status,
             AgentStatus::Completed,
             "Block from SubagentHook::on_subagent_stop must prevent mark_completed",
+        );
+    }
+
+    /// Confinement-escape regression (blocker): `workspace_root` is a
+    /// plain field on [`ToolContext`] — not an extension — so
+    /// `build_child_context` must forward it explicitly, and the child's
+    /// working dir must be seeded from the parent's *current* working dir
+    /// on the child's own handle (snapshot semantics), never from the
+    /// process CWD.
+    #[test]
+    fn child_context_forwards_workspace_root_and_snapshots_working_dir() {
+        use crate::tool::context::SharedWorkingDir;
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let infra = AgentToolInfra {
+            registry: AgentRegistry::shared(),
+            mailbox: Arc::new(Mailbox::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id: Uuid::new_v4(),
+            parent_id: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+        };
+        let mut parent_ctx =
+            ToolContext::with_working_dir(SharedWorkingDir::new(PathBuf::from("/tmp/parent-wd")));
+        parent_ctx.confine_to_workspace(PathBuf::from("/tmp/workspace-root"));
+
+        let child_ctx = build_child_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+        );
+
+        assert_eq!(
+            child_ctx.workspace_root(),
+            Some(std::path::Path::new("/tmp/workspace-root")),
+            "the parent's confinement root must be forwarded to the child",
+        );
+        assert_eq!(
+            child_ctx.working_dir(),
+            PathBuf::from("/tmp/parent-wd"),
+            "the child's working dir must be seeded from the parent's current dir",
+        );
+
+        // Snapshot semantics: the child owns its handle, so a child-side
+        // `cd` must not move the parent's working dir.
+        child_ctx.set_working_dir(PathBuf::from("/tmp/child-moved"));
+        assert_eq!(
+            parent_ctx.working_dir(),
+            PathBuf::from("/tmp/parent-wd"),
+            "child working-dir mutations must not propagate to the parent",
+        );
+    }
+
+    /// Hook-coverage regression: the parent's shared [`HookRegistry`]
+    /// extension must be forwarded to the child context so the child's
+    /// own spawn sites (grandchildren) can reach it.
+    #[test]
+    fn child_context_forwards_hook_registry_extension() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let infra = AgentToolInfra {
+            registry: AgentRegistry::shared(),
+            mailbox: Arc::new(Mailbox::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id: Uuid::new_v4(),
+            parent_id: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+        };
+        let parent_ctx = ToolContext::empty();
+        let hooks = Arc::new(HookRegistry::new());
+        parent_ctx.insert_extension(Arc::clone(&hooks));
+
+        let child_ctx = build_child_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+        );
+
+        let forwarded = child_ctx
+            .get_extension::<HookRegistry>()
+            .expect("HookRegistry must be forwarded to the child context");
+        assert!(
+            Arc::ptr_eq(&forwarded, &hooks),
+            "the child must share the parent's hook registry instance",
+        );
+    }
+
+    /// Builds a provider turn carrying a single `read` tool call.
+    fn read_call_turn(item_id: &str, path: &str) -> Vec<ProviderEvent> {
+        vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: item_id.to_string(),
+                name: Some("read".to_string()),
+                arguments_delta: json!({ "path": path }).to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ]
+    }
+
+    /// Collects the `read` tool results from a child store in event order.
+    fn read_results(events: &[SessionEvent]) -> Vec<serde_json::Value> {
+        events
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::ToolResult {
+                    tool_name, output, ..
+                } if tool_name == "read" => Some(output.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// Confinement-escape regression (blocker), end to end: a parent
+    /// confined to a workspace root spawns a child; the child's `read`
+    /// of an out-of-root file is REFUSED while an in-root read works.
+    #[tokio::test]
+    async fn spawned_child_file_tools_respect_parent_confinement() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let in_path = root.path().join("inside.txt");
+        std::fs::write(&in_path, "inside-content").unwrap();
+        let out_path = outside.path().join("secret.txt");
+        std::fs::write(&out_path, "secret-content").unwrap();
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            read_call_turn("tc-out", &out_path.to_string_lossy()),
+            read_call_turn("tc-in", &in_path.to_string_lossy()),
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "done".to_string(),
+                },
+                done_event(),
+            ],
+        ]));
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(crate::tools::read::ReadTool::new()));
+        let registry = Arc::new(registry);
+
+        let agent_registry = AgentRegistry::shared();
+        let mut ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            registry,
+            Arc::new(Mailbox::new()),
+        );
+        ctx.confine_to_workspace(root.path().to_path_buf());
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"task": "read files", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect("spawn");
+        let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(child_id)
+            .expect("handle");
+        let child_store = Arc::clone(&handle.event_store);
+        handle.join_handle.await.expect("join");
+
+        let results = read_results(&child_store.events());
+        assert_eq!(results.len(), 2, "both reads produced results: {results:?}");
+        assert_eq!(
+            results[0]["kind"], "confinement_refused",
+            "the out-of-root read must be refused inside the child: {}",
+            results[0],
+        );
+        assert_eq!(
+            results[1]["kind"], "text",
+            "the in-root read must succeed inside the child: {}",
+            results[1],
+        );
+        assert!(
+            results[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("inside-content"),
+            "the in-root read must return the file content: {}",
+            results[1],
+        );
+    }
+
+    /// Working-dir regression (blocker): a child must resolve relative
+    /// paths under the parent's working dir, not the process CWD.
+    #[tokio::test]
+    async fn spawned_child_resolves_relative_paths_under_parent_working_dir() {
+        let wd = tempfile::tempdir().unwrap();
+        std::fs::write(wd.path().join("norn-rel-probe.txt"), "rel-probe-content").unwrap();
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            read_call_turn("tc-rel", "norn-rel-probe.txt"),
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "done".to_string(),
+                },
+                done_event(),
+            ],
+        ]));
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(crate::tools::read::ReadTool::new()));
+        let registry = Arc::new(registry);
+
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            registry,
+            Arc::new(Mailbox::new()),
+        );
+        ctx.set_working_dir(wd.path().to_path_buf());
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"task": "read rel", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect("spawn");
+        let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(child_id)
+            .expect("handle");
+        let child_store = Arc::clone(&handle.event_store);
+        handle.join_handle.await.expect("join");
+
+        let results = read_results(&child_store.events());
+        assert_eq!(results.len(), 1, "the read produced a result: {results:?}");
+        assert_eq!(
+            results[0]["kind"], "text",
+            "the relative read must resolve under the parent's working dir, \
+             not the process CWD: {}",
+            results[0],
+        );
+        assert!(
+            results[0]["content"]
+                .as_str()
+                .unwrap()
+                .contains("rel-probe-content"),
+            "the relative read must return the probe content: {}",
+            results[0],
+        );
+    }
+
+    /// Hook-coverage regression (reviewer issue): a PreToolUse hook
+    /// registered on the parent must observe a spawned child's tool
+    /// calls — the child's loop dispatches hooks from its own
+    /// `LoopContext`, so the parent's registry must be forwarded.
+    #[tokio::test]
+    async fn parent_pre_tool_hook_fires_for_spawned_child_tool_call() {
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        use crate::integration::hooks::{Hook, PreToolHook};
+
+        struct CountingPreTool {
+            tool_name: &'static str,
+            count: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl PreToolHook for CountingPreTool {
+            async fn before_tool(
+                &self,
+                envelope: &ToolEnvelope,
+                _ctx: &ToolContext,
+            ) -> HookOutcome {
+                if envelope.tool_name == self.tool_name {
+                    self.count.fetch_add(1, AtomicOrdering::SeqCst);
+                }
+                HookOutcome::Proceed
+            }
+        }
+
+        let turn1 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "tc1".to_string(),
+                name: Some("probe".to_string()),
+                arguments_delta: "{}".to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let turn2 = vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_string(),
+            },
+            done_event(),
+        ];
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![turn1, turn2]));
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(EchoStubTool { tool_name: "probe" }));
+        let registry = Arc::new(registry);
+
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            registry,
+            Arc::new(Mailbox::new()),
+        );
+        let count = Arc::new(AtomicUsize::new(0));
+        let mut hook_registry = HookRegistry::new();
+        hook_registry.register(Hook::PreTool(Box::new(CountingPreTool {
+            tool_name: "probe",
+            count: Arc::clone(&count),
+        })));
+        ctx.insert_extension(Arc::new(hook_registry));
+
+        let tool = SpawnAgentTool::new();
+        spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "probe it", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+
+        assert_eq!(
+            count.load(AtomicOrdering::SeqCst),
+            1,
+            "a parent-registered PreToolUse hook must fire for the child's tool call",
         );
     }
 }

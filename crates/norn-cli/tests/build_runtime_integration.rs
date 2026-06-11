@@ -6,7 +6,7 @@
 //! `runtime.rs` covers a single field, these tests verify that several
 //! flags layered together produce the expected combined state.
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
 
 use std::path::Path;
 use std::sync::Arc;
@@ -27,8 +27,44 @@ fn cli(args: &[&str]) -> Cli {
     Cli::try_parse_from(args).unwrap()
 }
 
+/// Set `NORN_HOME` to a temp directory for the duration of a test so
+/// `build_runtime` reads hermetic settings rather than the developer's
+/// real `~/.norn/settings.json` (whose values would perturb the
+/// assertions below). Paired with `#[serial_test::serial]` on every test
+/// that calls `build_runtime`, so no concurrent test in this binary
+/// observes the env mutation.
+struct TempNornHome {
+    prior: Option<std::ffi::OsString>,
+    _tempdir: tempfile::TempDir,
+}
+
+impl TempNornHome {
+    fn new() -> Self {
+        let tempdir = tempfile::tempdir().unwrap();
+        let prior = std::env::var_os("NORN_HOME");
+        // SAFETY: paired with the `#[serial]` markers on every consumer;
+        // no concurrent reader observes the mutated env.
+        unsafe { std::env::set_var("NORN_HOME", tempdir.path()) };
+        Self {
+            prior,
+            _tempdir: tempdir,
+        }
+    }
+}
+
+impl Drop for TempNornHome {
+    fn drop(&mut self) {
+        match &self.prior {
+            Some(val) => unsafe { std::env::set_var("NORN_HOME", val) },
+            None => unsafe { std::env::remove_var("NORN_HOME") },
+        }
+    }
+}
+
 #[test]
+#[serial_test::serial]
 fn full_pipeline_with_every_flag_lands_on_the_correct_field() {
+    let _norn_home = TempNornHome::new();
     let dir = tempfile::tempdir().unwrap();
     let profile_path = dir.path().join("profile.toml");
     std::fs::write(
@@ -118,7 +154,9 @@ system_instructions = ["from profile"]
 }
 
 #[test]
+#[serial_test::serial]
 fn malformed_config_pair_reports_argument_error_with_exit_code_two() {
+    let _norn_home = TempNornHome::new();
     let result = build_runtime(
         &cli(&["norn", "-c", "max_turns=abc"]),
         RuntimeInputs::default(),
@@ -137,7 +175,9 @@ fn malformed_config_pair_reports_argument_error_with_exit_code_two() {
 }
 
 #[test]
+#[serial_test::serial]
 fn unknown_config_key_does_not_error_or_panic() {
+    let _norn_home = TempNornHome::new();
     let bundle = build_runtime(
         &cli(&["norn", "-c", "not_a_real_key=value"]),
         RuntimeInputs::default(),
@@ -148,7 +188,9 @@ fn unknown_config_key_does_not_error_or_panic() {
 }
 
 #[test]
+#[serial_test::serial]
 fn profile_event_schemas_merge_with_cli_event_schemas_cli_wins() {
+    let _norn_home = TempNornHome::new();
     let dir = tempfile::tempdir().unwrap();
     let profile_path = dir.path().join("profile.toml");
     std::fs::write(
@@ -182,7 +224,9 @@ event_schemas = { text = { type = "object" } }
 }
 
 #[test]
+#[serial_test::serial]
 fn disallowed_tools_carried_through_bundle_not_into_profile_tools() {
+    let _norn_home = TempNornHome::new();
     let bundle = build_runtime(
         &cli(&[
             "norn",
@@ -200,8 +244,98 @@ fn disallowed_tools_carried_through_bundle_not_into_profile_tools() {
     );
 }
 
+/// Minimal named tool for the registry-gating integration tests.
+struct GateStub {
+    tool_name: String,
+}
+
+impl GateStub {
+    fn boxed(name: &str) -> Box<dyn Tool + Send + Sync> {
+        Box::new(Self {
+            tool_name: name.to_owned(),
+        })
+    }
+}
+
+#[async_trait::async_trait]
+impl Tool for GateStub {
+    fn name(&self) -> &str {
+        &self.tool_name
+    }
+    fn description(&self) -> &'static str {
+        "stub"
+    }
+    fn input_schema(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
+    fn effect(&self) -> norn::tool::scheduling::ToolEffect {
+        norn::tool::scheduling::ToolEffect::ReadOnly
+    }
+    async fn execute(
+        &self,
+        _envelope: &norn::tool::envelope::ToolEnvelope,
+        _ctx: &norn::tool::context::ToolContext,
+    ) -> Result<norn::tool::traits::ToolOutput, norn::error::ToolError> {
+        Ok(norn::tool::traits::ToolOutput {
+            content: serde_json::json!(null),
+            is_error: false,
+            duration: Duration::ZERO,
+        })
+    }
+}
+
+/// H17 end-to-end: `--disallowed-tools` removes the named tools from the
+/// registry (lookup AND dispatch), wins over `--allowed-tools`, and the
+/// gated tool errors with `ToolNotFound` when the model calls it anyway.
+#[tokio::test]
+#[serial_test::serial]
+async fn disallowed_tools_gate_registry_lookup_and_dispatch() {
+    let _norn_home = TempNornHome::new();
+    let mut inputs = RuntimeInputs::default();
+    inputs.registry.register(GateStub::boxed("read"));
+    inputs.registry.register(GateStub::boxed("write"));
+    inputs.registry.register(GateStub::boxed("edit"));
+
+    let bundle = build_runtime(
+        &cli(&[
+            "norn",
+            "--allowed-tools",
+            "read,write",
+            "--disallowed-tools",
+            "write,edit",
+        ]),
+        inputs,
+    )
+    .unwrap();
+
+    // Lookup gating: deny wins over the allow-list.
+    assert!(bundle.registry.get("read").is_some());
+    assert!(
+        bundle.registry.get("write").is_none(),
+        "--disallowed-tools must win over --allowed-tools",
+    );
+    assert!(bundle.registry.get("edit").is_none());
+
+    // Dispatch gating: a disallowed tool fails as not-found.
+    let executor: &dyn ToolExecutor = &*bundle.registry;
+    let err = executor
+        .execute("write", "tc-gated", serde_json::json!({}))
+        .await
+        .expect_err("dispatching a disallowed tool must fail");
+    assert!(
+        matches!(err, norn::error::ToolError::ToolNotFound { .. }),
+        "expected ToolNotFound, got: {err:?}",
+    );
+    let ok = executor
+        .execute("read", "tc-open", serde_json::json!({}))
+        .await;
+    assert!(ok.is_ok(), "allowed tool still dispatches: {ok:?}");
+}
+
 #[test]
+#[serial_test::serial]
 fn diagnostics_collector_is_constructed_and_accessible_via_bundle() {
+    let _norn_home = TempNornHome::new();
     // NC-003 R3 acceptance: DiagnosticCollector is constructed and
     // accessible for draining. The bundle field must be a live Arc that
     // the caller can hand to RuntimePostValidateCheck implementations.
@@ -217,7 +351,9 @@ fn diagnostics_collector_is_constructed_and_accessible_via_bundle() {
 }
 
 #[test]
+#[serial_test::serial]
 fn diagnostics_collector_is_wired_onto_loop_context_and_tool_context() {
+    let _norn_home = TempNornHome::new();
     // NC-009 R1 acceptance: the bundle's collector, LoopContext::diagnostics,
     // and the registry's shared ToolContext extension must all be the same
     // Arc instance so push sites at any layer feed the sink the CLI drains.
@@ -385,7 +521,9 @@ fn unknown_write_subkey_warns_and_leaves_resolution_unchanged() {
 }
 
 #[test]
+#[serial_test::serial]
 fn iteration_monitor_profile_section_threads_into_loop_context() {
+    let _norn_home = TempNornHome::new();
     // NC-003 R3 acceptance: with a profile [iteration_monitor] section,
     // LoopContext::iteration_monitor is Some and matches the supplied
     // values byte-for-byte.
@@ -426,17 +564,21 @@ hedging_patterns = ["I cannot", "I'm unable"]
 }
 
 #[test]
+#[serial_test::serial]
 fn iteration_monitor_absent_yields_none_on_loop_context() {
+    let _norn_home = TempNornHome::new();
     let bundle = build_runtime(&cli(&["norn"]), RuntimeInputs::default()).unwrap();
     assert!(bundle.loop_context.iteration_monitor.is_none());
 }
 
 #[test]
+#[serial_test::serial]
 fn slash_state_builder_seeds_loop_context_with_all_eleven_builtins() {
     use norn::session::store::EventStore;
     use norn_cli::commands::slash::CLI_BUILTIN_NAMES;
     use norn_cli::runtime::build_slash_state_from_bundle;
 
+    let _norn_home = TempNornHome::new();
     let cli = cli(&["norn"]);
     let mut bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
     let store = Arc::new(EventStore::new());
@@ -455,7 +597,9 @@ fn slash_state_builder_seeds_loop_context_with_all_eleven_builtins() {
 }
 
 #[test]
+#[serial_test::serial]
 fn rules_flag_with_valid_yaml_installs_rule_engine() {
+    let _norn_home = TempNornHome::new();
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("coding.yaml");
     std::fs::write(

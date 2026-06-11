@@ -1,6 +1,5 @@
-//! Unit tests for [`crate::config::merge`]. Kept in a sibling file (declared
-//! via `#[path = "merge_tests.rs"] mod tests`) so the merge module's main
-//! body stays under the 500-line ceiling specified by NC-003.
+//! Unit tests for [`crate::config::merge`], exercising the public
+//! [`merge_settings`] entry point across all per-section merge semantics.
 
 #![allow(
     clippy::unwrap_used,
@@ -11,10 +10,10 @@
 
 use std::collections::BTreeMap;
 
-use super::*;
+use super::merge_settings;
 use crate::config::types::{
-    HookEntry, HookSettings, LengthOverrideEntry, McpServerSettings, PermissionSettings,
-    ProviderSettings, ToolSettings, WriteToolSettings,
+    HookEntry, HookSettings, LengthOverrideEntry, McpServerSettings, NornSettings,
+    PermissionSettings, ProviderSettings, ToolSettings, WriteToolSettings,
 };
 
 fn ns_model(model: &str) -> NornSettings {
@@ -352,6 +351,54 @@ fn sub_struct_some_when_any_layer_some() {
     );
     // All other provider fields remain None.
     assert!(provider.timeout.is_none());
+}
+
+#[test]
+fn provider_rate_and_retry_knobs_merge_per_field() {
+    // The three rate/retry duration knobs are independent scalars: each
+    // is taken from the highest layer that supplies it, exactly like
+    // every other provider field.
+    let mut user = NornSettings {
+        provider: Some(ProviderSettings {
+            rate_limit_interval: Some("30s".to_owned()),
+            retry_backoff: Some("250ms".to_owned()),
+            retry_after_ceiling: Some("5m".to_owned()),
+            ..ProviderSettings::default()
+        }),
+        ..NornSettings::default()
+    };
+    let mut project = NornSettings {
+        provider: Some(ProviderSettings {
+            retry_backoff: Some("2s".to_owned()),
+            ..ProviderSettings::default()
+        }),
+        ..NornSettings::default()
+    };
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings {
+        provider: Some(ProviderSettings {
+            retry_after_ceiling: Some("90s".to_owned()),
+            ..ProviderSettings::default()
+        }),
+        ..NornSettings::default()
+    };
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    let provider = merged.provider.expect("provider present");
+    assert_eq!(
+        provider.rate_limit_interval.as_deref(),
+        Some("30s"),
+        "only the user layer supplies rate_limit_interval",
+    );
+    assert_eq!(
+        provider.retry_backoff.as_deref(),
+        Some("2s"),
+        "project layer outranks user for retry_backoff",
+    );
+    assert_eq!(
+        provider.retry_after_ceiling.as_deref(),
+        Some("90s"),
+        "CLI layer outranks all others for retry_after_ceiling",
+    );
 }
 
 #[test]

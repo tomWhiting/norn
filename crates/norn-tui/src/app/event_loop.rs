@@ -43,9 +43,9 @@ use crate::terminal::caps::TerminalCaps;
 use crate::terminal::setup::TerminalGuard;
 
 use super::autocomplete::{PopupKeyOutcome, dismiss as dismiss_autocomplete, handle_popup_key};
-use super::dispatch::{finalise_turn, handle_agent_event};
+use super::dispatch::{finalise_turn, handle_agent_event, write_error_line};
 use super::edit::apply_edit_action;
-use super::helpers::flush_pending;
+use super::helpers::{checkpoint_session, flush_pending};
 use super::render::{
     redraw_all, redraw_panel, render_input, sync_input_area, write_cancelled_line,
     write_user_message,
@@ -627,6 +627,16 @@ async fn run_turn(
         state.streaming_indicator = StreamingIndicator::Idle;
         state.complete_at = None;
         state.sync_indicator_into_panel();
+    }
+    // Turn boundary: flush the store's index-registered sink so the
+    // session index entry (event count, usage, updated_at) tracks this
+    // turn instead of going stale until clean shutdown — an abort would
+    // lose the pending delta entirely. Failure is surfaced in the red
+    // error-line style (and logged inside the helper) but never aborts
+    // the turn: the on-screen conversation and the write-through JSONL
+    // event file are both intact.
+    if let Some(message) = checkpoint_session(runtime.store.as_ref()) {
+        write_error_line(state, guard, &message)?;
     }
     // Save scroll position (cursor is in scroll region after all writes).
     // The save persists into the next outer-loop iteration so the next

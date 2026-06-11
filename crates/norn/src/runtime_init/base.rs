@@ -1,10 +1,4 @@
-//! Shared runtime initialisation for CLI and in-process library consumers.
-//!
-//! This module contains the settings/context/profile pieces that must be
-//! identical whether Norn is launched by `norn-cli` or embedded in another
-//! process.
-
-#![allow(missing_docs)]
+//! Settings loading and runtime-base assembly shared by every launch path.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -12,56 +6,86 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::config::{HookSettings, NornSettings, load_settings, merge_settings, validate_settings};
+use crate::config::{NornSettings, load_settings, merge_settings, validate_settings};
 use crate::context::{ContextLoader, scan_rule_dirs};
 use crate::error::{ConfigError, NornError};
 use crate::integration::DiagnosticCollector;
-use crate::integration::hooks::{
-    Hook, HookContext, HookEventType, HookMatcher, HookRegistry, ShellCommandHook,
-    load_hooks_from_settings,
-};
-use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode, ToolExecutor};
+use crate::integration::hooks::{HookRegistry, load_hooks_from_settings};
+use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
 use crate::r#loop::iteration::IterationMonitorConfig;
 use crate::r#loop::retry::RetryPolicy;
 use crate::profile::Profile;
 use crate::provider::request::{ReasoningEffort, ReasoningSummary};
 use crate::rules::engine::RuleEngine;
 use crate::skill::SkillCatalog;
-use crate::tool::context::{SharedWorkingDir, ToolContext};
-use crate::tool::registry::ToolRegistry;
-use crate::tools::context_paths::ContextSearchPaths;
-
-use crate::tools::skill::SkillSearchPaths;
+use crate::tool::context::SharedWorkingDir;
 use crate::tools::task::{DiskTaskStore, SharedTaskStore, TaskStore};
-use crate::tools::tool_search::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
+
+use super::hooks::assemble_hook_registry;
 
 /// Fully loaded base runtime inputs shared by CLI and embedded agents.
 pub struct LoadedRuntimeBase {
+    /// Merged user/project/local settings.
     pub settings: NornSettings,
+    /// Agent-loop config with settings-level overrides applied.
     pub agent_config: AgentLoopConfig,
+    /// Provider retry policy from the merged settings.
     pub retry_policy: RetryPolicy,
+    /// Merged hook registry: programmatic hooks (first, winning conflicts)
+    /// plus the settings-declared shell hooks. See [`assemble_hook_registry`].
     pub hooks: Option<Arc<HookRegistry>>,
+    /// Rules discovered under `.norn/rules` and the user rules dir.
     pub rules: Option<RuleEngine>,
+    /// NORN.md context loader rooted at the working directory.
     pub context_loader: ContextLoader,
+    /// Skill search paths (settings-declared plus the standard locations).
     pub skill_paths: Vec<PathBuf>,
+    /// Catalog of skills discovered under [`Self::skill_paths`].
     pub skill_catalog: Arc<SkillCatalog>,
+    /// Disk-backed task store shared across the agent tree.
     pub shared_task_store: Arc<SharedTaskStore>,
+    /// Diagnostic collector created for this runtime base. Embedders that
+    /// supply their own collector take precedence over this one.
     pub diagnostics: Arc<DiagnosticCollector>,
+    /// Iteration-monitor config parsed from the profile, when declared.
     pub iteration_monitor: Option<IterationMonitorConfig>,
 }
 
 /// Provider settings after merging the same settings layers as the CLI.
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct ProviderSettingsResolved {
+    /// Override for the provider's base URL.
     pub base_url: Option<String>,
+    /// Per-request timeout.
     pub request_timeout: Option<Duration>,
+    /// Maximum provider-level retries.
     pub max_retries: Option<u32>,
+    /// Provider-specific options passed through verbatim.
     pub provider_options: Option<serde_json::Value>,
+    /// Directory for provider debug dumps.
     pub debug_dump_dir: Option<PathBuf>,
+    /// Requests-per-minute rate limit.
     pub rate_limit: Option<u32>,
+    /// Replenishment window over which [`Self::rate_limit`] permits are
+    /// granted. `None` defers to the library's owner-approved 60-second
+    /// default.
+    pub rate_limit_interval: Option<Duration>,
+    /// Backoff applied to a `429` response with no parseable
+    /// `Retry-After` header. `None` defers to the library's
+    /// owner-approved 1-second default.
+    pub retry_backoff: Option<Duration>,
+    /// Optional ceiling on accepted server-supplied `Retry-After` waits.
+    /// `None` honors the header as-is — the library deliberately has no
+    /// built-in ceiling.
+    pub retry_after_ceiling: Option<Duration>,
 }
 
 /// Load and validate user/project/local settings from the supplied CWD.
+///
+/// # Errors
+///
+/// Returns [`NornError::Config`] when a settings layer fails to load or the
+/// merged settings fail validation.
 pub fn load_merged_settings(cwd: &Path) -> Result<NornSettings, NornError> {
     let mut layers = load_settings(cwd)?;
     let mut cli_layer = NornSettings::default();
@@ -76,6 +100,10 @@ pub fn load_merged_settings(cwd: &Path) -> Result<NornSettings, NornError> {
 }
 
 /// Apply settings-level agent config onto compiled defaults.
+///
+/// # Errors
+///
+/// Returns [`NornError::Config`] for malformed settings values.
 pub fn agent_config_from_settings(settings: &NornSettings) -> Result<AgentLoopConfig, NornError> {
     let mut config = AgentLoopConfig::default();
     apply_settings_to_agent_config(settings, &mut config)?;
@@ -83,6 +111,10 @@ pub fn agent_config_from_settings(settings: &NornSettings) -> Result<AgentLoopCo
 }
 
 /// Apply settings-level reasoning defaults to a profile when unset.
+///
+/// # Errors
+///
+/// Returns [`NornError::Config`] for unrecognised reasoning values.
 pub fn apply_settings_reasoning_to_profile(
     settings: &NornSettings,
     profile: &mut Profile,
@@ -104,6 +136,10 @@ pub fn apply_settings_reasoning_to_profile(
 }
 
 /// Resolve provider settings using the same settings layer as CLI runtime assembly.
+///
+/// # Errors
+///
+/// Returns [`NornError::Config`] for malformed settings values.
 pub fn provider_settings_from_settings(
     settings: &NornSettings,
 ) -> Result<ProviderSettingsResolved, NornError> {
@@ -121,10 +157,30 @@ pub fn provider_settings_from_settings(
     resolved.provider_options.clone_from(&provider.options);
     resolved.debug_dump_dir = provider.debug_dump_dir.as_deref().map(PathBuf::from);
     resolved.rate_limit = provider.rate_limit;
+    if let Some(interval) = provider.rate_limit_interval.as_deref() {
+        resolved.rate_limit_interval = Some(parse_settings_duration(
+            "provider.rate_limit_interval",
+            interval,
+        )?);
+    }
+    if let Some(backoff) = provider.retry_backoff.as_deref() {
+        resolved.retry_backoff = Some(parse_settings_duration("provider.retry_backoff", backoff)?);
+    }
+    if let Some(ceiling) = provider.retry_after_ceiling.as_deref() {
+        resolved.retry_after_ceiling = Some(parse_settings_duration(
+            "provider.retry_after_ceiling",
+            ceiling,
+        )?);
+    }
     Ok(resolved)
 }
 
 /// Build all shared base runtime pieces for a profile and working directory.
+///
+/// # Errors
+///
+/// Returns [`NornError::Config`] when settings fail to load or validate, or
+/// when the settings-declared hooks are malformed.
 pub fn load_runtime_base(
     cwd: &Path,
     profile: &mut Profile,
@@ -158,59 +214,6 @@ pub fn load_runtime_base(
         diagnostics,
         iteration_monitor,
     })
-}
-
-pub fn install_skill_infra(ctx: &ToolContext, paths: Vec<PathBuf>, catalog: Arc<SkillCatalog>) {
-    ctx.insert_extension(Arc::new(SkillSearchPaths(paths)));
-    ctx.insert_extension(catalog);
-}
-
-pub fn install_context_search_paths(ctx: &ToolContext, settings: &NornSettings, cwd: &Path) {
-    let Some(context) = settings.context.as_ref() else {
-        return;
-    };
-    let Some(entries) = context.search_paths.as_ref() else {
-        return;
-    };
-    if entries.is_empty() {
-        return;
-    }
-    let paths = entries
-        .iter()
-        .map(|entry| resolve_search_path(cwd, entry))
-        .collect();
-    ctx.insert_extension(Arc::new(ContextSearchPaths(paths)));
-}
-
-pub fn install_runtime_extensions(
-    ctx: &ToolContext,
-    task_store: &Arc<SharedTaskStore>,
-    diagnostics: &Arc<DiagnosticCollector>,
-    hooks: Option<&Arc<HookRegistry>>,
-) {
-    ctx.insert_extension(Arc::clone(task_store));
-    ctx.insert_extension(Arc::clone(diagnostics));
-    if let Some(hooks) = hooks {
-        ctx.insert_extension(Arc::clone(hooks));
-    }
-}
-
-pub fn install_tool_catalog(registry: &ToolRegistry) {
-    let Some(ctx) = registry.shared_context() else {
-        return;
-    };
-    let mut entries: Vec<ToolCatalogEntry> = registry
-        .names()
-        .filter_map(|name| {
-            registry
-                .get(name)
-                .map(|tool| ToolCatalogEntry::tool(tool.name(), tool.description()))
-        })
-        .collect();
-    if let Some(extras) = ctx.get_extension::<ToolCatalogExtras>() {
-        entries.extend(extras.0.iter().cloned());
-    }
-    ctx.insert_extension(Arc::new(SharedToolCatalog(Arc::new(entries))));
 }
 
 fn apply_settings_to_agent_config(
@@ -318,7 +321,8 @@ fn build_skill_search_paths(settings: &NornSettings, cwd: &Path) -> Vec<PathBuf>
     paths
 }
 
-fn resolve_search_path(cwd: &Path, raw: &str) -> PathBuf {
+/// Resolve a settings-declared search path against `cwd` when relative.
+pub(super) fn resolve_search_path(cwd: &Path, raw: &str) -> PathBuf {
     let candidate = PathBuf::from(raw);
     if candidate.is_absolute() {
         candidate
@@ -374,175 +378,6 @@ fn sanitise_slug(raw: &str) -> String {
     out
 }
 
-fn assemble_hook_registry(
-    programmatic: Option<Arc<HookRegistry>>,
-    settings: &HookSettings,
-    profile: &Profile,
-    cwd: &Path,
-) -> Result<Option<Arc<HookRegistry>>, NornError> {
-    let shell_total = settings_total_entries(settings);
-    if programmatic.is_none() && shell_total == 0 {
-        return Ok(None);
-    }
-    if shell_total == 0 {
-        return Ok(programmatic);
-    }
-
-    let mut registry = match programmatic {
-        Some(arc) => Arc::try_unwrap(arc).unwrap_or_else(|_| HookRegistry::new()),
-        None => HookRegistry::new(),
-    };
-    let context = HookContext {
-        session_id: String::new(),
-        cwd: cwd.display().to_string(),
-        agent_id: String::new(),
-        profile_name: profile.name.clone(),
-    };
-
-    register_shell_hooks(
-        &mut registry,
-        settings.pre_tool.as_ref(),
-        HookEventType::PreTool,
-        &context,
-        |h| Hook::PreTool(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.post_tool.as_ref(),
-        HookEventType::PostTool,
-        &context,
-        |h| Hook::PostTool(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.post_tool_failure.as_ref(),
-        HookEventType::PostToolFailure,
-        &context,
-        |h| Hook::PostToolFailure(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.pre_llm.as_ref(),
-        HookEventType::PreLlm,
-        &context,
-        |h| Hook::PreLlm(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.post_llm.as_ref(),
-        HookEventType::PostLlm,
-        &context,
-        |h| Hook::PostLlm(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.session_event.as_ref(),
-        HookEventType::SessionEvent,
-        &context,
-        |h| Hook::SessionEvent(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.user_prompt.as_ref(),
-        HookEventType::UserPrompt,
-        &context,
-        |h| Hook::UserPrompt(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.stop.as_ref(),
-        HookEventType::Stop,
-        &context,
-        |h| Hook::Stop(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.subagent_start.as_ref(),
-        HookEventType::SubagentStart,
-        &context,
-        |h| Hook::Subagent(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.subagent_stop.as_ref(),
-        HookEventType::SubagentStop,
-        &context,
-        |h| Hook::Subagent(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.session_start.as_ref(),
-        HookEventType::SessionStart,
-        &context,
-        |h| Hook::SessionLifecycle(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.session_end.as_ref(),
-        HookEventType::SessionEnd,
-        &context,
-        |h| Hook::SessionLifecycle(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.pre_compaction.as_ref(),
-        HookEventType::PreCompaction,
-        &context,
-        |h| Hook::Compaction(Box::new(h)),
-    )?;
-
-    Ok(Some(Arc::new(registry)))
-}
-
-fn register_shell_hooks<F>(
-    registry: &mut HookRegistry,
-    entries: Option<&Vec<crate::config::HookEntry>>,
-    event_type: HookEventType,
-    context: &HookContext,
-    wrap: F,
-) -> Result<(), NornError>
-where
-    F: Fn(ShellCommandHook) -> Hook,
-{
-    let Some(entries) = entries else {
-        return Ok(());
-    };
-    for entry in entries {
-        let timeout_ms = entry.timeout.ok_or_else(|| {
-            invalid_config(format!(
-                "hook {:?} command '{}' is missing required timeout",
-                event_type, entry.command
-            ))
-        })?;
-        let timeout = Duration::from_millis(timeout_ms);
-        let matcher = HookMatcher::new(entry.matcher.as_deref())?;
-        registry.register(wrap(ShellCommandHook::new(
-            entry.command.clone(),
-            matcher,
-            timeout,
-            event_type,
-            context.clone(),
-        )));
-    }
-    Ok(())
-}
-
-fn settings_total_entries(settings: &HookSettings) -> usize {
-    settings.pre_tool.as_ref().map_or(0, Vec::len)
-        + settings.post_tool.as_ref().map_or(0, Vec::len)
-        + settings.post_tool_failure.as_ref().map_or(0, Vec::len)
-        + settings.pre_llm.as_ref().map_or(0, Vec::len)
-        + settings.post_llm.as_ref().map_or(0, Vec::len)
-        + settings.session_event.as_ref().map_or(0, Vec::len)
-        + settings.user_prompt.as_ref().map_or(0, Vec::len)
-        + settings.stop.as_ref().map_or(0, Vec::len)
-        + settings.subagent_start.as_ref().map_or(0, Vec::len)
-        + settings.subagent_stop.as_ref().map_or(0, Vec::len)
-        + settings.session_start.as_ref().map_or(0, Vec::len)
-        + settings.session_end.as_ref().map_or(0, Vec::len)
-        + settings.pre_compaction.as_ref().map_or(0, Vec::len)
-}
-
 fn iteration_monitor_from_profile(
     profile: &Profile,
 ) -> Result<Option<IterationMonitorConfig>, NornError> {
@@ -581,6 +416,79 @@ impl IterationMonitorSpec {
     }
 }
 
-fn invalid_config(reason: String) -> NornError {
+/// Build a [`NornError::Config`] with the supplied reason.
+pub(super) fn invalid_config(reason: String) -> NornError {
     NornError::Config(ConfigError::InvalidConfig { reason })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::config::types::ProviderSettings;
+
+    #[test]
+    fn provider_settings_resolve_maps_rate_and_retry_knobs() {
+        let settings = NornSettings {
+            provider: Some(ProviderSettings {
+                rate_limit: Some(120),
+                rate_limit_interval: Some("90s".to_owned()),
+                retry_backoff: Some("500ms".to_owned()),
+                retry_after_ceiling: Some("2m".to_owned()),
+                ..ProviderSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let resolved = provider_settings_from_settings(&settings).expect("valid settings");
+        assert_eq!(resolved.rate_limit, Some(120));
+        assert_eq!(resolved.rate_limit_interval, Some(Duration::from_secs(90)));
+        assert_eq!(resolved.retry_backoff, Some(Duration::from_millis(500)));
+        assert_eq!(resolved.retry_after_ceiling, Some(Duration::from_mins(2)));
+    }
+
+    #[test]
+    fn provider_settings_resolve_absent_knobs_stay_none() {
+        let resolved = provider_settings_from_settings(&NornSettings::default())
+            .expect("empty settings resolve");
+        assert_eq!(resolved.rate_limit_interval, None);
+        assert_eq!(resolved.retry_backoff, None);
+        assert_eq!(resolved.retry_after_ceiling, None);
+    }
+
+    #[test]
+    fn provider_settings_resolve_rejects_bad_duration() {
+        for (field, settings) in [
+            (
+                "provider.rate_limit_interval",
+                ProviderSettings {
+                    rate_limit_interval: Some("not-a-duration".to_owned()),
+                    ..ProviderSettings::default()
+                },
+            ),
+            (
+                "provider.retry_backoff",
+                ProviderSettings {
+                    retry_backoff: Some("not-a-duration".to_owned()),
+                    ..ProviderSettings::default()
+                },
+            ),
+            (
+                "provider.retry_after_ceiling",
+                ProviderSettings {
+                    retry_after_ceiling: Some("not-a-duration".to_owned()),
+                    ..ProviderSettings::default()
+                },
+            ),
+        ] {
+            let err = provider_settings_from_settings(&NornSettings {
+                provider: Some(settings),
+                ..NornSettings::default()
+            })
+            .expect_err("malformed duration must be rejected");
+            assert!(
+                err.to_string().contains(field),
+                "error must name {field}: {err}",
+            );
+        }
+    }
 }

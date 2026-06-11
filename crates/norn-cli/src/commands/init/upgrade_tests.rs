@@ -123,7 +123,9 @@ paths = ["**/*.rs"]
 advise_on = ["clippy"]
 "#,
     )?;
-    assert!(rendered.contains("[rust.lsp]"));
+    // The bundled rust language pack ships without an `[rust.lsp]`
+    // section (clippy carries the post-mutation diagnostics), so only
+    // the sections the template actually provides are asserted here.
     assert!(rendered.contains("[rust.diagnostics]"));
     assert!(rendered.contains("[rust.patterns]"));
     assert!(rendered.contains("[rust.remediation]"));

@@ -37,7 +37,17 @@ pub(super) fn latest_response_anchor(
     anchor
 }
 
-fn event_produces_prompt_message(event: &SessionEvent, include_compactions: bool) -> bool {
+/// Whether `event` renders to a provider message in the prompt view.
+///
+/// Mirrors the projection in [`crate::session::conversion`]: user and
+/// assistant messages and tool results always render; compaction events
+/// render only when the prompt view includes them (`include_compactions`,
+/// i.e. when a [`ContextEdits`](crate::session::context_edit::ContextEdits)
+/// tracker is active); all metadata events render nothing.
+pub(super) fn event_produces_prompt_message(
+    event: &SessionEvent,
+    include_compactions: bool,
+) -> bool {
     matches!(
         event,
         SessionEvent::UserMessage { .. }
@@ -117,6 +127,28 @@ impl ConversationRequestState {
         request_messages.extend(messages.iter().take(self.prefix_len).cloned());
         request_messages.extend(messages.iter().skip(self.input_start).cloned());
         request_messages
+    }
+
+    /// Drop the provider-side response anchor so the next request replays
+    /// the full local conversation instead of a delta.
+    ///
+    /// A `previous_response_id` thread is reconstructed server-side from
+    /// the referenced response, so a client-side compaction cannot shrink
+    /// it — the provider would keep the full uncompacted history and the
+    /// compaction record would claim an elision that never reached the
+    /// wire (fix campaign Track L, finding 2). Dropping the anchor forces
+    /// the next request to send the genuinely compacted conversation;
+    /// threading then resumes from that response via
+    /// [`Self::observe_response`].
+    pub(super) fn reset_thread_anchor(&mut self) {
+        if self.previous_response_id.is_some() || self.input_start != 0 {
+            tracing::debug!(
+                "dropping provider response-thread anchor so the compacted \
+                 conversation is replayed in full on the next request",
+            );
+        }
+        self.previous_response_id = None;
+        self.input_start = 0;
     }
 
     /// Update the anchor after a provider response.

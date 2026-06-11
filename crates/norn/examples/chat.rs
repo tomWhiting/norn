@@ -48,6 +48,9 @@ async fn main() {
         provider_options: None,
         debug_dump_file: None,
         rate_limit: None,
+        rate_limit_interval: None,
+        retry_backoff: None,
+        retry_after_ceiling: None,
     };
 
     let provider = match OpenAiProvider::new(config).await {

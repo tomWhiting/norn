@@ -29,6 +29,49 @@ pub enum AgentStatus {
     Failed,
 }
 
+impl AgentStatus {
+    /// True for statuses that end the agent's lifecycle
+    /// ([`Self::Completed`] and [`Self::Failed`]).
+    #[must_use]
+    pub fn is_terminal(self) -> bool {
+        matches!(self, Self::Completed | Self::Failed)
+    }
+}
+
+/// Error from a registry status transition (`mark_*`).
+///
+/// Defined here rather than on [`AgentError`] because the transition
+/// rules are a registry invariant: terminal statuses are immutable.
+/// Once an entry is [`AgentStatus::Completed`] or
+/// [`AgentStatus::Failed`] its outcome is part of the audit record —
+/// observers (status displays, the result channel) may have already
+/// reported it, so rewriting it would falsify history. Re-marking the
+/// *same* terminal status is an accepted no-op so independent
+/// finalisers need no coordination.
+#[derive(Debug, thiserror::Error)]
+pub enum StatusTransitionError {
+    /// No entry with the given id is registered (or it was reclaimed).
+    #[error("agent not found: id:{id}")]
+    NotFound {
+        /// The unknown agent id.
+        id: Uuid,
+    },
+    /// The entry already carries a terminal status; terminal statuses
+    /// are immutable (terminal → non-terminal and terminal → different
+    /// terminal transitions are both rejected).
+    #[error(
+        "invalid status transition for agent {id}: {from:?} is terminal and cannot become {to:?}"
+    )]
+    TerminalImmutable {
+        /// The agent whose transition was rejected.
+        id: Uuid,
+        /// The entry's current (terminal) status.
+        from: AgentStatus,
+        /// The rejected target status.
+        to: AgentStatus,
+    },
+}
+
 /// A registered agent record.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AgentEntry {
@@ -127,8 +170,10 @@ impl AgentRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`AgentError::NotFound`] if `id` is not registered.
-    pub fn mark_active(&mut self, id: Uuid) -> Result<(), AgentError> {
+    /// Returns [`StatusTransitionError::NotFound`] if `id` is not
+    /// registered, or [`StatusTransitionError::TerminalImmutable`] if the
+    /// entry is already terminal.
+    pub fn mark_active(&mut self, id: Uuid) -> Result<(), StatusTransitionError> {
         self.set_status(id, AgentStatus::Active)
     }
 
@@ -136,38 +181,103 @@ impl AgentRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`AgentError::NotFound`] if `id` is not registered.
-    pub fn mark_completing(&mut self, id: Uuid) -> Result<(), AgentError> {
+    /// Returns [`StatusTransitionError::NotFound`] if `id` is not
+    /// registered, or [`StatusTransitionError::TerminalImmutable`] if the
+    /// entry is already terminal.
+    pub fn mark_completing(&mut self, id: Uuid) -> Result<(), StatusTransitionError> {
         self.set_status(id, AgentStatus::Completing)
     }
 
-    /// Transition an entry to [`AgentStatus::Completed`].
+    /// Transition an entry to [`AgentStatus::Completed`], freeing its path
+    /// for reuse. The entry itself stays listed (with terminal status) for
+    /// observers such as status displays until [`Self::remove_terminal`]
+    /// reclaims it.
     ///
     /// # Errors
     ///
-    /// Returns [`AgentError::NotFound`] if `id` is not registered.
-    pub fn mark_completed(&mut self, id: Uuid) -> Result<(), AgentError> {
+    /// Returns [`StatusTransitionError::NotFound`] if `id` is not
+    /// registered, or [`StatusTransitionError::TerminalImmutable`] if the
+    /// entry is already [`AgentStatus::Failed`]. Re-marking an already
+    /// completed entry is an accepted no-op.
+    pub fn mark_completed(&mut self, id: Uuid) -> Result<(), StatusTransitionError> {
         self.set_status(id, AgentStatus::Completed)
     }
 
-    /// Transition an entry to [`AgentStatus::Failed`].
+    /// Transition an entry to [`AgentStatus::Failed`], freeing its path for
+    /// reuse. The entry itself stays listed (with terminal status) for
+    /// observers such as status displays until [`Self::remove_terminal`]
+    /// reclaims it.
     ///
     /// # Errors
     ///
-    /// Returns [`AgentError::NotFound`] if `id` is not registered.
-    pub fn mark_failed(&mut self, id: Uuid) -> Result<(), AgentError> {
+    /// Returns [`StatusTransitionError::NotFound`] if `id` is not
+    /// registered, or [`StatusTransitionError::TerminalImmutable`] if the
+    /// entry is already [`AgentStatus::Completed`]. Re-marking an already
+    /// failed entry is an accepted no-op.
+    pub fn mark_failed(&mut self, id: Uuid) -> Result<(), StatusTransitionError> {
         self.set_status(id, AgentStatus::Failed)
     }
 
-    fn set_status(&mut self, id: Uuid, status: AgentStatus) -> Result<(), AgentError> {
+    /// Reclaim a terminal entry, removing it from the registry.
+    ///
+    /// Returns `true` when an entry was removed; `false` when `id` is
+    /// absent (already reclaimed) or still non-terminal. Idempotent, so
+    /// every reclaimer may call it without coordination. Non-terminal
+    /// entries are never removed — lifecycle removal goes through
+    /// [`SpawnGuard`] rollback or a terminal `mark_*` first.
+    ///
+    /// One owner reclaims a naturally-finished child per launch mode:
+    /// `close_agent` for forced shutdowns, an external status observer
+    /// (e.g. the TUI panel after its hold window) when one is attached,
+    /// the spawn/fork wrapper at result delivery when the runtime
+    /// installed
+    /// [`ReclaimOnResultDelivery`](crate::tools::agent::ReclaimOnResultDelivery),
+    /// and otherwise whoever holds the child's
+    /// [`AgentHandle`](crate::tools::agent::AgentHandle). See
+    /// [`crate::tools::agent::reclaim`] for the full rule.
+    pub fn remove_terminal(&mut self, id: Uuid) -> bool {
+        match self.entries.get(&id) {
+            Some(entry) if entry.status.is_terminal() => {
+                self.entries.remove(&id);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// Apply a status transition. Terminal statuses free the entry's path
+    /// immediately (so the path is reusable, mirroring the RAII rollback
+    /// of an unconfirmed [`SpawnGuard`]) but retain the entry with its
+    /// terminal status so pollers of [`Self::list`] (e.g. the TUI agent
+    /// status panel's hold window) observe the outcome. Reclamation is
+    /// explicit via [`Self::remove_terminal`]; richer outcome
+    /// observability lives on the
+    /// [`AgentHandle`](crate::tools::agent::AgentHandle) status watch
+    /// channel and the child result channel.
+    ///
+    /// Terminal statuses are immutable: once an entry is Completed or
+    /// Failed, transitioning it to any *different* status — resurrection
+    /// to a non-terminal state or rewriting one terminal outcome as the
+    /// other — is rejected with
+    /// [`StatusTransitionError::TerminalImmutable`]. Re-applying the same
+    /// terminal status is an accepted no-op.
+    fn set_status(&mut self, id: Uuid, status: AgentStatus) -> Result<(), StatusTransitionError> {
         match self.entries.get_mut(&id) {
             Some(entry) => {
+                if entry.status.is_terminal() && entry.status != status {
+                    return Err(StatusTransitionError::TerminalImmutable {
+                        id,
+                        from: entry.status,
+                        to: status,
+                    });
+                }
                 entry.status = status;
+                if status.is_terminal() {
+                    self.path_index.remove(&entry.path);
+                }
                 Ok(())
             }
-            None => Err(AgentError::NotFound {
-                path: format!("id:{id}"),
-            }),
+            None => Err(StatusTransitionError::NotFound { id }),
         }
     }
 
@@ -216,18 +326,12 @@ impl AgentRegistry {
                     });
                 }
 
+                // Terminal entries linger until `remove_terminal` reclaims
+                // them, so the cap must count only non-terminal children.
                 let active_children = guard
                     .entries
                     .values()
-                    .filter(|e| {
-                        e.parent_id == Some(pid)
-                            && matches!(
-                                e.status,
-                                AgentStatus::Spawning
-                                    | AgentStatus::Active
-                                    | AgentStatus::Completing
-                            )
-                    })
+                    .filter(|e| e.parent_id == Some(pid) && !e.status.is_terminal())
                     .count();
                 if active_children >= MAX_CONCURRENT_CHILDREN {
                     return Err(AgentError::SpawnFailed {
@@ -296,9 +400,23 @@ impl SpawnGuard {
     /// # Errors
     ///
     /// Returns [`AgentError::NotFound`] if the reservation was already
-    /// removed externally (which should not happen under normal use).
+    /// removed externally, or [`AgentError::SpawnFailed`] if it was
+    /// externally driven to a terminal status before confirmation
+    /// (neither should happen under normal use).
     pub fn confirm(mut self) -> Result<(), AgentError> {
-        self.registry.write().mark_active(self.id)?;
+        self.registry
+            .write()
+            .mark_active(self.id)
+            .map_err(|e| match e {
+                StatusTransitionError::NotFound { id } => AgentError::NotFound {
+                    path: format!("id:{id}"),
+                },
+                terminal @ StatusTransitionError::TerminalImmutable { .. } => {
+                    AgentError::SpawnFailed {
+                        reason: terminal.to_string(),
+                    }
+                }
+            })?;
         self.confirmed = true;
         Ok(())
     }
@@ -528,10 +646,17 @@ mod tests {
             let mut w = registry.write();
             w.mark_completed(id).expect("completed");
         }
+        // Terminal transition frees the path immediately but keeps the
+        // entry observable (status displays hold it) until reclaimed.
+        let r = registry.read();
         assert_eq!(
-            registry.read().get(id).expect("entry").status,
+            r.get(id).expect("terminal entry observable").status,
             AgentStatus::Completed
         );
+        assert!(r.get_by_path("/root/states").is_none(), "path is freed");
+        drop(r);
+        assert!(registry.write().remove_terminal(id), "reclaim succeeds");
+        assert!(registry.read().get(id).is_none(), "entry reclaimed");
     }
 
     #[test]
@@ -539,11 +664,98 @@ mod tests {
         let registry = fresh();
         let mut w = registry.write();
         let err = w.mark_active(Uuid::new_v4()).expect_err("unknown");
-        assert!(matches!(err, AgentError::NotFound { .. }));
+        assert!(matches!(err, StatusTransitionError::NotFound { .. }));
+        let err = w.mark_completed(Uuid::new_v4()).expect_err("unknown");
+        assert!(matches!(err, StatusTransitionError::NotFound { .. }));
+    }
+
+    /// Terminal-resurrection regression: a Completed or Failed entry can
+    /// never transition back to a non-terminal status, and one terminal
+    /// outcome can never be rewritten as the other. Re-marking the same
+    /// terminal status stays an accepted no-op.
+    #[test]
+    fn terminal_status_is_immutable() {
+        let registry = fresh();
+        let guard = AgentRegistry::reserve(
+            &registry,
+            "/root/immutable".to_string(),
+            "dev".to_string(),
+            "claude".to_string(),
+            None,
+        )
+        .expect("reserve");
+        let id = guard.id();
+        guard.confirm().expect("confirm");
+        registry.write().mark_failed(id).expect("fail");
+
+        let mut w = registry.write();
+        // terminal → non-terminal: rejected, status unchanged.
+        let err = w.mark_active(id).expect_err("Failed must not resurrect");
+        assert!(matches!(
+            err,
+            StatusTransitionError::TerminalImmutable {
+                from: AgentStatus::Failed,
+                to: AgentStatus::Active,
+                ..
+            }
+        ));
+        let err = w
+            .mark_completing(id)
+            .expect_err("Failed must not become Completing");
+        assert!(matches!(
+            err,
+            StatusTransitionError::TerminalImmutable { .. }
+        ));
+        // terminal → different terminal: rejected (a failure is never
+        // rewritten as a success).
+        let err = w
+            .mark_completed(id)
+            .expect_err("Failed must not be rewritten as Completed");
+        assert!(matches!(
+            err,
+            StatusTransitionError::TerminalImmutable {
+                from: AgentStatus::Failed,
+                to: AgentStatus::Completed,
+                ..
+            }
+        ));
+        // terminal → same terminal: idempotent no-op.
+        w.mark_failed(id).expect("re-marking Failed is a no-op");
+        assert_eq!(w.get(id).expect("entry").status, AgentStatus::Failed);
+    }
+
+    /// The Completed direction of terminal immutability.
+    #[test]
+    fn completed_status_cannot_be_rewritten() {
+        let registry = fresh();
+        let guard = AgentRegistry::reserve(
+            &registry,
+            "/root/done".to_string(),
+            "dev".to_string(),
+            "claude".to_string(),
+            None,
+        )
+        .expect("reserve");
+        let id = guard.id();
+        guard.confirm().expect("confirm");
+        registry.write().mark_completed(id).expect("complete");
+
+        let mut w = registry.write();
+        assert!(matches!(
+            w.mark_failed(id),
+            Err(StatusTransitionError::TerminalImmutable { .. })
+        ));
+        assert!(matches!(
+            w.mark_active(id),
+            Err(StatusTransitionError::TerminalImmutable { .. })
+        ));
+        w.mark_completed(id)
+            .expect("re-marking Completed is a no-op");
+        assert_eq!(w.get(id).expect("entry").status, AgentStatus::Completed);
     }
 
     #[test]
-    fn mark_failed_sets_status() {
+    fn mark_failed_frees_path_and_retains_entry_until_reclaimed() {
         let registry = fresh();
         let guard = AgentRegistry::reserve(
             &registry,
@@ -556,10 +768,103 @@ mod tests {
         let id = guard.id();
         guard.confirm().expect("confirm");
         registry.write().mark_failed(id).expect("mark_failed");
-        assert_eq!(
-            registry.read().get(id).expect("entry").status,
-            AgentStatus::Failed
+        {
+            let r = registry.read();
+            let entry = r.get(id).expect("terminal entry stays observable");
+            assert_eq!(entry.status, AgentStatus::Failed);
+            assert!(r.get_by_path("/root/x").is_none(), "path is freed");
+        }
+        assert!(
+            registry.write().remove_terminal(id),
+            "terminal entry reclaims"
         );
+        assert!(registry.read().get(id).is_none(), "entry removed");
+        assert!(
+            !registry.write().remove_terminal(id),
+            "reclaim is idempotent"
+        );
+    }
+
+    #[test]
+    fn remove_terminal_never_removes_live_entries() {
+        let registry = fresh();
+        let guard = AgentRegistry::reserve(
+            &registry,
+            "/root/live".to_string(),
+            "dev".to_string(),
+            "claude".to_string(),
+            None,
+        )
+        .expect("reserve");
+        let id = guard.id();
+        guard.confirm().expect("confirm");
+        assert!(
+            !registry.write().remove_terminal(id),
+            "active entry must not be reclaimable"
+        );
+        assert!(registry.read().get(id).is_some());
+    }
+
+    /// Fix 10 regression: a path used by a finished agent is reusable. Before
+    /// terminal cleanup, the stale `path_index` entry rejected the second
+    /// reservation forever.
+    #[test]
+    fn terminal_cleanup_allows_path_reuse() {
+        let registry = fresh();
+        let parent = AgentRegistry::reserve(
+            &registry,
+            "/root".to_string(),
+            "lead".to_string(),
+            "opus".to_string(),
+            None,
+        )
+        .expect("reserve parent");
+        let parent_id = parent.id();
+        parent.confirm().expect("confirm parent");
+
+        let first = AgentRegistry::reserve(
+            &registry,
+            "/root/worker".to_string(),
+            "dev".to_string(),
+            "haiku".to_string(),
+            Some(parent_id),
+        )
+        .expect("first reservation");
+        let first_id = first.id();
+        first.confirm().expect("confirm first");
+        registry.write().mark_completed(first_id).expect("complete");
+
+        let second = AgentRegistry::reserve(
+            &registry,
+            "/root/worker".to_string(),
+            "dev".to_string(),
+            "haiku".to_string(),
+            Some(parent_id),
+        )
+        .expect("a completed agent's path must be reusable");
+        let second_id = second.id();
+        second.confirm().expect("confirm second");
+        assert_ne!(first_id, second_id);
+        assert_eq!(
+            registry
+                .read()
+                .get_by_path("/root/worker")
+                .expect("reused path resolves")
+                .id,
+            second_id,
+        );
+
+        // The failed-path variant frees the slot just the same.
+        registry.write().mark_failed(second_id).expect("fail");
+        let third = AgentRegistry::reserve(
+            &registry,
+            "/root/worker".to_string(),
+            "dev".to_string(),
+            "haiku".to_string(),
+            Some(parent_id),
+        )
+        .expect("a failed agent's path must be reusable");
+        drop(third);
     }
 
     #[test]

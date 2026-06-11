@@ -29,8 +29,7 @@
 //! unified diff path splits the input on `^--- ` boundaries so multi-file
 //! patches (each with its own `---`/`+++` header pair) work transparently.
 
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -38,17 +37,19 @@ use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
 use super::ast::{AstCheck, check_syntax};
+use super::confinement::check_confinement;
+use super::patch_commit::commit_staged;
 use super::patch_entity::EntityExtractor;
-use super::patch_parse::{
-    PatchBlockKind, PatchFormat, collect_unified_additions, parse_blocks, resolve_path,
-};
+use super::patch_followup::{has_viable_strict_alternative, strict_escalation_follow_ups};
+use super::patch_gate::{effective_working_dir, pre_validate_patch};
+use super::patch_parse::{PatchBlockKind, parse_blocks};
+use super::patch_stage::stage_blocks;
 use super::write::syntax_error_to_diagnostic;
 use crate::error::ToolError;
-use crate::session::action_log::hash_content;
 use crate::tool::ToolArgs;
 use crate::tool::context::{ToolContext, ToolFlag};
 use crate::tool::envelope::ToolEnvelope;
-use crate::tool::follow_up::{BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction};
+use crate::tool::follow_up::FollowUpAction;
 use crate::tool::lifecycle::{
     CheckOverride, PostValidateMode, PostValidateOutcome, PreValidateOutcome,
 };
@@ -113,12 +114,12 @@ pub(crate) enum PatchMode {
 }
 
 #[derive(Debug, Deserialize, ToolArgs)]
-struct PatchArgs {
+pub(super) struct PatchArgs {
     /// Unified-diff patch text. Supports single-file and multi-file patches.
-    patch: String,
+    pub(super) patch: String,
     /// Directory to resolve relative paths in the patch against.
     #[serde(default)]
-    working_dir: Option<String>,
+    pub(super) working_dir: Option<String>,
     /// Hunk-resolution mode. Defaults to [`PatchMode::Auto`] when omitted.
     #[serde(default)]
     #[tool_args(schema = {
@@ -127,47 +128,7 @@ struct PatchArgs {
         "default": "auto",
         "description": "Hunk-resolution mode. 'auto' (default) resolves entity-first: entity-guided placement, then context search, then header-corrected diffy. 'strict' applies a hunk only when its context matches exactly at the stated @@ line; failures are non-fatal and report whether structural matching would have succeeded — use it to verify your line numbers. 'structural' requires a semantic anchor and entity resolution for every hunk, searches context only within the entity's range, and never falls back to diffy."
     })]
-    mode: PatchMode,
-}
-
-struct StagedFile {
-    path: PathBuf,
-    original: String,
-    staged: String,
-    hunks: usize,
-    added: usize,
-    removed: usize,
-    kind: PatchBlockKind,
-}
-
-/// Reverses any disk mutations recorded in `applied` (indices into
-/// `staged`). Modify → write original back; Create → unlink the file
-/// we just created; Delete → recreate the file from captured before-
-/// content. Rollback errors are intentionally swallowed: the function
-/// is best-effort cleanup invoked from the error path of `execute`.
-async fn rollback_applied(staged: &[StagedFile], applied: &[usize]) {
-    for &idx in applied.iter().rev() {
-        let Some(s) = staged.get(idx) else { continue };
-        match s.kind {
-            PatchBlockKind::Modify | PatchBlockKind::Delete => {
-                let _ = tokio::fs::write(&s.path, s.original.as_bytes()).await;
-            }
-            PatchBlockKind::Create => {
-                let _ = tokio::fs::remove_file(&s.path).await;
-            }
-        }
-    }
-}
-
-/// Whether any `resolution_details` entry is an unapplied hunk that carries a
-/// non-null `structural_alternative` — i.e. a strict failure that structural
-/// matching would have resolved.
-fn has_viable_strict_alternative(resolution_details: &[serde_json::Value]) -> bool {
-    resolution_details.iter().any(|d| {
-        d.get("applied").and_then(serde_json::Value::as_bool) == Some(false)
-            && d.get("structural_alternative")
-                .is_some_and(|v| !v.is_null())
-    })
+    pub(super) mode: PatchMode,
 }
 
 #[async_trait]
@@ -201,91 +162,7 @@ impl Tool for ApplyPatchTool {
     }
 
     async fn pre_validate(&self, envelope: &ToolEnvelope, ctx: &ToolContext) -> PreValidateOutcome {
-        let args: PatchArgs = match serde_json::from_value(envelope.model_args.clone()) {
-            Ok(a) => a,
-            Err(e) => {
-                return PreValidateOutcome::Block {
-                    reason: format!("invalid arguments: {e}"),
-                };
-            }
-        };
-        let blocks = match parse_blocks(&args.patch) {
-            Ok(b) => b,
-            Err(e) => {
-                return PreValidateOutcome::Block {
-                    reason: format!("patch parse failed: {e}"),
-                };
-            }
-        };
-
-        // First pass: reject patches where a later block modifies or
-        // creates a file that an earlier block deletes. Modify→Delete
-        // (delete a file after editing it within the same patch) is
-        // allowed; Delete→{Modify,Create} on the same path would write
-        // to a path the patch just removed.
-        let mut first_delete: HashMap<&str, usize> = HashMap::new();
-        for (i, block) in blocks.iter().enumerate() {
-            if matches!(block.kind, PatchBlockKind::Delete) {
-                first_delete.entry(block.target.as_str()).or_insert(i);
-                continue;
-            }
-            if let Some(&del_idx) = first_delete.get(block.target.as_str()) {
-                let action = match block.kind {
-                    PatchBlockKind::Modify => "modified",
-                    PatchBlockKind::Create => "created",
-                    PatchBlockKind::Delete => continue,
-                };
-                return PreValidateOutcome::Block {
-                    reason: format!(
-                        "apply_patch: file '{}' is deleted by block {del_idx} but {action} by block {i}",
-                        block.target,
-                    ),
-                };
-            }
-        }
-
-        // Second pass: per-block existence and read-before-edit gates.
-        // Create blocks skip both gates (the file does not exist yet by
-        // definition) but are rejected if the target already exists on
-        // disk — that would silently turn a creation into a Modify.
-        let effective_wd: std::path::PathBuf = match args.working_dir.as_deref() {
-            Some(s) => std::path::PathBuf::from(s),
-            None => ctx.working_dir(),
-        };
-        for block in &blocks {
-            let path = resolve_path(&effective_wd, &block.target);
-            match block.kind {
-                PatchBlockKind::Create => {
-                    if path.exists() {
-                        return PreValidateOutcome::Block {
-                            reason: format!(
-                                "apply_patch: Create block target already exists: {}",
-                                path.display()
-                            ),
-                        };
-                    }
-                }
-                PatchBlockKind::Modify | PatchBlockKind::Delete => {
-                    if !path.exists() {
-                        return PreValidateOutcome::Block {
-                            reason: format!(
-                                "apply_patch: target file does not exist: {}",
-                                path.display()
-                            ),
-                        };
-                    }
-                    if !ctx.has_read_file(&path) {
-                        return PreValidateOutcome::Block {
-                            reason: format!(
-                                "apply_patch: target file not read this session: {}",
-                                path.display()
-                            ),
-                        };
-                    }
-                }
-            }
-        }
-        PreValidateOutcome::Proceed
+        pre_validate_patch(envelope, ctx)
     }
 
     async fn execute(
@@ -304,138 +181,51 @@ impl Tool for ApplyPatchTool {
             reason: format!("patch parse failed: {e}"),
         })?;
 
-        let mut staged_files: Vec<StagedFile> = Vec::with_capacity(blocks.len());
-        let mut total_hunks = 0usize;
-        let mut total_added = 0usize;
-        let mut total_removed = 0usize;
+        let effective_wd = effective_working_dir(args.working_dir.as_deref(), ctx);
+        if args.working_dir.is_some()
+            && let Err(reason) = check_confinement(ctx, &effective_wd)
+        {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!("apply_patch: working_dir refused: {reason}"),
+            });
+        }
+
+        let staged_set = stage_blocks(
+            blocks,
+            &effective_wd,
+            ctx,
+            self.extractor.as_deref(),
+            args.mode,
+        )
+        .await?;
+        let staged_files = &staged_set.files;
+        let total_hunks = staged_set.total_hunks;
+        let total_added = staged_set.total_added;
+        let total_removed = staged_set.total_removed;
+        let resolution_details = staged_set.resolution_details;
+
+        // AST-validate each file's *final* staged content (not per-block
+        // intermediates, which may legitimately be transitional states when
+        // several blocks touch the same file). Deletions have no
+        // post-mutation content to validate.
         let mut all_diagnostics: Vec<serde_json::Value> = Vec::new();
-        let mut resolution_details: Vec<serde_json::Value> = Vec::new();
-
-        let effective_wd: std::path::PathBuf = match args.working_dir.as_deref() {
-            Some(s) => std::path::PathBuf::from(s),
-            None => ctx.working_dir(),
-        };
-
-        for block in blocks {
-            let path = resolve_path(&effective_wd, &block.target);
-
-            let (original, new_content, hunks, added, removed) = match block.kind {
-                PatchBlockKind::Modify => {
-                    let original = tokio::fs::read_to_string(&path).await.map_err(|e| {
-                        ToolError::ExecutionFailed {
-                            reason: format!("failed to read {} for patch: {e}", path.display()),
-                        }
-                    })?;
-                    let (applied, h, a, r, resolutions) = match &block.format {
-                        PatchFormat::UnifiedDiff { raw } => {
-                            super::patch_apply::apply_unified_tiered(
-                                raw,
-                                &original,
-                                &path,
-                                self.extractor.as_deref(),
-                                args.mode,
-                            )?
-                        }
-                        PatchFormat::ClaudeCode { hunks: cc_hunks } => {
-                            let applied = super::patch_cc::apply_cc_hunks(&original, cc_hunks)
-                                .map_err(|e| ToolError::ExecutionFailed {
-                                    reason: format!(
-                                        "failed to apply patch to {}: {e}",
-                                        path.display()
-                                    ),
-                                })?;
-                            let h = cc_hunks.len();
-                            let a: usize = cc_hunks.iter().map(|hk| hk.additions.len()).sum();
-                            let r: usize = cc_hunks.iter().map(|hk| hk.removals.len()).sum();
-                            (applied, h, a, r, Vec::new())
-                        }
-                    };
-                    // Record per-hunk resolution metadata for unified-diff
-                    // hunks (R5). Create and Delete blocks place no hunks
-                    // against existing content, and the Claude Code format
-                    // resolves with its own strategy, so neither emits
-                    // resolution_details entries. Hunk index is 1-based to
-                    // match the user-facing numbering in error messages.
-                    for (hunk_index, res) in resolutions.iter().enumerate() {
-                        resolution_details.push(serde_json::json!({
-                            "file": path.to_string_lossy(),
-                            "hunk_index": hunk_index + 1,
-                            "tier_used": res.tier_used,
-                            "entity_matched": res.entity_matched,
-                            "matched_at_line": res.matched_at_line,
-                            "stated_line": res.stated_line,
-                            "drift": res.drift,
-                            "confidence": res.confidence,
-                            "applied": res.applied,
-                            "failure": res.failure,
-                            "structural_alternative": res.structural_alternative,
-                        }));
+        for staged in staged_files {
+            if matches!(staged.kind, PatchBlockKind::Delete) {
+                continue;
+            }
+            let ast = check_syntax(&staged.path, &staged.staged);
+            if let AstCheck::Fail { errors } = &ast {
+                for e in errors {
+                    let mut diag = syntax_error_to_diagnostic(e);
+                    if let Some(map) = diag.as_object_mut() {
+                        map.insert(
+                            "file".to_string(),
+                            serde_json::Value::String(staged.path.to_string_lossy().into_owned()),
+                        );
                     }
-                    (original, applied, h, a, r)
-                }
-                PatchBlockKind::Create => {
-                    // CC format is never tagged Create at parse time
-                    // (parse_blocks tags every CC block as Modify), but
-                    // guard the invariant rather than panic.
-                    let raw = match &block.format {
-                        PatchFormat::UnifiedDiff { raw } => *raw,
-                        PatchFormat::ClaudeCode { .. } => {
-                            return Err(ToolError::ExecutionFailed {
-                                reason: format!(
-                                    "apply_patch: Claude Code format does not support file creation: {}",
-                                    path.display()
-                                ),
-                            });
-                        }
-                    };
-                    let (new_content, h, a) = collect_unified_additions(raw);
-                    (String::new(), new_content, h, a, 0usize)
-                }
-                PatchBlockKind::Delete => {
-                    let original = tokio::fs::read_to_string(&path).await.map_err(|e| {
-                        ToolError::ExecutionFailed {
-                            reason: format!(
-                                "apply_patch: file expected for deletion does not exist: {}: {e}",
-                                path.display()
-                            ),
-                        }
-                    })?;
-                    let removed = original.lines().count();
-                    (original, String::new(), 0usize, 0usize, removed)
-                }
-            };
-
-            total_hunks += hunks;
-            total_added += added;
-            total_removed += removed;
-
-            // Skip AST validation on deletions — there is no
-            // post-mutation content to validate.
-            if !matches!(block.kind, PatchBlockKind::Delete) {
-                let ast = check_syntax(&path, &new_content);
-                if let AstCheck::Fail { errors } = &ast {
-                    for e in errors {
-                        let mut diag = syntax_error_to_diagnostic(e);
-                        if let Some(map) = diag.as_object_mut() {
-                            map.insert(
-                                "file".to_string(),
-                                serde_json::Value::String(path.to_string_lossy().into_owned()),
-                            );
-                        }
-                        all_diagnostics.push(diag);
-                    }
+                    all_diagnostics.push(diag);
                 }
             }
-
-            staged_files.push(StagedFile {
-                path,
-                original,
-                staged: new_content,
-                hunks,
-                added,
-                removed,
-                kind: block.kind,
-            });
         }
 
         let allow_broken = ctx.has_flag(&ToolFlag::AllowBrokenAst);
@@ -501,55 +291,9 @@ impl Tool for ApplyPatchTool {
             });
         }
 
-        // Commit staged changes in two phases:
-        //   1. Write Modify and Create files (creating parent dirs for
-        //      Create) — these may overwrite or add disk state.
-        //   2. Delete Delete files — only after every non-Delete file has
-        //      committed successfully, so a write failure never leaves
-        //      the patch half-applied with files already removed.
-        // On any failure we roll back everything we already touched:
-        // Modify reverts to its captured original, Create is unlinked,
-        // Delete is restored from captured before-content.
-        let mut applied: Vec<usize> = Vec::with_capacity(staged_files.len());
-
-        for (idx, staged) in staged_files.iter().enumerate() {
-            if matches!(staged.kind, PatchBlockKind::Delete) {
-                continue;
-            }
-            if matches!(staged.kind, PatchBlockKind::Create)
-                && let Some(parent) = staged.path.parent()
-                && !parent.as_os_str().is_empty()
-                && let Err(e) = tokio::fs::create_dir_all(parent).await
-            {
-                rollback_applied(&staged_files, &applied).await;
-                return Err(ToolError::ExecutionFailed {
-                    reason: format!(
-                        "failed to create parent directories for {}: {e}",
-                        staged.path.display()
-                    ),
-                });
-            }
-            if let Err(e) = tokio::fs::write(&staged.path, staged.staged.as_bytes()).await {
-                rollback_applied(&staged_files, &applied).await;
-                return Err(ToolError::ExecutionFailed {
-                    reason: format!("failed to write {}: {e}", staged.path.display()),
-                });
-            }
-            applied.push(idx);
-        }
-
-        for (idx, staged) in staged_files.iter().enumerate() {
-            if !matches!(staged.kind, PatchBlockKind::Delete) {
-                continue;
-            }
-            if let Err(e) = tokio::fs::remove_file(&staged.path).await {
-                rollback_applied(&staged_files, &applied).await;
-                return Err(ToolError::ExecutionFailed {
-                    reason: format!("failed to delete {}: {e}", staged.path.display()),
-                });
-            }
-            applied.push(idx);
-        }
+        // Commit staged changes atomically (temp file + rename per file,
+        // two-phase write-then-delete ordering, full rollback on failure).
+        commit_staged(staged_files).await?;
 
         let payload = serde_json::json!({
             "kind": "patch_committed",
@@ -628,87 +372,14 @@ impl Tool for ApplyPatchTool {
         }
     }
 
-    /// Register the strict→structural escalation follow-up.
-    ///
-    /// When a strict-mode run leaves a hunk unapplied that structural matching
-    /// would have placed, offer an `apply_patch` follow-up that re-runs the
-    /// same patch with `mode: auto`. The action only overrides `mode`; the
-    /// runtime merges it over the original call's args, so the original patch
-    /// text is reused without re-generation. The follow-up expires if any of
-    /// the touched/attempted files change before it runs, since that would
-    /// invalidate the structural placement the alternative reported.
+    /// Register the strict→structural escalation follow-up (see
+    /// `patch_followup::strict_escalation_follow_ups`).
     async fn register_follow_ups(
         &self,
         output: &ToolOutput,
         _ctx: &ToolContext,
     ) -> Vec<FollowUpAction> {
-        if output
-            .content
-            .get("mode")
-            .and_then(serde_json::Value::as_str)
-            != Some("strict")
-        {
-            return Vec::new();
-        }
-        let Some(details) = output
-            .content
-            .get("resolution_details")
-            .and_then(serde_json::Value::as_array)
-        else {
-            return Vec::new();
-        };
-        let viable = details
-            .iter()
-            .filter(|d| {
-                d.get("applied").and_then(serde_json::Value::as_bool) == Some(false)
-                    && d.get("structural_alternative")
-                        .is_some_and(|v| !v.is_null())
-            })
-            .count();
-        if viable == 0 {
-            return Vec::new();
-        }
-
-        // Key the expiry on the current on-disk hashes of the files this patch
-        // touched or attempted. If any changes before the follow-up runs, the
-        // reported structural alternative is stale and the action expires.
-        let mut file_hashes: HashMap<PathBuf, String> = HashMap::new();
-        for key in ["files_modified", "files_attempted"] {
-            let Some(arr) = output
-                .content
-                .get(key)
-                .and_then(serde_json::Value::as_array)
-            else {
-                continue;
-            };
-            for v in arr {
-                let Some(path_str) = v.as_str() else { continue };
-                let path = PathBuf::from(path_str);
-                if file_hashes.contains_key(&path) {
-                    continue;
-                }
-                if let Ok(bytes) = tokio::fs::read(&path).await {
-                    file_hashes.insert(path, hash_content(&bytes));
-                }
-            }
-        }
-        let expires = if file_hashes.is_empty() {
-            ExpiryCondition::Never
-        } else {
-            ExpiryCondition::AnyFileModified { files: file_hashes }
-        };
-
-        vec![FollowUpAction {
-            action: "apply_structural".to_string(),
-            description: format!(
-                "Re-apply this patch with structural matching (mode: auto). {viable} hunk(s) failed strict exact-position matching but structural matching would resolve them."
-            ),
-            tool: "apply_patch".to_string(),
-            args: serde_json::json!({ "mode": "auto" }),
-            expires,
-            confidence: Confidence::High,
-            before_content: BeforeContentSource::Unavailable,
-        }]
+        strict_escalation_follow_ups(output).await
     }
 }
 
@@ -1520,6 +1191,315 @@ mod tests {
         assert!(on_disk.contains("let x = 2;"));
 
         assert!(tool.register_follow_ups(&out, &ctx).await.is_empty());
+    }
+
+    // --- H8 regression: multiple blocks on the same file -------------------
+
+    #[tokio::test]
+    async fn two_blocks_on_same_file_both_land() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("file.rs");
+        let original = "fn alpha() {\n    let a = 1;\n}\n\nfn beta() {\n    let b = 1;\n}\n";
+        tokio::fs::write(&path, original).await.unwrap();
+
+        // The reproduced scenario: one block per change, both targeting the
+        // same file. The historical bug staged each block from the disk
+        // original, so the second write silently discarded the first change.
+        let patch_text = "\
+--- a/file.rs
++++ b/file.rs
+@@ -2,1 +2,1 @@
+-    let a = 1;
++    let a = 2;
+--- a/file.rs
++++ b/file.rs
+@@ -6,1 +6,1 @@
+-    let b = 1;
++    let b = 2;
+";
+
+        let tool = ApplyPatchTool::new();
+        let ctx = ToolContext::empty();
+        ctx.mark_file_read(&path);
+        let env = envelope_for(json!({
+            "patch": patch_text,
+            "working_dir": dir.path().to_string_lossy(),
+        }));
+
+        let out = tool.execute(&env, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+        assert_eq!(out.content["committed"], true);
+
+        let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
+        assert!(
+            on_disk.contains("let a = 2;"),
+            "first block landed: {on_disk}"
+        );
+        assert!(
+            on_disk.contains("let b = 2;"),
+            "second block landed: {on_disk}"
+        );
+
+        // The two blocks merge into one per_file entry with both hunks.
+        let per_file = out.content["per_file"].as_array().unwrap();
+        assert_eq!(per_file.len(), 1);
+        assert_eq!(per_file[0]["hunks"], 2);
+        assert_eq!(out.content["files_modified"].as_array().unwrap().len(), 1);
+    }
+
+    // --- EOL preservation regression ----------------------------------------
+
+    #[tokio::test]
+    async fn crlf_file_stays_crlf_byte_for_byte_outside_the_hunk() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("file.txt");
+        let original = "alpha\r\nbeta\r\ngamma\r\n";
+        tokio::fs::write(&path, original).await.unwrap();
+
+        let patch_text = "\
+--- a/file.txt
++++ b/file.txt
+@@ -2,1 +2,1 @@
+-beta
++BETA
+";
+        let tool = ApplyPatchTool::new();
+        let ctx = ToolContext::empty();
+        ctx.mark_file_read(&path);
+        let env = envelope_for(json!({
+            "patch": patch_text,
+            "working_dir": dir.path().to_string_lossy(),
+        }));
+
+        let out = tool.execute(&env, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+        let on_disk = tokio::fs::read(&path).await.unwrap();
+        assert_eq!(
+            String::from_utf8(on_disk).unwrap(),
+            "alpha\r\nBETA\r\ngamma\r\n",
+            "CRLF endings preserved byte-for-byte"
+        );
+    }
+
+    #[tokio::test]
+    async fn missing_trailing_newline_is_preserved() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("file.txt");
+        let original = "alpha\nbeta";
+        tokio::fs::write(&path, original).await.unwrap();
+
+        let patch_text = "\
+--- a/file.txt
++++ b/file.txt
+@@ -1,1 +1,1 @@
+-alpha
++ALPHA
+";
+        let tool = ApplyPatchTool::new();
+        let ctx = ToolContext::empty();
+        ctx.mark_file_read(&path);
+        let env = envelope_for(json!({
+            "patch": patch_text,
+            "working_dir": dir.path().to_string_lossy(),
+        }));
+
+        let out = tool.execute(&env, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+        let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(on_disk, "ALPHA\nbeta", "no trailing newline appended");
+    }
+
+    #[tokio::test]
+    async fn git_diff_with_no_newline_markers_round_trips() {
+        // A standard git diff against a file with no trailing newline, where
+        // the new side also lacks one: both sides carry the marker.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("file.txt");
+        tokio::fs::write(&path, "alpha\nbeta").await.unwrap();
+
+        let patch_text = "\
+--- a/file.txt
++++ b/file.txt
+@@ -1,2 +1,2 @@
+ alpha
+-beta
+\\ No newline at end of file
++BETA
+\\ No newline at end of file
+";
+        let tool = ApplyPatchTool::new();
+        let ctx = ToolContext::empty();
+        ctx.mark_file_read(&path);
+        let env = envelope_for(json!({
+            "patch": patch_text,
+            "working_dir": dir.path().to_string_lossy(),
+        }));
+
+        let out = tool.execute(&env, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+        let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(on_disk, "alpha\nBETA", "no trailing newline on the result");
+    }
+
+    #[tokio::test]
+    async fn marker_on_old_side_only_adds_trailing_newline() {
+        // The old file lacks a trailing newline (marker after the `-` line);
+        // the new side carries no marker, so the patched file gains one.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("file.txt");
+        tokio::fs::write(&path, "alpha\nbeta").await.unwrap();
+
+        let patch_text = "\
+--- a/file.txt
++++ b/file.txt
+@@ -2,1 +2,2 @@
+-beta
+\\ No newline at end of file
++beta
++gamma
+";
+        let tool = ApplyPatchTool::new();
+        let ctx = ToolContext::empty();
+        ctx.mark_file_read(&path);
+        let env = envelope_for(json!({
+            "patch": patch_text,
+            "working_dir": dir.path().to_string_lossy(),
+        }));
+
+        let out = tool.execute(&env, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+        let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(
+            on_disk, "alpha\nbeta\ngamma\n",
+            "new side has no marker, so the result gains a trailing newline"
+        );
+    }
+
+    #[tokio::test]
+    async fn marker_on_new_side_only_removes_trailing_newline() {
+        // The old file ends with a newline; the new side's final line carries
+        // the marker, so the patched file must lose its trailing newline.
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("file.txt");
+        tokio::fs::write(&path, "alpha\nbeta\n").await.unwrap();
+
+        let patch_text = "\
+--- a/file.txt
++++ b/file.txt
+@@ -2,1 +2,1 @@
+-beta
++BETA
+\\ No newline at end of file
+";
+        let tool = ApplyPatchTool::new();
+        let ctx = ToolContext::empty();
+        ctx.mark_file_read(&path);
+        let env = envelope_for(json!({
+            "patch": patch_text,
+            "working_dir": dir.path().to_string_lossy(),
+        }));
+
+        let out = tool.execute(&env, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+        let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(on_disk, "alpha\nBETA", "trailing newline removed");
+    }
+
+    // --- Block-splitter regression: `-- `-prefixed removals ------------------
+
+    #[tokio::test]
+    async fn diff_removing_sql_comment_lines_parses_and_applies() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("query.sql");
+        let original = "SELECT 1;\n-- legacy comment\nSELECT 2;\n";
+        tokio::fs::write(&path, original).await.unwrap();
+
+        // Removing `-- legacy comment` renders as `--- legacy comment`,
+        // which the old splitter misparsed as a new file header.
+        let patch_text = "\
+--- a/query.sql
++++ b/query.sql
+@@ -1,3 +1,2 @@
+ SELECT 1;
+--- legacy comment
+ SELECT 2;
+";
+        let tool = ApplyPatchTool::new();
+        let ctx = ToolContext::empty();
+        ctx.mark_file_read(&path);
+        let env = envelope_for(json!({
+            "patch": patch_text,
+            "working_dir": dir.path().to_string_lossy(),
+        }));
+
+        match tool.pre_validate(&env, &ctx).await {
+            PreValidateOutcome::Proceed => {}
+            PreValidateOutcome::Block { reason } => panic!("expected Proceed, got Block: {reason}"),
+        }
+        let out = tool.execute(&env, &ctx).await.unwrap();
+        assert!(!out.is_error, "{:?}", out.content);
+        let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
+        assert_eq!(on_disk, "SELECT 1;\nSELECT 2;\n");
+    }
+
+    // --- Workspace confinement ------------------------------------------------
+
+    #[tokio::test]
+    async fn confined_context_refuses_working_dir_outside_root() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("ws");
+        tokio::fs::create_dir(&root).await.unwrap();
+        let escape_target = outer.path().join("file.rs");
+        let original = "fn main() {\n    let x = 1;\n}\n";
+        tokio::fs::write(&escape_target, original).await.unwrap();
+
+        let patch_text = make_patch("file.rs", original, "fn main() {\n    let x = 2;\n}\n");
+        let tool = ApplyPatchTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(root.clone());
+        ctx.set_working_dir(root.clone());
+        ctx.mark_file_read(&escape_target);
+        // Model supplies a working_dir outside the confinement root.
+        let env = envelope_for(json!({
+            "patch": patch_text,
+            "working_dir": outer.path().to_string_lossy(),
+        }));
+
+        match tool.pre_validate(&env, &ctx).await {
+            PreValidateOutcome::Block { reason } => {
+                assert!(reason.contains("working_dir refused"), "{reason}");
+            }
+            PreValidateOutcome::Proceed => panic!("expected Block"),
+        }
+        let err = tool.execute(&env, &ctx).await.expect_err("refused");
+        assert!(err.to_string().contains("working_dir refused"), "{err}");
+        let untouched = tokio::fs::read_to_string(&escape_target).await.unwrap();
+        assert_eq!(untouched, original);
+    }
+
+    #[tokio::test]
+    async fn confined_context_refuses_target_escaping_via_dot_dot() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("ws");
+        tokio::fs::create_dir(&root).await.unwrap();
+        let escape_target = outer.path().join("secret.rs");
+        let original = "fn main() {}\n";
+        tokio::fs::write(&escape_target, original).await.unwrap();
+
+        let patch_text = make_patch("../secret.rs", original, "fn renamed() {}\n");
+        let tool = ApplyPatchTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(root.clone());
+        ctx.set_working_dir(root.clone());
+        ctx.mark_file_read(&escape_target);
+        let env = envelope_for(json!({ "patch": patch_text }));
+
+        match tool.pre_validate(&env, &ctx).await {
+            PreValidateOutcome::Block { reason } => {
+                assert!(reason.contains("target refused"), "{reason}");
+            }
+            PreValidateOutcome::Proceed => panic!("expected Block"),
+        }
     }
 
     #[tokio::test]

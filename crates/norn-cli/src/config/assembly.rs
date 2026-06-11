@@ -98,6 +98,18 @@ pub struct ConfigOverrides {
     pub request_timeout: Option<Duration>,
     /// `-c provider_options=<json>` → [`ProviderConfig::provider_options`].
     pub provider_options: Option<Value>,
+    /// `-c rate_limit_interval=<duration>` → `ProviderConfig::rate_limit_interval`
+    /// (replenishment window for the provider rate limiter; `None` defers
+    /// to the library's owner-approved 60s default).
+    pub rate_limit_interval: Option<Duration>,
+    /// `-c retry_backoff=<duration>` → `ProviderConfig::retry_backoff`
+    /// (backoff for a 429 without a parseable `Retry-After`; `None`
+    /// defers to the library's owner-approved 1s default).
+    pub retry_backoff: Option<Duration>,
+    /// `-c retry_after_ceiling=<duration>` → `ProviderConfig::retry_after_ceiling`
+    /// (optional cap on honored `Retry-After` waits; `None` honors the
+    /// header as-is per the library's deliberate no-ceiling default).
+    pub retry_after_ceiling: Option<Duration>,
 
     // -- RetryPolicy fields ----------------------------------------------
     /// `-c retry_max=<u32>` → [`RetryPolicy::max_retries`].
@@ -138,6 +150,27 @@ pub struct ProviderConfigOverrides {
     /// sourced from `settings.provider.rate_limit` (NC-005 R4). `None`
     /// falls back to the provider-specific compiled default.
     pub rate_limit: Option<u32>,
+    /// Replenishment window for the provider rate limiter, sourced from
+    /// `settings.provider.rate_limit_interval` and overridden by
+    /// `-c rate_limit_interval=<duration>`. `None` defers to the
+    /// library's owner-approved 60-second default.
+    pub rate_limit_interval: Option<Duration>,
+    /// Backoff for a 429 response without a parseable `Retry-After`
+    /// header, sourced from `settings.provider.retry_backoff` and
+    /// overridden by `-c retry_backoff=<duration>`. `None` defers to the
+    /// library's owner-approved 1-second default.
+    pub retry_backoff: Option<Duration>,
+    /// Optional cap on honored `Retry-After` waits, sourced from
+    /// `settings.provider.retry_after_ceiling` and overridden by
+    /// `-c retry_after_ceiling=<duration>`. `None` honors the header
+    /// as-is.
+    pub retry_after_ceiling: Option<Duration>,
+    /// Claude Runner binary path, sourced from
+    /// `settings.provider.runner_path`. `None` falls back to the
+    /// documented default lookup of `"claude"` on `PATH` (see
+    /// `print/provider.rs::build_provider`). Only the Claude-Runner
+    /// backend reads it; there is deliberately no `-c` surface.
+    pub runner_path: Option<PathBuf>,
 }
 
 impl ConfigOverrides {
@@ -172,6 +205,12 @@ impl ConfigOverrides {
             debug_dump_dir: self.debug_dump_dir.clone(),
             debug_dump_file: None,
             rate_limit: None,
+            rate_limit_interval: self.rate_limit_interval,
+            retry_backoff: self.retry_backoff,
+            retry_after_ceiling: self.retry_after_ceiling,
+            // `runner_path` is settings-only (no `-c` surface), so the
+            // `-c`-derived projection never carries it.
+            runner_path: None,
         }
     }
 
@@ -210,6 +249,15 @@ impl ConfigOverrides {
             }
             "request_timeout" => {
                 self.request_timeout = Some(parse_duration(value)?);
+            }
+            "rate_limit_interval" => {
+                self.rate_limit_interval = Some(parse_duration(value)?);
+            }
+            "retry_backoff" => {
+                self.retry_backoff = Some(parse_duration(value)?);
+            }
+            "retry_after_ceiling" => {
+                self.retry_after_ceiling = Some(parse_duration(value)?);
             }
             "retry_max" => {
                 self.retry_max = Some(parse_typed::<u32>(key, "u32", value)?);
@@ -348,6 +396,48 @@ mod tests {
         assert!(overrides.retry_base_delay.is_none());
         assert!(overrides.write_max_code_lines.is_none());
         assert!(overrides.debug_dump_dir.is_none());
+        assert!(overrides.rate_limit_interval.is_none());
+        assert!(overrides.retry_backoff.is_none());
+        assert!(overrides.retry_after_ceiling.is_none());
+    }
+
+    #[test]
+    fn parse_rate_limit_interval_sets_value() {
+        let overrides = ConfigOverrides::parse(&["rate_limit_interval=30s".to_owned()]).unwrap();
+        assert_eq!(overrides.rate_limit_interval, Some(Duration::from_secs(30)));
+    }
+
+    #[test]
+    fn parse_retry_backoff_sets_value() {
+        let overrides = ConfigOverrides::parse(&["retry_backoff=250ms".to_owned()]).unwrap();
+        assert_eq!(overrides.retry_backoff, Some(Duration::from_millis(250)));
+    }
+
+    #[test]
+    fn parse_retry_after_ceiling_sets_value() {
+        let overrides = ConfigOverrides::parse(&["retry_after_ceiling=90s".to_owned()]).unwrap();
+        assert_eq!(overrides.retry_after_ceiling, Some(Duration::from_secs(90)));
+    }
+
+    #[test]
+    fn parse_retry_after_ceiling_rejects_garbage() {
+        let err =
+            ConfigOverrides::parse(&["retry_after_ceiling=not-a-duration".to_owned()]).unwrap_err();
+        assert!(matches!(err, BuildError::Argument(_)));
+    }
+
+    #[test]
+    fn provider_rate_and_retry_overrides_flow_into_provider_overrides() {
+        let overrides = ConfigOverrides::parse(&[
+            "rate_limit_interval=45s".to_owned(),
+            "retry_backoff=2s".to_owned(),
+            "retry_after_ceiling=1m".to_owned(),
+        ])
+        .unwrap();
+        let provider = overrides.provider_overrides();
+        assert_eq!(provider.rate_limit_interval, Some(Duration::from_secs(45)));
+        assert_eq!(provider.retry_backoff, Some(Duration::from_secs(2)));
+        assert_eq!(provider.retry_after_ceiling, Some(Duration::from_mins(1)));
     }
 
     #[test]

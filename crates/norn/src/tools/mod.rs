@@ -5,17 +5,28 @@ pub mod agent;
 mod ast;
 pub mod bash;
 
+mod confinement;
 pub mod context_paths;
 pub mod conventions;
 pub mod diagnostics_check;
 pub mod diagnostics_infra;
 pub mod edit;
+mod file_commit;
 pub mod follow_up;
 pub mod lsp;
 pub mod patch;
 mod patch_apply;
 mod patch_cc;
+mod patch_commit;
 pub(crate) mod patch_entity;
+mod patch_eol;
+mod patch_followup;
+mod patch_gate;
+mod patch_hunk;
+mod patch_match;
+mod patch_modes;
+mod patch_resolve;
+mod patch_stage;
 
 mod patch_parse;
 pub mod read;

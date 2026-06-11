@@ -1,6 +1,20 @@
 //! Effect-based parallel execution.
+//!
+//! [`ToolEffect`] is the per-tool side-effect declaration,
+//! [`SchedulingPlan`] orders a batch of tool calls into concurrent /
+//! serial steps, and [`ToolEffectIndex`] is the registry-maintained
+//! name → implementation index the dispatch layer uses to resolve a
+//! call's effect (via [`Tool::effect_for_args`]) without widening the
+//! `ToolExecutor` trait.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
+
+use super::traits::Tool;
 
 /// Declared side effect of a tool, used for scheduling.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -83,37 +97,61 @@ impl SchedulingPlan {
     }
 }
 
+/// Registry-maintained index from tool name to implementation, published
+/// on the registry's shared [`ToolContext`](super::context::ToolContext)
+/// extension map so the agent loop's dispatch layer can resolve per-call
+/// [`ToolEffect`]s and build a [`SchedulingPlan`].
+///
+/// [`ToolRegistry`](super::registry::ToolRegistry) keeps this index in
+/// sync on `register` / `remove`; availability gating
+/// (`set_available` / `set_disallowed`) is deliberately **not** mirrored
+/// here — an unavailable tool's call fails at dispatch with
+/// `ToolNotFound`, and classifying it first is harmless (worst case it
+/// serializes a call that errors anyway). Unknown names resolve to
+/// [`ToolEffect::Unknown`], which the planner serializes.
+#[derive(Default)]
+pub struct ToolEffectIndex {
+    tools: RwLock<HashMap<String, Arc<dyn Tool + Send + Sync>>>,
+}
+
+impl ToolEffectIndex {
+    /// Create an empty index.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Insert (or replace) the implementation for `name`.
+    pub fn insert(&self, name: String, tool: Arc<dyn Tool + Send + Sync>) {
+        self.tools.write().insert(name, tool);
+    }
+
+    /// Remove the implementation for `name`, if present.
+    pub fn remove(&self, name: &str) {
+        self.tools.write().remove(name);
+    }
+
+    /// Resolve the effect of one call via [`Tool::effect_for_args`].
+    ///
+    /// Returns [`ToolEffect::Unknown`] (serialized for safety) when no
+    /// tool with that name is indexed.
+    #[must_use]
+    pub fn effect_for(&self, name: &str, args: &Value) -> ToolEffect {
+        self.tools
+            .read()
+            .get(name)
+            .map_or(ToolEffect::Unknown, |tool| tool.effect_for_args(args))
+    }
+}
+
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::clone_on_ref_ptr,
-    clippy::no_effect_underscore_binding,
-    clippy::useless_vec,
-    clippy::missing_const_for_fn,
-    clippy::duration_suboptimal_units,
-    clippy::needless_pass_by_value,
-    clippy::similar_names,
-    clippy::redundant_closure_for_method_calls,
-    clippy::used_underscore_items,
-    clippy::unnecessary_literal_bound,
-    clippy::items_after_statements,
-    clippy::err_expect,
-    clippy::get_unwrap,
-    clippy::doc_markdown,
-    clippy::unnecessary_trailing_comma,
-    clippy::uninlined_format_args,
-    clippy::wildcard_enum_match_arm,
-    clippy::collapsible_if,
-    clippy::match_wildcard_for_single_variants
-)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
 
     #[test]
     fn mixed_effects_scheduling() {
-        let calls = vec![
+        let calls = [
             ("read1".to_string(), ToolEffect::ReadOnly),
             ("read2".to_string(), ToolEffect::ReadOnly),
             ("read3".to_string(), ToolEffect::ReadOnly),
@@ -157,7 +195,7 @@ mod tests {
 
     #[test]
     fn all_serial_effects() {
-        let calls = vec![
+        let calls = [
             ("w1".to_string(), ToolEffect::Write),
             ("p1".to_string(), ToolEffect::Process),
             ("u1".to_string(), ToolEffect::Unknown),
@@ -173,7 +211,7 @@ mod tests {
 
     #[test]
     fn all_concurrent_effects() {
-        let calls = vec![
+        let calls = [
             ("r1".to_string(), ToolEffect::ReadOnly),
             ("n1".to_string(), ToolEffect::Network),
             ("r2".to_string(), ToolEffect::ReadOnly),

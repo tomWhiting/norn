@@ -1,9 +1,60 @@
 //! Domain types for session persistence (NC-002).
 
 use crate::session::SessionError;
+use crate::session::events::SessionEvent;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+
+/// Schema version this writer stamps into new session JSONL files (as the
+/// header line) and into [`SessionIndexEntry::format_version`].
+///
+/// Version history:
+///
+/// * `0` — implicit; files written before the header existed. Such files
+///   have no header line and index entries deserialise with
+///   `format_version = 0`.
+/// * `1` — first explicit version: a [`SessionFileHeader`] JSON object is
+///   the first line of every newly created session file.
+pub const SESSION_FORMAT_VERSION: u32 = 1;
+
+/// The header line written as the first line of a session JSONL file at
+/// creation time.
+///
+/// Serialised as `{"norn_session_format":N}`. The key is deliberately not
+/// `type` so a header line can never be confused with a
+/// [`SessionEvent`] (which is internally tagged on `type`), and vice
+/// versa. The header is optional on read: files created before versioning
+/// (format `0`) start directly with an event line and still load.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SessionFileHeader {
+    /// Schema version of the writer that created the file.
+    #[serde(rename = "norn_session_format")]
+    pub version: u32,
+}
+
+/// Result of tolerantly reading a session JSONL file.
+///
+/// Produced by [`read_session_events`](super::io::read_session_events):
+/// structurally corrupt lines (torn writes, invalid JSON),
+/// unknown-variant lines (events from a newer writer), and duplicate
+/// `EventId` lines (crash-retry artifacts; first occurrence kept) are
+/// skipped with a `tracing::warn!` and counted in
+/// [`Self::skipped_lines`] instead of failing the whole session.
+#[derive(Debug)]
+pub struct SessionFileRead {
+    /// Every event that parsed successfully, in file order, with later
+    /// duplicate-`EventId` occurrences removed.
+    pub events: Vec<SessionEvent>,
+    /// Number of non-empty lines that were skipped: unparseable as a
+    /// [`SessionEvent`] (torn write, invalid JSON, unknown variant) or
+    /// carrying an `EventId` already seen earlier in the file. `0` for
+    /// a healthy file.
+    pub skipped_lines: u64,
+    /// Schema version from the file's header line, or `None` for a
+    /// pre-versioning (format `0`) file with no header.
+    pub format_version: Option<u32>,
+}
 
 /// Errors produced by the session persistence layer (NC-002).
 #[derive(Debug, Error)]
@@ -12,17 +63,7 @@ pub enum SessionPersistError {
     #[error("session persistence I/O failed: {0}")]
     Io(#[from] std::io::Error),
 
-    /// A JSONL line could not be parsed.
-    #[error("session persistence parse error on line {line}: {source}")]
-    Parse {
-        /// 1-based line number of the failing line.
-        line: usize,
-        /// Underlying JSON parse error.
-        #[source]
-        source: serde_json::Error,
-    },
-
-    /// JSON (de)serialization failed outside the line-tracked reader path.
+    /// JSON (de)serialization failed.
     #[error("session persistence serde error: {0}")]
     Serde(#[from] serde_json::Error),
 
@@ -90,6 +131,11 @@ pub struct SessionIndexEntry {
     pub event_count: u64,
     /// Lifecycle status.
     pub status: SessionStatus,
+    /// Session JSONL schema version of the writer that created the
+    /// session ([`SESSION_FORMAT_VERSION`] for new sessions). `0` means
+    /// the session predates versioning and its file has no header line.
+    #[serde(default)]
+    pub format_version: u32,
     /// Cumulative input tokens across all turns.
     #[serde(default)]
     pub total_input_tokens: u64,

@@ -60,7 +60,7 @@ pub enum GoalSignal {
     /// Usage has crossed the warning threshold but remains under the budget.
     BudgetWarning {
         /// Fraction of the maximum budget consumed, in `[warning_threshold, 1.0)`.
-        pct_used: f32,
+        pct_used: f64,
     },
     /// Budget exhausted — the continuation policy should be enacted.
     BudgetExceeded {
@@ -73,12 +73,12 @@ pub enum GoalSignal {
 #[derive(Clone, Debug)]
 pub struct GoalTracker {
     goal: Goal,
-    warning_threshold: f32,
+    warning_threshold: f64,
 }
 
 impl GoalTracker {
     /// Default warning threshold (80% of budget).
-    pub const DEFAULT_WARNING_THRESHOLD: f32 = 0.80;
+    pub const DEFAULT_WARNING_THRESHOLD: f64 = 0.80;
 
     /// Construct a tracker with the default 80% warning threshold.
     #[must_use]
@@ -91,7 +91,7 @@ impl GoalTracker {
 
     /// Override the warning threshold. Values are clamped to `[0.0, 1.0]`.
     #[must_use]
-    pub fn with_warning_threshold(mut self, threshold: f32) -> Self {
+    pub fn with_warning_threshold(mut self, threshold: f64) -> Self {
         self.warning_threshold = threshold.clamp(0.0, 1.0);
         self
     }
@@ -104,7 +104,7 @@ impl GoalTracker {
 
     /// Inspect the current warning threshold.
     #[must_use]
-    pub fn warning_threshold(&self) -> f32 {
+    pub fn warning_threshold(&self) -> f64 {
         self.warning_threshold
     }
 
@@ -113,22 +113,28 @@ impl GoalTracker {
     /// Combined budget percentage uses `max(token_pct, time_pct)`.
     /// Token consumption is computed as `input_tokens + output_tokens`
     /// (cache-only tokens are excluded so the warning fires on chargeable
-    /// throughput, not pre-warmed context).
-    #[allow(clippy::cast_precision_loss)]
+    /// throughput, not pre-warmed context). Budget exhaustion is decided
+    /// by exact integer comparison (`used >= budget`); the fractional
+    /// percentage is only computed for the under-budget warning band, via
+    /// [`under_budget_fraction`].
     #[must_use]
     pub fn check(&self, usage: &Usage, elapsed: Duration) -> GoalSignal {
-        let token_pct = self.goal.token_budget.map_or(0.0_f32, |budget| {
+        let token_pct = self.goal.token_budget.map_or(0.0_f64, |budget| {
             if budget == 0 {
                 return 0.0;
             }
             let used = usage.input_tokens.saturating_add(usage.output_tokens);
-            used as f32 / budget as f32
+            if used >= budget {
+                1.0
+            } else {
+                under_budget_fraction(used, budget)
+            }
         });
-        let time_pct = self.goal.time_budget.map_or(0.0_f32, |budget| {
+        let time_pct = self.goal.time_budget.map_or(0.0_f64, |budget| {
             if budget.is_zero() {
                 return 0.0;
             }
-            elapsed.as_secs_f32() / budget.as_secs_f32()
+            elapsed.as_secs_f64() / budget.as_secs_f64()
         });
         let pct = token_pct.max(time_pct);
 
@@ -141,6 +147,41 @@ impl GoalTracker {
         } else {
             GoalSignal::OnTrack
         }
+    }
+}
+
+/// Fraction `used / budget` for the under-budget warning band, computed
+/// without lossy numeric casts.
+///
+/// Callers guarantee `used < budget` (and therefore `budget > 0`) and
+/// handle the at-or-over-budget
+/// case with an exact integer comparison before calling. Both operands are
+/// reduced by the same power-of-two shift until the budget fits in `u32`,
+/// then converted through the lossless `u32 -> f64` [`From`] impl:
+///
+/// - for budgets below 2^32 the shift is zero and the result is the
+///   correctly rounded `f64` quotient — exact integer inputs, one rounded
+///   division;
+/// - for larger budgets the floor-shift discards equal low-order bits from
+///   both operands, bounding the absolute error of the quotient by 2^-31
+///   (i.e. at budget scale; a tiny numerator against a huge budget may lose
+///   all its bits and floor to 0.0, which is fine for the threshold
+///   comparison this feeds) — documented precision, never silent wrap or
+///   truncation.
+fn under_budget_fraction(used: u64, budget: u64) -> f64 {
+    let significant_bits = 64 - budget.leading_zeros();
+    let shift = significant_bits.saturating_sub(32);
+    match (u32::try_from(used >> shift), u32::try_from(budget >> shift)) {
+        (Ok(used_reduced), Ok(budget_reduced)) if budget_reduced > 0 => {
+            f64::from(used_reduced) / f64::from(budget_reduced)
+        }
+        // Unreachable by construction: `budget >> shift` has at most 32
+        // significant bits (and at least one, since `budget > used >= 0`
+        // implies `budget > 0`), and `used < budget` keeps the reduced
+        // numerator within u32 as well. Saturate to the budget boundary
+        // rather than panic so a logic regression surfaces as an early
+        // budget signal instead of an abort.
+        _ => 1.0,
     }
 }
 
@@ -394,6 +435,95 @@ mod tests {
             Duration::from_secs(3600),
         );
         assert!(matches!(signal, GoalSignal::OnTrack));
+    }
+
+    #[test]
+    fn goal_tracker_ratio_just_below_threshold_stays_on_track() {
+        // 800_000_005 / 1_000_000_007 ≈ 0.799999998 — strictly below the
+        // 0.80 threshold. The old `u64 as f32` casts rounded both operands
+        // (f32 ulp is 64 at this magnitude) and emitted a spurious warning
+        // here; the exact integer-backed ratio must stay on track.
+        let tracker = GoalTracker::new(Goal {
+            description: "precise".to_string(),
+            token_budget: Some(1_000_000_007),
+            time_budget: None,
+            continuation: ContinuationPolicy::Stop,
+        });
+        let signal = tracker.check(&usage_with_tokens(800_000_005, 0), Duration::ZERO);
+        assert!(matches!(signal, GoalSignal::OnTrack), "got {signal:?}");
+    }
+
+    #[test]
+    fn goal_tracker_exceeded_exactly_at_budget() {
+        // used == budget is decided by integer comparison, not float
+        // rounding, so the boundary itself is exact.
+        let tracker = GoalTracker::new(Goal {
+            description: "boundary".to_string(),
+            token_budget: Some(1_000),
+            time_budget: None,
+            continuation: ContinuationPolicy::Stop,
+        });
+        let signal = tracker.check(&usage_with_tokens(1_000, 0), Duration::ZERO);
+        assert!(matches!(signal, GoalSignal::BudgetExceeded { .. }));
+    }
+
+    #[test]
+    fn goal_tracker_huge_budget_warning_band_is_accurate() {
+        // Budgets above 2^32 take the shift-reduction path in
+        // under_budget_fraction; the relative error is bounded by 2^-31,
+        // so an 85% ratio must surface as a warning with pct ≈ 0.85.
+        let budget = u64::MAX;
+        let used = u64::MAX / 20 * 17; // ≈ 85% of budget
+        let tracker = GoalTracker::new(Goal {
+            description: "huge".to_string(),
+            token_budget: Some(budget),
+            time_budget: None,
+            continuation: ContinuationPolicy::Stop,
+        });
+        let signal = tracker.check(&usage_with_tokens(used, 0), Duration::ZERO);
+        let GoalSignal::BudgetWarning { pct_used } = signal else {
+            panic!("expected BudgetWarning, got {signal:?}");
+        };
+        assert!(
+            (pct_used - 0.85).abs() < 1e-6,
+            "expected ~0.85, got {pct_used}"
+        );
+    }
+
+    #[test]
+    fn goal_tracker_token_sum_saturates_instead_of_wrapping() {
+        // input + output saturates at u64::MAX rather than wrapping to a
+        // small number that would mask exhaustion.
+        let tracker = GoalTracker::new(Goal {
+            description: "saturate".to_string(),
+            token_budget: Some(1_000),
+            time_budget: None,
+            continuation: ContinuationPolicy::Stop,
+        });
+        let signal = tracker.check(&usage_with_tokens(u64::MAX, u64::MAX), Duration::ZERO);
+        assert!(matches!(signal, GoalSignal::BudgetExceeded { .. }));
+    }
+
+    #[test]
+    fn under_budget_fraction_exact_below_two_pow_32() {
+        assert!((under_budget_fraction(800, 1_000) - 0.8).abs() < f64::EPSILON);
+        assert!(under_budget_fraction(1, u64::from(u32::MAX)) > 0.0);
+        assert!(under_budget_fraction(0, 1_000) < f64::EPSILON);
+    }
+
+    #[test]
+    fn under_budget_fraction_shift_path_bounds_error() {
+        // Budget above 2^32: both operands are floor-shifted equally, so
+        // the result is within 2^-31 of the true ratio. With both operands
+        // divisible by the shift amount the result is exact.
+        let budget = 5_u64 << 38;
+        let used = 4_u64 << 38; // exactly 80%, low bits zero
+        assert!((under_budget_fraction(used, budget) - 0.8).abs() < f64::EPSILON);
+
+        // One token below a huge budget rounds to the boundary itself
+        // (documented 2^-31 coarseness of the shift path).
+        let near = under_budget_fraction(budget - 1, budget);
+        assert!((near - 1.0).abs() < 1e-9, "got {near}");
     }
 
     // ----- Scheduler -----------------------------------------------------

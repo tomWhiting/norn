@@ -209,20 +209,24 @@ struct CodeExchangeResponse {
     account_id: Option<String>,
 }
 
+/// Exchanges the authorization code at the compiled token endpoint.
+///
+/// The endpoint is deliberately not configurable (no environment
+/// override): an environment-redirectable token endpoint would let any
+/// process that can set an env var receive the authorization-code
+/// exchange — and with it the freshly minted refresh token.
 fn exchange_code_blocking(
     client_id: &str,
     redirect_uri: &str,
     verifier: &str,
     code: &str,
 ) -> Result<AuthDotJson, LoginError> {
-    let url =
-        std::env::var("CODEX_REFRESH_TOKEN_URL_OVERRIDE").unwrap_or_else(|_| TOKEN_URL.to_string());
     let client = reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|err| LoginError::TokenExchange(err.to_string()))?;
     let response = client
-        .post(url)
+        .post(TOKEN_URL)
         .header("Content-Type", "application/x-www-form-urlencoded")
         .form(&[
             ("grant_type", "authorization_code"),

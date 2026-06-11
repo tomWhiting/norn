@@ -70,6 +70,14 @@ impl ClaudeRunnerAdapter {
         Self { config }
     }
 
+    /// The runner binary path this adapter invokes. Exposed so callers
+    /// (and their tests) can verify which binary a constructed adapter
+    /// resolved — e.g. that `settings.provider.runner_path` was honored.
+    #[must_use]
+    pub fn runner_path(&self) -> &std::path::Path {
+        &self.config.runner_path
+    }
+
     /// Build the [`ClaudeCommand`] for one call.
     pub(crate) fn build_command(&self, request: &ProviderRequest) -> ClaudeCommand {
         let prompt = render_prompt(&request.messages);

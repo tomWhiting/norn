@@ -6,6 +6,7 @@ pub mod edit;
 pub mod event_loop;
 pub mod helpers;
 pub mod render;
+pub mod rotation;
 pub mod slash;
 pub mod state;
 

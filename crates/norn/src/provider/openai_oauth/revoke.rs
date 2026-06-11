@@ -46,15 +46,18 @@ pub async fn logout_with_revoke(
     Ok(())
 }
 
+/// Revokes the refresh token at the compiled revoke endpoint.
+///
+/// The endpoint is deliberately not configurable (no environment
+/// override): the request body carries the live refresh token, so an
+/// environment-redirectable endpoint would be an exfiltration vector.
 async fn revoke_refresh_token(refresh_token: &str) -> Result<(), LogoutError> {
-    let url =
-        std::env::var("CODEX_REVOKE_TOKEN_URL_OVERRIDE").unwrap_or_else(|_| REVOKE_URL.to_string());
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|err| LogoutError::Revoke(err.to_string()))?;
     let response = client
-        .post(url)
+        .post(REVOKE_URL)
         .json(&RevokeRequest {
             token: refresh_token,
             token_type_hint: "refresh_token",

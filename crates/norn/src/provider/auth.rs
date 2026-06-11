@@ -125,9 +125,9 @@ impl OAuthAuthProvider {
     }
 
     /// Constructs an `OAuthAuthProvider` directly from a shared
-    /// `AuthManager`. Intended for tests that need to seed the manager
-    /// with a known `CodexAuth` via
-    /// `AuthManager::from_auth_for_testing`.
+    /// `AuthManager`. Used by embedders that seed the manager with an
+    /// in-memory `CodexAuth` via `AuthManager::from_static_auth`
+    /// (e.g. VM-provisioned credentials), and by tests.
     #[must_use]
     pub fn from_manager(manager: Arc<AuthManager>) -> Self {
         Self { manager }
@@ -168,7 +168,19 @@ impl AuthProvider for OAuthAuthProvider {
                     "OAuth refresh failed permanently: {failed}; please re-run the login flow"
                 ),
             }),
-            Err(RefreshTokenError::Transient(_)) => Ok(false),
+            // A transient refresh failure is a network/server fault, not
+            // a missing or dead credential: surface it as a retryable
+            // connection failure with an accurate reason. (`Ok(false)`
+            // is reserved for "no refresh path exists" — reporting it
+            // here made the caller emit a non-retryable
+            // `AuthenticationFailed { "no refresh available" }`, the
+            // wrong class and a false message.)
+            Err(RefreshTokenError::Transient(failed)) => Err(ProviderError::ConnectionFailed {
+                reason: format!(
+                    "OAuth token refresh failed transiently: {failed}; the stored refresh \
+                     credential remains valid and the request may be retried"
+                ),
+            }),
         }
     }
 }
@@ -598,7 +610,7 @@ mod tests {
         // with access_token = "Access Token" and
         // account_id = Some("account_id").
         let auth = super::super::openai_oauth::CodexAuth::create_dummy_chatgpt_auth_for_testing();
-        let manager = super::super::openai_oauth::AuthManager::from_auth_for_testing(auth);
+        let manager = super::super::openai_oauth::AuthManager::from_static_auth(auth);
         let provider = OAuthAuthProvider::from_manager(manager);
 
         let client = reqwest::Client::new();
@@ -630,12 +642,88 @@ mod tests {
         );
     }
 
+    /// Regression test (fix campaign Track V, finding 3): a *transient*
+    /// OAuth refresh failure after a 401 previously surfaced as
+    /// `Ok(false)`, which the caller reported as non-retryable
+    /// `AuthenticationFailed { "no refresh available" }` — the wrong
+    /// class AND a false message (a refresh WAS available; it
+    /// transiently failed). It must surface as a retryable error with
+    /// an accurate reason.
+    #[tokio::test]
+    async fn transient_refresh_failure_surfaces_as_retryable_error() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500))
+            .mount(&server)
+            .await;
+
+        let auth = super::super::openai_oauth::CodexAuth::create_dummy_chatgpt_auth_for_testing();
+        let manager = super::super::openai_oauth::AuthManager::from_static_auth_with_token_url(
+            auth,
+            server.uri(),
+        );
+        let provider = OAuthAuthProvider::from_manager(manager);
+
+        let err = provider
+            .on_unauthorized()
+            .await
+            .expect_err("transient refresh failure must surface as an error, not Ok(false)");
+        match &err {
+            ProviderError::ConnectionFailed { reason } => {
+                assert!(
+                    reason.contains("transiently"),
+                    "reason must say the refresh failed transiently: {reason}"
+                );
+                assert!(
+                    !reason.contains("no refresh available"),
+                    "reason must not falsely claim no refresh was available: {reason}"
+                );
+            }
+            other => panic!("expected retryable ConnectionFailed, got {other:?}"),
+        }
+        assert!(
+            crate::r#loop::retry::RetryPolicy::default().classifies_as_retryable(&err),
+            "transient refresh failure must classify as retryable: {err:?}"
+        );
+    }
+
+    /// Finding 3 counterpart: a genuinely missing refresh credential
+    /// (API-key auth has no refresh path) keeps the non-retryable
+    /// authentication failure.
+    #[tokio::test]
+    async fn missing_refresh_credential_remains_non_retryable_auth_failure() {
+        let auth = super::super::openai_oauth::CodexAuth::from_api_key("vm-injected-key");
+        let manager = super::super::openai_oauth::AuthManager::from_static_auth(auth);
+        let provider = OAuthAuthProvider::from_manager(manager);
+
+        let err = provider
+            .on_unauthorized()
+            .await
+            .expect_err("a credential with no refresh path must fail permanently");
+        match &err {
+            ProviderError::AuthenticationFailed { reason } => {
+                assert!(
+                    reason.contains("no refreshable OAuth credential"),
+                    "reason must name the missing refresh credential: {reason}"
+                );
+            }
+            other => panic!("expected AuthenticationFailed, got {other:?}"),
+        }
+        assert!(
+            !crate::r#loop::retry::RetryPolicy::default().classifies_as_retryable(&err),
+            "a permanently missing refresh credential must not be retryable"
+        );
+    }
+
     /// Complementary to the above: when `account_id` is absent, the
     /// `chatgpt-account-id` header must not be set.
     #[tokio::test]
     async fn oauth_provider_omits_account_id_when_absent() {
         let auth = super::super::openai_oauth::CodexAuth::from_api_key("test-api-key-value");
-        let manager = super::super::openai_oauth::AuthManager::from_auth_for_testing(auth);
+        let manager = super::super::openai_oauth::AuthManager::from_static_auth(auth);
         let provider = OAuthAuthProvider::from_manager(manager);
 
         let client = reqwest::Client::new();

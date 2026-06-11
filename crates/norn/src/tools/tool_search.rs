@@ -434,7 +434,10 @@ mod tests {
         ctx.insert_extension(Arc::new(SharedToolCatalog(Arc::new(catalog))));
 
         let out = tool
-            .execute(&envelope_for(json!({"query": "specific message conversation"})), &ctx)
+            .execute(
+                &envelope_for(json!({"query": "specific message conversation"})),
+                &ctx,
+            )
             .await
             .unwrap();
         let results = out.content["results"].as_array().unwrap();

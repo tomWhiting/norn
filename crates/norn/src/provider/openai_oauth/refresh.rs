@@ -5,8 +5,8 @@ use std::time::Duration;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
+use super::CLIENT_ID;
 use super::types::{AuthDotJson, ChatGptTokens, IdTokenInfo};
-use super::{CLIENT_ID, TOKEN_URL};
 
 /// Errors from token refresh.
 #[derive(Debug, thiserror::Error)]
@@ -47,23 +47,33 @@ struct ErrorBody {
 
 /// Refreshes an auth document using its refresh token.
 ///
+/// `token_url` is the token-endpoint URL the refresh token is sent to.
+/// It is threaded explicitly from the caller ([`AuthManager`]) rather
+/// than read from the environment: an environment-redirectable token
+/// endpoint would let any process that can set an env var exfiltrate
+/// refresh tokens. Production callers pass the compiled authority
+/// constant; tests inject their mock server URL through the API.
+///
+/// [`AuthManager`]: super::manager::AuthManager
+///
 /// # Errors
 ///
 /// Returns [`RefreshError::Permanent`] for dead credentials and
 /// [`RefreshError::Transient`] for retryable failures.
-pub async fn refresh_auth(auth: &AuthDotJson) -> Result<AuthDotJson, RefreshError> {
+pub async fn refresh_auth(
+    auth: &AuthDotJson,
+    token_url: &str,
+) -> Result<AuthDotJson, RefreshError> {
     let tokens = auth
         .tokens
         .as_ref()
         .ok_or_else(|| RefreshError::Permanent("missing OAuth tokens".to_string()))?;
-    let url =
-        std::env::var("CODEX_REFRESH_TOKEN_URL_OVERRIDE").unwrap_or_else(|_| TOKEN_URL.to_string());
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .map_err(|err| RefreshError::Transient(err.to_string()))?;
     let response = client
-        .post(url)
+        .post(token_url)
         .json(&RefreshRequest {
             client_id: CLIENT_ID,
             grant_type: "refresh_token",

@@ -24,6 +24,7 @@ pub mod config;
 pub mod input;
 pub mod loader;
 pub mod matchers;
+pub mod merge;
 pub mod new_traits;
 pub mod output;
 pub mod shell;

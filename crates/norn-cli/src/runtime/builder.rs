@@ -26,14 +26,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use norn::config::types::{HookEntry, HookSettings};
 use norn::config::{NornSettings, load_settings, merge_settings, validate_settings};
 use norn::context::{ContextLoader, scan_rule_dirs};
 use norn::integration::DiagnosticCollector;
-use norn::integration::hooks::{
-    Hook, HookContext, HookEventType, HookMatcher, HookRegistry, ShellCommandHook,
-    load_hooks_from_settings,
-};
+use norn::integration::hooks::{HookRegistry, load_hooks_from_settings};
 use norn::r#loop::loop_context::LoopContext;
 use norn::r#loop::retry::RetryPolicy;
 use norn::r#loop::runner::ToolExecutor;
@@ -46,17 +42,14 @@ use norn::system_prompt::{
 };
 use norn::tool::registry::ToolRegistry;
 
-use norn::tools::agent::AgentHandles;
-
 use norn::tools::task::{SharedTaskStore, TaskStore};
 
 use norn::tools::DiskTaskStore;
-use norn::tools::tool_search::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 
 use super::bundle::{RuntimeBundle, RuntimeInputs};
 use super::wiring::{
     build_diagnostic_collector, build_skill_catalog, build_skill_search_paths, build_write_tool,
-    install_context_search_paths, install_skill_infra, iteration_monitor_from_profile,
+    iteration_monitor_from_profile,
 };
 use crate::cli::BuildError;
 use crate::cli::Cli;
@@ -66,9 +59,10 @@ use crate::config::collect_extension_uris;
 use crate::config::load_rule_engine;
 use crate::config::merge_event_schemas;
 use crate::config::overrides::{
-    apply_cli_profile_overrides, apply_config_overrides_to_loop, apply_loop_config_overrides,
-    apply_settings_reasoning_to_profile, apply_settings_to_agent_config, apply_working_dir,
-    default_agent_loop_config, overlay_cli_provider_overrides, provider_overrides_from_settings,
+    AppliedOverrides, apply_cli_profile_overrides, apply_config_overrides_to_loop,
+    apply_loop_config_overrides, apply_settings_reasoning_to_profile,
+    apply_settings_to_agent_config, apply_working_dir, default_agent_loop_config,
+    overlay_cli_provider_overrides, provider_overrides_from_settings,
     retry_policy_from_settings_and_overrides,
 };
 use crate::config::resolve_profile;
@@ -142,17 +136,29 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
             .register(Box::new(norn::tools::skill::SkillTool::new()));
     }
 
+    // Snapshot the full (pre-gating) tool name set: `from_profile` and
+    // `set_disallowed` below remove gated names from `names()`, which
+    // would make the unknown-name check report false positives for
+    // legitimately gated tools.
+    warn_unmatched_tool_flag_names(&inputs.registry, &applied);
+
     let shared_task_store = build_shared_task_store(cli);
 
-    // NH-006 R1/R2: load shell-hook config from the three settings tiers,
-    // concatenate any caller-supplied programmatic [`HookRegistry`] with
-    // [`ShellCommandHook`] instances built from the merged
-    // [`HookSettings`], and publish the resulting [`Arc<HookRegistry>`] so
-    // it can be threaded through both the [`LoopContext`] and the shared
-    // [`ToolContext`] extension table. When no settings files exist and no
-    // programmatic hooks were supplied, `hooks` stays `None`.
+    // NH-006 R1/R2: load shell-hook config from the three settings tiers
+    // and merge it with any caller-supplied programmatic [`HookRegistry`]
+    // via the single library-owned assembly
+    // ([`norn::runtime_init::assemble_hook_registry`]): programmatic hooks
+    // register first, an outstanding programmatic `Arc` clone is folded in
+    // via `HookRegistry::merge_shared` instead of being dropped (H13), and
+    // [`norn::config::types::HookEntry::timeout`] is interpreted as
+    // MILLISECONDS. The resulting [`Arc<HookRegistry>`] is threaded through
+    // both the [`LoopContext`] and the shared [`ToolContext`] extension
+    // table. When no settings files exist and no programmatic hooks were
+    // supplied, `hooks` stays `None`.
     let hook_settings = load_hooks_from_settings(&cwd)?;
-    let hooks = assemble_hook_registry(inputs.hooks, &hook_settings, &profile, &cwd)?;
+    let hooks =
+        norn::runtime_init::assemble_hook_registry(inputs.hooks, &hook_settings, &profile, &cwd)
+            .map_err(|err| BuildError::Argument(err.to_string()))?;
 
     let loop_context = build_loop_context(BuildLoopContextArgs {
         profile: &profile,
@@ -184,18 +190,51 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
     // context — bash's `cd` updates flow to prompt commands, hooks, rules,
     // and shell-variable execution.
     loop_context.working_dir = shared_wd.clone();
-    let diag_ctx = super::wiring::build_tool_context_with_diagnostics(
+    let mut diag_ctx = super::wiring::build_tool_context_with_diagnostics(
         &cwd,
         shared_wd,
         inputs.lsp_backend.clone(),
         inputs.lsp_workspace.as_deref(),
     );
+    // Workspace confinement shares libnorn's single validation
+    // (`norn::agent::validate_workspace_root`): canonicalize, and reject
+    // nonexistent / non-directory roots loudly instead of confining
+    // nothing. The flag name is prefixed so the user can locate the
+    // offending value.
+    if let Some(root) = norn::agent::validate_workspace_root(cli.workspace_root.clone())
+        .map_err(|err| BuildError::Argument(format!("--workspace-root: {err}")))?
+    {
+        diag_ctx.confine_to_workspace(root);
+    }
     registry.set_context(Arc::new(diag_ctx));
-    publish_diagnostics_on_registry(&registry, &diagnostics);
+    // H17: `--disallowed-tools` gates the registry with the same
+    // exact-name semantics as `--allowed-tools` / `set_available`; a
+    // disallowed name stays unavailable even when the allow-list names
+    // it (deny wins, enforced by `ToolRegistry::set_disallowed`).
+    registry.set_disallowed(applied.disallowed_tools.clone());
     publish_hooks_on_registry(&registry, hooks.as_ref());
-    install_runtime_extensions(&registry, &shared_task_store);
-    install_skill_infra(&registry, skill_paths, Arc::clone(&skill_catalog));
-    install_context_search_paths(&registry, &merged_settings, &cwd);
+    {
+        let Some(shared) = registry.shared_context() else {
+            // Structurally unreachable: `set_context` installed the shared
+            // ToolContext two statements above. Guarded loudly anyway —
+            // silently skipping these installs would strand the task
+            // store, diagnostics, skills, and tool catalog.
+            return Err(BuildError::Argument(
+                "tool registry lost its shared ToolContext during assembly; \
+                 runtime extensions cannot be installed"
+                    .to_owned(),
+            ));
+        };
+        norn::runtime_init::install_permission_policy(&shared, &merged_settings);
+        norn::runtime_init::install_runtime_extensions(&shared, &shared_task_store, &diagnostics);
+        norn::runtime_init::install_skill_infra(&shared, skill_paths, Arc::clone(&skill_catalog));
+        norn::runtime_init::install_context_search_paths(&shared, &merged_settings, &cwd);
+        // NA-006 populates the handles at spawn time; the collection must
+        // exist before the first dispatch. Shared installer with
+        // AgentBuilder assembly so the two launch paths cannot drift.
+        norn::runtime_init::install_agent_handles(&shared);
+    }
+    norn::runtime_init::install_tool_catalog(&registry);
     let registry = Arc::new(registry);
 
     Ok(RuntimeBundle {
@@ -393,14 +432,43 @@ fn merge_discovered_rules(
     }
 }
 
-/// Publish the shared [`DiagnosticCollector`] onto the registry's
-/// orchestrator [`norn::tool::context::ToolContext`] so runtime tools
-/// (and `RuntimePostValidateCheck` implementations dispatched via
-/// `tool_dispatch`) can retrieve it via `ctx.get_extension::<DiagnosticCollector>()`
-/// and push diagnostics into the same sink the CLI drains.
-fn publish_diagnostics_on_registry(registry: &ToolRegistry, collector: &Arc<DiagnosticCollector>) {
-    if let Some(shared) = registry.shared_context() {
-        shared.insert_extension(Arc::clone(collector));
+/// Names from `names` that match no entry of `registered` exactly.
+/// Pure core of [`warn_unmatched_tool_flag_names`], split out for tests.
+fn unmatched_tool_names<'a>(
+    names: &'a [String],
+    registered: &std::collections::HashSet<&str>,
+) -> Vec<&'a str> {
+    names
+        .iter()
+        .map(String::as_str)
+        .filter(|name| !registered.contains(name))
+        .collect()
+}
+
+/// Emit a visible stderr warning for every `--allowed-tools` /
+/// `--disallowed-tools` name that matches no tool registered at
+/// `build_runtime` time. Gating is exact-name, so a typo or wrong-case
+/// name would otherwise enforce nothing with zero feedback. This is a
+/// warning rather than a hard error because `--extension` MCP servers
+/// may legitimately register additional tools after assembly.
+///
+/// Must run BEFORE `from_profile` / `set_disallowed` apply gating: gated
+/// names disappear from `ToolRegistry::names()`, which would turn
+/// legitimately gated tools into false positives.
+fn warn_unmatched_tool_flag_names(registry: &ToolRegistry, applied: &AppliedOverrides) {
+    let registered: std::collections::HashSet<&str> = registry.names().collect();
+    for (flag, names) in [
+        ("--allowed-tools", &applied.allowed_tools),
+        ("--disallowed-tools", &applied.disallowed_tools),
+    ] {
+        for name in unmatched_tool_names(names, &registered) {
+            eprintln!(
+                "norn: warning: {flag} name '{name}' matches no registered tool \
+                 (names are case-sensitive and matched exactly); it takes effect \
+                 only if a tool with that exact name is registered later (e.g. by \
+                 an --extension MCP server)",
+            );
+        }
     }
 }
 
@@ -419,270 +487,6 @@ fn publish_hooks_on_registry(registry: &ToolRegistry, hooks: Option<&Arc<HookReg
     }
 }
 
-/// Concatenate any caller-supplied programmatic [`HookRegistry`] with
-/// [`ShellCommandHook`] instances built from the merged
-/// [`HookSettings`]. Programmatic hooks register first so the
-/// registration-order contract (first-Block-wins per CO5) keeps
-/// caller-supplied logic ahead of operator-configured shell hooks.
-/// Within the shell-hook layer, entries already come pre-sorted in
-/// `user → project → local` order from
-/// [`load_hooks_from_settings`].
-///
-/// Returns `None` when no programmatic hooks were supplied and every
-/// [`HookSettings`] slot is empty — the empty-settings case ships zero
-/// hooks and zero allocation (NH-006 R1 acceptance).
-///
-/// # Errors
-///
-/// - Invalid regex in any [`HookEntry::matcher`] surfaces as
-///   [`BuildError::Argument`] (via the [`ConfigError`] conversion).
-/// - Missing [`HookEntry::timeout`] is already rejected upstream by
-///   [`load_hooks_from_settings`], but a defensive check here returns
-///   the same error type if a future caller passes pre-merged settings
-///   without going through the loader.
-fn assemble_hook_registry(
-    programmatic: Option<Arc<HookRegistry>>,
-    settings: &HookSettings,
-    profile: &Profile,
-    cwd: &std::path::Path,
-) -> Result<Option<Arc<HookRegistry>>, BuildError> {
-    let shell_total = settings_total_entries(settings);
-    if programmatic.is_none() && shell_total == 0 {
-        return Ok(None);
-    }
-
-    // When no shell hooks are configured, the programmatic Arc is
-    // passed through untouched — no need to unwrap-and-rewrap, and
-    // any outstanding clones survive intact.
-    if shell_total == 0 {
-        return Ok(programmatic);
-    }
-
-    // Shell hooks need to register into the same HookRegistry as any
-    // programmatic hooks so the loop's dispatch order ([CO5]
-    // first-Block-wins) folds them into a single chain. We take the
-    // programmatic registry by value via Arc::try_unwrap; this is
-    // sound because the registry came in via `inputs.hooks` and has
-    // not yet been installed on the LoopContext or ToolContext at
-    // this point. If a future caller retains an outstanding clone we
-    // log and fall back to a fresh registry — silently losing the
-    // programmatic hooks would be worse than logging.
-    let mut registry = match programmatic {
-        Some(arc) => Arc::try_unwrap(arc).unwrap_or_else(|shared_arc| {
-            tracing::warn!(
-                strong_count = Arc::strong_count(&shared_arc),
-                "programmatic HookRegistry has outstanding Arc clones; \
-                 shell hooks will register on a fresh registry — caller \
-                 must not retain an Arc<HookRegistry> across build_runtime",
-            );
-            HookRegistry::new()
-        }),
-        None => HookRegistry::new(),
-    };
-
-    let context = HookContext {
-        // Session and agent identifiers are not known at build_runtime
-        // time. Dispatch sites for `user_prompt`, `session_start`, and
-        // `session_end` override the captured session_id via their own
-        // dispatch argument, and shell hooks read `NORN_SESSION_ID` /
-        // `NORN_AGENT_ID` from the environment at execution time.
-        session_id: String::new(),
-        cwd: cwd.display().to_string(),
-        agent_id: String::new(),
-        profile_name: profile.name.clone(),
-    };
-
-    register_shell_hooks(
-        &mut registry,
-        settings.pre_tool.as_ref(),
-        HookEventType::PreTool,
-        &context,
-        |h| Hook::PreTool(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.post_tool.as_ref(),
-        HookEventType::PostTool,
-        &context,
-        |h| Hook::PostTool(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.post_tool_failure.as_ref(),
-        HookEventType::PostToolFailure,
-        &context,
-        |h| Hook::PostToolFailure(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.pre_llm.as_ref(),
-        HookEventType::PreLlm,
-        &context,
-        |h| Hook::PreLlm(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.post_llm.as_ref(),
-        HookEventType::PostLlm,
-        &context,
-        |h| Hook::PostLlm(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.session_event.as_ref(),
-        HookEventType::SessionEvent,
-        &context,
-        |h| Hook::SessionEvent(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.user_prompt.as_ref(),
-        HookEventType::UserPrompt,
-        &context,
-        |h| Hook::UserPrompt(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.stop.as_ref(),
-        HookEventType::Stop,
-        &context,
-        |h| Hook::Stop(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.subagent_start.as_ref(),
-        HookEventType::SubagentStart,
-        &context,
-        |h| Hook::Subagent(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.subagent_stop.as_ref(),
-        HookEventType::SubagentStop,
-        &context,
-        |h| Hook::Subagent(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.session_start.as_ref(),
-        HookEventType::SessionStart,
-        &context,
-        |h| Hook::SessionLifecycle(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.session_end.as_ref(),
-        HookEventType::SessionEnd,
-        &context,
-        |h| Hook::SessionLifecycle(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.pre_compaction.as_ref(),
-        HookEventType::PreCompaction,
-        &context,
-        |h| Hook::Compaction(Box::new(h)),
-    )?;
-
-    Ok(Some(Arc::new(registry)))
-}
-
-/// Translate one [`HookSettings`] slot into [`ShellCommandHook`]
-/// registrations on `registry`. The `wrap` argument receives the built
-/// [`ShellCommandHook`] and returns the appropriate [`Hook`] enum
-/// variant — every [`ShellCommandHook`] implements all eleven hook
-/// traits, so the caller's choice of wrapper determines which dispatch
-/// path the registry routes through at runtime.
-fn register_shell_hooks(
-    registry: &mut HookRegistry,
-    entries: Option<&Vec<HookEntry>>,
-    event_type: HookEventType,
-    context: &HookContext,
-    wrap: impl Fn(ShellCommandHook) -> Hook,
-) -> Result<(), BuildError> {
-    let Some(entries) = entries else {
-        return Ok(());
-    };
-    for entry in entries {
-        let matcher = HookMatcher::new(entry.matcher.as_deref())?;
-        let timeout_secs = entry.timeout.ok_or_else(|| {
-            BuildError::Argument(format!(
-                "hook entry missing required field 'timeout' (event {event_type:?}, command {command:?})",
-                command = entry.command,
-            ))
-        })?;
-        let hook = ShellCommandHook::new(
-            entry.command.clone(),
-            matcher,
-            std::time::Duration::from_secs(timeout_secs),
-            event_type,
-            context.clone(),
-        );
-        registry.register(wrap(hook));
-    }
-    Ok(())
-}
-
-/// Sum of [`HookEntry`] counts across every event slot. Used to decide
-/// whether shell-hook registration is needed at all (zero-allocation
-/// short-circuit when settings are empty).
-fn settings_total_entries(settings: &HookSettings) -> usize {
-    fn count(slot: Option<&Vec<HookEntry>>) -> usize {
-        slot.map_or(0, Vec::len)
-    }
-    count(settings.pre_tool.as_ref())
-        + count(settings.post_tool.as_ref())
-        + count(settings.post_tool_failure.as_ref())
-        + count(settings.pre_llm.as_ref())
-        + count(settings.post_llm.as_ref())
-        + count(settings.session_event.as_ref())
-        + count(settings.user_prompt.as_ref())
-        + count(settings.stop.as_ref())
-        + count(settings.subagent_start.as_ref())
-        + count(settings.subagent_stop.as_ref())
-        + count(settings.session_start.as_ref())
-        + count(settings.session_end.as_ref())
-        + count(settings.pre_compaction.as_ref())
-}
-
-/// Install the provider-independent [`norn::tool::context::ToolContext`]
-/// extensions every Norn agent needs: the task store (so the `task` tool
-/// resolves), the tool-search catalogue (so `tool_search` resolves), and
-/// an empty [`AgentHandles`] collection (NA-006 populates it at spawn
-/// time).
-///
-/// [`AgentToolInfra`](norn::tools::agent::AgentToolInfra) is *not*
-/// installed here — it needs the `Arc<dyn Provider>` that only exists
-/// after `build_provider`, so callers wire it via
-/// [`super::wiring::install_agent_tool_infra`] once the provider is built.
-///
-/// The task store is an [`InMemoryTaskStore`]; the disk-backed store
-/// (NA-004) replaces this once it lands. The tool catalogue is a snapshot
-/// of the registry's tool definitions taken at build time — the registry
-/// is fully populated before `build_runtime` runs, so the snapshot is
-/// complete.
-fn install_runtime_extensions(registry: &ToolRegistry, task_store: &Arc<SharedTaskStore>) {
-    let Some(shared) = registry.shared_context() else {
-        return;
-    };
-
-    shared.insert_extension(Arc::clone(task_store));
-
-    let mut entries: Vec<ToolCatalogEntry> = registry
-        .names()
-        .filter_map(|name| {
-            registry
-                .get(name)
-                .map(|tool| ToolCatalogEntry::tool(tool.name(), tool.description()))
-        })
-        .collect();
-    if let Some(extras) = shared.get_extension::<ToolCatalogExtras>() {
-        entries.extend(extras.0.iter().cloned());
-    }
-    shared.insert_extension(Arc::new(SharedToolCatalog(Arc::new(entries))));
-
-    shared.insert_extension(Arc::new(AgentHandles::new()));
-}
 /// Internal argument bundle for [`build_loop_context`] to keep the
 /// function signature within the `clippy::too_many_arguments` budget.
 struct BuildLoopContextArgs<'a> {
@@ -735,6 +539,7 @@ fn resolve_debug_api_dir(value: &str) -> PathBuf {
 mod tests {
     use super::*;
     use clap::Parser;
+    use norn::tools::tool_search::SharedToolCatalog;
     use std::time::Duration;
 
     fn cli_from(args: &[&str]) -> Cli {
@@ -761,7 +566,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn token_estimator_and_context_edits_always_set() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert!(
@@ -775,7 +585,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn model_override_flows_into_bundle_model_not_loop_context() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "-m", "gpt-5.5"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert_eq!(bundle.model, "gpt-5.5");
@@ -806,6 +621,7 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn allowed_tools_gates_registry_to_named_subset() {
         use norn::error::ToolError;
         use norn::tool::context::ToolContext;
@@ -843,6 +659,10 @@ mod tests {
             }
         }
 
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "--allowed-tools", "read"]);
         let mut registry = ToolRegistry::new();
         registry.register(Box::new(StubTool {
@@ -869,22 +689,233 @@ mod tests {
         );
     }
 
+    /// Minimal named tool for registry-gating tests.
+    struct NamedStub {
+        tool_name: String,
+    }
+
+    impl NamedStub {
+        fn boxed(name: &str) -> Box<dyn Tool + Send + Sync> {
+            Box::new(Self {
+                tool_name: name.to_owned(),
+            })
+        }
+    }
+
+    #[async_trait::async_trait]
+    impl Tool for NamedStub {
+        fn name(&self) -> &str {
+            &self.tool_name
+        }
+        fn description(&self) -> &'static str {
+            "stub"
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn effect(&self) -> norn::tool::scheduling::ToolEffect {
+            norn::tool::scheduling::ToolEffect::ReadOnly
+        }
+        async fn execute(
+            &self,
+            _envelope: &norn::tool::envelope::ToolEnvelope,
+            _ctx: &norn::tool::context::ToolContext,
+        ) -> Result<norn::tool::traits::ToolOutput, norn::error::ToolError> {
+            Ok(norn::tool::traits::ToolOutput {
+                content: serde_json::json!(null),
+                is_error: false,
+                duration: Duration::ZERO,
+            })
+        }
+    }
+
+    use norn::tool::traits::Tool;
+
+    /// H17: `--disallowed-tools` gates the registry even without an
+    /// allow-list — the named tools are unavailable for lookup and
+    /// dispatch.
     #[test]
+    #[serial_test::serial]
+    fn disallowed_tools_gates_registry() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = cli_from(&["norn", "--disallowed-tools", "write,edit"]);
+        let mut registry = ToolRegistry::new();
+        registry.register(NamedStub::boxed("read"));
+        registry.register(NamedStub::boxed("write"));
+        registry.register(NamedStub::boxed("edit"));
+
+        let bundle = build_runtime(
+            &cli,
+            RuntimeInputs {
+                registry,
+                hooks: None,
+                lsp_workspace: None,
+                lsp_backend: None,
+            },
+        )
+        .unwrap();
+        assert!(bundle.registry.get("read").is_some());
+        assert!(
+            bundle.registry.get("write").is_none(),
+            "write must be gated out by --disallowed-tools",
+        );
+        assert!(
+            bundle.registry.get("edit").is_none(),
+            "edit must be gated out by --disallowed-tools",
+        );
+        assert_eq!(
+            bundle.disallowed_tools,
+            vec!["write".to_owned(), "edit".to_owned()],
+            "bundle still carries the raw list for audit surfaces",
+        );
+    }
+
+    /// H17: a name present in both `--allowed-tools` and
+    /// `--disallowed-tools` is unavailable — deny wins.
+    #[test]
+    #[serial_test::serial]
+    fn disallowed_tools_wins_over_allowed_tools() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = cli_from(&[
+            "norn",
+            "--allowed-tools",
+            "read,write",
+            "--disallowed-tools",
+            "write",
+        ]);
+        let mut registry = ToolRegistry::new();
+        registry.register(NamedStub::boxed("read"));
+        registry.register(NamedStub::boxed("write"));
+
+        let bundle = build_runtime(
+            &cli,
+            RuntimeInputs {
+                registry,
+                hooks: None,
+                lsp_workspace: None,
+                lsp_backend: None,
+            },
+        )
+        .unwrap();
+        assert!(bundle.registry.get("read").is_some());
+        assert!(
+            bundle.registry.get("write").is_none(),
+            "--disallowed-tools must win over --allowed-tools",
+        );
+    }
+
+    /// H16: a `permissions` section in settings compiles into a
+    /// [`norn::config::PermissionPolicy`] published on the registry's
+    /// shared context, where tool dispatch enforces it.
+    #[test]
+    #[serial_test::serial]
+    fn permission_settings_install_policy_on_shared_context() {
+        use norn::config::{PermissionDecision, PermissionPolicy};
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let guard = TempNornHome::new(tempdir);
+        write_user_settings(
+            &guard,
+            r#"{
+                "permissions": {
+                    "deny": ["bash(rm *)"],
+                    "ask": ["write"],
+                    "allow": ["read"]
+                }
+            }"#,
+        );
+
+        let cli = cli_from(&["norn"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        let shared = bundle
+            .registry
+            .shared_context()
+            .expect("registry exposes a shared context");
+        let policy = shared
+            .get_extension::<PermissionPolicy>()
+            .expect("PermissionPolicy must be installed from settings.permissions");
+        assert_eq!(policy.rule_counts()["deny"], 1);
+        assert_eq!(policy.rule_counts()["ask"], 1);
+        assert_eq!(policy.rule_counts()["allow"], 1);
+        assert!(matches!(
+            policy.evaluate("bash", &serde_json::json!({"command": "rm -rf /tmp/x"})),
+            PermissionDecision::Deny { .. },
+        ));
+    }
+
+    /// H16: no `permissions` section (or an empty one) installs no
+    /// policy — dispatch treats the missing extension as "no consent
+    /// boundary configured".
+    #[test]
+    #[serial_test::serial]
+    fn absent_or_empty_permission_settings_install_no_policy() {
+        use norn::config::PermissionPolicy;
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let guard = TempNornHome::new(tempdir);
+
+        // No settings file at all.
+        let cli = cli_from(&["norn"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        let shared = bundle
+            .registry
+            .shared_context()
+            .expect("registry exposes a shared context");
+        assert!(
+            shared.get_extension::<PermissionPolicy>().is_none(),
+            "no settings: no policy installed",
+        );
+
+        // A permissions section with zero rules.
+        write_user_settings(&guard, r#"{"permissions": {}}"#);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        let shared = bundle
+            .registry
+            .shared_context()
+            .expect("registry exposes a shared context");
+        assert!(
+            shared.get_extension::<PermissionPolicy>().is_none(),
+            "empty permissions section: no policy installed",
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
     fn variables_flag_populates_loop_context_variables() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "--variables", "project=yggdrasil"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert!(bundle.loop_context.variables.is_some());
     }
 
     #[test]
+    #[serial_test::serial]
     fn extension_flag_populates_bundle_extension_uris() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "-e", "stdio://a", "--extension", "http://b"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert_eq!(bundle.extension_uris, vec!["stdio://a", "http://b"]);
     }
 
     #[test]
+    #[serial_test::serial]
     fn empty_extension_uri_returns_argument_error() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "-e", ""]);
         let result = build_runtime(&cli, RuntimeInputs::default());
         match result {
@@ -894,7 +925,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn config_max_turns_only_fills_when_cli_did_not() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli_a = cli_from(&["norn", "--max-turns", "3", "-c", "max_turns=99"]);
         let bundle_a = build_runtime(&cli_a, RuntimeInputs::default()).unwrap();
         assert_eq!(
@@ -909,14 +945,24 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn config_schema_budget_lands_on_agent_config() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "-c", "schema_budget=10"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert_eq!(bundle.agent_config.schema_attempt_budget, 10);
     }
 
     #[test]
+    #[serial_test::serial]
     fn config_base_url_flows_into_provider_overrides() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "-c", "base_url=http://local"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert_eq!(
@@ -926,14 +972,24 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn config_retry_max_overrides_default() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "-c", "retry_max=4"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert_eq!(bundle.loop_context.retry_policy.max_retries, 4);
     }
 
     #[test]
+    #[serial_test::serial]
     fn config_retry_base_delay_overrides_default_backoff() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "-c", "retry_base_delay=2s"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert_eq!(
@@ -943,7 +999,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn event_schema_cli_flag_lands_in_loop_context() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "--event-schema", r#"text={"type":"object"}"#]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         let set = bundle
@@ -955,7 +1016,12 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn invalid_event_type_propagates_as_argument_error() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "--event-schema", r#"made_up={"type":"object"}"#]);
         let result = build_runtime(&cli, RuntimeInputs::default());
         match result {
@@ -982,8 +1048,13 @@ mod tests {
     }
 
     #[test]
+    #[serial_test::serial]
     fn prompt_commands_from_profile_flow_into_loop_context() {
         use norn::profile::PromptCommand;
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("profile.toml");
         std::fs::write(
@@ -1006,7 +1077,12 @@ command = "echo cwd"
     }
 
     #[test]
+    #[serial_test::serial]
     fn rules_flag_loads_rule_engine_onto_loop_context() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("rust.yaml");
         std::fs::write(
@@ -1020,7 +1096,12 @@ command = "echo cwd"
     }
 
     #[test]
+    #[serial_test::serial]
     fn missing_rules_file_returns_argument_error() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "--rules", "/no/such/rules.yaml"]);
         let result = build_runtime(&cli, RuntimeInputs::default());
         match result {
@@ -1030,7 +1111,12 @@ command = "echo cwd"
     }
 
     #[test]
+    #[serial_test::serial]
     fn cli_reasoning_effort_flows_into_loop_context() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "--reasoning-effort", "high"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert_eq!(
@@ -1056,7 +1142,12 @@ command = "echo cwd"
     }
 
     #[test]
+    #[serial_test::serial]
     fn debug_api_flag_flows_into_provider_overrides() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "--debug-api", "/tmp/api-dump"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert_eq!(
@@ -1066,7 +1157,12 @@ command = "echo cwd"
     }
 
     #[test]
+    #[serial_test::serial]
     fn debug_api_flag_without_value_resolves_default() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn", "--debug-api"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         let dir = bundle
@@ -1210,7 +1306,12 @@ command = "echo cwd"
     }
 
     #[test]
+    #[serial_test::serial]
     fn build_runtime_installs_task_store_catalog_and_handles() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         let shared = bundle
@@ -1226,13 +1327,64 @@ command = "echo cwd"
             "SharedToolCatalog must be installed during build_runtime",
         );
         let handles = shared
-            .get_extension::<AgentHandles>()
+            .get_extension::<norn::tools::agent::AgentHandles>()
             .expect("AgentHandles must be installed during build_runtime");
         assert!(handles.is_empty(), "AgentHandles starts empty");
     }
 
+    /// Reclamation ownership at the runtime boundary: `build_runtime` is
+    /// shared between the TUI driver and the headless print path, and the
+    /// TUI's agent status panel owns terminal-entry reclamation through
+    /// its hold window — so the shared builder must NOT install the
+    /// [`norn::tools::agent::ReclaimOnResultDelivery`] marker. Only the
+    /// headless print driver layers it on afterwards (see
+    /// `crate::runtime::install_headless_reclamation`).
+    #[test]
+    #[serial_test::serial]
+    fn build_runtime_does_not_install_reclamation_marker() {
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = cli_from(&["norn"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        let shared = bundle
+            .registry
+            .shared_context()
+            .expect("registry exposes a shared context");
+        assert!(
+            shared
+                .get_extension::<norn::tools::agent::ReclaimOnResultDelivery>()
+                .is_none(),
+            "the shared builder must leave reclamation to the per-driver wiring",
+        );
+    }
+
+    /// The headless print driver's reclamation wiring publishes the
+    /// marker on the same shared context `build_runtime` assembled.
+    #[test]
+    #[serial_test::serial]
+    fn install_headless_reclamation_publishes_marker_on_bundle_context() {
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = cli_from(&["norn"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        crate::runtime::install_headless_reclamation(&bundle.registry);
+        let shared = bundle
+            .registry
+            .shared_context()
+            .expect("registry exposes a shared context");
+        assert!(
+            shared
+                .get_extension::<norn::tools::agent::ReclaimOnResultDelivery>()
+                .is_some(),
+            "headless wiring must install the reclamation marker",
+        );
+    }
+
     #[tokio::test]
+    #[serial_test::serial]
     async fn task_tool_resolves_after_build_runtime() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn"]);
         let bundle = bundle_with_standard_tools(&cli);
         let executor: &dyn ToolExecutor = &*bundle.registry;
@@ -1248,7 +1400,12 @@ command = "echo cwd"
     }
 
     #[tokio::test]
+    #[serial_test::serial]
     async fn tool_search_resolves_after_build_runtime() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
         let cli = cli_from(&["norn"]);
         let bundle = bundle_with_standard_tools(&cli);
         let executor: &dyn ToolExecutor = &*bundle.registry;
@@ -1313,6 +1470,169 @@ command = "echo cwd"
     fn write_user_settings(guard: &TempNornHome, body: &str) {
         let path = guard.path().join("settings.json");
         std::fs::write(&path, body).unwrap();
+    }
+
+    /// H13 regression at the CLI boundary: a programmatic [`HookRegistry`]
+    /// whose `Arc` has an outstanding clone (exactly what an embedder or
+    /// `AgentBuilder` produces) must survive the merge with settings shell
+    /// hooks. The deleted CLI-local assembly silently replaced it with an
+    /// empty registry; the converged library assembly folds it in via
+    /// `HookRegistry::merge_shared`.
+    #[test]
+    #[serial_test::serial]
+    fn programmatic_hooks_survive_outstanding_arc_clone_with_shell_hooks() {
+        use norn::integration::hooks::{Hook, HookOutcome, HookRegistry, StopHook};
+
+        struct BlockingStop;
+
+        #[async_trait::async_trait]
+        impl StopHook for BlockingStop {
+            async fn on_stop(&self, _final_text: &str) -> HookOutcome {
+                HookOutcome::Block {
+                    reason: "programmatic".to_owned(),
+                }
+            }
+        }
+
+        let tempdir = tempfile::tempdir().unwrap();
+        let guard = TempNornHome::new(tempdir);
+        write_user_settings(
+            &guard,
+            r#"{
+                "hooks": {
+                    "pre_tool": [
+                        { "command": "true", "timeout": 1000 }
+                    ]
+                }
+            }"#,
+        );
+
+        let mut programmatic = HookRegistry::new();
+        programmatic.register(Hook::Stop(Box::new(BlockingStop)));
+        let programmatic = Arc::new(programmatic);
+        // The clone an embedder legitimately retains across build_runtime.
+        let outstanding = Arc::clone(&programmatic);
+
+        let cli = cli_from(&["norn"]);
+        let bundle = build_runtime(
+            &cli,
+            RuntimeInputs {
+                registry: ToolRegistry::new(),
+                hooks: Some(programmatic),
+                lsp_workspace: None,
+                lsp_backend: None,
+            },
+        )
+        .unwrap();
+
+        let hooks = bundle
+            .loop_context
+            .hooks
+            .as_ref()
+            .expect("merged registry installed on the loop context");
+        assert_eq!(hooks.pre_tool_len(), 1, "settings shell hook registered");
+        assert_eq!(
+            hooks.stop_len(),
+            1,
+            "programmatic hooks must survive the merge even when the Arc \
+             has outstanding clones (H13)",
+        );
+        drop(outstanding);
+    }
+
+    /// `--workspace-root` confines the registry's shared `ToolContext`.
+    #[test]
+    #[serial_test::serial]
+    fn workspace_root_flag_confines_shared_tool_context() {
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let root = tempfile::tempdir().unwrap();
+        let cli = cli_from(&["norn", "--workspace-root", root.path().to_str().unwrap()]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        let shared = bundle
+            .registry
+            .shared_context()
+            .expect("shared context present");
+        assert_eq!(
+            shared.workspace_root(),
+            Some(std::fs::canonicalize(root.path()).unwrap().as_path()),
+            "--workspace-root must land on ToolContext::workspace_root",
+        );
+    }
+
+    /// Without the flag, path resolution stays unconfined.
+    #[test]
+    #[serial_test::serial]
+    fn no_workspace_root_flag_leaves_tools_unconfined() {
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = cli_from(&["norn"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        let shared = bundle
+            .registry
+            .shared_context()
+            .expect("shared context present");
+        assert!(shared.workspace_root().is_none());
+    }
+
+    /// A nonexistent `--workspace-root` is a hard argument error, not a
+    /// silently-ignored confinement.
+    #[test]
+    #[serial_test::serial]
+    fn workspace_root_missing_directory_is_argument_error() {
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = cli_from(&["norn", "--workspace-root", "/no/such/workspace-root"]);
+        match build_runtime(&cli, RuntimeInputs::default()) {
+            Ok(_) => panic!("expected Argument error for missing workspace root"),
+            Err(BuildError::Argument(reason)) => {
+                assert!(reason.contains("--workspace-root"), "reason: {reason}");
+                assert!(
+                    reason.contains("/no/such/workspace-root"),
+                    "reason: {reason}",
+                );
+            }
+            Err(other @ BuildError::Auth(_)) => panic!("expected Argument, got {other:?}"),
+        }
+    }
+
+    /// `--workspace-root` pointing at a file (not a directory) is rejected.
+    #[test]
+    #[serial_test::serial]
+    fn workspace_root_file_is_argument_error() {
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("plain-file");
+        std::fs::write(&file, "x").unwrap();
+        let cli = cli_from(&["norn", "--workspace-root", file.to_str().unwrap()]);
+        match build_runtime(&cli, RuntimeInputs::default()) {
+            Ok(_) => panic!("expected Argument error for non-directory workspace root"),
+            Err(BuildError::Argument(reason)) => {
+                assert!(reason.contains("not a directory"), "reason: {reason}");
+            }
+            Err(other @ BuildError::Auth(_)) => panic!("expected Argument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unmatched_tool_names_reports_only_unregistered() {
+        let registered: std::collections::HashSet<&str> =
+            ["read", "write", "bash"].into_iter().collect();
+        let names = vec![
+            "read".to_owned(),
+            "Bash".to_owned(),
+            "wrte".to_owned(),
+            "write".to_owned(),
+        ];
+        assert_eq!(
+            unmatched_tool_names(&names, &registered),
+            vec!["Bash", "wrte"],
+            "wrong-case and misspelled names must be reported; exact \
+             matches must not",
+        );
+    }
+
+    #[test]
+    fn unmatched_tool_names_empty_input_reports_nothing() {
+        let registered: std::collections::HashSet<&str> = ["read"].into_iter().collect();
+        assert!(unmatched_tool_names(&[], &registered).is_empty());
     }
 
     #[test]
@@ -1701,6 +2021,106 @@ system_instructions = []
         let cli = cli_from(&["norn"]);
         let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
         assert_eq!(bundle.provider_overrides.rate_limit, None);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn settings_rate_retry_knobs_flow_into_provider_overrides() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let guard = TempNornHome::new(tempdir);
+        write_user_settings(
+            &guard,
+            r#"{
+                "provider": {
+                    "rate_limit_interval": "90s",
+                    "retry_backoff": "500ms",
+                    "retry_after_ceiling": "2m",
+                    "runner_path": "/opt/tools/claude-custom"
+                }
+            }"#,
+        );
+
+        let cli = cli_from(&["norn"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        assert_eq!(
+            bundle.provider_overrides.rate_limit_interval,
+            Some(Duration::from_secs(90)),
+        );
+        assert_eq!(
+            bundle.provider_overrides.retry_backoff,
+            Some(Duration::from_millis(500)),
+        );
+        assert_eq!(
+            bundle.provider_overrides.retry_after_ceiling,
+            Some(Duration::from_mins(2)),
+        );
+        assert_eq!(
+            bundle.provider_overrides.runner_path,
+            Some(PathBuf::from("/opt/tools/claude-custom")),
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cli_dash_c_rate_retry_knobs_win_over_settings() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let guard = TempNornHome::new(tempdir);
+        write_user_settings(
+            &guard,
+            r#"{
+                "provider": {
+                    "rate_limit_interval": "90s",
+                    "retry_backoff": "500ms",
+                    "retry_after_ceiling": "2m"
+                }
+            }"#,
+        );
+
+        let cli = cli_from(&[
+            "norn",
+            "-c",
+            "rate_limit_interval=30s",
+            "-c",
+            "retry_backoff=3s",
+            "-c",
+            "retry_after_ceiling=10m",
+        ]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        assert_eq!(
+            bundle.provider_overrides.rate_limit_interval,
+            Some(Duration::from_secs(30)),
+            "-c overrides settings",
+        );
+        assert_eq!(
+            bundle.provider_overrides.retry_backoff,
+            Some(Duration::from_secs(3)),
+            "-c overrides settings",
+        );
+        assert_eq!(
+            bundle.provider_overrides.retry_after_ceiling,
+            Some(Duration::from_mins(10)),
+            "-c overrides settings",
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn zero_rate_limit_interval_in_settings_rejected_at_build() {
+        let tempdir = tempfile::tempdir().unwrap();
+        let guard = TempNornHome::new(tempdir);
+        write_user_settings(&guard, r#"{"provider":{"rate_limit_interval":"0s"}}"#);
+
+        let cli = cli_from(&["norn"]);
+        match build_runtime(&cli, RuntimeInputs::default()) {
+            Ok(_) => panic!("expected Argument error for zero rate_limit_interval"),
+            Err(BuildError::Argument(reason)) => {
+                assert!(
+                    reason.contains("provider.rate_limit_interval"),
+                    "reason: {reason}",
+                );
+            }
+            Err(other @ BuildError::Auth(_)) => panic!("expected Argument, got {other:?}"),
+        }
     }
 
     /// Set both `HOME` and `NORN_HOME` to (different) temp directories

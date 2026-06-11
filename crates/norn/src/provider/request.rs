@@ -227,7 +227,11 @@ pub struct ProviderConfig {
     pub auth_source: AuthSource,
     /// Optional base URL override.
     pub base_url: Option<String>,
-    /// Request timeout.
+    /// Stall deadline applied to each request phase: connection
+    /// establishment, the wait for response headers, and the gap
+    /// between SSE chunks mid-stream. Deliberately *not* a
+    /// whole-request deadline — streamed responses are legitimately
+    /// long-lived as long as data keeps arriving.
     pub timeout: Duration,
     /// Maximum number of retries on transient failures.
     pub max_retries: u32,
@@ -236,12 +240,36 @@ pub struct ProviderConfig {
     /// JSONL file for writing raw API request/response dumps.
     /// When set, the provider appends structured entries for each call.
     pub debug_dump_file: Option<PathBuf>,
-    /// Permits-per-minute granted by the provider's rate limiter.
+    /// Permits granted per rate-limit interval by the provider's rate
+    /// limiter.
     ///
     /// `None` falls back to the provider-specific compiled default
     /// (currently `60` for the `OpenAI` backend — see
     /// [`crate::provider::openai::OpenAiProvider`]).
     pub rate_limit: Option<u32>,
+    /// Replenishment window over which [`rate_limit`](Self::rate_limit)
+    /// permits are granted.
+    ///
+    /// `None` falls back to the deliberate, owner-approved default of
+    /// 60 seconds (permits-per-minute semantics).
+    pub rate_limit_interval: Option<Duration>,
+    /// Backoff applied to a `429` response that carries no parseable
+    /// `Retry-After` header.
+    ///
+    /// `None` falls back to the deliberate, owner-approved default of
+    /// 1 second.
+    pub retry_backoff: Option<Duration>,
+    /// Optional ceiling on accepted server-supplied `Retry-After`
+    /// waits. When set, any larger server-requested wait is clamped to
+    /// this value before it is slept on, imposed on the shared rate
+    /// limiter, or surfaced in
+    /// [`ProviderError::RateLimited`](crate::error::ProviderError::RateLimited).
+    ///
+    /// `None` honors the header as-is: there is deliberately no
+    /// built-in ceiling, and all arithmetic on the accepted value is
+    /// saturating, so absurd values can stall requests against this
+    /// provider but can never panic.
+    pub retry_after_ceiling: Option<Duration>,
 }
 
 #[cfg(test)]

@@ -30,16 +30,21 @@ use uuid::Uuid;
 
 use super::fork_pipeline::{
     FORK_INBOUND_BUFFER, ForkLaunch, build_fork_context, build_fork_tool_definitions, launch_fork,
-    resolve_fork_store, seed_fork_events,
+    resolve_fork_store,
 };
+use super::fork_seed::seed_fork_events;
 use super::handle::AgentHandles;
 use super::infra::{SubAgentExecutor, infra_from};
+use super::reclaim::{
+    ReclaimOnResultDelivery, entry_terminal_or_reclaimed, reclaim_delivered_child,
+};
 use crate::agent::fork::{
     ForkRequirement, ParentSystemInstruction, build_fork_output_schema, combine_system_instruction,
 };
 use crate::agent::registry::AgentRegistry;
 use crate::agent::result_channel::ChildResultSender;
 use crate::error::ToolError;
+use crate::integration::hooks::HookRegistry;
 use crate::r#loop::inbound::inbound_channel;
 use crate::r#loop::loop_context::LoopContext;
 use crate::tool::context::ToolContext;
@@ -238,12 +243,18 @@ impl Tool for ForkTool {
         // its own child_ctx so the fork's bash `cd`s update both the
         // child's tool path resolution and its loop-level command paths
         // (prompt commands, hooks, rules). The handle is a fresh Arc
-        // initialised from the parent's current dir, so the fork diverges
-        // from the parent independently.
+        // initialised from the parent's current dir (see
+        // `build_fork_context`), so the fork diverges from the parent
+        // independently.
         let mut loop_ctx = LoopContext::with_working_dir(
             combine_system_instruction(&parent_base),
             child_ctx.shared_working_dir(),
         );
+        // Hook coverage (parent → fork): the fork's loop dispatches
+        // pre/post-tool hooks from its *own* LoopContext, so the parent's
+        // shared registry must be installed here — otherwise operator
+        // policy/observability hooks silently never see fork tool calls.
+        loop_ctx.hooks = ctx.get_extension::<HookRegistry>();
         loop_ctx.environment = Some(crate::system_prompt::environment::EnvironmentConfig {
             session_id: None,
             model: args.model.clone(),
@@ -263,6 +274,12 @@ impl Tool for ForkTool {
         // child runs concurrently and this function returns immediately —
         // matching `SpawnAgentTool`'s pattern (R1).
         let result_sender = ctx.get_extension::<ChildResultSender>();
+
+        // Delivery-anchored reclamation is enabled only when the runtime
+        // declared it (no external status observer) AND a result channel
+        // exists to anchor "delivered" to. See `super::reclaim`.
+        let reclaim_on_delivery =
+            result_sender.is_some() && ctx.get_extension::<ReclaimOnResultDelivery>().is_some();
         let child_event_sender = ctx
             .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
             .map(|ch| {
@@ -297,10 +314,19 @@ impl Tool for ForkTool {
                 parent_id: infra.agent_id,
                 forked_session_id,
                 event_sender: child_event_sender,
+                reclaim_handles: reclaim_on_delivery.then(|| Arc::clone(&handles)),
             },
             inbound_tx,
         );
         handles.insert(handle);
+
+        // Close the insert/finish race in reclaim-on-delivery mode: a
+        // fast fork may have finished — and the wrapper's reclamation
+        // may have run — before the insert above stored the handle.
+        // Both sides reclaim idempotently.
+        if reclaim_on_delivery && entry_terminal_or_reclaimed(&infra.registry, fork_id) {
+            reclaim_delivered_child(&infra.registry, &handles, fork_id);
+        }
 
         Ok(ToolOutput {
             content: serde_json::json!({
@@ -552,11 +578,19 @@ mod tests {
             .unwrap()
             .remove(fork_id)
             .expect("handle");
+        let mut status_rx = handle.status_rx.clone();
         handle.join_handle.await.expect("join");
+        // Terminal transition retains the entry (status displays hold it)
+        // with terminal status; the watch channel carries it too.
         assert_eq!(
-            agent_registry.read().get(fork_id).expect("entry").status,
+            agent_registry
+                .read()
+                .get(fork_id)
+                .expect("completed fork entry stays observable until reclaimed")
+                .status,
             AgentStatus::Completed,
         );
+        assert_eq!(*status_rx.borrow_and_update(), AgentStatus::Completed);
     }
 
     /// R2: fork running mid-turn — the parent's latest `AssistantMessage`
@@ -1108,6 +1142,156 @@ mod tests {
         );
     }
 
+    /// Unbounded-retention regression: with
+    /// [`crate::tools::agent::ReclaimOnResultDelivery`] installed and a
+    /// result channel present, a naturally-completed fork's registry
+    /// entry AND parent-held handle are reclaimed once its result has
+    /// been delivered.
+    #[tokio::test]
+    async fn fork_delivered_result_reclaims_when_marker_present() {
+        let provider =
+            structured_response_provider(json!({"response": "done", "requirements": {}}));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+        ctx.insert_extension(Arc::new(crate::tools::agent::ReclaimOnResultDelivery));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"request": "noop", "model": "gpt-5.5", "requirements": []})),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+
+        let result = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("result within timeout")
+            .expect("channel open");
+        assert_eq!(result.agent_id, fork_id);
+
+        let handles = ctx.get_extension::<AgentHandles>().unwrap();
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        while agent_registry.read().get(fork_id).is_some() || handles.contains(fork_id) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "timed out waiting for fork registry entry and handle reclamation",
+            );
+            tokio::time::sleep(Duration::from_millis(5)).await;
+        }
+    }
+
+    /// Permission-escape regression (blocker), end to end: a tool denied
+    /// by the parent's policy must stay denied inside a fork — the fork
+    /// model calls it, dispatch blocks it, and the tool body never runs.
+    #[tokio::test]
+    async fn denied_tool_stays_denied_inside_fork() {
+        struct CountingStubTool {
+            executions: Arc<std::sync::atomic::AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl TestTool for CountingStubTool {
+            fn name(&self) -> &'static str {
+                "victim"
+            }
+            fn description(&self) -> &'static str {
+                "counts executions"
+            }
+            fn input_schema(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
+            fn effect(&self) -> ToolEffect {
+                ToolEffect::ReadOnly
+            }
+            async fn execute(
+                &self,
+                _envelope: &ToolEnvelope,
+                _ctx: &ToolContext,
+            ) -> Result<TestToolOutput, ToolError> {
+                self.executions
+                    .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                Ok(TestToolOutput {
+                    content: serde_json::json!({"ok": true}),
+                    is_error: false,
+                    duration: Duration::ZERO,
+                })
+            }
+        }
+
+        let turn1 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "tc1".to_string(),
+                name: Some("victim".to_string()),
+                arguments_delta: r#"{"command": "rm -rf /"}"#.to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let turn2 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "structured-out".to_string(),
+                name: Some("structured_output".to_string()),
+                arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![turn1, turn2]));
+
+        let executions = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(CountingStubTool {
+            executions: Arc::clone(&executions),
+        }));
+        let tool_registry = Arc::new(tool_registry);
+
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            tool_registry,
+            Arc::new(Mailbox::new()),
+        );
+        ctx.insert_extension(Arc::new(
+            crate::config::permissions::PermissionPolicy::from_patterns(&["victim"], &[], &[]),
+        ));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "try the denied tool", "model": "gpt-5.5", "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+
+        assert_eq!(
+            executions.load(std::sync::atomic::Ordering::SeqCst),
+            0,
+            "a tool denied in the parent must never execute inside a fork",
+        );
+    }
+
     /// R1 failure path: empty provider yields a run error — registry is
     /// marked `Failed` and the parent receives a failure result through the
     /// child result channel.
@@ -1145,13 +1329,219 @@ mod tests {
             .expect("handle");
         handle.join_handle.await.expect("join");
 
+        // Terminal transition retains the entry with Failed status; the
+        // result channel carries the failure.
         assert_eq!(
-            agent_registry.read().get(fork_id).expect("entry").status,
+            agent_registry
+                .read()
+                .get(fork_id)
+                .expect("failed fork entry stays observable until reclaimed")
+                .status,
             AgentStatus::Failed,
         );
         let result = rx.try_recv().expect("failure result on the channel");
         assert_eq!(result.agent_id, fork_id);
         assert!(!result.succeeded, "fork must report failure");
         assert!(result.error.is_some(), "error message present on failure");
+    }
+
+    /// Builds a provider turn carrying a single `read` tool call.
+    fn read_call_turn(item_id: &str, path: &str) -> Vec<ProviderEvent> {
+        vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: item_id.to_string(),
+                name: Some("read".to_string()),
+                arguments_delta: json!({ "path": path }).to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ]
+    }
+
+    /// Confinement-escape regression (blocker), end to end: a parent
+    /// confined to a workspace root forks a child; the fork's `read` of
+    /// an out-of-root file is REFUSED while an in-root read works.
+    #[tokio::test]
+    async fn forked_child_file_tools_respect_parent_confinement() {
+        let root = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        let in_path = root.path().join("inside.txt");
+        std::fs::write(&in_path, "inside-content").unwrap();
+        let out_path = outside.path().join("secret.txt");
+        std::fs::write(&out_path, "secret-content").unwrap();
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            read_call_turn("tc-out", &out_path.to_string_lossy()),
+            read_call_turn("tc-in", &in_path.to_string_lossy()),
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "structured-out".to_string(),
+                    name: Some("structured_output".to_string()),
+                    arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+        ]));
+
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(crate::tools::read::ReadTool::new()));
+        let tool_registry = Arc::new(tool_registry);
+
+        let agent_registry = AgentRegistry::shared();
+        let (mut ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            tool_registry,
+            Arc::new(Mailbox::new()),
+        );
+        ctx.confine_to_workspace(root.path().to_path_buf());
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "read files", "model": "gpt-5.5", "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        let child_store = Arc::clone(&handle.event_store);
+        handle.join_handle.await.expect("join");
+
+        let results: Vec<serde_json::Value> = child_store
+            .events()
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::ToolResult {
+                    tool_name, output, ..
+                } if tool_name == "read" => Some(output.clone()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(results.len(), 2, "both reads produced results: {results:?}");
+        assert_eq!(
+            results[0]["kind"], "confinement_refused",
+            "the out-of-root read must be refused inside the fork: {}",
+            results[0],
+        );
+        assert_eq!(
+            results[1]["kind"], "text",
+            "the in-root read must succeed inside the fork: {}",
+            results[1],
+        );
+        assert!(
+            results[1]["content"]
+                .as_str()
+                .unwrap()
+                .contains("inside-content"),
+            "the in-root read must return the file content: {}",
+            results[1],
+        );
+    }
+
+    /// Hook-coverage regression (reviewer issue): a PreToolUse hook
+    /// registered on the parent must observe a fork's tool calls — the
+    /// fork's loop dispatches hooks from its own `LoopContext`, so the
+    /// parent's registry must be forwarded.
+    #[tokio::test]
+    async fn parent_pre_tool_hook_fires_for_fork_tool_call() {
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        use crate::integration::hooks::{Hook, HookOutcome, HookRegistry, PreToolHook};
+
+        struct CountingPreTool {
+            tool_name: &'static str,
+            count: Arc<AtomicUsize>,
+        }
+
+        #[async_trait]
+        impl PreToolHook for CountingPreTool {
+            async fn before_tool(
+                &self,
+                envelope: &ToolEnvelope,
+                _ctx: &ToolContext,
+            ) -> HookOutcome {
+                if envelope.tool_name == self.tool_name {
+                    self.count.fetch_add(1, AtomicOrdering::SeqCst);
+                }
+                HookOutcome::Proceed
+            }
+        }
+
+        let turn1 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "tc1".to_string(),
+                name: Some("identity".to_string()),
+                arguments_delta: "{}".to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let turn2 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "structured-out".to_string(),
+                name: Some("structured_output".to_string()),
+                arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![turn1, turn2]));
+
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(IdentityStubTool {
+            seen_agent: Arc::new(StdMutex::new(None)),
+            seen_parent: Arc::new(StdMutex::new(None)),
+        }));
+        let tool_registry = Arc::new(tool_registry);
+
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            tool_registry,
+            Arc::new(Mailbox::new()),
+        );
+        let count = Arc::new(AtomicUsize::new(0));
+        let mut hook_registry = HookRegistry::new();
+        hook_registry.register(Hook::PreTool(Box::new(CountingPreTool {
+            tool_name: "identity",
+            count: Arc::clone(&count),
+        })));
+        ctx.insert_extension(Arc::new(hook_registry));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "probe it", "model": "gpt-5.5", "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+
+        assert_eq!(
+            count.load(AtomicOrdering::SeqCst),
+            1,
+            "a parent-registered PreToolUse hook must fire for the fork's tool call",
+        );
     }
 }

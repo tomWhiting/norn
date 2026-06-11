@@ -5,18 +5,84 @@
 //! each target, and `@@` hunks use context-based string matching rather
 //! than line-number-based offsets. Models trained on Claude Code output
 //! frequently produce this format by default.
+//!
+//! Hunks are parsed with their interleaving preserved: the canonical
+//! `ctx / -old / +new / ctx / -old / +new` shape forms one match window
+//! (context **and** removal lines, in order) and one replacement (context
+//! **and** addition lines, in order). The optional locator text after `@@`
+//! (e.g. `@@ fn process_event`) scopes the search: when the window matches
+//! more than once, the candidate closest after the anchor line wins; with
+//! no usable anchor, multiple matches are refused rather than guessed.
 
-/// A single hunk in Claude Code format: context lines locate the
-/// position, `-` lines are removed, `+` lines are inserted.
+use super::patch_match::{AmbiguousMatch, find_all_context_matches};
+
+/// One line of a Claude Code hunk, preserving interleaving order.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) enum CcLine {
+    /// Unchanged context line (part of the match window and the
+    /// replacement).
+    Context(String),
+    /// Removed line (part of the match window only).
+    Remove(String),
+    /// Added line (part of the replacement only).
+    Add(String),
+}
+
+/// A single hunk in Claude Code format.
+#[derive(Clone, Debug)]
 pub(super) struct CcHunk {
-    pub context_before: Vec<String>,
-    pub removals: Vec<String>,
-    pub additions: Vec<String>,
+    /// Locator text following `@@` (e.g. a function signature), used to
+    /// scope the context search. `None` for a bare `@@` line.
+    pub anchor: Option<String>,
+    /// Hunk body in original order.
+    pub lines: Vec<CcLine>,
+}
+
+impl CcHunk {
+    /// The match window: context and removal lines in order.
+    fn old_lines(&self) -> Vec<&str> {
+        self.lines
+            .iter()
+            .filter_map(|l| match l {
+                CcLine::Context(s) | CcLine::Remove(s) => Some(s.as_str()),
+                CcLine::Add(_) => None,
+            })
+            .collect()
+    }
+
+    /// The replacement: context and addition lines in order.
+    fn new_lines(&self) -> Vec<&str> {
+        self.lines
+            .iter()
+            .filter_map(|l| match l {
+                CcLine::Context(s) | CcLine::Add(s) => Some(s.as_str()),
+                CcLine::Remove(_) => None,
+            })
+            .collect()
+    }
+
+    /// Number of added lines.
+    pub(super) fn addition_count(&self) -> usize {
+        self.lines
+            .iter()
+            .filter(|l| matches!(l, CcLine::Add(_)))
+            .count()
+    }
+
+    /// Number of removed lines.
+    pub(super) fn removal_count(&self) -> usize {
+        self.lines
+            .iter()
+            .filter(|l| matches!(l, CcLine::Remove(_)))
+            .count()
+    }
 }
 
 /// A parsed per-file entry from a Claude Code format patch.
 pub(super) struct CcFileBlock {
+    /// Target file path from the `*** Update File:` line.
     pub target: String,
+    /// Hunks to apply, in order.
     pub hunks: Vec<CcHunk>,
 }
 
@@ -30,11 +96,7 @@ pub(super) fn parse_claude_code(input: &str) -> Result<Vec<CcFileBlock>, String>
     let mut blocks: Vec<CcFileBlock> = Vec::new();
     let mut current_target: Option<String> = None;
     let mut current_hunks: Vec<CcHunk> = Vec::new();
-    let mut in_hunk = false;
-    let mut ctx_before: Vec<String> = Vec::new();
-    let mut removes: Vec<String> = Vec::new();
-    let mut adds: Vec<String> = Vec::new();
-    let mut seen_changes = false;
+    let mut current_hunk: Option<CcHunk> = None;
 
     for line in input.lines() {
         let trimmed = line.trim();
@@ -55,8 +117,8 @@ pub(super) fn parse_claude_code(input: &str) -> Result<Vec<CcFileBlock>, String>
 
         if let Some(path) = trimmed.strip_prefix("*** Update File: ") {
             if let Some(target) = current_target.take() {
-                if in_hunk {
-                    current_hunks.push(finish_hunk(&mut ctx_before, &mut removes, &mut adds));
+                if let Some(hunk) = current_hunk.take() {
+                    current_hunks.push(hunk);
                 }
                 blocks.push(CcFileBlock {
                     target,
@@ -64,43 +126,37 @@ pub(super) fn parse_claude_code(input: &str) -> Result<Vec<CcFileBlock>, String>
                 });
             }
             current_target = Some(path.trim().to_string());
-            in_hunk = false;
-            ctx_before.clear();
-            removes.clear();
-            adds.clear();
-            seen_changes = false;
+            current_hunk = None;
             continue;
         }
 
-        if trimmed.starts_with("@@") {
-            if in_hunk {
-                current_hunks.push(finish_hunk(&mut ctx_before, &mut removes, &mut adds));
+        if let Some(rest) = trimmed.strip_prefix("@@") {
+            if let Some(hunk) = current_hunk.take() {
+                current_hunks.push(hunk);
             }
-            in_hunk = true;
-            ctx_before.clear();
-            removes.clear();
-            adds.clear();
-            seen_changes = false;
+            let anchor = rest.trim();
+            current_hunk = Some(CcHunk {
+                anchor: (!anchor.is_empty()).then(|| anchor.to_string()),
+                lines: Vec::new(),
+            });
             continue;
         }
 
-        if in_hunk {
+        if let Some(ref mut hunk) = current_hunk {
             if let Some(added) = line.strip_prefix('+') {
-                adds.push(added.to_string());
-                seen_changes = true;
+                hunk.lines.push(CcLine::Add(added.to_string()));
             } else if let Some(removed) = line.strip_prefix('-') {
-                removes.push(removed.to_string());
-                seen_changes = true;
-            } else if !seen_changes {
+                hunk.lines.push(CcLine::Remove(removed.to_string()));
+            } else {
                 let ctx_line = line.strip_prefix(' ').unwrap_or(line).to_string();
-                ctx_before.push(ctx_line);
+                hunk.lines.push(CcLine::Context(ctx_line));
             }
         }
     }
 
     if let Some(target) = current_target.take() {
-        if in_hunk {
-            current_hunks.push(finish_hunk(&mut ctx_before, &mut removes, &mut adds));
+        if let Some(hunk) = current_hunk.take() {
+            current_hunks.push(hunk);
         }
         blocks.push(CcFileBlock {
             target,
@@ -117,33 +173,72 @@ pub(super) fn parse_claude_code(input: &str) -> Result<Vec<CcFileBlock>, String>
     Ok(blocks)
 }
 
-fn finish_hunk(
-    ctx_before: &mut Vec<String>,
-    removes: &mut Vec<String>,
-    adds: &mut Vec<String>,
-) -> CcHunk {
-    CcHunk {
-        context_before: std::mem::take(ctx_before),
-        removals: std::mem::take(removes),
-        additions: std::mem::take(adds),
+/// Selects the match position for `positions`, using the hunk's `@@` anchor
+/// to scope when there are several candidates.
+///
+/// With an anchor that occurs in the file, each candidate is scored by its
+/// distance below the nearest anchor occurrence at or above it (Claude Code
+/// anchors precede the hunk content, mirroring git hunk headers); the
+/// closest candidate wins when unique. Without a usable anchor, multiple
+/// candidates are ambiguous and refused.
+fn select_cc_position(
+    positions: &[usize],
+    content_lines: &[&str],
+    anchor: Option<&str>,
+) -> Result<usize, AmbiguousMatch> {
+    if let [only] = positions {
+        return Ok(*only);
     }
+
+    if let Some(anchor) = anchor {
+        let anchor_trimmed = anchor.trim();
+        let anchor_lines: Vec<usize> = content_lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.contains(anchor_trimmed))
+            .map(|(i, _)| i)
+            .collect();
+        if !anchor_lines.is_empty() {
+            // Distance from the nearest anchor at or above the candidate;
+            // candidates with no preceding anchor are not considered.
+            let score = |pos: usize| -> Option<usize> {
+                anchor_lines
+                    .iter()
+                    .filter(|&&a| a <= pos)
+                    .map(|&a| pos - a)
+                    .min()
+            };
+            let scored: Vec<(usize, usize)> = positions
+                .iter()
+                .filter_map(|&p| score(p).map(|s| (p, s)))
+                .collect();
+            if let Some(&(best_pos, best_score)) = scored.iter().min_by_key(|&&(_, s)| s)
+                && scored.iter().filter(|&&(_, s)| s == best_score).count() == 1
+            {
+                return Ok(best_pos);
+            }
+        }
+    }
+
+    Err(AmbiguousMatch {
+        candidate_lines: positions.iter().map(|p| p + 1).collect(),
+    })
 }
 
 /// Applies a single Claude Code hunk to file content using string matching.
+///
+/// The match window is the hunk's context **and** removal lines in their
+/// original interleaved order; the replacement substitutes the context and
+/// addition lines in order, so context between change runs is preserved.
 pub(super) fn apply_cc_hunk(content: &str, hunk: &CcHunk) -> Result<String, String> {
-    let search_lines: Vec<&str> = hunk
-        .context_before
-        .iter()
-        .chain(hunk.removals.iter())
-        .map(String::as_str)
-        .collect();
+    let search_lines = hunk.old_lines();
 
-    if search_lines.is_empty() && !hunk.additions.is_empty() {
+    if search_lines.is_empty() && hunk.addition_count() > 0 {
         let mut result = content.to_string();
         if !result.ends_with('\n') {
             result.push('\n');
         }
-        for line in &hunk.additions {
+        for line in hunk.new_lines() {
             result.push_str(line);
             result.push('\n');
         }
@@ -158,49 +253,38 @@ pub(super) fn apply_cc_hunk(content: &str, hunk: &CcHunk) -> Result<String, Stri
     let search_len = search_lines.len();
 
     if search_len > content_lines.len() {
-        let preview = search_lines
-            .iter()
-            .take(3)
-            .copied()
-            .collect::<Vec<_>>()
-            .join("\n");
         return Err(format!(
-            "search pattern ({search_len} lines) is longer than file ({} lines). Looking for:\n{preview}",
-            content_lines.len()
+            "search pattern ({search_len} lines) is longer than file ({} lines). Looking for:\n{}",
+            content_lines.len(),
+            preview(&search_lines),
         ));
     }
 
-    let mut match_pos = None;
-    for i in 0..=content_lines.len() - search_len {
-        let window = &content_lines[i..i + search_len];
-        if window
-            .iter()
-            .zip(search_lines.iter())
-            .all(|(a, b)| a.trim_end() == b.trim_end())
-        {
-            match_pos = Some(i);
-            break;
-        }
-    }
+    let Some((positions, _kind)) = find_all_context_matches(&content_lines, &search_lines) else {
+        return Err(format!(
+            "could not find context in file. Looking for:\n{}",
+            preview(&search_lines),
+        ));
+    };
 
-    let pos = match_pos.ok_or_else(|| {
-        let preview = search_lines
-            .iter()
-            .take(3)
-            .copied()
-            .collect::<Vec<_>>()
-            .join("\n");
-        format!("could not find context in file. Looking for:\n{preview}")
-    })?;
+    let pos = select_cc_position(&positions, &content_lines, hunk.anchor.as_deref()).map_err(
+        |ambiguous| {
+            format!(
+                "context matches at multiple locations ({}){}; refusing to apply rather than \
+                 guess. Add more surrounding context or an `@@ <anchor>` locator naming the \
+                 enclosing declaration",
+                ambiguous.describe_candidates(),
+                hunk.anchor.as_deref().map_or_else(String::new, |a| format!(
+                    " and the anchor `{a}` does not disambiguate them"
+                )),
+            )
+        },
+    )?;
 
+    let new_lines = hunk.new_lines();
     let mut result_lines: Vec<&str> = Vec::with_capacity(content_lines.len());
     result_lines.extend_from_slice(&content_lines[..pos]);
-    for line in &hunk.context_before {
-        result_lines.push(line.as_str());
-    }
-    for line in &hunk.additions {
-        result_lines.push(line.as_str());
-    }
+    result_lines.extend(new_lines.iter().copied());
     let after_match = pos + search_len;
     if after_match < content_lines.len() {
         result_lines.extend_from_slice(&content_lines[after_match..]);
@@ -211,6 +295,16 @@ pub(super) fn apply_cc_hunk(content: &str, hunk: &CcHunk) -> Result<String, Stri
         result.push('\n');
     }
     Ok(result)
+}
+
+/// First three lines of the search window for error messages.
+fn preview(search_lines: &[&str]) -> String {
+    search_lines
+        .iter()
+        .take(3)
+        .copied()
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Applies all Claude Code hunks to file content sequentially.
@@ -224,16 +318,26 @@ pub(super) fn apply_cc_hunks(content: &str, hunks: &[CcHunk]) -> Result<String, 
 }
 
 #[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::needless_pass_by_value,
-    clippy::missing_const_for_fn,
-    clippy::unnecessary_trailing_comma
-)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    fn hunk(anchor: Option<&str>, lines: Vec<CcLine>) -> CcHunk {
+        CcHunk {
+            anchor: anchor.map(str::to_string),
+            lines,
+        }
+    }
+
+    fn ctx(s: &str) -> CcLine {
+        CcLine::Context(s.to_string())
+    }
+    fn rem(s: &str) -> CcLine {
+        CcLine::Remove(s.to_string())
+    }
+    fn add(s: &str) -> CcLine {
+        CcLine::Add(s.to_string())
+    }
 
     #[test]
     fn detects_claude_code_format() {
@@ -258,11 +362,76 @@ mod tests {
         assert_eq!(blocks[0].target, "/tmp/test.rs");
         assert_eq!(blocks[0].hunks.len(), 1);
         assert_eq!(
-            blocks[0].hunks[0].context_before,
-            vec!["fn main() {", "    let x = 1;"]
+            blocks[0].hunks[0].lines,
+            vec![
+                ctx("fn main() {"),
+                ctx("    let x = 1;"),
+                add("    let y = 2;"),
+                ctx("}"),
+            ]
         );
-        assert_eq!(blocks[0].hunks[0].additions, vec!["    let y = 2;"]);
-        assert!(blocks[0].hunks[0].removals.is_empty());
+        assert!(blocks[0].hunks[0].anchor.is_none());
+    }
+
+    #[test]
+    fn parses_interleaved_hunk_preserving_order() {
+        // The canonical ctx / -old / +new / ctx / -old / +new shape: the
+        // historical parser discarded interleaved context, breaking the
+        // match window. The order must be preserved exactly.
+        let input = "\
+*** Begin Patch
+*** Update File: test.rs
+@@ fn main
+ fn main() {
+-    let x = 1;
++    let x = 2;
+     println!(\"x\");
+-    let y = 1;
++    let y = 2;
+ }
+*** End Patch";
+        let blocks = parse_claude_code(input).unwrap();
+        let h = &blocks[0].hunks[0];
+        assert_eq!(h.anchor.as_deref(), Some("fn main"));
+        assert_eq!(
+            h.lines,
+            vec![
+                ctx("fn main() {"),
+                rem("    let x = 1;"),
+                add("    let x = 2;"),
+                ctx("    println!(\"x\");"),
+                rem("    let y = 1;"),
+                add("    let y = 2;"),
+                ctx("}"),
+            ]
+        );
+        assert_eq!(h.addition_count(), 2);
+        assert_eq!(h.removal_count(), 2);
+    }
+
+    /// H10 regression: the reproduced failing shape — interleaved context
+    /// between change runs — must apply correctly end to end.
+    #[test]
+    fn applies_interleaved_hunk() {
+        let content = "fn main() {\n    let x = 1;\n    println!(\"x\");\n    let y = 1;\n}\n";
+        let input = "\
+*** Begin Patch
+*** Update File: test.rs
+@@ fn main
+ fn main() {
+-    let x = 1;
++    let x = 2;
+     println!(\"x\");
+-    let y = 1;
++    let y = 2;
+ }
+*** End Patch";
+        let blocks = parse_claude_code(input).unwrap();
+        let result = apply_cc_hunks(content, &blocks[0].hunks).unwrap();
+        assert_eq!(
+            result,
+            "fn main() {\n    let x = 2;\n    println!(\"x\");\n    let y = 2;\n}\n"
+        );
     }
 
     #[test]
@@ -277,8 +446,11 @@ mod tests {
  }
 *** End Patch";
         let blocks = parse_claude_code(input).unwrap();
-        assert_eq!(blocks[0].hunks[0].removals, vec!["    let x = 1;"]);
-        assert_eq!(blocks[0].hunks[0].additions, vec!["    let x = 2;"]);
+        let h = &blocks[0].hunks[0];
+        assert_eq!(h.removal_count(), 1);
+        assert_eq!(h.addition_count(), 1);
+        assert!(h.lines.contains(&rem("    let x = 1;")));
+        assert!(h.lines.contains(&add("    let x = 2;")));
     }
 
     #[test]
@@ -303,12 +475,15 @@ mod tests {
     #[test]
     fn apply_hunk_inserts_line() {
         let content = "fn main() {\n    let x = 1;\n}\n";
-        let hunk = CcHunk {
-            context_before: vec!["fn main() {".to_string(), "    let x = 1;".to_string()],
-            removals: vec![],
-            additions: vec!["    let y = 2;".to_string()],
-        };
-        let result = apply_cc_hunk(content, &hunk).unwrap();
+        let h = hunk(
+            None,
+            vec![
+                ctx("fn main() {"),
+                ctx("    let x = 1;"),
+                add("    let y = 2;"),
+            ],
+        );
+        let result = apply_cc_hunk(content, &h).unwrap();
         assert!(result.contains("let y = 2;"));
         assert!(result.contains("let x = 1;"));
     }
@@ -316,12 +491,15 @@ mod tests {
     #[test]
     fn apply_hunk_replaces_line() {
         let content = "fn main() {\n    let x = 1;\n}\n";
-        let hunk = CcHunk {
-            context_before: vec!["fn main() {".to_string()],
-            removals: vec!["    let x = 1;".to_string()],
-            additions: vec!["    let x = 2;".to_string()],
-        };
-        let result = apply_cc_hunk(content, &hunk).unwrap();
+        let h = hunk(
+            None,
+            vec![
+                ctx("fn main() {"),
+                rem("    let x = 1;"),
+                add("    let x = 2;"),
+            ],
+        );
+        let result = apply_cc_hunk(content, &h).unwrap();
         assert!(result.contains("let x = 2;"));
         assert!(!result.contains("let x = 1;"));
     }
@@ -329,14 +507,62 @@ mod tests {
     #[test]
     fn apply_hunk_context_not_found() {
         let content = "fn main() {}\n";
-        let hunk = CcHunk {
-            context_before: vec!["nonexistent line".to_string()],
-            removals: vec![],
-            additions: vec!["added".to_string()],
-        };
-        let result = apply_cc_hunk(content, &hunk);
+        let h = hunk(None, vec![ctx("nonexistent line"), add("added")]);
+        let result = apply_cc_hunk(content, &h);
         assert!(result.is_err());
         assert!(result.unwrap_err().contains("could not find context"));
+    }
+
+    #[test]
+    fn anchor_scopes_duplicate_windows() {
+        // Two identical bodies under different functions; the anchor names
+        // the second function, so the second body must be patched.
+        let content = "\
+fn alpha() {
+    let v = 1;
+}
+
+fn beta() {
+    let v = 1;
+}
+";
+        let h = hunk(
+            Some("fn beta"),
+            vec![rem("    let v = 1;"), add("    let v = 2;")],
+        );
+        let result = apply_cc_hunk(content, &h).unwrap();
+        assert_eq!(
+            result,
+            "fn alpha() {\n    let v = 1;\n}\n\nfn beta() {\n    let v = 2;\n}\n"
+        );
+    }
+
+    #[test]
+    fn duplicate_windows_without_anchor_are_refused() {
+        let content = "fn a() {\n    let v = 1;\n}\nfn b() {\n    let v = 1;\n}\n";
+        let h = hunk(None, vec![rem("    let v = 1;"), add("    let v = 2;")]);
+        let err = apply_cc_hunk(content, &h).unwrap_err();
+        assert!(err.contains("multiple locations"), "{err}");
+        assert!(err.contains("refusing"), "{err}");
+    }
+
+    #[test]
+    fn duplicate_windows_with_unmatched_anchor_are_refused() {
+        let content = "fn a() {\n    let v = 1;\n}\nfn b() {\n    let v = 1;\n}\n";
+        let h = hunk(
+            Some("fn missing"),
+            vec![rem("    let v = 1;"), add("    let v = 2;")],
+        );
+        let err = apply_cc_hunk(content, &h).unwrap_err();
+        assert!(err.contains("multiple locations"), "{err}");
+    }
+
+    #[test]
+    fn preserves_missing_trailing_newline() {
+        let content = "line one\nline two";
+        let h = hunk(None, vec![rem("line two"), add("line 2")]);
+        let result = apply_cc_hunk(content, &h).unwrap();
+        assert_eq!(result, "line one\nline 2");
     }
 
     #[test]

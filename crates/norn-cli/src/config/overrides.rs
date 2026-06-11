@@ -30,25 +30,59 @@ use crate::config::{ConfigOverrides, ProviderConfigOverrides, parse_duration};
 /// fit on the [`Profile`] type itself.
 #[derive(Debug, Default, Clone)]
 pub struct AppliedOverrides {
-    /// Tool patterns added by `--disallowed-tools`, applied after tool
-    /// resolution per the brief's NC3 surface. Carried through to the
-    /// runtime bundle so downstream filters (bash command refusal etc.)
-    /// can consume them.
+    /// Tool names added by `--disallowed-tools` (exact names, matching
+    /// the `--allowed-tools` semantics). `build_runtime` applies them to
+    /// the registry via [`norn::tool::registry::ToolRegistry::set_disallowed`]
+    /// — deny wins over the allow-list — and also carries them on the
+    /// runtime bundle for downstream audit surfaces.
     pub disallowed_tools: Vec<String>,
+    /// Tool names supplied via the `--allowed-tools` flag specifically
+    /// (empty when the flag is absent). Kept separately from
+    /// [`Profile::tools`] — which may also be populated by the profile
+    /// file — so `build_runtime` can warn about flag-supplied names that
+    /// match no registered tool without flagging profile-declared lists.
+    pub allowed_tools: Vec<String>,
+}
+
+/// Characters that signal a glob / pattern rather than an exact tool
+/// name. Tool gating (`--allowed-tools` / `--disallowed-tools`) matches
+/// exact registered names only, so any of these in a value means the
+/// user expected pattern semantics that do not exist — silently treating
+/// `'bash*'` as a literal name would gate nothing.
+const TOOL_NAME_PATTERN_CHARS: [char; 6] = ['*', '?', '[', ']', '{', '}'];
+
+/// Reject `flag` values that contain glob / pattern metacharacters.
+///
+/// # Errors
+///
+/// Returns [`BuildError::Argument`] naming the flag and the offending
+/// value when any name contains one of [`TOOL_NAME_PATTERN_CHARS`].
+fn reject_pattern_tool_names(flag: &str, names: &[String]) -> Result<(), BuildError> {
+    for name in names {
+        if name.contains(TOOL_NAME_PATTERN_CHARS) {
+            return Err(BuildError::Argument(format!(
+                "{flag} value '{name}' contains pattern characters \
+                 ({TOOL_NAME_PATTERN_CHARS:?}); tool gating matches exact registered \
+                 tool names only — pass the exact name (e.g. 'bash', not 'bash*')",
+            )));
+        }
+    }
+    Ok(())
 }
 
 /// Apply every `--*` CLI flag in NC3 that targets the [`Profile`].
 ///
 /// `profile` is mutated in place. The return value collects the override
-/// side-channels — currently only the `--disallowed-tools` list — that
-/// have no home on the [`Profile`] type.
+/// side-channels — the `--disallowed-tools` list and the flag-sourced
+/// `--allowed-tools` list — that have no home on the [`Profile`] type.
 ///
 /// # Errors
 ///
-/// Returns [`BuildError::Argument`] when a CLI value fails validation —
-/// for example an unparseable `--timeout` (handled in
-/// [`apply_loop_config_overrides`], not here, but the function returns
-/// the unified error type for symmetry).
+/// Returns [`BuildError::Argument`] when a `--allowed-tools` or
+/// `--disallowed-tools` value contains glob / pattern metacharacters
+/// (see [`reject_pattern_tool_names`]) — gating matches exact registered
+/// names only, and silently treating `'bash*'` as a literal would
+/// enforce nothing.
 pub fn apply_cli_profile_overrides(
     cli: &Cli,
     profile: &mut Profile,
@@ -65,8 +99,14 @@ pub fn apply_cli_profile_overrides(
         profile.system_instructions.push(appended.to_owned());
     }
 
-    if let Some(allowed) = cli.allowed_tools.as_deref() {
-        profile.tools = Some(split_csv(allowed));
+    let allowed_tools = cli
+        .allowed_tools
+        .as_deref()
+        .map(split_csv)
+        .unwrap_or_default();
+    reject_pattern_tool_names("--allowed-tools", &allowed_tools)?;
+    if cli.allowed_tools.is_some() {
+        profile.tools = Some(allowed_tools.clone());
     }
 
     let disallowed_tools = cli
@@ -74,12 +114,16 @@ pub fn apply_cli_profile_overrides(
         .as_deref()
         .map(split_csv)
         .unwrap_or_default();
+    reject_pattern_tool_names("--disallowed-tools", &disallowed_tools)?;
 
     if let Some(effort) = cli.reasoning_effort {
         profile.reasoning_effort = Some(convert_reasoning_effort(effort));
     }
 
-    Ok(AppliedOverrides { disallowed_tools })
+    Ok(AppliedOverrides {
+        disallowed_tools,
+        allowed_tools,
+    })
 }
 
 /// Apply CLI flags that target [`AgentLoopConfig`] (`--max-turns`,
@@ -190,14 +234,18 @@ pub fn apply_settings_to_agent_config(
 /// defaults below the `-c` layer (NC-004 R3 + NC-005 R4).
 ///
 /// Maps the `provider` section verbatim: `base_url`, `timeout`,
-/// `max_retries`, `options`, `debug_dump_dir`, and `rate_limit`.
-/// `runner_path` is out of scope here — the Claude Runner adapter does
-/// not flow through `ProviderConfigOverrides`.
+/// `max_retries`, `options`, `debug_dump_dir`, `rate_limit`,
+/// `rate_limit_interval`, `retry_backoff`, `retry_after_ceiling`, and
+/// `runner_path`. Duration strings are parsed here; `runner_path`
+/// converts to a [`PathBuf`] and is consumed only by the Claude-Runner
+/// backend in `print/provider.rs::build_provider`.
 ///
 /// # Errors
 ///
-/// Returns [`BuildError::Argument`] when `provider.timeout` is present
-/// but fails to parse as a humantime duration.
+/// Returns [`BuildError::Argument`] when `provider.timeout`,
+/// `provider.rate_limit_interval`, `provider.retry_backoff`, or
+/// `provider.retry_after_ceiling` is present but fails to parse as a
+/// humantime duration.
 pub fn provider_overrides_from_settings(
     settings: &NornSettings,
 ) -> Result<ProviderConfigOverrides, BuildError> {
@@ -223,6 +271,24 @@ pub fn provider_overrides_from_settings(
     if let Some(rate_limit) = provider.rate_limit {
         overrides.rate_limit = Some(rate_limit);
     }
+    if let Some(interval) = provider.rate_limit_interval.as_deref() {
+        overrides.rate_limit_interval = Some(parse_settings_duration(
+            "provider.rate_limit_interval",
+            interval,
+        )?);
+    }
+    if let Some(backoff) = provider.retry_backoff.as_deref() {
+        overrides.retry_backoff = Some(parse_settings_duration("provider.retry_backoff", backoff)?);
+    }
+    if let Some(ceiling) = provider.retry_after_ceiling.as_deref() {
+        overrides.retry_after_ceiling = Some(parse_settings_duration(
+            "provider.retry_after_ceiling",
+            ceiling,
+        )?);
+    }
+    if let Some(runner_path) = provider.runner_path.as_deref() {
+        overrides.runner_path = Some(PathBuf::from(runner_path));
+    }
     Ok(overrides)
 }
 
@@ -247,6 +313,15 @@ pub fn overlay_cli_provider_overrides(
     }
     if let Some(dump_dir) = cli.debug_dump_dir.as_ref() {
         overrides.debug_dump_dir = Some(dump_dir.clone());
+    }
+    if let Some(interval) = cli.rate_limit_interval {
+        overrides.rate_limit_interval = Some(interval);
+    }
+    if let Some(backoff) = cli.retry_backoff {
+        overrides.retry_backoff = Some(backoff);
+    }
+    if let Some(ceiling) = cli.retry_after_ceiling {
+        overrides.retry_after_ceiling = Some(ceiling);
     }
 }
 
@@ -517,6 +592,76 @@ mod tests {
     }
 
     #[test]
+    fn allowed_tools_glob_pattern_is_hard_error() {
+        let cli = cli_from(&["norn", "--allowed-tools", "bash*"]);
+        let mut profile = Profile::default();
+        let err = apply_cli_profile_overrides(&cli, &mut profile).unwrap_err();
+        match err {
+            BuildError::Argument(reason) => {
+                assert!(reason.contains("--allowed-tools"), "reason: {reason}");
+                assert!(reason.contains("bash*"), "reason: {reason}");
+                assert!(reason.contains("exact"), "reason: {reason}");
+            }
+            other @ BuildError::Auth(_) => panic!("expected Argument, got {other:?}"),
+        }
+        // The profile must not have been partially gated.
+        assert!(profile.tools.is_none());
+    }
+
+    #[test]
+    fn disallowed_tools_glob_pattern_is_hard_error() {
+        for pattern in ["bash*", "to?l", "tool[ab]", "tool{ab}"] {
+            let cli = cli_from(&["norn", "--disallowed-tools", pattern]);
+            let mut profile = Profile::default();
+            let err = apply_cli_profile_overrides(&cli, &mut profile).unwrap_err();
+            match err {
+                BuildError::Argument(reason) => {
+                    assert!(
+                        reason.contains("--disallowed-tools"),
+                        "pattern {pattern}: reason: {reason}",
+                    );
+                    assert!(
+                        reason.contains(pattern),
+                        "pattern {pattern}: reason: {reason}",
+                    );
+                }
+                other @ BuildError::Auth(_) => panic!("expected Argument, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn exact_tool_names_pass_pattern_rejection() {
+        let cli = cli_from(&[
+            "norn",
+            "--allowed-tools",
+            "read,write_file,lsp-bridge",
+            "--disallowed-tools",
+            "bash",
+        ]);
+        let mut profile = Profile::default();
+        let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();
+        assert_eq!(
+            applied.allowed_tools,
+            vec!["read", "write_file", "lsp-bridge"],
+        );
+        assert_eq!(applied.disallowed_tools, vec!["bash"]);
+    }
+
+    #[test]
+    fn allowed_tools_flag_absent_leaves_applied_allowed_empty() {
+        let cli = cli_from(&["norn"]);
+        let mut profile = Profile {
+            tools: Some(vec!["from-profile".to_owned()]),
+            ..Profile::default()
+        };
+        let applied = apply_cli_profile_overrides(&cli, &mut profile).unwrap();
+        assert!(applied.allowed_tools.is_empty());
+        // Profile-declared tools stay untouched by the flag plumbing.
+        assert_eq!(profile.tools, Some(vec!["from-profile".to_owned()]));
+    }
+
+    #[test]
     fn disallowed_tools_returned_in_applied_overrides() {
         let cli = cli_from(&["norn", "--disallowed-tools", "write,edit"]);
         let mut profile = Profile::default();
@@ -690,6 +835,10 @@ mod tests {
                 options: Some(serde_json::json!({"k":"v"})),
                 debug_dump_dir: Some("/tmp/dump".to_owned()),
                 rate_limit: Some(120),
+                rate_limit_interval: Some("90s".to_owned()),
+                retry_backoff: Some("500ms".to_owned()),
+                retry_after_ceiling: Some("2m".to_owned()),
+                runner_path: Some("/usr/local/bin/claude".to_owned()),
                 ..ProviderSettings::default()
             }),
             ..NornSettings::default()
@@ -711,6 +860,99 @@ mod tests {
         );
         assert_eq!(overrides.debug_dump_dir, Some(PathBuf::from("/tmp/dump")));
         assert_eq!(overrides.rate_limit, Some(120));
+        assert_eq!(overrides.rate_limit_interval, Some(Duration::from_secs(90)));
+        assert_eq!(overrides.retry_backoff, Some(Duration::from_millis(500)));
+        assert_eq!(overrides.retry_after_ceiling, Some(Duration::from_mins(2)));
+        assert_eq!(
+            overrides.runner_path,
+            Some(PathBuf::from("/usr/local/bin/claude")),
+        );
+    }
+
+    #[test]
+    fn provider_overrides_from_settings_rejects_bad_rate_retry_durations() {
+        use norn::config::{NornSettings, ProviderSettings};
+        for (field, provider) in [
+            (
+                "provider.rate_limit_interval",
+                ProviderSettings {
+                    rate_limit_interval: Some("nope".to_owned()),
+                    ..ProviderSettings::default()
+                },
+            ),
+            (
+                "provider.retry_backoff",
+                ProviderSettings {
+                    retry_backoff: Some("nope".to_owned()),
+                    ..ProviderSettings::default()
+                },
+            ),
+            (
+                "provider.retry_after_ceiling",
+                ProviderSettings {
+                    retry_after_ceiling: Some("nope".to_owned()),
+                    ..ProviderSettings::default()
+                },
+            ),
+        ] {
+            let settings = NornSettings {
+                provider: Some(provider),
+                ..NornSettings::default()
+            };
+            let err = provider_overrides_from_settings(&settings).unwrap_err();
+            match err {
+                BuildError::Argument(reason) => {
+                    assert!(reason.contains(field), "reason must name {field}: {reason}");
+                }
+                other @ BuildError::Auth(_) => panic!("expected Argument, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn cli_rate_retry_overrides_beat_settings_values() {
+        // Precedence: `-c` flag beats settings, settings beat the library
+        // default — same chain as timeout / max_retries.
+        use norn::config::{NornSettings, ProviderSettings};
+        let settings = NornSettings {
+            provider: Some(ProviderSettings {
+                rate_limit_interval: Some("90s".to_owned()),
+                retry_backoff: Some("500ms".to_owned()),
+                retry_after_ceiling: Some("2m".to_owned()),
+                ..ProviderSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let mut overrides = provider_overrides_from_settings(&settings).unwrap();
+        let cli = ConfigOverrides {
+            rate_limit_interval: Some(Duration::from_secs(30)),
+            retry_backoff: Some(Duration::from_secs(3)),
+            retry_after_ceiling: Some(Duration::from_mins(10)),
+            ..ConfigOverrides::default()
+        };
+        overlay_cli_provider_overrides(&mut overrides, &cli);
+        assert_eq!(overrides.rate_limit_interval, Some(Duration::from_secs(30)));
+        assert_eq!(overrides.retry_backoff, Some(Duration::from_secs(3)));
+        assert_eq!(overrides.retry_after_ceiling, Some(Duration::from_mins(10)),);
+    }
+
+    #[test]
+    fn settings_rate_retry_values_survive_when_cli_unset() {
+        use norn::config::{NornSettings, ProviderSettings};
+        let settings = NornSettings {
+            provider: Some(ProviderSettings {
+                rate_limit_interval: Some("90s".to_owned()),
+                retry_backoff: Some("500ms".to_owned()),
+                retry_after_ceiling: Some("2m".to_owned()),
+                ..ProviderSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let mut overrides = provider_overrides_from_settings(&settings).unwrap();
+        overlay_cli_provider_overrides(&mut overrides, &ConfigOverrides::default());
+        assert_eq!(overrides.rate_limit_interval, Some(Duration::from_secs(90)));
+        assert_eq!(overrides.retry_backoff, Some(Duration::from_millis(500)));
+        assert_eq!(overrides.retry_after_ceiling, Some(Duration::from_mins(2)));
     }
 
     #[test]
@@ -734,6 +976,10 @@ mod tests {
             debug_dump_dir: Some(PathBuf::from("/tmp/from-settings")),
             debug_dump_file: None,
             rate_limit: None,
+            rate_limit_interval: None,
+            retry_backoff: None,
+            retry_after_ceiling: None,
+            runner_path: None,
         };
         let cli = ConfigOverrides {
             base_url: Some("https://from-cli".to_owned()),
@@ -741,6 +987,9 @@ mod tests {
             request_timeout: Some(Duration::from_secs(50)),
             provider_options: Some(serde_json::json!({"k":"cli"})),
             debug_dump_dir: Some(PathBuf::from("/tmp/from-cli")),
+            rate_limit_interval: Some(Duration::from_secs(30)),
+            retry_backoff: Some(Duration::from_millis(500)),
+            retry_after_ceiling: Some(Duration::from_mins(2)),
             ..ConfigOverrides::default()
         };
         overlay_cli_provider_overrides(&mut base, &cli);
@@ -755,6 +1004,9 @@ mod tests {
             Some("cli"),
         );
         assert_eq!(base.debug_dump_dir, Some(PathBuf::from("/tmp/from-cli")));
+        assert_eq!(base.rate_limit_interval, Some(Duration::from_secs(30)));
+        assert_eq!(base.retry_backoff, Some(Duration::from_millis(500)));
+        assert_eq!(base.retry_after_ceiling, Some(Duration::from_mins(2)));
     }
 
     #[test]

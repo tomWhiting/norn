@@ -295,6 +295,34 @@ pub(crate) fn extract_tool_use_description(arguments: &str) -> Option<String> {
         .filter(|d| !d.is_empty())
 }
 
+/// Flush the session store's persistence sink: pending durability work
+/// and the index-registered sink's accumulated delta (event counts,
+/// usage totals, `updated_at`) land now instead of at drop, so the
+/// session's `index.jsonl` entry stays current across turns and an
+/// abort cannot lose the delta. A no-op for sink-less stores
+/// (ephemeral / `--no-session` mode).
+///
+/// Mirrors the print orchestrator's post-turn / post-`/compact`
+/// checkpoint (`norn-cli::print::orchestrator::checkpoint_session`),
+/// adapted to the TUI's error surface: a checkpoint failure must never
+/// abort the turn — the conversation on screen is intact and the
+/// JSONL event file is write-through — so the failure is logged via
+/// `tracing::warn!` and returned as a message for the caller to write
+/// in the red error-line style.
+pub(crate) fn checkpoint_session(store: &norn::session::store::EventStore) -> Option<String> {
+    match store.checkpoint() {
+        Ok(()) => None,
+        Err(err) => {
+            tracing::warn!(
+                error = %err,
+                "session checkpoint failed; the session index entry will lag \
+                 until the next successful checkpoint or clean shutdown",
+            );
+            Some(format!("session checkpoint failed: {err}"))
+        }
+    }
+}
+
 /// Extract a short argument summary from the tool's inner arguments.
 ///
 /// Falls back to common field names (`file_path`, `command`, `pattern`,
@@ -317,9 +345,104 @@ pub(crate) fn extract_argument_summary(arguments: &str) -> Option<String> {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
+
+    use norn::session::events::{EventBase, SessionEvent};
+    use norn::session::store::EventStore;
+    use norn::session::{DurabilityPolicy, attach_sink, create_session, read_index};
+
+    fn session_with_registered_sink(data_dir: &std::path::Path) -> (String, EventStore) {
+        let entry = create_session(
+            data_dir,
+            "test-model".to_owned(),
+            "/tmp/work".to_owned(),
+            None,
+        )
+        .unwrap();
+        let store = attach_sink(
+            EventStore::new(),
+            data_dir,
+            &entry.id,
+            DurabilityPolicy::Flush,
+        )
+        .unwrap();
+        (entry.id, store)
+    }
+
+    /// Turn-boundary regression for the stale-index seam: under
+    /// `DurabilityPolicy::Flush` the index delta is batched in the sink,
+    /// so without an explicit checkpoint the entry only updates at drop
+    /// (clean shutdown) — an abort loses it. `checkpoint_session` must
+    /// land the delta while the store stays live across turns.
+    #[test]
+    fn checkpoint_session_flushes_index_delta_without_drop() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (id, store) = session_with_registered_sink(tmp.path());
+        store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(None),
+                content: "turn one".to_owned(),
+            })
+            .unwrap();
+
+        let before = read_index(tmp.path()).unwrap();
+        let entry = before.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(
+            entry.event_count, 0,
+            "precondition: Flush policy batches the index delta until checkpoint",
+        );
+
+        assert_eq!(
+            checkpoint_session(&store),
+            None,
+            "successful checkpoint reports no error",
+        );
+
+        let after = read_index(tmp.path()).unwrap();
+        let entry = after.iter().find(|e| e.id == id).unwrap();
+        assert_eq!(
+            entry.event_count, 1,
+            "checkpoint must flush the pending index delta while the store lives",
+        );
+        // Keep the store alive past the assertion so a drop-flush cannot
+        // mask a checkpoint that did nothing.
+        drop(store);
+    }
+
+    /// A sink-less store (`--no-session`) checkpoints as a no-op.
+    #[test]
+    fn checkpoint_session_sinkless_store_is_noop() {
+        let store = EventStore::new();
+        assert_eq!(checkpoint_session(&store), None);
+    }
+
+    /// Checkpoint failure surfaces a message (for the red error-line
+    /// style) instead of panicking or aborting — the turn must survive.
+    #[test]
+    fn checkpoint_session_failure_returns_message() {
+        let tmp = tempfile::tempdir().unwrap();
+        let data_dir = tmp.path().join("sessions");
+        std::fs::create_dir_all(&data_dir).unwrap();
+        let (_id, store) = session_with_registered_sink(&data_dir);
+        store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(None),
+                content: "doomed".to_owned(),
+            })
+            .unwrap();
+
+        // Destroy the data directory so the index rewrite cannot land.
+        std::fs::remove_dir_all(&data_dir).unwrap();
+
+        let message = checkpoint_session(&store)
+            .expect("checkpoint against a destroyed data dir must surface a failure");
+        assert!(
+            message.contains("session checkpoint failed"),
+            "message must identify the failure: {message}",
+        );
+    }
 
     #[test]
     fn dim_line_count_single_line() {

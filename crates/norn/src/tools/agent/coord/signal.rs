@@ -1,5 +1,4 @@
-//! `SignalAgentTool` — steer a child via its inbound channel, or signal a
-//! peer via the shared mailbox.
+//! `SignalAgentTool` — steer a child via its inbound channel.
 
 use std::time::Instant;
 
@@ -17,14 +16,15 @@ use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 use crate::tools::agent::handle::AgentHandles;
 use crate::tools::agent::infra::{infra_from, resolve_agent_id};
 
-/// Sends a steering signal to another agent.
+/// Sends a steering signal to a child agent.
 ///
-/// When the recipient is a child the parent holds an
-/// [`crate::tools::agent::handle::AgentHandle`] for, the signal is
-/// delivered via the child's
-/// [`crate::r#loop::inbound::InboundChannel`] (`Steer` / `FollowUp`), draining
-/// at the child's next tool boundary. Otherwise the signal falls through to
-/// the shared [`crate::agent::mailbox::Mailbox`].
+/// Delivery requires the caller to hold an
+/// [`crate::tools::agent::handle::AgentHandle`] for the recipient: the
+/// signal travels through the child's
+/// [`crate::r#loop::inbound::InboundChannel`] (`Steer` / `FollowUp`) and
+/// drains at the child's next tool boundary. When no handle is held there is
+/// no channel any loop drains, so the tool returns a structured delivery
+/// failure instead of pretending the message was sent.
 pub struct SignalAgentTool;
 
 impl SignalAgentTool {
@@ -157,21 +157,27 @@ impl Tool for SignalAgentTool {
             });
         }
 
-        // Fallback: peer-to-peer signalling via the shared mailbox. No
-        // AgentHandle held by the sender means the recipient is not a
-        // direct child (or AgentHandles is absent entirely).
-        let sequence = infra
-            .mailbox
-            .send(infra.agent_id, to_id, args.content, trigger_turn);
+        // H15: no AgentHandle means there is no inbound channel to deliver
+        // through. The shared mailbox is NOT a delivery path — no agent loop
+        // drains it — so queueing there would report success for a message
+        // nobody will ever read. Fail honestly with the reason so the model
+        // can pick a reachable recipient or restructure its coordination.
         let payload = serde_json::json!({
+            "delivered": false,
             "to": to_id.to_string(),
-            "sequence": sequence,
-            "trigger_turn": trigger_turn,
-            "routed_via": "mailbox",
+            "error": "no delivery channel to recipient",
+            "reason": format!(
+                "signal_agent can only deliver to agents whose handle this agent holds — \
+                 children it spawned or forked itself. '{}' is registered but is not a \
+                 direct child of this agent, so there is no inbound channel to deliver \
+                 through. Signal your own children directly, or route the message via \
+                 the recipient's parent.",
+                args.to,
+            ),
         });
         Ok(ToolOutput {
             content: payload,
-            is_error: false,
+            is_error: true,
             duration: started.elapsed(),
         })
     }
@@ -270,10 +276,11 @@ mod tests {
         assert_eq!(drained[0].content, "fyi");
     }
 
-    /// Existing contract preserved: peer-to-peer signal with no
-    /// `AgentHandle` for the recipient still hits the mailbox.
+    /// H15: a recipient the sender holds no `AgentHandle` for is
+    /// unreachable. The tool must report a structured delivery failure —
+    /// never a fake success into a queue nothing drains.
     #[tokio::test]
-    async fn signal_agent_delivers_to_target_mailbox() {
+    async fn signal_agent_reports_delivery_failure_for_non_child() {
         let sender = Uuid::new_v4();
         let (infra, registry, mailbox) = build_infra(sender);
         let recipient = register_agent(&registry, "/peer", None);
@@ -290,22 +297,30 @@ mod tests {
                 "trigger_turn": true,
             }),
         );
-        let out = tool.execute(&envelope, &ctx).await.expect("send");
-        assert!(!out.is_error, "{:?}", out.content);
-        assert_eq!(out.content["sequence"], 1);
-        assert_eq!(out.content["routed_via"], "mailbox");
-
-        let received = mailbox.recv(recipient);
-        assert_eq!(received.len(), 1);
-        assert_eq!(received[0].content["hello"], "world");
-        assert_eq!(received[0].from, sender);
-        assert!(received[0].trigger_turn);
+        let out = tool.execute(&envelope, &ctx).await.expect("executes");
+        assert!(
+            out.is_error,
+            "delivery failure must be an error the model sees"
+        );
+        assert_eq!(out.content["delivered"], false);
+        assert_eq!(out.content["to"], recipient.to_string());
+        assert!(
+            out.content["reason"]
+                .as_str()
+                .is_some_and(|r| r.contains("inbound channel")),
+            "the failure explains why delivery is impossible: {:?}",
+            out.content,
+        );
+        assert!(
+            mailbox.recv(recipient).is_empty(),
+            "nothing may be queued into the undrained mailbox",
+        );
     }
 
-    /// `AgentHandles` present but the recipient is not tracked: fall
-    /// through to mailbox.
+    /// H15: `AgentHandles` present but the recipient is not tracked —
+    /// same structured delivery failure, no mailbox side effects.
     #[tokio::test]
-    async fn signal_agent_falls_back_to_mailbox_when_handle_absent() {
+    async fn signal_agent_reports_delivery_failure_when_handle_absent() {
         let sender = Uuid::new_v4();
         let (infra, registry, mailbox) = build_infra(sender);
         let recipient = register_agent(&registry, "/peer", None);
@@ -320,9 +335,13 @@ mod tests {
             "signal_agent",
             json!({"to": "/peer", "content": "hi", "trigger_turn": false}),
         );
-        let out = tool.execute(&envelope, &ctx).await.expect("send");
-        assert_eq!(out.content["routed_via"], "mailbox");
-        assert_eq!(mailbox.recv(recipient).len(), 1);
+        let out = tool.execute(&envelope, &ctx).await.expect("executes");
+        assert!(out.is_error);
+        assert_eq!(out.content["delivered"], false);
+        assert!(
+            mailbox.recv(recipient).is_empty(),
+            "nothing may be queued into the undrained mailbox",
+        );
     }
 
     #[tokio::test]

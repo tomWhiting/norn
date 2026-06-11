@@ -608,7 +608,11 @@ pub fn write_tool_result(
 }
 
 /// Write a red `error: {message}` line into the scroll region.
-fn write_error_line(
+///
+/// `pub(super)` so [`super::slash`] can surface command failures (e.g.
+/// `/new` session-creation errors) in the same style as provider and
+/// turn errors.
+pub(super) fn write_error_line(
     state: &AppState,
     guard: &mut TerminalGuard,
     message: &str,

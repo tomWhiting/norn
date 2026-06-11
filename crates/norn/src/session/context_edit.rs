@@ -4,11 +4,68 @@
 //! is never mutated by context editing — only new events (compactions,
 //! injections) are appended.
 
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::error::SessionError;
 use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
+
+/// Result of a successful [`ContextEdits::auto_compact_keeping_recent_turns`]
+/// call.
+///
+/// Carries everything a live consumer (the agent loop) needs to apply the
+/// compaction to an in-flight prompt without re-deriving state: the ID of the
+/// appended [`SessionEvent::Compaction`] and the IDs of the events this
+/// specific compaction newly hid from prompt construction.
+#[derive(Debug)]
+pub struct AutoCompactionOutcome {
+    /// ID of the appended [`SessionEvent::Compaction`] event.
+    pub compaction_id: EventId,
+    /// Events that were visible in the prompt view before this compaction
+    /// and are superseded by it. Excludes events that were already
+    /// superseded by an earlier compaction or suppressed (those produced no
+    /// prompt content to begin with). Ordered by store insertion order.
+    pub newly_superseded: Vec<EventId>,
+}
+
+/// A computed auto-compaction cut that has not yet been committed.
+///
+/// Produced by [`ContextEdits::plan_auto_compaction`] and consumed by
+/// [`ContextEdits::commit_compaction_plan`]. The two-phase split exists so
+/// a caller that owns a provider handle (the agent loop) can generate an
+/// LLM-written summary of the events about to be elided *before* the
+/// compaction record is appended, while callers without one (manual
+/// `/compact` paths) commit the mechanical digest directly.
+#[derive(Debug)]
+pub struct CompactionPlan {
+    /// Exclusive end of the replaced span in store insertion order.
+    cut_exclusive: usize,
+    /// IDs of every event the compaction will supersede.
+    replaced_ids: Vec<EventId>,
+    /// Subset of `replaced_ids` that was still visible in the prompt view
+    /// when the plan was computed.
+    newly_superseded: Vec<EventId>,
+}
+
+impl CompactionPlan {
+    /// Exclusive end of the replaced span in store insertion order.
+    #[must_use]
+    pub const fn cut_exclusive(&self) -> usize {
+        self.cut_exclusive
+    }
+
+    /// IDs of every event the compaction will supersede.
+    #[must_use]
+    pub fn replaced_ids(&self) -> &[EventId] {
+        &self.replaced_ids
+    }
+
+    /// Events still visible in the prompt view when the plan was computed.
+    #[must_use]
+    pub fn newly_superseded(&self) -> &[EventId] {
+        &self.newly_superseded
+    }
+}
 
 /// Tracks context editing marks applied to session events.
 ///
@@ -135,19 +192,112 @@ impl ContextEdits {
         self.superseded.contains(id)
     }
 
-    /// Auto-compact older events while retaining the most recent
-    /// `keep_turns` assistant turns.
+    /// Compute the auto-compaction cut that retains the most recent
+    /// `keep_turns` assistant turns, without committing it.
     ///
     /// A *turn* is an [`SessionEvent::AssistantMessage`]. The function
     /// counts back from the end of the store, finds the cut position N+1
-    /// turns back, marks every event before the cut as superseded, and
-    /// appends a single [`SessionEvent::Compaction`] whose summary is a
-    /// JSON object describing the compaction (event count, freed token
-    /// estimate, turn range).
+    /// turns back (extended past any still-pending tool results of that
+    /// turn), and reports every event before the cut as replaced.
     ///
-    /// Returns `Ok(None)` when there are not yet `keep_turns + 1`
-    /// assistant turns in the store (nothing to compact). Returns the
-    /// `EventId` of the appended `Compaction` event on success.
+    /// Returns `None` when there are not yet `keep_turns + 1` assistant
+    /// turns in the store, or when the cut would replace nothing.
+    #[must_use]
+    pub fn plan_auto_compaction(
+        &self,
+        store: &EventStore,
+        keep_turns: usize,
+    ) -> Option<CompactionPlan> {
+        let events = store.events();
+        let assistant_positions: Vec<usize> = events
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, e)| {
+                matches!(e, SessionEvent::AssistantMessage { .. }).then_some(idx)
+            })
+            .collect();
+        if assistant_positions.len() <= keep_turns {
+            return None;
+        }
+        let prior_assistant_idx = assistant_positions[assistant_positions.len() - keep_turns - 1];
+        let cut_exclusive = compact_boundary_after_tool_results(&events, prior_assistant_idx);
+        let replaced_ids: Vec<EventId> = events[..cut_exclusive]
+            .iter()
+            .map(|e| e.base().id.clone())
+            .collect();
+        if replaced_ids.is_empty() {
+            return None;
+        }
+        let newly_superseded: Vec<EventId> = replaced_ids
+            .iter()
+            .filter(|id| !self.superseded.contains(*id) && !self.suppressed.contains(*id))
+            .cloned()
+            .collect();
+        Some(CompactionPlan {
+            cut_exclusive,
+            replaced_ids,
+            newly_superseded,
+        })
+    }
+
+    /// Commit a [`CompactionPlan`]: append a [`SessionEvent::Compaction`]
+    /// carrying `summary` and mark every planned event as superseded.
+    ///
+    /// The plan is re-validated against the store before anything is
+    /// written: because the store is append-only, the planned prefix must
+    /// still be identical, and a mismatch means the plan was computed
+    /// against a different store.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::EventAppendFailed`] if the plan no longer
+    /// matches the store or the compaction event cannot be appended.
+    pub fn commit_compaction_plan(
+        &mut self,
+        store: &EventStore,
+        plan: CompactionPlan,
+        summary: String,
+    ) -> Result<AutoCompactionOutcome, SessionError> {
+        let events = store.events();
+        let prefix_matches = events.len() >= plan.cut_exclusive
+            && events[..plan.cut_exclusive]
+                .iter()
+                .zip(&plan.replaced_ids)
+                .all(|(event, id)| event.base().id == *id)
+            && plan.replaced_ids.len() == plan.cut_exclusive;
+        if !prefix_matches {
+            return Err(SessionError::EventAppendFailed {
+                reason: "compaction plan does not match the event store it is committed against"
+                    .to_string(),
+            });
+        }
+        let compaction = SessionEvent::Compaction {
+            base: EventBase::new(None),
+            summary,
+            replaced_event_ids: plan.replaced_ids.clone(),
+        };
+        let compaction_id = store.append(compaction)?;
+        for id in plan.replaced_ids {
+            self.superseded.insert(id);
+        }
+        Ok(AutoCompactionOutcome {
+            compaction_id,
+            newly_superseded: plan.newly_superseded,
+        })
+    }
+
+    /// Auto-compact older events while retaining the most recent
+    /// `keep_turns` assistant turns, recording the mechanical digest as
+    /// the compaction summary.
+    ///
+    /// This is [`Self::plan_auto_compaction`] followed by
+    /// [`Self::commit_compaction_plan`] with the structured JSON digest
+    /// from [`build_compaction_digest`] as the summary. It is the path for
+    /// callers without a provider handle (manual `/compact` commands); the
+    /// agent loop instead commits an LLM-written summary through the
+    /// plan/commit pair directly.
+    ///
+    /// Returns `Ok(None)` when there is nothing to compact.
     ///
     /// # Errors
     ///
@@ -159,59 +309,17 @@ impl ContextEdits {
         store: &EventStore,
         keep_turns: usize,
         token_estimate_freed: usize,
-    ) -> Result<Option<EventId>, SessionError> {
-        let events = store.events();
-        let assistant_positions: Vec<usize> = events
-            .iter()
-            .enumerate()
-            .filter_map(|(idx, e)| {
-                matches!(e, SessionEvent::AssistantMessage { .. }).then_some(idx)
-            })
-            .collect();
-        if assistant_positions.len() <= keep_turns {
-            return Ok(None);
-        }
-        let prior_assistant_idx = assistant_positions[assistant_positions.len() - keep_turns - 1];
-        let cut_exclusive = compact_boundary_after_tool_results(&events, prior_assistant_idx);
-        let ids_before: Vec<EventId> = events[..cut_exclusive]
-            .iter()
-            .map(|e| e.base().id.clone())
-            .collect();
-        if ids_before.is_empty() {
-            return Ok(None);
-        }
-        let start_id = if let Some(id) = ids_before.first() {
-            id.to_string()
-        } else {
+    ) -> Result<Option<AutoCompactionOutcome>, SessionError> {
+        let Some(plan) = self.plan_auto_compaction(store, keep_turns) else {
             return Ok(None);
         };
-        let end_id = if let Some(id) = ids_before.last() {
-            id.to_string()
-        } else {
-            return Ok(None);
-        };
-        let summary_json = serde_json::json!({
-            "event_count_suppressed": ids_before.len(),
-            "token_estimate_freed": token_estimate_freed,
-            "turn_range": {
-                "start": start_id,
-                "end": end_id,
-            }
-        });
+        let replaced = &store.events()[..plan.cut_exclusive];
+        let summary_json = build_compaction_digest(replaced, token_estimate_freed);
         let summary =
             serde_json::to_string(&summary_json).map_err(|e| SessionError::EventAppendFailed {
                 reason: format!("failed to serialise auto-compaction summary: {e}"),
             })?;
-        let compaction = SessionEvent::Compaction {
-            base: EventBase::new(None),
-            summary,
-            replaced_event_ids: ids_before.clone(),
-        };
-        let compaction_id = store.append(compaction)?;
-        for id in ids_before {
-            self.superseded.insert(id);
-        }
-        Ok(Some(compaction_id))
+        self.commit_compaction_plan(store, plan, summary).map(Some)
     }
 
     // -- Inject (R6) -----------------------------------------------------
@@ -240,6 +348,72 @@ impl ContextEdits {
     pub fn is_injected(&self, id: &EventId) -> bool {
         self.injected.contains(id)
     }
+}
+
+/// Build the structured JSON digest recorded as an auto-compaction summary.
+///
+/// Describes the replaced span concretely so the model retains a factual
+/// account of what was elided: per-role event counts, the tool calls made
+/// (`name → count`, deterministically ordered), prior compactions folded
+/// into this one, the freed-token estimate, the first/last event
+/// timestamps (RFC 3339), and the replaced event-ID range.
+///
+/// The digest is mechanically derived, not semantic; the emitted object
+/// carries `"summary_kind": "mechanical_digest"` so consumers can tell it
+/// apart from an LLM-written summary. The agent loop's fallback path
+/// overrides this marker with `"mechanical_digest_fallback"` plus the
+/// summarization error when an LLM summary was attempted and failed.
+#[must_use]
+pub fn build_compaction_digest(
+    replaced: &[SessionEvent],
+    token_estimate_freed: usize,
+) -> serde_json::Value {
+    let mut user_messages = 0_usize;
+    let mut assistant_messages = 0_usize;
+    let mut tool_results = 0_usize;
+    let mut prior_compactions = 0_usize;
+    let mut other_events = 0_usize;
+    let mut tool_calls: BTreeMap<String, usize> = BTreeMap::new();
+    for event in replaced {
+        match event {
+            SessionEvent::UserMessage { .. } => user_messages += 1,
+            SessionEvent::AssistantMessage {
+                tool_calls: calls, ..
+            } => {
+                assistant_messages += 1;
+                for call in calls {
+                    *tool_calls.entry(call.name.clone()).or_insert(0) += 1;
+                }
+            }
+            SessionEvent::ToolResult { .. } => tool_results += 1,
+            SessionEvent::Compaction { .. } => prior_compactions += 1,
+            SessionEvent::Custom { .. }
+            | SessionEvent::ModelChange { .. }
+            | SessionEvent::Fork { .. }
+            | SessionEvent::ForkComplete { .. }
+            | SessionEvent::Label { .. }
+            | SessionEvent::SpokenResponse { .. } => other_events += 1,
+        }
+    }
+    let first = replaced.first().map(SessionEvent::base);
+    let last = replaced.last().map(SessionEvent::base);
+    serde_json::json!({
+        "summary_kind": "mechanical_digest",
+        "event_count_suppressed": replaced.len(),
+        "token_estimate_freed": token_estimate_freed,
+        "user_messages": user_messages,
+        "assistant_messages": assistant_messages,
+        "tool_results": tool_results,
+        "prior_compactions": prior_compactions,
+        "other_events": other_events,
+        "tool_calls": tool_calls,
+        "first_timestamp": first.map(|b| b.timestamp.to_rfc3339()),
+        "last_timestamp": last.map(|b| b.timestamp.to_rfc3339()),
+        "turn_range": {
+            "start": first.map(|b| b.id.to_string()),
+            "end": last.map(|b| b.id.to_string()),
+        }
+    })
 }
 
 fn compact_boundary_after_tool_results(events: &[SessionEvent], assistant_idx: usize) -> usize {
@@ -501,9 +675,11 @@ mod tests {
         let result = edits
             .auto_compact_keeping_recent_turns(&store, 10, 4096)
             .expect("compaction");
-        let comp_id = result.expect("expected compaction event");
+        let outcome = result.expect("expected compaction event");
 
-        let comp = store.get(&comp_id).expect("compaction stored");
+        let comp = store
+            .get(&outcome.compaction_id)
+            .expect("compaction stored");
         let SessionEvent::Compaction {
             replaced_event_ids,
             summary,
@@ -517,11 +693,101 @@ mod tests {
         for id in &replaced_event_ids {
             assert!(edits.is_superseded(id));
         }
+        // Nothing was previously superseded, so the newly-superseded set is
+        // the full replaced set, in order.
+        assert_eq!(outcome.newly_superseded, replaced_event_ids);
         let parsed: serde_json::Value = serde_json::from_str(&summary).expect("summary parses");
         assert_eq!(parsed["event_count_suppressed"], 15);
         assert_eq!(parsed["token_estimate_freed"], 4096);
         assert!(parsed["turn_range"]["start"].is_string());
         assert!(parsed["turn_range"]["end"].is_string());
+    }
+
+    // -- Review item 6a: the auto-compaction summary is a content digest --
+
+    #[test]
+    fn auto_compact_summary_is_structured_digest() {
+        let store = EventStore::new();
+        store.append(user_msg("old question")).expect("append");
+        store
+            .append(assistant_tool_call("call_old"))
+            .expect("append");
+        store.append(tool_result("call_old")).expect("append");
+        store.append(assistant_msg("old answer")).expect("append");
+        store.append(user_msg("newer question")).expect("append");
+        store.append(assistant_msg("newer answer")).expect("append");
+
+        let mut edits = ContextEdits::new();
+        let outcome = edits
+            .auto_compact_keeping_recent_turns(&store, 1, 512)
+            .expect("compaction runs")
+            .expect("compaction fires");
+
+        let comp = store
+            .get(&outcome.compaction_id)
+            .expect("compaction stored");
+        let SessionEvent::Compaction { summary, .. } = comp else {
+            panic!("expected Compaction variant");
+        };
+        let parsed: serde_json::Value = serde_json::from_str(&summary).expect("summary parses");
+        // keep_turns=1 cuts after "old answer" (the second-to-last
+        // assistant turn): the replaced span is [old question,
+        // assistant_tool_call, tool_result, old answer]. "newer question"
+        // and "newer answer" stay live.
+        assert_eq!(parsed["event_count_suppressed"], 4, "digest: {parsed}");
+        assert_eq!(parsed["user_messages"], 1, "digest: {parsed}");
+        assert_eq!(parsed["assistant_messages"], 2, "digest: {parsed}");
+        assert_eq!(parsed["tool_results"], 1, "digest: {parsed}");
+        assert_eq!(parsed["tool_calls"]["read"], 1, "digest: {parsed}");
+        assert_eq!(parsed["prior_compactions"], 0, "digest: {parsed}");
+        assert_eq!(parsed["token_estimate_freed"], 512);
+        let first = parsed["first_timestamp"].as_str().expect("first ts");
+        let last = parsed["last_timestamp"].as_str().expect("last ts");
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(first).is_ok(),
+            "first timestamp must be RFC 3339: {first}"
+        );
+        assert!(
+            chrono::DateTime::parse_from_rfc3339(last).is_ok(),
+            "last timestamp must be RFC 3339: {last}"
+        );
+    }
+
+    #[test]
+    fn auto_compact_newly_superseded_excludes_prior_marks() {
+        let store = EventStore::new();
+        let oldest = store.append(user_msg("oldest")).expect("append");
+        let suppressed = store.append(user_msg("suppressed")).expect("append");
+
+        let mut edits = ContextEdits::new();
+        edits.suppress(suppressed.clone());
+        let first = edits
+            .summarize(&store, vec![oldest.clone()], "first summary".to_owned())
+            .expect("summarize");
+
+        for i in 0..4 {
+            store
+                .append(assistant_msg(&format!("turn {i}")))
+                .expect("append");
+        }
+
+        let outcome = edits
+            .auto_compact_keeping_recent_turns(&store, 1, 100)
+            .expect("compaction runs")
+            .expect("compaction fires");
+
+        assert!(
+            !outcome.newly_superseded.contains(&oldest),
+            "already-superseded events must not be reported as newly hidden"
+        );
+        assert!(
+            !outcome.newly_superseded.contains(&suppressed),
+            "suppressed events must not be reported as newly hidden"
+        );
+        assert!(
+            outcome.newly_superseded.contains(&first),
+            "the prior compaction event itself was visible and is newly hidden"
+        );
     }
 
     #[test]
@@ -627,6 +893,102 @@ mod tests {
         assert!(!edits.is_superseded(&assistant));
         assert!(!edits.is_superseded(&retained_assistant));
         assert!(!edits.is_superseded(&late_result));
+    }
+
+    // -- Track L finding 1: plan/commit two-phase compaction ---------------
+
+    #[test]
+    fn plan_exposes_cut_and_replaced_ids_without_mutating() {
+        let store = EventStore::new();
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            ids.push(
+                store
+                    .append(assistant_msg(&format!("t{i}")))
+                    .expect("append"),
+            );
+        }
+        let edits = ContextEdits::new();
+
+        let plan = edits
+            .plan_auto_compaction(&store, 2)
+            .expect("plan computed");
+        assert_eq!(plan.cut_exclusive(), 3);
+        assert_eq!(plan.replaced_ids(), &ids[..3]);
+        assert_eq!(plan.newly_superseded(), &ids[..3]);
+        // Planning is read-only: nothing is superseded yet and no
+        // compaction event was appended.
+        for id in &ids {
+            assert!(!edits.is_superseded(id));
+        }
+        assert_eq!(store.len(), 5);
+    }
+
+    #[test]
+    fn commit_records_caller_summary_and_supersedes() {
+        let store = EventStore::new();
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            ids.push(
+                store
+                    .append(assistant_msg(&format!("t{i}")))
+                    .expect("append"),
+            );
+        }
+        let mut edits = ContextEdits::new();
+        let plan = edits.plan_auto_compaction(&store, 2).expect("plan");
+
+        let outcome = edits
+            .commit_compaction_plan(&store, plan, "an LLM-written summary".to_owned())
+            .expect("commit");
+
+        let comp = store.get(&outcome.compaction_id).expect("stored");
+        let SessionEvent::Compaction {
+            summary,
+            replaced_event_ids,
+            ..
+        } = comp
+        else {
+            panic!("expected Compaction variant");
+        };
+        assert_eq!(summary, "an LLM-written summary");
+        assert_eq!(replaced_event_ids, ids[..3].to_vec());
+        for id in &ids[..3] {
+            assert!(edits.is_superseded(id));
+        }
+        assert!(!edits.is_superseded(&ids[3]));
+        assert_eq!(outcome.newly_superseded, ids[..3].to_vec());
+    }
+
+    #[test]
+    fn commit_rejects_a_plan_from_a_different_store() {
+        let store_a = EventStore::new();
+        let store_b = EventStore::new();
+        for i in 0..5 {
+            store_a
+                .append(assistant_msg(&format!("a{i}")))
+                .expect("append");
+            store_b
+                .append(assistant_msg(&format!("b{i}")))
+                .expect("append");
+        }
+        let mut edits = ContextEdits::new();
+        let plan = edits.plan_auto_compaction(&store_a, 2).expect("plan");
+
+        let err = edits
+            .commit_compaction_plan(&store_b, plan, "summary".to_owned())
+            .expect_err("a plan must only commit against its own store");
+        assert!(matches!(err, SessionError::EventAppendFailed { .. }));
+        // Nothing was appended or superseded on the mismatching store.
+        assert_eq!(store_b.len(), 5);
+    }
+
+    #[test]
+    fn digest_is_marked_as_mechanical() {
+        let store = EventStore::new();
+        store.append(user_msg("hello")).expect("append");
+        let digest = build_compaction_digest(&store.events(), 64);
+        assert_eq!(digest["summary_kind"], "mechanical_digest");
     }
 
     // -- R6: Inject tests -------------------------------------------------

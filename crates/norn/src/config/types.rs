@@ -157,6 +157,30 @@ pub struct ProviderSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub rate_limit: Option<u32>,
 
+    /// Replenishment window over which [`Self::rate_limit`] permits are
+    /// granted, as a `humantime` duration string (e.g. `"60s"`, `"1m"`).
+    /// Maps to `ProviderConfig::rate_limit_interval`; absent defers to the
+    /// library's owner-approved 60-second default (permits-per-minute
+    /// semantics). Must be non-zero — validated in NC-003.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rate_limit_interval: Option<String>,
+
+    /// Backoff applied to a `429` response that carries no parseable
+    /// `Retry-After` header, as a `humantime` duration string (e.g.
+    /// `"1s"`). Maps to `ProviderConfig::retry_backoff`; absent defers to
+    /// the library's owner-approved 1-second default. Must be non-zero —
+    /// validated in NC-003.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_backoff: Option<String>,
+
+    /// Optional ceiling on accepted server-supplied `Retry-After` waits,
+    /// as a `humantime` duration string (e.g. `"2m"`). Maps to
+    /// `ProviderConfig::retry_after_ceiling`; absent honors the header
+    /// as-is (the library deliberately has no built-in ceiling). Must be
+    /// non-zero — validated in NC-003.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub retry_after_ceiling: Option<String>,
+
     /// Filesystem path to the Claude Runner binary (overrides the default
     /// `"claude"` lookup in `print/provider.rs`). Stored as [`String`]; the
     /// CLI converts to [`std::path::PathBuf`] at the runtime boundary.
@@ -273,9 +297,30 @@ pub struct RetrySettings {
 /// Consent-boundary permission rules.
 ///
 /// Patterns follow the Claude Code rule syntax (`tool_name`,
-/// `tool_name(pattern)`, wildcards). Evaluation order — deny > ask > allow,
-/// first match wins — is implemented in NC-003 and the runtime; this struct
-/// only holds the raw patterns.
+/// `tool_name(pattern)`, `*` wildcards in both segments). Evaluation order
+/// is deny > ask > allow, first match wins; this struct only holds the raw
+/// patterns — [`crate::config::permissions::PermissionPolicy`] compiles
+/// them and the tool dispatch path enforces the result before every tool
+/// execution. See the [`crate::config::permissions`] module docs for the
+/// exact grammar (argument patterns match the call's top-level string
+/// argument values).
+///
+/// Runtime behaviour:
+///
+/// - **deny** — the call is blocked with a structured tool error the
+///   model sees; a deny match cannot be un-denied by any allow or ask
+///   pattern (lower-precedence layers union into `deny`, CO6).
+/// - **ask** — the embedded loop has no interactive consent surface, so
+///   an ask match is routed through the registered
+///   [`PreToolHook`](crate::integration::hooks::PreToolHook) chain when
+///   at least one pre-tool hook exists: a `Block` outcome refuses the
+///   call, any other outcome is taken as consent. When **no** pre-tool
+///   hook is registered the call is blocked with a
+///   "requires consent; no interactive handler" error.
+/// - **allow** — short-circuits evaluation and permits the call. Calls
+///   matching no pattern at all also proceed; permissions add deny/ask
+///   restrictions on top of the capability boundary, they are not a
+///   second availability gate.
 ///
 /// Distinct from the *capability* boundary (the
 /// [`crate::profile::Profile::tools`] allow-list), which controls which
@@ -611,6 +656,9 @@ mod tests {
         assert!(prov.options.is_none());
         assert!(prov.auth.is_none());
         assert!(prov.rate_limit.is_none());
+        assert!(prov.rate_limit_interval.is_none());
+        assert!(prov.retry_backoff.is_none());
+        assert!(prov.retry_after_ceiling.is_none());
         assert!(prov.runner_path.is_none());
         assert!(prov.debug_dump_dir.is_none());
 
@@ -764,6 +812,9 @@ mod tests {
                 options: Some(serde_json::json!({"alpha":1})),
                 auth: Some("oauth".to_owned()),
                 rate_limit: Some(120),
+                rate_limit_interval: Some("90s".to_owned()),
+                retry_backoff: Some("500ms".to_owned()),
+                retry_after_ceiling: Some("2m".to_owned()),
                 runner_path: Some("/usr/local/bin/claude".to_owned()),
                 debug_dump_dir: Some("/tmp/norn-debug".to_owned()),
             }),
@@ -848,6 +899,10 @@ mod tests {
         assert_eq!(rp.base_url, op.base_url);
         assert_eq!(rp.timeout, op.timeout);
         assert_eq!(rp.rate_limit, op.rate_limit);
+        assert_eq!(rp.rate_limit_interval, op.rate_limit_interval);
+        assert_eq!(rp.retry_backoff, op.retry_backoff);
+        assert_eq!(rp.retry_after_ceiling, op.retry_after_ceiling);
+        assert_eq!(rp.runner_path, op.runner_path);
         let ra = roundtripped.agent.as_ref().unwrap();
         let oa = original.agent.as_ref().unwrap();
         assert_eq!(ra.max_turns, oa.max_turns);

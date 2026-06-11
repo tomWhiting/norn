@@ -17,16 +17,22 @@ use tokio_util::sync::CancellationToken;
 use crate::error::{HookType, NornError, ProviderError, SchemaError};
 use crate::integration::diagnostics::NornDiagnostic;
 use crate::integration::hooks::{HookOutcome, LlmCallSummary};
-use crate::r#loop::classify::{ResponseClass, call_provider, classify_response};
-use crate::r#loop::compaction::{CompactionState, maybe_auto_compact};
+use crate::r#loop::classify::{
+    ResponseClass, call_provider, classify_response, truncation_failure,
+};
+use crate::r#loop::compaction::CompactionState;
 use crate::r#loop::conversation_state::ConversationRequestState;
+use crate::r#loop::dev_context::ManagedDevMessage;
 use crate::r#loop::expansion::{expand_system_instruction, expand_tool_descriptions};
+use crate::r#loop::failure_tracking::collect_tool_failures;
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel};
+use crate::r#loop::inflight_compaction::{
+    InFlightPromptLayout, PreflightArgs, run_context_preflight,
+};
 use crate::r#loop::iteration::{IterationMonitorState, evaluate_iteration};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::retry::retry_with_backoff;
 use crate::r#loop::schema::{build_schema_tool, format_nudge, format_validation_feedback};
-use crate::r#loop::tokens::estimate_prompt_tokens;
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::events::StopReason;
 use crate::provider::request::{
@@ -40,9 +46,9 @@ use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent}
 use crate::session::store::EventStore;
 
 use super::helpers::{
-    ToolBatchRequest, accept_schema_tool_call, append_and_notify, append_tool_result,
-    apply_rule_injections, build_initial_messages, drain_and_partition, drain_child_results,
-    ensure_tool_results_complete, execute_tool_batch, flush_inbound_messages,
+    ToolBatchRequest, ToolResultRecord, accept_schema_tool_call, append_and_notify,
+    append_tool_result, apply_rule_injections, build_initial_messages, drain_and_partition,
+    drain_child_results, ensure_tool_results_complete, execute_tool_batch, flush_inbound_messages,
     handle_iteration_signals, inject_inbound_messages, inject_post_tool_batch_notifications,
     reject_post_schema_tools,
 };
@@ -163,7 +169,13 @@ pub struct AgentStepRequest<'a> {
 ///
 /// # Errors
 ///
-/// Propagates any [`NornError`] surfaced by the inner step loop.
+/// Propagates any [`NornError`] surfaced by the inner step loop. In
+/// particular, a no-schema response truncated by the provider
+/// (`MaxTokens`/`ContentFilter` with no tool calls) returns the
+/// never-retryable [`ProviderError::Truncated`] rather than a misleading
+/// [`AgentStepResult::Completed`]; the partial text, usage, and stop
+/// reason remain available on the persisted `AssistantMessage` event and
+/// the accompanying `loop.truncated` Custom event.
 pub async fn run_agent_step(request: AgentStepRequest<'_>) -> Result<AgentStepResult, NornError> {
     let timeout_state = crate::r#loop::compaction::shared_timeout_state();
     let started = std::time::Instant::now();
@@ -240,8 +252,13 @@ async fn run_agent_step_inner(
         initial_messages.prefix_len,
         initial_messages.response_thread_anchor,
     )?;
+    // REVIEW H2: the dynamic-context Developer message is tracked by
+    // explicit index, never located by first-role matching, so resumed
+    // histories containing Developer-role compaction summaries are safe.
+    let mut dev_message = ManagedDevMessage::new(initial_messages.managed_developer_index);
+    let new_input_len = initial_messages.new_input_len;
 
-    append_and_notify(
+    let prompt_event_id = append_and_notify(
         store,
         SessionEvent::UserMessage {
             base: EventBase::new(store.last_event_id()),
@@ -263,6 +280,10 @@ async fn run_agent_step_inner(
     let mut follow_up_buffer: Vec<ChannelMessage> = Vec::new();
     let mut pending_before_injections: Vec<RuleInjection> = Vec::new();
     let mut compaction_state = CompactionState::new();
+    // REVIEW item 4: failures produced by each iteration (tool errors and
+    // schema-validation failures), drained into the iteration monitor at
+    // the top of the next iteration so RepeatedFailure can actually fire.
+    let mut latest_failures: Vec<String> = Vec::new();
 
     loop {
         // Cooperative cancellation gate: checked before every provider
@@ -311,48 +332,24 @@ async fn run_agent_step_inner(
             apply_rule_injections(loop_context, injections, &mut messages, store).await?;
         }
 
-        // Sync the Developer message with current dynamic sections.
-        // messages[0] (System) stays stable for prefix caching.
-        // Only insert a Developer message when there's content — an
-        // empty developer message would be confused for a prompt.
-        let dev_idx = messages
-            .iter()
-            .position(|m| matches!(m.role, MessageRole::Developer));
-        match (loop_context.dynamic_context(), dev_idx) {
-            (Some(dynamic), Some(idx)) => {
-                messages[idx].content = Some(dynamic);
-            }
-            (Some(dynamic), None) => {
-                messages.insert(
-                    1,
-                    Message {
-                        role: MessageRole::Developer,
-                        content: Some(dynamic),
-                        thinking: String::new(),
-                        tool_calls: Vec::new(),
-                        tool_call_id: None,
-                        tool_name: None,
-                        tool_call_kind: None,
-                    },
-                );
-                conversation_state.note_inserted_message(1);
-            }
-            (None, Some(idx)) => {
-                messages.remove(idx);
-                conversation_state.note_removed_message(idx);
-            }
-            (None, None) => {}
-        }
+        // Sync the managed dynamic-context Developer message (REVIEW H2).
+        // messages[0] (System) stays stable for prefix caching, and only
+        // the tracked slot is ever written — history Developer messages
+        // (compaction summaries) are never overwritten or deleted. An
+        // empty developer message would be confused for a prompt, so the
+        // slot is removed when there is no content.
+        dev_message.sync(
+            loop_context.dynamic_context(),
+            &mut messages,
+            &mut conversation_state,
+        );
 
-        // R5: expand session-variable placeholders in the Developer
-        // message and tool descriptions before the request is built.
-        // The System message (messages[0]) is NOT expanded so the
+        // R5: expand session-variable placeholders in the managed
+        // Developer message and tool descriptions before the request is
+        // built. The System message (messages[0]) is NOT expanded so the
         // instructions field stays stable for caching.
-        let dev_idx = messages
-            .iter()
-            .position(|m| matches!(m.role, MessageRole::Developer));
         let iteration_tools = if let Some(var_store) = loop_context.variables.as_ref() {
-            if let Some(idx) = dev_idx
+            if let Some(idx) = dev_message.index()
                 && let Some(content) = messages[idx].content.as_ref()
             {
                 messages[idx].content = Some(expand_system_instruction(content, var_store).await);
@@ -363,7 +360,37 @@ async fn run_agent_step_inner(
         };
 
         let provider_tools = resolve_provider_tools(&iteration_tools, provider.capabilities());
+
+        // R3 + R4 + REVIEW 6b: token estimation, the token-warning event,
+        // the auto-compaction trigger (including the LLM summarization
+        // call), and in-flight application of a fired compaction. The
+        // request message list is built *after* the preflight so the
+        // current provider call already sees the compacted view and any
+        // dropped response-thread anchor, not just the next step.
+        let preflight = run_context_preflight(PreflightArgs {
+            store,
+            provider,
+            model,
+            messages: &mut messages,
+            iteration_tools: &iteration_tools,
+            conversation_state: &mut conversation_state,
+            loop_context,
+            config,
+            compaction_state: &mut compaction_state,
+            layout: InFlightPromptLayout {
+                prefix_len: dev_message.prefix_len(),
+                prompt_event_id: prompt_event_id.clone(),
+                prompt_message_len: new_input_len,
+            },
+        })
+        .await?;
+        // Summarization tokens are real provider spend: account them
+        // exactly like any other provider call in this step.
+        if let Some(usage) = preflight.summarization_usage {
+            total_usage += usage;
+        }
         let request_messages = conversation_state.request_messages(&messages);
+
         let request = ProviderRequest {
             messages: request_messages,
             tools: provider_tools,
@@ -376,61 +403,6 @@ async fn run_agent_step_inner(
             store: conversation_state.store(),
             context_management: ConversationRequestState::context_management(config),
         };
-
-        // R3: client-side token estimation runs immediately before the
-        // provider call. Advisory only — the call still proceeds. When the
-        // estimate exceeds the configured limit, emit a single-event
-        // `loop.token_warning` Custom session event for observers.
-        let estimated_tokens = if let Some(estimator) = loop_context.token_estimator.as_ref() {
-            let total =
-                estimate_prompt_tokens(estimator.as_ref(), &request.messages, &iteration_tools);
-            if let Some(limit) = config.context_window_limit
-                && (total as u64) > limit
-            {
-                append_and_notify(
-                    store,
-                    SessionEvent::Custom {
-                        base: EventBase::new(store.last_event_id()),
-                        event_type: "loop.token_warning".to_string(),
-                        data: serde_json::json!({
-                            "estimated": total,
-                            "limit": limit,
-                        }),
-                    },
-                    loop_context.hooks.as_deref(),
-                )
-                .await?;
-            }
-            Some(total)
-        } else {
-            None
-        };
-
-        // R4: auto-compaction trigger fires once per step when the estimate
-        // crosses `auto_compact_threshold_pct * context_window_limit`.
-        // NH-006 R6: the [`CompactionHook`] chain runs inside
-        // [`maybe_auto_compact`]; a Block returns Ok(0) and the trigger
-        // is silently skipped.
-        if let Some(estimated) = estimated_tokens {
-            let hooks_ref = loop_context.hooks.as_deref();
-            let compacted_tokens = maybe_auto_compact(
-                &mut compaction_state,
-                loop_context.context_edits.as_mut(),
-                store,
-                estimated,
-                config.context_window_limit,
-                config.auto_compact_threshold_pct,
-                config.auto_compact_keep_recent_turns,
-                hooks_ref,
-            )
-            .await?;
-            if compacted_tokens > 0 {
-                tracing::debug!(
-                    compacted_tokens,
-                    "auto-compaction suppressed older prompt context"
-                );
-            }
-        }
 
         if let Some(hooks) = loop_context.hooks.as_deref()
             && let HookOutcome::Block { reason } = hooks.run_pre_llm(&request).await
@@ -559,11 +531,15 @@ async fn run_agent_step_inner(
             } else {
                 Some(response.text.as_str())
             };
+            // REVIEW item 4: drain the failures the previous iteration
+            // produced (tool errors, schema-validation failures) into the
+            // monitor so RepeatedFailure detection has real input.
+            let failures = std::mem::take(&mut latest_failures);
             let signals = evaluate_iteration(
                 &mut iteration_state,
                 &total_usage,
                 latest_text,
-                None,
+                Some(&failures),
                 monitor_cfg,
             );
             handle_iteration_signals(store, &mut messages, signals, loop_context.hooks.as_deref())
@@ -635,6 +611,9 @@ async fn run_agent_step_inner(
             } => {
                 budget_consumed += 1;
                 best_attempt = Some(output.clone());
+                if loop_context.iteration_monitor.is_some() {
+                    latest_failures.extend(errors.iter().cloned());
+                }
 
                 if let Some(collector) = loop_context.diagnostics.as_ref() {
                     let schema_err = SchemaError::ValidationFailed {
@@ -654,6 +633,7 @@ async fn run_agent_step_inner(
                     });
                 }
 
+                let failure_watermark = store.len();
                 let before = execute_tool_batch(ToolBatchRequest {
                     provider: None,
                     executor,
@@ -667,6 +647,9 @@ async fn run_agent_step_inner(
                 })
                 .await?;
                 pending_before_injections.extend(before);
+                if loop_context.iteration_monitor.is_some() {
+                    latest_failures.extend(collect_tool_failures(store, failure_watermark));
+                }
 
                 let schema = output_schema.ok_or_else(|| {
                     NornError::Provider(ProviderError::StreamError {
@@ -678,11 +661,28 @@ async fn run_agent_step_inner(
                 append_tool_result(
                     store,
                     &mut messages,
-                    &schema_tc.call_id,
+                    ToolResultRecord {
+                        tool_call_id: &schema_tc.call_id,
+                        tool_name: &config.schema_tool_name,
+                        kind: schema_tc.kind,
+                        output: &Value::String(feedback),
+                        duration_ms: 0,
+                    },
+                    loop_context.hooks.as_deref(),
+                    event_tx,
+                )
+                .await?;
+
+                // REVIEW H3: tool calls the model placed *after* the schema
+                // call must also receive exactly one result each, mirroring
+                // the `ToolsAndSchemaValid` arm — otherwise the next request
+                // carries unanswered calls and the provider rejects it,
+                // permanently wedging the retry loop.
+                reject_post_schema_tools(
+                    store,
+                    &mut messages,
+                    &response,
                     &config.schema_tool_name,
-                    schema_tc.kind,
-                    &Value::String(feedback),
-                    0,
                     loop_context.hooks.as_deref(),
                     event_tx,
                 )
@@ -690,6 +690,7 @@ async fn run_agent_step_inner(
             }
 
             ResponseClass::ToolsOnly { tool_calls } => {
+                let failure_watermark = store.len();
                 let before = execute_tool_batch(ToolBatchRequest {
                     provider: None,
                     executor,
@@ -703,6 +704,9 @@ async fn run_agent_step_inner(
                 })
                 .await?;
                 pending_before_injections.extend(before);
+                if loop_context.iteration_monitor.is_some() {
+                    latest_failures.extend(collect_tool_failures(store, failure_watermark));
+                }
 
                 inject_post_tool_batch_notifications(executor, false).await;
 
@@ -798,10 +802,32 @@ async fn run_agent_step_inner(
                 });
             }
 
+            // REVIEW item 5: a `MaxTokens`/`ContentFilter` stop with no
+            // tool calls in no-schema mode is an incomplete fragment.
+            // Returning it as `Completed` made truncation indistinguishable
+            // from success, so it is surfaced as a typed provider error.
+            //
+            // Limitation: `AgentStepResult` (and the downstream
+            // `AgentStopReason`) currently has no `Truncated` variant, so
+            // accumulated usage cannot ride on the return value — callers
+            // recover both the partial text and usage from the session
+            // event store.
+            ResponseClass::Truncated { kind } => {
+                return Err(truncation_failure(
+                    store,
+                    loop_context.hooks.as_deref(),
+                    kind,
+                    &response.text,
+                    iterations,
+                )
+                .await?);
+            }
+
             ResponseClass::ToolsAndSchemaValid {
                 pre_schema_tools,
                 output,
             } => {
+                let failure_watermark = store.len();
                 let before = execute_tool_batch(ToolBatchRequest {
                     provider: None,
                     executor,
@@ -815,6 +841,9 @@ async fn run_agent_step_inner(
                 })
                 .await?;
                 pending_before_injections.extend(before);
+                if loop_context.iteration_monitor.is_some() {
+                    latest_failures.extend(collect_tool_failures(store, failure_watermark));
+                }
 
                 accept_schema_tool_call(
                     store,
@@ -983,6 +1012,19 @@ mod tests {
         (best_attempt, validation_errors, attempts, usage)
     }
 
+    /// Bundled inputs for the `run_step*` helpers, keeping each helper
+    /// within the workspace argument-count lint budget.
+    struct StepArgs<'a> {
+        provider: &'a MockProvider,
+        executor: &'a MockToolExecutor,
+        store: &'a EventStore,
+        tools: &'a [ToolDefinition],
+        schema: Option<&'a Value>,
+        config: &'a AgentLoopConfig,
+        event_tx: Option<&'a AgentEventSender>,
+        inbound: Option<&'a mut crate::r#loop::inbound::InboundChannel>,
+    }
+
     async fn run_step(
         provider: &MockProvider,
         executor: &MockToolExecutor,
@@ -994,68 +1036,42 @@ mod tests {
     ) -> AgentStepResult {
         let mut loop_ctx = LoopContext::new("system");
         run_step_with(
-            provider,
-            executor,
-            store,
-            tools,
-            schema,
-            config,
-            event_tx,
-            None,
+            StepArgs {
+                provider,
+                executor,
+                store,
+                tools,
+                schema,
+                config,
+                event_tx,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await
     }
 
     async fn run_step_full(
-        provider: &MockProvider,
-        executor: &MockToolExecutor,
-        store: &EventStore,
-        tools: &[ToolDefinition],
-        schema: Option<&Value>,
-        config: &AgentLoopConfig,
-        event_tx: Option<&AgentEventSender>,
+        args: StepArgs<'_>,
         event_schemas: Option<&crate::r#loop::event_schemas::EventSchemaSet>,
-        inbound: Option<&mut crate::r#loop::inbound::InboundChannel>,
     ) -> AgentStepResult {
         let mut loop_ctx = LoopContext::new("system");
         loop_ctx.event_schemas = event_schemas.cloned();
-        run_step_with(
-            provider,
-            executor,
-            store,
-            tools,
-            schema,
-            config,
-            event_tx,
-            inbound,
-            &mut loop_ctx,
-        )
-        .await
+        run_step_with(args, &mut loop_ctx).await
     }
 
-    async fn run_step_with(
-        provider: &MockProvider,
-        executor: &MockToolExecutor,
-        store: &EventStore,
-        tools: &[ToolDefinition],
-        schema: Option<&Value>,
-        config: &AgentLoopConfig,
-        event_tx: Option<&AgentEventSender>,
-        inbound: Option<&mut crate::r#loop::inbound::InboundChannel>,
-        loop_ctx: &mut LoopContext,
-    ) -> AgentStepResult {
+    async fn run_step_with(args: StepArgs<'_>, loop_ctx: &mut LoopContext) -> AgentStepResult {
         let result = run_agent_step(AgentStepRequest {
-            provider,
-            executor,
-            store,
+            provider: args.provider,
+            executor: args.executor,
+            store: args.store,
             user_prompt: "prompt",
-            tools,
-            output_schema: schema,
+            tools: args.tools,
+            output_schema: args.schema,
             model: "test-model",
-            config,
-            event_tx,
-            inbound,
+            config: args.config,
+            event_tx: args.event_tx,
+            inbound: args.inbound,
             loop_context: loop_ctx,
             cancel: None,
         })
@@ -1500,6 +1516,114 @@ mod tests {
                 "read_file should be rejected, got: {error_str}"
             );
         }
+
+        // REVIEW H1: exactly one result for the schema tool call. The
+        // pre-fix code appended an acceptance in BOTH
+        // `accept_schema_tool_call` and `reject_post_schema_tools`,
+        // producing a duplicate `function_call_output` that poisoned the
+        // persisted session and drew a provider 400 on the next request.
+        let schema_results: Vec<&SessionEvent> = events
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    SessionEvent::ToolResult { tool_name, .. }
+                        if tool_name == "structured_output"
+                )
+            })
+            .collect();
+        assert_eq!(
+            schema_results.len(),
+            1,
+            "exactly one structured_output result must be persisted",
+        );
+        if let SessionEvent::ToolResult {
+            tool_call_id,
+            output,
+            ..
+        } = schema_results[0]
+        {
+            assert_eq!(tool_call_id, "tc_schema");
+            assert_eq!(output.as_str(), Some("accepted"));
+        }
+    }
+
+    // -- REVIEW H1 regression: one persisted result per call_id ------------
+    //
+    // [read_file, structured_output, read_file] exercises pre-schema
+    // execution, schema acceptance, and post-schema rejection in one
+    // response. Every call_id must have exactly one ToolResult in the
+    // persisted store — duplicates poison session replay permanently.
+
+    #[tokio::test]
+    async fn schema_flow_persists_exactly_one_result_per_call_id() {
+        let events = vec![
+            tool_call_delta("tc_pre", Some("read_file"), r#"{"path":"a"}"#),
+            tool_call_delta(
+                "tc_schema",
+                Some("structured_output"),
+                r#"{"answer":"first"}"#,
+            ),
+            tool_call_delta("tc_post", Some("read_file"), r#"{"path":"b"}"#),
+            done_event(StopReason::ToolUse),
+        ];
+
+        let provider = MockProvider::new(vec![events]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::new(read_file_handlers());
+        let schema = simple_schema();
+
+        let result = run_step(
+            &provider,
+            &executor,
+            &store,
+            &[read_file_tool_def()],
+            Some(&schema),
+            &default_config(),
+            None,
+        )
+        .await;
+
+        let (output, _) = assert_completed(result);
+        assert_eq!(output["answer"], "first");
+
+        let mut results_by_call: std::collections::HashMap<String, Vec<Value>> =
+            std::collections::HashMap::new();
+        for event in store.events() {
+            if let SessionEvent::ToolResult {
+                tool_call_id,
+                output,
+                ..
+            } = event
+            {
+                results_by_call
+                    .entry(tool_call_id)
+                    .or_default()
+                    .push(output);
+            }
+        }
+        for call_id in ["tc_pre", "tc_schema", "tc_post"] {
+            let outputs = results_by_call
+                .get(call_id)
+                .unwrap_or_else(|| panic!("missing result for {call_id}"));
+            assert_eq!(
+                outputs.len(),
+                1,
+                "{call_id} must have exactly one persisted result, got {outputs:?}",
+            );
+        }
+        assert_eq!(results_by_call["tc_schema"][0].as_str(), Some("accepted"));
+        assert!(
+            results_by_call["tc_pre"][0]["content"].is_string(),
+            "pre-schema tool must actually execute",
+        );
+        assert!(
+            results_by_call["tc_post"][0]["error"]
+                .as_str()
+                .unwrap_or("")
+                .contains("rejected"),
+            "post-schema tool must be rejected, not executed",
+        );
     }
 
     // -- Test 12: Streaming events forwarded to broadcast channel (R9) ----
@@ -1697,15 +1821,17 @@ mod tests {
         .expect("send steer");
 
         let result = run_step_full(
-            &provider,
-            &executor,
-            &store,
-            &[read_file_tool_def()],
-            Some(&schema),
-            &default_config(),
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[read_file_tool_def()],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
             None,
-            None,
-            Some(&mut rx),
         )
         .await;
 
@@ -1765,15 +1891,17 @@ mod tests {
         .expect("send 2");
 
         let _result = run_step_full(
-            &provider,
-            &executor,
-            &store,
-            &[read_file_tool_def()],
-            Some(&schema),
-            &default_config(),
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[read_file_tool_def()],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
             None,
-            None,
-            Some(&mut rx),
         )
         .await;
 
@@ -1851,15 +1979,17 @@ mod tests {
         .expect("send");
 
         let result = run_step_full(
-            &provider,
-            &executor,
-            &store,
-            &[],
-            Some(&schema),
-            &default_config(),
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
             None,
-            None,
-            Some(&mut rx),
         )
         .await;
 
@@ -1902,15 +2032,17 @@ mod tests {
         .expect("send");
 
         let result = run_step_full(
-            &provider,
-            &executor,
-            &store,
-            &[],
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
             None,
-            &default_config(),
-            None,
-            None,
-            Some(&mut rx),
         )
         .await;
 
@@ -1949,15 +2081,17 @@ mod tests {
         let (_tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
 
         let result = run_step_full(
-            &provider,
-            &executor,
-            &store,
-            &[],
-            Some(&schema),
-            &default_config(),
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
             None,
-            None,
-            Some(&mut rx),
         )
         .await;
 
@@ -2010,15 +2144,17 @@ mod tests {
         // result in SchemaUnreachable. Successful Completed proves the
         // follow-up did NOT consume budget.
         let result = run_step_full(
-            &provider,
-            &executor,
-            &store,
-            &[],
-            Some(&schema),
-            &config_with_budget(1),
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: Some(&schema),
+                config: &config_with_budget(1),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
             None,
-            None,
-            Some(&mut rx),
         )
         .await;
 
@@ -2077,14 +2213,16 @@ mod tests {
         loop_ctx.iteration_monitor = Some(iteration_monitor(0.99, 0.5));
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -2136,14 +2274,16 @@ mod tests {
         loop_ctx.iteration_monitor = Some(iteration_monitor(0.5, 0.5));
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[read_file_tool_def()],
-            None,
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[read_file_tool_def()],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -2207,14 +2347,16 @@ mod tests {
         let schema = simple_schema();
 
         let result = run_step_full(
-            &provider,
-            &executor,
-            &store,
-            &[],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             None,
         )
         .await;
@@ -2313,14 +2455,16 @@ mod tests {
         loop_ctx.hooks = Some(std::sync::Arc::new(hooks));
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[write_tool],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[write_tool],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -2424,14 +2568,16 @@ mod tests {
         loop_ctx.hooks = Some(std::sync::Arc::new(hooks));
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[bash_tool],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[bash_tool],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -2538,14 +2684,16 @@ mod tests {
         loop_ctx.hooks = Some(std::sync::Arc::new(hooks));
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[bash_tool],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[bash_tool],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -2708,14 +2856,16 @@ mod tests {
         loop_ctx.hooks = Some(std::sync::Arc::new(hooks));
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[read_file_tool_def()],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[read_file_tool_def()],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -2780,14 +2930,16 @@ mod tests {
         loop_ctx.hooks = Some(std::sync::Arc::new(hooks));
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -2968,14 +3120,16 @@ mod tests {
         });
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -3034,14 +3188,16 @@ mod tests {
         });
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -3213,14 +3369,16 @@ mod tests {
         loop_ctx.hooks = Some(std::sync::Arc::new(hooks));
 
         let result = run_step_with(
-            &provider,
-            &executor,
-            &store,
-            &[tool_def],
-            Some(&schema),
-            &default_config(),
-            None,
-            None,
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[tool_def],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
             &mut loop_ctx,
         )
         .await;
@@ -3523,5 +3681,754 @@ mod tests {
             "ToolCallEvent.kind must propagate Custom from AssembledToolCall, not hardcode Function",
         );
         assert_eq!(tool_calls[0].call_id, "call_custom");
+    }
+
+    // -- REVIEW H3: SchemaInvalid must answer post-schema tool calls -------
+    //
+    // Turn 1 returns [structured_output(invalid), read_file]; turn 2
+    // returns a valid schema call. Pre-fix, tc_read was left unanswered:
+    // turn 2's request carried a dangling tool call and real providers
+    // reject it with a 400, wedging the retry loop.
+
+    #[tokio::test]
+    async fn schema_invalid_rejects_post_schema_tool_calls() {
+        let turn1 = vec![
+            tool_call_delta("tc_schema_1", Some("structured_output"), r#"{"wrong":1}"#),
+            tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
+            done_event(StopReason::ToolUse),
+        ];
+        let turn2 = vec![
+            tool_call_delta(
+                "tc_schema_2",
+                Some("structured_output"),
+                r#"{"answer":"ok"}"#,
+            ),
+            done_event(StopReason::ToolUse),
+        ];
+
+        let provider = MockProvider::new(vec![turn1, turn2]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::new(read_file_handlers());
+        let schema = simple_schema();
+
+        let result = run_step(
+            &provider,
+            &executor,
+            &store,
+            &[read_file_tool_def()],
+            Some(&schema),
+            &default_config(),
+            None,
+        )
+        .await;
+
+        let (output, _) = assert_completed(result);
+        assert_eq!(output["answer"], "ok");
+
+        // Exactly one persisted result per call_id across the whole step.
+        let mut result_counts: std::collections::HashMap<String, usize> =
+            std::collections::HashMap::new();
+        for event in store.events() {
+            if let SessionEvent::ToolResult { tool_call_id, .. } = event {
+                *result_counts.entry(tool_call_id).or_insert(0) += 1;
+            }
+        }
+        assert_eq!(
+            result_counts.get("tc_read"),
+            Some(&1),
+            "post-schema call after invalid schema must get exactly one result",
+        );
+        assert_eq!(result_counts.get("tc_schema_1"), Some(&1));
+        assert_eq!(result_counts.get("tc_schema_2"), Some(&1));
+
+        // The rejection is visible to the model on the retry request.
+        let requests = provider.requests().expect("requests recorded");
+        assert_eq!(requests.len(), 2);
+        let answered = requests[1].messages.iter().any(|m| {
+            matches!(m.role, MessageRole::ToolResult)
+                && m.tool_call_id.as_deref() == Some("tc_read")
+        });
+        assert!(
+            answered,
+            "retry request must carry a result for the post-schema call",
+        );
+    }
+
+    // -- REVIEW H2: developer-message sync must not clobber history --------
+
+    /// Resume with a compaction summary in history and no dynamic context:
+    /// pre-fix, the sync's first-Developer-role lookup matched the summary
+    /// and the `(None, Some(idx))` arm deleted it from the prompt.
+    #[tokio::test]
+    async fn history_compaction_summary_survives_dev_sync() {
+        let store = EventStore::new();
+        store
+            .append(SessionEvent::Compaction {
+                base: EventBase::new(None),
+                summary: "older history summary".to_string(),
+                replaced_event_ids: Vec::new(),
+            })
+            .expect("seed compaction");
+
+        let provider = MockProvider::new(vec![vec![
+            text_delta("hi"),
+            done_event(StopReason::EndTurn),
+        ]]);
+        let executor = MockToolExecutor::empty();
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        assert_completed(result);
+
+        let requests = provider.requests().expect("requests recorded");
+        let summary_present = requests[0].messages.iter().any(|m| {
+            matches!(m.role, MessageRole::Developer)
+                && m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("older history summary"))
+        });
+        assert!(
+            summary_present,
+            "history compaction summary must survive the developer-message sync: {:?}",
+            requests[0].messages,
+        );
+    }
+
+    /// Resume with a compaction summary in history while dynamic context
+    /// appears mid-step (environment section): pre-fix, the `(Some, Some)`
+    /// arm overwrote the summary with the dynamic context. Post-fix the
+    /// dynamic context gets its own message and the summary survives.
+    #[tokio::test]
+    async fn dynamic_context_does_not_overwrite_history_summary() {
+        let store = EventStore::new();
+        store
+            .append(SessionEvent::Compaction {
+                base: EventBase::new(None),
+                summary: "older history summary".to_string(),
+                replaced_event_ids: Vec::new(),
+            })
+            .expect("seed compaction");
+
+        let provider = MockProvider::new(vec![vec![
+            text_delta("hi"),
+            done_event(StopReason::EndTurn),
+        ]]);
+        let executor = MockToolExecutor::empty();
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
+        // Environment sections are injected at the top of each iteration,
+        // i.e. AFTER the initial prompt was built without dynamic context —
+        // exactly the resume shape that triggered the overwrite.
+        loop_ctx.environment = Some(crate::system_prompt::environment::EnvironmentConfig {
+            session_id: Some("sess-h2".to_owned()),
+            model: "test-model".to_owned(),
+        });
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        assert_completed(result);
+
+        let requests = provider.requests().expect("requests recorded");
+        let developer_contents: Vec<&str> = requests[0]
+            .messages
+            .iter()
+            .filter(|m| matches!(m.role, MessageRole::Developer))
+            .filter_map(|m| m.content.as_deref())
+            .collect();
+        assert!(
+            developer_contents
+                .iter()
+                .any(|c| c.contains("older history summary")),
+            "history summary must survive: {developer_contents:?}",
+        );
+        assert!(
+            developer_contents
+                .iter()
+                .any(|c| c.contains("# Environment")),
+            "dynamic context must be present in its own message: {developer_contents:?}",
+        );
+        assert!(
+            !developer_contents
+                .iter()
+                .any(|c| c.contains("older history summary") && c.contains("# Environment")),
+            "summary and dynamic context must be separate messages: {developer_contents:?}",
+        );
+    }
+
+    // -- REVIEW item 4: RepeatedFailure monitor fires on real failures -----
+
+    #[tokio::test]
+    async fn repeated_tool_failures_fire_monitor() {
+        let failing_call = |id: &str| {
+            vec![
+                tool_call_delta(id, Some("read_file"), r#"{"path":"f"}"#),
+                done_event(StopReason::ToolUse),
+            ]
+        };
+        let provider = MockProvider::new(vec![
+            failing_call("tc1"),
+            failing_call("tc2"),
+            vec![text_delta("giving up"), done_event(StopReason::EndTurn)],
+        ]);
+        let store = EventStore::new();
+
+        let mut handlers: std::collections::HashMap<String, ToolHandler> =
+            std::collections::HashMap::new();
+        handlers.insert(
+            "read_file".to_string(),
+            Box::new(|_| {
+                Err(crate::error::ToolError::ExecutionFailed {
+                    reason: "permission denied at line 42".to_string(),
+                })
+            }),
+        );
+        let executor = MockToolExecutor::new(handlers);
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.iteration_monitor = Some(crate::r#loop::IterationMonitorConfig {
+            context_window_tokens: 0,
+            warn_threshold_pct: 1.0,
+            handoff_threshold_pct: 1.0,
+            handoff_guidance: String::new(),
+            failure_repeat_window: 2,
+            hedging_patterns: Vec::new(),
+        });
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[read_file_tool_def()],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        assert_completed(result);
+
+        let repeated_failure = store.events().into_iter().find_map(|e| match e {
+            SessionEvent::Custom {
+                event_type, data, ..
+            } if event_type == "iteration.repeated_failure" => Some(data),
+            _ => None,
+        });
+        let data = repeated_failure
+            .expect("RepeatedFailure signal must fire after two identical tool failures");
+        assert_eq!(data["consecutive_count"], 2);
+        let signature = data["error_signature"].as_str().unwrap_or_default();
+        assert!(
+            signature.contains("permission denied"),
+            "signature must reflect the repeated error: {signature}",
+        );
+    }
+
+    // -- REVIEW item 5: truncation must not masquerade as Completed --------
+
+    async fn run_truncation_step(
+        provider: &MockProvider,
+        store: &EventStore,
+    ) -> Result<AgentStepResult, NornError> {
+        let executor = MockToolExecutor::empty();
+        let mut loop_ctx = LoopContext::new("system");
+        run_agent_step(AgentStepRequest {
+            provider,
+            executor: &executor,
+            store,
+            user_prompt: "prompt",
+            tools: &[],
+            output_schema: None,
+            model: "test-model",
+            config: &default_config(),
+            event_tx: None,
+            inbound: None,
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+    }
+
+    #[tokio::test]
+    async fn max_tokens_truncation_is_an_error_not_completed() {
+        let provider = MockProvider::new(vec![vec![
+            text_delta("partial answ"),
+            done_event(StopReason::MaxTokens),
+        ]]);
+        let store = EventStore::new();
+
+        let result = run_truncation_step(&provider, &store).await;
+
+        let err = result.expect_err("truncated output must not be Completed");
+        match err {
+            NornError::Provider(provider_err) => {
+                assert!(
+                    provider_err.to_string().contains("max_tokens"),
+                    "error must name the deterministic stop: {provider_err}"
+                );
+                // Fix campaign Track V, finding 2: a deterministic stop
+                // (max_tokens) is not a transient transport failure — it
+                // must never classify as retryable, or a consumer using
+                // the classifier retries the same truncation forever.
+                assert!(
+                    !crate::r#loop::retry::RetryPolicy::default()
+                        .classifies_as_retryable(&provider_err),
+                    "deterministic truncation must not classify as retryable: {provider_err:?}"
+                );
+                assert!(
+                    matches!(provider_err, ProviderError::Truncated { ref stop_reason, .. } if stop_reason == "max_tokens"),
+                    "expected ProviderError::Truncated, got {provider_err:?}"
+                );
+            }
+            other => panic!("expected a provider error, got {other:?}"),
+        }
+
+        // Partial text + stop reason persisted for recovery.
+        let assistant = store.events().into_iter().find_map(|e| match e {
+            SessionEvent::AssistantMessage {
+                content,
+                stop_reason,
+                ..
+            } => Some((content, stop_reason)),
+            _ => None,
+        });
+        let (content, stop_reason) = assistant.expect("assistant message persisted");
+        assert_eq!(content, "partial answ");
+        assert_eq!(stop_reason, "max_tokens");
+
+        let truncated_event = store.events().into_iter().any(|e| {
+            matches!(
+                e,
+                SessionEvent::Custom { event_type, .. } if event_type == "loop.truncated"
+            )
+        });
+        assert!(truncated_event, "loop.truncated event must be persisted");
+    }
+
+    #[tokio::test]
+    async fn content_filter_truncation_is_an_error_not_completed() {
+        let provider = MockProvider::new(vec![vec![done_event(StopReason::ContentFilter)]]);
+        let store = EventStore::new();
+
+        let result = run_truncation_step(&provider, &store).await;
+
+        let err = result.expect_err("filtered output must not be Completed");
+        match err {
+            NornError::Provider(provider_err) => {
+                assert!(
+                    provider_err.to_string().contains("content_filter"),
+                    "error must name the deterministic stop: {provider_err}"
+                );
+                // Fix campaign Track V, finding 2: a content-filter stop
+                // is deterministic — never retryable.
+                assert!(
+                    !crate::r#loop::retry::RetryPolicy::default()
+                        .classifies_as_retryable(&provider_err),
+                    "deterministic content-filter stop must not classify as retryable: {provider_err:?}"
+                );
+                assert!(
+                    matches!(provider_err, ProviderError::Truncated { ref stop_reason, .. } if stop_reason == "content_filter"),
+                    "expected ProviderError::Truncated, got {provider_err:?}"
+                );
+            }
+            other => panic!("expected a provider error, got {other:?}"),
+        }
+    }
+
+    /// With a schema present, truncation funnels into the existing nudge
+    /// path: budget is consumed and the step terminates `SchemaUnreachable` —
+    /// never a silent Completed.
+    #[tokio::test]
+    async fn truncation_with_schema_consumes_budget() {
+        let provider = MockProvider::new(vec![vec![
+            text_delta("partial"),
+            done_event(StopReason::MaxTokens),
+        ]]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+        let schema = simple_schema();
+
+        let result = run_step(
+            &provider,
+            &executor,
+            &store,
+            &[],
+            Some(&schema),
+            &config_with_budget(1),
+            None,
+        )
+        .await;
+
+        let (_, _, attempts, _) = assert_schema_unreachable(result);
+        assert_eq!(attempts, 1);
+    }
+
+    // -- REVIEW item 6b: compaction must affect the in-flight request ------
+
+    #[tokio::test]
+    async fn auto_compaction_applies_to_in_flight_request() {
+        let store = EventStore::new();
+        // Seed enough chunky history that the estimate crosses the
+        // threshold on the very first iteration.
+        for i in 0..6 {
+            store
+                .append(SessionEvent::UserMessage {
+                    base: EventBase::new(None),
+                    content: format!("seed question {i} {}", "x".repeat(200)),
+                })
+                .expect("seed user");
+            store
+                .append(SessionEvent::AssistantMessage {
+                    base: EventBase::new(None),
+                    content: format!("seed answer {i} {}", "y".repeat(200)),
+                    thinking: String::new(),
+                    tool_calls: Vec::new(),
+                    usage: EventUsage::default(),
+                    stop_reason: "end_turn".to_string(),
+                    response_id: None,
+                })
+                .expect("seed assistant");
+        }
+
+        // First scripted response answers the summarization call, the
+        // second answers the main (compacted) request.
+        let provider = MockProvider::new(vec![
+            vec![
+                text_delta("LLM summary of the seed turns"),
+                done_event(StopReason::EndTurn),
+            ],
+            vec![text_delta("done"), done_event(StopReason::EndTurn)],
+        ]);
+        let executor = MockToolExecutor::empty();
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
+        loop_ctx.token_estimator = Some(std::sync::Arc::new(crate::r#loop::SimpleTokenEstimator));
+
+        let config = AgentLoopConfig {
+            context_window_limit: Some(100),
+            auto_compact_threshold_pct: Some(0.5),
+            auto_compact_keep_recent_turns: 1,
+            ..AgentLoopConfig::default()
+        };
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &config,
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        let (_, usage) = assert_completed(result);
+        // Track L finding 1: the summarization call's usage (10/5 from the
+        // first scripted response) is accounted alongside the main call's.
+        assert_eq!(usage.input_tokens, 20, "summarization input tokens vanish");
+        assert_eq!(
+            usage.output_tokens, 10,
+            "summarization output tokens vanish"
+        );
+
+        let requests = provider.requests().expect("requests recorded");
+        assert_eq!(
+            requests.len(),
+            2,
+            "expected the summarization call plus the main call",
+        );
+        // The summarization request is isolated: untooled and unthreaded.
+        let summarization = &requests[0];
+        assert!(summarization.tools.is_empty());
+        assert!(summarization.previous_response_id.is_none());
+        assert!(!summarization.store);
+        assert!(
+            summarization.messages.iter().any(|m| {
+                m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("seed question 0"))
+            }),
+            "the summarization prompt must cover the elided history",
+        );
+
+        // The compaction must have hit the FIRST main request (in-flight),
+        // not just the next step: compacted turns absent, summary present.
+        let main = &requests[1];
+        assert!(
+            !main.messages.iter().any(|m| {
+                m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("seed question 0"))
+            }),
+            "compacted history must be absent from the in-flight request",
+        );
+        let summary_present = main.messages.iter().any(|m| {
+            matches!(m.role, MessageRole::Developer)
+                && m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("LLM summary of the seed turns"))
+        });
+        assert!(
+            summary_present,
+            "in-flight request must carry the LLM-written compaction summary",
+        );
+        // The most recent seeded turn survives (keep_recent_turns = 1).
+        assert!(
+            main.messages.iter().any(|m| {
+                m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("seed answer 5"))
+            }),
+            "kept turns must remain in the in-flight request",
+        );
+        // And the persisted state agrees for the next step: the compaction
+        // record carries the LLM summary as its content.
+        let persisted_summary = store.events().into_iter().find_map(|e| match e {
+            SessionEvent::Compaction { summary, .. } => Some(summary),
+            _ => None,
+        });
+        assert_eq!(
+            persisted_summary.as_deref(),
+            Some("LLM summary of the seed turns"),
+            "the compaction record's content must be the LLM summary",
+        );
+        // The summarization audit event is persisted with its usage.
+        let audit = store.events().into_iter().find_map(|e| match e {
+            SessionEvent::Custom {
+                event_type, data, ..
+            } if event_type == "loop.compaction_summarization" => Some(data),
+            _ => None,
+        });
+        let audit = audit.expect("loop.compaction_summarization event persisted");
+        assert_eq!(audit["summary_kind"], "llm_summary");
+        assert_eq!(audit["usage"]["input_tokens"], 10);
+        assert_eq!(audit["usage"]["output_tokens"], 5);
+    }
+
+    /// Track L finding 1 (failure policy): a failed summarization call
+    /// must not abort the step — the compaction still fires with the
+    /// mechanical digest, explicitly marked as a non-semantic fallback.
+    #[tokio::test]
+    async fn summarization_failure_falls_back_without_aborting_the_step() {
+        let store = EventStore::new();
+        for i in 0..6 {
+            store
+                .append(SessionEvent::UserMessage {
+                    base: EventBase::new(None),
+                    content: format!("seed question {i} {}", "x".repeat(200)),
+                })
+                .expect("seed user");
+            store
+                .append(SessionEvent::AssistantMessage {
+                    base: EventBase::new(None),
+                    content: format!("seed answer {i} {}", "y".repeat(200)),
+                    thinking: String::new(),
+                    tool_calls: Vec::new(),
+                    usage: EventUsage::default(),
+                    stop_reason: "end_turn".to_string(),
+                    response_id: None,
+                })
+                .expect("seed assistant");
+        }
+
+        // A truncated summarization response (MaxTokens) is unusable; the
+        // main call then succeeds. Its usage must still be accounted.
+        let provider = MockProvider::new(vec![
+            vec![text_delta("cut off"), done_event(StopReason::MaxTokens)],
+            vec![text_delta("done"), done_event(StopReason::EndTurn)],
+        ]);
+        let executor = MockToolExecutor::empty();
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
+        loop_ctx.token_estimator = Some(std::sync::Arc::new(crate::r#loop::SimpleTokenEstimator));
+
+        let config = AgentLoopConfig {
+            context_window_limit: Some(100),
+            auto_compact_threshold_pct: Some(0.5),
+            auto_compact_keep_recent_turns: 1,
+            ..AgentLoopConfig::default()
+        };
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &config,
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        let (_, usage) = assert_completed(result);
+        assert_eq!(
+            usage.input_tokens, 20,
+            "rejected summarization tokens were still spent and must be accounted",
+        );
+
+        let persisted_summary = store.events().into_iter().find_map(|e| match e {
+            SessionEvent::Compaction { summary, .. } => Some(summary),
+            _ => None,
+        });
+        let summary = persisted_summary.expect("compaction still fires on fallback");
+        let parsed: serde_json::Value =
+            serde_json::from_str(&summary).expect("fallback digest is JSON");
+        assert_eq!(parsed["summary_kind"], "mechanical_digest_fallback");
+        assert!(
+            parsed["summarization_error"]
+                .as_str()
+                .is_some_and(|e| !e.is_empty()),
+            "the fallback must carry why the LLM summary was unavailable: {parsed}",
+        );
+
+        let audit = store.events().into_iter().find_map(|e| match e {
+            SessionEvent::Custom {
+                event_type, data, ..
+            } if event_type == "loop.compaction_summarization" => Some(data),
+            _ => None,
+        });
+        let audit = audit.expect("audit event persisted on fallback too");
+        assert_eq!(audit["summary_kind"], "mechanical_digest_fallback");
+    }
+
+    /// Track L finding 2: when compaction fires under provider-side
+    /// response threading, the thread anchor must be dropped so the main
+    /// request replays the full compacted conversation instead of
+    /// pointing at an uncompacted server-side thread.
+    #[tokio::test]
+    async fn compaction_drops_response_thread_anchor() {
+        let store = EventStore::new();
+        for i in 0..6 {
+            store
+                .append(SessionEvent::UserMessage {
+                    base: EventBase::new(None),
+                    content: format!("seed question {i} {}", "x".repeat(200)),
+                })
+                .expect("seed user");
+            store
+                .append(SessionEvent::AssistantMessage {
+                    base: EventBase::new(None),
+                    content: format!("seed answer {i} {}", "y".repeat(200)),
+                    thinking: String::new(),
+                    tool_calls: Vec::new(),
+                    usage: EventUsage::default(),
+                    stop_reason: "end_turn".to_string(),
+                    response_id: Some(format!("resp_seed_{i}")),
+                })
+                .expect("seed assistant");
+        }
+
+        let provider = MockProvider::with_capabilities(
+            vec![
+                vec![
+                    text_delta("LLM summary of the seed turns"),
+                    done_event(StopReason::EndTurn),
+                ],
+                vec![text_delta("done"), done_event(StopReason::EndTurn)],
+            ],
+            crate::provider::tools::ProviderCapabilities::openai_responses(),
+        );
+        let executor = MockToolExecutor::empty();
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
+        loop_ctx.token_estimator = Some(std::sync::Arc::new(crate::r#loop::SimpleTokenEstimator));
+
+        let config = AgentLoopConfig {
+            context_window_limit: Some(100),
+            auto_compact_threshold_pct: Some(0.5),
+            auto_compact_keep_recent_turns: 1,
+            conversation_state: crate::r#loop::config::ConversationStateMode::ProviderThreaded,
+            ..AgentLoopConfig::default()
+        };
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &config,
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        assert_completed(result);
+
+        let requests = provider.requests().expect("requests recorded");
+        assert_eq!(requests.len(), 2);
+        let main = &requests[1];
+        assert_eq!(
+            main.previous_response_id, None,
+            "a fired compaction cannot shrink a server-side thread: the \
+             anchor must be dropped so the full compacted conversation is sent",
+        );
+        // Full replay: the kept turn and the summary ride on the request
+        // itself rather than living only in the server-side thread.
+        assert!(
+            main.messages.iter().any(|m| {
+                m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("seed answer 5"))
+            }),
+            "kept history must be replayed in full after the anchor drop",
+        );
+        assert!(
+            main.messages.iter().any(|m| {
+                m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("LLM summary of the seed turns"))
+            }),
+            "the compaction summary must ride on the full replay",
+        );
+        assert!(
+            !main.messages.iter().any(|m| {
+                m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("seed question 0"))
+            }),
+            "compacted history must not be replayed",
+        );
     }
 }
