@@ -21,6 +21,21 @@ use crate::tool::envelope::ToolEnvelope;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
+/// Field-level hints for constructing a cataloged subcommand call.
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
+pub struct ToolFieldHint {
+    /// JSON field name accepted by the subcommand.
+    pub name: String,
+    /// Coarse field type hint such as `string`, `integer`, `boolean`, or `array`.
+    pub type_hint: String,
+    /// Whether the field must be supplied for this command.
+    pub required: bool,
+    /// Human-facing field description.
+    pub description: String,
+    /// Allowed values when the field is constrained to an enum-like set.
+    pub enum_values: Vec<String>,
+}
+
 /// A single searchable tool or subcommand description.
 #[derive(Clone, Debug)]
 pub struct ToolCatalogEntry {
@@ -32,6 +47,8 @@ pub struct ToolCatalogEntry {
     pub parent_tool: Option<String>,
     /// Concrete command value to pass to the parent composite tool.
     pub command_value: Option<String>,
+    /// Field-level hints for constructing this entry when it is a subcommand.
+    pub fields: Vec<ToolFieldHint>,
 }
 
 impl ToolCatalogEntry {
@@ -43,6 +60,7 @@ impl ToolCatalogEntry {
             description: description.into(),
             parent_tool: None,
             command_value: None,
+            fields: Vec::new(),
         }
     }
 
@@ -52,6 +70,7 @@ impl ToolCatalogEntry {
         parent_tool: impl Into<String>,
         command_value: impl Into<String>,
         description: impl Into<String>,
+        fields: Vec<ToolFieldHint>,
     ) -> Self {
         let parent_tool = parent_tool.into();
         let command_value = command_value.into();
@@ -60,7 +79,18 @@ impl ToolCatalogEntry {
             description: description.into(),
             parent_tool: Some(parent_tool),
             command_value: Some(command_value),
+            fields,
         }
+    }
+
+    /// Construct a parameterless subcommand entry for a composite parent tool.
+    #[must_use]
+    pub fn subcommand_no_fields(
+        parent_tool: impl Into<String>,
+        command_value: impl Into<String>,
+        description: impl Into<String>,
+    ) -> Self {
+        Self::subcommand(parent_tool, command_value, description, Vec::new())
     }
 
     fn searchable_text(&self) -> String {
@@ -129,6 +159,9 @@ fn format_result(entry: &ToolCatalogEntry, score: f32) -> serde_json::Value {
     }
     if let Some(command_value) = &entry.command_value {
         value["command_value"] = serde_json::Value::String(command_value.clone());
+    }
+    if !entry.fields.is_empty() {
+        value["fields"] = serde_json::json!(entry.fields);
     }
     value
 }
@@ -342,7 +375,7 @@ mod tests {
             "meridian_messaging",
             "Direct messages, channels, and notifications.",
         ));
-        catalog.push(ToolCatalogEntry::subcommand(
+        catalog.push(ToolCatalogEntry::subcommand_no_fields(
             "meridian_messaging",
             "send",
             "Send a DM to one or more recipients.",
@@ -369,7 +402,7 @@ mod tests {
     async fn normal_tool_results_omit_subcommand_fields() {
         let tool = ToolSearchTool::new();
         let mut catalog = entries();
-        catalog.push(ToolCatalogEntry::subcommand(
+        catalog.push(ToolCatalogEntry::subcommand_no_fields(
             "meridian_messaging",
             "read",
             "Read a specific message or conversation by ID.",
@@ -385,6 +418,89 @@ mod tests {
         assert_eq!(first["name"], "read");
         assert!(first.get("parent_tool").is_none());
         assert!(first.get("command_value").is_none());
+        assert!(first.get("fields").is_none());
+    }
+
+    #[tokio::test]
+    async fn parameterless_subcommand_results_omit_fields() {
+        let tool = ToolSearchTool::new();
+        let mut catalog = entries();
+        catalog.push(ToolCatalogEntry::subcommand_no_fields(
+            "meridian_messaging",
+            "read_message",
+            "Read a specific message or conversation by ID.",
+        ));
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SharedToolCatalog(Arc::new(catalog))));
+
+        let out = tool
+            .execute(&envelope_for(json!({"query": "specific message conversation"})), &ctx)
+            .await
+            .unwrap();
+        let results = out.content["results"].as_array().unwrap();
+        let subcommand = results
+            .iter()
+            .find(|result| result["command_value"] == "read_message")
+            .expect("read_message subcommand result");
+        assert!(subcommand.get("fields").is_none());
+    }
+
+    #[tokio::test]
+    async fn subcommand_results_include_fields_when_present() {
+        let tool = ToolSearchTool::new();
+        let mut catalog = entries();
+        catalog.push(ToolCatalogEntry::subcommand(
+            "meridian_messaging",
+            "send",
+            "Send a DM to one or more recipients.",
+            vec![
+                ToolFieldHint {
+                    name: "to".to_string(),
+                    type_hint: "array".to_string(),
+                    required: true,
+                    description: "Recipient member handles.".to_string(),
+                    enum_values: Vec::new(),
+                },
+                ToolFieldHint {
+                    name: "priority".to_string(),
+                    type_hint: "string".to_string(),
+                    required: false,
+                    description: "Delivery priority.".to_string(),
+                    enum_values: vec!["normal".to_string(), "urgent".to_string()],
+                },
+            ],
+        ));
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SharedToolCatalog(Arc::new(catalog))));
+
+        let out = tool
+            .execute(&envelope_for(json!({"query": "send DM recipients"})), &ctx)
+            .await
+            .unwrap();
+        let results = out.content["results"].as_array().unwrap();
+        let subcommand = results
+            .iter()
+            .find(|result| result["command_value"] == "send")
+            .expect("send subcommand result");
+        assert_eq!(
+            subcommand["fields"],
+            json!([
+                {
+                    "name": "to",
+                    "type_hint": "array",
+                    "required": true,
+                    "description": "Recipient member handles.",
+                    "enum_values": []
+                },
+                {
+                    "name": "priority",
+                    "type_hint": "string",
+                    "required": false,
+                    "description": "Delivery priority.",
+                    "enum_values": ["normal", "urgent"]
+                }
+            ])
+        );
     }
 
     #[tokio::test]
