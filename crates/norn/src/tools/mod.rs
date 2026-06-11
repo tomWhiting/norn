@@ -62,6 +62,6 @@ pub use self::task::{
     DiskTaskStore, InMemoryTaskStore, SharedTaskStore, TaskEntry, TaskStatus, TaskStore, TaskTool,
 };
 pub use self::tool_search::{
-    SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras, ToolSearchTool,
+    SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras, ToolFieldHint, ToolSearchTool,
 };
 pub use self::web::{WEB_SEARCH_TOOL_NAME, WebFetchTool, WebSearchTool};
