@@ -1,8 +1,12 @@
 # Meridian Handoff — norn Phase 0+1 hardening
 
 **Date:** 2026-06-12
-**Pin commit:** `2955a27` (branch `main`, repo `tomWhiting/norn`)
-**Status:** reviewed (two Fable rounds, final verdict READY), gates green — clippy `--workspace -D warnings` clean, fmt clean, **2928 tests / 0 failures**.
+**Pin:** the current `main` head of `tomWhiting/norn`. `2955a27` is the code
+commit; every commit after it to date is documentation-only (this file) and
+code-identical, so pinning the head is equivalent and keeps this handoff in
+the pinned tree.
+**Status:** reviewed (two Fable rounds, final verdict READY), gates green —
+clippy `--workspace -D warnings` clean, fmt clean, **2928 tests / 0 failures**.
 
 This document is for the agent working on the meridian/yggdrasil side. It lists
 what changed in norn that affects you, what you must adapt when you bump the
@@ -15,8 +19,9 @@ which must wait. Background: `REVIEW.md` (verified findings) and `PLAN.md`
 ## 1. Update the pin
 
 All four consumers (meridian-services, meridian-tools, meridian-aion,
-meridian-vm-daemon) should move their git reference to `2955a27`. The changes
-below are breaking; bump everything in one pass.
+meridian-vm-daemon) should move their git reference to the current `main`
+head (≥ `2955a27`). The changes below are breaking; bump everything in one
+pass.
 
 ## 2. Breaking API changes you must adapt to
 
