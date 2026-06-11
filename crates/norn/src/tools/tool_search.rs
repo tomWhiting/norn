@@ -7,109 +7,21 @@
 //! tool context via the [`SharedToolCatalog`] extension and the search
 //! ranks against that snapshot. Empty queries return alphabetically-sorted
 //! results so the model gets a stable catalogue dump.
+//!
+//! The catalog types themselves live in [`crate::tool::catalog`].
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use bm25::{Document, Language, SearchEngineBuilder};
 use serde::Deserialize;
 
 use crate::error::ToolError;
+use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
-
-/// Field-level hints for constructing a cataloged subcommand call.
-#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
-pub struct ToolFieldHint {
-    /// JSON field name accepted by the subcommand.
-    pub name: String,
-    /// Coarse field type hint such as `string`, `integer`, `boolean`, or `array`.
-    pub type_hint: String,
-    /// Whether the field must be supplied for this command.
-    pub required: bool,
-    /// Human-facing field description.
-    pub description: String,
-    /// Allowed values when the field is constrained to an enum-like set.
-    pub enum_values: Vec<String>,
-}
-
-/// A single searchable tool or subcommand description.
-#[derive(Clone, Debug)]
-pub struct ToolCatalogEntry {
-    /// Tool or subcommand name.
-    pub name: String,
-    /// Human-facing description.
-    pub description: String,
-    /// Parent composite tool name when this entry describes a subcommand.
-    pub parent_tool: Option<String>,
-    /// Concrete command value to pass to the parent composite tool.
-    pub command_value: Option<String>,
-    /// Field-level hints for constructing this entry when it is a subcommand.
-    pub fields: Vec<ToolFieldHint>,
-}
-
-impl ToolCatalogEntry {
-    /// Construct a top-level tool catalog entry.
-    #[must_use]
-    pub fn tool(name: impl Into<String>, description: impl Into<String>) -> Self {
-        Self {
-            name: name.into(),
-            description: description.into(),
-            parent_tool: None,
-            command_value: None,
-            fields: Vec::new(),
-        }
-    }
-
-    /// Construct a subcommand entry for a composite parent tool.
-    #[must_use]
-    pub fn subcommand(
-        parent_tool: impl Into<String>,
-        command_value: impl Into<String>,
-        description: impl Into<String>,
-        fields: Vec<ToolFieldHint>,
-    ) -> Self {
-        let parent_tool = parent_tool.into();
-        let command_value = command_value.into();
-        Self {
-            name: command_value.clone(),
-            description: description.into(),
-            parent_tool: Some(parent_tool),
-            command_value: Some(command_value),
-            fields,
-        }
-    }
-
-    /// Construct a parameterless subcommand entry for a composite parent tool.
-    #[must_use]
-    pub fn subcommand_no_fields(
-        parent_tool: impl Into<String>,
-        command_value: impl Into<String>,
-        description: impl Into<String>,
-    ) -> Self {
-        Self::subcommand(parent_tool, command_value, description, Vec::new())
-    }
-
-    fn searchable_text(&self) -> String {
-        let parent = self.parent_tool.as_deref().unwrap_or_default();
-        let command = self.command_value.as_deref().unwrap_or_default();
-        format!("{} {parent} {command} {}", self.name, self.description)
-    }
-}
-
-/// Additional catalog entries supplied by an embedding runtime before the
-/// final [`SharedToolCatalog`] snapshot is published.
-pub struct ToolCatalogExtras(pub Vec<ToolCatalogEntry>);
-
-/// Shared catalog handle.
-///
-/// Wrapping `Vec<ToolCatalogEntry>` in a named type lets the extension
-/// map key on this type rather than the bare `Vec`, which keeps multiple
-/// catalogues from accidentally clashing.
-pub struct SharedToolCatalog(pub Arc<Vec<ToolCatalogEntry>>);
 
 /// Default result count when the caller does not specify `max_results`.
 const DEFAULT_MAX_RESULTS: usize = 10;
@@ -138,9 +50,20 @@ struct SearchArgs {
     max_results: Option<u32>,
 }
 
+/// Sort key for the empty-query catalogue dump: the *displayed* tool name
+/// (the parent for subcommand entries) first, then the command value, so a
+/// composite tool's subcommands group under it and the displayed list is
+/// genuinely alphabetical.
+fn display_sort_key(entry: &ToolCatalogEntry) -> (&str, &str) {
+    (
+        entry.parent_tool.as_deref().unwrap_or(entry.name.as_str()),
+        entry.command_value.as_deref().unwrap_or_default(),
+    )
+}
+
 fn alphabetical_results(entries: &[ToolCatalogEntry], limit: usize) -> Vec<serde_json::Value> {
     let mut sorted: Vec<&ToolCatalogEntry> = entries.iter().collect();
-    sorted.sort_by(|a, b| a.name.cmp(&b.name));
+    sorted.sort_by(|a, b| display_sort_key(a).cmp(&display_sort_key(b)));
     sorted
         .into_iter()
         .take(limit)
@@ -212,18 +135,13 @@ impl Tool for ToolSearchTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: SearchArgs =
             serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
                 ToolError::ExecutionFailed {
                     reason: format!("invalid arguments: {e}"),
                 }
             })?;
-        let catalog: Arc<SharedToolCatalog> =
-            ctx.get_extension::<SharedToolCatalog>()
-                .ok_or_else(|| ToolError::ExecutionFailed {
-                    reason: "tool catalog not configured in tool context".to_string(),
-                })?;
+        let catalog: Arc<SharedToolCatalog> = ctx.require_extension::<SharedToolCatalog>()?;
 
         let limit = args
             .max_results
@@ -234,11 +152,9 @@ impl Tool for ToolSearchTool {
 
         let entries = catalog.0.as_ref();
         if entries.is_empty() {
-            return Ok(ToolOutput {
-                content: serde_json::json!({ "results": Vec::<serde_json::Value>::new() }),
-                is_error: false,
-                duration: started.elapsed(),
-            });
+            return Ok(ToolOutput::success(
+                serde_json::json!({ "results": Vec::<serde_json::Value>::new() }),
+            ));
         }
 
         let query = args.query.trim();
@@ -264,11 +180,9 @@ impl Tool for ToolSearchTool {
                 .collect()
         };
 
-        Ok(ToolOutput {
-            content: serde_json::json!({ "results": results }),
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(
+            serde_json::json!({ "results": results }),
+        ))
     }
 }
 
@@ -301,6 +215,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+    use crate::tool::catalog::ToolFieldHint;
     use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
 
     fn entries() -> Vec<ToolCatalogEntry> {
@@ -526,13 +441,21 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_catalog_returns_execution_failed() {
+    async fn missing_catalog_returns_missing_extension() {
         let tool = ToolSearchTool::new();
         let ctx = ToolContext::empty();
         let err = tool
             .execute(&envelope_for(json!({"query": "x"})), &ctx)
             .await
             .expect_err("no catalog");
-        assert!(matches!(err, ToolError::ExecutionFailed { .. }));
+        match err {
+            ToolError::MissingExtension { extension } => {
+                assert!(
+                    extension.contains("SharedToolCatalog"),
+                    "error must name the missing extension type: {extension}",
+                );
+            }
+            other => panic!("expected MissingExtension, got {other:?}"),
+        }
     }
 }

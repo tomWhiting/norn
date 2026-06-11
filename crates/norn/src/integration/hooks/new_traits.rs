@@ -110,7 +110,6 @@ pub trait PostToolFailureHook: Send + Sync {
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
 
     use super::*;
     use crate::integration::hooks::traits::{Hook, HookRegistry};
@@ -309,11 +308,7 @@ mod tests {
             counter: Arc::clone(&counter),
         };
         let envelope = make_envelope("bash");
-        let output = ToolOutput {
-            content: serde_json::json!({ "error": "boom" }),
-            is_error: true,
-            duration: Duration::ZERO,
-        };
+        let output = ToolOutput::from_content(serde_json::json!({ "error": "boom" }));
         hook.after_tool_failure(&envelope, &output, &ToolContext::empty())
             .await;
         assert_eq!(counter.load(Ordering::SeqCst), 1);
@@ -402,11 +397,7 @@ mod tests {
         reg.run_session_start("sess-1").await;
         reg.run_session_end("sess-1").await;
         let envelope = make_envelope("bash");
-        let output = ToolOutput {
-            content: serde_json::json!({ "error": "boom" }),
-            is_error: true,
-            duration: Duration::ZERO,
-        };
+        let output = ToolOutput::from_content(serde_json::json!({ "error": "boom" }));
         reg.run_post_tool_failure(&envelope, &output, &ToolContext::empty())
             .await;
 

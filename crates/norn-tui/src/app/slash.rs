@@ -22,7 +22,7 @@ use std::sync::Arc;
 use norn::session::context_edit::ContextEdits;
 use norn::session::events::SessionEvent;
 use norn::session::{
-    DurabilityPolicy, EventStore, SessionPersistError, attach_sink, create_session,
+    CreateSessionOptions, DurabilityPolicy, EventStore, SessionManager, SessionPersistError,
 };
 
 use crate::TuiError;
@@ -187,12 +187,11 @@ fn write_dim_line(message: &str, guard: &mut TerminalGuard) -> Result<(), TuiErr
     Ok(())
 }
 
-/// Create a new persistent session through the full session stack:
-/// [`create_session`] registers the session in the index (so it is
-/// listable and resumable), then [`attach_sink`] equips a fresh store
-/// with an index-registered JSONL sink using
-/// [`DurabilityPolicy::Flush`] — the same durability every other
-/// interactive attach point in the workspace uses.
+/// Create a new persistent session through [`SessionManager::create`]:
+/// the session is registered in the index (so it is listable and
+/// resumable) and the returned store carries an index-registered JSONL
+/// sink using [`DurabilityPolicy::Flush`] — the same durability every
+/// other interactive open in the workspace uses.
 ///
 /// Returns the new session id and the sink-equipped store. Pure
 /// store-stack work with no terminal I/O, so both the success and the
@@ -206,14 +205,15 @@ fn create_new_session_store(
     // error and keeps the current session rather than silently
     // indexing a session with an empty working directory.
     let working_dir = std::env::current_dir()?.to_string_lossy().into_owned();
-    let entry = create_session(data_dir, model.to_owned(), working_dir, None)?;
-    let store = attach_sink(
-        EventStore::new(),
-        data_dir,
-        &entry.id,
+    let opened = SessionManager::new(data_dir).create(
+        CreateSessionOptions {
+            model: model.to_owned(),
+            working_dir,
+            name: None,
+        },
         DurabilityPolicy::Flush,
     )?;
-    Ok((entry.id, store))
+    Ok((opened.entry.id, opened.store))
 }
 
 /// `/new` (also `/clear`) — rotate to a new session, drop conversation
@@ -523,7 +523,7 @@ mod tests {
     use super::*;
 
     use norn::session::events::EventBase;
-    use norn::session::{read_index, read_session_events, resume_session};
+    use norn::session::{read_index, read_session_events};
 
     #[test]
     fn create_new_session_store_registers_session_in_index() {
@@ -583,9 +583,14 @@ mod tests {
             })
             .unwrap();
         drop(store);
-        let (_resumed_store, events, entry) = resume_session(tmp.path(), &id).unwrap();
-        assert_eq!(entry.id, id);
-        assert_eq!(events.len(), 1, "resume must replay the appended event");
+        let resumed = SessionManager::new(tmp.path())
+            .resume(&id, DurabilityPolicy::Flush)
+            .unwrap();
+        assert_eq!(resumed.entry.id, id);
+        assert_eq!(
+            resumed.replay.replayed_events, 1,
+            "resume must replay the appended event"
+        );
     }
 
     #[test]

@@ -52,7 +52,6 @@ impl Tool for McpProxyTool {
         envelope: &ToolEnvelope,
         _ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = std::time::Instant::now();
         let params = serde_json::json!({
             "name": self.def.name,
             "arguments": envelope.model_args,
@@ -84,10 +83,15 @@ impl Tool for McpProxyTool {
             "is_error": parsed.is_error,
             "raw": value,
         });
-        Ok(ToolOutput {
-            content,
-            is_error: parsed.is_error,
-            duration: started.elapsed(),
-        })
+        if parsed.is_error {
+            return Ok(ToolOutput::failure_with_content(
+                content,
+                crate::tool::failure::ToolErrorPayload::new(
+                    crate::tool::failure::ToolErrorKind::ExternalService,
+                    format!("MCP tool '{}' reported an error", self.def.name),
+                ),
+            ));
+        }
+        Ok(ToolOutput::success(content))
     }
 }

@@ -17,9 +17,7 @@ use tokio_util::sync::CancellationToken;
 use crate::error::{HookType, NornError, ProviderError, SchemaError};
 use crate::integration::diagnostics::NornDiagnostic;
 use crate::integration::hooks::{HookOutcome, LlmCallSummary};
-use crate::r#loop::classify::{
-    ResponseClass, call_provider, classify_response, truncation_failure,
-};
+use crate::r#loop::classify::{ResponseClass, call_provider, classify_response, record_truncation};
 use crate::r#loop::compaction::CompactionState;
 use crate::r#loop::conversation_state::ConversationRequestState;
 use crate::r#loop::dev_context::ManagedDevMessage;
@@ -55,8 +53,7 @@ use super::helpers::{
 
 use crate::integration::hooks::HookRegistry;
 
-// Re-export config types for backward compatibility.
-pub use crate::r#loop::config::{AgentLoopConfig, AgentStepResult, ToolExecutor};
+pub use crate::r#loop::config::{AgentLoopConfig, AgentStepResult, ToolExecutor, TruncationKind};
 
 /// On a [`HookOutcome::Block`] from `outcome`, inject the supplied
 /// reason as a follow-up user message — both into the session event
@@ -169,13 +166,13 @@ pub struct AgentStepRequest<'a> {
 ///
 /// # Errors
 ///
-/// Propagates any [`NornError`] surfaced by the inner step loop. In
-/// particular, a no-schema response truncated by the provider
-/// (`MaxTokens`/`ContentFilter` with no tool calls) returns the
-/// never-retryable [`ProviderError::Truncated`] rather than a misleading
-/// [`AgentStepResult::Completed`]; the partial text, usage, and stop
-/// reason remain available on the persisted `AssistantMessage` event and
-/// the accompanying `loop.truncated` Custom event.
+/// Propagates any [`NornError`] surfaced by the inner step loop. A
+/// no-schema response truncated by the provider
+/// (`MaxTokens`/`ContentFilter` with no tool calls) is **not** an error:
+/// it returns [`AgentStepResult::Truncated`] carrying the partial text and
+/// accumulated usage, with the full fragment and stop reason persisted on
+/// the `AssistantMessage` event and the accompanying `loop.truncated`
+/// Custom event.
 pub async fn run_agent_step(request: AgentStepRequest<'_>) -> Result<AgentStepResult, NornError> {
     let timeout_state = crate::r#loop::compaction::shared_timeout_state();
     let started = std::time::Instant::now();
@@ -190,6 +187,7 @@ pub async fn run_agent_step(request: AgentStepRequest<'_>) -> Result<AgentStepRe
                 elapsed: started.elapsed(),
                 iterations: snapshot.iterations,
                 partial_output: snapshot.last_assistant_text.clone().map(Value::String),
+                usage: snapshot.usage.clone(),
             })
         }
     } else {
@@ -388,6 +386,7 @@ async fn run_agent_step_inner(
         // exactly like any other provider call in this step.
         if let Some(usage) = preflight.summarization_usage {
             total_usage += usage;
+            timeout_state.lock().usage = total_usage.clone();
         }
         let request_messages = conversation_state.request_messages(&messages);
 
@@ -442,8 +441,14 @@ async fn run_agent_step_inner(
         };
 
         total_usage += response.usage.clone();
-        if !response.text.is_empty() {
-            timeout_state.lock().last_assistant_text = Some(response.text.clone());
+        {
+            // Keep the timeout snapshot's usage in lock-step with the
+            // running total so a timed-out step reports real spend.
+            let mut snapshot = timeout_state.lock();
+            snapshot.usage = total_usage.clone();
+            if !response.text.is_empty() {
+                snapshot.last_assistant_text = Some(response.text.clone());
+            }
         }
 
         if let Some(hooks) = loop_context.hooks.as_deref() {
@@ -805,22 +810,27 @@ async fn run_agent_step_inner(
             // REVIEW item 5: a `MaxTokens`/`ContentFilter` stop with no
             // tool calls in no-schema mode is an incomplete fragment.
             // Returning it as `Completed` made truncation indistinguishable
-            // from success, so it is surfaced as a typed provider error.
-            //
-            // Limitation: `AgentStepResult` (and the downstream
-            // `AgentStopReason`) currently has no `Truncated` variant, so
-            // accumulated usage cannot ride on the return value — callers
-            // recover both the partial text and usage from the session
-            // event store.
+            // from success. A truncated run is a *stopped run with partial
+            // output*, not a transport error, so it returns the typed
+            // `Truncated` stop outcome carrying the partial text and the
+            // accumulated usage; the full fragment and stop reason are also
+            // persisted on the `AssistantMessage` and `loop.truncated`
+            // events.
             ResponseClass::Truncated { kind } => {
-                return Err(truncation_failure(
+                record_truncation(
                     store,
                     loop_context.hooks.as_deref(),
                     kind,
                     &response.text,
                     iterations,
                 )
-                .await?);
+                .await?;
+                return Ok(AgentStepResult::Truncated {
+                    kind,
+                    partial_text: (!response.text.is_empty()).then(|| response.text.clone()),
+                    iterations,
+                    usage: total_usage,
+                });
             }
 
             ResponseClass::ToolsAndSchemaValid {
@@ -1630,7 +1640,7 @@ mod tests {
 
     #[tokio::test]
     async fn streaming_events_forwarded_to_broadcast() {
-        use crate::provider::agent_event::{AgentEvent, AgentEventSender};
+        use crate::provider::agent_event::{AgentEvent, AgentEventKind, AgentEventSender};
         use uuid::Uuid;
 
         let events = vec![
@@ -1659,7 +1669,12 @@ mod tests {
 
         let mut received = Vec::new();
         while let Ok(agent_event) = rx.try_recv() {
-            received.push(agent_event.event);
+            match agent_event.event {
+                AgentEventKind::Provider(event) => received.push(event),
+                AgentEventKind::Subagent(other) => {
+                    panic!("the loop emits only provider events, got {other:?}")
+                }
+            }
         }
 
         assert_eq!(received.len(), 3, "should receive all 3 events");
@@ -2598,9 +2613,15 @@ mod tests {
             }
         });
         let bash_output = bash_result.expect("bash ToolResult missing");
-        let error_str = bash_output["error"].as_str().unwrap_or("");
+        // Hook blocks persist as the typed `blocked` payload (kind +
+        // message + machine-readable detail), not a collapsed string.
+        assert_eq!(
+            bash_output["error"]["kind"], "blocked",
+            "hook block must carry the typed kind, got: {bash_output}",
+        );
+        let message = bash_output["error"]["message"].as_str().unwrap_or("");
         assert!(
-            error_str.contains("blocked by hook") && error_str.contains("bash blocked"),
+            message.contains("blocked by hook") && message.contains("bash blocked"),
             "expected block reason in bash output, got: {bash_output}",
         );
     }
@@ -3954,6 +3975,84 @@ mod tests {
         );
     }
 
+    // -- Step timeout: accumulated usage rides the TimedOut outcome --------
+
+    /// Provider whose first call streams a complete tool-call turn (with
+    /// usage) and whose second call hangs forever, forcing the step
+    /// timeout to fire mid-run.
+    struct HangsOnSecondCall {
+        calls: std::sync::atomic::AtomicUsize,
+    }
+
+    impl crate::provider::traits::Provider for HangsOnSecondCall {
+        fn stream(
+            &self,
+            _request: ProviderRequest,
+        ) -> Result<crate::provider::traits::ProviderStream, crate::error::ProviderError> {
+            let call = self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            if call == 0 {
+                Ok(Box::pin(futures_util::stream::iter(
+                    vec![
+                        tool_call_delta("tc1", Some("read_file"), "{}"),
+                        done_event(StopReason::ToolUse),
+                    ]
+                    .into_iter()
+                    .map(Ok),
+                )))
+            } else {
+                Ok(Box::pin(futures_util::stream::pending()))
+            }
+        }
+    }
+
+    /// The timed-out outcome must carry the usage accumulated by the
+    /// provider calls that completed before the budget elapsed — it was
+    /// previously zeroed because the outer timeout wrapper had no access
+    /// to the loop's running total.
+    #[tokio::test(start_paused = true)]
+    async fn timed_out_carries_accumulated_usage_and_partial_state() {
+        let provider = HangsOnSecondCall {
+            calls: std::sync::atomic::AtomicUsize::new(0),
+        };
+        let executor = MockToolExecutor::new(read_file_handlers());
+        let store = EventStore::new();
+        let config = AgentLoopConfig {
+            step_timeout: Some(std::time::Duration::from_secs(5)),
+            ..AgentLoopConfig::default()
+        };
+        let mut loop_ctx = LoopContext::new("system");
+
+        let result = run_agent_step(AgentStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "prompt",
+            tools: &[read_file_tool_def()],
+            output_schema: None,
+            model: "test-model",
+            config: &config,
+            event_tx: None,
+            inbound: None,
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+        .expect("timeout is a stop outcome, not an error");
+
+        match result {
+            AgentStepResult::TimedOut {
+                iterations, usage, ..
+            } => {
+                assert_eq!(iterations, 2, "second iteration was in flight");
+                // The first provider call completed and reported
+                // input 10 / output 5 (see `done_event`).
+                assert_eq!(usage.input_tokens, 10);
+                assert_eq!(usage.output_tokens, 5);
+            }
+            other => panic!("expected AgentStepResult::TimedOut, got {other:?}"),
+        }
+    }
+
     // -- REVIEW item 5: truncation must not masquerade as Completed --------
 
     async fn run_truncation_step(
@@ -3979,38 +4078,43 @@ mod tests {
         .await
     }
 
+    /// REVIEW item 5 (Phase 2 shape): a `max_tokens` stop with no tool
+    /// calls in no-schema mode is a *stopped run*, not a `Completed` one
+    /// and not an error. It returns the typed `Truncated` outcome carrying
+    /// the partial text, iteration count, and accumulated usage — making
+    /// the truncation impossible to mistake for success while keeping the
+    /// partial output on the return value. (Replaces the Phase 1 stopgap
+    /// that returned `ProviderError::Truncated`; truncation can no longer
+    /// reach the retry classifier at all, so the never-retry property is
+    /// structural.)
     #[tokio::test]
-    async fn max_tokens_truncation_is_an_error_not_completed() {
+    async fn max_tokens_truncation_is_a_typed_stop_not_completed() {
         let provider = MockProvider::new(vec![vec![
             text_delta("partial answ"),
             done_event(StopReason::MaxTokens),
         ]]);
         let store = EventStore::new();
 
-        let result = run_truncation_step(&provider, &store).await;
+        let result = run_truncation_step(&provider, &store)
+            .await
+            .expect("truncation is a stop outcome, not an error");
 
-        let err = result.expect_err("truncated output must not be Completed");
-        match err {
-            NornError::Provider(provider_err) => {
+        match result {
+            AgentStepResult::Truncated {
+                kind,
+                partial_text,
+                iterations,
+                usage,
+            } => {
+                assert_eq!(kind, TruncationKind::MaxTokens);
+                assert_eq!(partial_text.as_deref(), Some("partial answ"));
+                assert_eq!(iterations, 1);
                 assert!(
-                    provider_err.to_string().contains("max_tokens"),
-                    "error must name the deterministic stop: {provider_err}"
-                );
-                // Fix campaign Track V, finding 2: a deterministic stop
-                // (max_tokens) is not a transient transport failure — it
-                // must never classify as retryable, or a consumer using
-                // the classifier retries the same truncation forever.
-                assert!(
-                    !crate::r#loop::retry::RetryPolicy::default()
-                        .classifies_as_retryable(&provider_err),
-                    "deterministic truncation must not classify as retryable: {provider_err:?}"
-                );
-                assert!(
-                    matches!(provider_err, ProviderError::Truncated { ref stop_reason, .. } if stop_reason == "max_tokens"),
-                    "expected ProviderError::Truncated, got {provider_err:?}"
+                    usage.input_tokens > 0 || usage.output_tokens > 0,
+                    "accumulated usage must ride the truncated outcome: {usage:?}"
                 );
             }
-            other => panic!("expected a provider error, got {other:?}"),
+            other => panic!("expected AgentStepResult::Truncated, got {other:?}"),
         }
 
         // Partial text + stop reason persisted for recovery.
@@ -4036,32 +4140,25 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn content_filter_truncation_is_an_error_not_completed() {
+    async fn content_filter_truncation_is_a_typed_stop_not_completed() {
         let provider = MockProvider::new(vec![vec![done_event(StopReason::ContentFilter)]]);
         let store = EventStore::new();
 
-        let result = run_truncation_step(&provider, &store).await;
+        let result = run_truncation_step(&provider, &store)
+            .await
+            .expect("content-filter stop is a stop outcome, not an error");
 
-        let err = result.expect_err("filtered output must not be Completed");
-        match err {
-            NornError::Provider(provider_err) => {
+        match result {
+            AgentStepResult::Truncated {
+                kind, partial_text, ..
+            } => {
+                assert_eq!(kind, TruncationKind::ContentFilter);
                 assert!(
-                    provider_err.to_string().contains("content_filter"),
-                    "error must name the deterministic stop: {provider_err}"
-                );
-                // Fix campaign Track V, finding 2: a content-filter stop
-                // is deterministic — never retryable.
-                assert!(
-                    !crate::r#loop::retry::RetryPolicy::default()
-                        .classifies_as_retryable(&provider_err),
-                    "deterministic content-filter stop must not classify as retryable: {provider_err:?}"
-                );
-                assert!(
-                    matches!(provider_err, ProviderError::Truncated { ref stop_reason, .. } if stop_reason == "content_filter"),
-                    "expected ProviderError::Truncated, got {provider_err:?}"
+                    partial_text.is_none(),
+                    "no text was produced, so no partial text: {partial_text:?}"
                 );
             }
-            other => panic!("expected a provider error, got {other:?}"),
+            other => panic!("expected AgentStepResult::Truncated, got {other:?}"),
         }
     }
 

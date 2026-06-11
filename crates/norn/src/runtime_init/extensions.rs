@@ -8,13 +8,13 @@ use crate::config::permissions::PermissionPolicy;
 use crate::integration::DiagnosticCollector;
 use crate::r#loop::config::ToolExecutor;
 use crate::skill::SkillCatalog;
+use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 use crate::tool::context::ToolContext;
 use crate::tool::registry::ToolRegistry;
 use crate::tools::agent::{AgentHandles, ReclaimOnResultDelivery};
 use crate::tools::context_paths::ContextSearchPaths;
 use crate::tools::skill::SkillSearchPaths;
 use crate::tools::task::SharedTaskStore;
-use crate::tools::tool_search::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 
 use super::base::resolve_search_path;
 
@@ -122,17 +122,19 @@ pub fn install_agent_handles(ctx: &ToolContext) {
 
 /// Publish the searchable tool catalog (registry tools plus any
 /// consumer-contributed extras) on the registry's shared tool context.
+///
+/// Entries come from each tool's
+/// [`Tool::catalog_entries`](crate::tool::traits::Tool::catalog_entries),
+/// so field hints and composite subcommand entries are derived from the
+/// tools' own schemas.
 pub fn install_tool_catalog(registry: &ToolRegistry) {
     let Some(ctx) = registry.shared_context() else {
         return;
     };
     let mut entries: Vec<ToolCatalogEntry> = registry
         .names()
-        .filter_map(|name| {
-            registry
-                .get(name)
-                .map(|tool| ToolCatalogEntry::tool(tool.name(), tool.description()))
-        })
+        .filter_map(|name| registry.get(name))
+        .flat_map(crate::tool::traits::Tool::catalog_entries)
         .collect();
     if let Some(extras) = ctx.get_extension::<ToolCatalogExtras>() {
         entries.extend(extras.0.iter().cloned());

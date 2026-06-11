@@ -5,6 +5,9 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
+use crate::agent::output::AgentStopReason;
+use crate::provider::usage::Usage;
+
 /// Formatted result from a completed child agent (fork or spawn).
 ///
 /// Sent through the bounded mpsc channel from the child's `tokio::spawn`
@@ -22,6 +25,20 @@ pub struct ChildAgentResult {
     pub formatted_message: String,
     /// Error message when `succeeded` is false.
     pub error: Option<String>,
+    /// Typed stop reason when the child's run stopped early without
+    /// completing (schema budget, max iterations, timeout, cancellation,
+    /// truncation). `None` when the child completed (`succeeded: true`)
+    /// or failed with a hard [`NornError`](crate::error::NornError)
+    /// (in which case `error` carries the description).
+    pub stop: Option<AgentStopReason>,
+    /// Accumulated token usage across every provider call the child
+    /// made, populated on success and every early-stop outcome alike (a
+    /// stopped run still consumed tokens). [`Usage::default`] (all zeros)
+    /// when the run ended in a hard
+    /// [`NornError`](crate::error::NornError) or the child's wrapper task
+    /// panicked — the runner's `Err` path carries no usage, so zeros mean
+    /// "unknown", not "no tokens consumed".
+    pub usage: Usage,
 }
 
 /// Sender half of the child-agent result channel.

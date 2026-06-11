@@ -2,9 +2,9 @@
 
 use std::time::Duration;
 
-use norn::r#loop::config::{AgentLoopConfig, AgentStepResult};
-use norn::r#loop::loop_context::LoopContext;
-use norn::r#loop::runner::{AgentStepRequest, run_agent_step};
+use norn::agent_loop::config::{AgentLoopConfig, AgentStepResult};
+use norn::agent_loop::loop_context::LoopContext;
+use norn::agent_loop::runner::{AgentStepRequest, run_agent_step};
 use norn::provider::auth::AuthSource;
 use norn::provider::openai::OpenAiProvider;
 use norn::provider::request::{ProviderConfig, ToolDefinition};
@@ -171,6 +171,7 @@ async fn main() {
             elapsed,
             iterations,
             partial_output,
+            usage,
         }) => {
             eprintln!("[5/5] TIMED OUT after {elapsed:?} ({iterations} iterations)");
             if let Some(partial) = partial_output {
@@ -179,10 +180,33 @@ async fn main() {
                     serde_json::to_string_pretty(&partial).unwrap_or_default()
                 );
             }
+            eprintln!(
+                "  Tokens: {} in / {} out",
+                usage.input_tokens, usage.output_tokens
+            );
             std::process::exit(1);
         }
         Ok(AgentStepResult::Cancelled { usage }) => {
             eprintln!("[5/5] CANCELLED");
+            eprintln!(
+                "  Tokens: {} in / {} out",
+                usage.input_tokens, usage.output_tokens
+            );
+            std::process::exit(1);
+        }
+        Ok(AgentStepResult::Truncated {
+            kind,
+            partial_text,
+            iterations,
+            usage,
+        }) => {
+            eprintln!(
+                "[5/5] TRUNCATED ({}) after {iterations} iterations",
+                kind.as_str()
+            );
+            if let Some(partial) = partial_text {
+                eprintln!("  Partial text: {partial}");
+            }
             eprintln!(
                 "  Tokens: {} in / {} out",
                 usage.input_tokens, usage.output_tokens

@@ -23,6 +23,16 @@ pub enum ToolEffect {
     ReadOnly,
     /// Writes to disk — must be serialized.
     Write,
+    /// Mutates state in an external system (database, message broker,
+    /// remote service) — serialized like [`Self::Write`].
+    ///
+    /// This is the honest declaration for tools whose mutation target is
+    /// not the local filesystem. Two remote mutations in one batch may
+    /// touch the same remote entity and the scheduler has no key to prove
+    /// otherwise, so the same serialize-mutations rule that protects disk
+    /// writes applies. [`Self::Network`] remains the declaration for
+    /// *read-only* network I/O, which stays concurrent.
+    RemoteMutation,
     /// Runs an external process — serialized by default.
     Process,
     /// Network I/O — safe to run concurrently.
@@ -35,6 +45,33 @@ impl ToolEffect {
     /// Returns true if this effect is safe for concurrent execution.
     fn is_concurrent(self) -> bool {
         matches!(self, Self::ReadOnly | Self::Network)
+    }
+
+    /// Conservative union of two effects: the result is never narrower
+    /// than either input, so a batch classified with the combined effect
+    /// can never mis-schedule a mutation as concurrent.
+    ///
+    /// Severity order (most → least conservative): `Unknown` > `Process` >
+    /// `RemoteMutation` > `Write` > `Network` > `ReadOnly`. Among the
+    /// serialized effects the order is documentation only — the scheduler
+    /// treats every non-concurrent effect identically.
+    #[must_use]
+    pub fn combine(self, other: Self) -> Self {
+        fn severity(effect: ToolEffect) -> u8 {
+            match effect {
+                ToolEffect::ReadOnly => 0,
+                ToolEffect::Network => 1,
+                ToolEffect::Write => 2,
+                ToolEffect::RemoteMutation => 3,
+                ToolEffect::Process => 4,
+                ToolEffect::Unknown => 5,
+            }
+        }
+        if severity(other) > severity(self) {
+            other
+        } else {
+            self
+        }
     }
 }
 
@@ -191,6 +228,54 @@ mod tests {
                 tool_call_id: "write2".to_string()
             }
         );
+    }
+
+    #[test]
+    fn remote_mutation_is_serialized_like_write() {
+        let calls = [
+            ("read1".to_string(), ToolEffect::ReadOnly),
+            ("db1".to_string(), ToolEffect::RemoteMutation),
+            ("db2".to_string(), ToolEffect::RemoteMutation),
+        ];
+        let plan = SchedulingPlan::build(&calls);
+        assert_eq!(plan.steps.len(), 3);
+        assert_eq!(
+            plan.steps[1],
+            ExecutionStep::Serial {
+                tool_call_id: "db1".to_string()
+            }
+        );
+        assert_eq!(
+            plan.steps[2],
+            ExecutionStep::Serial {
+                tool_call_id: "db2".to_string()
+            }
+        );
+    }
+
+    #[test]
+    fn combine_is_never_narrower_than_either_input() {
+        use ToolEffect::{Network, Process, ReadOnly, RemoteMutation, Unknown, Write};
+        let all = [ReadOnly, Network, Write, RemoteMutation, Process, Unknown];
+        for a in all {
+            for b in all {
+                let combined = a.combine(b);
+                // Symmetric.
+                assert_eq!(combined, b.combine(a));
+                // Concurrent only when both inputs are concurrent.
+                let both_concurrent =
+                    matches!(a, ReadOnly | Network) && matches!(b, ReadOnly | Network);
+                assert_eq!(
+                    matches!(combined, ReadOnly | Network),
+                    both_concurrent,
+                    "combine({a:?}, {b:?}) = {combined:?}",
+                );
+            }
+        }
+        assert_eq!(ReadOnly.combine(ReadOnly), ReadOnly);
+        assert_eq!(ReadOnly.combine(Write), Write);
+        assert_eq!(RemoteMutation.combine(Write), RemoteMutation);
+        assert_eq!(Process.combine(Unknown), Unknown);
     }
 
     #[test]

@@ -11,3 +11,5 @@ To parallelise work, spawn several children for independent subtasks. Results ar
 If you genuinely need a blocking sub-agent that shares the current conversation context, prefer fork over spawn_agent.
 
 The path parameter is a hierarchical registry path (e.g. "/research/phase-1"), not a file path — it controls where the sub-agent appears in the agent tree. Omit path to auto-generate one under /spawn/.
+
+Use the output_schema parameter to require structured output: pass a JSON Schema object and the sub-agent's final answer must validate against it. The schema is an explicit per-spawn decision — a sub-agent never inherits your own output schema implicitly. Omit output_schema for free-form output.

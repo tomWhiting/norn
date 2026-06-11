@@ -4,7 +4,7 @@ mod tests {
     use std::sync::Arc;
 
     use norn::agent::registry::AgentRegistry;
-    use norn::r#loop::config::ToolExecutor;
+    use norn::agent_loop::config::ToolExecutor;
     use norn::profile::Profile;
     use norn::provider::traits::Provider;
     use norn::session::store::EventStore;
@@ -69,7 +69,7 @@ mod tests {
         );
 
         let registry = ToolRegistry::new();
-        let mut loop_context = norn::r#loop::loop_context::LoopContext {
+        let mut loop_context = norn::agent_loop::loop_context::LoopContext {
             working_dir: SharedWorkingDir::new(agent_dir.path().to_path_buf()),
             ..Default::default()
         };
@@ -141,7 +141,7 @@ mod tests {
             .unwrap();
 
         let registry = ToolRegistry::new();
-        let mut loop_context = norn::r#loop::loop_context::LoopContext::default();
+        let mut loop_context = norn::agent_loop::loop_context::LoopContext::default();
         crate::runtime::install_action_log(&registry, &store, &mut loop_context);
 
         let log = loop_context

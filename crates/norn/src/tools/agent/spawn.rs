@@ -12,7 +12,6 @@
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
@@ -22,35 +21,34 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use super::handle::{AgentHandle, AgentHandles, ChildBranchMetadata, SharedSessionTree};
-use super::infra::{AgentToolInfra, SubAgentExecutor, infra_from};
+use super::infra::{SubAgentExecutor, infra_from};
+use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
 use super::reclaim::{
     ReclaimOnResultDelivery, entry_terminal_or_reclaimed, reclaim_delivered_child,
 };
-use super::spawn_outcome::{extract_outcome_summary, mark_terminal_in_registry};
+use super::spawn_context::build_child_context;
+use super::spawn_outcome::{
+    extract_outcome_summary, mark_terminal_in_registry, panicked_outcome_summary,
+};
 use crate::agent::fork::ContextFilter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::ChildResultSender;
-use crate::config::permissions::PermissionPolicy;
 use crate::error::ToolError;
-use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::{HookOutcome, HookRegistry};
-use crate::internal::extraction::SharedProvider;
 use crate::r#loop::inbound::inbound_channel;
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::runner::{AgentLoopConfig, AgentStepRequest, run_agent_step};
 use crate::profile::{default_scan_dirs, from_profile, resolve_profile};
-use crate::provider::agent_event::AgentEventSender;
+use crate::provider::agent_event::{AgentEventSender, SubagentDescriptor, SubagentKind};
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
 use crate::session::store::EventStore;
 use crate::session::tree::{BranchConfig, SessionMetadata, SessionStatus};
-use crate::tool::context::{SharedWorkingDir, ToolContext};
+use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::registry::ToolRegistry;
-use crate::tool::scheduling::{ToolEffect, ToolEffectIndex};
+use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
-use crate::tools::task::SharedTaskStore;
-use crate::tools::tool_search::SharedToolCatalog;
 
 /// Bounded capacity of a child's inbound steering channel.
 ///
@@ -88,6 +86,12 @@ struct SpawnAgentArgs {
     tools: Option<Vec<String>>,
     #[serde(default)]
     path: Option<String>,
+    /// Optional JSON Schema the child's final output must validate
+    /// against. Schema is an explicit per-spawn decision: a child never
+    /// implicitly inherits the parent's output schema — omitting this
+    /// field means the child produces free-form output.
+    #[serde(default)]
+    output_schema: Option<serde_json::Value>,
 }
 
 /// Build the child's [`LoopContext`] and the profile-derived tool list.
@@ -147,100 +151,6 @@ fn build_tool_definitions(
             })
         })
         .collect()
-}
-
-/// Construct the per-child [`ToolContext`].
-///
-/// The child gets a *fresh* [`AgentToolInfra`] carrying its own
-/// `agent_id` / `parent_id` and its own [`EventStore`], plus a *fresh*
-/// (empty) [`AgentHandles`] so it can spawn grandchildren. The shared
-/// infrastructure — [`SharedTaskStore`], [`SharedToolCatalog`],
-/// [`DiagnosticCollector`] — is forwarded from the parent context so tasks
-/// and tool discovery stay global across the agent tree. The
-/// [`crate::agent::mailbox::Mailbox`] is shared by design, so a child's
-/// send to its `parent_id` routes back to the same mailbox.
-///
-/// The consent-boundary [`PermissionPolicy`] and the scheduling
-/// [`ToolEffectIndex`] are likewise forwarded: the child's agent loop
-/// resolves both from *its own* executor's shared context, so omitting
-/// them here would let a child evade every deny/ask rule the parent is
-/// subject to (and lose effect-based batch scheduling).
-///
-/// The parent's workspace-confinement root (a plain [`ToolContext`] field,
-/// not an extension) is forwarded via
-/// [`ToolContext::confine_to_workspace`] for the same reason: the child's
-/// file tools check confinement against the *child's* dispatch context, so
-/// dropping the root would let a confined parent escape its sandbox simply
-/// by spawning a child. The child's working dir is its **own**
-/// [`SharedWorkingDir`] handle seeded from the parent's *current* working
-/// dir — snapshot semantics, matching [`SharedWorkingDir`]'s documented
-/// fork contract: children run concurrently with the parent, so sharing
-/// the live handle would let a child's bash `cd` move the parent's (and
-/// every sibling's) working dir mid-turn.
-///
-/// The parent's shared [`HookRegistry`] extension is forwarded so the
-/// child's own spawn/fork sites (grandchildren) observe the same operator
-/// hooks; the caller separately installs the registry on the child's
-/// [`LoopContext`] so pre/post-tool hooks fire for the child's own calls.
-///
-/// When `child_tree` is `Some` — i.e. an orchestrator published a
-/// [`SharedSessionTree`] on the parent context — it is installed on the
-/// child context keyed to the *child's* `SessionId`, so a grandchild spawn
-/// branches under the child's session in turn (NA-008 R3).
-fn build_child_context(
-    parent_infra: &AgentToolInfra,
-    child_id: Uuid,
-    child_store: Arc<EventStore>,
-    parent_ctx: &ToolContext,
-    child_tree: Option<SharedSessionTree>,
-) -> Arc<ToolContext> {
-    let child_infra = AgentToolInfra {
-        registry: Arc::clone(&parent_infra.registry),
-        mailbox: Arc::clone(&parent_infra.mailbox),
-        provider: Arc::clone(&parent_infra.provider),
-        event_store: child_store,
-        agent_id: child_id,
-        parent_id: Some(parent_infra.agent_id),
-        tool_registry: parent_infra.tool_registry.as_ref().map(Arc::clone),
-    };
-
-    let mut child_ctx =
-        ToolContext::with_working_dir(SharedWorkingDir::new(parent_ctx.working_dir()));
-    if let Some(root) = parent_ctx.workspace_root() {
-        child_ctx.confine_to_workspace(root.to_path_buf());
-    }
-    child_ctx.insert_extension(Arc::new(child_infra));
-    child_ctx.insert_extension(Arc::new(AgentHandles::new()));
-    if let Some(task_store) = parent_ctx.get_extension::<SharedTaskStore>() {
-        child_ctx.insert_extension(task_store);
-    }
-    if let Some(catalog) = parent_ctx.get_extension::<SharedToolCatalog>() {
-        child_ctx.insert_extension(catalog);
-    }
-    if let Some(diagnostics) = parent_ctx.get_extension::<DiagnosticCollector>() {
-        child_ctx.insert_extension(diagnostics);
-    }
-    if let Some(sp) = parent_ctx.get_extension::<SharedProvider>() {
-        child_ctx.insert_extension(sp);
-    }
-    if let Some(policy) = parent_ctx.get_extension::<PermissionPolicy>() {
-        child_ctx.insert_extension(policy);
-    }
-    if let Some(effects) = parent_ctx.get_extension::<ToolEffectIndex>() {
-        child_ctx.insert_extension(effects);
-    }
-    if let Some(hooks) = parent_ctx.get_extension::<HookRegistry>() {
-        child_ctx.insert_extension(hooks);
-    }
-    if let Some(ch) =
-        parent_ctx.get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
-    {
-        child_ctx.insert_extension(ch);
-    }
-    if let Some(tree) = child_tree {
-        child_ctx.insert_extension(Arc::new(tree));
-    }
-    Arc::new(child_ctx)
 }
 
 /// Resolve the child's [`EventStore`] and, when an orchestrator published a
@@ -313,6 +223,9 @@ struct ChildLaunch {
     tool_defs: Vec<ToolDefinition>,
     /// The self-contained task string the child runs.
     task: String,
+    /// Optional JSON Schema the child's final output must validate
+    /// against (the spawn caller's explicit `output_schema` argument).
+    output_schema: Option<serde_json::Value>,
     /// Model identifier for the child's provider calls.
     model: String,
     /// Shared agent registry — the spawn wrapper marks terminal status here.
@@ -344,6 +257,10 @@ struct ChildLaunch {
     /// handle (see [`super::reclaim`] for the ownership rule). `None`
     /// leaves both for an external observer or the handle holder.
     reclaim_handles: Option<Arc<AgentHandles>>,
+    /// Typed lifecycle emitter — `Started` was already emitted by the
+    /// tool before launch; the wrapper emits `Completed` once the run
+    /// reaches a terminal outcome.
+    lifecycle: LifecycleEmitter,
 }
 
 /// Launch the child on its own `tokio` task and return the [`AgentHandle`]
@@ -360,6 +277,7 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
         mut loop_ctx,
         tool_defs,
         task,
+        output_schema,
         model,
         agent_registry,
         result_sender,
@@ -369,6 +287,7 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
         role_label,
         event_sender,
         reclaim_handles,
+        lifecycle,
     } = launch;
 
     let handle_store = Arc::clone(&store);
@@ -377,21 +296,32 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let agent_role = format!("spawn/{model}");
 
     let join_handle = tokio::spawn(async move {
-        let outcome = run_agent_step(AgentStepRequest {
-            provider: provider.as_ref(),
-            executor: &executor,
-            store: store.as_ref(),
-            user_prompt: &task,
-            tools: &tool_defs,
-            output_schema: None,
-            model: &model,
-            config: &AgentLoopConfig::default(),
-            event_tx: event_sender.as_ref(),
-            inbound: Some(&mut inbound_rx),
-            loop_context: &mut loop_ctx,
-            cancel: None,
-        })
-        .await;
+        // Panic isolation: the agent step runs on its own inner task so a
+        // panic inside a tool or provider (workspace code denies panics,
+        // but a dependency inside the child's task can still unwind)
+        // surfaces here as a `JoinError` instead of killing the wrapper.
+        // The wrapper then completes every obligation of the normal
+        // failure path — stop hook, lifecycle `Completed`, result-channel
+        // delivery, status broadcast, registry transition, reclamation —
+        // so observers never see a dangling `Started`.
+        let inner = tokio::spawn(async move {
+            run_agent_step(AgentStepRequest {
+                provider: provider.as_ref(),
+                executor: &executor,
+                store: store.as_ref(),
+                user_prompt: &task,
+                tools: &tool_defs,
+                output_schema: output_schema.as_ref(),
+                model: &model,
+                config: &AgentLoopConfig::default(),
+                event_tx: event_sender.as_ref(),
+                inbound: Some(&mut inbound_rx),
+                loop_context: &mut loop_ctx,
+                cancel: None,
+            })
+            .await
+        });
+        let outcome = inner.await;
 
         // NH-006 R5 / C57: fire SubagentHook::on_subagent_stop before
         // marking the registry's terminal status. A Block suppresses
@@ -399,7 +329,8 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
         // pre-terminal registry state) while the result-channel
         // summary still surfaces so the parent observes the child's
         // outcome. Hooks is None → marking happens unconditionally,
-        // matching pre-NH-006 behaviour.
+        // matching pre-NH-006 behaviour. Fires on the panic path too —
+        // the child stopped either way.
         let stop_blocked = if let Some(hooks_arc) = hooks.as_ref() {
             matches!(
                 hooks_arc
@@ -411,25 +342,46 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
             false
         };
 
-        let (terminal_status, output_text, error) = extract_outcome_summary(outcome);
+        let summary = match outcome {
+            Ok(step_outcome) => extract_outcome_summary(step_outcome),
+            Err(join_error) => {
+                tracing::error!(
+                    child_id = %child_id,
+                    error = %join_error,
+                    "spawn_agent: child task panicked or was aborted before completing",
+                );
+                panicked_outcome_summary(&join_error)
+            }
+        };
+        let terminal_status = summary.status;
+        let succeeded = terminal_status == AgentStatus::Completed;
 
         if !stop_blocked {
             mark_terminal_in_registry(&agent_registry, child_id, terminal_status);
         }
 
+        // Typed lifecycle: the run itself finished, so `Completed` is
+        // emitted unconditionally — a stop hook's Block only suppresses
+        // the registry transition above, not the observable outcome.
+        lifecycle.emit_completed(SubagentCompletion {
+            usage: summary.usage.clone(),
+            succeeded,
+            error: summary.error.clone(),
+            stop: summary.stop.clone(),
+        });
+
         if let Some(sender) = result_sender {
-            let succeeded = terminal_status == AgentStatus::Completed;
             let formatted_message = if succeeded {
                 crate::agent::fork::format_spawn_result(
                     child_id,
                     &agent_role,
-                    output_text.as_deref().unwrap_or("(no output)"),
+                    summary.output_text.as_deref().unwrap_or("(no output)"),
                 )
             } else {
                 crate::agent::fork::format_spawn_failure(
                     child_id,
                     &agent_role,
-                    error.as_deref().unwrap_or("unknown error"),
+                    summary.error.as_deref().unwrap_or("unknown error"),
                 )
             };
             let result = crate::agent::result_channel::ChildAgentResult {
@@ -437,7 +389,9 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
                 agent_role,
                 succeeded,
                 formatted_message,
-                error,
+                error: summary.error,
+                stop: summary.stop,
+                usage: summary.usage,
             };
             if let Err(e) = sender.0.send(result).await {
                 tracing::error!(
@@ -526,6 +480,10 @@ impl Tool for SpawnAgentTool {
                 "path": {
                     "type": "string",
                     "description": "Hierarchical registry path for the sub-agent (e.g. \"/workers/phase-1\"). Not a file path. Omit to auto-generate under /spawn/."
+                },
+                "output_schema": {
+                    "type": "object",
+                    "description": "Optional JSON Schema the sub-agent's final output must validate against. The sub-agent never inherits the caller's output schema implicitly — supply one here when the result must be structured. Omit for free-form output."
                 }
             }
         })
@@ -540,7 +498,6 @@ impl Tool for SpawnAgentTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: SpawnAgentArgs =
             serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
                 ToolError::ExecutionFailed {
@@ -560,13 +517,9 @@ impl Tool for SpawnAgentTool {
         // The spawning agent's `AgentHandles` extension must be installed
         // before we launch a child — otherwise the child would run
         // unobservable, with no status channel and no steering channel.
-        let handles =
-            ctx.get_extension::<AgentHandles>()
-                .ok_or_else(|| ToolError::ExecutionFailed {
-                    reason: "spawn_agent requires the AgentHandles extension on the tool context; \
-                         build_runtime installs it during runtime construction"
-                        .to_string(),
-                })?;
+        // `build_runtime` installs it during runtime construction; a
+        // missing extension surfaces as a typed `MissingExtension` error.
+        let handles = ctx.require_extension::<AgentHandles>()?;
 
         // Build the child's loop context and resolve the profile's tool
         // list. The profile scanner walks the same directories the CLI uses
@@ -592,6 +545,15 @@ impl Tool for SpawnAgentTool {
         // prefer the profile name, falling back to the role argument when no
         // profile was given. Computed before `reserve` consumes `args.role`.
         let role_label = args.profile.clone().unwrap_or_else(|| args.role.clone());
+
+        // Provenance carried on both typed lifecycle phases. Captured
+        // before `reserve` consumes `args.role`.
+        let descriptor = SubagentDescriptor {
+            kind: SubagentKind::Spawn,
+            role: args.role.clone(),
+            model: args.model.clone(),
+            profile: args.profile.clone(),
+        };
 
         let guard = AgentRegistry::reserve(
             &infra.registry,
@@ -675,6 +637,21 @@ impl Tool for SpawnAgentTool {
                 AgentEventSender::new(ch.0.clone(), child_id, format!("spawn/{}", args.model))
             });
 
+        // Typed lifecycle: `Started` is emitted before the child task
+        // launches, so it always precedes the child's own provider
+        // events on the broadcast channel; the wrapper task emits
+        // `Completed`. Both phases also land as Custom audit events on
+        // the parent's session store.
+        let lifecycle = LifecycleEmitter::new(
+            child_event_sender.clone(),
+            Arc::clone(&infra.event_store),
+            infra.agent_id,
+            child_id,
+            descriptor,
+            Utc::now(),
+        );
+        lifecycle.emit_started();
+
         let handle = launch_child(ChildLaunch {
             provider: Arc::clone(&infra.provider),
             executor: child_executor,
@@ -682,6 +659,7 @@ impl Tool for SpawnAgentTool {
             loop_ctx: child_loop_ctx,
             tool_defs,
             task: args.task,
+            output_schema: args.output_schema,
             model: args.model,
             agent_registry: Arc::clone(&infra.registry),
             result_sender: result_sender.map(|s| (*s).clone()),
@@ -691,6 +669,7 @@ impl Tool for SpawnAgentTool {
             role_label,
             event_sender: child_event_sender,
             reclaim_handles: reclaim_on_delivery.then(|| Arc::clone(&handles)),
+            lifecycle,
         });
         handles.insert(handle);
 
@@ -706,15 +685,11 @@ impl Tool for SpawnAgentTool {
             reclaim_delivered_child(&infra.registry, &handles, child_id);
         }
 
-        Ok(ToolOutput {
-            content: serde_json::json!({
-                "agent_id": child_id.to_string(),
-                "path": path,
-                "status": "active",
-            }),
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(serde_json::json!({
+            "agent_id": child_id.to_string(),
+            "path": path,
+            "status": "active",
+        })))
     }
 }
 
@@ -750,6 +725,7 @@ mod tests {
     use futures_util::{StreamExt, stream};
     use serde_json::json;
 
+    use super::super::infra::AgentToolInfra;
     use super::*;
     use crate::agent::mailbox::Mailbox;
     use crate::error::ProviderError;
@@ -830,7 +806,7 @@ mod tests {
         args: serde_json::Value,
     ) -> Uuid {
         let out = tool.execute(&envelope_for(args), ctx).await.expect("spawn");
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["status"], "active");
         assert!(
             out.content.get("result_summary").is_none(),
@@ -877,11 +853,7 @@ mod tests {
                 *self.seen_agent.lock().unwrap() = Some(infra.agent_id);
                 *self.seen_parent.lock().unwrap() = infra.parent_id;
             }
-            Ok(TestToolOutput {
-                content: serde_json::json!({"ok": true}),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(TestToolOutput::success(serde_json::json!({"ok": true})))
         }
     }
 
@@ -909,11 +881,9 @@ mod tests {
             _envelope: &ToolEnvelope,
             _ctx: &ToolContext,
         ) -> Result<TestToolOutput, ToolError> {
-            Ok(TestToolOutput {
-                content: serde_json::json!({"echoed": self.tool_name}),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(TestToolOutput::success(
+                serde_json::json!({"echoed": self.tool_name}),
+            ))
         }
     }
 
@@ -1014,16 +984,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn spawn_agent_without_infra_returns_execution_failed() {
+    async fn spawn_agent_without_infra_returns_missing_extension() {
         let tool = SpawnAgentTool::new();
         let envelope = envelope_for(json!({"task": "x", "model": "m", "role": "r"}));
         let ctx = ToolContext::empty();
         let err = tool.execute(&envelope, &ctx).await.expect_err("no infra");
         match err {
-            ToolError::ExecutionFailed { reason } => {
-                assert!(reason.contains("agent runtime not configured"), "{reason}");
+            ToolError::MissingExtension { extension } => {
+                assert!(
+                    extension.contains("AgentToolInfra"),
+                    "error must name the missing extension type: {extension}"
+                );
             }
-            other => panic!("expected ExecutionFailed, got {other:?}"),
+            other => panic!("expected MissingExtension, got {other:?}"),
         }
     }
 
@@ -1091,10 +1064,10 @@ mod tests {
             .await
             .expect_err("must error when AgentHandles missing");
         match err {
-            ToolError::ExecutionFailed { reason } => {
-                assert!(reason.contains("AgentHandles"), "{reason}");
+            ToolError::MissingExtension { extension } => {
+                assert!(extension.contains("AgentHandles"), "{extension}");
             }
-            other => panic!("expected ExecutionFailed, got {other:?}"),
+            other => panic!("expected MissingExtension, got {other:?}"),
         }
     }
 
@@ -1296,6 +1269,375 @@ mod tests {
         assert!(result.error.is_some(), "error message present on failure");
     }
 
+    /// Typed lifecycle: spawn emits `SubagentLifecycle::Started` then
+    /// `Completed` on the shared broadcast channel — child-tagged, with
+    /// parent/child ids, the spawn descriptor, ordered wall-clock
+    /// timestamps, and the child's accumulated usage — and appends the
+    /// matching `subagent.started` / `subagent.completed` Custom audit
+    /// events to the parent's session store. The result channel carries
+    /// the same per-child usage.
+    #[tokio::test]
+    async fn spawn_emits_typed_lifecycle_events_on_channel_and_parent_store() {
+        use crate::provider::agent_event::{
+            AgentEvent, AgentEventKind, SUBAGENT_COMPLETED_EVENT_TYPE, SUBAGENT_STARTED_EVENT_TYPE,
+            SharedAgentEventChannel, SubagentKind, SubagentLifecycle,
+        };
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "child done".to_string(),
+            },
+            done_event(),
+        ]]));
+        let parent = Uuid::new_v4();
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            parent,
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (btx, mut brx) = tokio::sync::broadcast::channel::<AgentEvent>(64);
+        ctx.insert_extension(Arc::new(SharedAgentEventChannel(btx)));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let before = Utc::now();
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "do it", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+
+        // Collect every broadcast event; lifecycle events are child-tagged
+        // and `Started` must precede the child's own provider events.
+        let mut subagent_events = Vec::new();
+        let mut first_child_event_is_started = None;
+        while let Ok(ev) = brx.try_recv() {
+            if ev.agent_id == child_id && first_child_event_is_started.is_none() {
+                first_child_event_is_started = Some(matches!(
+                    ev.event,
+                    AgentEventKind::Subagent(SubagentLifecycle::Started { .. })
+                ));
+            }
+            if let AgentEventKind::Subagent(lifecycle) = ev.event {
+                assert_eq!(ev.agent_id, child_id, "lifecycle events are child-tagged");
+                assert_eq!(&*ev.agent_role, "spawn/haiku");
+                subagent_events.push(lifecycle);
+            }
+        }
+        assert_eq!(
+            first_child_event_is_started,
+            Some(true),
+            "Started must precede the child's own provider events",
+        );
+        assert_eq!(subagent_events.len(), 2, "exactly Started then Completed");
+        match &subagent_events[0] {
+            SubagentLifecycle::Started {
+                parent_id,
+                child_id: c,
+                descriptor,
+                started_at,
+            } => {
+                assert_eq!(*parent_id, parent);
+                assert_eq!(*c, child_id);
+                assert_eq!(descriptor.kind, SubagentKind::Spawn);
+                assert_eq!(descriptor.role, "worker");
+                assert_eq!(descriptor.model, "haiku");
+                assert!(descriptor.profile.is_none());
+                assert!(
+                    *started_at >= before,
+                    "started_at is wall-clock launch time"
+                );
+            }
+            other => panic!("expected Started, got {other:?}"),
+        }
+        match &subagent_events[1] {
+            SubagentLifecycle::Completed {
+                parent_id,
+                child_id: c,
+                descriptor,
+                started_at,
+                completed_at,
+                usage,
+                succeeded,
+                error,
+                stop,
+            } => {
+                assert_eq!(*parent_id, parent);
+                assert_eq!(*c, child_id);
+                assert_eq!(descriptor.kind, SubagentKind::Spawn);
+                assert!(*completed_at >= *started_at, "timestamps must be ordered");
+                assert!(*succeeded);
+                assert!(error.is_none());
+                assert!(stop.is_none());
+                assert_eq!(usage.input_tokens, 10, "per-child usage must surface");
+                assert_eq!(usage.output_tokens, 5);
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+
+        // Audit carrier: the parent store got both Custom events.
+        let infra = ctx.get_extension::<AgentToolInfra>().expect("infra");
+        let custom: Vec<(String, serde_json::Value)> = infra
+            .event_store
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                SessionEvent::Custom {
+                    event_type, data, ..
+                } => Some((event_type, data)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(custom.len(), 2, "started + completed audit events");
+        assert_eq!(custom[0].0, SUBAGENT_STARTED_EVENT_TYPE);
+        assert_eq!(custom[0].1["phase"], "started");
+        assert_eq!(custom[0].1["child_id"], child_id.to_string());
+        assert_eq!(custom[0].1["descriptor"]["kind"], "spawn");
+        assert_eq!(custom[1].0, SUBAGENT_COMPLETED_EVENT_TYPE);
+        assert_eq!(custom[1].1["phase"], "completed");
+        assert_eq!(custom[1].1["succeeded"], true);
+        assert_eq!(custom[1].1["usage"]["input_tokens"], 10);
+
+        // The result channel carries the same per-child usage.
+        let result = rx.try_recv().expect("result on the channel");
+        assert_eq!(result.usage.input_tokens, 10);
+        assert_eq!(result.usage.output_tokens, 5);
+    }
+
+    /// Typed lifecycle on the failure path: a child whose provider errors
+    /// reports `Completed` with `succeeded: false`, the error description,
+    /// and zero usage (no provider call completed).
+    #[tokio::test]
+    async fn failed_spawn_emits_completed_lifecycle_with_error() {
+        use crate::provider::agent_event::{
+            AgentEvent, AgentEventKind, SharedAgentEventChannel, SubagentLifecycle,
+        };
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (btx, mut brx) = tokio::sync::broadcast::channel::<AgentEvent>(64);
+        ctx.insert_extension(Arc::new(SharedAgentEventChannel(btx)));
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "will fail", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+
+        let mut completed = None;
+        while let Ok(ev) = brx.try_recv() {
+            if let AgentEventKind::Subagent(SubagentLifecycle::Completed {
+                child_id: c,
+                succeeded,
+                error,
+                usage,
+                ..
+            }) = ev.event
+            {
+                completed = Some((c, succeeded, error, usage));
+            }
+        }
+        let (c, succeeded, error, usage) = completed.expect("completed lifecycle event");
+        assert_eq!(c, child_id);
+        assert!(!succeeded, "failed child must report succeeded: false");
+        assert!(error.is_some(), "error description must be present");
+        assert_eq!(usage.input_tokens, 0, "no provider call completed");
+    }
+
+    /// Panic defense: a panic inside the child's run (here: a tool that
+    /// panics, standing in for a panicking dependency) must not leave
+    /// observers a dangling `Started`. The wrapper isolates the run on an
+    /// inner task, observes the `JoinError`, and still emits the
+    /// `Completed` lifecycle event with `succeeded: false` and an honest
+    /// error, delivers the failure through the result channel, and marks
+    /// the registry `Failed`.
+    #[tokio::test]
+    async fn panicking_child_task_still_completes_lifecycle_and_delivers_result() {
+        use crate::provider::agent_event::{
+            AgentEvent, AgentEventKind, SharedAgentEventChannel, SubagentLifecycle,
+        };
+
+        struct PanickingTool;
+
+        #[async_trait]
+        impl TestTool for PanickingTool {
+            fn name(&self) -> &'static str {
+                "explode"
+            }
+            fn description(&self) -> &'static str {
+                "panics on execute (test stand-in for a panicking dependency)"
+            }
+            fn input_schema(&self) -> serde_json::Value {
+                json!({})
+            }
+            fn effect(&self) -> ToolEffect {
+                ToolEffect::ReadOnly
+            }
+            async fn execute(
+                &self,
+                _envelope: &ToolEnvelope,
+                _ctx: &ToolContext,
+            ) -> Result<TestToolOutput, ToolError> {
+                panic!("dependency panic inside child tool");
+            }
+        }
+
+        let turn = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "tc-panic".to_string(),
+                name: Some("explode".to_string()),
+                arguments_delta: "{}".to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![turn]));
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(PanickingTool));
+
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(registry),
+            Arc::new(Mailbox::new()),
+        );
+        let (btx, mut brx) = tokio::sync::broadcast::channel::<AgentEvent>(64);
+        ctx.insert_extension(Arc::new(SharedAgentEventChannel(btx)));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "boom", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+
+        // Registry: the wrapper still applied the terminal transition.
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("panicked child entry stays observable")
+                .status,
+            AgentStatus::Failed,
+        );
+
+        // Result channel: the failure is delivered, naming the panic.
+        let result = rx.try_recv().expect("failure result on the channel");
+        assert_eq!(result.agent_id, child_id);
+        assert!(!result.succeeded, "panicked child must report failure");
+        let error = result.error.expect("error present after panic");
+        assert!(
+            error.contains("terminated without an outcome"),
+            "error must be honest about the missing outcome: {error}",
+        );
+
+        // Lifecycle: `Completed` is emitted — no dangling `Started`.
+        let mut completed = None;
+        while let Ok(ev) = brx.try_recv() {
+            if let AgentEventKind::Subagent(SubagentLifecycle::Completed {
+                child_id: c,
+                succeeded,
+                error,
+                usage,
+                ..
+            }) = ev.event
+            {
+                completed = Some((c, succeeded, error, usage));
+            }
+        }
+        let (c, succeeded, error, usage) =
+            completed.expect("Completed lifecycle event after panic");
+        assert_eq!(c, child_id);
+        assert!(!succeeded);
+        assert!(
+            error
+                .unwrap_or_default()
+                .contains("terminated without an outcome"),
+            "lifecycle error must name the panic outcome",
+        );
+        assert_eq!(usage.input_tokens, 0, "usage is unknown after a panic");
+    }
+
+    /// Schema is an explicit per-spawn decision: the `output_schema`
+    /// argument flows into the child's loop, which enforces it — the
+    /// structured result reaches the parent through the result channel.
+    /// (Without the argument the child runs free-form; children never
+    /// inherit the parent's schema implicitly.)
+    #[tokio::test]
+    async fn spawn_output_schema_enforces_structured_output() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "structured-out".to_string(),
+                    name: Some("structured_output".to_string()),
+                    arguments_delta: json!({"answer": 42}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            // Fallback done-turn in case the runner loops after structured
+            // output.
+            vec![done_event()],
+        ]));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({
+                "task": "answer the question",
+                "model": "haiku",
+                "role": "worker",
+                "output_schema": {
+                    "type": "object",
+                    "required": ["answer"],
+                    "additionalProperties": false,
+                    "properties": { "answer": { "type": "integer" } }
+                }
+            }),
+        )
+        .await;
+
+        let result = rx.try_recv().expect("result on the channel");
+        assert_eq!(result.agent_id, child_id);
+        assert!(result.succeeded, "schema-valid output completes the child");
+        assert!(
+            result.formatted_message.contains("42"),
+            "the structured output must reach the parent: {}",
+            result.formatted_message,
+        );
+    }
+
     /// R2: a disallowed tool name surfaces as `ToolNotFound` from the
     /// child's executor; the loop falls back to its next turn's text and the
     /// spawn still completes.
@@ -1450,11 +1792,7 @@ mod tests {
         ) -> Result<TestToolOutput, ToolError> {
             self.executions
                 .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            Ok(TestToolOutput {
-                content: serde_json::json!({"ok": true}),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(TestToolOutput::success(serde_json::json!({"ok": true})))
         }
     }
 
@@ -1465,6 +1803,8 @@ mod tests {
     /// context, so a missing forward disables enforcement entirely.
     #[tokio::test]
     async fn child_context_forwards_permission_policy_and_effect_index() {
+        use crate::tool::scheduling::ToolEffectIndex;
+
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),

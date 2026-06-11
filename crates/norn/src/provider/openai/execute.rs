@@ -496,6 +496,108 @@ mod streaming_tests {
     }
 
     #[tokio::test]
+    async fn incomplete_stream_completes_with_truncation_stop_not_error() {
+        // BLOCKER regression: a stream cut by `response.incomplete`
+        // (max_output_tokens) must complete normally — accumulated text
+        // deltas delivered, terminal Done event carrying
+        // `StopReason::MaxTokens` plus the usage and response id from the
+        // incomplete payload — and must NOT surface any Err.
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = "event: response.output_text.delta\n\
+                    data: {\"delta\":\"partial \"}\n\n\
+                    event: response.output_text.delta\n\
+                    data: {\"delta\":\"answer\"}\n\n\
+                    event: response.incomplete\n\
+                    data: {\"response\":{\"id\":\"resp_inc\",\"status\":\"incomplete\",\
+                    \"incomplete_details\":{\"reason\":\"max_output_tokens\"},\
+                    \"usage\":{\"input_tokens\":11,\"output_tokens\":13}}}\n\n";
+
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(server.uri(), 0);
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let mut text = String::new();
+        let mut done: Option<ProviderEvent> = None;
+        while let Some(evt) = stream.next().await {
+            match evt {
+                Ok(ProviderEvent::TextDelta { text: t }) => text.push_str(&t),
+                Ok(d @ ProviderEvent::Done { .. }) => done = Some(d),
+                Ok(_) => {}
+                Err(e) => panic!("truncation must not surface as an error: {e}"),
+            }
+        }
+
+        assert_eq!(text, "partial answer", "accumulated deltas must survive");
+        match done {
+            Some(ProviderEvent::Done {
+                stop_reason,
+                usage,
+                response_id,
+            }) => {
+                assert_eq!(stop_reason, crate::provider::events::StopReason::MaxTokens);
+                assert_eq!(usage.input_tokens, 11);
+                assert_eq!(usage.output_tokens, 13);
+                assert_eq!(response_id.as_deref(), Some("resp_inc"));
+            }
+            other => panic!("expected a terminal Done event, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn incomplete_content_filter_stream_completes_with_typed_stop() {
+        use wiremock::matchers::method;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        let body = "event: response.output_text.delta\n\
+                    data: {\"delta\":\"redac\"}\n\n\
+                    event: response.incomplete\n\
+                    data: {\"response\":{\"id\":\"resp_cf\",\"status\":\"incomplete\",\
+                    \"incomplete_details\":{\"reason\":\"content_filter\"},\
+                    \"usage\":{\"input_tokens\":5,\"output_tokens\":2}}}\n\n";
+
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(server.uri(), 0);
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let mut text = String::new();
+        let mut stop = None;
+        while let Some(evt) = stream.next().await {
+            match evt {
+                Ok(ProviderEvent::TextDelta { text: t }) => text.push_str(&t),
+                Ok(ProviderEvent::Done { stop_reason, .. }) => stop = Some(stop_reason),
+                Ok(_) => {}
+                Err(e) => panic!("content_filter truncation must not error: {e}"),
+            }
+        }
+
+        assert_eq!(text, "redac");
+        assert_eq!(
+            stop,
+            Some(crate::provider::events::StopReason::ContentFilter)
+        );
+    }
+
+    #[tokio::test]
     async fn streamed_events_arrive_incrementally() {
         // Custom TCP listener with paced chunked-encoding writes — verifies
         // the consumer receives each event before the server emits the next.

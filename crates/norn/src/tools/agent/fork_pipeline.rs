@@ -21,14 +21,16 @@ use uuid::Uuid;
 
 use super::handle::{AgentHandle, AgentHandles, ChildBranchMetadata, SharedSessionTree};
 use super::infra::{AgentToolInfra, SubAgentExecutor};
+use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
 use super::reclaim::reclaim_delivered_child;
 use crate::agent::fork::{ContextFilter, ParentSystemInstruction};
+use crate::agent::output::AgentStopReason;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::config::permissions::PermissionPolicy;
 use crate::error::{NornError, SessionError};
 use crate::integration::DiagnosticCollector;
-use crate::integration::hooks::HookRegistry;
+use crate::integration::hooks::{HookOutcome, HookRegistry};
 use crate::internal::extraction::SharedProvider;
 use crate::r#loop::inbound::{InboundChannel, InboundSender};
 use crate::r#loop::loop_context::LoopContext;
@@ -40,11 +42,11 @@ use crate::provider::usage::Usage;
 use crate::session::events::{EventBase, EventUsage, SessionEvent};
 use crate::session::store::EventStore;
 use crate::session::tree::{BranchConfig, SessionId, SessionMetadata, SessionStatus};
+use crate::tool::catalog::SharedToolCatalog;
 use crate::tool::context::{SharedWorkingDir, ToolContext};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::scheduling::ToolEffectIndex;
 use crate::tools::task::SharedTaskStore;
-use crate::tools::tool_search::SharedToolCatalog;
 
 /// Bounded capacity of the fork's inbound steering channel — mirrors the
 /// value used by [`super::spawn`] so the two surfaces behave identically.
@@ -221,73 +223,119 @@ pub(crate) struct ForkOutcome {
     pub(crate) usage: Usage,
     pub(crate) duration: std::time::Duration,
     pub(crate) error_message: Option<String>,
+    /// Typed stop reason when the fork's run stopped early without
+    /// completing; `None` on completion or hard error.
+    pub(crate) stop: Option<AgentStopReason>,
 }
 
-/// Mark the fork's terminal registry status and project the agent loop's
-/// result into a transport-friendly payload.
+/// Project the agent loop's result into a transport-friendly payload.
 ///
 /// Only [`AgentStepResult::Completed`] is a success. `SchemaUnreachable`,
-/// `MaxIterationsReached`, `TimedOut`, and `Cancelled` children surface as
-/// failures with an explanatory `error_message` — the parent must never read
-/// a bailed-out fork as a completed one. Partial output (best schema attempt,
-/// pre-timeout text) is preserved on `result_summary` for the parent's
-/// `ForkComplete` audit event.
-pub(super) fn finish_fork(
-    registry: &RwLock<AgentRegistry>,
-    fork_id: Uuid,
+/// `MaxIterationsReached`, `TimedOut`, `Cancelled`, and `Truncated`
+/// children surface as failures with an explanatory `error_message` and the
+/// typed [`AgentStopReason`] — the parent must never read a bailed-out fork
+/// as a completed one. Partial output (best schema attempt, pre-timeout
+/// text, pre-truncation text) is preserved on `result_summary` for the
+/// parent's `ForkComplete` audit event.
+///
+/// Pure — the registry transition lives in [`mark_fork_terminal`] so the
+/// wrapper can fire `SubagentHook::on_subagent_stop` between projection
+/// and marking (a hook Block suppresses the transition, mirroring spawn).
+pub(super) fn project_fork_outcome(
     outcome: Result<AgentStepResult, NornError>,
     started: Instant,
 ) -> ForkOutcome {
     let duration = started.elapsed();
-    let (status, result_summary, usage, error_message) = match outcome {
-        Ok(result) => classify_step_result(result),
-        Err(err) => (
-            AgentStatus::Failed,
-            serde_json::Value::Null,
-            Usage::default(),
-            Some(err.to_string()),
-        ),
-    };
-
-    {
-        let mut reg = registry.write();
-        if status == AgentStatus::Completed {
-            if let Err(e) = reg.mark_completing(fork_id) {
-                tracing::warn!(fork_id = %fork_id, error = %e, "fork: mark_completing failed");
-            }
-            if let Err(e) = reg.mark_completed(fork_id) {
-                tracing::warn!(fork_id = %fork_id, error = %e, "fork: mark_completed failed");
-            }
-        } else if let Err(e) = reg.mark_failed(fork_id) {
-            tracing::warn!(fork_id = %fork_id, error = %e, "fork: mark_failed failed");
-        }
+    match outcome {
+        Ok(result) => classify_step_result(result, duration),
+        // Hard error: `run_agent_step`'s `Err` path carries no usage, so
+        // tokens consumed before a mid-run error are unrecoverable here —
+        // `Usage::default()` means "unknown", not "none consumed" (same
+        // limitation as `extract_outcome_summary` on the spawn side; the
+        // `ForkComplete` event and lifecycle `Completed` inherit it).
+        Err(err) => ForkOutcome {
+            status: AgentStatus::Failed,
+            result_summary: serde_json::Value::Null,
+            usage: Usage::default(),
+            duration,
+            error_message: Some(err.to_string()),
+            stop: None,
+        },
     }
+}
 
+/// Apply the fork's terminal registry transition for `status`
+/// (`Completed` walks Completing → Completed; anything else marks
+/// `Failed`). Transition failures are logged, never propagated — the
+/// wrapper still owes result delivery.
+pub(super) fn mark_fork_terminal(
+    registry: &RwLock<AgentRegistry>,
+    fork_id: Uuid,
+    status: AgentStatus,
+) {
+    let mut reg = registry.write();
+    if status == AgentStatus::Completed {
+        if let Err(e) = reg.mark_completing(fork_id) {
+            tracing::warn!(fork_id = %fork_id, error = %e, "fork: mark_completing failed");
+        }
+        if let Err(e) = reg.mark_completed(fork_id) {
+            tracing::warn!(fork_id = %fork_id, error = %e, "fork: mark_completed failed");
+        }
+    } else if let Err(e) = reg.mark_failed(fork_id) {
+        tracing::warn!(fork_id = %fork_id, error = %e, "fork: mark_failed failed");
+    }
+}
+
+/// Project a fork task that never produced an outcome — its inner `tokio`
+/// task panicked or was aborted, surfacing as a
+/// [`tokio::task::JoinError`] — onto the failure payload the wrapper
+/// delivers. Mirrors `panicked_outcome_summary` on the spawn side: the
+/// wrapper still appends `ForkComplete`, emits the lifecycle `Completed`,
+/// delivers the result, and transitions the registry, so observers never
+/// see a dangling `Started`. Usage is [`Usage::default`] (unknown — the
+/// panicked task took its accumulated usage with it).
+fn panicked_fork_outcome(
+    join_error: &tokio::task::JoinError,
+    duration: std::time::Duration,
+) -> ForkOutcome {
     ForkOutcome {
+        status: AgentStatus::Failed,
+        result_summary: serde_json::Value::Null,
+        usage: Usage::default(),
+        duration,
+        error_message: Some(format!(
+            "fork task terminated without an outcome (panicked or aborted): {join_error}"
+        )),
+        stop: None,
+    }
+}
+
+/// Map an [`AgentStepResult`] onto the fork's terminal [`ForkOutcome`]
+/// projection. Pure — no registry side effects — so every variant's mapping
+/// is unit-testable.
+fn classify_step_result(result: AgentStepResult, duration: std::time::Duration) -> ForkOutcome {
+    let project = |status: AgentStatus,
+                   result_summary: serde_json::Value,
+                   usage: Usage,
+                   error_message: Option<String>,
+                   stop: Option<AgentStopReason>| ForkOutcome {
         status,
         result_summary,
         usage,
         duration,
         error_message,
-    }
-}
-
-/// Map an [`AgentStepResult`] onto the fork's terminal `(status, summary,
-/// usage, error)` projection. Pure — no registry side effects — so every
-/// variant's mapping is unit-testable.
-fn classify_step_result(
-    result: AgentStepResult,
-) -> (AgentStatus, serde_json::Value, Usage, Option<String>) {
+        stop,
+    };
     match result {
         AgentStepResult::Completed { output, usage } => {
-            (AgentStatus::Completed, output, usage, None)
+            project(AgentStatus::Completed, output, usage, None, None)
         }
         AgentStepResult::SchemaUnreachable {
             best_attempt,
             validation_errors,
             attempts,
             usage,
-        } => (
+        } => project(
             AgentStatus::Failed,
             best_attempt.unwrap_or(serde_json::Value::Null),
             usage,
@@ -295,32 +343,59 @@ fn classify_step_result(
                 "fork could not produce schema-valid output after {attempts} attempts: {}",
                 validation_errors.join("; "),
             )),
+            Some(AgentStopReason::SchemaUnreachable {
+                validation_errors,
+                attempts,
+            }),
         ),
-        AgentStepResult::MaxIterationsReached { usage } => (
+        AgentStepResult::MaxIterationsReached { usage } => project(
             AgentStatus::Failed,
             serde_json::Value::Null,
             usage,
             Some("fork reached its max-iterations cap before completing its task".to_owned()),
+            Some(AgentStopReason::MaxIterationsReached),
         ),
         AgentStepResult::TimedOut {
             elapsed,
             iterations,
             partial_output,
-        } => (
+            usage,
+        } => project(
             AgentStatus::Failed,
             partial_output.unwrap_or(serde_json::Value::Null),
-            Usage::default(),
+            usage,
             Some(format!(
                 "fork timed out after {:.1}s ({iterations} iterations completed); any partial \
                  output is recorded on the fork's session branch",
                 elapsed.as_secs_f64(),
             )),
+            Some(AgentStopReason::TimedOut {
+                elapsed,
+                iterations,
+            }),
         ),
-        AgentStepResult::Cancelled { usage } => (
+        AgentStepResult::Cancelled { usage } => project(
             AgentStatus::Failed,
             serde_json::Value::Null,
             usage,
             Some("fork was cancelled before completing its task".to_owned()),
+            Some(AgentStopReason::Cancelled),
+        ),
+        AgentStepResult::Truncated {
+            kind,
+            partial_text,
+            iterations,
+            usage,
+        } => project(
+            AgentStatus::Failed,
+            partial_text.map_or(serde_json::Value::Null, serde_json::Value::String),
+            usage,
+            Some(format!(
+                "fork output was truncated ({}) before it completed its task; the partial \
+                 output is recorded on the fork's session branch",
+                kind.as_str(),
+            )),
+            Some(AgentStopReason::Truncated { kind, iterations }),
         ),
     }
 }
@@ -384,6 +459,19 @@ pub(super) struct ForkLaunch {
     /// the wrapper reclaims the registry entry and drops the
     /// parent-held handle (see [`super::reclaim`]).
     pub(super) reclaim_handles: Option<Arc<AgentHandles>>,
+    /// Typed lifecycle emitter — `Started` was already emitted by the
+    /// tool before launch; the wrapper emits `Completed` once the run
+    /// reaches a terminal outcome.
+    pub(super) lifecycle: LifecycleEmitter,
+    /// Shared hook registry retrieved from the parent's
+    /// [`ToolContext`](crate::tool::context::ToolContext). When present,
+    /// the wrapper fires
+    /// [`SubagentHook::on_subagent_stop`](crate::integration::hooks::SubagentHook::on_subagent_stop)
+    /// after the run finishes; a Block suppresses the registry's terminal
+    /// transition (and delivery-anchored reclamation) while the outcome
+    /// still surfaces — identical semantics to the spawn wrapper
+    /// (NH-006 R5).
+    pub(super) hooks: Option<Arc<HookRegistry>>,
 }
 
 /// Launch the fork on its own `tokio::spawn` task and build the parent-side
@@ -408,6 +496,8 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         forked_session_id,
         event_sender,
         reclaim_handles,
+        lifecycle,
+        hooks,
     } = launch;
 
     let handle_store = Arc::clone(&child_store);
@@ -416,34 +506,85 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
 
     let join_handle = tokio::spawn(async move {
         let started = Instant::now();
-        let step_result = run_agent_step(AgentStepRequest {
-            provider: provider.as_ref(),
-            executor: &executor,
-            store: child_store.as_ref(),
-            user_prompt: &request,
-            tools: &tool_defs,
-            output_schema: Some(&output_schema),
-            model: &model,
-            config: &AgentLoopConfig::default(),
-            event_tx: event_sender.as_ref(),
-            inbound: Some(&mut inbound_rx),
-            loop_context: &mut loop_ctx,
-            cancel: None,
-        })
-        .await;
+        // Panic isolation: the agent step runs on its own inner task so a
+        // panic inside a tool or provider (workspace code denies panics,
+        // but a dependency inside the fork's task can still unwind)
+        // surfaces here as a `JoinError` instead of killing the wrapper.
+        // The wrapper then completes every obligation of the normal
+        // failure path — stop hook, `ForkComplete`, lifecycle
+        // `Completed`, result delivery, status broadcast, registry
+        // transition, reclamation — so observers never see a dangling
+        // `Started`. Mirrors the spawn wrapper.
+        let inner = tokio::spawn(async move {
+            run_agent_step(AgentStepRequest {
+                provider: provider.as_ref(),
+                executor: &executor,
+                store: child_store.as_ref(),
+                user_prompt: &request,
+                tools: &tool_defs,
+                output_schema: Some(&output_schema),
+                model: &model,
+                config: &AgentLoopConfig::default(),
+                event_tx: event_sender.as_ref(),
+                inbound: Some(&mut inbound_rx),
+                loop_context: &mut loop_ctx,
+                cancel: None,
+            })
+            .await
+        });
+        let outcome = match inner.await {
+            Ok(step_result) => {
+                if let Err(ref e) = step_result {
+                    tracing::error!(
+                        fork_id = %fork_id,
+                        role = %agent_role,
+                        error = %e,
+                        elapsed_ms =
+                            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
+                        "fork: run_agent_step failed",
+                    );
+                }
+                project_fork_outcome(step_result, started)
+            }
+            Err(join_error) => {
+                tracing::error!(
+                    fork_id = %fork_id,
+                    role = %agent_role,
+                    error = %join_error,
+                    "fork: child task panicked or was aborted before completing",
+                );
+                panicked_fork_outcome(&join_error, started.elapsed())
+            }
+        };
 
-        if let Err(ref e) = step_result {
-            tracing::error!(
-                fork_id = %fork_id,
-                model = %model,
-                error = %e,
-                elapsed_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                "fork: run_agent_step failed",
-            );
+        // NH-006 R5 parity with spawn: fire SubagentHook::on_subagent_stop
+        // before the registry's terminal transition. A Block suppresses
+        // the transition (and reclamation below) while the outcome still
+        // surfaces — the parent always observes the fork's result.
+        let stop_blocked = if let Some(hooks_arc) = hooks.as_ref() {
+            matches!(
+                hooks_arc
+                    .run_subagent_stop(&fork_id.to_string(), "fork")
+                    .await,
+                HookOutcome::Block { .. },
+            )
+        } else {
+            false
+        };
+        if !stop_blocked {
+            mark_fork_terminal(&agent_registry, fork_id, outcome.status);
         }
 
-        let outcome = finish_fork(&agent_registry, fork_id, step_result, started);
         append_fork_complete(parent_store.as_ref(), forked_session_id, &outcome, fork_id);
+
+        // Typed lifecycle: emit `Completed` with the fork's accumulated
+        // usage, terminal outcome, and typed stop reason.
+        lifecycle.emit_completed(SubagentCompletion {
+            usage: outcome.usage.clone(),
+            succeeded: outcome.status == AgentStatus::Completed,
+            error: outcome.error_message.clone(),
+            stop: outcome.stop.clone(),
+        });
 
         if let Some(sender) = result_sender {
             let (succeeded, formatted_message, error) =
@@ -454,6 +595,8 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 succeeded,
                 formatted_message,
                 error,
+                stop: outcome.stop.clone(),
+                usage: outcome.usage.clone(),
             };
             if let Err(e) = sender.0.send(result).await {
                 tracing::error!(
@@ -471,9 +614,12 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // plus the ForkComplete event on its timeline, so the registry
         // entry and the parent-held handle can go. Runs after the
         // terminal status broadcast so the fork tool's post-insert check
-        // observes a consistent order. A failed result send means the
-        // receiver is gone — reclaiming is still correct.
-        if let Some(parent_handles) = reclaim_handles {
+        // observes a consistent order; skipped when a stop hook
+        // suppressed the terminal transition (the fork is then
+        // deliberately left observable and non-terminal — mirrors
+        // spawn). A failed result send means the receiver is gone —
+        // reclaiming is still correct.
+        if !stop_blocked && let Some(parent_handles) = reclaim_handles {
             reclaim_delivered_child(&agent_registry, &parent_handles, fork_id);
         }
     });
@@ -665,7 +811,8 @@ mod tests {
 
     fn finish(result: AgentStepResult) -> Result<ForkOutcome, String> {
         let (registry, fork_id) = registry_with_fork()?;
-        let outcome = finish_fork(&registry, fork_id, Ok(result), Instant::now());
+        let outcome = project_fork_outcome(Ok(result), Instant::now());
+        mark_fork_terminal(&registry, fork_id, outcome.status);
         // Terminal transitions free the path and leave the entry observable
         // (terminal status) until an observer reclaims it (fix 10).
         let status = registry
@@ -762,42 +909,103 @@ mod tests {
     }
 
     /// Fix 6: `TimedOut` surfaces as non-success while preserving partial
-    /// output.
+    /// output, accumulated usage, and the typed stop reason.
     #[test]
     fn finish_fork_timed_out_is_failure() -> Result<(), String> {
         let outcome = finish(AgentStepResult::TimedOut {
             elapsed: std::time::Duration::from_secs(30),
             iterations: 4,
             partial_output: Some(serde_json::json!("partial text")),
+            usage: Usage {
+                input_tokens: 50,
+                ..Usage::default()
+            },
         })?;
         assert_failure(&outcome, "timed out")?;
         if outcome.result_summary != serde_json::json!("partial text") {
             return Err("partial output must be preserved on the result summary".to_owned());
         }
+        if outcome.usage.input_tokens != 50 {
+            return Err("timed-out usage must be preserved on the fork outcome".to_owned());
+        }
+        if outcome.stop
+            != Some(AgentStopReason::TimedOut {
+                elapsed: std::time::Duration::from_secs(30),
+                iterations: 4,
+            })
+        {
+            return Err(format!(
+                "typed stop reason must surface, got {:?}",
+                outcome.stop
+            ));
+        }
         Ok(())
     }
 
-    /// Fix 6: `Cancelled` surfaces as non-success.
+    /// Fix 6: `Cancelled` surfaces as non-success with the typed stop
+    /// reason.
     #[test]
     fn finish_fork_cancelled_is_failure() -> Result<(), String> {
         let outcome = finish(AgentStepResult::Cancelled {
             usage: Usage::default(),
         })?;
-        assert_failure(&outcome, "cancelled")
+        assert_failure(&outcome, "cancelled")?;
+        if outcome.stop != Some(AgentStopReason::Cancelled) {
+            return Err(format!(
+                "typed stop reason must surface, got {:?}",
+                outcome.stop
+            ));
+        }
+        Ok(())
+    }
+
+    /// A truncated fork (max-tokens / content-filter stop) surfaces as
+    /// non-success while preserving the partial text, usage, and the typed
+    /// stop reason — never as a completed fork.
+    #[test]
+    fn finish_fork_truncated_is_failure() -> Result<(), String> {
+        use crate::r#loop::config::TruncationKind;
+        let outcome = finish(AgentStepResult::Truncated {
+            kind: TruncationKind::ContentFilter,
+            partial_text: Some("cut short".to_owned()),
+            iterations: 2,
+            usage: Usage {
+                output_tokens: 9,
+                ..Usage::default()
+            },
+        })?;
+        assert_failure(&outcome, "truncated")?;
+        if outcome.result_summary != serde_json::json!("cut short") {
+            return Err("partial text must be preserved on the result summary".to_owned());
+        }
+        if outcome.usage.output_tokens != 9 {
+            return Err("truncated usage must be preserved on the fork outcome".to_owned());
+        }
+        if outcome.stop
+            != Some(AgentStopReason::Truncated {
+                kind: TruncationKind::ContentFilter,
+                iterations: 2,
+            })
+        {
+            return Err(format!(
+                "typed stop reason must surface, got {:?}",
+                outcome.stop
+            ));
+        }
+        Ok(())
     }
 
     /// A loop error keeps the pre-existing failure mapping.
     #[test]
     fn finish_fork_loop_error_is_failure() -> Result<(), String> {
         let (registry, fork_id) = registry_with_fork()?;
-        let outcome = finish_fork(
-            &registry,
-            fork_id,
+        let outcome = project_fork_outcome(
             Err(NornError::Session(SessionError::StorageError {
                 reason: "disk gone".to_owned(),
             })),
             Instant::now(),
         );
+        mark_fork_terminal(&registry, fork_id, outcome.status);
         let status = registry
             .read()
             .get(fork_id)
@@ -807,5 +1015,39 @@ mod tests {
             return Err(format!("fork entry must be Failed, got {status:?}"));
         }
         assert_failure(&outcome, "disk gone")
+    }
+
+    /// A panicked/aborted fork task projects onto an honest failure
+    /// payload: Failed status, an error naming the missing outcome, no
+    /// stop reason, and unknown (zero) usage — so the wrapper's
+    /// `ForkComplete` / lifecycle / result-channel obligations are all
+    /// satisfiable after a dependency panic.
+    #[tokio::test]
+    #[allow(clippy::panic, clippy::expect_used)]
+    async fn panicked_fork_outcome_reports_honest_failure() -> Result<(), String> {
+        let join_error = tokio::spawn(async { panic!("dependency exploded") })
+            .await
+            .expect_err("task must panic");
+        let outcome = panicked_fork_outcome(&join_error, std::time::Duration::from_millis(7));
+        if outcome.status != AgentStatus::Failed {
+            return Err(format!("expected Failed, got {:?}", outcome.status));
+        }
+        let error = outcome
+            .error_message
+            .as_deref()
+            .ok_or("panic outcome must carry an error message")?;
+        if !error.contains("terminated without an outcome") {
+            return Err(format!("error must name the missing outcome: {error}"));
+        }
+        if outcome.stop.is_some() {
+            return Err("a panic is not a typed early stop".to_owned());
+        }
+        if outcome.usage.input_tokens != 0 || outcome.usage.output_tokens != 0 {
+            return Err("usage is unknown after a panic — must be zeros".to_owned());
+        }
+        if outcome.result_summary != serde_json::Value::Null {
+            return Err("no result summary exists after a panic".to_owned());
+        }
+        assert_failure(&outcome, "terminated without an outcome")
     }
 }

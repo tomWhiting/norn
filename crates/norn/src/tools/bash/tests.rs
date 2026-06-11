@@ -103,7 +103,7 @@ async fn echo_hello_succeeds() {
         .await
         .expect("bash ok");
 
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     assert_eq!(out.content["exit_code"].as_i64(), Some(0));
     let stdout = out.content["stdout"].as_str().unwrap_or_default();
     assert!(stdout.contains("hello"), "stdout was {stdout:?}");
@@ -178,7 +178,7 @@ async fn timeout_with_partial_output_redirects_to_file() {
 
     let out = tool.execute(&env, &ctx).await.expect("bash ok");
 
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert_eq!(out.content["timed_out"].as_bool(), Some(true));
     assert_eq!(out.content["output_redirected"].as_bool(), Some(true));
     assert!(out.content["output_chars"].as_u64().unwrap_or_default() >= 23_001);
@@ -204,7 +204,7 @@ async fn non_zero_exit_marks_is_error() {
         .execute(&env, &ToolContext::empty())
         .await
         .expect("bash ok");
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert_eq!(out.content["exit_code"].as_i64(), Some(7));
 }
 
@@ -236,7 +236,7 @@ async fn timeout_kills_long_running_process() {
         .execute(&env, &ToolContext::empty())
         .await
         .expect("bash ok");
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert_eq!(out.content["timed_out"].as_bool(), Some(true));
 }
 
@@ -277,7 +277,7 @@ async fn with_drain_grace_bounds_background_pipe_holders() {
         .expect("bash ok");
     let elapsed = started.elapsed();
 
-    assert!(!out.is_error);
+    assert!(!out.is_error());
     assert_eq!(out.content["streams_still_open"].as_bool(), Some(true));
     assert!(
         out.content["stdout"]
@@ -636,7 +636,7 @@ async fn backgrounded_child_returns_promptly_with_buffered_output() {
         "tool blocked on the backgrounded child's pipe: {:?}",
         started.elapsed()
     );
-    assert!(!out.is_error, "{:?}", out.content);
+    assert!(!out.is_error(), "{:?}", out.content);
     assert_eq!(out.content["exit_code"].as_i64(), Some(0));
     assert!(
         out.content["stdout"]
@@ -696,7 +696,7 @@ async fn timeout_kills_the_whole_process_tree() {
         .execute(&env, &ToolContext::empty())
         .await
         .expect("bash ok");
-    assert!(out.is_error);
+    assert!(out.is_error());
     assert_eq!(out.content["timed_out"].as_bool(), Some(true));
     assert!(
         started.elapsed() < std::time::Duration::from_secs(15),

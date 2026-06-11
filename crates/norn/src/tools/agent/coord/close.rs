@@ -1,8 +1,6 @@
 //! `CloseAgentTool` — recursively shut down a target agent and its whole
 //! subtree, leaves first.
 
-use std::time::Instant;
-
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
@@ -172,7 +170,6 @@ impl Tool for CloseAgentTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: CloseAgentArgs =
             serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
                 ToolError::ExecutionFailed {
@@ -214,11 +211,7 @@ impl Tool for CloseAgentTool {
             "reason": args.reason,
             "shut_down": shut_down,
         });
-        Ok(ToolOutput {
-            content: payload,
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(payload))
     }
 }
 
@@ -272,7 +265,7 @@ mod tests {
             json!({"agent_id": "/root", "reason": "stop"}),
         );
         let out = tool.execute(&envelope, &ctx).await.expect("close");
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let shut_down = out.content["shut_down"].as_array().expect("array");
         assert_eq!(shut_down.len(), 3);
         // Leaves-first ordering: both children appear before root.
@@ -311,7 +304,7 @@ mod tests {
             json!({"agent_id": "/leaf", "reason": "done"}),
         );
         let out = tool.execute(&envelope, &ctx).await.expect("close");
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         let shut_down = out.content["shut_down"].as_array().expect("array");
         assert_eq!(shut_down.len(), 1);
         assert_eq!(shut_down[0]["agent_id"], leaf.to_string());
@@ -348,7 +341,7 @@ mod tests {
             json!({"agent_id": child.to_string(), "reason": "sweep"}),
         );
         let out = tool.execute(&envelope, &ctx).await.expect("close");
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let shut_down = out.content["shut_down"].as_array().expect("array");
         assert_eq!(shut_down.len(), 1);
         assert_eq!(
@@ -384,7 +377,7 @@ mod tests {
             json!({"agent_id": "/parent/child", "reason": "wrap up"}),
         );
         let out = tool.execute(&envelope, &ctx).await.expect("close");
-        assert!(!out.is_error);
+        assert!(!out.is_error());
 
         let drained = inbound_rx.drain();
         assert_eq!(drained.len(), 1);

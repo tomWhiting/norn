@@ -23,7 +23,6 @@ mod fuzzy;
 mod helpers;
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
 
 use async_trait::async_trait;
 use regex::Regex;
@@ -33,12 +32,13 @@ use serde_json::{Value, json};
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::ToolErrorKind;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
 use self::ast_search::run_ast_search;
 use self::fuzzy::run_fuzzy_search;
-use self::helpers::{GlobFilter, compile_glob, elapsed, expand_braces, walk_for_content};
+use self::helpers::{GlobFilter, compile_glob, expand_braces, walk_for_content};
 
 /// Default cap on matches returned by a single content-search invocation.
 const DEFAULT_MAX_RESULTS: u32 = 50;
@@ -152,12 +152,12 @@ impl Tool for SearchTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: SearchArgs =
             serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
-                ToolError::PreValidationFailed {
-                    reason: format!("invalid search arguments: {e}"),
-                }
+                ToolError::pre_validation(
+                    ToolErrorKind::InvalidArguments,
+                    format!("invalid search arguments: {e}"),
+                )
             })?;
 
         let max_results = args.max_results.unwrap_or(DEFAULT_MAX_RESULTS);
@@ -166,79 +166,64 @@ impl Tool for SearchTool {
         match normalized_mode.as_deref() {
             Some("content") => {
                 let pattern = args.pattern.as_deref().ok_or_else(|| {
-                    ToolError::PreValidationFailed {
-                        reason: "mode=content requires `pattern`".to_owned(),
-                    }
+                    ToolError::pre_validation(
+                        ToolErrorKind::InvalidArguments,
+                        "mode=content requires `pattern`",
+                    )
                 })?;
                 let root = resolve_root(ctx, args.path.as_deref());
-                run_content_search(
-                    pattern,
-                    &root,
-                    args.glob.as_deref(),
-                    max_results,
-                    started,
-                )
+                run_content_search(pattern, &root, args.glob.as_deref(), max_results)
             }
             Some("files") => {
                 let glob_pattern = args.glob.as_deref().ok_or_else(|| {
-                    ToolError::PreValidationFailed {
-                        reason: "mode=files requires `glob`".to_owned(),
-                    }
+                    ToolError::pre_validation(
+                        ToolErrorKind::InvalidArguments,
+                        "mode=files requires `glob`",
+                    )
                 })?;
                 let root = resolve_root(ctx, args.path.as_deref());
-                run_file_find(&root, glob_pattern, max_results, started)
+                run_file_find(&root, glob_pattern, max_results)
             }
             Some("fuzzy") => {
                 let needle = args.pattern.as_deref().unwrap_or_default();
                 if needle.is_empty() {
-                    return Err(ToolError::PreValidationFailed {
-                        reason: "mode=fuzzy requires a non-empty `pattern`".to_owned(),
-                    });
+                    return Err(ToolError::pre_validation(
+                        ToolErrorKind::InvalidArguments,
+                        "mode=fuzzy requires a non-empty `pattern`",
+                    ));
                 }
                 let root = resolve_root(ctx, args.path.as_deref());
-                run_fuzzy_search(
-                    needle,
-                    &root,
-                    args.glob.as_deref(),
-                    max_results,
-                    started,
-                )
+                run_fuzzy_search(needle, &root, args.glob.as_deref(), max_results)
             }
             Some("ast") => {
                 let query_src = args.ast_query.as_deref().unwrap_or_default();
                 if query_src.is_empty() {
-                    return Err(ToolError::PreValidationFailed {
-                        reason: "mode=ast requires a non-empty `ast_query`".to_owned(),
-                    });
+                    return Err(ToolError::pre_validation(
+                        ToolErrorKind::InvalidArguments,
+                        "mode=ast requires a non-empty `ast_query`",
+                    ));
                 }
                 let root = resolve_root(ctx, args.path.as_deref());
-                run_ast_search(
-                    query_src,
-                    &root,
-                    args.glob.as_deref(),
-                    max_results,
-                    started,
-                )
+                run_ast_search(query_src, &root, args.glob.as_deref(), max_results)
             }
-            Some(other) => Err(ToolError::PreValidationFailed {
-                reason: format!(
-                    "unknown search mode `{other}` -- valid: content, files, fuzzy, ast"
-                ),
-            }),
+            Some(other) => Err(ToolError::pre_validation(
+                ToolErrorKind::InvalidArguments,
+                format!("unknown search mode `{other}` -- valid: content, files, fuzzy, ast"),
+            )),
             None => match (args.pattern.as_deref(), args.glob.as_deref()) {
                 (Some(pattern), glob) => {
                     let root = resolve_root(ctx, args.path.as_deref());
-                    run_content_search(pattern, &root, glob, max_results, started)
+                    run_content_search(pattern, &root, glob, max_results)
                 }
                 (None, Some(glob)) => {
                     let root = resolve_root(ctx, args.path.as_deref());
-                    run_file_find(&root, glob, max_results, started)
+                    run_file_find(&root, glob, max_results)
                 }
-                (None, None) => Err(ToolError::PreValidationFailed {
-                    reason:
-                        "at least one of `pattern` or `glob` must be supplied (or set `mode` explicitly)"
-                            .to_owned(),
-                }),
+                (None, None) => Err(ToolError::pre_validation(
+                    ToolErrorKind::InvalidArguments,
+                    "at least one of `pattern` or `glob` must be supplied (or set `mode` \
+                     explicitly)",
+                )),
             },
         }
     }
@@ -256,10 +241,12 @@ fn run_content_search(
     root: &std::path::Path,
     glob_filter: Option<&str>,
     max_results: u32,
-    started: Instant,
 ) -> Result<ToolOutput, ToolError> {
-    let regex = Regex::new(pattern).map_err(|e| ToolError::PreValidationFailed {
-        reason: format!("invalid regex `{pattern}`: {e}"),
+    let regex = Regex::new(pattern).map_err(|e| {
+        ToolError::pre_validation(
+            ToolErrorKind::InvalidArguments,
+            format!("invalid regex `{pattern}`: {e}"),
+        )
     })?;
 
     let compiled_filter: Option<GlobFilter> = compile_glob(glob_filter)?;
@@ -275,21 +262,16 @@ fn run_content_search(
         &mut truncated,
     );
 
-    Ok(ToolOutput {
-        content: json!({
-            "matches": matches,
-            "truncated": truncated,
-        }),
-        is_error: false,
-        duration: elapsed(started),
-    })
+    Ok(ToolOutput::success(json!({
+        "matches": matches,
+        "truncated": truncated,
+    })))
 }
 
 fn run_file_find(
     base: &Path,
     glob_pattern: &str,
     max_results: u32,
-    started: Instant,
 ) -> Result<ToolOutput, ToolError> {
     let expanded = expand_braces(glob_pattern);
 
@@ -304,8 +286,11 @@ fn run_file_find(
         }
         let resolved = format!("{}/{}", base_str.trim_end_matches('/'), pat);
 
-        let iter = glob::glob(&resolved).map_err(|e| ToolError::PreValidationFailed {
-            reason: format!("invalid glob `{resolved}`: {e}"),
+        let iter = glob::glob(&resolved).map_err(|e| {
+            ToolError::pre_validation(
+                ToolErrorKind::InvalidArguments,
+                format!("invalid glob `{resolved}`: {e}"),
+            )
         })?;
 
         for entry in iter {
@@ -318,14 +303,10 @@ fn run_file_find(
         }
     }
 
-    Ok(ToolOutput {
-        content: json!({
-            "paths": paths,
-            "truncated": truncated,
-        }),
-        is_error: false,
-        duration: elapsed(started),
-    })
+    Ok(ToolOutput::success(json!({
+        "paths": paths,
+        "truncated": truncated,
+    })))
 }
 
 #[cfg(test)]
@@ -397,7 +378,7 @@ mod tests {
             .await
             .expect("search ok");
 
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         let matches = out.content["matches"].as_array().expect("matches array");
         assert_eq!(matches.len(), 2);
 
@@ -659,13 +640,18 @@ mod tests {
             .await
             .expect_err("unknown mode must fail");
         match err {
-            ToolError::PreValidationFailed { reason } => {
+            ToolError::PreValidationFailed { payload } => {
+                assert_eq!(
+                    payload.kind,
+                    crate::tool::failure::ToolErrorKind::InvalidArguments
+                );
+                let message = &payload.message;
                 assert!(
-                    reason.contains("content")
-                        && reason.contains("files")
-                        && reason.contains("fuzzy")
-                        && reason.contains("ast"),
-                    "error message should list valid modes, got `{reason}`"
+                    message.contains("content")
+                        && message.contains("files")
+                        && message.contains("fuzzy")
+                        && message.contains("ast"),
+                    "error message should list valid modes, got `{message}`"
                 );
             }
             other => panic!("expected PreValidationFailed, got {other:?}"),

@@ -4,21 +4,15 @@ use std::path::Path;
 
 use crate::cli::ExitCode;
 use crate::cli::SessionExportFormat;
-use crate::session::{
-    SessionIndexEntry, SessionPersistError, read_session_events, resolve_session,
-};
+use crate::session::{SessionIndexEntry, SessionManager, SessionPersistError};
 
 use norn::session::events::SessionEvent;
 
 /// Execute the `norn session export` subcommand: resolve the session,
 /// load its events, and render in the requested format.
 pub fn run_export(data_dir: &Path, input: &str, format: Option<SessionExportFormat>) -> ExitCode {
-    let entry = match resolve_session(data_dir, input) {
-        Ok(entry) => entry,
-        Err(err) => return report_export_error(&err),
-    };
-    let read = match read_session_events(data_dir, &entry.id) {
-        Ok(read) => read,
+    let (entry, read) = match SessionManager::new(data_dir).read_events(input) {
+        Ok(loaded) => loaded,
         Err(err) => return report_export_error(&err),
     };
     if read.skipped_lines > 0 {

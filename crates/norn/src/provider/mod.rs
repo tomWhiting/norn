@@ -1,6 +1,10 @@
 //! LLM provider abstraction and implementations.
 
-pub use self::agent_event::{AgentEvent, AgentEventSender, SharedAgentEventChannel};
+pub use self::agent_event::{
+    AgentEvent, AgentEventKind, AgentEventSender, SUBAGENT_COMPLETED_EVENT_TYPE,
+    SUBAGENT_STARTED_EVENT_TYPE, SharedAgentEventChannel, SubagentDescriptor, SubagentKind,
+    SubagentLifecycle,
+};
 pub use self::auth::{
     ApiKeyAuthProvider, AuthProvider, AuthSource, LoginConfig, OAuthAuthProvider,
     build_from_auth_source, login, logout,

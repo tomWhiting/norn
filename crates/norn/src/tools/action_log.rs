@@ -26,7 +26,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -36,6 +35,7 @@ use crate::session::action_log::{ActionLog, ActionLogEntry};
 use crate::session::mutation_ledger::MutationLedgerEntry;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
@@ -127,26 +127,23 @@ impl ActionLogFilter {
 }
 
 /// Build the structured error [`ToolOutput`] for a missing `call_id`.
-fn missing_call_id(query: &str, started: Instant) -> ToolOutput {
-    ToolOutput {
-        content: serde_json::json!({
-            "error": format!("call_id required for {query} query"),
-        }),
-        is_error: true,
-        duration: started.elapsed(),
-    }
+fn missing_call_id(query: &str) -> ToolOutput {
+    ToolOutput::failure(
+        ToolErrorPayload::new(
+            ToolErrorKind::InvalidArguments,
+            format!("call_id required for {query} query"),
+        )
+        .with_detail(serde_json::json!({ "query": query })),
+    )
 }
 
 /// Build the structured error [`ToolOutput`] for an unknown `call_id`.
-fn unknown_call_id(call_id: &str, started: Instant) -> ToolOutput {
-    ToolOutput {
-        content: serde_json::json!({
-            "error": "tool_call_id not found",
-            "call_id": call_id,
-        }),
-        is_error: true,
-        duration: started.elapsed(),
-    }
+fn unknown_call_id(call_id: &str) -> ToolOutput {
+    ToolOutput::failure_with_content(
+        serde_json::json!({ "call_id": call_id }),
+        ToolErrorPayload::new(ToolErrorKind::NotFound, "tool_call_id not found")
+            .with_detail(serde_json::json!({ "call_id": call_id })),
+    )
 }
 
 /// Build the `follow_ups` query response: every unexpired follow-up action,
@@ -163,7 +160,6 @@ fn query_follow_ups(
     action_log: &ActionLog,
     filter: Option<&ActionLogFilter>,
     ctx: &ToolContext,
-    started: Instant,
 ) -> ToolOutput {
     let resolve = |path: &std::path::Path| ctx.resolve_path(path);
     let mut follow_ups = action_log.unexpired_follow_ups(resolve, None);
@@ -190,15 +186,11 @@ fn query_follow_ups(
         })
         .collect();
 
-    ToolOutput {
-        content: serde_json::json!({
-            "query": "follow_ups",
-            "count": actions.len(),
-            "actions": actions,
-        }),
-        is_error: false,
-        duration: started.elapsed(),
-    }
+    ToolOutput::success(serde_json::json!({
+        "query": "follow_ups",
+        "count": actions.len(),
+        "actions": actions,
+    }))
 }
 
 #[async_trait]
@@ -282,7 +274,6 @@ impl Tool for ActionLogTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: ActionLogArgs =
             serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
                 ToolError::ExecutionFailed {
@@ -290,11 +281,7 @@ impl Tool for ActionLogTool {
                 }
             })?;
 
-        let action_log: Arc<ActionLog> =
-            ctx.get_extension::<ActionLog>()
-                .ok_or_else(|| ToolError::ExecutionFailed {
-                    reason: "action log not configured in tool context".to_string(),
-                })?;
+        let action_log: Arc<ActionLog> = ctx.require_extension::<ActionLog>()?;
 
         match args.query.as_str() {
             "list" => {
@@ -305,56 +292,44 @@ impl Tool for ActionLogTool {
                 };
                 let summaries: Vec<serde_json::Value> =
                     filtered.iter().map(ActionLogEntry::compact_json).collect();
-                Ok(ToolOutput {
-                    content: serde_json::json!({
-                        "query": "list",
-                        "count": summaries.len(),
-                        "entries": summaries,
-                    }),
-                    is_error: false,
-                    duration: started.elapsed(),
-                })
+                Ok(ToolOutput::success(serde_json::json!({
+                    "query": "list",
+                    "count": summaries.len(),
+                    "entries": summaries,
+                })))
             }
             "detail" => {
                 let Some(call_id) = args.call_id.as_deref() else {
-                    return Ok(missing_call_id("detail", started));
+                    return Ok(missing_call_id("detail"));
                 };
                 match action_log.get_detail(call_id) {
-                    Some(detail) => Ok(ToolOutput {
-                        content: serde_json::json!({
-                            "query": "detail",
-                            "entry": detail.entry,
-                            "output": detail.output,
-                            "args": detail.args,
-                            "duration_ms": detail.duration_ms,
-                            "follow_ups": detail.follow_ups,
-                        }),
-                        is_error: false,
-                        duration: started.elapsed(),
-                    }),
-                    None => Ok(unknown_call_id(call_id, started)),
+                    Some(detail) => Ok(ToolOutput::success(serde_json::json!({
+                        "query": "detail",
+                        "entry": detail.entry,
+                        "output": detail.output,
+                        "args": detail.args,
+                        "duration_ms": detail.duration_ms,
+                        "follow_ups": detail.follow_ups,
+                    }))),
+                    None => Ok(unknown_call_id(call_id)),
                 }
             }
             "context" => {
                 let Some(call_id) = args.call_id.as_deref() else {
-                    return Ok(missing_call_id("context", started));
+                    return Ok(missing_call_id("context"));
                 };
                 match action_log.get_context(call_id) {
-                    Some(context) => Ok(ToolOutput {
-                        content: serde_json::json!({
-                            "query": "context",
-                            "entry": context.detail.entry,
-                            "output": context.detail.output,
-                            "args": context.detail.args,
-                            "duration_ms": context.detail.duration_ms,
-                            "follow_ups": context.detail.follow_ups,
-                            "before_content": context.before_content,
-                            "post_validate_outcome": context.post_validate_outcome,
-                        }),
-                        is_error: false,
-                        duration: started.elapsed(),
-                    }),
-                    None => Ok(unknown_call_id(call_id, started)),
+                    Some(context) => Ok(ToolOutput::success(serde_json::json!({
+                        "query": "context",
+                        "entry": context.detail.entry,
+                        "output": context.detail.output,
+                        "args": context.detail.args,
+                        "duration_ms": context.detail.duration_ms,
+                        "follow_ups": context.detail.follow_ups,
+                        "before_content": context.before_content,
+                        "post_validate_outcome": context.post_validate_outcome,
+                    }))),
+                    None => Ok(unknown_call_id(call_id)),
                 }
             }
             "mutations" => {
@@ -375,22 +350,13 @@ impl Tool for ActionLogTool {
                         }
                         None => entries,
                     };
-                Ok(ToolOutput {
-                    content: serde_json::json!({
-                        "query": "mutations",
-                        "count": filtered.len(),
-                        "entries": filtered,
-                    }),
-                    is_error: false,
-                    duration: started.elapsed(),
-                })
+                Ok(ToolOutput::success(serde_json::json!({
+                    "query": "mutations",
+                    "count": filtered.len(),
+                    "entries": filtered,
+                })))
             }
-            "follow_ups" => Ok(query_follow_ups(
-                &action_log,
-                args.filter.as_ref(),
-                ctx,
-                started,
-            )),
+            "follow_ups" => Ok(query_follow_ups(&action_log, args.filter.as_ref(), ctx)),
             other => Err(ToolError::ExecutionFailed {
                 reason: format!(
                     "unknown query '{other}': expected list, detail, context, mutations, or follow_ups"
@@ -507,7 +473,7 @@ mod tests {
             .execute(&envelope(json!({ "query": "list" })), &ctx)
             .await
             .unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["query"], "list");
         assert_eq!(out.content["count"], 3);
         let entries = out.content["entries"].as_array().unwrap();
@@ -639,7 +605,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["count"], 0);
         assert_eq!(out.content["entries"], json!([]));
     }
@@ -655,7 +621,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["query"], "detail");
         assert_eq!(out.content["entry"]["tool_call_id"], "tc-1");
         assert_eq!(out.content["output"]["path"], "src/a.rs");
@@ -672,8 +638,12 @@ mod tests {
             .execute(&envelope(json!({ "query": "detail" })), &ctx)
             .await
             .unwrap();
-        assert!(out.is_error);
-        assert_eq!(out.content["error"], "call_id required for detail query");
+        assert!(out.is_error());
+        assert_eq!(out.content["error"]["kind"], "invalid_arguments");
+        assert_eq!(
+            out.content["error"]["message"],
+            "call_id required for detail query"
+        );
     }
 
     #[tokio::test]
@@ -687,8 +657,9 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(out.is_error);
-        assert_eq!(out.content["error"], "tool_call_id not found");
+        assert!(out.is_error());
+        assert_eq!(out.content["error"]["kind"], "not_found");
+        assert_eq!(out.content["error"]["message"], "tool_call_id not found");
         assert_eq!(out.content["call_id"], "nope");
     }
 
@@ -727,7 +698,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["query"], "context");
         assert_eq!(out.content["before_content"]["src/a.rs"], "old");
         assert!(out.content["post_validate_outcome"].is_null());
@@ -744,7 +715,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert!(out.content["before_content"].is_null());
     }
 
@@ -756,8 +727,12 @@ mod tests {
             .execute(&envelope(json!({ "query": "context" })), &ctx)
             .await
             .unwrap();
-        assert!(out.is_error);
-        assert_eq!(out.content["error"], "call_id required for context query");
+        assert!(out.is_error());
+        assert_eq!(out.content["error"]["kind"], "invalid_arguments");
+        assert_eq!(
+            out.content["error"]["message"],
+            "call_id required for context query"
+        );
     }
 
     #[tokio::test]
@@ -787,7 +762,7 @@ mod tests {
             )
             .await
             .unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["entry"]["tool_name"], "action_log");
         assert!(out.content["output"].is_null());
         assert!(out.content["args"].is_null());
@@ -801,7 +776,12 @@ mod tests {
             .execute(&envelope(json!({ "query": "list" })), &ctx)
             .await
             .expect_err("no action log");
-        assert!(matches!(err, ToolError::ExecutionFailed { .. }));
+        match err {
+            ToolError::MissingExtension { extension } => {
+                assert!(extension.contains("ActionLog"), "{extension}");
+            }
+            other => panic!("expected MissingExtension, got {other:?}"),
+        }
     }
 
     #[tokio::test]
@@ -847,7 +827,7 @@ mod tests {
             .execute(&envelope(json!({ "query": "mutations" })), &ctx)
             .await
             .unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_error());
 
         // Top-level envelope keys are exactly query/count/entries.
         let obj = out.content.as_object().unwrap();
@@ -1003,7 +983,7 @@ mod tests {
             .execute(&envelope(json!({ "query": "follow_ups" })), &ctx)
             .await
             .unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["query"], "follow_ups");
         assert_eq!(out.content["count"], 2);
 

@@ -253,7 +253,6 @@ impl McpServer {
     clippy::match_wildcard_for_single_variants
 )]
 mod tests {
-    use std::time::Duration;
 
     use async_trait::async_trait;
 
@@ -297,11 +296,7 @@ mod tests {
                 .get("message")
                 .cloned()
                 .unwrap_or(serde_json::Value::Null);
-            Ok(ToolOutput {
-                content: serde_json::json!({"echoed": msg}),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(ToolOutput::success(serde_json::json!({"echoed": msg})))
         }
     }
 

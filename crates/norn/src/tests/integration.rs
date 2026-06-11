@@ -861,9 +861,12 @@ async fn test_hooks_block_tool_execution() {
         } = e
         {
             if tool_name == "bash" {
-                let error = output["error"].as_str().unwrap_or("");
-                return error.contains("blocked by hook")
-                    && error.contains("bash is not permitted");
+                // Hook blocks persist as the typed `blocked` payload —
+                // kind plus a message carrying the hook's stated reason.
+                let message = output["error"]["message"].as_str().unwrap_or("");
+                return output["error"]["kind"] == "blocked"
+                    && message.contains("blocked by hook")
+                    && message.contains("bash is not permitted");
             }
         }
         false
@@ -1079,7 +1082,8 @@ async fn test_inbound_steer_message() {
 /// Proves that:
 /// - WriteTool's `pre_validate` blocks unread-existing-file writes
 /// - The ToolRegistry surfaces this as a `ToolError::PreValidationFailed`
-/// - The error appears as `{"error": "..."}` in the session store ToolResult
+/// - The error appears as the typed `{"error": {kind, message, detail}}`
+///   payload in the session store ToolResult
 /// - A successful write (to a new file) completes without error
 #[tokio::test]
 async fn test_read_before_write_enforcement_through_registry() {
@@ -1142,7 +1146,9 @@ async fn test_read_before_write_enforcement_through_registry() {
         "file must not be overwritten without prior read"
     );
 
-    // The session store must record the blocked write as an error result.
+    // The session store must record the blocked write as a structured error
+    // result: the typed payload object (kind + message + guidance detail),
+    // not a collapsed string.
     let events = store.events();
     let blocked_write = events.iter().any(|e| {
         if let SessionEvent::ToolResult {
@@ -1150,15 +1156,19 @@ async fn test_read_before_write_enforcement_through_registry() {
         } = e
         {
             if tool_name == "write" {
-                let err = output["error"].as_str().unwrap_or("");
-                return err.contains("not been read");
+                let error = &output["error"];
+                return error["kind"] == "blocked"
+                    && error["message"]
+                        .as_str()
+                        .is_some_and(|m| m.contains("not been read"))
+                    && error["detail"]["guidance"].is_string();
             }
         }
         false
     });
     assert!(
         blocked_write,
-        "session store must record a ToolResult error for the blocked write",
+        "session store must record a structured ToolResult error for the blocked write",
     );
 }
 

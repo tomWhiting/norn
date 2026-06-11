@@ -28,7 +28,6 @@ use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
 use crate::tool::follow_up::{Confidence, ExpiryCondition};
 use crate::tool::traits::{Tool, ToolOutput};
 use serde_json::{Value, json};
-use std::time::Duration;
 
 fn envelope(args: Value) -> ToolEnvelope {
     ToolEnvelope {
@@ -94,7 +93,7 @@ async fn rerun_follow_ups_registered_after_failure() {
         .execute(&env, &ToolContext::empty())
         .await
         .expect("bash ok");
-    assert!(out.is_error);
+    assert!(out.is_error());
     let follow_ups = tool.register_follow_ups(&out, &ToolContext::empty()).await;
     let actions: Vec<&str> = follow_ups.iter().map(|f| f.action.as_str()).collect();
     assert!(actions.contains(&"rerun"));
@@ -104,18 +103,14 @@ async fn rerun_follow_ups_registered_after_failure() {
 #[tokio::test]
 async fn redirected_output_registers_read_and_grep_follow_ups() {
     let tool = BashTool::new();
-    let out = ToolOutput {
-        content: json!({
-            "exit_code": 0,
-            "output_redirected": true,
-            "output_path": "~/.norn/outputs/session/call-bash.log",
-            "output_chars": 23_001,
-            "timed_out": false,
-            "metadata": { "risk_tier": "Harmless", "timeout_secs": 120 }
-        }),
-        is_error: false,
-        duration: Duration::from_millis(1),
-    };
+    let out = ToolOutput::success(json!({
+        "exit_code": 0,
+        "output_redirected": true,
+        "output_path": "~/.norn/outputs/session/call-bash.log",
+        "output_chars": 23_001,
+        "timed_out": false,
+        "metadata": { "risk_tier": "Harmless", "timeout_secs": 120 }
+    }));
 
     let follow_ups = tool.register_follow_ups(&out, &ToolContext::empty()).await;
     let read = follow_ups

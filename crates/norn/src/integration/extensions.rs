@@ -273,7 +273,6 @@ impl Tool for ExtensionProxyTool {
         envelope: &ToolEnvelope,
         _ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = std::time::Instant::now();
         let response = match &self.extension.state {
             ExtensionState::Http { client } => {
                 let base = match &self.extension.manifest.transport {
@@ -344,11 +343,7 @@ impl Tool for ExtensionProxyTool {
 
         let value: serde_json::Value = serde_json::from_str(response.trim())
             .unwrap_or_else(|_| serde_json::json!({ "text": response.trim() }));
-        Ok(ToolOutput {
-            content: value,
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(value))
     }
 }
 

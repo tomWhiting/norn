@@ -12,7 +12,7 @@
 //! count assistant turns, locate the cut index that retains the most
 //! recent `keep` turns, then estimate the tokens that will be freed by
 //! summing each superseded event's content through the bundle's
-//! [`TokenEstimator`](norn::r#loop::tokens::TokenEstimator).
+//! [`TokenEstimator`](norn::agent_loop::tokens::TokenEstimator).
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
@@ -178,9 +178,25 @@ mod tests {
     use crate::commands::slash::state::{SlashState, SlashStateSeed};
     use crate::runtime::RuntimeInputs;
     use crate::runtime::build_runtime;
-    use crate::session::{attach_sink, create_session, resume_session, session_file_path};
+    use crate::session::{CreateSessionOptions, SessionManager, session_file_path};
 
     use super::*;
+
+    /// Open a fresh sink-backed session for the compact regression
+    /// tests, mirroring what the orchestrator gets from `open_session`.
+    fn open_persisted(dir: &std::path::Path) -> (String, Arc<EventStore>) {
+        let opened = SessionManager::new(dir)
+            .create(
+                CreateSessionOptions {
+                    model: "gpt-x".to_owned(),
+                    working_dir: "/work".to_owned(),
+                    name: None,
+                },
+                norn::session::DurabilityPolicy::Flush,
+            )
+            .expect("create session");
+        (opened.entry.id, Arc::new(opened.store))
+    }
 
     fn make_state(store: Arc<EventStore>) -> SlashState {
         SlashState::new(SlashStateSeed {
@@ -282,18 +298,8 @@ mod tests {
         // is written through the attached sink; apply_compact_request
         // must not re-append it (nor touch the index).
         let tmp = tempfile::tempdir().unwrap();
-        let entry =
-            create_session(tmp.path(), "gpt-x".to_owned(), "/work".to_owned(), None).unwrap();
         // Write-through sink: every append lands in the session JSONL.
-        let store = Arc::new(
-            attach_sink(
-                EventStore::new(),
-                tmp.path(),
-                &entry.id,
-                norn::session::DurabilityPolicy::Flush,
-            )
-            .expect("attach sink"),
-        );
+        let (entry_id, store) = open_persisted(tmp.path());
         for i in 0..12 {
             store.append(user(&format!("u{i}"))).unwrap();
             store.append(assistant(&format!("a{i}"))).unwrap();
@@ -314,7 +320,7 @@ mod tests {
         // `norn_session_format` header line, excluded here). A
         // double-write would yield 26 event lines and a duplicate
         // EventId.
-        let body = std::fs::read_to_string(session_file_path(tmp.path(), &entry.id)).unwrap();
+        let body = std::fs::read_to_string(session_file_path(tmp.path(), &entry_id)).unwrap();
         let line_count = body
             .lines()
             .filter(|l| !l.trim().is_empty() && !l.contains("norn_session_format"))
@@ -325,9 +331,11 @@ mod tests {
         );
 
         // Resume succeeds — the duplicate-ID guard never fires.
-        let (resumed, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
-        assert_eq!(resumed.len(), 25);
-        assert_eq!(replayed.len(), 25);
+        let resumed = SessionManager::new(tmp.path())
+            .resume(&entry_id, norn::session::DurabilityPolicy::Flush)
+            .unwrap();
+        assert_eq!(resumed.store.len(), 25);
+        assert_eq!(resumed.replay.replayed_events, 25);
     }
 
     #[test]
@@ -338,17 +346,7 @@ mod tests {
         // index on top. Pre-fix this read 26 (25 sink updates + 1
         // duplicate reconcile for the Compaction event).
         let tmp = tempfile::tempdir().unwrap();
-        let entry =
-            create_session(tmp.path(), "gpt-x".to_owned(), "/work".to_owned(), None).unwrap();
-        let store = Arc::new(
-            attach_sink(
-                EventStore::new(),
-                tmp.path(),
-                &entry.id,
-                norn::session::DurabilityPolicy::Flush,
-            )
-            .expect("attach sink"),
-        );
+        let (entry_id, store) = open_persisted(tmp.path());
         for i in 0..12 {
             store.append(user(&format!("u{i}"))).unwrap();
             store.append(assistant(&format!("a{i}"))).unwrap();
@@ -371,7 +369,7 @@ mod tests {
         let index = crate::session::read_index(tmp.path()).unwrap();
         let indexed = index
             .iter()
-            .find(|e| e.id == entry.id)
+            .find(|e| e.id == entry_id)
             .expect("session present in index");
         assert_eq!(
             indexed.event_count, 25,

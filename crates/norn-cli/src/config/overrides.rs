@@ -16,9 +16,9 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
+use norn::agent_loop::config::{AgentLoopConfig, ConversationStateMode};
+use norn::agent_loop::retry::RetryPolicy;
 use norn::config::NornSettings;
-use norn::r#loop::config::{AgentLoopConfig, ConversationStateMode};
-use norn::r#loop::retry::RetryPolicy;
 use norn::profile::Profile;
 use norn::provider::request::{ReasoningEffort, ReasoningSummary};
 

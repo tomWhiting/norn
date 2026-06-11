@@ -25,7 +25,7 @@
 
 use std::sync::Arc;
 
-use norn::r#loop::loop_context::LoopContext;
+use norn::agent_loop::loop_context::LoopContext;
 use norn::session::action_log::ActionLog;
 use norn::session::store::EventStore;
 use norn::tool::context::ToolContext;
@@ -56,8 +56,9 @@ use norn::tools::agent::AgentToolInfra;
 ///    there), the mailbox, the provider, the agent identity, and the
 ///    tool registry. When no infra was installed (the startup wiring is
 ///    conditional on a shared context existing), none is fabricated —
-///    agent tools keep reporting "agent runtime not configured" exactly
-///    as before the rotation.
+///    agent tools keep reporting the missing [`AgentToolInfra`]
+///    extension (a typed `MissingExtension` error) exactly as before
+///    the rotation.
 /// 4. **Swap** `LoopContext::action_log` and `store_slot`.
 pub(super) fn rotate_store_dependents(
     shared_ctx: Option<Arc<ToolContext>>,
@@ -129,7 +130,7 @@ mod tests {
     use norn::provider::request::ProviderRequest;
     use norn::provider::traits::{Provider, ProviderStream};
     use norn::session::events::{EventBase, SessionEvent};
-    use norn::session::{DurabilityPolicy, attach_sink, create_session, read_index};
+    use norn::session::{CreateSessionOptions, DurabilityPolicy, SessionManager, read_index};
     use norn::tool::registry::ToolRegistry;
     use uuid::Uuid;
 
@@ -290,16 +291,18 @@ mod tests {
         // holding Arc clones of the old store defer that drop
         // indefinitely. The rotation must checkpoint explicitly.
         let tmp = tempfile::tempdir().unwrap();
-        let entry =
-            create_session(tmp.path(), "test-model".to_owned(), "/tmp".to_owned(), None).unwrap();
-        let store = attach_sink(
-            EventStore::new(),
-            tmp.path(),
-            &entry.id,
-            DurabilityPolicy::Flush,
-        )
-        .unwrap();
-        let old_store = Arc::new(store);
+        let opened = SessionManager::new(tmp.path())
+            .create(
+                CreateSessionOptions {
+                    model: "test-model".to_owned(),
+                    working_dir: "/tmp".to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .unwrap();
+        let entry = opened.entry;
+        let old_store = Arc::new(opened.store);
         // Simulate a component still pinning the old store — its
         // drop-flush cannot run while this clone is alive.
         let pinned = Arc::clone(&old_store);

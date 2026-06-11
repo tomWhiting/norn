@@ -17,6 +17,7 @@ use serde::Deserialize;
 
 use super::sse_types::{
     CustomToolCallItem, FunctionCallItem, ResponseFailedPayload, classify_failed_error,
+    incomplete_stop_reason,
 };
 use crate::error::ProviderError;
 use crate::provider::events::{ProviderEvent, StopReason};
@@ -346,16 +347,10 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
         "response.completed" => {
             let usage = extract_usage(&event.data);
             let stop_reason = extract_stop_reason(&event.data);
-            let response_id = event
-                .data
-                .get("response")
-                .and_then(|r| r.get("id"))
-                .and_then(|v| v.as_str())
-                .map(str::to_owned);
             Some(Ok(ProviderEvent::Done {
                 stop_reason,
                 usage,
-                response_id,
+                response_id: extract_response_id(&event.data),
             }))
         }
 
@@ -378,15 +373,33 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
         }
 
         "response.incomplete" => {
-            // The reason nests under `response.incomplete_details.reason`.
+            // A `response.incomplete` event is the Responses API's terminal
+            // frame for a deterministic model-side stop with partial output
+            // (`max_output_tokens` / `content_filter`). It is NOT a
+            // transport error: the stream completes normally with a typed
+            // `Done` event so the agent loop classifies the turn as
+            // `ResponseClass::Truncated` and surfaces
+            // `AgentStepResult::Truncated` — a stopped run with partial
+            // output — instead of failing a stop that would recur on every
+            // retry. Text deltas already emitted are preserved by assembly;
+            // usage and the response id are read from the same nested
+            // `response` object that `response.completed` carries. The
+            // reason nests under `response.incomplete_details.reason`;
+            // unknown reasons surface as a terminal error (see
+            // `incomplete_stop_reason`).
             let reason = ResponseFailedPayload::deserialize(&event.data)
                 .ok()
                 .and_then(|p| p.response)
                 .and_then(|r| r.incomplete_details)
-                .and_then(|d| d.reason)
-                .unwrap_or_else(|| "unknown".to_string());
-            let msg = format!("incomplete response: {reason}");
-            Some(Err(ProviderError::StreamError { reason: msg }))
+                .and_then(|d| d.reason);
+            match incomplete_stop_reason(reason.as_deref()) {
+                Ok(stop_reason) => Some(Ok(ProviderEvent::Done {
+                    stop_reason,
+                    usage: extract_usage(&event.data),
+                    response_id: extract_response_id(&event.data),
+                })),
+                Err(err) => Some(Err(err)),
+            }
         }
 
         "response.output_text.done" => {
@@ -460,13 +473,22 @@ fn extract_usage(data: &serde_json::Value) -> Usage {
     }
 }
 
-fn extract_stop_reason(data: &serde_json::Value) -> StopReason {
-    let status = data
-        .get("response")
-        .and_then(|r| r.get("status"))
+/// Extracts the server-assigned response id from the nested `response`
+/// object carried by `response.completed` and `response.incomplete` events.
+fn extract_response_id(data: &serde_json::Value) -> Option<String> {
+    data.get("response")
+        .and_then(|r| r.get("id"))
         .and_then(|v| v.as_str())
-        .unwrap_or("");
+        .map(str::to_owned)
+}
 
+/// Derives the [`StopReason`] for a `response.completed` event.
+///
+/// Only reachable from `response.completed`, whose status is always
+/// `"completed"` — truncation stops arrive on the dedicated
+/// `response.incomplete` event and are mapped by
+/// [`incomplete_stop_reason`] instead.
+fn extract_stop_reason(data: &serde_json::Value) -> StopReason {
     let end_turn = data
         .get("response")
         .and_then(|r| r.get("output"))
@@ -477,7 +499,6 @@ fn extract_stop_reason(data: &serde_json::Value) -> StopReason {
 
     match end_turn {
         Some("function_call") => StopReason::ToolUse,
-        _ if status == "incomplete" => StopReason::MaxTokens,
         _ => StopReason::EndTurn,
     }
 }
@@ -994,19 +1015,114 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn incomplete_event_mapping() {
-        // #9: reason read from the nested `response.incomplete_details.reason`.
+    fn incomplete_max_output_tokens_completes_with_typed_stop() {
+        // BLOCKER regression: a `response.incomplete` event with reason
+        // `max_output_tokens` is a deterministic model-side stop, NOT a
+        // stream error. It must complete the stream with
+        // `StopReason::MaxTokens` and carry the usage and response id from
+        // the nested `response` object so the loop classifies the turn as
+        // Truncated instead of failing (and retrying) the call.
         let event = SseEvent {
             event_type: "response.incomplete".to_string(),
             data: serde_json::json!({
-                "response": { "incomplete_details": {"reason": "max_output_tokens"} }
+                "response": {
+                    "id": "resp_incomplete_1",
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "max_output_tokens"},
+                    "usage": {"input_tokens": 7, "output_tokens": 9}
+                }
             }),
         };
         match map_sse_event(&event) {
-            Some(Err(ProviderError::StreamError { reason })) => {
-                assert!(reason.contains("max_output_tokens"));
+            Some(Ok(ProviderEvent::Done {
+                stop_reason,
+                usage,
+                response_id,
+            })) => {
+                assert_eq!(stop_reason, StopReason::MaxTokens);
+                assert_eq!(usage.input_tokens, 7);
+                assert_eq!(usage.output_tokens, 9);
+                assert_eq!(response_id.as_deref(), Some("resp_incomplete_1"));
             }
-            other => panic!("expected StreamError, got {other:?}"),
+            other => panic!("expected Done with MaxTokens, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn incomplete_content_filter_completes_with_typed_stop() {
+        let event = SseEvent {
+            event_type: "response.incomplete".to_string(),
+            data: serde_json::json!({
+                "response": {
+                    "id": "resp_incomplete_2",
+                    "status": "incomplete",
+                    "incomplete_details": {"reason": "content_filter"},
+                    "usage": {"input_tokens": 3, "output_tokens": 4}
+                }
+            }),
+        };
+        match map_sse_event(&event) {
+            Some(Ok(ProviderEvent::Done {
+                stop_reason,
+                usage,
+                response_id,
+            })) => {
+                assert_eq!(stop_reason, StopReason::ContentFilter);
+                assert_eq!(usage.input_tokens, 3);
+                assert_eq!(usage.output_tokens, 4);
+                assert_eq!(response_id.as_deref(), Some("resp_incomplete_2"));
+            }
+            other => panic!("expected Done with ContentFilter, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn incomplete_unknown_reason_is_terminal_parse_error() {
+        // An unrecognized incomplete reason must NOT be guessed as
+        // MaxTokens (dishonest) and must NOT be retryable (the stop is
+        // deterministic). It surfaces as a terminal ResponseParseError
+        // carrying the verbatim reason.
+        let event = SseEvent {
+            event_type: "response.incomplete".to_string(),
+            data: serde_json::json!({
+                "response": {
+                    "incomplete_details": {"reason": "some_future_reason"}
+                }
+            }),
+        };
+        match map_sse_event(&event) {
+            Some(Err(err @ ProviderError::ResponseParseError { .. })) => {
+                assert!(
+                    err.to_string().contains("some_future_reason"),
+                    "error must carry the verbatim reason: {err}"
+                );
+                assert!(
+                    !err.is_retryable(),
+                    "a deterministic incomplete stop must never classify retryable"
+                );
+            }
+            other => panic!("expected terminal ResponseParseError, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn incomplete_missing_reason_is_terminal_parse_error() {
+        // No incomplete_details.reason at all: same refusal to guess.
+        for data in [
+            serde_json::json!({"response": {"incomplete_details": {}}}),
+            serde_json::json!({"response": {}}),
+            serde_json::json!({}),
+        ] {
+            let event = SseEvent {
+                event_type: "response.incomplete".to_string(),
+                data,
+            };
+            match map_sse_event(&event) {
+                Some(Err(err @ ProviderError::ResponseParseError { .. })) => {
+                    assert!(!err.is_retryable());
+                }
+                other => panic!("expected terminal ResponseParseError, got {other:?}"),
+            }
         }
     }
 

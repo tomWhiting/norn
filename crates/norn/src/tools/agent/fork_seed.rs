@@ -52,7 +52,7 @@ pub(super) fn seed_fork_events(
             let is_fork_call = fork_call_id.is_some_and(|fid| fid == orphan.id);
             let output = if is_fork_call {
                 serde_json::json!({
-                    "fork_id": fork_id.to_string(),
+                    "agent_id": fork_id.to_string(),
                     "status": "active",
                     "message": crate::agent::fork::FORK_SYNTHETIC_RESULT_MESSAGE,
                 })
@@ -100,7 +100,7 @@ pub(super) fn seed_fork_events(
             let is_fork_call = fork_call_id.is_some_and(|fid| fid == orphan.id);
             let output = if is_fork_call {
                 serde_json::json!({
-                    "fork_id": fork_id.to_string(),
+                    "agent_id": fork_id.to_string(),
                     "status": "active",
                     "message": crate::agent::fork::FORK_SYNTHETIC_RESULT_MESSAGE,
                 })

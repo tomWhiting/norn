@@ -1,27 +1,32 @@
 //! The `task` tool: CRUD plus hierarchy and group operations.
 //!
-//! [`TaskTool`] dispatches over a [`TaskStore`] resolved from the
-//! [`ToolContext`] extension map. Effect is `Write` because most actions
-//! mutate the store and `ToolEffect` is a single value per tool — picking
-//! `Write` keeps task operations serialised under the scheduler.
+//! [`TaskTool`] is a [`CompositeTool`]: its operations are the
+//! [`TaskCommand`] enum (internally tagged on `action`), so the input
+//! schema, per-command catalog entries, per-call effects, and
+//! invalid-command handling are all derived rather than hand-maintained.
+//! Read commands (`get`, `list`, `children`, `ancestors`, `list_groups`)
+//! classify as `ReadOnly` and may be scheduled concurrently; mutating
+//! commands classify as `Write`.
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use chrono::Utc;
+use norn_macros::ToolArgs;
 use serde::Deserialize;
 use serde_json::Value;
 use uuid::Uuid;
 
 use super::memory::{InMemoryTaskStore, SharedTaskStore};
 use super::rollup::effective_status;
-use super::types::{TaskEntry, TaskStatus, TaskStore, parse_status};
+use super::types::{TaskEntry, TaskStatus, TaskStore};
 use crate::error::ToolError;
+use crate::tool::composite::CompositeTool;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::scheduling::ToolEffect;
-use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
+use crate::tool::traits::{ToolCategory, ToolOutput};
 
 /// CRUD-plus-hierarchy tool over [`TaskStore`].
 pub struct TaskTool;
@@ -40,25 +45,90 @@ impl Default for TaskTool {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct TaskArgs {
-    action: String,
-    #[serde(default)]
-    task_id: Option<String>,
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    status: Option<String>,
-    #[serde(default)]
-    depends_on: Option<Vec<String>>,
-    #[serde(default)]
-    metadata: Option<Value>,
-    #[serde(default)]
-    parent_task_id: Option<String>,
-    #[serde(default)]
-    agent_path: Option<String>,
-    #[serde(default)]
-    group_slug: Option<String>,
+/// One `task` operation, dispatched on `action`.
+#[derive(Debug, Deserialize, ToolArgs)]
+#[serde(tag = "action", rename_all = "snake_case")]
+pub enum TaskCommand {
+    /// Create a new task.
+    Create {
+        /// Human-readable task description.
+        description: String,
+        /// Explicit task identifier; a UUID is generated when omitted.
+        task_id: Option<String>,
+        /// Initial lifecycle status; defaults to pending.
+        status: Option<TaskStatus>,
+        /// IDs of tasks that must complete before this one can start.
+        depends_on: Option<Vec<String>>,
+        /// Free-form structured metadata to attach to the task.
+        metadata: Option<Value>,
+    },
+    /// Retrieve a task by id.
+    Get {
+        /// Task identifier.
+        task_id: String,
+    },
+    /// List tasks, optionally filtered by status.
+    List {
+        /// Filter to tasks with this lifecycle status.
+        status: Option<TaskStatus>,
+    },
+    /// Update fields of an existing task; omitted fields are untouched.
+    Update {
+        /// Task identifier.
+        task_id: String,
+        /// New lifecycle status.
+        status: Option<TaskStatus>,
+        /// New task description.
+        description: Option<String>,
+        /// Replacement dependency list.
+        depends_on: Option<Vec<String>>,
+        /// Replacement metadata.
+        metadata: Option<Value>,
+    },
+    /// Mark a task as completed.
+    Complete {
+        /// Task identifier.
+        task_id: String,
+    },
+    /// Create a task as a child of an existing parent task.
+    CreateSubtask {
+        /// Parent task id.
+        parent_task_id: String,
+        /// Human-readable task description.
+        description: String,
+        /// Explicit task identifier; a UUID is generated when omitted.
+        task_id: Option<String>,
+        /// Initial lifecycle status; defaults to pending.
+        status: Option<TaskStatus>,
+        /// IDs of tasks that must complete before this one can start.
+        depends_on: Option<Vec<String>>,
+        /// Free-form structured metadata to attach to the task.
+        metadata: Option<Value>,
+    },
+    /// List the direct children of a parent task with roll-up status.
+    Children {
+        /// Parent task id.
+        parent_task_id: String,
+    },
+    /// Walk the parent chain from a task to its root, inclusive.
+    Ancestors {
+        /// Task identifier.
+        task_id: String,
+    },
+    /// Atomically assign an agent to an unclaimed task.
+    Claim {
+        /// Task identifier.
+        task_id: String,
+        /// Registry path of the claiming agent.
+        agent_path: String,
+    },
+    /// Create a named task group.
+    CreateGroup {
+        /// Human-readable task group slug.
+        group_slug: String,
+    },
+    /// List all known task group slugs.
+    ListGroups,
 }
 
 fn entry_to_json(entry: &TaskEntry) -> Value {
@@ -73,39 +143,34 @@ fn store_from(ctx: &ToolContext) -> Result<Arc<dyn TaskStore>, ToolError> {
         let trait_store: Arc<dyn TaskStore> = concrete;
         return Ok(trait_store);
     }
-    Err(ToolError::ExecutionFailed {
-        reason: "task store not configured in tool context".to_string(),
+    Err(ToolError::MissingExtension {
+        extension: std::any::type_name::<SharedTaskStore>().to_string(),
     })
 }
 
-fn require<'a>(value: Option<&'a str>, action: &str, field: &str) -> Result<&'a str, ToolError> {
-    value.ok_or_else(|| ToolError::ExecutionFailed {
-        reason: format!("{action} requires `{field}`"),
-    })
+/// Fields shared by the two create-style commands.
+struct CreateFields {
+    description: String,
+    task_id: Option<String>,
+    status: Option<TaskStatus>,
+    depends_on: Option<Vec<String>>,
+    metadata: Option<Value>,
 }
 
-/// Build a fresh [`TaskEntry`] from create-style arguments.
-fn build_entry(args: &TaskArgs, description: String) -> Result<TaskEntry, ToolError> {
+/// Build a fresh [`TaskEntry`] from create-style fields.
+fn build_entry(fields: CreateFields) -> TaskEntry {
     let now = Utc::now();
-    let id = args
-        .task_id
-        .clone()
-        .unwrap_or_else(|| Uuid::new_v4().to_string());
-    let status = match args.status.as_deref() {
-        Some(s) => parse_status(s)?,
-        None => TaskStatus::Pending,
-    };
-    Ok(TaskEntry {
-        id,
-        description,
-        status,
-        depends_on: args.depends_on.clone().unwrap_or_default(),
-        metadata: args.metadata.clone().unwrap_or(Value::Null),
+    TaskEntry {
+        id: fields.task_id.unwrap_or_else(|| Uuid::new_v4().to_string()),
+        description: fields.description,
+        status: fields.status.unwrap_or(TaskStatus::Pending),
+        depends_on: fields.depends_on.unwrap_or_default(),
+        metadata: fields.metadata.unwrap_or(Value::Null),
         created_at: now,
         updated_at: now,
         parent_task_id: None,
         assigned_agent: None,
-    })
+    }
 }
 
 /// Serialise a child with its roll-up status substituted in.
@@ -129,13 +194,23 @@ fn child_with_rollup(store: &dyn TaskStore, child: &TaskEntry) -> Value {
 }
 
 #[async_trait]
-impl Tool for TaskTool {
+impl CompositeTool for TaskTool {
+    type Command = TaskCommand;
+
     fn name(&self) -> &'static str {
         "task"
     }
 
     fn description(&self) -> &'static str {
         include_str!("../guidance/task.description.md")
+    }
+
+    fn command_field(&self) -> &'static str {
+        "action"
+    }
+
+    fn input_schema(&self) -> Value {
+        TaskCommand::json_schema()
     }
 
     fn category(&self) -> ToolCategory {
@@ -146,197 +221,144 @@ impl Tool for TaskTool {
         Some(include_str!("../guidance/task.usage.md"))
     }
 
-    fn input_schema(&self) -> serde_json::Value {
-        serde_json::json!({
-            "type": "object",
-            "required": ["action"],
-            "properties": {
-                "action": {
-                    "type": "string",
-                    "enum": [
-                        "create", "get", "list", "update", "complete",
-                        "create_subtask", "children", "ancestors", "claim",
-                        "create_group", "list_groups"
-                    ],
-                    "description": "Operation to perform."
-                },
-                "task_id": {
-                    "type": "string",
-                    "description": "Task identifier. Required for get, update, complete, ancestors, and claim."
-                },
-                "description": {
-                    "type": "string",
-                    "description": "Human-readable task description. Required for create and create_subtask, optional for update."
-                },
-                "status": {
-                    "type": "string",
-                    "enum": ["pending", "in_progress", "completed", "blocked", "failed"],
-                    "description": "Task lifecycle status. Used to filter in list or set in create/update."
-                },
-                "depends_on": {
-                    "type": "array",
-                    "items": { "type": "string" },
-                    "description": "IDs of tasks that must complete before this one can start."
-                },
-                "metadata": {
-                    "type": "object",
-                    "description": "Free-form structured metadata to attach to the task."
-                },
-                "parent_task_id": {
-                    "type": "string",
-                    "description": "Parent task id. Required for create_subtask and children."
-                },
-                "agent_path": {
-                    "type": "string",
-                    "description": "Registry path of the claiming agent. Required for claim."
-                },
-                "group_slug": {
-                    "type": "string",
-                    "description": "Human-readable task group slug. Required for create_group."
-                }
-            },
-            "additionalProperties": false
-        })
+    fn command_effect(&self, command: &TaskCommand) -> ToolEffect {
+        match command {
+            TaskCommand::Get { .. }
+            | TaskCommand::List { .. }
+            | TaskCommand::Children { .. }
+            | TaskCommand::Ancestors { .. }
+            | TaskCommand::ListGroups => ToolEffect::ReadOnly,
+            TaskCommand::Create { .. }
+            | TaskCommand::Update { .. }
+            | TaskCommand::Complete { .. }
+            | TaskCommand::CreateSubtask { .. }
+            | TaskCommand::Claim { .. }
+            | TaskCommand::CreateGroup { .. } => ToolEffect::Write,
+        }
     }
 
-    fn effect(&self) -> ToolEffect {
+    fn conservative_effect(&self) -> ToolEffect {
         ToolEffect::Write
     }
 
-    async fn execute(
+    async fn run(
         &self,
-        envelope: &ToolEnvelope,
+        command: TaskCommand,
+        _envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
-        let args: TaskArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
-            ToolError::ExecutionFailed {
-                reason: format!("invalid arguments: {e}"),
-            }
-        })?;
         let store = store_from(ctx)?;
 
-        let content = match args.action.as_str() {
-            "create" => {
-                let description =
-                    require(args.description.as_deref(), "create", "description")?.to_string();
-                let entry = build_entry(&args, description)?;
+        let content = match command {
+            TaskCommand::Create {
+                description,
+                task_id,
+                status,
+                depends_on,
+                metadata,
+            } => {
+                let entry = build_entry(CreateFields {
+                    description,
+                    task_id,
+                    status,
+                    depends_on,
+                    metadata,
+                });
                 store.create(entry.clone())?;
                 serde_json::json!({ "action": "create", "task": entry_to_json(&entry) })
             }
-            "get" => {
-                let id = require(args.task_id.as_deref(), "get", "task_id")?.to_string();
-                match store.get(&id) {
-                    Some(entry) => {
-                        serde_json::json!({ "action": "get", "task": entry_to_json(&entry) })
-                    }
-                    None => {
-                        return Ok(ToolOutput {
-                            content: serde_json::json!({
-                                "action": "get",
-                                "task_id": id,
-                                "error": "not found"
-                            }),
-                            is_error: true,
-                            duration: started.elapsed(),
-                        });
-                    }
+            TaskCommand::Get { task_id } => match store.get(&task_id) {
+                Some(entry) => {
+                    serde_json::json!({ "action": "get", "task": entry_to_json(&entry) })
                 }
-            }
-            "list" => {
-                let filter = match args.status.as_deref() {
-                    Some(s) => Some(parse_status(s)?),
-                    None => None,
-                };
-                let items: Vec<Value> = store.list(filter).iter().map(entry_to_json).collect();
+                None => {
+                    return Ok(ToolOutput::failure_with_content(
+                        serde_json::json!({ "action": "get", "task_id": task_id }),
+                        ToolErrorPayload::new(
+                            ToolErrorKind::NotFound,
+                            format!("task '{task_id}' not found"),
+                        )
+                        .with_detail(serde_json::json!({ "task_id": task_id })),
+                    ));
+                }
+            },
+            TaskCommand::List { status } => {
+                let items: Vec<Value> = store.list(status).iter().map(entry_to_json).collect();
                 serde_json::json!({ "action": "list", "tasks": items })
             }
-            "update" => {
-                let id = require(args.task_id.as_deref(), "update", "task_id")?.to_string();
-                let status = match args.status.as_deref() {
-                    Some(s) => Some(parse_status(s)?),
-                    None => None,
-                };
-                let entry = store.update(
-                    &id,
-                    status,
-                    args.description.clone(),
-                    args.depends_on.clone(),
-                    args.metadata.clone(),
-                )?;
+            TaskCommand::Update {
+                task_id,
+                status,
+                description,
+                depends_on,
+                metadata,
+            } => {
+                let entry = store.update(&task_id, status, description, depends_on, metadata)?;
                 serde_json::json!({ "action": "update", "task": entry_to_json(&entry) })
             }
-            "complete" => {
-                let id = require(args.task_id.as_deref(), "complete", "task_id")?.to_string();
-                let entry = store.complete(&id)?;
+            TaskCommand::Complete { task_id } => {
+                let entry = store.complete(&task_id)?;
                 serde_json::json!({ "action": "complete", "task": entry_to_json(&entry) })
             }
-            "create_subtask" => {
-                let parent_id = require(
-                    args.parent_task_id.as_deref(),
-                    "create_subtask",
-                    "parent_task_id",
-                )?
-                .to_string();
-                let description =
-                    require(args.description.as_deref(), "create_subtask", "description")?
-                        .to_string();
-                let mut entry = build_entry(&args, description)?;
-                entry.parent_task_id = Some(parent_id.clone());
-                store.create_subtask(&parent_id, entry.clone())?;
+            TaskCommand::CreateSubtask {
+                parent_task_id,
+                description,
+                task_id,
+                status,
+                depends_on,
+                metadata,
+            } => {
+                let mut entry = build_entry(CreateFields {
+                    description,
+                    task_id,
+                    status,
+                    depends_on,
+                    metadata,
+                });
+                entry.parent_task_id = Some(parent_task_id.clone());
+                store.create_subtask(&parent_task_id, entry.clone())?;
                 serde_json::json!({
                     "action": "create_subtask",
                     "task": entry_to_json(&entry)
                 })
             }
-            "children" => {
-                let parent_id =
-                    require(args.parent_task_id.as_deref(), "children", "parent_task_id")?
-                        .to_string();
+            TaskCommand::Children { parent_task_id } => {
                 let items: Vec<Value> = store
-                    .children(&parent_id)
+                    .children(&parent_task_id)
                     .iter()
                     .map(|child| child_with_rollup(store.as_ref(), child))
                     .collect();
                 serde_json::json!({
                     "action": "children",
-                    "parent_task_id": parent_id,
+                    "parent_task_id": parent_task_id,
                     "tasks": items
                 })
             }
-            "ancestors" => {
-                let id = require(args.task_id.as_deref(), "ancestors", "task_id")?.to_string();
-                let chain: Vec<Value> = store.ancestors(&id)?.iter().map(entry_to_json).collect();
-                serde_json::json!({ "action": "ancestors", "task_id": id, "tasks": chain })
+            TaskCommand::Ancestors { task_id } => {
+                let chain: Vec<Value> = store
+                    .ancestors(&task_id)?
+                    .iter()
+                    .map(entry_to_json)
+                    .collect();
+                serde_json::json!({ "action": "ancestors", "task_id": task_id, "tasks": chain })
             }
-            "claim" => {
-                let id = require(args.task_id.as_deref(), "claim", "task_id")?.to_string();
-                let agent_path =
-                    require(args.agent_path.as_deref(), "claim", "agent_path")?.to_string();
-                let entry = store.claim(&id, &agent_path)?;
+            TaskCommand::Claim {
+                task_id,
+                agent_path,
+            } => {
+                let entry = store.claim(&task_id, &agent_path)?;
                 serde_json::json!({ "action": "claim", "task": entry_to_json(&entry) })
             }
-            "create_group" => {
-                let slug =
-                    require(args.group_slug.as_deref(), "create_group", "group_slug")?.to_string();
-                store.create_group(&slug)?;
-                serde_json::json!({ "action": "create_group", "group_slug": slug })
+            TaskCommand::CreateGroup { group_slug } => {
+                store.create_group(&group_slug)?;
+                serde_json::json!({ "action": "create_group", "group_slug": group_slug })
             }
-            "list_groups" => {
+            TaskCommand::ListGroups => {
                 serde_json::json!({ "action": "list_groups", "groups": store.list_groups() })
-            }
-            other => {
-                return Err(ToolError::ExecutionFailed {
-                    reason: format!("unknown action '{other}'"),
-                });
             }
         };
 
-        Ok(ToolOutput {
-            content,
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(content))
     }
 }
 
@@ -370,6 +392,7 @@ mod tests {
 
     use super::*;
     use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+    use crate::tool::traits::Tool;
     use crate::tools::task::TaskStatus;
 
     fn envelope_for(args: Value) -> ToolEnvelope {
@@ -390,38 +413,251 @@ mod tests {
         (ctx, store)
     }
 
+    fn as_tool(tool: &TaskTool) -> &dyn Tool {
+        tool
+    }
+
+    async fn execute(tool: &TaskTool, args: Value, ctx: &ToolContext) -> ToolOutput {
+        as_tool(tool)
+            .execute(&envelope_for(args), ctx)
+            .await
+            .unwrap()
+    }
+
+    // -- Composite derivation -------------------------------------------
+
+    #[test]
+    fn schema_is_derived_one_of_with_per_command_required_fields() {
+        let tool = TaskTool::new();
+        let schema = as_tool(&tool).input_schema();
+        let variants = schema["oneOf"].as_array().expect("oneOf array");
+        assert_eq!(variants.len(), 11);
+
+        let create = variants
+            .iter()
+            .find(|v| v["properties"]["action"]["const"] == "create")
+            .expect("create variant");
+        assert_eq!(create["description"], "Create a new task.");
+        assert_eq!(create["required"], json!(["action", "description"]));
+        // Status delegates to TaskStatus's derived string-enum schema.
+        assert_eq!(
+            create["properties"]["status"]["enum"],
+            json!(["pending", "in_progress", "completed", "blocked", "failed"])
+        );
+
+        let claim = variants
+            .iter()
+            .find(|v| v["properties"]["action"]["const"] == "claim")
+            .expect("claim variant");
+        assert_eq!(
+            claim["required"],
+            json!(["action", "task_id", "agent_path"])
+        );
+    }
+
+    #[test]
+    fn per_command_effects_split_reads_from_writes() {
+        let tool = TaskTool::new();
+        let dyn_tool = as_tool(&tool);
+        assert_eq!(dyn_tool.effect(), ToolEffect::Write);
+
+        for read in [
+            json!({"action": "get", "task_id": "t"}),
+            json!({"action": "list"}),
+            json!({"action": "children", "parent_task_id": "p"}),
+            json!({"action": "ancestors", "task_id": "t"}),
+            json!({"action": "list_groups"}),
+        ] {
+            assert_eq!(
+                dyn_tool.effect_for_args(&read),
+                ToolEffect::ReadOnly,
+                "read command must classify ReadOnly: {read}",
+            );
+        }
+        for write in [
+            json!({"action": "create", "description": "d"}),
+            json!({"action": "update", "task_id": "t"}),
+            json!({"action": "complete", "task_id": "t"}),
+            json!({"action": "claim", "task_id": "t", "agent_path": "a"}),
+            json!({"action": "create_group", "group_slug": "g"}),
+        ] {
+            assert_eq!(
+                dyn_tool.effect_for_args(&write),
+                ToolEffect::Write,
+                "mutating command must classify Write: {write}",
+            );
+        }
+        // Unknown command / malformed args → conservative Write.
+        assert_eq!(
+            dyn_tool.effect_for_args(&json!({"action": "explode"})),
+            ToolEffect::Write,
+        );
+    }
+
+    /// Contract pin (doc-mandated for every `CompositeTool` impl): the
+    /// conservative effect covers every command's effect, one constructed
+    /// value per `TaskCommand` variant. Adding a variant without listing
+    /// it here is caught by the exhaustive `command_effect` match; adding
+    /// it here with a wider effect than `conservative_effect` fails this
+    /// test.
+    #[test]
+    fn conservative_effect_covers_every_command() {
+        crate::tool::composite::assert_conservative_effect_covers_all_commands(
+            &TaskTool::new(),
+            [
+                TaskCommand::Create {
+                    description: "d".to_owned(),
+                    task_id: None,
+                    status: None,
+                    depends_on: None,
+                    metadata: None,
+                },
+                TaskCommand::Get {
+                    task_id: "t".to_owned(),
+                },
+                TaskCommand::List { status: None },
+                TaskCommand::Update {
+                    task_id: "t".to_owned(),
+                    status: None,
+                    description: None,
+                    depends_on: None,
+                    metadata: None,
+                },
+                TaskCommand::Complete {
+                    task_id: "t".to_owned(),
+                },
+                TaskCommand::CreateSubtask {
+                    parent_task_id: "p".to_owned(),
+                    description: "d".to_owned(),
+                    task_id: None,
+                    status: None,
+                    depends_on: None,
+                    metadata: None,
+                },
+                TaskCommand::Children {
+                    parent_task_id: "p".to_owned(),
+                },
+                TaskCommand::Ancestors {
+                    task_id: "t".to_owned(),
+                },
+                TaskCommand::Claim {
+                    task_id: "t".to_owned(),
+                    agent_path: "/a".to_owned(),
+                },
+                TaskCommand::CreateGroup {
+                    group_slug: "g".to_owned(),
+                },
+                TaskCommand::ListGroups,
+            ],
+        );
+    }
+
+    #[test]
+    fn catalog_entries_cover_every_command_with_derived_fields() {
+        let tool = TaskTool::new();
+        let entries = as_tool(&tool).catalog_entries();
+        // 1 tool entry + 11 command entries.
+        assert_eq!(entries.len(), 12);
+        assert_eq!(entries[0].name, "task");
+        assert!(entries[0].parent_tool.is_none());
+
+        let claim = entries
+            .iter()
+            .find(|e| e.command_value.as_deref() == Some("claim"))
+            .expect("claim entry");
+        assert_eq!(claim.parent_tool.as_deref(), Some("task"));
+        assert_eq!(
+            claim.description,
+            "Atomically assign an agent to an unclaimed task."
+        );
+        let agent_path = claim
+            .fields
+            .iter()
+            .find(|f| f.name == "agent_path")
+            .expect("agent_path hint");
+        assert!(agent_path.required);
+        assert_eq!(agent_path.type_hint, "string");
+        assert_eq!(
+            agent_path.description,
+            "Registry path of the claiming agent."
+        );
+
+        let list = entries
+            .iter()
+            .find(|e| e.command_value.as_deref() == Some("list"))
+            .expect("list entry");
+        let status = &list.fields[0];
+        assert_eq!(status.name, "status");
+        assert!(!status.required);
+        assert_eq!(
+            status.enum_values,
+            vec!["pending", "in_progress", "completed", "blocked", "failed"]
+        );
+    }
+
+    #[tokio::test]
+    async fn unknown_action_is_typed_invalid_arguments_soft_failure() {
+        let tool = TaskTool::new();
+        let (ctx, _store) = ctx_with_store();
+        let out = execute(&tool, json!({"action": "explode"}), &ctx).await;
+        assert!(out.is_error());
+        let payload = out.error().expect("typed payload");
+        assert_eq!(payload.kind, ToolErrorKind::InvalidArguments);
+        let valid = payload.detail["valid_commands"]
+            .as_array()
+            .expect("valid commands listed");
+        assert!(valid.iter().any(|v| v == "create"));
+        assert!(valid.iter().any(|v| v == "list_groups"));
+    }
+
+    #[tokio::test]
+    async fn missing_required_field_is_typed_invalid_arguments() {
+        let tool = TaskTool::new();
+        let (ctx, _store) = ctx_with_store();
+        // `create` without `description`.
+        let out = execute(&tool, json!({"action": "create"}), &ctx).await;
+        assert!(out.is_error());
+        assert_eq!(out.error().unwrap().kind, ToolErrorKind::InvalidArguments);
+    }
+
+    // -- Behaviour ------------------------------------------------------
+
     #[tokio::test]
     async fn create_list_update_complete_full_cycle() {
         let tool = TaskTool::new();
         let (ctx, store) = ctx_with_store();
 
         for i in 0..3 {
-            let env = envelope_for(json!({
-                "action": "create",
-                "description": format!("task {i}"),
-            }));
-            let out = tool.execute(&env, &ctx).await.unwrap();
-            assert!(!out.is_error, "create {i}: {:?}", out.content);
+            let out = execute(
+                &tool,
+                json!({ "action": "create", "description": format!("task {i}") }),
+                &ctx,
+            )
+            .await;
+            assert!(!out.is_error(), "create {i}: {:?}", out.content);
             assert_eq!(out.content["task"]["status"], "pending");
         }
 
-        let env = envelope_for(json!({"action": "list", "status": "pending"}));
-        let out = tool.execute(&env, &ctx).await.unwrap();
+        let out = execute(&tool, json!({"action": "list", "status": "pending"}), &ctx).await;
         let listed = out.content["tasks"].as_array().unwrap();
         assert_eq!(listed.len(), 3);
 
         let target_id = listed[0]["id"].as_str().unwrap().to_string();
-        let env = envelope_for(json!({
-            "action": "update",
-            "task_id": target_id,
-            "status": "in_progress",
-        }));
-        let out = tool.execute(&env, &ctx).await.unwrap();
+        let out = execute(
+            &tool,
+            json!({ "action": "update", "task_id": target_id, "status": "in_progress" }),
+            &ctx,
+        )
+        .await;
         assert_eq!(out.content["task"]["status"], "in_progress");
 
         let second_id = listed[1]["id"].as_str().unwrap().to_string();
-        let env = envelope_for(json!({"action": "complete", "task_id": second_id}));
-        let out = tool.execute(&env, &ctx).await.unwrap();
+        let out = execute(
+            &tool,
+            json!({"action": "complete", "task_id": second_id}),
+            &ctx,
+        )
+        .await;
         assert_eq!(out.content["task"]["status"], "completed");
 
         let final_state = store.list(None);
@@ -439,46 +675,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn get_missing_task_is_typed_not_found() {
+        let tool = TaskTool::new();
+        let (ctx, _store) = ctx_with_store();
+        let out = execute(&tool, json!({"action": "get", "task_id": "ghost"}), &ctx).await;
+        assert!(out.is_error());
+        let payload = out.error().expect("typed payload");
+        assert_eq!(payload.kind, ToolErrorKind::NotFound);
+        assert_eq!(payload.detail["task_id"], "ghost");
+        // Model-facing content keeps the tool-specific fields plus the error.
+        assert_eq!(out.content["action"], "get");
+        assert_eq!(out.content["error"]["kind"], "not_found");
+    }
+
+    #[tokio::test]
+    async fn invalid_status_string_is_typed_invalid_arguments() {
+        let tool = TaskTool::new();
+        let (ctx, _store) = ctx_with_store();
+        let out = execute(&tool, json!({"action": "list", "status": "bogus"}), &ctx).await;
+        assert!(out.is_error());
+        assert_eq!(out.error().unwrap().kind, ToolErrorKind::InvalidArguments);
+    }
+
+    #[tokio::test]
     async fn list_filters_by_status() {
         let tool = TaskTool::new();
         let (ctx, _store) = ctx_with_store();
 
-        tool.execute(
-            &envelope_for(json!({"action": "create", "description": "a"})),
-            &ctx,
-        )
-        .await
-        .unwrap();
-        let out = tool
-            .execute(
-                &envelope_for(json!({"action": "create", "description": "b"})),
-                &ctx,
-            )
-            .await
-            .unwrap();
+        execute(&tool, json!({"action": "create", "description": "a"}), &ctx).await;
+        let out = execute(&tool, json!({"action": "create", "description": "b"}), &ctx).await;
         let b_id = out.content["task"]["id"].as_str().unwrap().to_string();
-        tool.execute(
-            &envelope_for(json!({"action": "complete", "task_id": b_id})),
+        execute(&tool, json!({"action": "complete", "task_id": b_id}), &ctx).await;
+
+        let out = execute(&tool, json!({"action": "list", "status": "pending"}), &ctx).await;
+        assert_eq!(out.content["tasks"].as_array().unwrap().len(), 1);
+        let out = execute(
+            &tool,
+            json!({"action": "list", "status": "completed"}),
             &ctx,
         )
-        .await
-        .unwrap();
-
-        let out = tool
-            .execute(
-                &envelope_for(json!({"action": "list", "status": "pending"})),
-                &ctx,
-            )
-            .await
-            .unwrap();
-        assert_eq!(out.content["tasks"].as_array().unwrap().len(), 1);
-        let out = tool
-            .execute(
-                &envelope_for(json!({"action": "list", "status": "completed"})),
-                &ctx,
-            )
-            .await
-            .unwrap();
+        .await;
         assert_eq!(out.content["tasks"].as_array().unwrap().len(), 1);
     }
 
@@ -486,26 +722,33 @@ mod tests {
     async fn update_missing_task_errors() {
         let tool = TaskTool::new();
         let (ctx, _store) = ctx_with_store();
-        let env = envelope_for(json!({
-            "action": "update",
-            "task_id": "ghost",
-            "status": "in_progress"
-        }));
-        let err = tool.execute(&env, &ctx).await.expect_err("ghost");
+        let err = as_tool(&tool)
+            .execute(
+                &envelope_for(json!({
+                    "action": "update",
+                    "task_id": "ghost",
+                    "status": "in_progress"
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("ghost");
         assert!(matches!(err, ToolError::ExecutionFailed { .. }));
     }
 
     #[tokio::test]
-    async fn missing_store_returns_execution_failed() {
+    async fn missing_store_returns_missing_extension() {
         let tool = TaskTool::new();
         let ctx = ToolContext::empty();
-        let env = envelope_for(json!({"action": "list"}));
-        let err = tool.execute(&env, &ctx).await.expect_err("no store");
+        let err = as_tool(&tool)
+            .execute(&envelope_for(json!({"action": "list"})), &ctx)
+            .await
+            .expect_err("no store");
         match err {
-            ToolError::ExecutionFailed { reason } => {
-                assert!(reason.contains("task store"), "{reason}");
+            ToolError::MissingExtension { extension } => {
+                assert!(extension.contains("SharedTaskStore"), "{extension}");
             }
-            other => panic!("expected ExecutionFailed, got {other:?}"),
+            other => panic!("expected MissingExtension, got {other:?}"),
         }
     }
 
@@ -515,71 +758,53 @@ mod tests {
         let (ctx, _store) = ctx_with_store();
 
         // Create a named task group.
-        let out = tool
-            .execute(
-                &envelope_for(json!({
-                    "action": "create_group",
-                    "group_slug": "norn-agents-wiring"
-                })),
-                &ctx,
-            )
-            .await
-            .unwrap();
+        let out = execute(
+            &tool,
+            json!({ "action": "create_group", "group_slug": "norn-agents-wiring" }),
+            &ctx,
+        )
+        .await;
         assert_eq!(out.content["group_slug"], "norn-agents-wiring");
 
-        let out = tool
-            .execute(&envelope_for(json!({"action": "list_groups"})), &ctx)
-            .await
-            .unwrap();
+        let out = execute(&tool, json!({"action": "list_groups"}), &ctx).await;
         assert_eq!(out.content["groups"][0], "norn-agents-wiring");
 
         // Create a parent task.
-        let out = tool
-            .execute(
-                &envelope_for(json!({
-                    "action": "create",
-                    "task_id": "parent",
-                    "description": "parent work"
-                })),
-                &ctx,
-            )
-            .await
-            .unwrap();
+        let out = execute(
+            &tool,
+            json!({ "action": "create", "task_id": "parent", "description": "parent work" }),
+            &ctx,
+        )
+        .await;
         assert_eq!(out.content["task"]["id"], "parent");
 
         // Create three subtasks under the parent.
         for i in 0..3 {
-            let out = tool
-                .execute(
-                    &envelope_for(json!({
-                        "action": "create_subtask",
-                        "parent_task_id": "parent",
-                        "task_id": format!("child-{i}"),
-                        "description": format!("subtask {i}")
-                    })),
-                    &ctx,
-                )
-                .await
-                .unwrap();
+            let out = execute(
+                &tool,
+                json!({
+                    "action": "create_subtask",
+                    "parent_task_id": "parent",
+                    "task_id": format!("child-{i}"),
+                    "description": format!("subtask {i}")
+                }),
+                &ctx,
+            )
+            .await;
             assert_eq!(out.content["task"]["parent_task_id"], "parent");
         }
 
         // Claim one subtask.
-        let out = tool
-            .execute(
-                &envelope_for(json!({
-                    "action": "claim",
-                    "task_id": "child-0",
-                    "agent_path": "root/worker"
-                })),
-                &ctx,
-            )
-            .await
-            .unwrap();
+        let out = execute(
+            &tool,
+            json!({ "action": "claim", "task_id": "child-0", "agent_path": "root/worker" }),
+            &ctx,
+        )
+        .await;
         assert_eq!(out.content["task"]["assigned_agent"], "root/worker");
 
         // A second claim on the same task fails.
-        let err = tool
+        let err = as_tool(&tool)
             .execute(
                 &envelope_for(json!({
                     "action": "claim",
@@ -593,42 +818,30 @@ mod tests {
         assert!(matches!(err, ToolError::ExecutionFailed { .. }));
 
         // Move one child to in_progress so the parent rolls up to in_progress.
-        tool.execute(
-            &envelope_for(json!({
-                "action": "update",
-                "task_id": "child-1",
-                "status": "in_progress"
-            })),
+        execute(
+            &tool,
+            json!({ "action": "update", "task_id": "child-1", "status": "in_progress" }),
             &ctx,
         )
-        .await
-        .unwrap();
+        .await;
 
         // List children of the parent.
-        let out = tool
-            .execute(
-                &envelope_for(json!({
-                    "action": "children",
-                    "parent_task_id": "parent"
-                })),
-                &ctx,
-            )
-            .await
-            .unwrap();
+        let out = execute(
+            &tool,
+            json!({ "action": "children", "parent_task_id": "parent" }),
+            &ctx,
+        )
+        .await;
         let children = out.content["tasks"].as_array().unwrap();
         assert_eq!(children.len(), 3);
 
         // Ancestors of a child walk back to the root parent.
-        let out = tool
-            .execute(
-                &envelope_for(json!({
-                    "action": "ancestors",
-                    "task_id": "child-2"
-                })),
-                &ctx,
-            )
-            .await
-            .unwrap();
+        let out = execute(
+            &tool,
+            json!({ "action": "ancestors", "task_id": "child-2" }),
+            &ctx,
+        )
+        .await;
         let chain = out.content["tasks"].as_array().unwrap();
         assert_eq!(chain.len(), 2);
         assert_eq!(chain[0]["id"], "child-2");
@@ -641,40 +854,37 @@ mod tests {
         let (ctx, _store) = ctx_with_store();
 
         // parent -> mid -> leaf, with leaf failed so mid rolls up to failed.
-        tool.execute(
-            &envelope_for(json!({
-                "action": "create", "task_id": "parent", "description": "p"
-            })),
+        execute(
+            &tool,
+            json!({ "action": "create", "task_id": "parent", "description": "p" }),
             &ctx,
         )
-        .await
-        .unwrap();
-        tool.execute(
-            &envelope_for(json!({
+        .await;
+        execute(
+            &tool,
+            json!({
                 "action": "create_subtask", "parent_task_id": "parent",
                 "task_id": "mid", "description": "m"
-            })),
+            }),
             &ctx,
         )
-        .await
-        .unwrap();
-        tool.execute(
-            &envelope_for(json!({
+        .await;
+        execute(
+            &tool,
+            json!({
                 "action": "create_subtask", "parent_task_id": "mid",
                 "task_id": "leaf", "description": "l", "status": "failed"
-            })),
+            }),
             &ctx,
         )
-        .await
-        .unwrap();
+        .await;
 
-        let out = tool
-            .execute(
-                &envelope_for(json!({"action": "children", "parent_task_id": "parent"})),
-                &ctx,
-            )
-            .await
-            .unwrap();
+        let out = execute(
+            &tool,
+            json!({"action": "children", "parent_task_id": "parent"}),
+            &ctx,
+        )
+        .await;
         let children = out.content["tasks"].as_array().unwrap();
         assert_eq!(children.len(), 1);
         // `mid` is stored as pending but rolls up to failed via its leaf.

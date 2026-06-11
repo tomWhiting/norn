@@ -2,11 +2,11 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
 
 use regex::Regex;
 
 use crate::error::ToolError;
+use crate::tool::failure::ToolErrorKind;
 
 use super::SearchMatch;
 
@@ -44,11 +44,12 @@ pub(super) fn compile_glob(glob_filter: Option<&str>) -> Result<Option<GlobFilte
     let expanded = expand_braces(raw);
     let mut patterns = Vec::with_capacity(expanded.len());
     for pat_str in &expanded {
-        patterns.push(
-            glob::Pattern::new(pat_str).map_err(|e| ToolError::PreValidationFailed {
-                reason: format!("invalid glob `{pat_str}`: {e}"),
-            })?,
-        );
+        patterns.push(glob::Pattern::new(pat_str).map_err(|e| {
+            ToolError::pre_validation(
+                ToolErrorKind::InvalidArguments,
+                format!("invalid glob `{pat_str}`: {e}"),
+            )
+        })?);
     }
     let filename_only = !raw.contains('/') && !raw.contains('\\') && !raw.starts_with("**");
     Ok(Some(GlobFilter {
@@ -254,9 +255,4 @@ fn walk_dir_collect_paths(dir: &Path, glob_filter: Option<&GlobFilter>, out: &mu
         }
         out.push(path);
     }
-}
-
-/// Elapsed duration since `started`.
-pub(super) fn elapsed(started: Instant) -> Duration {
-    Instant::now().saturating_duration_since(started)
 }

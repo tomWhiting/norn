@@ -14,7 +14,6 @@
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -247,17 +246,12 @@ impl Tool for SkillTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: SkillArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
             ToolError::ExecutionFailed {
                 reason: format!("invalid arguments: {e}"),
             }
         })?;
-        let paths: Arc<SkillSearchPaths> =
-            ctx.get_extension::<SkillSearchPaths>()
-                .ok_or_else(|| ToolError::ExecutionFailed {
-                    reason: "skill search paths not configured in tool context".to_string(),
-                })?;
+        let paths: Arc<SkillSearchPaths> = ctx.require_extension::<SkillSearchPaths>()?;
 
         let arguments_raw = args.arguments.unwrap_or_default();
         let positional = parse_shell_args(&arguments_raw);
@@ -271,7 +265,6 @@ impl Tool for SkillTool {
                     &candidate,
                     &arguments_raw,
                     &positional,
-                    started,
                     &working_dir,
                 )
                 .await;
@@ -283,7 +276,6 @@ impl Tool for SkillTool {
                     &candidate,
                     &arguments_raw,
                     &positional,
-                    started,
                     &working_dir,
                 )
                 .await;
@@ -310,7 +302,6 @@ async fn activate(
     skill_path: &Path,
     arguments_raw: &str,
     positional: &[String],
-    started: Instant,
     working_dir: &Path,
 ) -> Result<ToolOutput, ToolError> {
     let loaded = load_skill_from_path(skill_path).map_err(|diags| {
@@ -363,11 +354,7 @@ async fn activate(
         "resources": resources,
     });
 
-    Ok(ToolOutput {
-        content: payload,
-        is_error: false,
-        duration: started.elapsed(),
-    })
+    Ok(ToolOutput::success(payload))
 }
 
 #[cfg(test)]
@@ -544,7 +531,7 @@ mod tests {
             .execute(&envelope_for(json!({"name": "my-skill"})), &ctx)
             .await
             .unwrap();
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["content"], "Do the thing.");
         assert_eq!(out.content["name"], "my-skill");
         // R5: skill_dir + resources are present.
@@ -605,14 +592,19 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn missing_search_paths_returns_execution_failed() {
+    async fn missing_search_paths_returns_missing_extension() {
         let tool = SkillTool::new();
         let ctx = ToolContext::empty();
         let err = tool
             .execute(&envelope_for(json!({"name": "anything"})), &ctx)
             .await
             .expect_err("no paths");
-        assert!(matches!(err, ToolError::ExecutionFailed { .. }));
+        match err {
+            ToolError::MissingExtension { extension } => {
+                assert!(extension.contains("SkillSearchPaths"), "{extension}");
+            }
+            other => panic!("expected MissingExtension, got {other:?}"),
+        }
     }
 
     // ---------------- R1: arguments parameter ----------------

@@ -6,7 +6,6 @@ use std::collections::HashSet;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 use async_trait::async_trait;
 use serde_json::json;
@@ -29,11 +28,7 @@ use crate::tools::lsp::{
 };
 
 fn make_output(content: serde_json::Value) -> ToolOutput {
-    ToolOutput {
-        content,
-        is_error: false,
-        duration: Duration::from_millis(1),
-    }
+    ToolOutput::success(content)
 }
 
 fn write_file(path: &Path, contents: &str) {

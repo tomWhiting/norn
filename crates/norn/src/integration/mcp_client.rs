@@ -573,7 +573,7 @@ mod tests {
         let ctx = ToolContext::empty();
         let output = tool.execute(&envelope, &ctx).await.unwrap();
         assert_eq!(output.content["text"], "hello world");
-        assert!(!output.is_error);
+        assert!(!output.is_error());
     }
 
     #[tokio::test]

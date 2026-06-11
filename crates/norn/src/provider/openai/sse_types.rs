@@ -18,9 +18,12 @@
 //! 2. Typed `response.failed` / `response.incomplete` payloads
 //!    ([`ResponseFailedPayload`] and friends) for nested-error
 //!    deserialization without hand-walking `serde_json::Value`.
-//! 3. The error-code classifier ([`classify_failed_error`]) plus the
-//!    `Retry-After` regex parser ([`parse_retry_after`]) — pure functions
-//!    that map a typed error description into a [`ProviderError`] variant.
+//! 3. The classifiers — pure functions mapping typed wire payloads into
+//!    domain values: [`classify_failed_error`] (a `response.failed` error
+//!    description into a [`ProviderError`] variant),
+//!    [`incomplete_stop_reason`] (a `response.incomplete` reason into a
+//!    typed [`StopReason`]), and the `Retry-After` regex parser
+//!    ([`parse_retry_after`]).
 
 use std::sync::OnceLock;
 use std::time::Duration;
@@ -29,6 +32,7 @@ use regex::Regex;
 use serde::Deserialize;
 
 use crate::error::ProviderError;
+use crate::provider::events::StopReason;
 
 /// Typed deserialization target for the `item` payload of a
 /// `response.output_item.done` event when `item.type == "function_call"`.
@@ -157,6 +161,41 @@ pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
         _ => ProviderError::StreamError {
             reason: message_or(detail.message.as_deref(), "response.failed"),
         },
+    }
+}
+
+/// Maps the `incomplete_details.reason` of a `response.incomplete` SSE
+/// event onto a typed [`StopReason`].
+///
+/// A `response.incomplete` event is the Responses API's terminal frame for
+/// a deterministic model-side stop with partial output — NOT a transport
+/// fault. The API documents exactly two incomplete reasons, and both map
+/// onto the same [`StopReason`] values the Claude adapter produces, so the
+/// loop's truncation handling (`ResponseClass::Truncated` →
+/// `AgentStepResult::Truncated`) is reachable identically from both
+/// providers:
+///
+/// * `max_output_tokens` → [`StopReason::MaxTokens`]
+/// * `content_filter` → [`StopReason::ContentFilter`]
+///
+/// Any other (or missing) reason is a wire contract this client does not
+/// understand. It surfaces as [`ProviderError::ResponseParseError`] —
+/// classified [`ErrorClass::Terminal`](crate::error::ErrorClass) — carrying
+/// the verbatim reason. Guessing `MaxTokens` would silently mislabel an
+/// unknown stop condition, and any retryable classification would replay a
+/// deterministic stop; a terminal error stops the run honestly instead.
+pub(super) fn incomplete_stop_reason(reason: Option<&str>) -> Result<StopReason, ProviderError> {
+    match reason {
+        Some("max_output_tokens") => Ok(StopReason::MaxTokens),
+        Some("content_filter") => Ok(StopReason::ContentFilter),
+        Some(other) => Err(ProviderError::ResponseParseError {
+            reason: format!(
+                "response.incomplete carried unrecognized incomplete_details.reason {other:?}"
+            ),
+        }),
+        None => Err(ProviderError::ResponseParseError {
+            reason: "response.incomplete carried no incomplete_details.reason".to_string(),
+        }),
     }
 }
 

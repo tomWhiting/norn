@@ -13,19 +13,19 @@
 //! locally must not emit a user message to the model. The dispatcher
 //! ([`super::dispatch::dispatch_input`]) intercepts each CLI builtin by
 //! name and never reaches
-//! [`run_agent_step`](norn::r#loop::runner::run_agent_step) for it, so
+//! [`run_agent_step`](norn::agent_loop::runner::run_agent_step) for it, so
 //! the empty-expansion behaviour is purely a defensive invariant.
 
 use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use norn::r#loop::commands::{
+use norn::agent_loop::commands::{
     CustomSlashHandler, SlashCommand, SlashCommandHandler, SlashCommandRegistry,
 };
 
 use crate::config::parse_inline_or_file;
-use crate::session::update_index_entry;
+use crate::session::SessionManager;
 
 use super::state::SlashState;
 
@@ -83,9 +83,9 @@ pub const PROFILE_DESCRIPTION_PLACEHOLDER: &str = "(profile)";
 /// can never displace `/help`, `/exit`, or any other built-in.
 ///
 /// The returned [`SlashCommandRegistry`] is installed onto
-/// [`LoopContext::slash_commands`](norn::r#loop::loop_context::LoopContext::slash_commands)
+/// [`LoopContext::slash_commands`](norn::agent_loop::loop_context::LoopContext::slash_commands)
 /// so that profile commands continue to fire inside
-/// [`run_agent_step`](norn::r#loop::runner::run_agent_step) when the
+/// [`run_agent_step`](norn::agent_loop::runner::run_agent_step) when the
 /// dispatcher hands an unrecognised slash through to the agent.
 ///
 /// As a side effect the merged command roster is recorded inside
@@ -319,10 +319,7 @@ fn name_handler(state: &SlashState) -> CustomSlashHandler {
 }
 
 fn persist_session_name(data_dir: &Path, session_id: &str, name: &str) {
-    let owned = name.to_owned();
-    if let Err(err) =
-        update_index_entry(data_dir, session_id, move |entry| entry.name = Some(owned))
-    {
+    if let Err(err) = SessionManager::new(data_dir).rename(session_id, Some(name.to_owned())) {
         eprintln!("norn: warning: failed to update session index: {err}");
     }
 }

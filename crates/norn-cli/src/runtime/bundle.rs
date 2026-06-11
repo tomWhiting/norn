@@ -7,10 +7,10 @@
 
 use std::sync::Arc;
 
+use norn::agent_loop::config::AgentLoopConfig;
+use norn::agent_loop::loop_context::LoopContext;
 use norn::integration::DiagnosticCollector;
 use norn::integration::hooks::HookRegistry;
-use norn::r#loop::config::AgentLoopConfig;
-use norn::r#loop::loop_context::LoopContext;
 use norn::tool::registry::ToolRegistry;
 use norn::tools::SharedTaskStore;
 use norn::tools::lsp::{LspBackend, LspWorkspace};

@@ -28,6 +28,7 @@ use crate::session::action_log::{CompletionRecord, Outcome};
 use crate::session::store::EventStore;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::traits::ToolOutput;
 
 use super::{
@@ -87,29 +88,47 @@ pub(super) async fn prepare_tool_call(
             .hooks
             .as_deref()
             .map_or(0, HookRegistry::pre_tool_len);
-        let blocked_reason = match policy.evaluate(&tc.name, &envelope.model_args) {
-            PermissionDecision::Deny { rule } => {
-                Some(format!("denied by permissions.deny rule '{rule}'"))
-            }
-            PermissionDecision::Ask { rule } if pre_tool_hooks == 0 => Some(format!(
-                "permissions.ask rule '{rule}' requires consent; no interactive handler is \
-                 configured",
+        let blocked = match policy.evaluate(&tc.name, &envelope.model_args) {
+            PermissionDecision::Deny { rule } => Some((
+                format!("denied by permissions.deny rule '{rule}'"),
+                rule,
+                "deny",
+            )),
+            PermissionDecision::Ask { rule } if pre_tool_hooks == 0 => Some((
+                format!(
+                    "permissions.ask rule '{rule}' requires consent; no interactive handler \
+                     is configured",
+                ),
+                rule,
+                "ask",
             )),
             // With at least one PreToolHook registered, the hook chain
             // below is the consent mechanism for ask-matched calls: a
             // Block refuses, anything else is consent.
             PermissionDecision::Ask { .. } | PermissionDecision::Allow => None,
         };
-        if let Some(reason) = blocked_reason {
+        if let Some((reason, rule, decision)) = blocked {
             report_permission_diagnostic(loop_context, &tc.name, &reason);
+            // Typed failure payload: embedders dispatch on `error.kind`,
+            // so a permission denial must persist as `permission_denied`
+            // (never a collapsed string that re-types as
+            // `execution_failed`). The matched rule and which decision
+            // arm fired stay machine-readable in `detail`.
+            let payload = ToolErrorPayload::new(
+                ToolErrorKind::PermissionDenied,
+                format!("blocked by permissions: {reason}"),
+            )
+            .with_detail(serde_json::json!({
+                "rule": rule,
+                "decision": decision,
+                "reason": reason,
+            }));
             return Ok(PreparedCall {
                 tc_index,
                 envelope,
                 description,
                 plan: CallPlan::Blocked {
-                    output: serde_json::json!({
-                        "error": format!("blocked by permissions: {reason}"),
-                    }),
+                    output: serde_json::json!({ "error": payload.to_value() }),
                     reason,
                 },
             });
@@ -118,12 +137,23 @@ pub(super) async fn prepare_tool_call(
 
     let plan = if let Some(hooks) = loop_context.hooks.as_deref() {
         match hooks.run_pre_tool(&envelope, &tool_ctx).await {
-            HookOutcome::Block { reason } => CallPlan::Blocked {
-                output: serde_json::json!({
-                    "error": format!("blocked by hook ({:?}): {reason}", HookType::PreTool),
-                }),
-                reason,
-            },
+            HookOutcome::Block { reason } => {
+                // Typed failure payload: a pre-tool hook block persists as
+                // `blocked` with the hook identity and the hook's stated
+                // reason machine-readable in `detail`.
+                let payload = ToolErrorPayload::new(
+                    ToolErrorKind::Blocked,
+                    format!("blocked by hook ({:?}): {reason}", HookType::PreTool),
+                )
+                .with_detail(serde_json::json!({
+                    "hook": "pre_tool",
+                    "reason": reason,
+                }));
+                CallPlan::Blocked {
+                    output: serde_json::json!({ "error": payload.to_value() }),
+                    reason,
+                }
+            }
             HookOutcome::Modify { updated_input } => {
                 let serialized = serde_json::to_string(&updated_input).map_err(|e| {
                     NornError::Tool(ToolError::ExecutionFailed {
@@ -227,6 +257,7 @@ pub(super) async fn finish_executed_call(
 ) -> Result<Vec<RuleInjection>, NornError> {
     let SingleToolResult {
         output,
+        error,
         duration_ms,
         follow_ups,
         post_validate_outcome,
@@ -248,11 +279,13 @@ pub(super) async fn finish_executed_call(
     .await?;
 
     // Record after the result event is in the store so detail/context
-    // queries find the matching event. The coarse outcome mirrors the
-    // existing follow-up-chain convention: an `error` key means failure.
-    let outcome = match output.get("error").and_then(|v| v.as_str()) {
-        Some(message) => Outcome::Error {
-            message: message.to_owned(),
+    // queries find the matching event. The coarse outcome comes from the
+    // typed failure payload — covering both hard ToolErrors and soft
+    // ToolOutput::failure results — rendered as message-plus-guidance so
+    // action-log queries stay readable.
+    let outcome = match &error {
+        Some(payload) => Outcome::Error {
+            message: payload.model_message(),
         },
         None => Outcome::Success,
     };
@@ -274,11 +307,8 @@ pub(super) async fn finish_executed_call(
 
     if let Some(hooks) = loop_context.hooks.as_deref() {
         let tool_ctx = ToolContext::empty();
-        let post_output = ToolOutput {
-            content: output.clone(),
-            is_error: output.get("error").is_some(),
-            duration: Duration::from_millis(duration_ms),
-        };
+        let mut post_output = ToolOutput::from_content(output.clone());
+        post_output.duration = Duration::from_millis(duration_ms);
         hooks
             .run_post_tool(&prepared.envelope, &post_output, &tool_ctx)
             .await;
@@ -286,7 +316,7 @@ pub(super) async fn finish_executed_call(
         // existing PostToolHook, but only when the tool output indicates
         // an error (matches the same `is_error` test the post-tool block
         // uses for parity). Observational — no control flow effect.
-        if post_output.is_error {
+        if post_output.is_error() {
             hooks
                 .run_post_tool_failure(&prepared.envelope, &post_output, &tool_ctx)
                 .await;

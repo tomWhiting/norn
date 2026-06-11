@@ -1,15 +1,15 @@
 //! Runtime wiring helpers added by NC-003 R3 and extended by NC-009.
 //!
 //! [`crate::runtime::build_runtime`] already threads
-//! [`norn::r#loop::tokens::SimpleTokenEstimator`],
+//! [`norn::agent_loop::tokens::SimpleTokenEstimator`],
 //! [`norn::session::context_edit::ContextEdits`], retry policy, and event
-//! schemas onto the [`norn::r#loop::loop_context::LoopContext`]. This
+//! schemas onto the [`norn::agent_loop::loop_context::LoopContext`]. This
 //! module fills the remaining gaps:
 //!
 //! 1. [`DiagnosticCollector`] construction — produced as an `Arc` and
 //!    carried on [`crate::runtime::bundle::RuntimeBundle`] for draining after
 //!    `run_agent_step`. The same `Arc` is wired onto
-//!    [`norn::r#loop::loop_context::LoopContext::diagnostics`] and
+//!    [`norn::agent_loop::loop_context::LoopContext::diagnostics`] and
 //!    published on the [`norn::tool::registry::ToolRegistry`]'s shared
 //!    [`norn::tool::context::ToolContext`] via `insert_extension`
 //!    (NC-009 R1) so runtime post-validate checks and tool implementations
@@ -37,9 +37,9 @@ use norn::config::NornSettings;
 use norn::integration::DiagnosticCollector;
 use norn::integration::hooks::HookRegistry;
 
-use norn::r#loop::commands::SlashCommandRegistry;
-use norn::r#loop::iteration::IterationMonitorConfig;
-use norn::r#loop::runner::ToolExecutor;
+use norn::agent_loop::commands::SlashCommandRegistry;
+use norn::agent_loop::iteration::IterationMonitorConfig;
+use norn::agent_loop::runner::ToolExecutor;
 use norn::profile::Profile;
 
 use norn::internal::extraction::SharedProvider;
@@ -81,7 +81,8 @@ mod wiring_tests;
 /// [`norn::tool::context::ToolContext`] so the four agent-coordination
 /// tools (`spawn_agent`, `fork`, `signal_agent`,
 /// `close_agent`) resolve their runtime infrastructure instead of
-/// erroring with "agent runtime not configured".
+/// erroring with a typed `MissingExtension` error naming
+/// `AgentToolInfra`.
 ///
 /// `build_runtime` is synchronous and runs before the provider is
 /// constructed, so this step is split out: callers invoke it after
@@ -175,7 +176,7 @@ pub fn install_shared_agent_event_channel(
 /// at the moment the CLI driver opens a session, before the first
 /// `run_agent_step` call. `hooks` is the same `Arc<HookRegistry>` that
 /// [`crate::runtime::build_runtime`] installs on
-/// [`norn::r#loop::loop_context::LoopContext::hooks`]; passing `None`
+/// [`norn::agent_loop::loop_context::LoopContext::hooks`]; passing `None`
 /// is a no-op so the call site can invoke this unconditionally.
 pub async fn run_session_start(hooks: Option<&Arc<HookRegistry>>, session_id: &str) {
     if let Some(h) = hooks {
@@ -199,7 +200,7 @@ pub async fn run_session_end(hooks: Option<&Arc<HookRegistry>>, session_id: &str
 ///
 /// Returned as an `Arc` so the CLI can publish the same collector onto
 /// [`crate::runtime::bundle::RuntimeBundle`], onto
-/// [`norn::r#loop::loop_context::LoopContext::diagnostics`], and onto
+/// [`norn::agent_loop::loop_context::LoopContext::diagnostics`], and onto
 /// the [`norn::tool::context::ToolContext`] for runtime validators.
 #[must_use]
 pub fn build_diagnostic_collector() -> Arc<DiagnosticCollector> {
@@ -437,7 +438,7 @@ pub fn build_tool_context_with_diagnostics(
 
 /// Install an [`ActionLog`](norn::session::action_log::ActionLog) on the
 /// registry's shared [`norn::tool::context::ToolContext`] and the
-/// [`norn::r#loop::loop_context::LoopContext`] so the `action_log` tool
+/// [`norn::agent_loop::loop_context::LoopContext`] so the `action_log` tool
 /// and the loop's dispatch recording share one ledger.
 ///
 /// The log is constructed with the loop context's **live**
@@ -454,7 +455,7 @@ pub fn build_tool_context_with_diagnostics(
 pub fn install_action_log(
     registry: &norn::tool::registry::ToolRegistry,
     store: &Arc<EventStore>,
-    loop_context: &mut norn::r#loop::loop_context::LoopContext,
+    loop_context: &mut norn::agent_loop::loop_context::LoopContext,
 ) {
     let action_log = Arc::new(norn::session::action_log::ActionLog::with_working_dir(
         Arc::clone(store),

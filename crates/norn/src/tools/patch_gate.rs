@@ -10,7 +10,8 @@ use super::patch::PatchArgs;
 use super::patch_parse::{PatchBlockKind, parse_blocks, resolve_path};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
-use crate::tool::lifecycle::PreValidateOutcome;
+use crate::tool::failure::ToolErrorKind;
+use crate::tool::lifecycle::{BlockDecision, PreValidateOutcome};
 
 /// The directory patch-relative paths resolve against: the model-supplied
 /// `working_dir` when present, otherwise the session working directory.
@@ -33,17 +34,19 @@ pub(super) fn pre_validate_patch(envelope: &ToolEnvelope, ctx: &ToolContext) -> 
     let args: PatchArgs = match serde_json::from_value(envelope.model_args.clone()) {
         Ok(a) => a,
         Err(e) => {
-            return PreValidateOutcome::Block {
-                reason: format!("invalid arguments: {e}"),
-            };
+            return PreValidateOutcome::Block(
+                BlockDecision::new(format!("invalid arguments: {e}"))
+                    .with_kind(ToolErrorKind::InvalidArguments),
+            );
         }
     };
     let blocks = match parse_blocks(&args.patch) {
         Ok(b) => b,
         Err(e) => {
-            return PreValidateOutcome::Block {
-                reason: format!("patch parse failed: {e}"),
-            };
+            return PreValidateOutcome::Block(
+                BlockDecision::new(format!("patch parse failed: {e}"))
+                    .with_kind(ToolErrorKind::InvalidArguments),
+            );
         }
     };
 
@@ -59,12 +62,14 @@ pub(super) fn pre_validate_patch(envelope: &ToolEnvelope, ctx: &ToolContext) -> 
                 PatchBlockKind::Create => "created",
                 PatchBlockKind::Delete => continue,
             };
-            return PreValidateOutcome::Block {
-                reason: format!(
+            return PreValidateOutcome::Block(
+                BlockDecision::new(format!(
                     "apply_patch: file '{}' is deleted by block {del_idx} but {action} by block {i}",
                     block.target,
-                ),
-            };
+                ))
+                .with_kind(ToolErrorKind::InvalidArguments)
+                .with_detail(serde_json::json!({ "target": block.target })),
+            );
         }
     }
 
@@ -74,44 +79,54 @@ pub(super) fn pre_validate_patch(envelope: &ToolEnvelope, ctx: &ToolContext) -> 
     if args.working_dir.is_some()
         && let Err(reason) = check_confinement(ctx, &effective_wd)
     {
-        return PreValidateOutcome::Block {
-            reason: format!("apply_patch: working_dir refused: {reason}"),
-        };
+        return PreValidateOutcome::Block(
+            BlockDecision::new(format!("apply_patch: working_dir refused: {reason}"))
+                .with_kind(ToolErrorKind::PermissionDenied),
+        );
     }
     for block in &blocks {
         let path = resolve_path(&effective_wd, &block.target);
         if let Err(reason) = check_confinement(ctx, &path) {
-            return PreValidateOutcome::Block {
-                reason: format!("apply_patch: target refused: {reason}"),
-            };
+            return PreValidateOutcome::Block(
+                BlockDecision::new(format!("apply_patch: target refused: {reason}"))
+                    .with_kind(ToolErrorKind::PermissionDenied)
+                    .with_detail(serde_json::json!({ "target": block.target })),
+            );
         }
         match block.kind {
             PatchBlockKind::Create => {
                 if path.exists() {
-                    return PreValidateOutcome::Block {
-                        reason: format!(
+                    return PreValidateOutcome::Block(
+                        BlockDecision::new(format!(
                             "apply_patch: Create block target already exists: {}",
                             path.display()
+                        ))
+                        .with_kind(ToolErrorKind::Conflict)
+                        .with_guidance(
+                            "Use a Modify block to change an existing file, or read it \
+                             first and overwrite deliberately.",
                         ),
-                    };
+                    );
                 }
             }
             PatchBlockKind::Modify | PatchBlockKind::Delete => {
                 if !path.exists() {
-                    return PreValidateOutcome::Block {
-                        reason: format!(
+                    return PreValidateOutcome::Block(
+                        BlockDecision::new(format!(
                             "apply_patch: target file does not exist: {}",
                             path.display()
-                        ),
-                    };
+                        ))
+                        .with_kind(ToolErrorKind::NotFound),
+                    );
                 }
                 if !ctx.has_read_file(&path) {
-                    return PreValidateOutcome::Block {
-                        reason: format!(
+                    return PreValidateOutcome::Block(
+                        BlockDecision::new(format!(
                             "apply_patch: target file not read this session: {}",
                             path.display()
-                        ),
-                    };
+                        ))
+                        .with_guidance("Read the file with the read tool before patching it."),
+                    );
                 }
             }
         }

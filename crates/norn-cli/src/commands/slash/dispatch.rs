@@ -1,23 +1,23 @@
 //! Slash-command dispatch for CLI orchestrators (NC-006 R13).
 //!
 //! Wires the CLI's interception layer over libnorn's
-//! [`preprocess_input`](norn::r#loop::commands::preprocess_input).
+//! [`preprocess_input`](norn::agent_loop::commands::preprocess_input).
 //!
 //! For inputs that match a CLI built-in name the closure is fired once
 //! (so the stderr side effects happen) and the orchestrator is told the
 //! command was [`DispatchOutcome::HandledLocally`] — no
-//! [`run_agent_step`](norn::r#loop::runner::run_agent_step) call follows.
+//! [`run_agent_step`](norn::agent_loop::runner::run_agent_step) call follows.
 //!
 //! Anything else — non-slash input, unknown slash names, and
 //! profile-registered slash commands — is returned as
 //! [`DispatchOutcome::PassToAgent`] so the orchestrator can drive
 //! `run_agent_step` with the original verbatim input. Profile slash
 //! commands then fire through libnorn's
-//! [`build_initial_messages`](norn::r#loop::helpers::build_initial_messages)
+//! [`build_initial_messages`](norn::agent_loop::helpers::build_initial_messages)
 //! call site, exactly as they do without the CLI layer.
 
+use norn::agent_loop::commands::{PreprocessResult, SlashCommandRegistry, preprocess_input};
 use norn::error::NornError;
-use norn::r#loop::commands::{PreprocessResult, SlashCommandRegistry, preprocess_input};
 
 use super::registry::CLI_BUILTIN_NAMES;
 
@@ -38,7 +38,7 @@ pub enum DispatchOutcome {
 ///
 /// Propagates any error from a CLI-builtin closure (currently none —
 /// every builtin returns `Ok(_)`) or from
-/// [`preprocess_input`](norn::r#loop::commands::preprocess_input)
+/// [`preprocess_input`](norn::agent_loop::commands::preprocess_input)
 /// when a registered slash expansion fails.
 pub fn dispatch_input(
     input: &str,
@@ -87,7 +87,7 @@ mod tests {
     use std::sync::Arc;
     use std::sync::atomic::Ordering;
 
-    use norn::r#loop::commands::{SlashCommand, SlashCommandHandler};
+    use norn::agent_loop::commands::{SlashCommand, SlashCommandHandler};
     use norn::session::store::EventStore;
 
     use super::super::registry::build_slash_registry;

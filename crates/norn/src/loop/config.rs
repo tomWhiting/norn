@@ -14,8 +14,36 @@ use crate::provider::usage::Usage;
 use crate::tool::context::ToolContext;
 use crate::tool::follow_up::FollowUpAction;
 
+/// Which deterministic provider stop cut a response off before the model
+/// finished its turn.
+///
+/// Only the two abnormal [`StopReason`](crate::provider::events::StopReason)
+/// variants are representable here, so a truncated outcome can never carry
+/// a normal stop. Serializable so embedders can persist the stop kind
+/// across process/activity boundaries.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TruncationKind {
+    /// The model hit its maximum output-token limit mid-response.
+    MaxTokens,
+    /// The provider's content filter cut the response off.
+    ContentFilter,
+}
+
+impl TruncationKind {
+    /// Stable string form used in session events and error messages.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::MaxTokens => "max_tokens",
+            Self::ContentFilter => "content_filter",
+        }
+    }
+}
+
 /// How the loop carries conversation state between provider calls.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum ConversationStateMode {
     /// Use provider-managed threading when the selected provider supports it,
     /// otherwise replay local prompt history.
@@ -78,7 +106,16 @@ pub trait ToolExecutor: Send + Sync {
 /// Iteration-monitor configuration moved off this struct in N-017 and now
 /// lives on [`LoopContext::iteration_monitor`], so it can be assembled by
 /// the same caller that wires the rules engine and hook registry.
-#[derive(Clone, Debug)]
+///
+/// Serializable end to end (durations serialize as `{secs, nanos}`), so
+/// embedders that cross process or activity boundaries — durable-workflow
+/// activities, queued steps — can carry the *entire* loop configuration,
+/// including the structured-output schema, inside their own serialized
+/// inputs and reconstruct it with `serde` on the other side. Every field
+/// has a default, so partial JSON deserializes with the remaining fields
+/// at their [`Default`] values.
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
+#[serde(default)]
 pub struct AgentLoopConfig {
     /// Combined budget for schema validation retries and nudges.
     ///
@@ -130,6 +167,20 @@ pub struct AgentLoopConfig {
     /// This is distinct from [`Self::auto_compact_threshold_pct`], which is
     /// local and expressed as a fraction of [`Self::context_window_limit`].
     pub server_compaction_threshold_tokens: Option<u64>,
+
+    /// JSON schema enforced on the final response (structured output).
+    ///
+    /// `Some` puts the loop in schema mode: the model must answer through
+    /// the schema tool named by [`Self::schema_tool_name`], validation
+    /// failures consume [`Self::schema_attempt_budget`], and a completed
+    /// run carries the validated value. `None` is plain-text mode.
+    ///
+    /// Living on the loop config (rather than as a separate builder-only
+    /// field) gives the schema a serialized form: it rides along when an
+    /// embedder persists or transmits the config, and it is introspectable
+    /// post-build via
+    /// [`ResolvedAgentInfo::output_schema`](crate::agent::ResolvedAgentInfo).
+    pub output_schema: Option<Value>,
 }
 
 /// Full result of dispatching one tool through its lifecycle.
@@ -156,6 +207,7 @@ impl Default for AgentLoopConfig {
             cache_key: None,
             conversation_state: ConversationStateMode::Auto,
             server_compaction_threshold_tokens: None,
+            output_schema: None,
         }
     }
 }
@@ -198,6 +250,33 @@ pub enum AgentStepResult {
         iterations: usize,
         /// Last assistant text observed before the timeout, if any.
         partial_output: Option<Value>,
+        /// Accumulated token usage across all provider calls that
+        /// completed before the timeout fired.
+        usage: Usage,
+    },
+
+    /// The model stopped deterministically before completing its output —
+    /// it hit its maximum output-token limit or the provider's content
+    /// filter cut the response off — with no tool calls and no output
+    /// schema in play. The response is an incomplete fragment, never a
+    /// completion: the partial text and accumulated usage ride on this
+    /// variant, and the full fragment plus stop reason are persisted on
+    /// the session's `AssistantMessage` and `loop.truncated` events.
+    ///
+    /// Truncation is a *stopped run*, not a transport error — it is never
+    /// retried (re-sending the identical request reproduces the same
+    /// deterministic stop) and never surfaces as a
+    /// [`ProviderError`](crate::error::ProviderError).
+    Truncated {
+        /// Which deterministic stop cut the response off.
+        kind: TruncationKind,
+        /// Partial assistant text produced before the cut, if any.
+        partial_text: Option<String>,
+        /// Completed provider iterations, including the truncated one.
+        iterations: u32,
+        /// Accumulated token usage across all provider calls, including
+        /// the truncated call.
+        usage: Usage,
     },
 
     /// Cooperative cancellation fired via the

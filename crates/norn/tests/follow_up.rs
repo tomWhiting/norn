@@ -7,17 +7,11 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
-use std::time::Duration;
-
 use norn::tool::{ExpiryCondition, ToolOutput, tool_follow_ups};
 
 /// Builds a `ToolOutput` carrying the given JSON content.
 fn output(content: serde_json::Value) -> ToolOutput {
-    ToolOutput {
-        content,
-        is_error: false,
-        duration: Duration::from_millis(0),
-    }
+    ToolOutput::success(content)
 }
 
 #[test]

@@ -86,7 +86,7 @@ pub trait PersistenceSink: Send {
 /// [`checkpoint`](EventStore::checkpoint) and when the sink is dropped
 /// (clean shutdown). A crash before a pending delta lands leaves the
 /// index entry stale; the self-maintenance pass in
-/// [`resume_session`](crate::session::persistence::resume_session)
+/// [`SessionManager::resume`](crate::session::SessionManager::resume)
 /// recomputes and repairs it from the event file. The batch path
 /// ([`append_events`](crate::session::persistence::append_events))
 /// fsyncs per batch and updates the index per batch, unchanged.
@@ -176,8 +176,8 @@ impl IndexRegistration {
 /// partial line, the tolerant reader skips the corrupt line, and every
 /// later event still loads (H19, both halves).
 ///
-/// When index-registered (see
-/// [`attach_sink`](crate::session::persistence::attach_sink)), the sink
+/// When index-registered (as in every store
+/// [`SessionManager`](crate::session::SessionManager) opens), the sink
 /// keeps the session's index entry (`event_count`, usage totals,
 /// `updated_at`) in step without hand-reconciliation: deltas accumulate
 /// in memory and are written under the inter-process index lock at each
@@ -185,8 +185,9 @@ impl IndexRegistration {
 /// explicit [`checkpoint`](PersistenceSink::checkpoint), and on drop.
 /// An index write failure never fails the event append (the event is
 /// already durable); the delta is retained and retried at the next
-/// flush point, and `resume_session` repairs any staleness a crash
-/// leaves behind.
+/// flush point, and
+/// [`SessionManager::resume`](crate::session::SessionManager::resume)
+/// repairs any staleness a crash leaves behind.
 pub struct JsonlSink {
     file: std::fs::File,
     durability: DurabilityPolicy,
@@ -236,13 +237,17 @@ impl JsonlSink {
     ///
     /// # Errors
     ///
-    /// Returns an error if the session file cannot be opened or the
-    /// header cannot be written.
+    /// Returns [`SessionPersistError::InvalidSessionId`] when
+    /// `session_id` is reserved by the persistence layer (it would name a
+    /// persistence-owned file such as `index.jsonl`, never session data),
+    /// and an error if the session file cannot be opened or the header
+    /// cannot be written.
     pub fn open_registered(
         data_dir: &Path,
         session_id: &str,
         durability: DurabilityPolicy,
     ) -> Result<Self, SessionPersistError> {
+        crate::session::persistence::io::ensure_session_id_not_reserved(session_id)?;
         let path = session_file_path(data_dir, session_id);
         let mut sink = Self::open_with(&path, durability)?;
         sink.index = Some(IndexRegistration {
@@ -507,7 +512,7 @@ impl EventStore {
     /// Consume the store and return its events in insertion order
     /// without cloning. Any installed sink is dropped (closing its
     /// file handle); use this when rebuilding a store around the same
-    /// events, e.g. [`attach_sink`](crate::session::persistence::attach_sink).
+    /// events with a different sink.
     #[must_use]
     pub fn into_events(self) -> Vec<SessionEvent> {
         self.inner.into_inner().events

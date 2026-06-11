@@ -1,7 +1,5 @@
 //! `SignalAgentTool` — steer a child via its inbound channel.
 
-use std::time::Instant;
-
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
@@ -97,7 +95,6 @@ impl Tool for SignalAgentTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: SignalAgentArgs =
             serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
                 ToolError::ExecutionFailed {
@@ -150,11 +147,7 @@ impl Tool for SignalAgentTool {
                 "routed_via": "inbound_channel",
                 "trigger_turn": trigger_turn,
             });
-            return Ok(ToolOutput {
-                content: payload,
-                is_error: false,
-                duration: started.elapsed(),
-            });
+            return Ok(ToolOutput::success(payload));
         }
 
         // H15: no AgentHandle means there is no inbound channel to deliver
@@ -165,21 +158,22 @@ impl Tool for SignalAgentTool {
         let payload = serde_json::json!({
             "delivered": false,
             "to": to_id.to_string(),
-            "error": "no delivery channel to recipient",
-            "reason": format!(
-                "signal_agent can only deliver to agents whose handle this agent holds — \
-                 children it spawned or forked itself. '{}' is registered but is not a \
-                 direct child of this agent, so there is no inbound channel to deliver \
-                 through. Signal your own children directly, or route the message via \
-                 the recipient's parent.",
-                args.to,
-            ),
         });
-        Ok(ToolOutput {
-            content: payload,
-            is_error: true,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::failure_with_content(
+            payload,
+            crate::tool::failure::ToolErrorPayload::new(
+                crate::tool::failure::ToolErrorKind::NotFound,
+                format!(
+                    "no delivery channel to recipient: signal_agent can only deliver to \
+                     agents whose handle this agent holds — children it spawned or forked \
+                     itself. '{}' is registered but is not a direct child of this agent, \
+                     so there is no inbound channel to deliver through. Signal your own \
+                     children directly, or route the message via the recipient's parent.",
+                    args.to,
+                ),
+            )
+            .with_detail(serde_json::json!({ "to": args.to })),
+        ))
     }
 }
 
@@ -230,7 +224,7 @@ mod tests {
             }),
         );
         let out = tool.execute(&envelope, &ctx).await.expect("send");
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["routed_via"], "inbound_channel");
         assert_eq!(out.content["delivery"], "steer");
 
@@ -267,7 +261,7 @@ mod tests {
             json!({"to": "/parent/child", "content": "fyi"}),
         );
         let out = tool.execute(&envelope, &ctx).await.expect("send");
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["delivery"], "follow_up");
 
         let drained = inbound_rx.drain();
@@ -299,13 +293,13 @@ mod tests {
         );
         let out = tool.execute(&envelope, &ctx).await.expect("executes");
         assert!(
-            out.is_error,
+            out.is_error(),
             "delivery failure must be an error the model sees"
         );
         assert_eq!(out.content["delivered"], false);
         assert_eq!(out.content["to"], recipient.to_string());
         assert!(
-            out.content["reason"]
+            out.content["error"]["message"]
                 .as_str()
                 .is_some_and(|r| r.contains("inbound channel")),
             "the failure explains why delivery is impossible: {:?}",
@@ -336,7 +330,7 @@ mod tests {
             json!({"to": "/peer", "content": "hi", "trigger_turn": false}),
         );
         let out = tool.execute(&envelope, &ctx).await.expect("executes");
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert_eq!(out.content["delivered"], false);
         assert!(
             mailbox.recv(recipient).is_empty(),

@@ -163,6 +163,24 @@ impl VariableStore {
         &self.session_id
     }
 
+    /// Replace the store's session ID with a caller-supplied one (e.g. the
+    /// persisted session's index-entry ID), updating the `session_id`
+    /// builtin variable when it is registered so `{{session_id}}`
+    /// substitution and [`Self::session_id`] always agree.
+    #[must_use]
+    pub fn with_session_id(mut self, session_id: impl Into<String>) -> Self {
+        self.session_id = session_id.into();
+        if self.variables.lock().contains_key(BUILTIN_SESSION_ID) {
+            self.set(SessionVariable {
+                name: BUILTIN_SESSION_ID.to_owned(),
+                source: VariableSource::Static {
+                    value: self.session_id.clone(),
+                },
+            });
+        }
+        self
+    }
+
     /// Insert or replace a variable.
     pub fn set(&self, variable: SessionVariable) {
         let name = variable.name.clone();

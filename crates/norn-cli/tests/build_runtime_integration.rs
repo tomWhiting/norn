@@ -13,8 +13,8 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use clap::Parser;
+use norn::agent_loop::runner::ToolExecutor;
 use norn::integration::DiagnosticCollector;
-use norn::r#loop::runner::ToolExecutor;
 use norn::profile::Profile;
 use norn::tool::traits::Tool;
 use norn_cli::cli::{BuildError, Cli, ExitCode};
@@ -218,7 +218,7 @@ event_schemas = { text = { type = "object" } }
     .unwrap();
     let set = bundle.loop_context.event_schemas.as_ref().unwrap();
     let schema = set
-        .get(norn::r#loop::event_schemas::EventType::Text)
+        .get(norn::agent_loop::event_schemas::EventType::Text)
         .unwrap();
     assert_eq!(schema, &serde_json::json!({"type": "string"}));
 }
@@ -276,11 +276,9 @@ impl Tool for GateStub {
         _envelope: &norn::tool::envelope::ToolEnvelope,
         _ctx: &norn::tool::context::ToolContext,
     ) -> Result<norn::tool::traits::ToolOutput, norn::error::ToolError> {
-        Ok(norn::tool::traits::ToolOutput {
-            content: serde_json::json!(null),
-            is_error: false,
-            duration: Duration::ZERO,
-        })
+        Ok(norn::tool::traits::ToolOutput::success(serde_json::json!(
+            null
+        )))
     }
 }
 

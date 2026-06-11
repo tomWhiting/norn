@@ -3,39 +3,48 @@
 //! The builder composes every Norn runtime internal (tool registry, event
 //! store, loop context, agent-loop config, provider, profile resolution,
 //! system prompt, hooks, rules, diagnostics, fork/spawn infra) from simple
-//! inputs and exposes [`Agent::run`] / [`Agent::run_with`] /
-//! [`Agent::run_stream`] for execution. This is the public library API that
-//! workflow steps, tests, and embedding consumers call.
+//! inputs. [`AgentBuilder::build`] yields an [`Agent`] whose
+//! [`Agent::handle`] is the cloneable control surface (events, cancel,
+//! steering, introspection) and whose [`Agent::run`] is the single way to
+//! execute. This is the public library API that workflow steps, tests, and
+//! embedding consumers call.
 //!
 //! Simple callers set three or four fields:
 //!
 //! ```no_run
 //! # use std::sync::Arc;
 //! # use norn::agent::builder::AgentBuilder;
+//! # use norn::agent::RunOutcome;
 //! # use norn::provider::traits::Provider;
 //! # async fn demo(provider: Arc<dyn Provider>) -> Result<(), norn::error::NornError> {
-//! let output = AgentBuilder::new(provider)
+//! let outcome = AgentBuilder::new(provider)
 //!     .profile_name("dev")
 //!     .working_dir("/repo")
-//!     .run_with("Fix the failing tests")
+//!     .run("Fix the failing tests")
 //!     .await?;
-//! println!("{:?}", output.text());
+//! match outcome {
+//!     RunOutcome::Completed(output) => println!("{:?}", output.text()),
+//!     RunOutcome::Stopped { reason, partial } => {
+//!         eprintln!("run stopped early ({reason:?}): {:?}", partial.text());
+//!     }
+//! }
 //! # Ok(())
 //! # }
 //! ```
 //!
-//! Advanced callers layer retry policy, hooks, rules, diagnostics, an
-//! [`EventStore`] for session resume, a streaming event sink, a cancellation
-//! token, and a fork/spawn agent registry onto the same builder — same type,
-//! same code path.
+//! Advanced callers layer retry policy, hooks, rules, diagnostics, a
+//! persisted session ([`AgentBuilder::open_session`] or
+//! [`AgentBuilder::session`]), an event broadcast channel
+//! ([`AgentBuilder::event_channel_capacity`]), an inbound steering channel
+//! ([`AgentBuilder::inbound_capacity`]), a cancellation token, and a
+//! fork/spawn agent registry onto the same builder — same type, same code
+//! path.
 
-use std::any::Any;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use parking_lot::RwLock;
-use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
@@ -47,20 +56,23 @@ use crate::agent::assembly::{
     populate_loop_context, resolve_base_profile, resolve_runtime_overlay, resolve_working_dir,
     restore_session_state, validate_workspace_root,
 };
+use crate::agent::handle::ResolvedAgentInfo;
 use crate::agent::instance::Agent;
-use crate::agent::output::AgentOutput;
+use crate::agent::output::RunOutcome;
 use crate::agent::registry::AgentRegistry;
-use crate::error::{ConfigError, NornError};
+use crate::agent::session_spec::SessionRequest;
+use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
+use crate::agent_loop::inbound::{InboundChannel, InboundSender};
+use crate::agent_loop::retry::RetryPolicy;
+use crate::error::{ConfigError, NornError, SessionError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
-use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode, ToolExecutor};
-use crate::r#loop::inbound::InboundChannel;
-use crate::r#loop::retry::RetryPolicy;
 use crate::profile::{Capability, Profile, from_profile};
-use crate::provider::AgentEventSender;
 use crate::provider::request::ReasoningEffort;
 use crate::provider::traits::Provider;
+use crate::provider::{AgentEvent, AgentEventSender, SharedAgentEventChannel};
 use crate::rules::engine::RuleEngine;
+use crate::session::manager::ReplaySummary;
 use crate::session::store::EventStore;
 use crate::system_prompt::builder::ExecutionMode;
 use crate::tool::context::SharedWorkingDir;
@@ -73,44 +85,45 @@ use crate::tools::lsp::{LspBackend, LspWorkspace};
 ///
 /// Construct with [`AgentBuilder::new`] (provider is the only required
 /// input), chain fluent setters, then call [`AgentBuilder::build`] to obtain
-/// an [`Agent`], or call [`AgentBuilder::run`] / [`AgentBuilder::run_with`] to
-/// build and execute in one step.
+/// an [`Agent`], or call [`AgentBuilder::run`] to build and execute in one
+/// step.
 pub struct AgentBuilder {
-    provider: Arc<dyn Provider>,
-    profile: Option<Profile>,
-    profile_name: Option<String>,
-    model: Option<String>,
-    system_prompt: Option<String>,
-    append_system_prompt: Option<String>,
-    reasoning_effort: Option<ReasoningEffort>,
-    capabilities: Vec<Capability>,
-    working_dir: Option<PathBuf>,
-    workspace_root: Option<PathBuf>,
-    bash_drain_grace: Option<Duration>,
-    allowed_tools: Option<Vec<String>>,
-    extra_tools: Vec<Box<dyn Tool + Send + Sync>>,
-    without_tools: Vec<String>,
-    lsp_backend: Option<Arc<dyn LspBackend>>,
-    lsp_workspace: Option<Arc<LspWorkspace>>,
-    prompt: Option<String>,
-    output_schema: Option<Value>,
-    execution_mode: ExecutionMode,
-    agent_config: AgentLoopConfig,
-    retry_policy: Option<RetryPolicy>,
-    session: Option<EventStore>,
-    event_sender: Option<AgentEventSender>,
-    cancel: Option<CancellationToken>,
-    inbound: Option<InboundChannel>,
-    agent_id: Option<Uuid>,
-    hooks: Option<Arc<HookRegistry>>,
-    rules: Option<RuleEngine>,
-    diagnostics: Option<Arc<DiagnosticCollector>>,
-    diagnostic_infra: Option<Arc<DiagnosticInfra>>,
-    additional_post_checks: Vec<Box<dyn RuntimePostValidateCheck>>,
-    agent_registry: Option<Arc<RwLock<AgentRegistry>>>,
-    extensions: Vec<ExtensionInstaller>,
-    load_runtime_base: bool,
-    task_group_slug: Option<String>,
+    pub(super) provider: Arc<dyn Provider>,
+    pub(super) profile: Option<Profile>,
+    pub(super) profile_name: Option<String>,
+    pub(super) model: Option<String>,
+    pub(super) system_prompt: Option<String>,
+    pub(super) append_system_prompt: Option<String>,
+    pub(super) reasoning_effort: Option<ReasoningEffort>,
+    pub(super) capabilities: Vec<Capability>,
+    pub(super) working_dir: Option<PathBuf>,
+    pub(super) workspace_root: Option<PathBuf>,
+    pub(super) bash_drain_grace: Option<Duration>,
+    pub(super) allowed_tools: Option<Vec<String>>,
+    pub(super) extra_tools: Vec<Box<dyn Tool + Send + Sync>>,
+    pub(super) without_tools: Vec<String>,
+    pub(super) lsp_backend: Option<Arc<dyn LspBackend>>,
+    pub(super) lsp_workspace: Option<Arc<LspWorkspace>>,
+    pub(super) execution_mode: ExecutionMode,
+    pub(super) agent_config: AgentLoopConfig,
+    pub(super) retry_policy: Option<RetryPolicy>,
+    pub(super) session: Option<EventStore>,
+    pub(super) session_request: Option<SessionRequest>,
+    pub(super) event_channel_capacity: Option<usize>,
+    pub(super) cancel: Option<CancellationToken>,
+    pub(super) inbound_capacity: Option<usize>,
+    pub(super) inbound: Option<InboundChannel>,
+    pub(super) inbound_tx: Option<InboundSender>,
+    pub(super) agent_id: Option<Uuid>,
+    pub(super) hooks: Option<Arc<HookRegistry>>,
+    pub(super) rules: Option<RuleEngine>,
+    pub(super) diagnostics: Option<Arc<DiagnosticCollector>>,
+    pub(super) diagnostic_infra: Option<Arc<DiagnosticInfra>>,
+    pub(super) additional_post_checks: Vec<Box<dyn RuntimePostValidateCheck>>,
+    pub(super) agent_registry: Option<Arc<RwLock<AgentRegistry>>>,
+    pub(super) extensions: Vec<ExtensionInstaller>,
+    pub(super) load_runtime_base: bool,
+    pub(super) task_group_slug: Option<String>,
 }
 
 impl AgentBuilder {
@@ -134,15 +147,16 @@ impl AgentBuilder {
             without_tools: Vec::new(),
             lsp_backend: None,
             lsp_workspace: None,
-            prompt: None,
-            output_schema: None,
             execution_mode: ExecutionMode::Headless,
             agent_config: AgentLoopConfig::default(),
             retry_policy: None,
             session: None,
-            event_sender: None,
+            session_request: None,
+            event_channel_capacity: None,
             cancel: None,
+            inbound_capacity: None,
             inbound: None,
+            inbound_tx: None,
             agent_id: None,
             hooks: None,
             rules: None,
@@ -156,352 +170,45 @@ impl AgentBuilder {
         }
     }
 
-    /// Load the same settings, NORN.md context, skill catalog, discovered
-    /// rules, hook registry, retry policy, and agent-loop config used by the
-    /// CLI before applying explicit builder overrides.
-    #[must_use]
-    pub fn load_runtime_base(mut self) -> Self {
-        self.load_runtime_base = true;
-        self
-    }
-
-    /// Select the task-store group slug used when [`Self::load_runtime_base`]
-    /// installs the disk-backed task store.
-    #[must_use]
-    pub fn task_group_slug(mut self, slug: impl Into<String>) -> Self {
-        self.task_group_slug = Some(slug.into());
-        self
-    }
-
-    /// Use an already-loaded profile (capabilities, model, instructions).
-    #[must_use]
-    pub fn profile(mut self, profile: Profile) -> Self {
-        self.profile = Some(profile);
-        self
-    }
-
-    /// Resolve a profile by bare name at build time, searching
-    /// `.norn/profiles` then `.meridian/profiles` then `~/.norn/profiles`
-    /// relative to the working directory. Ignored when [`Self::profile`] is
-    /// also set.
-    #[must_use]
-    pub fn profile_name(mut self, name: impl Into<String>) -> Self {
-        self.profile_name = Some(name.into());
-        self
-    }
-
-    /// Override the model the profile selects.
-    #[must_use]
-    pub fn model(mut self, model: impl Into<String>) -> Self {
-        self.model = Some(model.into());
-        self
-    }
-
-    /// Override the profile's system instructions.
-    #[must_use]
-    pub fn system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.system_prompt = Some(prompt.into());
-        self
-    }
-
-    /// Append additional instructions after the resolved profile instructions
-    /// or caller-supplied [`Self::system_prompt`] override.
-    #[must_use]
-    pub fn append_system_prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.append_system_prompt = Some(prompt.into());
-        self
-    }
-
-    /// Override the profile's reasoning-effort hint.
-    #[must_use]
-    pub fn reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
-        self.reasoning_effort = Some(effort);
-        self
-    }
-
-    /// Add capability bundles to the resolved profile before tool gating and
-    /// prompt construction.
-    #[must_use]
-    pub fn capabilities(mut self, capabilities: Vec<Capability>) -> Self {
-        self.capabilities.extend(capabilities);
-        self
-    }
-
-    /// Set the agent's working directory. Defaults to the process current
-    /// directory when unset. All filesystem tools resolve relative paths
-    /// against this, and `bash` `cd` directives update it.
-    #[must_use]
-    pub fn working_dir(mut self, dir: impl Into<PathBuf>) -> Self {
-        self.working_dir = Some(dir.into());
-        self
-    }
-
-    /// Confine the file tools (`read` / `write` / `edit` / `apply_patch`)
-    /// to `root`: any path that resolves outside it after symlink-aware
-    /// canonicalization is refused, including `..` traversal, absolute
-    /// paths, and symlink escapes. `bash` checks its model-supplied
-    /// `working_dir` argument against the root but cannot confine what the
-    /// command itself does — a known, documented limitation.
-    ///
-    /// The root must exist and be a directory when [`Self::build`] runs,
-    /// otherwise building fails with a configuration error. Unset (the
-    /// default) leaves path resolution unconfined for embedders that
-    /// operate across arbitrary directories.
-    #[must_use]
-    pub fn workspace_root(mut self, root: impl Into<PathBuf>) -> Self {
-        self.workspace_root = Some(root.into());
-        self
-    }
-
-    /// Override the grace period the `bash` tool grants its output drains
-    /// after the shell exits — the bound on how long a backgrounded child
-    /// (`server &`) can hold the output pipes before the tool returns the
-    /// buffered output annotated with `streams_still_open`.
-    ///
-    /// Defaults to 2 seconds (the owner-approved default) when unset.
-    /// Applies to the standard `bash` tool; building fails when this is
-    /// set but `bash` is excluded from the final tool set.
-    #[must_use]
-    pub fn bash_drain_grace(mut self, grace: Duration) -> Self {
-        self.bash_drain_grace = Some(grace);
-        self
-    }
-
-    /// Restrict the default/profile tool set to the named tools.
-    #[must_use]
-    pub fn allowed_tools(mut self, names: &[&str]) -> Self {
-        self.allowed_tools
-            .replace(names.iter().map(|s| (*s).to_string()).collect());
-        self
-    }
-
-    /// Exclude specific tools from the default all-tools set (e.g. mutation
-    /// tools for a read-only scout step). Names match the Norn tool registry
-    /// names (`bash`, `write`, `edit`, …).
-    #[must_use]
-    pub fn without_tools(mut self, names: &[&str]) -> Self {
-        self.without_tools
-            .extend(names.iter().map(|s| (*s).to_string()));
-        self
-    }
-
-    /// Add a custom tool alongside the standard set.
-    #[must_use]
-    pub fn tool(mut self, tool: Box<dyn Tool + Send + Sync>) -> Self {
-        self.extra_tools.push(tool);
-        self
-    }
-
-    /// Wire a live LSP backend for the `lsp` tool. Without one, `lsp` is
-    /// registered but every call returns a "configure a backend" error.
-    #[must_use]
-    pub fn lsp_backend(mut self, backend: Arc<dyn LspBackend>) -> Self {
-        self.lsp_backend = Some(backend);
-        self
-    }
-
-    /// Wire a live LSP workspace for diagnostics post-checks. Without one,
-    /// diagnostics still run through server / inline adapters but skip the LSP
-    /// fast path.
-    #[must_use]
-    pub fn lsp_workspace(mut self, workspace: Arc<LspWorkspace>) -> Self {
-        self.lsp_workspace = Some(workspace);
-        self
-    }
-
-    /// Set the prompt used by [`Agent::run`] / [`Agent::run_stream`].
-    #[must_use]
-    pub fn prompt(mut self, prompt: impl Into<String>) -> Self {
-        self.prompt = Some(prompt.into());
-        self
-    }
-
-    /// Enforce a structured-output JSON schema on the final response.
-    #[must_use]
-    pub fn output_schema(mut self, schema: Value) -> Self {
-        self.output_schema = Some(schema);
-        self
-    }
-
-    /// Interactive vs headless execution (shapes the system prompt). Defaults
-    /// to [`ExecutionMode::Headless`] for library use.
-    #[must_use]
-    pub fn execution_mode(mut self, mode: ExecutionMode) -> Self {
-        self.execution_mode = mode;
-        self
-    }
-
-    /// Replace the whole agent-loop config (schema budget, max iterations,
-    /// step timeout, compaction, cache key).
-    #[must_use]
-    pub fn agent_config(mut self, config: AgentLoopConfig) -> Self {
-        self.agent_config = config;
-        self
-    }
-
-    /// Cap total provider round-trips per step.
-    #[must_use]
-    pub fn max_iterations(mut self, max: u32) -> Self {
-        self.agent_config.max_iterations = Some(max);
-        self
-    }
-
-    /// Set an outer wall-clock cap on the whole step.
-    #[must_use]
-    pub fn step_timeout(mut self, timeout: std::time::Duration) -> Self {
-        self.agent_config.step_timeout = Some(timeout);
-        self
-    }
-
-    /// Select how the provider carries conversation state between calls.
-    #[must_use]
-    pub fn conversation_state(mut self, mode: ConversationStateMode) -> Self {
-        self.agent_config.conversation_state = mode;
-        self
-    }
-
-    /// Set the provider-side compaction threshold in rendered tokens.
-    #[must_use]
-    pub fn server_compaction_threshold_tokens(mut self, tokens: u64) -> Self {
-        self.agent_config.server_compaction_threshold_tokens = Some(tokens);
-        self
-    }
-
-    /// Configure provider retry. Defaults to [`RetryPolicy::default`]
-    /// (2 retries, 1s initial backoff, 2x multiplier) when unset.
-    #[must_use]
-    pub fn retry_policy(mut self, policy: RetryPolicy) -> Self {
-        self.retry_policy = Some(policy);
-        self
-    }
-
-    /// Resume a session from a prior run's [`EventStore`]. A fresh store is
-    /// created when unset.
-    #[must_use]
-    pub fn session(mut self, store: EventStore) -> Self {
-        self.session = Some(store);
-        self
-    }
-
-    /// Receive [`AgentEvent`]s as they happen during execution. For an
-    /// owned receiver, prefer [`Agent::run_stream`].
-    #[must_use]
-    pub fn event_sender(mut self, sender: AgentEventSender) -> Self {
-        self.event_sender = Some(sender);
-        self
-    }
-
-    /// Thread a cancellation token into the loop for cooperative abort.
-    #[must_use]
-    pub fn cancel_token(mut self, token: CancellationToken) -> Self {
-        self.cancel = Some(token);
-        self
-    }
-
-    /// Wire the receiver half of an [`InboundChannel`] into the root agent
-    /// step so mid-session messages (e.g. DMs while the agent is mid-turn)
-    /// are drained at every tool boundary just like sub-agent inbound
-    /// messages. The matching [`InboundSender`](crate::r#loop::inbound::InboundSender)
-    /// is held by the embedding consumer (e.g. the assistant session loop)
-    /// so it can `.send(..)` `ChannelMessage`s as user input arrives.
-    ///
-    /// Without an inbound channel the root step has no mid-session
-    /// injection path — only the initial `run_with` prompt enters the
-    /// conversation.
-    #[must_use]
-    pub fn inbound(mut self, inbound: InboundChannel) -> Self {
-        self.inbound = Some(inbound);
-        self
-    }
-
-    /// Set the agent's id (sender identity for messaging, parent id for
-    /// spawned children). A fresh id is generated when unset.
-    #[must_use]
-    pub fn agent_id(mut self, id: Uuid) -> Self {
-        self.agent_id = Some(id);
-        self
-    }
-
-    /// Wire a programmatic hook registry.
-    #[must_use]
-    pub fn hooks(mut self, hooks: Arc<HookRegistry>) -> Self {
-        self.hooks = Some(hooks);
-        self
-    }
-
-    /// Wire a rules engine (context injection / guardrails).
-    #[must_use]
-    pub fn rules(mut self, rules: RuleEngine) -> Self {
-        self.rules = Some(rules);
-        self
-    }
-
-    /// Wire a diagnostic collector. Published on the tool context and the
-    /// loop context so post-validation checks can record diagnostics.
-    #[must_use]
-    pub fn diagnostics(mut self, diagnostics: Arc<DiagnosticCollector>) -> Self {
-        self.diagnostics = Some(diagnostics);
-        self
-    }
-
-    /// Wire diagnostic infrastructure and install the diagnostics post-check.
-    #[must_use]
-    pub fn diagnostic_infra(mut self, infra: Arc<DiagnosticInfra>) -> Self {
-        self.diagnostic_infra = Some(infra);
-        self
-    }
-
-    /// Add a runtime post-validation check to the agent's tool context.
-    ///
-    /// Checks added here run after the diagnostics post-check installed by
-    /// [`Self::diagnostic_infra`], when diagnostic infrastructure is present.
-    #[must_use]
-    pub fn post_check(mut self, check: Box<dyn RuntimePostValidateCheck>) -> Self {
-        self.additional_post_checks.push(check);
-        self
-    }
-
-    /// Wire the shared agent registry so `fork` / `spawn_agent` /
-    /// `signal_agent` / `close_agent` resolve their runtime instead of
-    /// erroring with "agent runtime not configured".
-    #[must_use]
-    pub fn agent_registry(mut self, registry: Arc<RwLock<AgentRegistry>>) -> Self {
-        self.agent_registry = Some(registry);
-        self
-    }
-
-    /// Publish a typed extension on the agent's shared
-    /// [`ToolContext`](crate::tool::context::ToolContext) at build time,
-    /// retrievable inside tools via
-    /// [`ToolContext::get_extension`](crate::tool::context::ToolContext::get_extension).
-    ///
-    /// Extensions are installed after the standard and extra tools are
-    /// registered and after profile gating, so embedding consumers can attach
-    /// host-supplied infrastructure (identity, service handles, registries)
-    /// that individual tools read at execution time. Inserting two values of
-    /// the same type keeps only the last, matching
-    /// [`ToolContext::insert_extension`](crate::tool::context::ToolContext::insert_extension)
-    /// semantics.
-    #[must_use]
-    pub fn extension<T>(mut self, value: Arc<T>) -> Self
-    where
-        T: Any + Send + Sync,
-    {
-        self.extensions
-            .push(Box::new(move |ctx| ctx.insert_extension(value)));
-        self
-    }
-
     /// Validate and assemble the [`Agent`].
     ///
     /// # Errors
     ///
     /// - [`NornError::Config`] when the working directory cannot be
     ///   determined, the workspace root is not an existing directory, the
-    ///   named profile cannot be resolved, no tool remains after
-    ///   exclusions, or [`Self::bash_drain_grace`] is set while `bash` is
-    ///   excluded from the final tool set.
+    ///   named profile cannot be resolved, neither a profile model nor an
+    ///   explicit [`Self::model`] is set, no tool remains after
+    ///   exclusions, [`Self::bash_drain_grace`] is set while `bash` is
+    ///   excluded from the final tool set,
+    ///   [`Self::event_channel_capacity`] or [`Self::inbound_capacity`]
+    ///   is zero, or [`Self::open_session`] conflicts with
+    ///   [`Self::session`] / an explicit `cache_key`.
+    /// - [`NornError::Session`] when [`Self::open_session`] fails to
+    ///   create, resume, or fork the persisted session.
     pub fn build(mut self) -> Result<Agent, NornError> {
+        let invalid = |reason: String| NornError::Config(ConfigError::InvalidConfig { reason });
+        if self.event_channel_capacity == Some(0) {
+            return Err(invalid(
+                "event_channel_capacity is 0 — the event broadcast channel needs a \
+                 non-zero capacity; pick one sized to how fast consumers drain"
+                    .to_string(),
+            ));
+        }
+        if self.inbound_capacity == Some(0) {
+            return Err(invalid(
+                "inbound_capacity is 0 — the inbound steering channel needs a \
+                 non-zero capacity"
+                    .to_string(),
+            ));
+        }
+        if self.session.is_some() && self.session_request.is_some() {
+            return Err(invalid(
+                "both .session(store) and .open_session(..) are set — pass either an \
+                 in-memory event store or a managed persisted session, not both"
+                    .to_string(),
+            ));
+        }
+
         let working_dir = resolve_working_dir(self.working_dir.take())?;
         let workspace_root = validate_workspace_root(self.workspace_root.take())?;
         let shared_wd = SharedWorkingDir::new(working_dir.clone());
@@ -546,10 +253,37 @@ impl AgentBuilder {
         }
         let model = profile.model.clone();
         if model.is_empty() {
-            return Err(NornError::Config(ConfigError::InvalidConfig {
-                reason: "no model specified — set .profile() or .model() on the builder"
+            return Err(invalid(
+                "no model resolved: set .model(\"<model-id>\") on the builder, or supply \
+                 a profile that specifies one via .profile(..) / .profile_name(..); Norn \
+                 never assumes a default model"
                     .to_string(),
-            }));
+            ));
+        }
+        let profile_name = (!profile.name.is_empty()).then(|| profile.name.clone());
+
+        // Open the managed persisted session now that the model and
+        // working directory are resolved — the index entry records the
+        // values the agent actually runs with.
+        let mut opened_session: Option<(crate::session::SessionIndexEntry, ReplaySummary)> = None;
+        if let Some(request) = self.session_request.take() {
+            let opened = request
+                .open(&model, &working_dir.display().to_string())
+                .map_err(|e| {
+                    NornError::Session(SessionError::StorageError {
+                        reason: format!("open_session failed: {e}"),
+                    })
+                })?;
+            if opened.replay.skipped_lines > 0 {
+                tracing::warn!(
+                    session_id = %opened.entry.id,
+                    skipped_lines = opened.replay.skipped_lines,
+                    "open_session: tolerant reader skipped lines — the replayed \
+                     session history is incomplete",
+                );
+            }
+            self.session = Some(opened.store);
+            opened_session = Some((opened.entry, opened.replay));
         }
 
         let lsp_backend = self.lsp_backend.clone();
@@ -605,21 +339,37 @@ impl AgentBuilder {
             diagnostics.as_ref(),
             &shared_wd,
             &model,
+            opened_session.as_ref().map(|(entry, _)| entry.id.as_str()),
         );
         if let Some(base) = runtime_base.as_ref() {
             apply_base_to_loop_context(&mut loop_context, base);
         }
-        let config_override = effective_agent_config(runtime_base.as_ref(), self.agent_config);
+        let mut config_override = effective_agent_config(runtime_base.as_ref(), self.agent_config);
+        if let Some((entry, _)) = opened_session.as_ref() {
+            // The persisted session's id is the prompt cache key on this
+            // path: an explicitly configured cache_key would silently
+            // contradict it, so the ambiguity is rejected loudly.
+            if let Some(existing) = config_override.cache_key.as_ref() {
+                return Err(invalid(format!(
+                    "open_session wires the session id ('{}') as the prompt cache_key, \
+                     but the agent config already sets cache_key ('{existing}') — \
+                     remove the explicit cache_key or drop open_session",
+                    entry.id,
+                )));
+            }
+            config_override.cache_key = Some(entry.id.clone());
+        }
         // Both compaction fields are read from the same effective config:
         // the system prompt's compaction guidance must track exactly the
-        // config the loop will actually compact under.
+        // config the loop will actually compact under. The output schema
+        // is read from the same source for the same reason.
         let has_auto_compact = config_override.auto_compact_threshold_pct.is_some()
             && config_override.context_window_limit.is_some();
         install_system_prompt(
             &mut loop_context,
             &registry,
             self.execution_mode,
-            self.output_schema.is_some(),
+            config_override.output_schema.is_some(),
             self.system_prompt,
             self.append_system_prompt,
             has_auto_compact,
@@ -633,7 +383,7 @@ impl AgentBuilder {
         let ctx = assemble_tool_context(ToolContextParts {
             shared_wd,
             workspace_root,
-            session_id,
+            session_id: session_id.clone(),
             diagnostics: diagnostics.clone(),
             diagnostic_infra,
             hooks: hooks_for_ctx,
@@ -665,6 +415,20 @@ impl AgentBuilder {
 
         let agent_id = self.agent_id.unwrap_or_else(Uuid::new_v4);
 
+        // Event channel: the builder owns the broadcast channel and the
+        // root sender, and publishes the raw channel on the tool context
+        // so fork/spawn children stream their events through the same
+        // channel the embedder subscribes to.
+        let (events_tx, event_sender) = match self.event_channel_capacity {
+            Some(capacity) => {
+                let (tx, _rx) = tokio::sync::broadcast::channel::<AgentEvent>(capacity);
+                shared.insert_extension(Arc::new(SharedAgentEventChannel(tx.clone())));
+                let sender = AgentEventSender::new(tx.clone(), agent_id, "root".to_string());
+                (Some(tx), Some(sender))
+            }
+            None => (None, None),
+        };
+
         if let Some(agent_registry) = self.agent_registry {
             let child_rx = install_agent_infra(
                 &registry,
@@ -682,53 +446,66 @@ impl AgentBuilder {
             loop_context.child_result_rx = Some(child_rx);
         }
 
+        let (session_entry, replay) = match opened_session {
+            Some((entry, replay)) => (Some(entry), Some(replay)),
+            None => (None, None),
+        };
+        let info = Arc::new(ResolvedAgentInfo {
+            agent_id,
+            model: model.clone(),
+            profile_name,
+            tool_names: tool_defs.iter().map(|def| def.name.clone()).collect(),
+            session_id,
+            working_dir,
+            output_schema: config_override.output_schema.clone(),
+        });
+
         Ok(Agent {
             provider: self.provider,
             registry,
             loop_context,
             config: config_override,
             model,
-            output_schema: self.output_schema,
             tool_defs,
             event_store,
-            event_sender: self.event_sender,
-            cancel: self.cancel,
+            event_sender,
+            events_tx,
+            cancel: self.cancel.unwrap_or_default(),
             inbound: self.inbound,
+            inbound_tx: self.inbound_tx,
             id: agent_id,
-            prompt: self.prompt,
+            info,
+            session_entry,
+            replay,
         })
     }
 
-    /// Build and run with the prompt set via [`Self::prompt`]. Shorthand for
-    /// `self.build()?.run().await`.
-    ///
-    /// # Errors
-    ///
-    /// Propagates [`Self::build`] errors and any execution error.
-    pub async fn run(self) -> Result<AgentOutput, NornError> {
-        self.build()?.run().await
-    }
-
     /// Build and run with an explicit prompt. Shorthand for
-    /// `self.build()?.run_with(prompt).await`.
+    /// `self.build()?.run(prompt).await`.
     ///
     /// # Errors
     ///
-    /// Propagates [`Self::build`] errors and any execution error.
-    pub async fn run_with(self, prompt: impl Into<String>) -> Result<AgentOutput, NornError> {
-        self.build()?.run_with(prompt).await
+    /// Propagates [`Self::build`] errors and any execution error,
+    /// including the typed rejection of an empty prompt.
+    pub async fn run(self, prompt: impl Into<String>) -> Result<RunOutcome, NornError> {
+        self.build()?.run(prompt).await
     }
 }
 
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
+    use serde_json::Value;
+
     use super::*;
     use crate::agent::output::AgentStopReason;
+    use crate::agent::session_spec::SessionSpec;
     use crate::integration::hooks::{Hook, HookOutcome, StopHook};
     use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::mock::MockProvider;
     use crate::provider::usage::Usage;
+    use crate::session::SessionManager;
+    use crate::session::store::DurabilityPolicy;
     use crate::tool::context::ToolContext;
     use crate::tools::diagnostics::build_diagnostic_infra;
 
@@ -1008,7 +785,7 @@ mod tests {
             .execute(&envelope, ctx.as_ref())
             .await
             .expect("action_log list query runs through the built context");
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["query"], "list");
         assert_eq!(out.content["count"], 1);
         assert_eq!(out.content["entries"][0]["id"], "tc-built");
@@ -1094,62 +871,232 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn run_with_executes_and_returns_output() {
-        let output = AgentBuilder::new(provider_with(text_completion("Hello from the agent")))
+    async fn run_executes_and_returns_output() {
+        let outcome = AgentBuilder::new(provider_with(text_completion("Hello from the agent")))
             .model("test-model")
             .working_dir(std::env::temp_dir())
-            .run_with("say hello")
+            .run("say hello")
             .await
             .expect("run succeeds");
         assert!(
-            output.is_success(),
-            "no-schema text completion is a success"
+            outcome.is_completed(),
+            "no-schema text completion is a completed run"
         );
-        assert_eq!(output.text().as_deref(), Some("Hello from the agent"));
-        assert!(output.event_store.is_some(), "event store is returned");
+        assert_eq!(
+            outcome.output().text().as_deref(),
+            Some("Hello from the agent")
+        );
+        assert!(
+            outcome.output().event_store.is_some(),
+            "event store is returned"
+        );
     }
 
+    /// An empty (or whitespace-only) prompt has no defined model-facing
+    /// meaning — it must be rejected with a typed error at the run
+    /// boundary, never sent to the provider as undefined behaviour.
     #[tokio::test]
-    async fn run_uses_builder_prompt() {
-        let output = AgentBuilder::new(provider_with(text_completion("answer")))
+    async fn run_rejects_empty_and_whitespace_prompts() {
+        for prompt in ["", "   ", "\n\t "] {
+            let agent = AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .build()
+                .expect("build succeeds");
+            match agent.run(prompt).await {
+                Err(NornError::Config(ConfigError::InvalidConfig { reason })) => {
+                    assert!(reason.contains("empty prompt"), "{reason}");
+                }
+                Err(other) => panic!("expected a typed config error, got: {other}"),
+                Ok(_) => panic!("prompt {prompt:?} must be rejected"),
+            }
+        }
+    }
+
+    /// The handle's subscription replaces the old `run_stream`: configure
+    /// the channel capacity on the builder, subscribe through the handle,
+    /// and drain alongside the run. Real consumers drain concurrently and
+    /// stop when the run future resolves (the handle keeps the channel
+    /// open, so end-of-run — not channel close — is the stop signal).
+    #[tokio::test]
+    async fn handle_subscription_delivers_events() {
+        let agent = AgentBuilder::new(provider_with(text_completion("streamed")))
             .model("test-model")
             .working_dir(std::env::temp_dir())
-            .prompt("the question")
-            .run()
-            .await
-            .expect("run succeeds");
-        assert!(output.is_success());
+            .event_channel_capacity(64)
+            .build()
+            .expect("build succeeds");
+        let handle = agent.handle();
+        let mut rx = handle
+            .subscribe()
+            .expect("event channel configured — subscribe must succeed");
+        let output = agent.run("go").await.expect("run succeeds");
+        assert!(output.is_completed());
+        // Every event the run broadcast is buffered for this receiver.
+        let mut seen = 0usize;
+        while rx.try_recv().is_ok() {
+            seen += 1;
+        }
+        assert!(seen > 0, "the run must deliver at least one event");
     }
 
-    #[tokio::test]
-    async fn run_without_prompt_errors() {
+    #[test]
+    fn subscribe_without_event_channel_is_none() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
-        let result = agent.run().await;
-        assert!(result.is_err(), "run with no prompt must error");
+        assert!(
+            agent.handle().subscribe().is_none(),
+            "no configured channel means no subscription — never a silent dead channel",
+        );
+        assert!(agent.handle().inbound_sender().is_none());
     }
 
-    #[tokio::test]
-    async fn run_stream_delivers_events() {
-        let (mut rx, fut) = AgentBuilder::new(provider_with(text_completion("streamed")))
+    #[test]
+    fn zero_channel_capacities_fail_build() {
+        let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
             .working_dir(std::env::temp_dir())
-            .prompt("go")
+            .event_channel_capacity(0)
+            .build();
+        assert!(matches!(
+            result,
+            Err(NornError::Config(ConfigError::InvalidConfig { .. }))
+        ));
+        let result = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .inbound_capacity(0)
+            .build();
+        assert!(matches!(
+            result,
+            Err(NornError::Config(ConfigError::InvalidConfig { .. }))
+        ));
+    }
+
+    /// The builder owns the event channel end to end: the raw broadcast
+    /// channel must be published on the tool context as
+    /// `SharedAgentEventChannel` so fork/spawn children stream their
+    /// events through the same channel the embedder subscribes to.
+    #[test]
+    fn event_channel_is_published_for_subagents() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .event_channel_capacity(16)
             .build()
-            .expect("build succeeds")
-            .run_stream(64);
-        let (output, drained) = tokio::join!(fut, async move {
-            let mut seen = 0usize;
-            while rx.recv().await.is_ok() {
-                seen += 1;
-            }
-            seen
-        });
-        assert!(output.expect("run succeeds").is_success());
-        assert!(drained > 0, "stream must deliver at least one event");
+            .expect("build succeeds");
+        let ctx = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context");
+        let shared_channel = ctx
+            .get_extension::<SharedAgentEventChannel>()
+            .expect("SharedAgentEventChannel must be installed for child streaming");
+        let mut handle_rx = agent.handle().subscribe().expect("subscribe");
+        shared_channel
+            .0
+            .send(crate::provider::AgentEvent {
+                agent_id: Uuid::nil(),
+                agent_role: std::sync::Arc::from("spawn/test"),
+                event: crate::provider::AgentEventKind::Provider(ProviderEvent::TextDelta {
+                    text: "child delta".to_string(),
+                }),
+            })
+            .expect("handle subscription keeps the channel open");
+        let received = handle_rx.try_recv().expect("event arrives");
+        assert_eq!(&*received.agent_role, "spawn/test");
+    }
+
+    /// The inbound sender is reachable both mid-chain (for infrastructure
+    /// built before the agent) and on the handle, and both feed the same
+    /// channel the loop drains.
+    #[test]
+    fn inbound_sender_available_pre_build_and_on_handle() {
+        let builder = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .inbound_capacity(8);
+        let pre_build = builder
+            .inbound_sender()
+            .expect("sender available as soon as the capacity is set");
+        let agent = builder.build().expect("build succeeds");
+        let handle_sender = agent
+            .handle()
+            .inbound_sender()
+            .expect("sender available on the handle");
+        // Both senders feed the channel whose receiver the agent holds.
+        assert!(agent.inbound.is_some(), "loop receives the inbound half");
+        drop((pre_build, handle_sender));
+    }
+
+    #[test]
+    fn handle_exposes_resolved_introspection() {
+        let schema = serde_json::json!({"type": "object", "required": ["answer"]});
+        let temp = tempfile::tempdir().expect("tempdir");
+        let id = Uuid::new_v4();
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .profile(Profile {
+                name: "reviewer".to_owned(),
+                model: "profile-model".to_owned(),
+                ..Profile::default()
+            })
+            .model("resolved-model")
+            .working_dir(temp.path())
+            .agent_id(id)
+            .allowed_tools(&["read", "search"])
+            .output_schema(schema.clone())
+            .build()
+            .expect("build succeeds");
+
+        let info = agent.handle().info().clone();
+        assert_eq!(info.agent_id, id);
+        assert_eq!(info.model, "resolved-model", "model override wins");
+        assert_eq!(info.profile_name.as_deref(), Some("reviewer"));
+        assert_eq!(info.working_dir, temp.path());
+        assert_eq!(info.output_schema.as_ref(), Some(&schema));
+        assert!(!info.session_id.is_empty(), "session id always resolved");
+        let mut tools = info.tool_names.clone();
+        tools.sort();
+        assert_eq!(tools, vec!["read".to_owned(), "search".to_owned()]);
+        // The snapshot is serializable for activity records / telemetry.
+        let json = serde_json::to_value(&info).expect("info serializes");
+        assert_eq!(json["model"], "resolved-model");
+        assert_eq!(json["output_schema"], schema);
+        // Agent-side accessors agree with the handle.
+        assert_eq!(agent.info().model, info.model);
+        assert_eq!(agent.agent_id(), id);
+    }
+
+    #[test]
+    fn default_profile_yields_no_profile_name() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .build()
+            .expect("build succeeds");
+        assert_eq!(agent.info().profile_name, None);
+    }
+
+    /// Cancellation through the handle: no caller-supplied token needed —
+    /// the builder mints one and the handle controls it.
+    #[tokio::test]
+    async fn handle_cancel_stops_run_with_cancelled_reason() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .build()
+            .expect("build succeeds");
+        let handle = agent.handle();
+        assert!(!handle.cancellation_token().is_cancelled());
+        handle.cancel();
+        let outcome = agent
+            .run("go")
+            .await
+            .expect("cancelled run returns Ok(Stopped)");
+        assert_eq!(outcome.stop_reason(), Some(&AgentStopReason::Cancelled));
     }
 
     #[test]
@@ -1179,11 +1126,7 @@ mod tests {
                 _envelope: &ToolEnvelope,
                 _ctx: &ToolContext,
             ) -> Result<ToolOutput, ToolError> {
-                Ok(ToolOutput {
-                    content: Value::Null,
-                    is_error: false,
-                    duration: std::time::Duration::ZERO,
-                })
+                Ok(ToolOutput::success(Value::Null))
             }
         }
 
@@ -1236,15 +1179,22 @@ mod tests {
     async fn cancelled_token_yields_cancelled_stop_reason() {
         let token = CancellationToken::new();
         token.cancel();
-        let output = AgentBuilder::new(provider_with(vec![]))
+        let outcome = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
             .working_dir(std::env::temp_dir())
             .cancel_token(token)
-            .run_with("go")
+            .run("go")
             .await
-            .expect("cancelled run returns Ok with a Cancelled stop reason");
-        assert!(matches!(output.stop_reason, AgentStopReason::Cancelled));
-        assert!(!output.is_success());
+            .expect("cancelled run returns Ok(Stopped) with a Cancelled reason");
+        assert!(!outcome.is_completed());
+        assert_eq!(outcome.stop_reason(), Some(&AgentStopReason::Cancelled));
+        // The Stopped arm's partial payload genuinely carries the run's
+        // session state — the event store is handed back exactly as on
+        // the Completed arm, so a stopped run remains resumable.
+        assert!(
+            outcome.output().event_store.is_some(),
+            "stopped run must hand the event store back on the partial payload"
+        );
     }
 
     #[tokio::test]
@@ -1252,10 +1202,13 @@ mod tests {
         let first = AgentBuilder::new(provider_with(text_completion("first")))
             .model("test-model")
             .working_dir(std::env::temp_dir())
-            .run_with("question one")
+            .run("question one")
             .await
             .expect("first run succeeds");
-        let store = first.event_store.expect("event store returned");
+        let store = first
+            .into_output()
+            .event_store
+            .expect("event store returned");
         let after_first = store.events().len();
         assert!(after_first > 0, "first run records events");
 
@@ -1263,10 +1216,13 @@ mod tests {
             .model("test-model")
             .working_dir(std::env::temp_dir())
             .session(store)
-            .run_with("question two")
+            .run("question two")
             .await
             .expect("resumed run succeeds");
-        let store = second.event_store.expect("event store returned");
+        let store = second
+            .into_output()
+            .event_store
+            .expect("event store returned");
         assert!(
             store.events().len() > after_first,
             "resumed run appends onto the prior session's events",
@@ -1291,7 +1247,7 @@ mod tests {
             .await;
         if let Err(err) = result {
             assert!(
-                !err.to_string().contains("agent runtime not configured"),
+                !err.to_string().contains("AgentToolInfra"),
                 "spawn_agent must get past infra resolution once agent_registry is wired: {err}",
             );
         }
@@ -1581,20 +1537,24 @@ mod tests {
             .execute(&read_envelope(&secret), ctx.as_ref())
             .await
             .expect("confinement refusal is a structured tool error");
-        assert!(denied.is_error, "out-of-root read must be refused");
+        assert!(denied.is_error(), "out-of-root read must be refused");
         assert!(
-            denied.content["error"]
+            denied.content["error"]["message"]
                 .as_str()
                 .is_some_and(|m| m.contains("refused")),
             "refusal must be explicit: {}",
             denied.content,
+        );
+        assert_eq!(
+            denied.content["error"]["kind"], "permission_denied",
+            "confinement refusal carries the typed kind",
         );
 
         let allowed = tool
             .execute(&read_envelope(&inside), ctx.as_ref())
             .await
             .expect("in-root read executes");
-        assert!(!allowed.is_error, "in-root read must succeed");
+        assert!(!allowed.is_error(), "in-root read must succeed");
     }
 
     /// Finding 1 companion: without `workspace_root` the built context
@@ -1638,7 +1598,7 @@ mod tests {
             )
             .await
             .expect("unconfined read executes");
-        assert!(!out.is_error, "unconfined context reads anywhere");
+        assert!(!out.is_error(), "unconfined context reads anywhere");
     }
 
     /// Finding 1: a `workspace_root` that does not exist fails the build
@@ -1871,19 +1831,25 @@ mod tests {
             .model("test-model")
             .working_dir(temp.path())
             .load_runtime_base()
-            .run_with("run a command")
+            .run("run a command")
             .await
             .expect("run completes");
 
-        let store = output.event_store.expect("event store returned");
+        let store = output
+            .into_output()
+            .event_store
+            .expect("event store returned");
         let blocked = store.events().iter().any(|event| {
             matches!(
                 event,
                 SessionEvent::ToolResult { tool_name, output, .. }
                     if tool_name == "bash"
-                        && output
-                            .get("error")
-                            .and_then(Value::as_str)
+                        // Permission denials persist as the typed
+                        // `permission_denied` payload, not a collapsed
+                        // string.
+                        && output["error"]["kind"] == "permission_denied"
+                        && output["error"]["message"]
+                            .as_str()
                             .is_some_and(|m| m.contains("blocked by permissions"))
             )
         });
@@ -1952,5 +1918,323 @@ mod tests {
             entry.outcome,
             crate::session::action_log::Outcome::Success
         ));
+    }
+
+    /// NO ASSUMED DEFAULTS: with neither a profile model nor an explicit
+    /// `.model(..)`, the build must fail with a typed error that tells the
+    /// embedder exactly what to set — never fall back to a hardcoded model.
+    #[test]
+    fn build_without_profile_or_model_is_a_typed_error() {
+        let result = AgentBuilder::new(provider_with(vec![]))
+            .working_dir(std::env::temp_dir())
+            .build();
+        match result {
+            Err(NornError::Config(ConfigError::InvalidConfig { reason })) => {
+                assert!(reason.contains("no model resolved"), "{reason}");
+                assert!(reason.contains(".model("), "{reason}");
+                assert!(reason.contains(".profile"), "{reason}");
+            }
+            Err(other) => panic!("expected a typed config error, got: {other}"),
+            Ok(_) => panic!("a build with no model must fail, not assume one"),
+        }
+    }
+
+    /// ITEM C: the output schema lives on the agent-loop config, so it
+    /// round-trips through serde with the rest of the config — the
+    /// serialized form embedders carry across activity boundaries.
+    #[test]
+    fn output_schema_round_trips_through_serialized_loop_config() {
+        let schema = serde_json::json!({"type": "object", "required": ["verdict"]});
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .output_schema(schema.clone())
+            .build()
+            .expect("build succeeds");
+        assert_eq!(
+            agent.loop_config().output_schema.as_ref(),
+            Some(&schema),
+            "the effective config is introspectable through the public accessor",
+        );
+
+        let json = serde_json::to_string(agent.loop_config()).expect("config serializes");
+        let back: AgentLoopConfig = serde_json::from_str(&json).expect("config deserializes");
+        assert_eq!(back.output_schema.as_ref(), Some(&schema));
+        assert_eq!(back.schema_tool_name, agent.config.schema_tool_name);
+
+        // Partial JSON deserializes with defaults — the activity-input shape.
+        let partial: AgentLoopConfig =
+            serde_json::from_str(r#"{"output_schema": {"type": "object"}}"#)
+                .expect("partial config deserializes");
+        assert_eq!(
+            partial.output_schema,
+            Some(serde_json::json!({"type": "object"}))
+        );
+        assert_eq!(
+            partial.schema_attempt_budget,
+            AgentLoopConfig::default().schema_attempt_budget
+        );
+    }
+
+    /// A runtime-base config merges with the explicit schema: the schema
+    /// is part of the effective config, exactly like every other field.
+    #[test]
+    fn output_schema_survives_runtime_base_merge() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let schema = serde_json::json!({"type": "string"});
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(temp.path())
+            .load_runtime_base()
+            .output_schema(schema.clone())
+            .build()
+            .expect("build succeeds");
+        assert_eq!(agent.config.output_schema.as_ref(), Some(&schema));
+        assert_eq!(agent.info().output_schema.as_ref(), Some(&schema));
+        assert!(
+            agent
+                .loop_context
+                .base_system_instruction()
+                .contains("structured"),
+            "schema mode must reach the system prompt through the effective config",
+        );
+    }
+
+    // -- open_session: the managed persisted-session path -------------------
+
+    fn manager_in(dir: &std::path::Path) -> SessionManager {
+        SessionManager::new(dir)
+    }
+
+    /// `open_session(Create)` wires the persisted session end to end:
+    /// the index entry records the resolved model and working dir, the
+    /// entry id becomes the cache key, the environment session id, and
+    /// the introspected session id, and a run's events persist to disk.
+    #[tokio::test]
+    async fn open_session_create_wires_store_cache_key_and_session_id() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sessions = tempfile::tempdir().expect("session dir");
+        let manager = manager_in(sessions.path());
+
+        let agent = AgentBuilder::new(provider_with(text_completion("persisted")))
+            .model("test-model")
+            .working_dir(temp.path())
+            .open_session(
+                &manager,
+                SessionSpec::Create {
+                    name: Some("track-h".to_owned()),
+                },
+                DurabilityPolicy::Flush,
+            )
+            .build()
+            .expect("build succeeds");
+
+        let entry = agent
+            .session_entry()
+            .expect("opened session entry surfaced")
+            .clone();
+        assert_eq!(entry.model, "test-model", "entry records resolved model");
+        assert_eq!(
+            entry.working_dir,
+            temp.path().display().to_string(),
+            "entry records resolved working dir",
+        );
+        assert_eq!(entry.name.as_deref(), Some("track-h"));
+        assert_eq!(agent.config.cache_key.as_deref(), Some(entry.id.as_str()));
+        assert_eq!(agent.info().session_id, entry.id);
+        assert_eq!(
+            agent
+                .loop_context
+                .environment
+                .as_ref()
+                .and_then(|env| env.session_id.as_deref()),
+            Some(entry.id.as_str()),
+            "the system prompt environment carries the persisted session id",
+        );
+        assert_eq!(
+            agent.session_replay(),
+            Some(crate::session::ReplaySummary::default()),
+            "a fresh create replays nothing",
+        );
+
+        let outcome = agent.run("persist me").await.expect("run succeeds");
+        assert!(outcome.is_completed());
+
+        // The run's events landed in the managed session on disk.
+        let (_, read) = manager.read_events(&entry.id).expect("session readable");
+        assert!(
+            !read.events.is_empty(),
+            "run events must persist through the managed sink",
+        );
+    }
+
+    /// `open_session(OpenOrResume)` with the same deterministic id
+    /// resumes the prior run's history — the retry-safe activity path.
+    #[tokio::test]
+    async fn open_session_open_or_resume_continues_history() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sessions = tempfile::tempdir().expect("session dir");
+        let manager = manager_in(sessions.path());
+        let spec = || SessionSpec::OpenOrResume {
+            id: "wf-7.step-2".to_owned(),
+        };
+
+        let first = AgentBuilder::new(provider_with(text_completion("first")))
+            .model("test-model")
+            .working_dir(temp.path())
+            .open_session(&manager, spec(), DurabilityPolicy::Flush)
+            .build()
+            .expect("first build succeeds");
+        assert_eq!(first.info().session_id, "wf-7.step-2");
+        let outcome = first.run("attempt one").await.expect("first run succeeds");
+        assert!(outcome.is_completed());
+
+        let retry = AgentBuilder::new(provider_with(text_completion("second")))
+            .model("test-model")
+            .working_dir(temp.path())
+            .open_session(&manager, spec(), DurabilityPolicy::Flush)
+            .build()
+            .expect("retry build succeeds");
+        let replay = retry.session_replay().expect("resume surfaced replay");
+        assert!(
+            replay.replayed_events > 0,
+            "the retry must replay the first attempt's history",
+        );
+        assert_eq!(
+            manager.list().expect("index readable").len(),
+            1,
+            "one deterministic id, one session",
+        );
+    }
+
+    #[test]
+    fn open_session_conflicts_with_explicit_session_store() {
+        let sessions = tempfile::tempdir().expect("session dir");
+        let manager = manager_in(sessions.path());
+        let result = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .session(EventStore::new())
+            .open_session(
+                &manager,
+                SessionSpec::Create { name: None },
+                DurabilityPolicy::Flush,
+            )
+            .build();
+        match result {
+            Err(NornError::Config(ConfigError::InvalidConfig { reason })) => {
+                assert!(reason.contains("open_session"), "{reason}");
+            }
+            Err(other) => panic!("expected a typed config error, got: {other}"),
+            Ok(_) => panic!("session + open_session must fail the build"),
+        }
+    }
+
+    #[test]
+    fn open_session_conflicts_with_explicit_cache_key() {
+        let sessions = tempfile::tempdir().expect("session dir");
+        let manager = manager_in(sessions.path());
+        let result = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_config(AgentLoopConfig {
+                cache_key: Some("explicit-key".to_owned()),
+                ..AgentLoopConfig::default()
+            })
+            .open_session(
+                &manager,
+                SessionSpec::Create { name: None },
+                DurabilityPolicy::Flush,
+            )
+            .build();
+        match result {
+            Err(NornError::Config(ConfigError::InvalidConfig { reason })) => {
+                assert!(reason.contains("cache_key"), "{reason}");
+            }
+            Err(other) => panic!("expected a typed config error, got: {other}"),
+            Ok(_) => panic!("open_session + explicit cache_key must fail the build"),
+        }
+    }
+
+    /// A failed open (e.g. resuming a session that does not exist) is a
+    /// typed build error — never a silent fresh session.
+    #[test]
+    fn open_session_resume_of_missing_session_fails_build() {
+        let sessions = tempfile::tempdir().expect("session dir");
+        let manager = manager_in(sessions.path());
+        let result = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .open_session(
+                &manager,
+                SessionSpec::Resume {
+                    id_or_name: "does-not-exist".to_owned(),
+                },
+                DurabilityPolicy::Flush,
+            )
+            .build();
+        match result {
+            Err(NornError::Session(_)) => {}
+            Err(other) => panic!("expected a session error, got: {other}"),
+            Ok(_) => panic!("resuming a missing session must fail the build"),
+        }
+    }
+
+    /// `open_session(Fork)` copies the source history into a new session
+    /// and the agent runs against the fork, leaving the source untouched.
+    #[tokio::test]
+    async fn open_session_fork_runs_against_forked_history() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sessions = tempfile::tempdir().expect("session dir");
+        let manager = manager_in(sessions.path());
+
+        let source = AgentBuilder::new(provider_with(text_completion("origin")))
+            .model("test-model")
+            .working_dir(temp.path())
+            .open_session(
+                &manager,
+                SessionSpec::Create {
+                    name: Some("source".to_owned()),
+                },
+                DurabilityPolicy::Flush,
+            )
+            .build()
+            .expect("source build succeeds");
+        let source_id = source.session_entry().expect("source entry").id.clone();
+        let outcome = source.run("seed history").await.expect("source run");
+        assert!(outcome.is_completed());
+        let (_, source_read) = manager.read_events(&source_id).expect("source readable");
+        let source_len = source_read.events.len();
+
+        let fork = AgentBuilder::new(provider_with(text_completion("forked")))
+            .model("test-model")
+            .working_dir(temp.path())
+            .open_session(
+                &manager,
+                SessionSpec::Fork {
+                    source: source_id.clone(),
+                    name: Some("fork".to_owned()),
+                },
+                DurabilityPolicy::Flush,
+            )
+            .build()
+            .expect("fork build succeeds");
+        let fork_entry = fork.session_entry().expect("fork entry").clone();
+        assert_ne!(fork_entry.id, source_id);
+        let replay = fork.session_replay().expect("fork replay");
+        assert_eq!(
+            replay.replayed_events,
+            source_len + 1,
+            "fork replays the copied events plus the fork marker",
+        );
+        let outcome = fork.run("continue on fork").await.expect("fork run");
+        assert!(outcome.is_completed());
+
+        let (_, source_after) = manager.read_events(&source_id).expect("source readable");
+        assert_eq!(
+            source_after.events.len(),
+            source_len,
+            "the fork's run must not touch the source session",
+        );
     }
 }

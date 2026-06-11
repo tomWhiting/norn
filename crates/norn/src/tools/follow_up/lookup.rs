@@ -7,18 +7,18 @@
 //! the [`ToolContext`], loading the original call's arguments and follow-up
 //! vector, and selecting an action by exact name.
 //!
-//! Lookup misses are returned as model-facing [`ToolOutput`] errors
-//! (`is_error: true`) rather than [`ToolError`]s — a missing `tool_call_id` or
-//! `action` is a correctable model mistake, not an infrastructure failure.
-//! [`ToolError`] is reserved for genuine configuration problems (no action log
-//! published on the context).
+//! Lookup misses are returned as model-facing [`ToolOutput`] failures
+//! (typed [`ToolErrorKind::NotFound`] payloads) rather than [`ToolError`]s —
+//! a missing `tool_call_id` or `action` is a correctable model mistake, not
+//! an infrastructure failure. [`ToolError`] is reserved for genuine
+//! configuration problems (no action log published on the context).
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use crate::error::ToolError;
 use crate::session::action_log::ActionLog;
 use crate::tool::context::ToolContext;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::FollowUpAction;
 use crate::tool::traits::ToolOutput;
 
@@ -50,26 +50,20 @@ pub enum ActionSelection {
 ///
 /// # Errors
 ///
-/// Returns [`ToolError::ExecutionFailed`] when no action log is configured —
+/// Returns [`ToolError::MissingExtension`] when no action log is configured —
 /// the tool cannot resolve any reference without it.
 pub fn action_log_from_ctx(ctx: &ToolContext) -> Result<Arc<ActionLog>, ToolError> {
-    ctx.get_extension::<ActionLog>()
-        .ok_or_else(|| ToolError::ExecutionFailed {
-            reason: "action log not configured in tool context".to_string(),
-        })
+    ctx.require_extension::<ActionLog>()
 }
 
 /// Build the structured `tool_call_id not found` error output.
 #[must_use]
-pub fn not_found_output(tool_call_id: &str, started: Instant) -> ToolOutput {
-    ToolOutput {
-        content: serde_json::json!({
-            "error": "tool_call_id not found",
-            "tool_call_id": tool_call_id,
-        }),
-        is_error: true,
-        duration: started.elapsed(),
-    }
+pub fn not_found_output(tool_call_id: &str) -> ToolOutput {
+    ToolOutput::failure_with_content(
+        serde_json::json!({ "tool_call_id": tool_call_id }),
+        ToolErrorPayload::new(ToolErrorKind::NotFound, "tool_call_id not found")
+            .with_detail(serde_json::json!({ "tool_call_id": tool_call_id })),
+    )
 }
 
 /// Build the structured `action not found` error output, listing the
@@ -79,25 +73,27 @@ pub fn action_not_found_output(
     tool_call_id: &str,
     action: &str,
     available_actions: &[String],
-    started: Instant,
 ) -> ToolOutput {
-    ToolOutput {
-        content: serde_json::json!({
-            "error": "action not found",
+    ToolOutput::failure_with_content(
+        serde_json::json!({
             "tool_call_id": tool_call_id,
             "action": action,
             "available_actions": available_actions,
         }),
-        is_error: true,
-        duration: started.elapsed(),
-    }
+        ToolErrorPayload::new(ToolErrorKind::NotFound, "action not found").with_detail(
+            serde_json::json!({
+                "action": action,
+                "available_actions": available_actions,
+            }),
+        ),
+    )
 }
 
 /// Load the original call's arguments and follow-up vector.
 ///
-/// Returns `Err(ToolOutput)` carrying the structured `tool_call_id not found`
-/// error when the call is absent from the log, so the caller can surface it
-/// directly to the model.
+/// Returns a boxed [`ToolOutput`] carrying the structured `tool_call_id not
+/// found` error when the call is absent from the log, so the caller can
+/// surface it directly to the model.
 ///
 /// # Errors
 ///
@@ -106,14 +102,13 @@ pub fn action_not_found_output(
 pub fn load_call(
     action_log: &ActionLog,
     tool_call_id: &str,
-    started: Instant,
-) -> Result<LoadedCall, ToolOutput> {
+) -> Result<LoadedCall, Box<ToolOutput>> {
     match action_log.get_detail(tool_call_id) {
         Some(detail) => Ok(LoadedCall {
             args: detail.args,
             follow_ups: detail.follow_ups,
         }),
-        None => Err(not_found_output(tool_call_id, started)),
+        None => Err(Box::new(not_found_output(tool_call_id))),
     }
 }
 
@@ -186,7 +181,7 @@ mod tests {
     #[test]
     fn load_call_returns_args_and_follow_ups() {
         let log = seeded_log(vec![follow_up("undo", "apply_patch")]);
-        let loaded = load_call(&log, "tc-1", Instant::now()).expect("call present");
+        let loaded = load_call(&log, "tc-1").expect("call present");
         assert_eq!(
             loaded.args.get("n").and_then(serde_json::Value::as_i64),
             Some(7)
@@ -198,9 +193,10 @@ mod tests {
     #[test]
     fn load_call_missing_returns_not_found_output() {
         let log = seeded_log(Vec::new());
-        let out = load_call(&log, "missing", Instant::now()).expect_err("call absent");
-        assert!(out.is_error);
-        assert_eq!(out.content["error"], "tool_call_id not found");
+        let out = load_call(&log, "missing").expect_err("call absent");
+        assert!(out.is_error());
+        assert_eq!(out.content["error"]["kind"], "not_found");
+        assert_eq!(out.content["error"]["message"], "tool_call_id not found");
         assert_eq!(out.content["tool_call_id"], "missing");
     }
 

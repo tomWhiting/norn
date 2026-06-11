@@ -1,40 +1,42 @@
-//! Builder-facing result types: [`AgentOutput`] and [`AgentStopReason`].
+//! Builder-facing result types: [`RunOutcome`], [`AgentOutput`], and
+//! [`AgentStopReason`].
 //!
 //! [`Agent::run`](super::instance::Agent::run) maps the runner's
-//! [`AgentStepResult`](crate::r#loop::config::AgentStepResult) into an
-//! [`AgentOutput`] that bundles the final output value, accumulated token
-//! usage, the (optional) event store for session resume, and a public
-//! [`AgentStopReason`] describing why the step ended.
+//! [`AgentStepResult`](crate::r#loop::config::AgentStepResult) into a
+//! [`RunOutcome`]: [`RunOutcome::Completed`] for a finished run, or
+//! [`RunOutcome::Stopped`] when the run ended early (schema budget
+//! exhausted, max iterations, timeout, cancellation, truncation). The split
+//! is structural — a consumer cannot read a stopped run's partial output
+//! without going through the [`RunOutcome::Stopped`] arm, so non-completion
+//! can never silently masquerade as success.
 //!
-//! The runner's `AgentStepResult` carries the per-variant payload the loop
-//! needs internally; `AgentOutput` flattens the owned `output`, `usage`, and
-//! `event_store` onto the struct so consumers branch on a small
-//! [`AgentStopReason`] discriminant rather than destructuring a large enum.
+//! [`AgentOutput`] is the payload carried by *both* arms: the output value,
+//! accumulated token usage, and the (optional) session event store for
+//! resume. [`AgentStopReason`] describes *why* a stopped run stopped, with
+//! the per-reason detail (validation errors, elapsed time, truncation kind).
 
 use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::r#loop::config::AgentStepResult;
+use crate::r#loop::config::{AgentStepResult, TruncationKind};
 use crate::provider::usage::Usage;
 use crate::session::events::SessionEvent;
 use crate::session::store::EventStore;
 
-/// Why an agent step stopped.
+/// Why a run stopped before completing.
 ///
-/// Public mirror of the [`AgentStepResult`](crate::r#loop::config::AgentStepResult)
-/// outcome discriminant, trimmed to the fields a consumer needs to branch on.
-/// The owned output value, token usage, and event store live on
-/// [`AgentOutput`] rather than being duplicated per variant.
-#[derive(Debug)]
+/// Carried on [`RunOutcome::Stopped`]. There is deliberately no
+/// `Completed` variant: completion is [`RunOutcome::Completed`], so a stop
+/// reason always means non-completion. Serializable so embedders can
+/// persist the reason across process/activity boundaries.
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
 pub enum AgentStopReason {
-    /// The model produced valid structured output (or text in no-schema mode).
-    Completed,
-
-    /// The schema-enforcement budget was exhausted without valid output. The
-    /// best attempt the model produced (if any) is on
-    /// [`AgentOutput::output`]; the validation errors and attempt count that
-    /// explain the failure are here.
+    /// The schema-enforcement budget was exhausted without valid output.
+    /// The best attempt the model produced (if any) is on the partial
+    /// [`AgentOutput::output`]; the validation errors and attempt count
+    /// that explain the failure are here.
     SchemaUnreachable {
         /// Validation errors from the final attempt.
         validation_errors: Vec<String>,
@@ -42,12 +44,12 @@ pub enum AgentStopReason {
         attempts: u32,
     },
 
-    /// The optional max-iterations cap was reached before the model produced
-    /// final output.
+    /// The optional max-iterations cap was reached before the model
+    /// produced final output.
     MaxIterationsReached,
 
     /// The configured step timeout elapsed before the loop completed. Any
-    /// partial assistant output is on [`AgentOutput::output`].
+    /// partial assistant output is on the partial [`AgentOutput::output`].
     TimedOut {
         /// Wall-clock time the loop ran before being cancelled.
         elapsed: Duration,
@@ -57,101 +59,50 @@ pub enum AgentStopReason {
 
     /// Cooperative cancellation fired via the builder's cancellation token.
     Cancelled,
+
+    /// The model stopped deterministically before completing its output —
+    /// it hit its maximum output-token limit or the provider's content
+    /// filter cut the response off. The partial text (if any) is on the
+    /// partial [`AgentOutput::output`]. Deterministic: re-running the
+    /// identical request reproduces the same stop.
+    Truncated {
+        /// Which deterministic stop cut the response off.
+        kind: TruncationKind,
+        /// Completed provider iterations, including the truncated one.
+        iterations: u32,
+    },
 }
 
-/// The outcome of running an agent step via
-/// [`Agent::run`](super::instance::Agent::run).
+/// The payload of a run: final (or partial) output value, accumulated
+/// token usage, and the session event store.
 ///
-/// Not [`Clone`]: it owns the session [`EventStore`], which is single-owner
-/// runtime state.
+/// Carried by both [`RunOutcome`] arms. Not [`Clone`]: it owns the session
+/// [`EventStore`], which is single-owner runtime state.
 #[derive(Debug)]
 pub struct AgentOutput {
-    /// Final output value.
+    /// Output value.
     ///
-    /// For [`AgentStopReason::Completed`] this is the schema-validated (or
-    /// plain-text) output. For [`AgentStopReason::SchemaUnreachable`] and
-    /// [`AgentStopReason::TimedOut`] it is the best / partial attempt the
-    /// model produced, or [`Value::Null`] when none was produced. For the
-    /// remaining stop reasons it is [`Value::Null`].
+    /// On [`RunOutcome::Completed`] this is the schema-validated (or
+    /// plain-text) output. On [`RunOutcome::Stopped`] it is whatever the
+    /// run produced before stopping — the best schema attempt for
+    /// [`AgentStopReason::SchemaUnreachable`], the partial text for
+    /// [`AgentStopReason::TimedOut`] / [`AgentStopReason::Truncated`] —
+    /// or [`Value::Null`] when nothing was produced.
     pub output: Value,
 
-    /// Accumulated token usage across every provider call in the step.
-    ///
-    /// Always [`Usage::default`] (all-zero) for
-    /// [`AgentStopReason::TimedOut`]: the timeout fires from the outer
-    /// `tokio::time::timeout` wrapper, which does not thread per-call usage
-    /// back out.
+    /// Accumulated token usage across every provider call in the step,
+    /// populated on completed *and* stopped runs (including timeouts,
+    /// whose usage is tracked through the loop's shared timeout state).
     pub usage: Usage,
 
-    /// The session event store, returned so callers can resume the session by
-    /// passing it back to
+    /// The session event store, returned so callers can resume the session
+    /// by passing it back to
     /// [`AgentBuilder::session`](super::builder::AgentBuilder::session).
     /// `None` when the builder was asked not to surface it.
     pub event_store: Option<EventStore>,
-
-    /// Why the step stopped.
-    pub stop_reason: AgentStopReason,
 }
 
 impl AgentOutput {
-    /// Build an [`AgentOutput`] from the runner's [`AgentStepResult`] and the
-    /// session's event store.
-    ///
-    /// This is the single conversion point from the loop-internal result enum
-    /// to the public builder surface. The `event_store` is moved onto the
-    /// output so callers can resume the session; pass `None` when the store
-    /// should not be surfaced.
-    #[must_use]
-    pub fn from_step_result(result: AgentStepResult, event_store: Option<EventStore>) -> Self {
-        match result {
-            AgentStepResult::Completed { output, usage } => Self {
-                output,
-                usage,
-                event_store,
-                stop_reason: AgentStopReason::Completed,
-            },
-            AgentStepResult::SchemaUnreachable {
-                best_attempt,
-                validation_errors,
-                attempts,
-                usage,
-            } => Self {
-                output: best_attempt.unwrap_or(Value::Null),
-                usage,
-                event_store,
-                stop_reason: AgentStopReason::SchemaUnreachable {
-                    validation_errors,
-                    attempts,
-                },
-            },
-            AgentStepResult::MaxIterationsReached { usage } => Self {
-                output: Value::Null,
-                usage,
-                event_store,
-                stop_reason: AgentStopReason::MaxIterationsReached,
-            },
-            AgentStepResult::TimedOut {
-                elapsed,
-                iterations,
-                partial_output,
-            } => Self {
-                output: partial_output.unwrap_or(Value::Null),
-                usage: Usage::default(),
-                event_store,
-                stop_reason: AgentStopReason::TimedOut {
-                    elapsed,
-                    iterations,
-                },
-            },
-            AgentStepResult::Cancelled { usage } => Self {
-                output: Value::Null,
-                usage,
-                event_store,
-                stop_reason: AgentStopReason::Cancelled,
-            },
-        }
-    }
-
     /// The model's final text response, read from the event store.
     ///
     /// Scans the event store newest-first for the most recent
@@ -173,34 +124,174 @@ impl AgentOutput {
             })
     }
 
-    /// The schema-enforced output value, available only when the step
-    /// [`Completed`](AgentStopReason::Completed).
-    ///
-    /// Returns `None` for every non-success stop reason so callers do not
-    /// mistake a best-effort or partial attempt for validated output.
-    #[must_use]
-    pub fn structured_output(&self) -> Option<&Value> {
-        if matches!(self.stop_reason, AgentStopReason::Completed) {
-            Some(&self.output)
-        } else {
-            None
-        }
-    }
-
-    /// Whether the step completed successfully.
-    ///
-    /// `true` only for [`AgentStopReason::Completed`]; every other stop
-    /// reason (schema unreachable, max iterations, timeout, cancellation) is
-    /// a non-success outcome.
-    #[must_use]
-    pub fn is_success(&self) -> bool {
-        matches!(self.stop_reason, AgentStopReason::Completed)
-    }
-
     /// Accumulated token usage for the step.
     #[must_use]
     pub fn usage(&self) -> &Usage {
         &self.usage
+    }
+}
+
+/// The outcome of running an agent via
+/// [`Agent::run`](super::instance::Agent::run): either the run completed,
+/// or it stopped early with a typed reason and whatever partial output it
+/// produced.
+///
+/// The enum forces consumers to confront non-completion: partial output is
+/// only reachable through the [`Stopped`](Self::Stopped) arm, alongside the
+/// [`AgentStopReason`] that explains it.
+#[must_use = "a run can stop early without completing; match on the outcome \
+              (or call is_completed) instead of discarding it"]
+#[derive(Debug)]
+pub enum RunOutcome {
+    /// The run completed: the model produced valid structured output (or
+    /// text in no-schema mode).
+    Completed(AgentOutput),
+
+    /// The run stopped before completing. `partial` carries whatever the
+    /// run genuinely produced — partial output value, accumulated usage,
+    /// and the session event store with every persisted event.
+    Stopped {
+        /// Why the run stopped.
+        reason: AgentStopReason,
+        /// Everything the run produced before stopping.
+        partial: AgentOutput,
+    },
+}
+
+impl RunOutcome {
+    /// Build a [`RunOutcome`] from the runner's [`AgentStepResult`] and the
+    /// session's event store.
+    ///
+    /// This is the single conversion point from the loop-internal result
+    /// enum to the public run surface. The `event_store` is moved onto the
+    /// payload so callers can resume the session; pass `None` when the
+    /// store should not be surfaced.
+    pub fn from_step_result(result: AgentStepResult, event_store: Option<EventStore>) -> Self {
+        let stopped = |reason: AgentStopReason, output: Value, usage: Usage| Self::Stopped {
+            reason,
+            partial: AgentOutput {
+                output,
+                usage,
+                event_store: None,
+            },
+        };
+        let outcome = match result {
+            AgentStepResult::Completed { output, usage } => Self::Completed(AgentOutput {
+                output,
+                usage,
+                event_store: None,
+            }),
+            AgentStepResult::SchemaUnreachable {
+                best_attempt,
+                validation_errors,
+                attempts,
+                usage,
+            } => stopped(
+                AgentStopReason::SchemaUnreachable {
+                    validation_errors,
+                    attempts,
+                },
+                best_attempt.unwrap_or(Value::Null),
+                usage,
+            ),
+            AgentStepResult::MaxIterationsReached { usage } => {
+                stopped(AgentStopReason::MaxIterationsReached, Value::Null, usage)
+            }
+            AgentStepResult::TimedOut {
+                elapsed,
+                iterations,
+                partial_output,
+                usage,
+            } => stopped(
+                AgentStopReason::TimedOut {
+                    elapsed,
+                    iterations,
+                },
+                partial_output.unwrap_or(Value::Null),
+                usage,
+            ),
+            AgentStepResult::Cancelled { usage } => {
+                stopped(AgentStopReason::Cancelled, Value::Null, usage)
+            }
+            AgentStepResult::Truncated {
+                kind,
+                partial_text,
+                iterations,
+                usage,
+            } => stopped(
+                AgentStopReason::Truncated { kind, iterations },
+                partial_text.map_or(Value::Null, Value::String),
+                usage,
+            ),
+        };
+        outcome.with_event_store(event_store)
+    }
+
+    /// Attach the event store to whichever arm carries the payload.
+    fn with_event_store(mut self, event_store: Option<EventStore>) -> Self {
+        match &mut self {
+            Self::Completed(output)
+            | Self::Stopped {
+                partial: output, ..
+            } => output.event_store = event_store,
+        }
+        self
+    }
+
+    /// Whether the run completed.
+    #[must_use]
+    pub const fn is_completed(&self) -> bool {
+        matches!(self, Self::Completed(_))
+    }
+
+    /// The stop reason when the run stopped early, `None` when it
+    /// completed.
+    #[must_use]
+    pub const fn stop_reason(&self) -> Option<&AgentStopReason> {
+        match self {
+            Self::Completed(_) => None,
+            Self::Stopped { reason, .. } => Some(reason),
+        }
+    }
+
+    /// The run's payload — final output for a completed run, partial
+    /// output for a stopped one.
+    #[must_use]
+    pub const fn output(&self) -> &AgentOutput {
+        match self {
+            Self::Completed(output)
+            | Self::Stopped {
+                partial: output, ..
+            } => output,
+        }
+    }
+
+    /// Consume the outcome, returning the payload regardless of arm.
+    ///
+    /// Use this only after the completion question has been answered (or
+    /// when both arms are genuinely handled the same way, e.g. handing the
+    /// event store back for resume).
+    #[must_use]
+    pub fn into_output(self) -> AgentOutput {
+        match self {
+            Self::Completed(output)
+            | Self::Stopped {
+                partial: output, ..
+            } => output,
+        }
+    }
+
+    /// The schema-enforced output value, available only when the run
+    /// [`Completed`](Self::Completed).
+    ///
+    /// Returns `None` for every stopped run so callers do not mistake a
+    /// best-effort or partial attempt for validated output.
+    #[must_use]
+    pub const fn structured_output(&self) -> Option<&Value> {
+        match self {
+            Self::Completed(output) => Some(&output.output),
+            Self::Stopped { .. } => None,
+        }
     }
 }
 
@@ -243,57 +334,48 @@ mod tests {
     }
 
     #[test]
-    fn output_holds_all_fields() {
-        let out = AgentOutput {
-            output: serde_json::json!({"k": "v"}),
-            usage: sample_usage(),
-            event_store: Some(EventStore::new()),
-            stop_reason: AgentStopReason::Completed,
-        };
-        assert_eq!(out.output, serde_json::json!({"k": "v"}));
-        assert_eq!(out.usage.input_tokens, 100);
-        assert!(out.event_store.is_some());
-        assert!(matches!(out.stop_reason, AgentStopReason::Completed));
-    }
-
-    #[test]
-    fn completed_maps_output_and_usage_and_is_success() {
+    fn completed_maps_output_and_usage() {
         let result = AgentStepResult::Completed {
             output: serde_json::json!({"answer": 42}),
             usage: sample_usage(),
         };
-        let out = AgentOutput::from_step_result(result, None);
-        assert!(matches!(out.stop_reason, AgentStopReason::Completed));
-        assert_eq!(out.output, serde_json::json!({"answer": 42}));
-        assert_eq!(out.usage().output_tokens, 40);
-        assert!(out.is_success());
+        let outcome = RunOutcome::from_step_result(result, Some(EventStore::new()));
+        assert!(outcome.is_completed());
+        assert!(outcome.stop_reason().is_none());
         assert_eq!(
-            out.structured_output(),
+            outcome.structured_output(),
             Some(&serde_json::json!({"answer": 42}))
         );
+        assert_eq!(outcome.output().usage().output_tokens, 40);
+        let output = outcome.into_output();
+        assert_eq!(output.output, serde_json::json!({"answer": 42}));
+        assert!(output.event_store.is_some(), "store rides the payload");
     }
 
     #[test]
-    fn schema_unreachable_maps_best_attempt_and_errors() {
+    fn schema_unreachable_stops_with_best_attempt_and_errors() {
         let result = AgentStepResult::SchemaUnreachable {
             best_attempt: Some(serde_json::json!({"partial": true})),
             validation_errors: vec!["missing field x".to_string()],
             attempts: 3,
             usage: sample_usage(),
         };
-        let out = AgentOutput::from_step_result(result, None);
-        assert_eq!(out.output, serde_json::json!({"partial": true}));
-        assert!(!out.is_success());
-        assert!(out.structured_output().is_none());
-        match out.stop_reason {
-            AgentStopReason::SchemaUnreachable {
-                validation_errors,
-                attempts,
-            } => {
-                assert_eq!(validation_errors, vec!["missing field x".to_string()]);
-                assert_eq!(attempts, 3);
+        let outcome = RunOutcome::from_step_result(result, None);
+        assert!(!outcome.is_completed());
+        assert!(outcome.structured_output().is_none());
+        match outcome {
+            RunOutcome::Stopped { reason, partial } => {
+                assert_eq!(
+                    reason,
+                    AgentStopReason::SchemaUnreachable {
+                        validation_errors: vec!["missing field x".to_string()],
+                        attempts: 3,
+                    }
+                );
+                assert_eq!(partial.output, serde_json::json!({"partial": true}));
+                assert_eq!(partial.usage.input_tokens, 100);
             }
-            other => panic!("expected SchemaUnreachable, got {other:?}"),
+            RunOutcome::Completed(_) => panic!("expected Stopped"),
         }
     }
 
@@ -305,59 +387,135 @@ mod tests {
             attempts: 1,
             usage: Usage::default(),
         };
-        let out = AgentOutput::from_step_result(result, None);
-        assert_eq!(out.output, Value::Null);
+        let outcome = RunOutcome::from_step_result(result, None);
+        assert_eq!(outcome.output().output, Value::Null);
     }
 
     #[test]
-    fn max_iterations_maps_to_null_output() {
+    fn max_iterations_stops_with_usage() {
         let result = AgentStepResult::MaxIterationsReached {
             usage: sample_usage(),
         };
-        let out = AgentOutput::from_step_result(result, None);
-        assert_eq!(out.output, Value::Null);
-        assert_eq!(out.usage.input_tokens, 100);
-        assert!(matches!(
-            out.stop_reason,
-            AgentStopReason::MaxIterationsReached
-        ));
-        assert!(!out.is_success());
+        let outcome = RunOutcome::from_step_result(result, None);
+        assert_eq!(
+            outcome.stop_reason(),
+            Some(&AgentStopReason::MaxIterationsReached)
+        );
+        assert_eq!(outcome.output().output, Value::Null);
+        assert_eq!(outcome.output().usage.input_tokens, 100);
     }
 
     #[test]
-    fn timed_out_maps_partial_output_and_zero_usage() {
+    fn timed_out_stops_with_partial_output_and_usage() {
         let result = AgentStepResult::TimedOut {
             elapsed: Duration::from_secs(5),
             iterations: 2,
             partial_output: Some(serde_json::json!("partial text")),
+            usage: sample_usage(),
         };
-        let out = AgentOutput::from_step_result(result, None);
-        assert_eq!(out.output, serde_json::json!("partial text"));
-        // TimedOut carries no usage on the runner side.
-        assert_eq!(out.usage.input_tokens, 0);
-        match out.stop_reason {
-            AgentStopReason::TimedOut {
-                elapsed,
-                iterations,
-            } => {
-                assert_eq!(elapsed, Duration::from_secs(5));
-                assert_eq!(iterations, 2);
-            }
-            other => panic!("expected TimedOut, got {other:?}"),
-        }
-        assert!(!out.is_success());
+        let outcome = RunOutcome::from_step_result(result, None);
+        assert_eq!(
+            outcome.stop_reason(),
+            Some(&AgentStopReason::TimedOut {
+                elapsed: Duration::from_secs(5),
+                iterations: 2,
+            })
+        );
+        assert_eq!(outcome.output().output, serde_json::json!("partial text"));
+        // Usage now rides the timeout arm (tracked via shared timeout
+        // state) instead of being zeroed.
+        assert_eq!(outcome.output().usage.input_tokens, 100);
     }
 
     #[test]
-    fn cancelled_maps_to_null_output_with_usage() {
+    fn cancelled_stops_with_null_output_and_usage() {
         let result = AgentStepResult::Cancelled {
             usage: sample_usage(),
         };
-        let out = AgentOutput::from_step_result(result, None);
-        assert_eq!(out.output, Value::Null);
-        assert_eq!(out.usage.input_tokens, 100);
-        assert!(matches!(out.stop_reason, AgentStopReason::Cancelled));
-        assert!(!out.is_success());
+        let outcome = RunOutcome::from_step_result(result, None);
+        assert_eq!(outcome.stop_reason(), Some(&AgentStopReason::Cancelled));
+        assert_eq!(outcome.output().output, Value::Null);
+        assert_eq!(outcome.output().usage.input_tokens, 100);
+    }
+
+    #[test]
+    fn truncated_stops_with_partial_text_and_usage() {
+        let result = AgentStepResult::Truncated {
+            kind: TruncationKind::MaxTokens,
+            partial_text: Some("partial answ".to_string()),
+            iterations: 1,
+            usage: sample_usage(),
+        };
+        let outcome = RunOutcome::from_step_result(result, None);
+        assert!(!outcome.is_completed());
+        assert!(outcome.structured_output().is_none());
+        assert_eq!(
+            outcome.stop_reason(),
+            Some(&AgentStopReason::Truncated {
+                kind: TruncationKind::MaxTokens,
+                iterations: 1,
+            })
+        );
+        assert_eq!(
+            outcome.output().output,
+            Value::String("partial answ".to_string())
+        );
+        assert_eq!(outcome.output().usage.input_tokens, 100);
+    }
+
+    #[test]
+    fn truncated_without_text_is_null() {
+        let result = AgentStepResult::Truncated {
+            kind: TruncationKind::ContentFilter,
+            partial_text: None,
+            iterations: 1,
+            usage: Usage::default(),
+        };
+        let outcome = RunOutcome::from_step_result(result, None);
+        assert_eq!(outcome.output().output, Value::Null);
+    }
+
+    #[test]
+    fn stopped_arm_carries_event_store() {
+        let result = AgentStepResult::Cancelled {
+            usage: Usage::default(),
+        };
+        let store = store_with(&["progress so far"]);
+        let outcome = RunOutcome::from_step_result(result, Some(store));
+        assert!(
+            outcome.output().event_store.is_some(),
+            "a stopped run's partial payload must carry the event store"
+        );
+        assert_eq!(outcome.output().text().as_deref(), Some("progress so far"));
+    }
+
+    #[test]
+    fn stop_reason_serde_round_trips_every_shape() {
+        let cases = vec![
+            AgentStopReason::SchemaUnreachable {
+                validation_errors: vec!["missing field x".to_string()],
+                attempts: 3,
+            },
+            AgentStopReason::MaxIterationsReached,
+            AgentStopReason::TimedOut {
+                elapsed: Duration::from_millis(1500),
+                iterations: 2,
+            },
+            AgentStopReason::Cancelled,
+            AgentStopReason::Truncated {
+                kind: TruncationKind::MaxTokens,
+                iterations: 4,
+            },
+            AgentStopReason::Truncated {
+                kind: TruncationKind::ContentFilter,
+                iterations: 1,
+            },
+        ];
+        for reason in cases {
+            let json = serde_json::to_string(&reason).expect("serialize");
+            let back: AgentStopReason = serde_json::from_str(&json).expect("deserialize");
+            assert_eq!(back, reason, "round trip failed for {json}");
+        }
     }
 
     #[test]
@@ -367,8 +525,8 @@ mod tests {
             usage: Usage::default(),
         };
         let store = store_with(&["first reply", "second reply"]);
-        let out = AgentOutput::from_step_result(result, Some(store));
-        assert_eq!(out.text().as_deref(), Some("second reply"));
+        let outcome = RunOutcome::from_step_result(result, Some(store));
+        assert_eq!(outcome.output().text().as_deref(), Some("second reply"));
     }
 
     #[test]
@@ -380,8 +538,8 @@ mod tests {
         // A trailing tool-call-only turn produces an empty-content
         // AssistantMessage; .text() must skip it and surface the prior text.
         let store = store_with(&["the real answer", ""]);
-        let out = AgentOutput::from_step_result(result, Some(store));
-        assert_eq!(out.text().as_deref(), Some("the real answer"));
+        let outcome = RunOutcome::from_step_result(result, Some(store));
+        assert_eq!(outcome.output().text().as_deref(), Some("the real answer"));
     }
 
     #[test]
@@ -390,8 +548,8 @@ mod tests {
             output: Value::Null,
             usage: Usage::default(),
         };
-        let out = AgentOutput::from_step_result(result, None);
-        assert!(out.text().is_none());
+        let outcome = RunOutcome::from_step_result(result, None);
+        assert!(outcome.output().text().is_none());
     }
 
     #[test]
@@ -401,7 +559,7 @@ mod tests {
             usage: Usage::default(),
         };
         let store = store_with(&[]);
-        let out = AgentOutput::from_step_result(result, Some(store));
-        assert!(out.text().is_none());
+        let outcome = RunOutcome::from_step_result(result, Some(store));
+        assert!(outcome.output().text().is_none());
     }
 }

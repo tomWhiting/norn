@@ -10,7 +10,6 @@
 #![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
 use std::sync::Arc;
-use std::time::Duration;
 
 use async_trait::async_trait;
 use parking_lot::Mutex;
@@ -68,11 +67,9 @@ impl Tool for RecordingTool {
         _ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         *self.seen_args.lock() = Some(envelope.model_args.clone());
-        Ok(ToolOutput {
-            content: serde_json::json!({ "echo": envelope.model_args, "committed": true }),
-            is_error: false,
-            duration: Duration::ZERO,
-        })
+        Ok(ToolOutput::success(
+            serde_json::json!({ "echo": envelope.model_args, "committed": true }),
+        ))
     }
 
     async fn post_validate(&self, _output: &ToolOutput, _ctx: &ToolContext) -> PostValidateOutcome {
@@ -233,14 +230,16 @@ async fn expired_file_modified_follow_up_returns_error() {
         .expect("dispatch returns structured error");
     let content = output;
 
-    assert_eq!(content["error"], "follow-up expired");
+    assert_eq!(content["error"]["kind"], "blocked");
     assert!(
-        content["reason"]
+        content["error"]["message"]
             .as_str()
             .unwrap()
             .contains(&path.display().to_string()),
-        "reason should name the changed file: {content}",
+        "message should name the changed file: {content}",
     );
+    // The pre-payload expiry fields stay model-visible alongside the error.
+    assert_eq!(content["action"], "reapply");
 }
 
 #[tokio::test]
@@ -257,7 +256,8 @@ async fn nonexistent_tool_call_id_returns_error() {
         .expect("dispatch returns structured error");
     let content = output;
 
-    assert_eq!(content["error"], "tool_call_id not found");
+    assert_eq!(content["error"]["kind"], "not_found");
+    assert_eq!(content["error"]["message"], "tool_call_id not found");
     assert_eq!(content["tool_call_id"], "does-not-exist");
 }
 
@@ -299,7 +299,8 @@ async fn nonexistent_action_returns_error_with_available_actions() {
         .expect("dispatch returns structured error");
     let content = output;
 
-    assert_eq!(content["error"], "action not found");
+    assert_eq!(content["error"]["kind"], "not_found");
+    assert_eq!(content["error"]["message"], "action not found");
     assert_eq!(content["tool_call_id"], "tc-orig");
     assert_eq!(content["action"], "ghost");
     let available = content["available_actions"].as_array().unwrap();

@@ -9,7 +9,7 @@
 //! searches concurrently with other read-only / network tools.
 
 use std::fmt::Write as _;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use regex::Regex;
@@ -19,6 +19,7 @@ use serde_json::{Value, json};
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::ToolErrorKind;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
@@ -127,18 +128,19 @@ impl Tool for WebSearchTool {
         envelope: &ToolEnvelope,
         _ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: WebSearchArgs =
             serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
-                ToolError::PreValidationFailed {
-                    reason: format!("invalid web_search arguments: {e}"),
-                }
+                ToolError::pre_validation(
+                    ToolErrorKind::InvalidArguments,
+                    format!("invalid web_search arguments: {e}"),
+                )
             })?;
 
         if args.query.trim().is_empty() {
-            return Err(ToolError::PreValidationFailed {
-                reason: "`query` must be a non-empty string".to_owned(),
-            });
+            return Err(ToolError::pre_validation(
+                ToolErrorKind::InvalidArguments,
+                "`query` must be a non-empty string",
+            ));
         }
 
         let requested = args.num_results.unwrap_or(DEFAULT_NUM_RESULTS);
@@ -148,15 +150,11 @@ impl Tool for WebSearchTool {
         let results = parse_ddg_results(&html, num_results);
         let formatted = format_results(&args.query, &results);
 
-        Ok(ToolOutput {
-            content: json!({
-                "query": args.query,
-                "results": results,
-                "formatted": formatted,
-            }),
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(json!({
+            "query": args.query,
+            "results": results,
+            "formatted": formatted,
+        })))
     }
 }
 

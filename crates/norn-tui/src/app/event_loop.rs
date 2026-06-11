@@ -27,9 +27,9 @@ use tokio::sync::{broadcast, mpsc};
 use uuid::Uuid;
 
 use norn::agent::registry::AgentRegistry;
-use norn::r#loop::config::AgentLoopConfig;
-use norn::r#loop::loop_context::LoopContext;
-use norn::r#loop::runner::{AgentStepRequest, AgentStepResult, ToolExecutor, run_agent_step};
+use norn::agent_loop::config::AgentLoopConfig;
+use norn::agent_loop::loop_context::LoopContext;
+use norn::agent_loop::runner::{AgentStepRequest, AgentStepResult, ToolExecutor, run_agent_step};
 use norn::provider::request::ToolDefinition;
 use norn::provider::traits::Provider;
 use norn::session::store::EventStore;
@@ -618,7 +618,7 @@ async fn run_turn(
         handle_agent_event(state, guard, &mut renderer, agent_ev)?;
     }
     if cancelled {
-        norn::r#loop::ensure_tool_results_complete(runtime.store.as_ref()).await;
+        norn::agent_loop::ensure_tool_results_complete(runtime.store.as_ref()).await;
     }
     flush_pending(state, guard, &mut renderer)?;
     finalise_turn(state, guard, step_result, &mut renderer)?;

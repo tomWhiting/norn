@@ -21,8 +21,8 @@
 use std::io::Write;
 use std::sync::Arc;
 
+use norn::agent_loop::config::AgentStepResult;
 use norn::integration::{DiagnosticCollector, NornDiagnostic};
-use norn::r#loop::config::AgentStepResult;
 use norn::provider::events::ProviderEvent;
 use norn::provider::usage::Usage;
 use norn::session::events::SessionEvent;
@@ -43,6 +43,7 @@ pub fn result_label(result: &AgentStepResult) -> &'static str {
         AgentStepResult::MaxIterationsReached { .. } => "max_iterations",
         AgentStepResult::TimedOut { .. } => "timed_out",
         AgentStepResult::Cancelled { .. } => "cancelled",
+        AgentStepResult::Truncated { .. } => "truncated",
     }
 }
 
@@ -61,9 +62,16 @@ pub fn extract_output_and_usage(result: &AgentStepResult) -> (Option<Value>, Usa
         AgentStepResult::MaxIterationsReached { usage } | AgentStepResult::Cancelled { usage } => {
             (None, usage.clone())
         }
-        AgentStepResult::TimedOut { partial_output, .. } => {
-            (partial_output.clone(), Usage::default())
-        }
+        AgentStepResult::TimedOut {
+            partial_output,
+            usage,
+            ..
+        } => (partial_output.clone(), usage.clone()),
+        AgentStepResult::Truncated {
+            partial_text,
+            usage,
+            ..
+        } => (partial_text.clone().map(Value::String), usage.clone()),
     }
 }
 
@@ -298,17 +306,51 @@ pub fn spawn_stream_renderer(
 /// `partial` delta filter. Returns `false` when stdout is gone (broken
 /// pipe) and the renderer should stop.
 fn write_stream_event(agent_event: &norn::provider::AgentEvent, partial: bool) -> bool {
-    let event = &agent_event.event;
-    if !partial && is_delta_event(event) {
-        return true;
-    }
-    let Some(line) = provider_event_to_ndjson(event) else {
+    let line = match &agent_event.event {
+        norn::provider::AgentEventKind::Provider(event) => {
+            if !partial && is_delta_event(event) {
+                return true;
+            }
+            provider_event_to_ndjson(event)
+        }
+        norn::provider::AgentEventKind::Subagent(lifecycle) => subagent_event_to_ndjson(lifecycle),
+    };
+    let Some(line) = line else {
         return true;
     };
     let mut stdout = std::io::stdout().lock();
     stdout.write_all(line.as_bytes()).is_ok()
         && stdout.write_all(b"\n").is_ok()
         && stdout.flush().is_ok()
+}
+
+/// Translate a typed [`norn::provider::SubagentLifecycle`] event into an
+/// NDJSON line: the event's stable serde form (`snake_case` `phase` /
+/// `kind` tags) under `"type": "subagent_started"` /
+/// `"subagent_completed"`.
+fn subagent_event_to_ndjson(lifecycle: &norn::provider::SubagentLifecycle) -> Option<String> {
+    let type_label = match lifecycle {
+        norn::provider::SubagentLifecycle::Started { .. } => "subagent_started",
+        norn::provider::SubagentLifecycle::Completed { .. } => "subagent_completed",
+    };
+    let mut value = match serde_json::to_value(lifecycle) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!("failed to serialize subagent lifecycle event to NDJSON: {err}");
+            return None;
+        }
+    };
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("phase");
+        obj.insert("type".to_owned(), json!(type_label));
+    }
+    match serde_json::to_string(&value) {
+        Ok(s) => Some(s),
+        Err(err) => {
+            tracing::warn!("failed to serialize subagent lifecycle event to NDJSON: {err}");
+            None
+        }
+    }
 }
 
 /// Drain and render the events already buffered on `rx` after a
@@ -802,6 +844,7 @@ mod tests {
                 elapsed: std::time::Duration::ZERO,
                 iterations: 0,
                 partial_output: None,
+                usage: Usage::default(),
             }),
             "timed_out"
         );
@@ -811,5 +854,42 @@ mod tests {
             }),
             "cancelled"
         );
+        assert_eq!(
+            result_label(&AgentStepResult::Truncated {
+                kind: norn::agent_loop::config::TruncationKind::MaxTokens,
+                partial_text: None,
+                iterations: 0,
+                usage: Usage::default(),
+            }),
+            "truncated"
+        );
+    }
+
+    /// `TimedOut` and `Truncated` carry real usage and partial output on
+    /// the envelope projection — neither is zeroed or dropped.
+    #[test]
+    fn extract_output_and_usage_covers_timed_out_and_truncated() {
+        let usage = Usage {
+            input_tokens: 21,
+            output_tokens: 8,
+            ..Usage::default()
+        };
+        let (output, extracted) = extract_output_and_usage(&AgentStepResult::TimedOut {
+            elapsed: std::time::Duration::from_secs(3),
+            iterations: 2,
+            partial_output: Some(json!("half done")),
+            usage: usage.clone(),
+        });
+        assert_eq!(output, Some(json!("half done")));
+        assert_eq!(extracted.input_tokens, 21);
+
+        let (output, extracted) = extract_output_and_usage(&AgentStepResult::Truncated {
+            kind: norn::agent_loop::config::TruncationKind::ContentFilter,
+            partial_text: Some("cut short".to_string()),
+            iterations: 1,
+            usage,
+        });
+        assert_eq!(output, Some(json!("cut short")));
+        assert_eq!(extracted.output_tokens, 8);
     }
 }

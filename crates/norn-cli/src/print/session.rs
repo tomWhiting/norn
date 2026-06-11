@@ -13,9 +13,7 @@ use norn::session::store::{DurabilityPolicy, EventStore};
 use crate::cli::Cli;
 use crate::config::session_data_dir;
 use crate::runtime::RuntimeBundle;
-use crate::session::{
-    SessionIndexEntry, attach_sink, create_session, fork_session, resume_session,
-};
+use crate::session::{CreateSessionOptions, OpenSession, SessionIndexEntry, SessionManager};
 
 use super::orchestrator::PrintError;
 
@@ -43,22 +41,24 @@ fn working_dir_string() -> Result<String, PrintError> {
         .map_err(|err| PrintError::Io(format!("failed to determine working directory: {err}")))
 }
 
-/// Resolve the print-mode session, honoring `--no-session`, `--resume`,
-/// `--fork`, and `--session-name`.
+/// Resolve the print-mode session through [`SessionManager`], honoring
+/// `--no-session`, `--resume`, `--fork`, and `--session-name`.
 ///
 /// - `--no-session`: a fresh in-memory [`EventStore`] with no sink and no
 ///   on-disk record.
-/// - `--resume <id>`: replay the persisted session into a store and
-///   attach a write-through sink for continued appends.
+/// - `--resume <id>`: replay the persisted session and continue appending
+///   through its write-through sink.
 /// - `--fork <id>`: copy the source session (with its `Fork` marker) into
-///   a new one and attach a sink to the new file.
+///   a new one.
 /// - otherwise: create a fresh persisted session, honoring
 ///   `--session-name`.
 ///
-/// Every attached sink is index-registered via
-/// [`attach_sink`]: each persisted event also updates the session's
-/// `index.jsonl` entry (event count, token totals, `updated_at`), so no
-/// caller reconciles the index by hand.
+/// Every store the manager returns carries an index-registered sink:
+/// each persisted event also updates the session's `index.jsonl` entry
+/// (event count, token totals, `updated_at`), so no caller reconciles
+/// the index by hand. Lines the tolerant reader skipped during a resume
+/// or fork replay are reported on stderr — a partial replay is never
+/// silent.
 ///
 /// # Errors
 ///
@@ -66,7 +66,6 @@ fn working_dir_string() -> Result<String, PrintError> {
 /// resolved or read or the new index entry cannot be written, and
 /// [`PrintError::Io`] when the working directory cannot be determined.
 pub(crate) fn open_session(cli: &Cli, bundle: &RuntimeBundle) -> Result<SessionHandle, PrintError> {
-    let data_dir = session_data_dir();
     if cli.no_session {
         return Ok(SessionHandle {
             store: Arc::new(EventStore::new()),
@@ -74,43 +73,46 @@ pub(crate) fn open_session(cli: &Cli, bundle: &RuntimeBundle) -> Result<SessionH
         });
     }
 
-    let working_dir = working_dir_string()?;
-
-    if let Some(id) = cli.resume.as_deref() {
-        let (store, _events, entry) = resume_session(&data_dir, id)?;
-        let store = attach_sink(store, &data_dir, &entry.id, DurabilityPolicy::Flush)?;
-        return Ok(SessionHandle {
-            store: Arc::new(store),
-            entry: Some(entry),
-        });
-    }
-
-    if let Some(id) = cli.fork.as_deref() {
-        let (entry, store, _events) =
-            fork_session(&data_dir, id, bundle.model.clone(), working_dir)?;
-        let store = attach_sink(store, &data_dir, &entry.id, DurabilityPolicy::Flush)?;
-        return Ok(SessionHandle {
-            store: Arc::new(store),
-            entry: Some(entry),
-        });
-    }
-
-    let entry = create_session(
-        &data_dir,
-        bundle.model.clone(),
-        working_dir,
-        cli.session_name.clone(),
-    )?;
-    let store = attach_sink(
-        EventStore::new(),
-        &data_dir,
-        &entry.id,
-        DurabilityPolicy::Flush,
-    )?;
+    let manager = SessionManager::new(session_data_dir());
+    let opened = if let Some(id) = cli.resume.as_deref() {
+        manager.resume(id, DurabilityPolicy::Flush)?
+    } else if let Some(id) = cli.fork.as_deref() {
+        manager.fork(
+            id,
+            CreateSessionOptions {
+                model: bundle.model.clone(),
+                working_dir: working_dir_string()?,
+                name: None,
+            },
+            DurabilityPolicy::Flush,
+        )?
+    } else {
+        manager.create(
+            CreateSessionOptions {
+                model: bundle.model.clone(),
+                working_dir: working_dir_string()?,
+                name: cli.session_name.clone(),
+            },
+            DurabilityPolicy::Flush,
+        )?
+    };
+    warn_if_lines_skipped(&opened);
     Ok(SessionHandle {
-        store: Arc::new(store),
-        entry: Some(entry),
+        store: Arc::new(opened.store),
+        entry: Some(opened.entry),
     })
+}
+
+/// Surface a partial replay on stderr: the tolerant reader skips torn,
+/// corrupt, unknown, and duplicate lines instead of failing the load,
+/// and that count must reach the user.
+fn warn_if_lines_skipped(opened: &OpenSession) {
+    if opened.replay.skipped_lines > 0 {
+        eprintln!(
+            "norn: warning: {} corrupt or unreadable line(s) skipped while loading session {}",
+            opened.replay.skipped_lines, opened.entry.id,
+        );
+    }
 }
 
 #[cfg(test)]

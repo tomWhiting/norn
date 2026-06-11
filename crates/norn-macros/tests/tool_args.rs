@@ -537,6 +537,33 @@ fn internally_tagged_enum_uses_one_of_with_const_discriminator() {
     );
 }
 
+/// Per-variant doc comments must surface as `description` on each `oneOf`
+/// variant so catalog derivation (and the model) can see what each command
+/// does.
+#[test]
+fn internally_tagged_variants_carry_doc_descriptions() {
+    let schema = TaskAction::json_schema();
+    let variants = schema["oneOf"].as_array().expect("oneOf is array");
+    assert_eq!(variants[0]["description"], "Create a fresh task.");
+    assert_eq!(
+        variants[1]["description"],
+        "Update an existing task's status."
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "kind")]
+enum UndocumentedAction {
+    Ping,
+}
+
+#[test]
+fn internally_tagged_variant_without_doc_has_no_description_key() {
+    let schema = UndocumentedAction::json_schema();
+    let variants = schema["oneOf"].as_array().expect("oneOf is array");
+    assert!(variants[0].get("description").is_none());
+}
+
 #[derive(Deserialize, ToolArgs)]
 #[serde(untagged)]
 enum UntaggedKind {
@@ -587,6 +614,29 @@ fn adjacent_enum_uses_tag_and_content_fields() {
     );
     assert_eq!(entry["required"], serde_json::json!(["t", "c"]));
     assert_eq!(entry["additionalProperties"], false);
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(untagged)]
+enum DocumentedUntagged {
+    /// A numeric form.
+    Number {
+        /// Numeric value.
+        value: i64,
+    },
+}
+
+/// Adjacent and untagged variants carry their doc descriptions too.
+#[test]
+fn adjacent_and_untagged_variants_carry_doc_descriptions() {
+    let adjacent = AdjacentKind::json_schema();
+    assert_eq!(
+        adjacent["oneOf"][0]["description"],
+        "Variant carrying named data."
+    );
+
+    let untagged = DocumentedUntagged::json_schema();
+    assert_eq!(untagged["oneOf"][0]["description"], "A numeric form.");
 }
 
 // ---------------------------------------------------------------------------

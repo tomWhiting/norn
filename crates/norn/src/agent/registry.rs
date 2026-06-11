@@ -15,7 +15,12 @@ use crate::error::AgentError;
 const MAX_CONCURRENT_CHILDREN: usize = 32;
 
 /// Lifecycle status of a registered agent.
+///
+/// Serialized in `snake_case` (`"active"`, `"completed"`, `"failed"`, ...)
+/// so every status string norn emits — registry entries, tool outputs,
+/// typed lifecycle events — shares one stable representation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum AgentStatus {
     /// Reservation made; awaiting confirmation.
     Spawning,
@@ -882,5 +887,22 @@ mod tests {
         let back: AgentEntry = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.path, entry.path);
         assert_eq!(back.status, entry.status);
+    }
+
+    /// Status strings are part of the embedder contract: snake_case,
+    /// matching the typed lifecycle events and tool outputs.
+    #[test]
+    fn agent_status_serializes_snake_case() {
+        let cases = [
+            (AgentStatus::Spawning, "\"spawning\""),
+            (AgentStatus::Active, "\"active\""),
+            (AgentStatus::Completing, "\"completing\""),
+            (AgentStatus::Completed, "\"completed\""),
+            (AgentStatus::Failed, "\"failed\""),
+        ];
+        for (status, expected) in cases {
+            let json = serde_json::to_string(&status).expect("serialize");
+            assert_eq!(json, expected);
+        }
     }
 }

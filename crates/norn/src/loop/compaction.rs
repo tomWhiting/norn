@@ -298,6 +298,10 @@ pub struct TimeoutState {
     pub iterations: usize,
     /// Most recent non-empty assistant text observed by the runner.
     pub last_assistant_text: Option<String>,
+    /// Token usage accumulated so far in this step, kept in sync with the
+    /// runner's running total after every usage-bearing provider call so a
+    /// timed-out step still reports the spend it incurred.
+    pub usage: crate::provider::usage::Usage,
 }
 
 /// Convenience alias for `Arc<Mutex<TimeoutState>>`.
@@ -674,9 +678,16 @@ mod tests {
             let mut guard = handle.lock();
             guard.iterations = 3;
             guard.last_assistant_text = Some("partial".to_string());
+            guard.usage = crate::provider::usage::Usage {
+                input_tokens: 120,
+                output_tokens: 45,
+                ..crate::provider::usage::Usage::default()
+            };
         }
         let snapshot = handle.lock();
         assert_eq!(snapshot.iterations, 3);
         assert_eq!(snapshot.last_assistant_text.as_deref(), Some("partial"));
+        assert_eq!(snapshot.usage.input_tokens, 120);
+        assert_eq!(snapshot.usage.output_tokens, 45);
     }
 }

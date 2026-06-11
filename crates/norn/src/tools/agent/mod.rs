@@ -10,8 +10,10 @@ mod fork_seed;
 pub mod fork_tool;
 pub mod handle;
 pub mod infra;
+mod lifecycle;
 pub mod reclaim;
 pub mod spawn;
+mod spawn_context;
 mod spawn_outcome;
 
 pub use self::coord::{CloseAgentTool, SignalAgentTool};

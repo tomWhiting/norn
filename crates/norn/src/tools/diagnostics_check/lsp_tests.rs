@@ -76,6 +76,16 @@ pub(super) async fn run_lsp_tests_for_matched_rules(
         return;
     };
 
+    // Loop-invariant context for the per-rule runs, bundled so the
+    // per-rule helper stays inside the `too_many_arguments` budget
+    // without a lint bypass.
+    let run_scope = LspTestRunScope {
+        file_path,
+        relative_path,
+        backend: backend.as_ref(),
+        infra,
+    };
+
     for (rule_name, compiled) in conventions.rules() {
         if !compiled.triggers.contains(&trigger) {
             continue;
@@ -91,38 +101,35 @@ pub(super) async fn run_lsp_tests_for_matched_rules(
             continue;
         };
 
-        run_lsp_tests_for_rule(
-            file_path,
-            relative_path,
-            rule_name,
-            compiled,
-            scope,
-            backend.as_ref(),
-            infra,
-            findings,
-        )
-        .await;
+        run_lsp_tests_for_rule(&run_scope, rule_name, compiled, scope, findings).await;
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+/// Loop-invariant context shared by every per-rule LSP test run within
+/// one [`run_lsp_tests_for_matched_rules`] invocation: the file under
+/// test, its workspace-relative path, the wired backend, and the
+/// diagnostic infrastructure.
+struct LspTestRunScope<'a> {
+    file_path: &'a Path,
+    relative_path: &'a Path,
+    backend: &'a dyn LspBackend,
+    infra: &'a DiagnosticInfra,
+}
+
 async fn run_lsp_tests_for_rule(
-    file_path: &Path,
-    relative_path: &Path,
+    run_scope: &LspTestRunScope<'_>,
     rule_name: &str,
     compiled: &CompiledRule,
     scope: TestScope,
-    backend: &dyn LspBackend,
-    infra: &DiagnosticInfra,
     findings: &mut Findings<'_>,
 ) {
-    let runnables = match discover_runnables(backend, file_path, scope).await {
+    let runnables = match discover_runnables(run_scope.backend, run_scope.file_path, scope).await {
         Ok(runnables) => runnables,
         Err(LspBackendError::NoServerForFile { .. }) => return,
         Err(error) => {
             tracing::warn!(
                 rule = rule_name,
-                path = %file_path.display(),
+                path = %run_scope.file_path.display(),
                 error = %error,
                 "LSP test discovery failed; skipping"
             );
@@ -136,7 +143,13 @@ async fn run_lsp_tests_for_rule(
 
     let handling = handling_for_rule(compiled);
     for runnable in runnables {
-        let events = match execute_runnable(&runnable, &infra.workspace_root, file_path).await {
+        let events = match execute_runnable(
+            &runnable,
+            &run_scope.infra.workspace_root,
+            run_scope.file_path,
+        )
+        .await
+        {
             Ok(events) => events,
             Err(error) => {
                 tracing::warn!(
@@ -149,7 +162,14 @@ async fn run_lsp_tests_for_rule(
             }
         };
 
-        route_events(&events, rule_name, relative_path, handling, infra, findings);
+        route_events(
+            &events,
+            rule_name,
+            run_scope.relative_path,
+            handling,
+            run_scope.infra,
+            findings,
+        );
     }
 }
 

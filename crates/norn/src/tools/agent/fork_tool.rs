@@ -15,16 +15,17 @@
 //! composes the child's [`LoopContext`](crate::r#loop::loop_context::LoopContext) (fork preamble + parent base system
 //! instruction), filters the parent registry's tool definitions through the
 //! per-fork allow-list, launches the child via [`tokio::spawn`], and returns
-//! immediately with `{ fork_id, status: "active" }`. On terminal status the
+//! immediately with `{ agent_id, path, status: "active" }` — the same child-id
+//! field name `spawn_agent` uses. On terminal status the
 //! launcher marks the registry, appends a
 //! [`SessionEvent::ForkComplete`](crate::session::events::SessionEvent::ForkComplete)
 //! to the parent's timeline, and sends the formatted result through the
 //! [`ChildResultSender`](crate::agent::result_channel::ChildResultSender).
 
 use std::sync::Arc;
-use std::time::Instant;
 
 use async_trait::async_trait;
+use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
 
@@ -35,6 +36,7 @@ use super::fork_pipeline::{
 use super::fork_seed::seed_fork_events;
 use super::handle::AgentHandles;
 use super::infra::{SubAgentExecutor, infra_from};
+use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{
     ReclaimOnResultDelivery, entry_terminal_or_reclaimed, reclaim_delivered_child,
 };
@@ -47,6 +49,7 @@ use crate::error::ToolError;
 use crate::integration::hooks::HookRegistry;
 use crate::r#loop::inbound::inbound_channel;
 use crate::r#loop::loop_context::LoopContext;
+use crate::provider::agent_event::{SubagentDescriptor, SubagentKind};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::scheduling::ToolEffect;
@@ -149,7 +152,6 @@ impl Tool for ForkTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: ForkArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
             ToolError::ExecutionFailed {
                 reason: format!("invalid arguments: {e}"),
@@ -176,13 +178,11 @@ impl Tool for ForkTool {
                          orchestrator must provide a ToolRegistry so the fork has tools available"
                         .to_owned(),
                 })?;
-        let handles =
-            ctx.get_extension::<AgentHandles>()
-                .ok_or_else(|| ToolError::ExecutionFailed {
-                    reason: "fork requires the AgentHandles extension on the tool context; \
-                         build_runtime installs it during runtime construction"
-                        .to_owned(),
-                })?;
+        // The forking agent's `AgentHandles` extension must be installed
+        // before launch — `build_runtime` installs it during runtime
+        // construction; a missing extension surfaces as a typed
+        // `MissingExtension` error.
+        let handles = ctx.require_extension::<AgentHandles>()?;
 
         // R3: hierarchical fork path nests under the parent's registry path.
         let parent_prefix = infra
@@ -195,7 +195,7 @@ impl Tool for ForkTool {
 
         let guard = AgentRegistry::reserve(
             &infra.registry,
-            path,
+            path.clone(),
             "fork".to_owned(),
             args.model.clone(),
             Some(infra.agent_id),
@@ -254,7 +254,11 @@ impl Tool for ForkTool {
         // pre/post-tool hooks from its *own* LoopContext, so the parent's
         // shared registry must be installed here — otherwise operator
         // policy/observability hooks silently never see fork tool calls.
-        loop_ctx.hooks = ctx.get_extension::<HookRegistry>();
+        // The same registry is also handed to the launch wrapper so the
+        // subagent start/stop hooks fire around the fork exactly as they
+        // do around a spawn (NH-006 R5 parity).
+        let hooks = ctx.get_extension::<HookRegistry>();
+        loop_ctx.hooks = hooks.as_ref().map(Arc::clone);
         loop_ctx.environment = Some(crate::system_prompt::environment::EnvironmentConfig {
             session_id: None,
             model: args.model.clone(),
@@ -295,6 +299,36 @@ impl Tool for ForkTool {
             .map(|r| crate::agent::fork::slugify_requirement_name(&r.name))
             .collect();
 
+        // NH-006 R5 parity with spawn (C56): fire
+        // SubagentHook::on_subagent_start before launching the fork.
+        // Observational — Block has no semantics on start (the trait
+        // method returns `()`). Absent registry → no hook to fire.
+        if let Some(hooks_arc) = hooks.as_ref() {
+            hooks_arc
+                .run_subagent_start(&fork_id.to_string(), "fork")
+                .await;
+        }
+
+        // Typed lifecycle: `Started` is emitted before the fork task
+        // launches, so it always precedes the fork's own provider events
+        // on the broadcast channel; the wrapper task emits `Completed`.
+        // Both phases also land as Custom audit events on the parent's
+        // session store.
+        let lifecycle = LifecycleEmitter::new(
+            child_event_sender.clone(),
+            Arc::clone(&infra.event_store),
+            infra.agent_id,
+            fork_id,
+            SubagentDescriptor {
+                kind: SubagentKind::Fork,
+                role: "fork".to_owned(),
+                model: args.model.clone(),
+                profile: None,
+            },
+            Utc::now(),
+        );
+        lifecycle.emit_started();
+
         let handle = launch_fork(
             ForkLaunch {
                 provider: Arc::clone(&infra.provider),
@@ -315,6 +349,8 @@ impl Tool for ForkTool {
                 forked_session_id,
                 event_sender: child_event_sender,
                 reclaim_handles: reclaim_on_delivery.then(|| Arc::clone(&handles)),
+                lifecycle,
+                hooks,
             },
             inbound_tx,
         );
@@ -328,14 +364,11 @@ impl Tool for ForkTool {
             reclaim_delivered_child(&infra.registry, &handles, fork_id);
         }
 
-        Ok(ToolOutput {
-            content: serde_json::json!({
-                "fork_id": fork_id.to_string(),
-                "status": "active",
-            }),
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(serde_json::json!({
+            "agent_id": fork_id.to_string(),
+            "path": path,
+            "status": "active",
+        })))
     }
 }
 
@@ -513,11 +546,7 @@ mod tests {
                 *self.seen_agent.lock().unwrap() = Some(infra.agent_id);
                 *self.seen_parent.lock().unwrap() = infra.parent_id;
             }
-            Ok(TestToolOutput {
-                content: serde_json::json!({"ok": true}),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(TestToolOutput::success(serde_json::json!({"ok": true})))
         }
     }
 
@@ -549,7 +578,7 @@ mod tests {
         );
 
         let tool = ForkTool::new();
-        let started = Instant::now();
+        let started = std::time::Instant::now();
         let out = tool
             .execute(
                 &envelope_for(
@@ -565,7 +594,7 @@ mod tests {
             "fork must return within 50ms while child is gated; took {elapsed:?}",
         );
         assert_eq!(out.content["status"], "active");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
 
         assert_eq!(
             agent_registry.read().get(fork_id).expect("entry").status,
@@ -591,6 +620,92 @@ mod tests {
             AgentStatus::Completed,
         );
         assert_eq!(*status_rx.borrow_and_update(), AgentStatus::Completed);
+    }
+
+    /// NH-006 R5 parity with spawn: `SubagentHook::on_subagent_start`
+    /// fires before the fork launches and
+    /// `SubagentHook::on_subagent_stop` fires from the fork's wrapper
+    /// task once the run finishes — the pre-existing asymmetry (spawn
+    /// fired both, fork fired neither) is closed.
+    #[tokio::test]
+    async fn subagent_hook_start_and_stop_fire_around_fork() {
+        use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
+
+        use crate::integration::hooks::{Hook, HookOutcome, HookRegistry, SubagentHook};
+
+        struct CountingSubagentHook {
+            start_count: Arc<AtomicUsize>,
+            stop_count: Arc<AtomicUsize>,
+            seen_type: Arc<StdMutex<Option<String>>>,
+        }
+
+        #[async_trait]
+        impl SubagentHook for CountingSubagentHook {
+            async fn on_subagent_start(&self, _agent_id: &str, agent_type: &str) {
+                self.start_count.fetch_add(1, AtomicOrdering::SeqCst);
+                *self.seen_type.lock().unwrap() = Some(agent_type.to_owned());
+            }
+            async fn on_subagent_stop(&self, _agent_id: &str, _agent_type: &str) -> HookOutcome {
+                self.stop_count.fetch_add(1, AtomicOrdering::SeqCst);
+                HookOutcome::Proceed
+            }
+        }
+
+        let provider =
+            structured_response_provider(json!({"response": "done", "requirements": {}}));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+
+        let start_count = Arc::new(AtomicUsize::new(0));
+        let stop_count = Arc::new(AtomicUsize::new(0));
+        let seen_type = Arc::new(StdMutex::new(None));
+        let mut hook_registry = HookRegistry::new();
+        hook_registry.register(Hook::Subagent(Box::new(CountingSubagentHook {
+            start_count: Arc::clone(&start_count),
+            stop_count: Arc::clone(&stop_count),
+            seen_type: Arc::clone(&seen_type),
+        })));
+        ctx.insert_extension(Arc::new(hook_registry));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "summarise", "model": "gpt-5.5", "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+
+        assert_eq!(
+            start_count.load(AtomicOrdering::SeqCst),
+            1,
+            "SubagentHook::on_subagent_start must fire exactly once per fork",
+        );
+        assert_eq!(
+            stop_count.load(AtomicOrdering::SeqCst),
+            1,
+            "SubagentHook::on_subagent_stop must fire exactly once per fork",
+        );
+        assert_eq!(
+            seen_type.lock().unwrap().as_deref(),
+            Some("fork"),
+            "the hook matcher input for forks is the literal role 'fork'",
+        );
     }
 
     /// R2: fork running mid-turn — the parent's latest `AssistantMessage`
@@ -676,7 +791,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
 
         let handle = ctx
             .get_extension::<AgentHandles>()
@@ -791,7 +906,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
         let entry = agent_registry.read().get(fork_id).expect("fork entry");
         assert!(
             entry.path.starts_with("/parent/fork/"),
@@ -842,7 +957,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
         let handle = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
@@ -915,7 +1030,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
         let handle = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
@@ -1031,7 +1146,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
 
         let handles = ctx.get_extension::<AgentHandles>().unwrap();
         let inbound = handles.inbound_tx(fork_id).expect("inbound sender present");
@@ -1108,7 +1223,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
         let handle = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
@@ -1171,7 +1286,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
 
         let result = tokio::time::timeout(Duration::from_secs(5), rx.recv())
             .await
@@ -1220,11 +1335,7 @@ mod tests {
             ) -> Result<TestToolOutput, ToolError> {
                 self.executions
                     .fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-                Ok(TestToolOutput {
-                    content: serde_json::json!({"ok": true}),
-                    is_error: false,
-                    duration: Duration::ZERO,
-                })
+                Ok(TestToolOutput::success(serde_json::json!({"ok": true})))
             }
         }
 
@@ -1277,7 +1388,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
         let handle = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
@@ -1321,7 +1432,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
         let handle = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
@@ -1408,7 +1519,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
         let handle = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
@@ -1530,7 +1641,7 @@ mod tests {
             )
             .await
             .expect("fork");
-        let fork_id = Uuid::parse_str(out.content["fork_id"].as_str().unwrap()).unwrap();
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
         let handle = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
@@ -1543,5 +1654,153 @@ mod tests {
             1,
             "a parent-registered PreToolUse hook must fire for the fork's tool call",
         );
+    }
+
+    /// Typed lifecycle: fork emits `SubagentLifecycle::Started` then
+    /// `Completed` on the shared broadcast channel — child-tagged, with
+    /// the fork descriptor, ordered wall-clock timestamps, and the
+    /// fork's accumulated usage — appends the matching Custom audit
+    /// events to the parent's store, and the result channel carries the
+    /// same per-child usage.
+    #[tokio::test]
+    async fn fork_emits_typed_lifecycle_events_on_channel_and_parent_store() {
+        use crate::agent::result_channel::ChildResultSender;
+        use crate::provider::agent_event::{
+            AgentEvent, AgentEventKind, SUBAGENT_COMPLETED_EVENT_TYPE, SUBAGENT_STARTED_EVENT_TYPE,
+            SharedAgentEventChannel, SubagentKind, SubagentLifecycle,
+        };
+
+        let provider =
+            structured_response_provider(json!({"response": "done", "requirements": {}}));
+        let parent = Uuid::new_v4();
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, parent_store) = parent_ctx(
+            provider,
+            parent,
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (btx, mut brx) = tokio::sync::broadcast::channel::<AgentEvent>(64);
+        ctx.insert_extension(Arc::new(SharedAgentEventChannel(btx)));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "summarise", "model": "gpt-5.5", "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        assert!(
+            out.content["path"].as_str().unwrap().contains("/fork/"),
+            "fork output carries the registry path: {}",
+            out.content,
+        );
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+
+        // Live carrier: child-tagged Started then Completed, with the
+        // Started event preceding the fork's own provider events.
+        let mut subagent_events = Vec::new();
+        let mut first_child_event_is_started = None;
+        while let Ok(ev) = brx.try_recv() {
+            if ev.agent_id == fork_id && first_child_event_is_started.is_none() {
+                first_child_event_is_started = Some(matches!(
+                    ev.event,
+                    AgentEventKind::Subagent(SubagentLifecycle::Started { .. })
+                ));
+            }
+            if let AgentEventKind::Subagent(lifecycle) = ev.event {
+                assert_eq!(ev.agent_id, fork_id, "lifecycle events are child-tagged");
+                assert_eq!(&*ev.agent_role, "fork/gpt-5.5");
+                subagent_events.push(lifecycle);
+            }
+        }
+        assert_eq!(
+            first_child_event_is_started,
+            Some(true),
+            "Started must precede the fork's own provider events",
+        );
+        assert_eq!(subagent_events.len(), 2, "exactly Started then Completed");
+        match &subagent_events[0] {
+            SubagentLifecycle::Started {
+                parent_id,
+                child_id,
+                descriptor,
+                ..
+            } => {
+                assert_eq!(*parent_id, parent);
+                assert_eq!(*child_id, fork_id);
+                assert_eq!(descriptor.kind, SubagentKind::Fork);
+                assert_eq!(descriptor.role, "fork");
+                assert_eq!(descriptor.model, "gpt-5.5");
+                assert!(descriptor.profile.is_none(), "forks have no profile");
+            }
+            other => panic!("expected Started, got {other:?}"),
+        }
+        match &subagent_events[1] {
+            SubagentLifecycle::Completed {
+                parent_id,
+                child_id,
+                started_at,
+                completed_at,
+                usage,
+                succeeded,
+                error,
+                stop,
+                ..
+            } => {
+                assert_eq!(*parent_id, parent);
+                assert_eq!(*child_id, fork_id);
+                assert!(*completed_at >= *started_at, "timestamps must be ordered");
+                assert!(*succeeded);
+                assert!(error.is_none());
+                assert!(stop.is_none());
+                assert_eq!(usage.input_tokens, 5, "per-fork usage must surface");
+                assert_eq!(usage.output_tokens, 2);
+            }
+            other => panic!("expected Completed, got {other:?}"),
+        }
+
+        // Audit carrier: the parent store got both Custom events (in
+        // addition to the existing ForkComplete completion reference).
+        let custom: Vec<(String, serde_json::Value)> = parent_store
+            .events()
+            .into_iter()
+            .filter_map(|e| match e {
+                SessionEvent::Custom {
+                    event_type, data, ..
+                } => Some((event_type, data)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(custom.len(), 2, "started + completed audit events");
+        assert_eq!(custom[0].0, SUBAGENT_STARTED_EVENT_TYPE);
+        assert_eq!(custom[0].1["descriptor"]["kind"], "fork");
+        assert_eq!(custom[1].0, SUBAGENT_COMPLETED_EVENT_TYPE);
+        assert_eq!(custom[1].1["succeeded"], true);
+        assert!(
+            parent_store
+                .events()
+                .iter()
+                .any(|e| matches!(e, SessionEvent::ForkComplete { .. })),
+            "the ForkComplete completion reference is still appended",
+        );
+
+        // The result channel carries the same per-fork usage.
+        let result = rx.try_recv().expect("result on the channel");
+        assert_eq!(result.agent_id, fork_id);
+        assert_eq!(result.usage.input_tokens, 5);
+        assert_eq!(result.usage.output_tokens, 2);
     }
 }

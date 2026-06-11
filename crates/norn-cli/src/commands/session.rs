@@ -19,10 +19,7 @@ use std::path::Path;
 use crate::cli::ExitCode;
 use crate::cli::{Cli, SessionCmd, SessionListFormat};
 use crate::config::session_data_dir;
-use crate::session::{
-    self, SessionIndexEntry, SessionPersistError, remove_index_entry, resolve_session,
-    session_file_path,
-};
+use crate::session::{SessionIndexEntry, SessionManager, SessionPersistError};
 
 use super::session_export;
 
@@ -56,7 +53,7 @@ fn run_list(
     limit: Option<usize>,
     format: Option<SessionListFormat>,
 ) -> ExitCode {
-    let entries = match session::read_index(data_dir) {
+    let entries = match SessionManager::new(data_dir).list() {
         Ok(rows) => rows,
         Err(err) => return report_persist_error(&err),
     };
@@ -176,7 +173,7 @@ fn print_json_array(entries: &[SessionIndexEntry]) -> ExitCode {
 // ---------------------------------------------------------------------------
 
 fn run_show(data_dir: &Path, input: &str) -> ExitCode {
-    let entry = match resolve_session(data_dir, input) {
+    let entry = match SessionManager::new(data_dir).resolve(input) {
         Ok(entry) => entry,
         Err(err) => return report_persist_error(&err),
     };
@@ -208,7 +205,7 @@ fn run_show(data_dir: &Path, input: &str) -> ExitCode {
 // ---------------------------------------------------------------------------
 
 fn run_resume(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -> ExitCode {
-    let resolved = match resolve_session(data_dir, input) {
+    let resolved = match SessionManager::new(data_dir).resolve(input) {
         Ok(entry) => entry,
         Err(err) => return report_persist_error(&err),
     };
@@ -223,7 +220,7 @@ fn run_resume(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>)
 // ---------------------------------------------------------------------------
 
 fn run_fork(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -> ExitCode {
-    let resolved = match resolve_session(data_dir, input) {
+    let resolved = match SessionManager::new(data_dir).resolve(input) {
         Ok(entry) => entry,
         Err(err) => return report_persist_error(&err),
     };
@@ -238,25 +235,13 @@ fn run_fork(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -
 // ---------------------------------------------------------------------------
 
 fn run_remove(data_dir: &Path, input: &str) -> ExitCode {
-    let entry = match resolve_session(data_dir, input) {
-        Ok(entry) => entry,
-        Err(err) => return report_persist_error(&err),
-    };
-    let file_path = session_file_path(data_dir, &entry.id);
-    if file_path.exists()
-        && let Err(err) = std::fs::remove_file(&file_path)
-    {
-        eprintln!(
-            "norn: failed to delete session file {}: {err}",
-            file_path.display()
-        );
-        return ExitCode::AgentError;
+    match SessionManager::new(data_dir).delete(input) {
+        Ok(entry) => {
+            eprintln!("Removed session {}.", entry.id);
+            ExitCode::Success
+        }
+        Err(err) => report_persist_error(&err),
     }
-    if let Err(err) = remove_index_entry(data_dir, &entry.id) {
-        return report_persist_error(&err);
-    }
-    eprintln!("Removed session {}.", entry.id);
-    ExitCode::Success
 }
 
 // ---------------------------------------------------------------------------
@@ -289,13 +274,26 @@ fn report_persist_error(err: &SessionPersistError) -> ExitCode {
 mod tests {
     use super::*;
     use crate::cli::SessionExportFormat;
-    use crate::session::{SessionStatus, append_events, create_session, write_index_atomic};
+    use crate::session::{
+        CreateSessionOptions, SessionStatus, append_events, session_file_path, write_index_atomic,
+    };
     use chrono::Utc;
     use clap::Parser;
+    use norn::session::DurabilityPolicy;
     use norn::session::events::{EventBase, SessionEvent};
 
     fn fresh(data_dir: &Path, model: &str, wd: &str) -> SessionIndexEntry {
-        create_session(data_dir, model.to_owned(), wd.to_owned(), None).unwrap()
+        SessionManager::new(data_dir)
+            .create(
+                CreateSessionOptions {
+                    model: model.to_owned(),
+                    working_dir: wd.to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .unwrap()
+            .entry
     }
 
     #[test]
@@ -407,7 +405,9 @@ mod tests {
     fn remove_handles_missing_file_gracefully() {
         let tmp = tempfile::tempdir().unwrap();
         let entry = fresh(tmp.path(), "gpt", "/work");
-        // No append → file never created.
+        // Delete the session file out from under the index entry — the
+        // remove must still succeed and clean up the entry.
+        std::fs::remove_file(session_file_path(tmp.path(), &entry.id)).unwrap();
         let code = run_remove(tmp.path(), &entry.id);
         assert_eq!(code, ExitCode::Success);
     }

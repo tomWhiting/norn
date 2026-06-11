@@ -14,7 +14,7 @@
 use std::future::Future;
 use std::time::Duration;
 
-use crate::error::{NornError, ProviderError};
+use crate::error::{ErrorClass, NornError, ProviderError, TransientKind};
 use crate::r#loop::assembly::AssembledResponse;
 
 /// Default maximum retry attempts (excluding the original call).
@@ -104,11 +104,11 @@ impl Default for RetryPolicy {
 impl RetryPolicy {
     /// Determine whether an error matches the configured retryable set.
     ///
-    /// `AuthenticationFailed`, `ResponseParseError`,
-    /// `UnsupportedFeature`, and `Truncated` are never retryable
-    /// regardless of the configured set: those represent client-side
-    /// faults or deterministic stops that further attempts cannot
-    /// resolve.
+    /// Derived from the public [`ProviderError::class`] taxonomy: errors
+    /// whose class is [`ErrorClass::Auth`] or [`ErrorClass::Terminal`]
+    /// (authentication failures, parse errors, unsupported features,
+    /// exhausted quota, oversized context, invalid requests) are never
+    /// retryable regardless of the configured set.
     #[must_use]
     pub fn classifies_as_retryable(&self, err: &ProviderError) -> bool {
         let category = classify_provider_error(err);
@@ -144,42 +144,21 @@ impl RetryPolicy {
     }
 }
 
+/// Project the public [`ProviderError::class`] taxonomy onto the policy's
+/// matchable [`RetryableError`] categories. `None` means "never retryable"
+/// — [`ErrorClass::Auth`] and [`ErrorClass::Terminal`] errors cannot be
+/// opted into retry by any policy. The taxonomy is the single source of
+/// truth: this function carries no classification logic of its own.
 fn classify_provider_error(err: &ProviderError) -> Option<RetryableError> {
-    match err {
-        ProviderError::ConnectionFailed { reason } => {
-            if reason.to_lowercase().contains("timed out") {
-                Some(RetryableError::NetworkTimeout)
-            } else {
-                Some(RetryableError::ConnectionReset)
-            }
-        }
-        ProviderError::StreamInterrupted { .. } => Some(RetryableError::ConnectionReset),
-        ProviderError::StreamError { reason } => {
-            if reason.starts_with("HTTP 5") {
-                Some(RetryableError::ServerError {
-                    status: parse_status_from_reason(reason),
-                })
-            } else if reason.to_lowercase().contains("timed out") {
-                Some(RetryableError::NetworkTimeout)
-            } else {
-                None
-            }
-        }
-        ProviderError::RateLimited { .. } => Some(RetryableError::RateLimited),
-        ProviderError::AuthenticationFailed { .. }
-        | ProviderError::ResponseParseError { .. }
-        | ProviderError::UnsupportedFeature { .. }
-        | ProviderError::ContextWindowExceeded
-        | ProviderError::QuotaExceeded
-        | ProviderError::InvalidRequest { .. }
-        | ProviderError::Truncated { .. } => None,
+    match err.class() {
+        ErrorClass::Retryable { kind } => Some(match kind {
+            TransientKind::Timeout => RetryableError::NetworkTimeout,
+            TransientKind::ConnectionReset => RetryableError::ConnectionReset,
+            TransientKind::ServerError { status } => RetryableError::ServerError { status },
+        }),
+        ErrorClass::RateLimited { .. } => Some(RetryableError::RateLimited),
+        ErrorClass::Auth | ErrorClass::Terminal => None,
     }
-}
-
-fn parse_status_from_reason(reason: &str) -> u16 {
-    let trimmed = reason.trim_start_matches("HTTP ");
-    let digits: String = trimmed.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse::<u16>().unwrap_or(0)
 }
 
 /// Execute `call` and retry it on transient `ProviderError` classifications
@@ -318,24 +297,67 @@ mod tests {
         assert!(policy.classifies_as_retryable(&err));
     }
 
-    /// Regression test (fix campaign Track V, finding 2): deterministic
-    /// stops — truncation at the token limit or a content-filter cut —
-    /// were previously typed as `StreamInterrupted` and therefore
-    /// classified retryable, so a consumer using the classifier retried
-    /// a deterministic stop forever. The dedicated `Truncated` variant
-    /// must never classify as retryable.
+    /// Single-source-of-truth invariant: the loop's policy classifier is a
+    /// pure projection of the public [`ProviderError::class`] taxonomy.
+    /// Any error the taxonomy calls `Auth` or `Terminal` must be refused
+    /// by *every* policy — including one that opts into all retryable
+    /// categories — and any error the taxonomy calls `Retryable` must be
+    /// accepted by the maximally permissive policy.
+    ///
+    /// (Replaces `truncated_never_retries`: deterministic stops no longer
+    /// exist as a `ProviderError` at all — truncation is a typed
+    /// `AgentStepResult::Truncated` stop outcome, so it can never reach the
+    /// retry classifier. The runner's truncation tests pin that behaviour.)
     #[test]
-    fn truncated_never_retries() {
-        let policy = RetryPolicy::default();
-        for stop_reason in ["max_tokens", "content_filter"] {
-            let err = ProviderError::Truncated {
-                stop_reason: stop_reason.to_string(),
-                reason: "model output truncated".to_string(),
-            };
-            assert!(
-                !policy.classifies_as_retryable(&err),
-                "deterministic stop {stop_reason} must not be retryable"
+    fn policy_classification_is_a_projection_of_the_public_taxonomy() {
+        use crate::error::ErrorClass;
+        let permissive = maximally_permissive_policy();
+        let cases = vec![
+            ProviderError::ConnectionFailed {
+                reason: "request timed out".to_string(),
+            },
+            ProviderError::ConnectionFailed {
+                reason: "connection refused".to_string(),
+            },
+            ProviderError::StreamInterrupted {
+                reason: "reset".to_string(),
+            },
+            ProviderError::StreamError {
+                reason: "HTTP 502: bad gateway".to_string(),
+            },
+            ProviderError::StreamError {
+                reason: "protocol violation".to_string(),
+            },
+            ProviderError::RateLimited { retry_after: None },
+            ProviderError::AuthenticationFailed {
+                reason: "401".to_string(),
+            },
+            ProviderError::ResponseParseError {
+                reason: "bad json".to_string(),
+            },
+            ProviderError::UnsupportedFeature {
+                feature: "x".to_string(),
+            },
+            ProviderError::ContextWindowExceeded,
+            ProviderError::QuotaExceeded,
+            ProviderError::InvalidRequest {
+                message: "bad prompt".to_string(),
+            },
+        ];
+        for err in cases {
+            let expected = err.class().is_retryable();
+            assert_eq!(
+                permissive.classifies_as_retryable(&err),
+                expected,
+                "policy and taxonomy disagree for {err:?} (class {:?})",
+                err.class(),
             );
+            if matches!(err.class(), ErrorClass::Auth | ErrorClass::Terminal) {
+                assert!(
+                    !permissive.classifies_as_retryable(&err),
+                    "terminal-class error must be refused by every policy: {err:?}"
+                );
+            }
         }
     }
 

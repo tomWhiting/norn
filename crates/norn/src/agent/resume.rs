@@ -31,19 +31,27 @@ use std::collections::HashMap;
 use crate::session::action_log::{ActionLog, CompletionRecord, Outcome};
 use crate::session::events::SessionEvent;
 use crate::tool::envelope::split_envelope_fields;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 
 /// Prefix the dispatch path uses for hook-blocked tool outputs. Used to map
 /// a persisted `error` string back to [`Outcome::Blocked`] on rebuild.
 const BLOCKED_BY_HOOK_PREFIX: &str = "blocked by hook";
+
+/// Prefix the dispatch path uses for permission-blocked tool outputs —
+/// the other string the consent boundary records with
+/// `Outcome::Blocked` (see `loop/tool_dispatch/gating.rs::prepare_tool_call`).
+const BLOCKED_BY_PERMISSIONS_PREFIX: &str = "blocked by permissions";
 
 /// Replay `events` into `action_log`, restoring Level 1/2 entries and the
 /// mutation ledger for every persisted tool call of the resumed session.
 ///
 /// Arguments and the model-supplied `tool_use_description` are recovered
 /// from the matching [`SessionEvent::AssistantMessage`] tool call; the
-/// coarse outcome is derived from the persisted output using the same
-/// `error`-key convention the live dispatch path records with (an `error`
-/// string prefixed `blocked by hook` rebuilds as a blocked outcome).
+/// coarse outcome is derived from the persisted output's `error` key via
+/// the typed [`ToolErrorPayload`] machinery — covering the object form
+/// the dispatch path persists today, the legacy string form in event
+/// files written by earlier norn versions, and the consent-boundary
+/// block strings — see [`outcome_from_output`].
 ///
 /// [`AgentBuilder`](crate::agent::builder::AgentBuilder) calls this
 /// automatically when resuming from an
@@ -83,15 +91,7 @@ pub fn rebuild_action_log(action_log: &ActionLog, events: &[SessionEvent]) {
         let (args, description) = call_meta
             .remove(tool_call_id.as_str())
             .unwrap_or((serde_json::Value::Null, String::new()));
-        let outcome = match output.get("error").and_then(serde_json::Value::as_str) {
-            Some(message) if message.starts_with(BLOCKED_BY_HOOK_PREFIX) => Outcome::Blocked {
-                reason: message.to_owned(),
-            },
-            Some(message) => Outcome::Error {
-                message: message.to_owned(),
-            },
-            None => Outcome::Success,
-        };
+        let outcome = outcome_from_output(output);
         action_log.record_completion(CompletionRecord {
             tool_name,
             tool_call_id,
@@ -107,6 +107,63 @@ pub fn rebuild_action_log(action_log: &ActionLog, events: &[SessionEvent]) {
             // not bloated with old query results.
             level_1_only: tool_name == "action_log",
         });
+    }
+}
+
+/// Derive the coarse [`Outcome`] for a rebuilt entry from a persisted
+/// tool-result `output`, mirroring how the live dispatch path recorded it:
+///
+/// * no `error` key → [`Outcome::Success`] (matches
+///   `finish_executed_call` deriving Success from an absent typed
+///   payload);
+/// * an `error` whose re-typed message carries one of the
+///   consent-boundary prefixes (`blocked by hook` / `blocked by
+///   permissions`) → [`Outcome::Blocked`] when the payload's kind is a
+///   block kind (`blocked` / `permission_denied`), or unconditionally for
+///   the kind-less legacy string form — `finish_blocked_call` is the only
+///   writer of those messages. The bare block reason is recovered from
+///   `detail.reason` (both block writers populate it); the full message
+///   stands in only for the legacy string form, which carries no detail;
+/// * any other `error` value → [`Outcome::Error`], re-typed through
+///   [`ToolErrorPayload::from_error_value`] so both the object form the
+///   dispatch path persists today (`{"error": {kind, message, detail}}`)
+///   and the string form found in session files written by earlier norn
+///   versions rebuild identically (message-plus-guidance, exactly what
+///   `finish_executed_call` records live). Reading the old string form is
+///   data compatibility with event files already on disk — durable user
+///   data, not an API compat shim. An `error` value matching neither
+///   shape still rebuilds as `Error` (rendering the raw JSON), never as
+///   `Success`: the presence of the key is the failure signal.
+fn outcome_from_output(output: &serde_json::Value) -> Outcome {
+    let Some(error_value) = output.get("error") else {
+        return Outcome::Success;
+    };
+    let Some(payload) = ToolErrorPayload::from_error_value(error_value) else {
+        return Outcome::Error {
+            message: error_value.to_string(),
+        };
+    };
+    let has_block_prefix = payload.message.starts_with(BLOCKED_BY_HOOK_PREFIX)
+        || payload.message.starts_with(BLOCKED_BY_PERMISSIONS_PREFIX);
+    // Object form carries the writer's kind, so require a consent-boundary
+    // kind alongside the prefix — an unrelated tool error whose message
+    // merely begins with the prefix must stay `Error`. The legacy string
+    // form has no kind to consult; there the prefix is the only signal.
+    let is_block_kind = matches!(
+        payload.kind,
+        ToolErrorKind::Blocked | ToolErrorKind::PermissionDenied
+    );
+    if has_block_prefix && (is_block_kind || error_value.is_string()) {
+        let reason = payload
+            .detail
+            .get("reason")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or(&payload.message)
+            .to_owned();
+        return Outcome::Blocked { reason };
+    }
+    Outcome::Error {
+        message: payload.model_message(),
     }
 }
 
@@ -241,6 +298,245 @@ mod tests {
         assert_eq!(mutations[0].file_path, file);
         assert_eq!(mutations[0].diff_stats.lines_added, 2);
         assert_eq!(mutations[0].diff_stats.lines_removed, 1);
+        Ok(())
+    }
+
+    /// Blocker regression: the dispatch path persists typed OBJECT-form
+    /// errors (`{"error": {kind, message, detail}}`). Before the fix the
+    /// rebuild only recognised string-form errors, so every typed tool
+    /// failure rebuilt as `Outcome::Success` after session resume.
+    #[test]
+    fn rebuild_derives_error_from_object_form_payload() -> Result<(), String> {
+        let store = Arc::new(EventStore::new());
+        let events = vec![
+            assistant_with_call("tc-typed", "bash", serde_json::json!({"command": "false"})),
+            tool_result(
+                "tc-typed",
+                "bash",
+                serde_json::json!({
+                    "error": {"kind": "execution_failed", "message": "exit 1"},
+                }),
+            ),
+            assistant_with_call("tc-guided", "edit", serde_json::json!({"path": "/a.rs"})),
+            tool_result(
+                "tc-guided",
+                "edit",
+                serde_json::json!({
+                    "error": {
+                        "kind": "blocked",
+                        "message": "file has not been read",
+                        "detail": {"guidance": "read it first"},
+                    },
+                }),
+            ),
+        ];
+        for event in &events {
+            store
+                .append(event.clone())
+                .map_err(|e| format!("append: {e}"))?;
+        }
+
+        let log = ActionLog::new(Arc::clone(&store));
+        rebuild_action_log(&log, &store.events());
+
+        let typed = log.entry("tc-typed").ok_or("tc-typed entry missing")?;
+        match &typed.outcome {
+            Outcome::Error { message } => assert_eq!(message, "exit 1"),
+            other => return Err(format!("expected Outcome::Error, got {other:?}")),
+        }
+
+        // Guidance renders the same way the live dispatch path records it
+        // (`ToolErrorPayload::model_message`).
+        let guided = log.entry("tc-guided").ok_or("tc-guided entry missing")?;
+        match &guided.outcome {
+            Outcome::Error { message } => {
+                assert_eq!(message, "file has not been read Guidance: read it first");
+            }
+            other => return Err(format!("expected Outcome::Error, got {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// Live-path parity: consent-boundary blocks are persisted in the typed
+    /// object form (`{"error": {"kind": "blocked", "message": "blocked by
+    /// hook ...", "detail": {"reason": ...}}}`) and recorded live as
+    /// `Outcome::Blocked` with the bare reason — rebuild must restore
+    /// exactly that, recovering the reason from `detail.reason`.
+    #[test]
+    fn rebuild_maps_object_form_hook_block_to_blocked() -> Result<(), String> {
+        let store = Arc::new(EventStore::new());
+        store
+            .append(tool_result(
+                "tc-hook-obj",
+                "bash",
+                serde_json::json!({
+                    "error": {
+                        "kind": "blocked",
+                        "message": "blocked by hook (PreTool): bash blocked",
+                        "detail": {"hook": "pre_tool", "reason": "bash blocked"},
+                    },
+                }),
+            ))
+            .map_err(|e| format!("append: {e}"))?;
+
+        let log = ActionLog::new(Arc::clone(&store));
+        rebuild_action_log(&log, &store.events());
+        let entry = log.entry("tc-hook-obj").ok_or("tc-hook-obj missing")?;
+        match &entry.outcome {
+            Outcome::Blocked { reason } => assert_eq!(reason, "bash blocked"),
+            other => return Err(format!("expected Outcome::Blocked, got {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// Legacy string form (session files written before the typed payload
+    /// landed): permission blocks persisted as `{"error": "blocked by
+    /// permissions: ..."}` — rebuild must restore Blocked, not a generic
+    /// Error. The string form carries no `detail.reason`, so the full
+    /// message stands in (documented reconstruction limit).
+    #[test]
+    fn rebuild_maps_permission_block_string_to_blocked() -> Result<(), String> {
+        let store = Arc::new(EventStore::new());
+        store
+            .append(tool_result(
+                "tc-perm",
+                "bash",
+                serde_json::json!({
+                    "error": "blocked by permissions: denied by permissions.deny rule 'no-bash'",
+                }),
+            ))
+            .map_err(|e| format!("append: {e}"))?;
+
+        let log = ActionLog::new(Arc::clone(&store));
+        rebuild_action_log(&log, &store.events());
+        let entry = log.entry("tc-perm").ok_or("tc-perm entry missing")?;
+        assert!(
+            matches!(entry.outcome, Outcome::Blocked { .. }),
+            "permission-blocked call must rebuild as Blocked, got {:?}",
+            entry.outcome,
+        );
+        Ok(())
+    }
+
+    /// Live-path parity for the typed object form the dispatch gate
+    /// persists today: kind `permission_denied`, prefixed message, and the
+    /// bare reason in `detail.reason` — rebuild must restore Blocked with
+    /// exactly the bare reason `finish_blocked_call` records live.
+    #[test]
+    fn rebuild_maps_object_form_permission_block_to_blocked_with_bare_reason() -> Result<(), String>
+    {
+        let store = Arc::new(EventStore::new());
+        let reason = "denied by permissions.deny rule 'no-bash'";
+        store
+            .append(tool_result(
+                "tc-perm-obj",
+                "bash",
+                serde_json::json!({
+                    "error": {
+                        "kind": "permission_denied",
+                        "message": format!("blocked by permissions: {reason}"),
+                        "detail": {
+                            "rule": "no-bash",
+                            "decision": "deny",
+                            "reason": reason,
+                        },
+                    },
+                }),
+            ))
+            .map_err(|e| format!("append: {e}"))?;
+
+        let log = ActionLog::new(Arc::clone(&store));
+        rebuild_action_log(&log, &store.events());
+        let entry = log.entry("tc-perm-obj").ok_or("tc-perm-obj missing")?;
+        match &entry.outcome {
+            Outcome::Blocked { reason: got } => assert_eq!(got, reason),
+            other => return Err(format!("expected Outcome::Blocked, got {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// An object-form error whose MESSAGE merely begins with a consent
+    /// prefix but whose KIND is not a block kind is an ordinary tool
+    /// failure — rebuild must keep it `Error`, matching what the live path
+    /// recorded. Only the kind-less legacy string form may classify on the
+    /// prefix alone.
+    #[test]
+    fn rebuild_keeps_non_block_kind_with_block_prefix_as_error() -> Result<(), String> {
+        let store = Arc::new(EventStore::new());
+        store
+            .append(tool_result(
+                "tc-imposter",
+                "bash",
+                serde_json::json!({
+                    "error": {
+                        "kind": "execution_failed",
+                        "message": "blocked by permissions check timing out upstream",
+                        "detail": null,
+                    },
+                }),
+            ))
+            .map_err(|e| format!("append: {e}"))?;
+
+        let log = ActionLog::new(Arc::clone(&store));
+        rebuild_action_log(&log, &store.events());
+        let entry = log.entry("tc-imposter").ok_or("tc-imposter missing")?;
+        assert!(
+            matches!(entry.outcome, Outcome::Error { .. }),
+            "non-block kind must stay Error despite the prefix, got {:?}",
+            entry.outcome,
+        );
+        Ok(())
+    }
+
+    /// An `error` key whose value matches neither the typed object form nor
+    /// the string form still marks a failure — rebuilding it as Success
+    /// would be the silent Success-on-failure class this module just fixed.
+    #[test]
+    fn rebuild_never_maps_unrecognised_error_shape_to_success() -> Result<(), String> {
+        let store = Arc::new(EventStore::new());
+        store
+            .append(tool_result(
+                "tc-odd",
+                "bash",
+                serde_json::json!({"error": 42}),
+            ))
+            .map_err(|e| format!("append: {e}"))?;
+
+        let log = ActionLog::new(Arc::clone(&store));
+        rebuild_action_log(&log, &store.events());
+        let entry = log.entry("tc-odd").ok_or("tc-odd entry missing")?;
+        match &entry.outcome {
+            Outcome::Error { message } => {
+                assert!(message.contains("42"), "message renders the raw value");
+            }
+            other => return Err(format!("expected Outcome::Error, got {other:?}")),
+        }
+        Ok(())
+    }
+
+    /// Object-form failures must keep failed mutations out of the rebuilt
+    /// mutation ledger, exactly like the legacy string form.
+    #[test]
+    fn rebuild_skips_ledger_for_object_form_failed_mutations() -> Result<(), String> {
+        let store = Arc::new(EventStore::new());
+        store
+            .append(tool_result(
+                "tc-bad-typed",
+                "edit",
+                serde_json::json!({
+                    "path": "/nope.rs",
+                    "error": {"kind": "not_found", "message": "no match"},
+                }),
+            ))
+            .map_err(|e| format!("append: {e}"))?;
+
+        let log = ActionLog::new(Arc::clone(&store));
+        rebuild_action_log(&log, &store.events());
+        assert!(
+            log.mutation_entries().is_empty(),
+            "typed failure must not rebuild into the mutation ledger",
+        );
+        assert_eq!(log.entries().len(), 1, "the entry itself is still listed");
         Ok(())
     }
 

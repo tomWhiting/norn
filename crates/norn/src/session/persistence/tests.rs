@@ -6,7 +6,8 @@ use std::path::Path;
 
 use crate::provider::usage::Usage;
 use crate::session::events::{EventBase, EventId, EventUsage, SessionEvent, ToolCallEvent};
-use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};
+use crate::session::manager::{CreateSessionOptions, SessionManager};
+use crate::session::store::{DurabilityPolicy, JsonlSink, PersistenceSink};
 use chrono::Utc;
 
 use super::*;
@@ -108,8 +109,49 @@ fn assert_event_eq(a: &SessionEvent, b: &SessionEvent) {
     assert_eq!(ja, jb);
 }
 
+fn manager(dir: &Path) -> SessionManager {
+    SessionManager::new(dir)
+}
+
+fn options(model: &str, working_dir: &str, name: Option<&str>) -> CreateSessionOptions {
+    CreateSessionOptions {
+        model: model.to_owned(),
+        working_dir: working_dir.to_owned(),
+        name: name.map(str::to_owned),
+    }
+}
+
+/// Create a session through the manager and drop its store immediately,
+/// leaving the index entry (and the header-only session file) behind —
+/// the setup most batch-path tests want.
 fn fresh_session(dir: &Path) -> SessionIndexEntry {
-    create_session(dir, "gpt-x".to_owned(), "/work".to_owned(), None).unwrap()
+    manager(dir)
+        .create(options("gpt-x", "/work", None), DurabilityPolicy::Flush)
+        .unwrap()
+        .entry
+}
+
+/// Register an index entry WITHOUT touching the session file at all —
+/// for tests that assert the file's absence or that a lower layer
+/// creates it.
+fn index_only_entry(dir: &Path) -> SessionIndexEntry {
+    let now = Utc::now();
+    let entry = SessionIndexEntry {
+        id: uuid::Uuid::now_v7().to_string(),
+        name: None,
+        model: "gpt-x".to_owned(),
+        working_dir: "/work".to_owned(),
+        created_at: now,
+        updated_at: now,
+        event_count: 0,
+        status: SessionStatus::Active,
+        format_version: SESSION_FORMAT_VERSION,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_read_tokens: 0,
+    };
+    append_index_entry(dir, &entry).unwrap();
+    entry
 }
 
 // ----- R2: JSONL serialization -----
@@ -243,9 +285,12 @@ fn torn_final_line_is_skipped_and_resume_succeeds() {
     assert_eq!(read.events.len(), 3, "intact events must all load");
     assert_eq!(read.skipped_lines, 1, "the torn line is counted");
 
-    let (store, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
-    assert_eq!(store.len(), 3);
-    assert_eq!(replayed.len(), 3);
+    let resumed = manager(tmp.path())
+        .resume(&entry.id, DurabilityPolicy::Flush)
+        .unwrap();
+    assert_eq!(resumed.store.len(), 3);
+    assert_eq!(resumed.replay.replayed_events, 3);
+    assert_eq!(resumed.replay.skipped_lines, 1);
 }
 
 /// R4 regression: an event variant from a newer writer is skipped with a
@@ -429,7 +474,7 @@ fn disabled_append_leaves_filesystem_untouched() {
 fn append_creates_missing_directory() {
     let tmp = tempfile::tempdir().unwrap();
     let nested = tmp.path().join("nested").join("deeper");
-    let entry = create_session(&nested, "gpt-x".to_owned(), "/work".to_owned(), None).unwrap();
+    let entry = index_only_entry(&nested);
     let only = vec![user_msg("hi")];
     append_events(&nested, &entry.id, &only, false).unwrap();
     assert!(session_file_path(&nested, &entry.id).exists());
@@ -467,11 +512,13 @@ fn resume_reconstructs_event_store() {
     let events: Vec<_> = one_of_each().into_iter().take(5).collect();
     append_events(tmp.path(), &entry.id, &events, false).unwrap();
 
-    let (store, replayed, resolved) = resume_session(tmp.path(), &entry.id).unwrap();
-    assert_eq!(store.len(), 5);
-    assert_eq!(replayed.len(), 5);
-    assert_eq!(resolved.id, entry.id);
-    let store_events = store.events();
+    let resumed = manager(tmp.path())
+        .resume(&entry.id, DurabilityPolicy::Flush)
+        .unwrap();
+    assert_eq!(resumed.store.len(), 5);
+    assert_eq!(resumed.replay.replayed_events, 5);
+    assert_eq!(resumed.entry.id, entry.id);
+    let store_events = resumed.store.events();
     for (a, b) in events.iter().zip(store_events.iter()) {
         assert_event_eq(a, b);
     }
@@ -486,9 +533,11 @@ fn resume_empty_string_resolves_latest_updated() {
     // Touch `a`'s entry with an event to bump its updated_at past `b`.
     append_events(tmp.path(), &a.id, &[user_msg("late")], false).unwrap();
 
-    let (_, _, resolved) = resume_session(tmp.path(), "").unwrap();
+    let resumed = manager(tmp.path())
+        .resume("", DurabilityPolicy::Flush)
+        .unwrap();
     assert_eq!(
-        resolved.id, a.id,
+        resumed.entry.id, a.id,
         "expected `a` (most recently updated), not `b={}`",
         b.id
     );
@@ -500,15 +549,19 @@ fn resume_eight_char_unique_prefix_succeeds() {
     let entry = fresh_session(tmp.path());
     append_events(tmp.path(), &entry.id, &[user_msg("hi")], false).unwrap();
     let prefix = &entry.id[..8];
-    let (_, _, resolved) = resume_session(tmp.path(), prefix).unwrap();
-    assert_eq!(resolved.id, entry.id);
+    let resumed = manager(tmp.path())
+        .resume(prefix, DurabilityPolicy::Flush)
+        .unwrap();
+    assert_eq!(resumed.entry.id, entry.id);
 }
 
 #[test]
 fn resume_unknown_prefix_returns_not_found() {
     let tmp = tempfile::tempdir().unwrap();
     let _ = fresh_session(tmp.path());
-    let err = resume_session(tmp.path(), "ffffffff-no-match").unwrap_err();
+    let err = manager(tmp.path())
+        .resume("ffffffff-no-match", DurabilityPolicy::Flush)
+        .unwrap_err();
     assert!(matches!(err, SessionPersistError::NotFound { .. }));
 }
 
@@ -536,7 +589,9 @@ fn resume_ambiguous_prefix_returns_error() {
         });
     }
     write_index_atomic(tmp.path(), &entries).unwrap();
-    let err = resume_session(tmp.path(), shared_prefix).unwrap_err();
+    let err = manager(tmp.path())
+        .resume(shared_prefix, DurabilityPolicy::Flush)
+        .unwrap_err();
     match err {
         SessionPersistError::AmbiguousPrefix { matches, .. } => {
             assert_eq!(matches.len(), 2);
@@ -549,29 +604,35 @@ fn resume_ambiguous_prefix_returns_error() {
 fn resume_too_short_prefix_returns_not_found() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
-    let err = resume_session(tmp.path(), &entry.id[..7]).unwrap_err();
+    let err = manager(tmp.path())
+        .resume(&entry.id[..7], DurabilityPolicy::Flush)
+        .unwrap_err();
     assert!(matches!(err, SessionPersistError::NotFound { .. }));
 }
 
 #[test]
 fn resume_by_name_succeeds() {
     let tmp = tempfile::tempdir().unwrap();
-    let entry = create_session(
-        tmp.path(),
-        "gpt".to_owned(),
-        "/w".to_owned(),
-        Some("nightly".to_owned()),
-    )
-    .unwrap();
+    let entry = manager(tmp.path())
+        .create(
+            options("gpt", "/w", Some("nightly")),
+            DurabilityPolicy::Flush,
+        )
+        .unwrap()
+        .entry;
     append_events(tmp.path(), &entry.id, &[user_msg("hi")], false).unwrap();
-    let (_, _, resolved) = resume_session(tmp.path(), "nightly").unwrap();
-    assert_eq!(resolved.id, entry.id);
+    let resumed = manager(tmp.path())
+        .resume("nightly", DurabilityPolicy::Flush)
+        .unwrap();
+    assert_eq!(resumed.entry.id, entry.id);
 }
 
 #[test]
 fn resume_empty_index_returns_not_found() {
     let tmp = tempfile::tempdir().unwrap();
-    let err = resume_session(tmp.path(), "").unwrap_err();
+    let err = manager(tmp.path())
+        .resume("", DurabilityPolicy::Flush)
+        .unwrap_err();
     assert!(matches!(err, SessionPersistError::NotFound { .. }));
 }
 
@@ -584,11 +645,17 @@ fn fork_appends_fork_event_at_tail() {
     let events: Vec<_> = one_of_each().into_iter().take(5).collect();
     append_events(tmp.path(), &entry.id, &events, false).unwrap();
 
-    let (new_entry, _, all_events) =
-        fork_session(tmp.path(), &entry.id, "gpt".to_owned(), "/w".to_owned()).unwrap();
-    assert_eq!(all_events.len(), 6);
+    let fork = manager(tmp.path())
+        .fork(
+            &entry.id,
+            options("gpt", "/w", None),
+            DurabilityPolicy::Flush,
+        )
+        .unwrap();
+    assert_eq!(fork.replay.replayed_events, 6);
+    assert_eq!(fork.store.len(), 6);
 
-    let body = fs::read_to_string(session_file_path(tmp.path(), &new_entry.id)).unwrap();
+    let body = fs::read_to_string(session_file_path(tmp.path(), &fork.entry.id)).unwrap();
     let line_count = body.lines().filter(|l| !l.trim().is_empty()).count();
     assert_eq!(line_count, 7, "header line + six event lines");
 }
@@ -601,17 +668,22 @@ fn fork_event_source_id_matches_last_original() {
     append_events(tmp.path(), &entry.id, &events, false).unwrap();
     let last_id = events.last().unwrap().base().id.clone();
 
-    let (new_entry, _, all_events) =
-        fork_session(tmp.path(), &entry.id, "gpt".to_owned(), "/w".to_owned()).unwrap();
-    let fork = all_events.last().unwrap();
-    match fork {
+    let fork = manager(tmp.path())
+        .fork(
+            &entry.id,
+            options("gpt", "/w", None),
+            DurabilityPolicy::Flush,
+        )
+        .unwrap();
+    let all_events = fork.store.events();
+    match all_events.last().unwrap() {
         SessionEvent::Fork {
             source_event_id,
             forked_session_id,
             ..
         } => {
             assert_eq!(source_event_id, &last_id);
-            assert_eq!(forked_session_id, &new_entry.id);
+            assert_eq!(forked_session_id, &fork.entry.id);
         }
         other => panic!("expected Fork tail, got {other:?}"),
     }
@@ -624,7 +696,13 @@ fn fork_does_not_modify_source_file() {
     append_events(tmp.path(), &entry.id, &one_of_each(), false).unwrap();
     let source_path = session_file_path(tmp.path(), &entry.id);
     let before = fs::read(&source_path).unwrap();
-    let _ = fork_session(tmp.path(), &entry.id, "gpt".to_owned(), "/w".to_owned()).unwrap();
+    let _ = manager(tmp.path())
+        .fork(
+            &entry.id,
+            options("gpt", "/w", None),
+            DurabilityPolicy::Flush,
+        )
+        .unwrap();
     let after = fs::read(&source_path).unwrap();
     assert_eq!(before, after);
 }
@@ -634,22 +712,33 @@ fn fork_index_contains_both_entries() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
     append_events(tmp.path(), &entry.id, &one_of_each(), false).unwrap();
-    let (new_entry, _, _) =
-        fork_session(tmp.path(), &entry.id, "gpt".to_owned(), "/w".to_owned()).unwrap();
+    let fork = manager(tmp.path())
+        .fork(
+            &entry.id,
+            options("gpt", "/w", None),
+            DurabilityPolicy::Flush,
+        )
+        .unwrap();
     let ids: Vec<String> = read_index(tmp.path())
         .unwrap()
         .into_iter()
         .map(|e| e.id)
         .collect();
     assert!(ids.contains(&entry.id));
-    assert!(ids.contains(&new_entry.id));
+    assert!(ids.contains(&fork.entry.id));
 }
 
 #[test]
 fn fork_empty_source_returns_empty_source() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
-    let err = fork_session(tmp.path(), &entry.id, "gpt".to_owned(), "/w".to_owned()).unwrap_err();
+    let err = manager(tmp.path())
+        .fork(
+            &entry.id,
+            options("gpt", "/w", None),
+            DurabilityPolicy::Flush,
+        )
+        .unwrap_err();
     assert!(matches!(err, SessionPersistError::EmptySource { .. }));
 }
 
@@ -660,11 +749,12 @@ fn fork_no_argument_resolves_latest() {
     std::thread::sleep(std::time::Duration::from_millis(5));
     let newer = fresh_session(tmp.path());
     append_events(tmp.path(), &newer.id, &one_of_each(), false).unwrap();
-    let (new_entry, _, all_events) =
-        fork_session(tmp.path(), "", "gpt".to_owned(), "/w".to_owned()).unwrap();
-    assert_eq!(all_events.len(), one_of_each().len() + 1);
+    let fork = manager(tmp.path())
+        .fork("", options("gpt", "/w", None), DurabilityPolicy::Flush)
+        .unwrap();
+    assert_eq!(fork.replay.replayed_events, one_of_each().len() + 1);
     // The forked session is a new entry -- not the newer source.
-    assert_ne!(new_entry.id, newer.id);
+    assert_ne!(fork.entry.id, newer.id);
 }
 
 // ----- update_session_index: index-only reconcile (double-write fix) -----
@@ -692,7 +782,7 @@ fn update_session_index_adds_count_and_tokens() {
 #[test]
 fn update_session_index_does_not_write_session_jsonl() {
     let tmp = tempfile::tempdir().unwrap();
-    let entry = fresh_session(tmp.path());
+    let entry = index_only_entry(tmp.path());
     update_session_index(tmp.path(), &entry.id, 4, &Usage::default()).unwrap();
     // The index-only path must never create or touch the session JSONL.
     assert!(!session_file_path(tmp.path(), &entry.id).exists());
@@ -755,34 +845,30 @@ fn sum_usage_from_events_empty_is_zero() {
 }
 
 /// End-to-end regression for the double-write bug and the
-/// agent-maintained index: a write-through `JsonlSink` attached via
-/// `attach_sink` must leave the session JSONL at a 1:1 line-to-event
+/// agent-maintained index: the write-through `JsonlSink` every manager
+/// open installs must leave the session JSONL at a 1:1 line-to-event
 /// ratio, bring the index entry in step at the turn-boundary
 /// `checkpoint` **without any manual `update_session_index` call**, and
 /// remain resumable.
 #[test]
 fn registered_sink_maintains_index_and_stays_resumable() {
     let tmp = tempfile::tempdir().unwrap();
-    let entry = fresh_session(tmp.path());
+    let opened = manager(tmp.path())
+        .create(options("gpt-x", "/work", None), DurabilityPolicy::Flush)
+        .unwrap();
+    let entry_id = opened.entry.id.clone();
     let created_updated_at = read_index(tmp.path()).unwrap()[0].updated_at;
 
     // Simulate a turn: write events through the sink (write-through),
     // then checkpoint at the turn boundary.
-    let store = attach_sink(
-        EventStore::new(),
-        tmp.path(),
-        &entry.id,
-        DurabilityPolicy::Flush,
-    )
-    .unwrap();
     let turn = vec![user_msg("hello"), assistant_with_usage(12, 8, 4)];
     for event in &turn {
-        store.append(event.clone()).unwrap();
+        opened.store.append(event.clone()).unwrap();
     }
-    store.checkpoint().unwrap();
+    opened.store.checkpoint().unwrap();
 
     // JSONL holds the header plus exactly the turn's events.
-    let body = fs::read_to_string(session_file_path(tmp.path(), &entry.id)).unwrap();
+    let body = fs::read_to_string(session_file_path(tmp.path(), &entry_id)).unwrap();
     let line_count = body.lines().filter(|l| !l.trim().is_empty()).count();
     assert_eq!(
         line_count,
@@ -802,26 +888,23 @@ fn registered_sink_maintains_index_and_stays_resumable() {
     );
 
     // The session resumes cleanly — the duplicate-ID guard never fires.
-    let (resumed, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
-    assert_eq!(resumed.len(), 2);
-    assert_eq!(replayed.len(), 2);
+    let resumed = manager(tmp.path())
+        .resume(&entry_id, DurabilityPolicy::Flush)
+        .unwrap();
+    assert_eq!(resumed.store.len(), 2);
+    assert_eq!(resumed.replay.replayed_events, 2);
 }
 
-/// `attach_sink` must surface open failures instead of silently
-/// degrading to memory-only persistence.
+/// Opening a session must surface sink-open failures instead of
+/// silently degrading to memory-only persistence.
 #[test]
-fn attach_sink_open_failure_returns_error() {
+fn sink_open_failure_returns_error() {
     let tmp = tempfile::tempdir().unwrap();
-    let entry = fresh_session(tmp.path());
+    let entry = index_only_entry(tmp.path());
     // Occupy the session file path with a directory so the open fails.
     fs::create_dir_all(session_file_path(tmp.path(), &entry.id)).unwrap();
 
-    let result = attach_sink(
-        EventStore::new(),
-        tmp.path(),
-        &entry.id,
-        DurabilityPolicy::Flush,
-    );
+    let result = manager(tmp.path()).resume(&entry.id, DurabilityPolicy::Flush);
     assert!(result.is_err(), "open failure must not be swallowed");
 }
 
@@ -892,7 +975,7 @@ fn torn_final_line_is_healed_on_batch_reopen() {
     }
 }
 
-/// Same crash scenario through the live-sink path: resume + `attach_sink`
+/// Same crash scenario through the live-sink path: a manager resume
 /// after a torn final line must heal the tear before the first
 /// write-through append.
 #[test]
@@ -907,11 +990,16 @@ fn torn_final_line_is_healed_on_sink_reopen() {
         .unwrap();
     drop(file);
 
-    let (store, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
-    assert_eq!(replayed.len(), 1, "torn line skipped on resume");
-    let store = attach_sink(store, tmp.path(), &entry.id, DurabilityPolicy::Flush).unwrap();
-    store.append(user_msg("after-crash")).unwrap();
-    drop(store);
+    let resumed = manager(tmp.path())
+        .resume(&entry.id, DurabilityPolicy::Flush)
+        .unwrap();
+    assert_eq!(
+        resumed.replay.replayed_events, 1,
+        "torn line skipped on resume"
+    );
+    assert_eq!(resumed.replay.skipped_lines, 1);
+    resumed.store.append(user_msg("after-crash")).unwrap();
+    drop(resumed);
 
     let read = read_session_events(tmp.path(), &entry.id).unwrap();
     assert_eq!(
@@ -963,14 +1051,25 @@ fn resume_and_fork_tolerate_duplicate_event_lines() {
     append_events(tmp.path(), &entry.id, std::slice::from_ref(&a), false).unwrap();
     append_events(tmp.path(), &entry.id, &[user_msg("b")], false).unwrap();
 
-    let (store, replayed, _) = resume_session(tmp.path(), &entry.id).unwrap();
-    assert_eq!(store.len(), 2);
-    assert_eq!(replayed.len(), 2);
+    let resumed = manager(tmp.path())
+        .resume(&entry.id, DurabilityPolicy::Flush)
+        .unwrap();
+    assert_eq!(resumed.store.len(), 2);
+    assert_eq!(resumed.replay.replayed_events, 2);
+    drop(resumed);
 
-    let (_, fork_store, all_events) =
-        fork_session(tmp.path(), &entry.id, "gpt".to_owned(), "/w".to_owned()).unwrap();
-    assert_eq!(all_events.len(), 3, "2 deduplicated events + Fork tail");
-    assert_eq!(fork_store.len(), 3);
+    let fork = manager(tmp.path())
+        .fork(
+            &entry.id,
+            options("gpt", "/w", None),
+            DurabilityPolicy::Flush,
+        )
+        .unwrap();
+    assert_eq!(
+        fork.replay.replayed_events, 3,
+        "2 deduplicated events + Fork tail"
+    );
+    assert_eq!(fork.store.len(), 3);
 }
 
 // ----- Index failure after a durable event write (retry-safety) -----
@@ -1003,9 +1102,11 @@ fn append_events_index_failure_is_durable_and_nonfatal() {
 
     // The index is stale (still 1) until resume repairs it.
     assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 1);
-    let (_, _, resolved) = resume_session(tmp.path(), &entry.id).unwrap();
+    let resumed = manager(tmp.path())
+        .resume(&entry.id, DurabilityPolicy::Flush)
+        .unwrap();
     assert_eq!(
-        resolved.event_count, 2,
+        resumed.entry.event_count, 2,
         "resume must repair the stale entry"
     );
     assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 2);
@@ -1019,14 +1120,13 @@ fn append_events_index_failure_is_durable_and_nonfatal() {
 fn sink_index_failure_retains_delta_and_recovers_on_checkpoint() {
     use std::os::unix::fs::PermissionsExt as _;
     let tmp = tempfile::tempdir().unwrap();
-    let entry = fresh_session(tmp.path());
-    let store = attach_sink(
-        EventStore::new(),
-        tmp.path(),
-        &entry.id,
-        DurabilityPolicy::FsyncPerEvent,
-    )
-    .unwrap();
+    let store = manager(tmp.path())
+        .create(
+            options("gpt-x", "/work", None),
+            DurabilityPolicy::FsyncPerEvent,
+        )
+        .unwrap()
+        .store;
 
     store.append(user_msg("one")).unwrap();
     assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 1);
@@ -1056,14 +1156,10 @@ fn sink_index_failure_retains_delta_and_recovers_on_checkpoint() {
 #[test]
 fn flush_policy_defers_index_updates_to_checkpoint_and_drop() {
     let tmp = tempfile::tempdir().unwrap();
-    let entry = fresh_session(tmp.path());
-    let store = attach_sink(
-        EventStore::new(),
-        tmp.path(),
-        &entry.id,
-        DurabilityPolicy::Flush,
-    )
-    .unwrap();
+    let store = manager(tmp.path())
+        .create(options("gpt-x", "/work", None), DurabilityPolicy::Flush)
+        .unwrap()
+        .store;
 
     store.append(user_msg("one")).unwrap();
     store.append(assistant_with_usage(12, 8, 4)).unwrap();
@@ -1095,14 +1191,13 @@ fn flush_policy_defers_index_updates_to_checkpoint_and_drop() {
 #[test]
 fn fsync_every_n_flushes_index_at_durability_boundary() {
     let tmp = tempfile::tempdir().unwrap();
-    let entry = fresh_session(tmp.path());
-    let store = attach_sink(
-        EventStore::new(),
-        tmp.path(),
-        &entry.id,
-        DurabilityPolicy::FsyncEveryEvents(std::num::NonZeroU64::new(2).unwrap()),
-    )
-    .unwrap();
+    let store = manager(tmp.path())
+        .create(
+            options("gpt-x", "/work", None),
+            DurabilityPolicy::FsyncEveryEvents(std::num::NonZeroU64::new(2).unwrap()),
+        )
+        .unwrap()
+        .store;
 
     store.append(user_msg("one")).unwrap();
     assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 0);
@@ -1119,14 +1214,13 @@ fn fsync_every_n_flushes_index_at_durability_boundary() {
 #[test]
 fn fsync_per_event_keeps_index_current() {
     let tmp = tempfile::tempdir().unwrap();
-    let entry = fresh_session(tmp.path());
-    let store = attach_sink(
-        EventStore::new(),
-        tmp.path(),
-        &entry.id,
-        DurabilityPolicy::FsyncPerEvent,
-    )
-    .unwrap();
+    let store = manager(tmp.path())
+        .create(
+            options("gpt-x", "/work", None),
+            DurabilityPolicy::FsyncPerEvent,
+        )
+        .unwrap()
+        .store;
     store.append(user_msg("one")).unwrap();
     assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 1);
     store.append(user_msg("two")).unwrap();
@@ -1158,7 +1252,10 @@ fn resume_repairs_stale_index_entry() {
     })
     .unwrap();
 
-    let (_, _, resolved) = resume_session(tmp.path(), &entry.id).unwrap();
+    let resolved = manager(tmp.path())
+        .resume(&entry.id, DurabilityPolicy::Flush)
+        .unwrap()
+        .entry;
     assert_eq!(
         resolved.event_count, 3,
         "resolved entry carries repaired count"
@@ -1201,11 +1298,20 @@ fn concurrent_creates_and_updates_drop_no_index_entries() {
         .map(|_| {
             let dir = dir.clone();
             std::thread::spawn(move || {
+                let mgr = SessionManager::new(&dir);
                 (0..10)
                     .map(|_| {
-                        create_session(&dir, "gpt-x".to_owned(), "/w".to_owned(), None)
-                            .unwrap()
-                            .id
+                        mgr.create(
+                            CreateSessionOptions {
+                                model: "gpt-x".to_owned(),
+                                working_dir: "/w".to_owned(),
+                                name: None,
+                            },
+                            DurabilityPolicy::Flush,
+                        )
+                        .unwrap()
+                        .entry
+                        .id
                     })
                     .collect::<Vec<String>>()
             })
@@ -1237,23 +1343,15 @@ fn concurrent_creates_and_updates_drop_no_index_entries() {
 #[test]
 fn two_sink_backed_stores_same_dir_do_not_corrupt_index() {
     let tmp = tempfile::tempdir().unwrap();
-    let a = fresh_session(tmp.path());
-    let b = fresh_session(tmp.path());
-
-    let store_a = attach_sink(
-        EventStore::new(),
-        tmp.path(),
-        &a.id,
-        DurabilityPolicy::Flush,
-    )
-    .unwrap();
-    let store_b = attach_sink(
-        EventStore::new(),
-        tmp.path(),
-        &b.id,
-        DurabilityPolicy::Flush,
-    )
-    .unwrap();
+    let mgr = manager(tmp.path());
+    let opened_a = mgr
+        .create(options("gpt-x", "/work", None), DurabilityPolicy::Flush)
+        .unwrap();
+    let opened_b = mgr
+        .create(options("gpt-x", "/work", None), DurabilityPolicy::Flush)
+        .unwrap();
+    let (a_id, store_a) = (opened_a.entry.id, opened_a.store);
+    let (b_id, store_b) = (opened_b.entry.id, opened_b.store);
 
     let writer_a = std::thread::spawn(move || {
         for i in 0..25 {
@@ -1273,8 +1371,106 @@ fn two_sink_backed_stores_same_dir_do_not_corrupt_index() {
     for entry in &index {
         assert_eq!(entry.event_count, 25, "entry {} miscounted", entry.id);
     }
-    let (resumed_a, _, _) = resume_session(tmp.path(), &a.id).unwrap();
-    let (resumed_b, _, _) = resume_session(tmp.path(), &b.id).unwrap();
-    assert_eq!(resumed_a.len(), 25);
-    assert_eq!(resumed_b.len(), 25);
+    let resumed_a = mgr.resume(&a_id, DurabilityPolicy::Flush).unwrap();
+    let resumed_b = mgr.resume(&b_id, DurabilityPolicy::Flush).unwrap();
+    assert_eq!(resumed_a.store.len(), 25);
+    assert_eq!(resumed_b.store.len(), 25);
+}
+
+// ----- Reserved session IDs (persistence-owned file names) -----
+
+/// Blocker regression: ids map to `{id}.jsonl`, so the id `"index"`
+/// collides with the session index itself. Every persistence boundary a
+/// caller-supplied id can reach must reject the reserved name family —
+/// not just the manager's validation.
+#[test]
+fn reserved_ids_rejected_at_every_persistence_boundary() {
+    let tmp = tempfile::tempdir().unwrap();
+    // A healthy index with one real session, so corruption would show.
+    let real = fresh_session(tmp.path());
+    let index_before = fs::read_to_string(index_file_path(tmp.path())).unwrap();
+
+    let now = Utc::now();
+    let smuggled = SessionIndexEntry {
+        id: "index".to_owned(),
+        name: None,
+        model: "gpt-x".to_owned(),
+        working_dir: "/work".to_owned(),
+        created_at: now,
+        updated_at: now,
+        event_count: 0,
+        status: SessionStatus::Active,
+        format_version: SESSION_FORMAT_VERSION,
+        total_input_tokens: 0,
+        total_output_tokens: 0,
+        total_cache_read_tokens: 0,
+    };
+
+    // Index insertion: a reserved id must never enter the index.
+    let err = append_index_entry(tmp.path(), &smuggled).unwrap_err();
+    assert!(
+        matches!(err, SessionPersistError::InvalidSessionId { .. }),
+        "append_index_entry must reject reserved ids, got {err:?}",
+    );
+    let err = insert_index_entry_if_absent(tmp.path(), &smuggled).unwrap_err();
+    assert!(
+        matches!(err, SessionPersistError::InvalidSessionId { .. }),
+        "insert_index_entry_if_absent must reject reserved ids, got {err:?}",
+    );
+
+    // Event append: must never write session events into index.jsonl.
+    let err = append_events(tmp.path(), "index", &[user_msg("evil")], false).unwrap_err();
+    assert!(
+        matches!(err, SessionPersistError::InvalidSessionId { .. }),
+        "append_events must reject reserved ids, got {err:?}",
+    );
+
+    // Event read: must never parse index.jsonl as a session file.
+    let err = read_session_events(tmp.path(), "index").unwrap_err();
+    assert!(
+        matches!(err, SessionPersistError::InvalidSessionId { .. }),
+        "read_session_events must reject reserved ids, got {err:?}",
+    );
+
+    // Sink open: must never attach an event sink to index.jsonl.
+    match JsonlSink::open_registered(tmp.path(), "index", DurabilityPolicy::Flush) {
+        Err(SessionPersistError::InvalidSessionId { .. }) => {}
+        Err(other) => panic!("JsonlSink::open_registered wrong error: {other:?}"),
+        Ok(_) => panic!("JsonlSink::open_registered must reject reserved ids"),
+    }
+
+    // Nothing above may have altered the index.
+    let index_after = fs::read_to_string(index_file_path(tmp.path())).unwrap();
+    assert_eq!(index_before, index_after, "index bytes untouched");
+    assert_eq!(read_index(tmp.path()).unwrap()[0].id, real.id);
+}
+
+/// The reservation rule is a name *family*, not an enumeration: a stem
+/// reserves itself plus every `.`-extended sibling, so any future
+/// persistence-owned file named `index.<suffix>` is excluded
+/// automatically.
+#[test]
+fn reserved_id_rule_covers_stem_family_only() {
+    for reserved in [
+        "index",
+        "index.jsonl",
+        "index.lock",
+        "index.jsonl.tmp.deadbeef",
+        "index.anything-future",
+        // Case-insensitive: the default macOS / Windows filesystems are
+        // case-insensitive, so "INDEX.jsonl" IS "index.jsonl" there.
+        "INDEX",
+        "Index.Lock",
+    ] {
+        assert!(
+            io::is_reserved_session_id(reserved),
+            "{reserved:?} must be reserved",
+        );
+    }
+    for free in ["indexer", "myindex", "ind", "index-2", "index_2"] {
+        assert!(
+            !io::is_reserved_session_id(free),
+            "{free:?} must stay claimable",
+        );
+    }
 }

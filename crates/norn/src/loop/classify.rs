@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::error::{NornError, ProviderError, SessionError};
 use crate::integration::hooks::HookRegistry;
 use crate::r#loop::assembly::{AssembledResponse, assemble_response};
+use crate::r#loop::config::TruncationKind;
 use crate::r#loop::helpers::append_and_notify;
 use crate::r#loop::schema::validate_against_schema;
 use crate::provider::agent_event::AgentEventSender;
@@ -15,49 +16,27 @@ use crate::provider::traits::Provider;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
 
-/// Why a response was cut off before the model finished its turn.
-///
-/// Only the two abnormal [`StopReason`] variants are representable here, so
-/// a [`ResponseClass::Truncated`] can never carry a normal stop.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum TruncationKind {
-    /// The model hit its maximum output-token limit mid-response.
-    MaxTokens,
-    /// The provider's content filter cut the response off.
-    ContentFilter,
-}
-
-impl TruncationKind {
-    /// Stable string form used in session events and error messages.
-    pub(super) const fn as_str(self) -> &'static str {
-        match self {
-            Self::MaxTokens => "max_tokens",
-            Self::ContentFilter => "content_filter",
-        }
-    }
-}
-
-/// Persist a `loop.truncated` Custom event and build the typed error the
-/// runner returns for a truncated no-schema response (REVIEW item 5).
+/// Persist the `loop.truncated` Custom event marking a truncated no-schema
+/// response (REVIEW item 5).
 ///
 /// The partial text, per-call usage, and stop reason are already persisted
 /// on the preceding `AssistantMessage` event; the Custom event marks the
-/// abort for observers and the returned [`NornError`] makes the truncation
-/// impossible to mistake for a successful completion. The error is
-/// [`ProviderError::Truncated`], which never classifies as retryable —
-/// truncation and content-filter stops are deterministic, so retrying
-/// the identical request reproduces the same stop.
+/// abort for observers. The runner then returns
+/// [`AgentStepResult::Truncated`](crate::r#loop::config::AgentStepResult),
+/// which carries the partial text and accumulated usage — a truncated run
+/// is a stopped run with partial output, never a transport error and never
+/// retryable (the stop is deterministic).
 ///
 /// # Errors
 ///
 /// Returns [`SessionError`] if the Custom event cannot be appended.
-pub(super) async fn truncation_failure(
+pub(super) async fn record_truncation(
     store: &EventStore,
     hooks: Option<&HookRegistry>,
     kind: TruncationKind,
     partial_text: &str,
     iterations: u32,
-) -> Result<NornError, SessionError> {
+) -> Result<(), SessionError> {
     append_and_notify(
         store,
         SessionEvent::Custom {
@@ -71,14 +50,8 @@ pub(super) async fn truncation_failure(
         },
         hooks,
     )
-    .await?;
-    Ok(NornError::Provider(ProviderError::Truncated {
-        stop_reason: kind.as_str().to_string(),
-        reason: "model output truncated; the response is an incomplete \
-                 fragment — partial text and usage are persisted in the \
-                 session event store"
-            .to_string(),
-    }))
+    .await
+    .map(|_event_id| ())
 }
 
 /// Internal classification of a provider response.
@@ -225,4 +198,82 @@ pub(super) async fn call_provider(
             reason: "provider stream ended without a Done event".to_string(),
         })
     })
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::provider::openai::sse::{map_sse_event, parse_sse_bytes};
+
+    /// Maps a raw `OpenAI` Responses SSE transcript through the real
+    /// provider parser into the loop's event stream, asserting no event
+    /// surfaces as an error.
+    fn provider_events(raw: &str) -> Vec<ProviderEvent> {
+        parse_sse_bytes(raw)
+            .iter()
+            .filter_map(map_sse_event)
+            .map(|r| r.expect("truncation frames must not map to errors"))
+            .collect()
+    }
+
+    #[test]
+    fn openai_incomplete_max_tokens_classifies_as_truncated() {
+        // BLOCKER regression seam test: an OpenAI-shaped stream cut by
+        // `response.incomplete` (max_output_tokens) must flow through
+        // assembly into `ResponseClass::Truncated { MaxTokens }` — the
+        // classification the runner turns into `AgentStepResult::Truncated`
+        // (see the `ResponseClass::Truncated` arm in `runner.rs`) — with
+        // the partial text and usage preserved on the assembled response.
+        let raw = "event: response.output_text.delta\n\
+                   data: {\"delta\":\"cut \"}\n\n\
+                   event: response.output_text.delta\n\
+                   data: {\"delta\":\"off\"}\n\n\
+                   event: response.incomplete\n\
+                   data: {\"response\":{\"id\":\"resp_t\",\"status\":\"incomplete\",\
+                   \"incomplete_details\":{\"reason\":\"max_output_tokens\"},\
+                   \"usage\":{\"input_tokens\":21,\"output_tokens\":34}}}\n\n";
+
+        let events = provider_events(raw);
+        let response = assemble_response(&events).expect("Done event must terminate assembly");
+        assert_eq!(response.text, "cut off", "partial text must be preserved");
+        assert_eq!(response.stop_reason, StopReason::MaxTokens);
+        assert_eq!(response.usage.input_tokens, 21);
+        assert_eq!(response.usage.output_tokens, 34);
+
+        match classify_response(&response, None, "norn_schema_output") {
+            ResponseClass::Truncated { kind } => {
+                assert_eq!(kind, TruncationKind::MaxTokens);
+            }
+            other => panic!(
+                "expected Truncated(MaxTokens), got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn openai_incomplete_content_filter_classifies_as_truncated() {
+        let raw = "event: response.output_text.delta\n\
+                   data: {\"delta\":\"partial\"}\n\n\
+                   event: response.incomplete\n\
+                   data: {\"response\":{\"id\":\"resp_cf\",\"status\":\"incomplete\",\
+                   \"incomplete_details\":{\"reason\":\"content_filter\"},\
+                   \"usage\":{\"input_tokens\":2,\"output_tokens\":3}}}\n\n";
+
+        let events = provider_events(raw);
+        let response = assemble_response(&events).expect("Done event must terminate assembly");
+        assert_eq!(response.text, "partial");
+        assert_eq!(response.stop_reason, StopReason::ContentFilter);
+
+        match classify_response(&response, None, "norn_schema_output") {
+            ResponseClass::Truncated { kind } => {
+                assert_eq!(kind, TruncationKind::ContentFilter);
+            }
+            other => panic!(
+                "expected Truncated(ContentFilter), got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
 }

@@ -7,7 +7,6 @@
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::time::Instant;
 
 use serde::Serialize;
 use serde_json::json;
@@ -17,7 +16,7 @@ use crate::error::ToolError;
 use crate::tool::traits::ToolOutput;
 use crate::tools::ast::SyntaxLanguage;
 
-use super::helpers::{GlobFilter, compile_glob, elapsed, walk_collect_paths};
+use super::helpers::{GlobFilter, compile_glob, walk_collect_paths};
 
 /// A single AST-query hit.
 #[derive(Debug, Serialize)]
@@ -41,7 +40,6 @@ pub(super) fn run_ast_search(
     root: &Path,
     glob_filter: Option<&str>,
     max_results: u32,
-    started: Instant,
 ) -> Result<ToolOutput, ToolError> {
     let compiled_filter: Option<GlobFilter> = compile_glob(glob_filter)?;
 
@@ -121,12 +119,8 @@ pub(super) fn run_ast_search(
         }
     }
 
-    Ok(ToolOutput {
-        content: json!({
-            "matches": out,
-            "truncated": truncated,
-        }),
-        is_error: false,
-        duration: elapsed(started),
-    })
+    Ok(ToolOutput::success(json!({
+        "matches": out,
+        "truncated": truncated,
+    })))
 }

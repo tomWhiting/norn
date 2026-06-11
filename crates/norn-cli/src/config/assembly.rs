@@ -1,8 +1,8 @@
 //! Runtime configuration assembly for the Norn CLI (NC-004 R2 / R3 / R8).
 //!
 //! Lives at the layer between [`clap`] argument parsing and the
-//! [`norn::r#loop::loop_context::LoopContext`] / `AgentLoopConfig` /
-//! `ProviderConfig` triplet that [`norn::r#loop::runner::run_agent_step`]
+//! [`norn::agent_loop::loop_context::LoopContext`] / `AgentLoopConfig` /
+//! `ProviderConfig` triplet that [`norn::agent_loop::runner::run_agent_step`]
 //! consumes. The functions here:
 //!
 //! - Parse `KEY=VALUE` pairs and human-readable duration strings.
@@ -19,7 +19,7 @@
 use std::path::PathBuf;
 use std::time::Duration;
 
-use norn::r#loop::config::ConversationStateMode;
+use norn::agent_loop::config::ConversationStateMode;
 use serde_json::Value;
 
 use crate::cli::BuildError;

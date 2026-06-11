@@ -83,6 +83,19 @@ pub enum SessionPersistError {
         matches: Vec<String>,
     },
 
+    /// A caller-supplied session ID failed validation. Session IDs become
+    /// file names (`{id}.jsonl`), so the explicit-ID path
+    /// ([`SessionManager::open_or_resume`](crate::session::SessionManager::open_or_resume))
+    /// rejects anything that could escape the data directory or collide
+    /// with the persistence layer's own files.
+    #[error("invalid session id '{id}': {reason}")]
+    InvalidSessionId {
+        /// The rejected identifier.
+        id: String,
+        /// Why it was rejected.
+        reason: String,
+    },
+
     /// Attempted to fork a session that has no events.
     #[error("cannot fork session '{id}': source has no events")]
     EmptySource {

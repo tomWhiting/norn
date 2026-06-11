@@ -14,11 +14,15 @@
 //! +-- index.jsonl.tmp.*    transient -- present only during an atomic
 //!                           index rewrite that has not yet been renamed
 //! ```
+//!
+//! Session IDs share the data directory with the persistence layer's own
+//! files, so the `index` name family is reserved and rejected as a
+//! session ID at every boundary — see
+//! [`io::RESERVED_SESSION_ID_STEMS`] / [`io::is_reserved_session_id`].
 
 pub mod index;
 pub mod io;
 mod lock;
-pub mod ops;
 pub mod types;
 
 #[cfg(test)]
@@ -26,11 +30,14 @@ pub mod types;
 mod tests;
 
 pub use index::{
-    append_index_entry, index_file_path, read_index, remove_index_entry, resolve_session,
-    sum_usage_from_events, update_index_entry, update_session_index, write_index_atomic,
+    append_index_entry, index_file_path, insert_index_entry_if_absent, read_index,
+    remove_index_entry, resolve_session, sum_usage_from_events, update_index_entry,
+    update_session_index, write_index_atomic,
 };
-pub use io::{append_events, read_session_events, session_file_path};
-pub use ops::{attach_sink, create_session, fork_session, resume_session};
+pub use io::{
+    RESERVED_SESSION_ID_STEMS, append_events, is_reserved_session_id, read_session_events,
+    session_file_path,
+};
 pub use types::{
     SESSION_FORMAT_VERSION, SessionFileHeader, SessionFileRead, SessionIndexEntry,
     SessionPersistError, SessionStatus,

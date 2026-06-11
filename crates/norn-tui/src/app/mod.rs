@@ -9,6 +9,8 @@ pub mod render;
 pub mod rotation;
 pub mod slash;
 pub mod state;
+pub mod streaming;
+pub mod tool_calls;
 
 pub use event_loop::{TuiInputs, run_app};
 pub use state::AppState;

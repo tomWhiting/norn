@@ -476,7 +476,6 @@ impl HookRegistry {
 mod tests {
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
-    use std::time::Duration;
 
     use super::*;
     use crate::provider::request::{Message, MessageRole, ProviderRequest};
@@ -668,11 +667,7 @@ mod tests {
             counter: Arc::clone(&counter),
         })));
 
-        let output = ToolOutput {
-            content: serde_json::json!({}),
-            is_error: false,
-            duration: Duration::ZERO,
-        };
+        let output = ToolOutput::success(serde_json::json!({}));
         reg.run_post_tool(&make_envelope("x"), &output, &ToolContext::empty())
             .await;
         assert_eq!(counter.load(Ordering::SeqCst), 2);

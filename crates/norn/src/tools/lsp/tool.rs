@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -11,6 +10,7 @@ use serde_json::{Value, json};
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::ToolErrorKind;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
@@ -122,11 +122,11 @@ impl Tool for LspTool {
         envelope: &ToolEnvelope,
         _ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: LspArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
-            ToolError::PreValidationFailed {
-                reason: format!("invalid lsp arguments: {e}"),
-            }
+            ToolError::pre_validation(
+                ToolErrorKind::InvalidArguments,
+                format!("invalid lsp arguments: {e}"),
+            )
         })?;
 
         let backend = self.backend.as_ref().ok_or(ToolError::ExecutionFailed {
@@ -182,19 +182,17 @@ impl Tool for LspTool {
                 json!({ "action": "diagnostics", "diagnostics": diagnostics })
             }
             other => {
-                return Err(ToolError::PreValidationFailed {
-                    reason: format!(
-                        "unknown action `{other}`; expected hover|definition|references|symbols|diagnostics"
+                return Err(ToolError::pre_validation(
+                    ToolErrorKind::InvalidArguments,
+                    format!(
+                        "unknown action `{other}`; expected \
+                         hover|definition|references|symbols|diagnostics"
                     ),
-                });
+                ));
             }
         };
 
-        Ok(ToolOutput {
-            content: result,
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(result))
     }
 }
 
@@ -205,9 +203,10 @@ fn require_position(
 ) -> Result<(u32, u32), ToolError> {
     match (line, column) {
         (Some(l), Some(c)) => Ok((l, c)),
-        _ => Err(ToolError::PreValidationFailed {
-            reason: format!("action `{action}` requires `line` and `column`"),
-        }),
+        _ => Err(ToolError::pre_validation(
+            ToolErrorKind::InvalidArguments,
+            format!("action `{action}` requires `line` and `column`"),
+        )),
     }
 }
 

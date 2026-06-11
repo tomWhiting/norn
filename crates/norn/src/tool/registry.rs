@@ -246,16 +246,20 @@ async fn dispatch_tool_with_outcome(
     envelope: &ToolEnvelope,
     ctx: &ToolContext,
 ) -> Result<DispatchOutcome, ToolError> {
-    if let PreValidateOutcome::Block { reason } = tool.pre_validate(envelope, ctx).await {
-        return Err(ToolError::PreValidationFailed { reason });
+    if let PreValidateOutcome::Block(decision) = tool.pre_validate(envelope, ctx).await {
+        return Err(decision.into());
     }
     for check in &ctx.pre_checks {
-        if let PreValidateOutcome::Block { reason } = check.check(envelope, ctx).await {
-            return Err(ToolError::PreValidationFailed { reason });
+        if let PreValidateOutcome::Block(decision) = check.check(envelope, ctx).await {
+            return Err(decision.into());
         }
     }
 
+    // The registry stamps execution duration so individual tools never
+    // measure themselves.
+    let dispatch_started = std::time::Instant::now();
     let mut output = tool.execute(envelope, ctx).await?;
+    output.duration = dispatch_started.elapsed();
     let post_validate_outcome = run_post_validation(tool, &output, ctx).await;
 
     let tool_default_mode = tool.post_validate_mode();
@@ -574,11 +578,7 @@ mod tests {
             _envelope: &ToolEnvelope,
             _ctx: &ToolContext,
         ) -> Result<ToolOutput, ToolError> {
-            Ok(ToolOutput {
-                content: serde_json::json!(null),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(ToolOutput::success(serde_json::json!(null)))
         }
     }
 
@@ -655,11 +655,7 @@ mod tests {
                     reason: "boom".to_string(),
                 });
             }
-            Ok(ToolOutput {
-                content: self.output_payload.clone(),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(ToolOutput::success(self.output_payload.clone()))
         }
 
         async fn post_validate(
@@ -694,9 +690,7 @@ mod tests {
     #[async_trait]
     impl RuntimePreValidateCheck for BlockingPreCheck {
         async fn check(&self, _envelope: &ToolEnvelope, _ctx: &ToolContext) -> PreValidateOutcome {
-            PreValidateOutcome::Block {
-                reason: self.reason.clone(),
-            }
+            PreValidateOutcome::block(self.reason.clone())
         }
     }
 
@@ -964,9 +958,7 @@ mod tests {
     #[tokio::test]
     async fn pre_validate_block_prevents_execution() {
         let mut tool = StatefulStubTool::new("blocked");
-        tool.pre_outcome = PreValidateOutcome::Block {
-            reason: "must-read-first".to_string(),
-        };
+        tool.pre_outcome = PreValidateOutcome::block("must-read-first");
         let executed = tool.executed.clone();
         let on_success_count = tool.on_success_count.clone();
 
@@ -979,8 +971,9 @@ mod tests {
             .await
             .expect_err("must error");
         match err {
-            ToolError::PreValidationFailed { reason } => {
-                assert_eq!(reason, "must-read-first");
+            ToolError::PreValidationFailed { payload } => {
+                assert_eq!(payload.message, "must-read-first");
+                assert_eq!(payload.kind, crate::tool::failure::ToolErrorKind::Blocked);
             }
             other => panic!("expected PreValidationFailed, got {other:?}"),
         }
@@ -990,6 +983,97 @@ mod tests {
             0,
             "on_success must not run",
         );
+    }
+
+    /// A structured block survives dispatch as a typed payload: the kind,
+    /// message, and guidance all reach the `PreValidationFailed` error, and
+    /// the rendered `Display` (what logs show) still carries
+    /// message-plus-guidance.
+    #[tokio::test]
+    async fn block_structure_survives_into_pre_validation_error() {
+        use crate::tool::failure::ToolErrorKind;
+        use crate::tool::lifecycle::BlockDecision;
+
+        let mut tool = StatefulStubTool::new("guided-block");
+        tool.pre_outcome = PreValidateOutcome::Block(
+            BlockDecision::new("file has not been read")
+                .with_kind(ToolErrorKind::PermissionDenied)
+                .with_guidance("read the file first")
+                .with_detail(serde_json::json!({ "path": "a.rs" })),
+        );
+
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(tool));
+        let executor: &dyn ToolExecutor = &reg;
+
+        let err = executor
+            .execute("guided-block", "test-call", serde_json::json!({}))
+            .await
+            .expect_err("block must error");
+        let rendered = err.to_string();
+        assert!(
+            rendered.contains("file has not been read")
+                && rendered.contains("Guidance: read the file first"),
+            "Display must keep message+guidance readable: {rendered}",
+        );
+        match err {
+            ToolError::PreValidationFailed { payload } => {
+                assert_eq!(payload.kind, ToolErrorKind::PermissionDenied);
+                assert_eq!(payload.message, "file has not been read");
+                assert_eq!(payload.guidance(), Some("read the file first"));
+                assert_eq!(payload.detail["path"], "a.rs");
+            }
+            other => panic!("expected PreValidationFailed, got {other:?}"),
+        }
+    }
+
+    /// The registry stamps execution duration on dispatched outputs — tools
+    /// construct outputs with `Duration::ZERO` and never time themselves.
+    #[tokio::test]
+    async fn registry_stamps_execution_duration() {
+        struct SleepyTool;
+
+        #[async_trait]
+        impl Tool for SleepyTool {
+            fn name(&self) -> &str {
+                "sleepy"
+            }
+            fn description(&self) -> &str {
+                "sleeps"
+            }
+            fn input_schema(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
+            fn effect(&self) -> ToolEffect {
+                ToolEffect::ReadOnly
+            }
+            async fn execute(
+                &self,
+                _envelope: &ToolEnvelope,
+                _ctx: &ToolContext,
+            ) -> Result<ToolOutput, ToolError> {
+                tokio::time::sleep(Duration::from_millis(15)).await;
+                Ok(ToolOutput::success(serde_json::json!({"ok": true})))
+            }
+
+            async fn on_success(&self, output: &ToolOutput, _ctx: &ToolContext) {
+                // The stamped duration is already visible to later lifecycle
+                // phases (hooks, on-success), not just the final caller.
+                assert!(
+                    output.duration >= Duration::from_millis(15),
+                    "duration must be stamped before on_success; got {:?}",
+                    output.duration,
+                );
+            }
+        }
+
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(SleepyTool));
+        let executor: &dyn ToolExecutor = &reg;
+        executor
+            .execute("sleepy", "test-call", serde_json::json!({}))
+            .await
+            .expect("dispatch succeeds");
     }
 
     /// R1 supporting: runtime pre-checks also gate execution.
@@ -1011,7 +1095,7 @@ mod tests {
             .await
             .expect_err("runtime check must block");
         match err {
-            ToolError::PreValidationFailed { reason } => assert_eq!(reason, "policy"),
+            ToolError::PreValidationFailed { payload } => assert_eq!(payload.message, "policy"),
             other => panic!("expected PreValidationFailed, got {other:?}"),
         }
         assert!(!executed.load(Ordering::SeqCst));

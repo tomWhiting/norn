@@ -21,7 +21,7 @@
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
@@ -32,6 +32,7 @@ use crate::error::ToolError;
 use crate::internal::extraction::{self, DetailLevel, SharedProvider};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::ToolErrorKind;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
@@ -248,23 +249,26 @@ impl Tool for WebFetchTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: WebFetchArgs =
             serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
-                ToolError::PreValidationFailed {
-                    reason: format!("invalid web_fetch arguments: {e}"),
-                }
+                ToolError::pre_validation(
+                    ToolErrorKind::InvalidArguments,
+                    format!("invalid web_fetch arguments: {e}"),
+                )
             })?;
 
         if !is_http_url(&args.url) {
-            return Err(ToolError::PreValidationFailed {
-                reason: "url must start with http:// or https://".to_owned(),
-            });
+            return Err(ToolError::pre_validation(
+                ToolErrorKind::InvalidArguments,
+                "url must start with http:// or https://",
+            ));
         }
-        let parsed_url =
-            url::Url::parse(&args.url).map_err(|e| ToolError::PreValidationFailed {
-                reason: format!("invalid url `{}`: {e}", args.url),
-            })?;
+        let parsed_url = url::Url::parse(&args.url).map_err(|e| {
+            ToolError::pre_validation(
+                ToolErrorKind::InvalidArguments,
+                format!("invalid url `{}`: {e}", args.url),
+            )
+        })?;
 
         let format = parse_format(args.format.as_deref())?;
         let timeout_secs = args.timeout.unwrap_or(DEFAULT_TIMEOUT).min(MAX_TIMEOUT);
@@ -304,13 +308,7 @@ impl Tool for WebFetchTool {
 
         let questions = args.questions;
 
-        let provider =
-            ctx.get_extension::<SharedProvider>()
-                .ok_or_else(|| ToolError::ExecutionFailed {
-                    reason:
-                        "web_fetch extraction is not available: SharedProvider extension is missing"
-                            .to_owned(),
-                })?;
+        let provider = ctx.require_extension::<SharedProvider>()?;
 
         let numbered = prepend_line_numbers(&converted);
         let answers = extraction::extract(
@@ -342,11 +340,7 @@ impl Tool for WebFetchTool {
             );
         }
 
-        Ok(ToolOutput {
-            content,
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(content))
     }
 }
 
@@ -367,9 +361,10 @@ fn parse_format(raw: Option<&str>) -> Result<Format, ToolError> {
         None | Some("markdown") => Ok(Format::Markdown),
         Some("text") => Ok(Format::Text),
         Some("html") => Ok(Format::Html),
-        Some(other) => Err(ToolError::PreValidationFailed {
-            reason: format!("unknown format `{other}`; expected markdown|text|html"),
-        }),
+        Some(other) => Err(ToolError::pre_validation(
+            ToolErrorKind::InvalidArguments,
+            format!("unknown format `{other}`; expected markdown|text|html"),
+        )),
     }
 }
 
@@ -378,9 +373,10 @@ fn parse_detail(raw: Option<&str>) -> Result<DetailLevel, ToolError> {
         None | Some("normal") => Ok(DetailLevel::Normal),
         Some("brief") => Ok(DetailLevel::Brief),
         Some("detailed") => Ok(DetailLevel::Detailed),
-        Some(other) => Err(ToolError::PreValidationFailed {
-            reason: format!("unknown detail `{other}`; expected brief|normal|detailed"),
-        }),
+        Some(other) => Err(ToolError::pre_validation(
+            ToolErrorKind::InvalidArguments,
+            format!("unknown detail `{other}`; expected brief|normal|detailed"),
+        )),
     }
 }
 

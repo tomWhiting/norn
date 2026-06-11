@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use serde_json::Value;
 
+use norn::agent_loop::config::{AgentLoopConfig, AgentStepResult, ToolExecutor};
+use norn::agent_loop::loop_context::LoopContext;
+use norn::agent_loop::runner::{AgentStepRequest, run_agent_step};
 use norn::error::ToolError;
-use norn::r#loop::config::{AgentLoopConfig, AgentStepResult, ToolExecutor};
-use norn::r#loop::loop_context::LoopContext;
-use norn::r#loop::runner::{AgentStepRequest, run_agent_step};
 use norn::provider::auth::AuthSource;
 use norn::provider::openai::OpenAiProvider;
 use norn::provider::request::ProviderConfig;

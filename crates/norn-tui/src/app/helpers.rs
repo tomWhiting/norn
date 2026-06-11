@@ -21,12 +21,12 @@ use crate::render::text::format_count;
 use crate::terminal::caps::TerminalCaps;
 use crate::terminal::setup::TerminalGuard;
 
-use super::dispatch::{parse_args, write_tool_result};
 use super::state::{AppState, PendingToolCall};
+use super::tool_calls::{parse_args, write_tool_result};
 
 /// Break the dim-stream cycle before a non-markdown-stream write.
 ///
-/// Called at the top of [`crate::app::dispatch::write_tool_result`],
+/// Called at the top of [`crate::app::tool_calls::write_tool_result`],
 /// [`flush_markdown`], and [`flush_pending`] to fix the dim-to-tool
 /// transition bug: without this, a `TextDelta("Here is my")` followed
 /// by a `ToolResult` leaves the dim preview text on screen mixed with
@@ -351,24 +351,20 @@ mod tests {
 
     use norn::session::events::{EventBase, SessionEvent};
     use norn::session::store::EventStore;
-    use norn::session::{DurabilityPolicy, attach_sink, create_session, read_index};
+    use norn::session::{CreateSessionOptions, DurabilityPolicy, SessionManager, read_index};
 
     fn session_with_registered_sink(data_dir: &std::path::Path) -> (String, EventStore) {
-        let entry = create_session(
-            data_dir,
-            "test-model".to_owned(),
-            "/tmp/work".to_owned(),
-            None,
-        )
-        .unwrap();
-        let store = attach_sink(
-            EventStore::new(),
-            data_dir,
-            &entry.id,
-            DurabilityPolicy::Flush,
-        )
-        .unwrap();
-        (entry.id, store)
+        let opened = SessionManager::new(data_dir)
+            .create(
+                CreateSessionOptions {
+                    model: "test-model".to_owned(),
+                    working_dir: "/tmp/work".to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .unwrap();
+        (opened.entry.id, opened.store)
     }
 
     /// Turn-boundary regression for the stale-index seam: under

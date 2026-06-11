@@ -16,6 +16,7 @@ use chrono::Utc;
 use serde::Serialize;
 use uuid::Uuid;
 
+use super::io::ensure_session_id_not_reserved;
 use super::lock::lock_index;
 use super::types::{SessionIndexEntry, SessionPersistError};
 
@@ -138,6 +139,47 @@ pub fn append_index_entry(
     entry: &SessionIndexEntry,
 ) -> Result<(), SessionPersistError> {
     let _lock = lock_index(data_dir)?;
+    append_entry_assuming_locked(data_dir, entry)
+}
+
+/// Insert `entry` into the session index unless an entry with the same
+/// `id` already exists, holding the inter-process index lock across the
+/// existence check and the append so two processes (or threads) racing
+/// the same ID can never both insert (the idempotent
+/// open-or-resume primitive — see
+/// [`SessionManager::open_or_resume`](crate::session::SessionManager::open_or_resume)).
+///
+/// Returns `Ok(Some(existing))` with the already-indexed entry when the
+/// ID is taken (nothing is written), and `Ok(None)` when `entry` was
+/// appended.
+pub fn insert_index_entry_if_absent(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+) -> Result<Option<SessionIndexEntry>, SessionPersistError> {
+    let _lock = lock_index(data_dir)?;
+    if let Some(existing) = read_index(data_dir)?.into_iter().find(|e| e.id == entry.id) {
+        return Ok(Some(existing));
+    }
+    append_entry_assuming_locked(data_dir, entry)?;
+    Ok(None)
+}
+
+/// The raw `O_APPEND` index-entry write shared by [`append_index_entry`]
+/// and [`insert_index_entry_if_absent`]. The caller MUST already hold the
+/// inter-process index lock — the lock is not re-entrant (each
+/// acquisition opens its own file description), so taking it here again
+/// would deadlock.
+///
+/// Rejects entries whose `id` is reserved by the persistence layer
+/// ([`SessionPersistError::InvalidSessionId`]): an indexed reserved id
+/// would later route session I/O onto a persistence-owned file (e.g.
+/// `delete("index")` removing the index itself), so it must never enter
+/// the index through any insertion path.
+fn append_entry_assuming_locked(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+) -> Result<(), SessionPersistError> {
+    ensure_session_id_not_reserved(&entry.id)?;
     let path = index_file_path(data_dir);
     let file = OpenOptions::new().create(true).append(true).open(&path)?;
     let mut writer = BufWriter::new(file);
@@ -179,12 +221,13 @@ pub fn update_index_entry(
 /// Use it when events were already durably persisted through a sink (the
 /// `JsonlSink` write-through path) and only the index needs to catch up —
 /// calling `append_events` in that case double-writes every event and
-/// breaks resume. A sink attached via
-/// [`attach_sink`](super::ops::attach_sink) performs this update itself
-/// (batched per its `DurabilityPolicy`, flushed by
-/// `EventStore::checkpoint` and on drop), so embedders must **not** call
-/// this function as well — doing so double-counts every event. It
-/// remains public for consumers reconciling externally-written files.
+/// breaks resume. The index-registered sink every
+/// [`SessionManager`](crate::session::SessionManager) open installs
+/// performs this update itself (batched per its `DurabilityPolicy`,
+/// flushed by `EventStore::checkpoint` and on drop), so embedders must
+/// **not** call this function as well — doing so double-counts every
+/// event. It remains public for consumers reconciling
+/// externally-written files.
 ///
 /// `new_event_count` is the number of events landed since the last
 /// index update. `usage_delta` is the cumulative token usage for those
@@ -246,11 +289,28 @@ pub fn sum_usage_from_events(events: &[SessionEvent]) -> Usage {
 
 /// Resolve a user-supplied identifier (empty = latest, full ID, name, or
 /// >=8-character ID prefix) against the index.
+///
+/// Resolving to an entry whose `id` is reserved by the persistence layer
+/// fails with [`SessionPersistError::InvalidSessionId`]: such an entry
+/// can only exist through a hand-edited index (every insertion path
+/// rejects reserved ids), and handing it to a caller would route session
+/// I/O onto a persistence-owned file (e.g. `delete` removing the index
+/// itself).
 pub fn resolve_session(
     data_dir: &Path,
     input: &str,
 ) -> Result<SessionIndexEntry, SessionPersistError> {
-    let entries = read_index(data_dir)?;
+    let entry = resolve_in_entries(read_index(data_dir)?, input)?;
+    ensure_session_id_not_reserved(&entry.id)?;
+    Ok(entry)
+}
+
+/// The resolution rules of [`resolve_session`], over an already-read
+/// index snapshot.
+fn resolve_in_entries(
+    entries: Vec<SessionIndexEntry>,
+    input: &str,
+) -> Result<SessionIndexEntry, SessionPersistError> {
     let trimmed = input.trim();
 
     if trimmed.is_empty() {

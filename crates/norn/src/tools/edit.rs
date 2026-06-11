@@ -10,7 +10,6 @@
 //! recorded in the tool output.
 
 use std::path::PathBuf;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -24,9 +23,10 @@ use crate::session::action_log::hash_content;
 use crate::tool::ToolArgs;
 use crate::tool::context::{ToolContext, ToolFlag};
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::{BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction};
 use crate::tool::lifecycle::{
-    CheckOverride, PostValidateMode, PostValidateOutcome, PreValidateOutcome,
+    BlockDecision, CheckOverride, PostValidateMode, PostValidateOutcome, PreValidateOutcome,
 };
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
@@ -104,40 +104,51 @@ impl Tool for EditTool {
         let args: EditArgs = match serde_json::from_value(envelope.model_args.clone()) {
             Ok(args) => args,
             Err(e) => {
-                return PreValidateOutcome::Block {
-                    reason: format!("invalid arguments: {e}"),
-                };
+                return PreValidateOutcome::Block(
+                    BlockDecision::new(format!("invalid arguments: {e}"))
+                        .with_kind(ToolErrorKind::InvalidArguments),
+                );
             }
         };
 
         let path = ctx.resolve_path(&args.path);
 
         if let Err(reason) = check_confinement(ctx, &path) {
-            return PreValidateOutcome::Block {
-                reason: format!("Edit blocked: {reason}"),
-            };
+            return PreValidateOutcome::Block(
+                BlockDecision::new(format!("Edit blocked: {reason}"))
+                    .with_kind(ToolErrorKind::PermissionDenied)
+                    .with_detail(serde_json::json!({ "path": args.path })),
+            );
         }
 
         if !ctx.has_read_file(&path) {
-            return PreValidateOutcome::Block {
-                reason: "Edit blocked: file has not been read this session".to_string(),
-            };
+            return PreValidateOutcome::Block(
+                BlockDecision::new("Edit blocked: file has not been read this session")
+                    .with_guidance("Read the file with the read tool before editing it.")
+                    .with_detail(serde_json::json!({ "path": args.path })),
+            );
         }
 
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
             Err(e) => {
-                return PreValidateOutcome::Block {
-                    reason: format!("Edit blocked: failed to read {}: {e}", args.path),
-                };
+                return PreValidateOutcome::Block(
+                    BlockDecision::new(format!("Edit blocked: failed to read {}: {e}", args.path))
+                        .with_kind(ToolErrorKind::Io)
+                        .with_detail(serde_json::json!({ "path": args.path })),
+                );
             }
         };
 
         let count = content.matches(&args.old_string).count();
         if count == 0 {
-            return PreValidateOutcome::Block {
-                reason: "old_string not found in file".to_string(),
-            };
+            return PreValidateOutcome::Block(
+                BlockDecision::new("old_string not found in file")
+                    .with_kind(ToolErrorKind::NotFound)
+                    .with_guidance(
+                        "Re-read the file and supply old_string exactly as it appears on disk.",
+                    ),
+            );
         }
         // An ambiguous match (count > 1) is NOT blocked here: execute surfaces
         // it as a non-committing structured result so register_follow_ups can
@@ -149,9 +160,13 @@ impl Tool for EditTool {
         if let Some(n) = args.occurrence
             && (n == 0 || n > count)
         {
-            return PreValidateOutcome::Block {
-                reason: format!("occurrence {n} out of range: old_string matches {count} time(s)"),
-            };
+            return PreValidateOutcome::Block(
+                BlockDecision::new(format!(
+                    "occurrence {n} out of range: old_string matches {count} time(s)"
+                ))
+                .with_kind(ToolErrorKind::InvalidArguments)
+                .with_detail(serde_json::json!({ "occurrence": n, "match_count": count })),
+            );
         }
 
         PreValidateOutcome::Proceed
@@ -162,7 +177,6 @@ impl Tool for EditTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: EditArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
             ToolError::ExecutionFailed {
                 reason: format!("invalid arguments: {e}"),
@@ -188,16 +202,15 @@ impl Tool for EditTool {
         let match_offsets = occurrence_offsets(&original, &args.old_string);
         let count = match_offsets.len();
         if count == 0 {
-            return Ok(ToolOutput {
-                content: serde_json::json!({
+            return Ok(ToolOutput::failure_with_content(
+                serde_json::json!({
                     "path": args.path,
                     "kind": "edit_failed",
-                    "message": "old_string not found in file",
                     "committed": false,
                 }),
-                is_error: true,
-                duration: started.elapsed(),
-            });
+                ToolErrorPayload::new(ToolErrorKind::NotFound, "old_string not found in file")
+                    .with_detail(serde_json::json!({ "path": args.path })),
+            ));
         }
 
         // Resolve which occurrence to apply. An explicit `occurrence` selects a
@@ -207,38 +220,38 @@ impl Tool for EditTool {
         // apply_at_occurrence_N follow-ups.
         let match_byte = if let Some(n) = args.occurrence {
             let Some(&byte) = n.checked_sub(1).and_then(|i| match_offsets.get(i)) else {
-                return Ok(ToolOutput {
-                    content: serde_json::json!({
+                return Ok(ToolOutput::failure_with_content(
+                    serde_json::json!({
                         "path": args.path,
                         "kind": "edit_failed",
-                        "message": format!(
-                            "occurrence {n} out of range: old_string matches {count} time(s)"
-                        ),
                         "committed": false,
                     }),
-                    is_error: true,
-                    duration: started.elapsed(),
-                });
+                    ToolErrorPayload::new(
+                        ToolErrorKind::InvalidArguments,
+                        format!("occurrence {n} out of range: old_string matches {count} time(s)"),
+                    )
+                    .with_detail(serde_json::json!({ "occurrence": n, "match_count": count })),
+                ));
             };
             byte
         } else {
             if count > 1 {
                 let occurrences = occurrence_descriptors(&original, &match_offsets);
-                return Ok(ToolOutput {
-                    content: serde_json::json!({
+                return Ok(ToolOutput::failure_with_content(
+                    serde_json::json!({
                         "path": args.path,
                         "kind": "edit_ambiguous",
-                        "message": format!(
-                            "old_string matches {count} times; choose an occurrence"
-                        ),
                         "match_count": count,
                         "occurrences": occurrences,
                         "file_hash": hash_content(original.as_bytes()),
                         "committed": false,
                     }),
-                    is_error: true,
-                    duration: started.elapsed(),
-                });
+                    ToolErrorPayload::new(
+                        ToolErrorKind::Conflict,
+                        format!("old_string matches {count} times; choose an occurrence"),
+                    )
+                    .with_detail(serde_json::json!({ "match_count": count })),
+                ));
             }
             match_offsets[0]
         };
@@ -280,17 +293,19 @@ impl Tool for EditTool {
             let payload = serde_json::json!({
                 "path": args.path,
                 "kind": "edit_blocked_by_ast",
-                "message": "edit rejected: staged content has syntax errors",
-                "diagnostics": ast_diagnostics,
+                "diagnostics": ast_diagnostics.clone(),
                 "blast_radius": blast,
                 "check_overrides": check_overrides,
                 "committed": false,
             });
-            return Ok(ToolOutput {
-                content: payload,
-                is_error: true,
-                duration: started.elapsed(),
-            });
+            return Ok(ToolOutput::failure_with_content(
+                payload,
+                ToolErrorPayload::new(
+                    ToolErrorKind::ValidationFailed,
+                    "edit rejected: staged content has syntax errors",
+                )
+                .with_detail(serde_json::json!({ "diagnostics": ast_diagnostics })),
+            ));
         }
 
         if !ast_diagnostics.is_empty() && allow_broken {
@@ -316,13 +331,13 @@ impl Tool for EditTool {
 
         let after_hash = hash_content(staged.as_bytes());
 
-        let is_error = ast_diagnostics
+        let has_error_diagnostic = ast_diagnostics
             .iter()
             .any(|d| d.get("severity").and_then(serde_json::Value::as_str) == Some("error"));
         let payload = serde_json::json!({
             "path": args.path,
             "kind": "edit_committed",
-            "diagnostics": ast_diagnostics,
+            "diagnostics": ast_diagnostics.clone(),
             "blast_radius": blast,
             "check_overrides": check_overrides,
             "committed": true,
@@ -330,11 +345,17 @@ impl Tool for EditTool {
             "after_hash": after_hash,
         });
 
-        Ok(ToolOutput {
-            content: payload,
-            is_error,
-            duration: started.elapsed(),
-        })
+        if has_error_diagnostic {
+            return Ok(ToolOutput::failure_with_content(
+                payload,
+                ToolErrorPayload::new(
+                    ToolErrorKind::ValidationFailed,
+                    "edit committed with syntax errors (AllowBrokenAst override)",
+                )
+                .with_detail(serde_json::json!({ "diagnostics": ast_diagnostics })),
+            ));
+        }
+        Ok(ToolOutput::success(payload))
     }
 
     async fn post_validate(&self, output: &ToolOutput, _ctx: &ToolContext) -> PostValidateOutcome {
@@ -590,7 +611,10 @@ mod tests {
         let ctx = ToolContext::empty();
 
         match tool.pre_validate(&envelope, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => {
                 assert!(reason.contains("not been read"), "{reason:?}");
             }
             PreValidateOutcome::Proceed => panic!("expected Block, got Proceed"),
@@ -612,7 +636,10 @@ mod tests {
         ctx.mark_file_read(&path);
 
         match tool.pre_validate(&envelope, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => {
                 assert!(reason.contains("not found"), "{reason:?}");
             }
             PreValidateOutcome::Proceed => panic!("expected Block, got Proceed"),
@@ -661,7 +688,10 @@ mod tests {
         ctx.mark_file_read(&path);
 
         match tool.pre_validate(&envelope, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => {
                 assert!(reason.contains("out of range"), "{reason:?}");
             }
             PreValidateOutcome::Proceed => panic!("expected Block, got Proceed"),
@@ -686,7 +716,7 @@ mod tests {
         ctx.mark_file_read(&path);
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(on_disk, "fn target() { let x = 2; }\n");
     }
@@ -715,7 +745,7 @@ mod tests {
         ctx.mark_file_read(&path);
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(out.is_error, "expected gate failure: {:?}", out.content);
+        assert!(out.is_error(), "expected gate failure: {:?}", out.content);
         assert_eq!(out.content["committed"], false);
 
         let after = tokio::fs::read_to_string(&path).await.unwrap();
@@ -748,7 +778,7 @@ mod tests {
         let out = tool.execute(&envelope, &ctx).await.unwrap();
         // With AllowBrokenAst the file is committed despite AST errors;
         // diagnostics are still recorded at severity 'error' so is_error is true.
-        assert!(out.is_error, "{:?}", out.content);
+        assert!(out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
 
         let after = tokio::fs::read_to_string(&path).await.unwrap();
@@ -784,7 +814,7 @@ mod tests {
         ctx.mark_file_read(&path);
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
 
         let symbols = out.content["blast_radius"]["containing_symbols"]
             .as_array()
@@ -815,7 +845,7 @@ mod tests {
         ctx.mark_file_read(&path);
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let blast = &out.content["blast_radius"];
         assert_eq!(blast["lines_added"].as_u64().unwrap(), 2);
         assert_eq!(blast["lines_removed"].as_u64().unwrap(), 0);
@@ -962,7 +992,10 @@ mod tests {
         }));
 
         match tool.pre_validate(&envelope, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => {
                 assert!(reason.contains("outside the workspace"), "{reason}");
             }
             PreValidateOutcome::Proceed => panic!("expected Block"),

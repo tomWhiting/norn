@@ -16,9 +16,64 @@ use super::types::{
 };
 
 /// Return the JSONL file path for `session_id` under `data_dir`.
+///
+/// Callers passing an id that did not come out of the session index must
+/// validate it first (see [`is_reserved_session_id`] and the manager's
+/// explicit-ID validation) — the mapping itself is mechanical.
 #[must_use]
 pub fn session_file_path(data_dir: &Path, session_id: &str) -> PathBuf {
     data_dir.join(format!("{session_id}.jsonl"))
+}
+
+/// Name stems the persistence layer reserves for its own files in the
+/// session data directory.
+///
+/// Session IDs and persistence-owned files share the data directory:
+/// [`session_file_path`] maps an id to `{id}.jsonl`, so the id `"index"`
+/// would name `index.jsonl` — the session index itself. A reserved stem
+/// excludes the stem and its entire `.`-extended family (`index`,
+/// `index.jsonl`, `index.lock`, `index.jsonl.tmp.{uuid}`, …) from the
+/// session-id namespace, matched ASCII-case-insensitively because the
+/// default macOS and Windows filesystems are case-insensitive.
+///
+/// **Adding a new persistence-owned file?** Name it
+/// `<reserved-stem>.<suffix>` (already excluded), or add its stem here —
+/// never claim a name session IDs can reach.
+pub const RESERVED_SESSION_ID_STEMS: &[&str] = &["index"];
+
+/// Whether `id` is reserved by the persistence layer and may never be
+/// used as a session ID (see [`RESERVED_SESSION_ID_STEMS`]).
+#[must_use]
+pub fn is_reserved_session_id(id: &str) -> bool {
+    RESERVED_SESSION_ID_STEMS.iter().any(|stem| {
+        // `get` (not `split_at`) so a multi-byte char straddling the
+        // boundary yields `None` instead of panicking — such an id can
+        // never match an ASCII stem anyway.
+        let Some(head) = id.get(..stem.len()) else {
+            return false;
+        };
+        let rest = &id[stem.len()..];
+        head.eq_ignore_ascii_case(stem) && (rest.is_empty() || rest.starts_with('.'))
+    })
+}
+
+/// Reject `id` with [`SessionPersistError::InvalidSessionId`] when it is
+/// reserved by the persistence layer. Every boundary where a session ID
+/// selects a file in the data directory calls this — the manager's
+/// explicit-ID validation, index insertion, event append/read, and sink
+/// open — so a reserved ID can never reach [`session_file_path`].
+pub(crate) fn ensure_session_id_not_reserved(id: &str) -> Result<(), SessionPersistError> {
+    if is_reserved_session_id(id) {
+        return Err(SessionPersistError::InvalidSessionId {
+            id: id.to_owned(),
+            reason: format!(
+                "collides with the session persistence layer's own files \
+                 (reserved name stems and their '.'-extended families: {})",
+                RESERVED_SESSION_ID_STEMS.join(", "),
+            ),
+        });
+    }
+    Ok(())
 }
 
 /// Open (or create) the session JSONL file at `path` in append mode,
@@ -90,12 +145,16 @@ pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistErr
 ///   `tracing::warn!`, also counted in
 ///   [`SessionFileRead::skipped_lines`].
 ///
-/// The call fails only when the file as a whole is unreadable (open or
-/// stream-level I/O error) — a torn final line never prevents resume.
+/// The call fails when `session_id` is reserved by the persistence layer
+/// ([`SessionPersistError::InvalidSessionId`] — the id would select a
+/// persistence-owned file such as the session index, never session data)
+/// or when the file as a whole is unreadable (open or stream-level I/O
+/// error) — a torn final line never prevents resume.
 pub fn read_session_events(
     data_dir: &Path,
     session_id: &str,
 ) -> Result<SessionFileRead, SessionPersistError> {
+    ensure_session_id_not_reserved(session_id)?;
     let path = session_file_path(data_dir, session_id);
     let mut read = SessionFileRead {
         events: Vec::new(),
@@ -175,10 +234,12 @@ pub fn read_session_events(
 /// `disabled = true` short-circuits the call with `Ok(())` and performs
 /// no filesystem work — this is the `--no-session` path.
 ///
-/// Empty `events` is a no-op. The index entry MUST already exist and is
-/// verified **before** any event bytes are written; a missing entry
-/// returns [`SessionPersistError::NotFound`] with the session file
-/// untouched. The session JSONL file and its parent directory are
+/// Empty `events` is a no-op. A reserved `session_id` (one that would
+/// select a persistence-owned file — see [`is_reserved_session_id`])
+/// returns [`SessionPersistError::InvalidSessionId`] before anything is
+/// touched. The index entry MUST already exist and is verified **before**
+/// any event bytes are written; a missing entry returns
+/// [`SessionPersistError::NotFound`] with the session file untouched. The session JSONL file and its parent directory are
 /// created on first write (with a version header line), and the whole
 /// batch is flushed and `fsync`-ed.
 ///
@@ -188,9 +249,9 @@ pub fn read_session_events(
 /// call, because returning an error for an already-durable batch would
 /// invite a retry that duplicates every event. The stale entry is
 /// repaired by the self-maintenance pass in
-/// [`resume_session`](super::ops::resume_session). An error return
-/// therefore always means "nothing from this batch was written", so
-/// retrying the same batch is safe.
+/// [`SessionManager::resume`](crate::session::SessionManager::resume).
+/// An error return therefore always means "nothing from this batch was
+/// written", so retrying the same batch is safe.
 pub fn append_events(
     data_dir: &Path,
     session_id: &str,
@@ -200,6 +261,7 @@ pub fn append_events(
     if disabled || events.is_empty() {
         return Ok(());
     }
+    ensure_session_id_not_reserved(session_id)?;
     if !read_index(data_dir)?.iter().any(|e| e.id == session_id) {
         return Err(SessionPersistError::NotFound {
             input: session_id.to_owned(),

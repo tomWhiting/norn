@@ -1,7 +1,7 @@
 //! Per-event-schema parsing and merging for the Norn CLI (NC-004 R7).
 //!
 //! Two sources feed the merged
-//! [`EventSchemaSet`](norn::r#loop::event_schemas::EventSchemaSet):
+//! [`EventSchemaSet`](norn::agent_loop::event_schemas::EventSchemaSet):
 //!
 //! 1. A profile's `event_schemas` entry inside [`Profile::settings`]
 //!    (`settings["event_schemas"]` as a JSON object keyed by the snake-
@@ -17,7 +17,7 @@
 
 use std::path::Path;
 
-use norn::r#loop::event_schemas::{EventSchemaSet, EventType};
+use norn::agent_loop::event_schemas::{EventSchemaSet, EventType};
 use norn::profile::Profile;
 use serde_json::Value;
 

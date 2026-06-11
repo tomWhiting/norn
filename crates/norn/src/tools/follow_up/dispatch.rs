@@ -28,6 +28,7 @@ use crate::r#loop::runner::ToolExecutor;
 use crate::session::action_log::{CompletionRecord, Outcome};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::traits::ToolOutput;
 
@@ -56,27 +57,23 @@ struct FollowUpArgs {
 }
 
 /// Build the structured `target tool not found` error output.
-fn missing_target_output(tool: &str, started: Instant) -> ToolOutput {
-    ToolOutput {
-        content: serde_json::json!({
-            "error": "target tool not found",
-            "tool": tool,
-        }),
-        is_error: true,
-        duration: started.elapsed(),
-    }
+fn missing_target_output(tool: &str) -> ToolOutput {
+    ToolOutput::failure_with_content(
+        serde_json::json!({ "tool": tool }),
+        ToolErrorPayload::new(ToolErrorKind::NotFound, "target tool not found")
+            .with_detail(serde_json::json!({ "tool": tool })),
+    )
 }
 
 /// Build the structured invalid-argument-merge error output.
-fn merge_error_output(message: &str, started: Instant) -> ToolOutput {
-    ToolOutput {
-        content: serde_json::json!({
-            "error": "could not merge follow-up arguments",
-            "reason": message,
-        }),
-        is_error: true,
-        duration: started.elapsed(),
-    }
+fn merge_error_output(message: &str) -> ToolOutput {
+    ToolOutput::failure(
+        ToolErrorPayload::new(
+            ToolErrorKind::InvalidArguments,
+            "could not merge follow-up arguments",
+        )
+        .with_detail(serde_json::json!({ "reason": message })),
+    )
 }
 
 /// Execute the deferred action referenced by the `follow_up` envelope.
@@ -90,19 +87,19 @@ fn merge_error_output(message: &str, started: Instant) -> ToolOutput {
 ///
 /// # Errors
 ///
-/// Returns [`ToolError::ExecutionFailed`] for malformed arguments or missing
-/// runtime configuration (no action log / no registry on the context), and
-/// propagates any [`ToolError`] the target tool's lifecycle raises (e.g. a
-/// gate-mode post-validate failure), so the result matches a direct invocation
-/// of the target tool. Model-correctable misses (unknown id, unknown action,
-/// expired action, non-object arguments) are returned as `Ok(ToolOutput)` with
-/// `is_error: true`.
+/// Returns [`ToolError::ExecutionFailed`] for malformed arguments,
+/// [`ToolError::MissingExtension`] for missing runtime configuration (no
+/// action log / no registry on the context), and propagates any
+/// [`ToolError`] the target tool's lifecycle raises (e.g. a gate-mode
+/// post-validate failure), so the result matches a direct invocation of the
+/// target tool. Model-correctable misses (unknown id, unknown action,
+/// expired action, non-object arguments) are returned as failed
+/// `Ok(ToolOutput)`s carrying typed error payloads.
 pub async fn dispatch_follow_up(
     envelope: &ToolEnvelope,
     ctx: &ToolContext,
 ) -> Result<ToolOutput, ToolError> {
     let started = Instant::now();
-
     let args: FollowUpArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
         ToolError::ExecutionFailed {
             reason: format!("invalid arguments: {e}"),
@@ -110,9 +107,9 @@ pub async fn dispatch_follow_up(
     })?;
 
     let action_log = lookup::action_log_from_ctx(ctx)?;
-    let loaded = match lookup::load_call(&action_log, &args.tool_call_id, started) {
+    let loaded = match lookup::load_call(&action_log, &args.tool_call_id) {
         Ok(loaded) => loaded,
-        Err(output) => return Ok(output),
+        Err(output) => return Ok(*output),
     };
 
     let turn_id = ctx.get_extension::<CurrentTurnId>().map(|t| t.0.clone());
@@ -135,7 +132,6 @@ pub async fn dispatch_follow_up(
                 &args.tool_call_id,
                 &args.action,
                 &available,
-                started,
             ));
         }
     };
@@ -147,26 +143,29 @@ pub async fn dispatch_follow_up(
         &action.action,
         &resolve,
     ) {
-        return Ok(ToolOutput {
-            content: expired.to_content(),
-            is_error: true,
-            duration: started.elapsed(),
-        });
+        return Ok(ToolOutput::failure_with_content(
+            expired.to_content(),
+            ToolErrorPayload::new(
+                ToolErrorKind::Blocked,
+                format!("follow-up expired: {}", expired.reason),
+            )
+            .with_detail(serde_json::json!({
+                "tool_call_id": expired.tool_call_id,
+                "action": expired.action,
+                "suggestion": expired.suggestion,
+            })),
+        ));
     }
 
     let merged = match merge_args(&loaded.args, &action.args) {
         Ok(merged) => merged,
-        Err(e) => return Ok(merge_error_output(&e.to_string(), started)),
+        Err(e) => return Ok(merge_error_output(&e.to_string())),
     };
 
-    let registry =
-        ctx.get_extension::<SharedToolRegistry>()
-            .ok_or_else(|| ToolError::ExecutionFailed {
-                reason: "tool registry not configured in tool context".to_string(),
-            })?;
+    let registry = ctx.require_extension::<SharedToolRegistry>()?;
 
     if registry.0.get(&action.tool).is_none() {
-        return Ok(missing_target_output(&action.tool, started));
+        return Ok(missing_target_output(&action.tool));
     }
 
     // Dispatch the target through the registry's full lifecycle. A target
@@ -186,12 +185,10 @@ pub async fn dispatch_follow_up(
         started.elapsed(),
     );
 
-    let is_error = output.get("error").is_some();
-    Ok(ToolOutput {
-        is_error,
-        content: output,
-        duration: started.elapsed(),
-    })
+    // Re-type the target's result: the registry returned model-facing
+    // content, so reconstruct the error payload from the `error`-key
+    // convention.
+    Ok(ToolOutput::from_content(output))
 }
 
 /// Record the dispatched target's completion in the action log with a chain
@@ -206,9 +203,12 @@ fn record_chain_entry(
     duration: Duration,
 ) {
     let entry_id = format!("{source_tool_call_id}->{target_tool}");
-    let outcome = match content.get("error").and_then(|v| v.as_str()) {
-        Some(message) => Outcome::Error {
-            message: message.to_owned(),
+    let outcome = match content
+        .get("error")
+        .and_then(ToolErrorPayload::from_error_value)
+    {
+        Some(payload) => Outcome::Error {
+            message: payload.message,
         },
         None => Outcome::Success,
     };

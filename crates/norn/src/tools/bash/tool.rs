@@ -3,7 +3,7 @@
 //! rerun/read-output follow-up registration.
 
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -13,6 +13,7 @@ use crate::error::ToolError;
 use crate::tool::ToolArgs;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::{Confidence, ExpiryCondition, FollowUpAction};
 use crate::tool::lifecycle::PreValidateOutcome;
 use crate::tool::risk::{BashRiskTier, classify_risk};
@@ -149,11 +150,11 @@ impl Tool for BashTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: BashArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
-            ToolError::PreValidationFailed {
-                reason: format!("invalid bash arguments: {e}"),
-            }
+            ToolError::pre_validation(
+                ToolErrorKind::InvalidArguments,
+                format!("invalid bash arguments: {e}"),
+            )
         })?;
 
         let tier = classify_risk(&args.command);
@@ -170,14 +171,22 @@ impl Tool for BashTool {
             Some(raw) => {
                 let resolved = ctx.resolve_path(raw);
                 if let Err(reason) = check_confinement(ctx, &resolved) {
-                    return Err(ToolError::PreValidationFailed { reason });
+                    return Err(ToolError::PreValidationFailed {
+                        payload: ToolErrorPayload::new(ToolErrorKind::PermissionDenied, reason)
+                            .with_detail(json!({ "working_dir": raw })),
+                    });
                 }
                 if !resolved.is_dir() {
                     return Err(ToolError::PreValidationFailed {
-                        reason: format!(
-                            "working_dir `{raw}` resolves to {} which is not an existing directory",
-                            resolved.display()
-                        ),
+                        payload: ToolErrorPayload::new(
+                            ToolErrorKind::NotFound,
+                            format!(
+                                "working_dir `{raw}` resolves to {} which is not an existing \
+                                 directory",
+                                resolved.display()
+                            ),
+                        )
+                        .with_detail(json!({ "working_dir": raw })),
                     });
                 }
                 resolved
@@ -195,8 +204,6 @@ impl Tool for BashTool {
             Arc::clone(&capture),
         )
         .await?;
-
-        let is_error = execution.timed_out || execution.exit_code != 0;
 
         // Inspect the model's command string for `cd` directives and update
         // the agent's working directory accordingly. Done unconditionally
@@ -255,11 +262,30 @@ impl Tool for BashTool {
             );
         }
 
-        Ok(ToolOutput {
-            content,
-            is_error,
-            duration: elapsed(started),
-        })
+        if execution.timed_out {
+            return Ok(ToolOutput::failure_with_content(
+                content,
+                ToolErrorPayload::new(
+                    ToolErrorKind::Timeout,
+                    format!("command timed out after {timeout_secs}s"),
+                )
+                .with_detail(serde_json::json!({
+                    "timeout_secs": timeout_secs,
+                    "exit_code": execution.exit_code,
+                })),
+            ));
+        }
+        if execution.exit_code != 0 {
+            return Ok(ToolOutput::failure_with_content(
+                content,
+                ToolErrorPayload::new(
+                    ToolErrorKind::ExecutionFailed,
+                    format!("command exited with code {}", execution.exit_code),
+                )
+                .with_detail(serde_json::json!({ "exit_code": execution.exit_code })),
+            ));
+        }
+        Ok(ToolOutput::success(content))
     }
 
     /// Register rerun follow-ups available after any completed execution.
@@ -336,9 +362,4 @@ impl Tool for BashTool {
 
         follow_ups
     }
-}
-
-/// Monotonic elapsed time since `started`, saturating at zero.
-fn elapsed(started: Instant) -> Duration {
-    Instant::now().saturating_duration_since(started)
 }

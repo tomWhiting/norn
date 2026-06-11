@@ -5,13 +5,14 @@
 //! (the in-memory store, and any persistent backend) live in sibling modules.
 
 use chrono::{DateTime, Utc};
+use norn_macros::ToolArgs;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::error::ToolError;
 
-/// Lifecycle state of a tracked task.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+/// Task lifecycle status.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, ToolArgs)]
 #[serde(rename_all = "snake_case")]
 pub enum TaskStatus {
     /// Created but not yet started.
@@ -162,23 +163,6 @@ pub trait TaskStore: Send + Sync {
     }
 }
 
-/// Parse a wire status string into a [`TaskStatus`].
-///
-/// # Errors
-/// Returns [`ToolError::ExecutionFailed`] if `raw` is not a known status.
-pub(crate) fn parse_status(raw: &str) -> Result<TaskStatus, ToolError> {
-    match raw {
-        "pending" => Ok(TaskStatus::Pending),
-        "in_progress" => Ok(TaskStatus::InProgress),
-        "completed" => Ok(TaskStatus::Completed),
-        "blocked" => Ok(TaskStatus::Blocked),
-        "failed" => Ok(TaskStatus::Failed),
-        other => Err(ToolError::ExecutionFailed {
-            reason: format!("unknown status '{other}'"),
-        }),
-    }
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used)]
 mod tests {
@@ -201,9 +185,16 @@ mod tests {
     }
 
     #[test]
-    fn parse_status_handles_failed() {
-        assert_eq!(parse_status("failed").unwrap(), TaskStatus::Failed);
-        assert!(parse_status("bogus").is_err());
+    fn task_status_json_schema_is_string_enum_with_descriptions() {
+        let schema = TaskStatus::json_schema();
+        assert_eq!(schema["type"], "string");
+        assert_eq!(
+            schema["enum"],
+            serde_json::json!(["pending", "in_progress", "completed", "blocked", "failed"])
+        );
+        let description = schema["description"].as_str().unwrap();
+        assert!(description.starts_with("Task lifecycle status."));
+        assert!(description.contains("in_progress: Actively being worked on."));
     }
 
     #[test]

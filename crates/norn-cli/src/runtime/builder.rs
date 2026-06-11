@@ -26,14 +26,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use norn::agent_loop::loop_context::LoopContext;
+use norn::agent_loop::retry::RetryPolicy;
+use norn::agent_loop::runner::ToolExecutor;
+use norn::agent_loop::tokens::SimpleTokenEstimator;
 use norn::config::{NornSettings, load_settings, merge_settings, validate_settings};
 use norn::context::{ContextLoader, scan_rule_dirs};
 use norn::integration::DiagnosticCollector;
 use norn::integration::hooks::{HookRegistry, load_hooks_from_settings};
-use norn::r#loop::loop_context::LoopContext;
-use norn::r#loop::retry::RetryPolicy;
-use norn::r#loop::runner::ToolExecutor;
-use norn::r#loop::tokens::SimpleTokenEstimator;
 use norn::profile::{Profile, from_profile};
 use norn::rules::engine::RuleEngine;
 use norn::session::context_edit::ContextEdits;
@@ -356,7 +356,7 @@ pub fn apply_system_prompt(bundle: &mut RuntimeBundle, mode: ExecutionMode) {
                         .map(|v| serde_json::to_string_pretty(v).unwrap_or_default())
                         .unwrap_or_default();
                     let label = match et {
-                        norn::r#loop::event_schemas::EventType::Text => "text message",
+                        norn::agent_loop::event_schemas::EventType::Text => "text message",
                     };
                     (label.to_owned(), schema)
                 })
@@ -494,10 +494,10 @@ struct BuildLoopContextArgs<'a> {
     registry: ToolRegistry,
     rules: Option<RuleEngine>,
     hooks: Option<Arc<HookRegistry>>,
-    event_schemas: Option<norn::r#loop::event_schemas::EventSchemaSet>,
+    event_schemas: Option<norn::agent_loop::event_schemas::EventSchemaSet>,
     variables: Option<Arc<norn::integration::variables::VariableStore>>,
     retry_policy: RetryPolicy,
-    iteration_monitor: Option<norn::r#loop::iteration::IterationMonitorConfig>,
+    iteration_monitor: Option<norn::agent_loop::iteration::IterationMonitorConfig>,
     diagnostics: Arc<DiagnosticCollector>,
 }
 
@@ -539,7 +539,7 @@ fn resolve_debug_api_dir(value: &str) -> PathBuf {
 mod tests {
     use super::*;
     use clap::Parser;
-    use norn::tools::tool_search::SharedToolCatalog;
+    use norn::tool::catalog::SharedToolCatalog;
     use std::time::Duration;
 
     fn cli_from(args: &[&str]) -> Cli {
@@ -651,11 +651,7 @@ mod tests {
                 _envelope: &ToolEnvelope,
                 _ctx: &ToolContext,
             ) -> Result<ToolOutput, ToolError> {
-                Ok(ToolOutput {
-                    content: serde_json::json!(null),
-                    is_error: false,
-                    duration: Duration::ZERO,
-                })
+                Ok(ToolOutput::success(serde_json::json!(null)))
             }
         }
 
@@ -721,11 +717,9 @@ mod tests {
             _envelope: &norn::tool::envelope::ToolEnvelope,
             _ctx: &norn::tool::context::ToolContext,
         ) -> Result<norn::tool::traits::ToolOutput, norn::error::ToolError> {
-            Ok(norn::tool::traits::ToolOutput {
-                content: serde_json::json!(null),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(norn::tool::traits::ToolOutput::success(serde_json::json!(
+                null
+            )))
         }
     }
 
@@ -1012,7 +1006,7 @@ mod tests {
             .event_schemas
             .as_ref()
             .expect("event_schemas wired when --event-schema flag present");
-        assert!(set.has(norn::r#loop::event_schemas::EventType::Text));
+        assert!(set.has(norn::agent_loop::event_schemas::EventType::Text));
     }
 
     #[test]
@@ -1457,7 +1451,7 @@ command = "echo cwd"
         if let Err(err) = result {
             let reason = err.to_string();
             assert!(
-                !reason.contains("agent runtime not configured"),
+                !reason.contains("AgentToolInfra"),
                 "spawn_agent must get past infra_from once AgentToolInfra is installed: {reason}",
             );
         }
@@ -1671,7 +1665,7 @@ command = "echo cwd"
         assert_eq!(bundle.agent_config.auto_compact_keep_recent_turns, 8);
         assert_eq!(
             bundle.agent_config.conversation_state,
-            norn::r#loop::config::ConversationStateMode::ProviderThreaded,
+            norn::agent_loop::config::ConversationStateMode::ProviderThreaded,
         );
         assert_eq!(
             bundle.agent_config.server_compaction_threshold_tokens,

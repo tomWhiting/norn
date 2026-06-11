@@ -59,6 +59,7 @@ use crate::session::action_log::CompletionRecord;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
 use crate::tool::envelope::{RuntimeInputs, ToolEnvelope, split_envelope_fields};
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::FollowUpAction;
 
 use super::helpers::append_and_notify;
@@ -70,6 +71,12 @@ use super::helpers::append_and_notify;
 pub(super) struct SingleToolResult {
     /// Model-facing structured output (errors surfaced under an `error` key).
     pub output: Value,
+    /// Typed failure payload when the call failed — the structured form of
+    /// `output["error"]`, identical for hard [`ToolError`]s and soft
+    /// [`ToolOutput::failure`](crate::tool::traits::ToolOutput::failure)
+    /// results — so downstream phases never re-parse the content. `None`
+    /// for successful calls.
+    pub error: Option<ToolErrorPayload>,
     /// Wall-clock execution duration in milliseconds.
     pub duration_ms: u64,
     /// Full follow-up actions registered by the tool, for action-log indexing.
@@ -96,55 +103,83 @@ pub(super) async fn execute_single_tool(
     let args = serde_json::from_str::<Value>(arguments_json)
         .unwrap_or_else(|e| Value::String(format!("invalid JSON arguments: {e}")));
 
-    let (output, follow_ups, post_validate_outcome) = match executor
-        .execute_with_outcome(name, call_id, args)
-        .await
-    {
-        Ok(DispatchOutcome {
-            content,
-            follow_ups,
-            post_validate_outcome,
-        }) => (content, follow_ups, post_validate_outcome),
-        Err(e) => {
-            if let Some(collector) = diagnostics
-                && matches!(
-                    e,
-                    ToolError::PreValidationFailed { .. } | ToolError::PostValidationFailed { .. }
-                )
-            {
-                collector.report(NornDiagnostic::from_tool_error(name, &e));
+    let (output, error, follow_ups, post_validate_outcome) =
+        match executor.execute_with_outcome(name, call_id, args).await {
+            Ok(DispatchOutcome {
+                content,
+                follow_ups,
+                post_validate_outcome,
+            }) => {
+                // Soft failures (ToolOutput::failure family) carry their typed
+                // payload under the content's `error` key; re-type it once here
+                // so downstream phases dispatch on the payload, not the JSON.
+                let error = content
+                    .get("error")
+                    .and_then(ToolErrorPayload::from_error_value);
+                (content, error, follow_ups, post_validate_outcome)
             }
-            let output = match &e {
-                ToolError::PostValidationFailed {
-                    committed_output: Some(Value::Object(map)),
-                    ..
-                } => {
-                    let mut out = map.clone();
-                    out.insert("error".to_owned(), Value::String(e.to_string()));
-                    Value::Object(out)
+            Err(e) => {
+                if let Some(collector) = diagnostics
+                    && matches!(
+                        e,
+                        ToolError::PreValidationFailed { .. }
+                            | ToolError::PostValidationFailed { .. }
+                    )
+                {
+                    collector.report(NornDiagnostic::from_tool_error(name, &e));
                 }
-                ToolError::PostValidationFailed {
-                    committed_output: Some(val),
-                    ..
-                } => {
-                    tracing::warn!("PostValidationFailed committed_output is not a JSON object");
-                    serde_json::json!({
-                        "error": e.to_string(),
-                        "committed_output": val,
-                    })
-                }
-                _ => serde_json::json!({ "error": e.to_string() }),
-            };
-            (output, Vec::new(), None)
-        }
-    };
+                let (output, payload) = hard_error_output(&e);
+                (output, Some(payload), Vec::new(), None)
+            }
+        };
 
     let duration_ms = u64::try_from(start.elapsed().as_millis()).unwrap_or(u64::MAX);
     SingleToolResult {
         output,
+        error,
         duration_ms,
         follow_ups,
         post_validate_outcome,
+    }
+}
+
+/// Render a hard [`ToolError`] into the model-facing output value and its
+/// typed payload. The payload is embedded verbatim under the `error` key —
+/// the same wire shape soft failures use — so hard errors are equally
+/// machine-readable in the persisted `ToolResult` event.
+///
+/// `PostValidationFailed` with committed output keeps the committed fields
+/// at the top level (the model needs to see what was written) and embeds an
+/// `error` payload without the committed copy, so the event does not carry
+/// the output twice.
+fn hard_error_output(e: &ToolError) -> (Value, ToolErrorPayload) {
+    match e {
+        ToolError::PostValidationFailed {
+            reason,
+            committed_output: Some(Value::Object(map)),
+        } => {
+            let payload = ToolErrorPayload::new(ToolErrorKind::ValidationFailed, reason.clone());
+            let mut out = map.clone();
+            out.insert("error".to_owned(), payload.to_value());
+            (Value::Object(out), payload)
+        }
+        ToolError::PostValidationFailed {
+            reason,
+            committed_output: Some(val),
+        } => {
+            tracing::warn!("PostValidationFailed committed_output is not a JSON object");
+            let payload = ToolErrorPayload::new(ToolErrorKind::ValidationFailed, reason.clone());
+            let output = serde_json::json!({
+                "error": payload.to_value(),
+                "committed_output": val,
+            });
+            (output, payload)
+        }
+        _ => {
+            let payload = ToolErrorPayload::from(e);
+            let output = serde_json::json!({ "error": payload.to_value() });
+            (output, payload)
+        }
     }
 }
 
@@ -394,6 +429,156 @@ mod tests {
         assert!(detail.output.get("error").is_some());
     }
 
+    /// The persisted `ToolResult` output for `tool_name`, from the store.
+    fn persisted_tool_result(store: &EventStore, tool_name: &str) -> Value {
+        store
+            .events()
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::ToolResult {
+                    tool_name: name,
+                    output,
+                    ..
+                } if name == tool_name => Some(output.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| panic!("no ToolResult event for {tool_name}"))
+    }
+
+    /// A hard `ToolError` must reach the persisted `ToolResult` event as a
+    /// structured `error` object — kind, message — not a collapsed string,
+    /// and the action log must still classify the call as an error.
+    #[tokio::test]
+    async fn hard_tool_error_persists_structured_error_in_event() {
+        let store = Arc::new(EventStore::new());
+        let action_log = Arc::new(ActionLog::new(Arc::clone(&store)));
+        let mut loop_context = loop_with_log(&action_log);
+
+        let mut handlers: HashMap<String, ToolHandler> = HashMap::new();
+        handlers.insert(
+            "edit".to_owned(),
+            Box::new(|_args| {
+                Err(ToolError::ExecutionFailed {
+                    reason: "boom".to_owned(),
+                })
+            }),
+        );
+        let executor = MockToolExecutor::new(handlers);
+
+        let response = response_with(tool_call("tc-hard", "edit", r#"{"path":"a.rs"}"#));
+        dispatch(&executor, store.as_ref(), &mut loop_context, &response).await;
+
+        let output = persisted_tool_result(&store, "edit");
+        assert_eq!(
+            output["error"],
+            json!({ "kind": "execution_failed", "message": "boom" }),
+            "hard ToolError must persist as the typed payload object",
+        );
+        let reparsed = crate::tool::failure::ToolErrorPayload::from_error_value(&output["error"])
+            .expect("persisted error value re-types");
+        assert_eq!(
+            reparsed.kind,
+            crate::tool::failure::ToolErrorKind::ExecutionFailed
+        );
+        assert_eq!(reparsed.message, "boom");
+
+        match &action_log.entries()[0].outcome {
+            Outcome::Error { message } => assert_eq!(message, "boom"),
+            other => panic!("expected Error outcome, got {other:?}"),
+        }
+    }
+
+    /// Registry tool whose pre-validate blocks with a fully structured
+    /// decision (kind + guidance + detail).
+    struct GuidedBlockTool;
+
+    #[async_trait::async_trait]
+    impl Tool for GuidedBlockTool {
+        fn name(&self) -> &'static str {
+            "guarded_edit"
+        }
+        fn description(&self) -> &'static str {
+            "blocks with guidance"
+        }
+        fn input_schema(&self) -> Value {
+            json!({})
+        }
+        fn effect(&self) -> ToolEffect {
+            ToolEffect::Write
+        }
+        async fn pre_validate(
+            &self,
+            _envelope: &ToolEnvelope,
+            _ctx: &crate::tool::context::ToolContext,
+        ) -> crate::tool::lifecycle::PreValidateOutcome {
+            crate::tool::lifecycle::PreValidateOutcome::Block(
+                crate::tool::lifecycle::BlockDecision::new("file has not been read")
+                    .with_kind(crate::tool::failure::ToolErrorKind::PermissionDenied)
+                    .with_guidance("read the file first")
+                    .with_detail(json!({ "path": "a.rs" })),
+            )
+        }
+        async fn execute(
+            &self,
+            _envelope: &ToolEnvelope,
+            _ctx: &crate::tool::context::ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            panic!("execute must not run for a blocked call");
+        }
+    }
+
+    /// A `PreValidationFailed` block round-trips end-to-end: the kind,
+    /// message, guidance, and detail set by the tool's `BlockDecision`
+    /// survive registry dispatch into the persisted `ToolResult` event, and
+    /// the action log's error message keeps the model-facing
+    /// message-plus-guidance rendering.
+    #[tokio::test]
+    async fn pre_validation_block_round_trips_kind_and_guidance_into_event() {
+        let store = Arc::new(EventStore::new());
+        let action_log = Arc::new(ActionLog::new(Arc::clone(&store)));
+        let mut loop_context = loop_with_log(&action_log);
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(GuidedBlockTool));
+
+        let mut messages = Vec::new();
+        let config = AgentLoopConfig::default();
+        let response = response_with(tool_call("tc-guided", "guarded_edit", r"{}"));
+        execute_planned_tool_batch(planned_request(
+            &registry,
+            store.as_ref(),
+            &mut messages,
+            &response,
+            &config,
+            &mut loop_context,
+        ))
+        .await
+        .expect("dispatch returns Ok");
+
+        let output = persisted_tool_result(&store, "guarded_edit");
+        let error = &output["error"];
+        assert_eq!(error["kind"], "permission_denied");
+        assert_eq!(error["message"], "file has not been read");
+        assert_eq!(error["detail"]["guidance"], "read the file first");
+        assert_eq!(error["detail"]["path"], "a.rs");
+
+        let reparsed = crate::tool::failure::ToolErrorPayload::from_error_value(error)
+            .expect("persisted block error re-types");
+        assert_eq!(
+            reparsed.kind,
+            crate::tool::failure::ToolErrorKind::PermissionDenied
+        );
+        assert_eq!(reparsed.guidance(), Some("read the file first"));
+
+        match &action_log.entries()[0].outcome {
+            Outcome::Error { message } => assert_eq!(
+                message, "file has not been read Guidance: read the file first",
+                "action log keeps the model-facing message+guidance rendering",
+            ),
+            other => panic!("expected Error outcome, got {other:?}"),
+        }
+    }
+
     struct BlockEverything {
         reason: String,
     }
@@ -540,11 +725,9 @@ mod tests {
             if let Some(log) = self.log.as_ref() {
                 log.lock().push(format!("end:{}", envelope.tool_call_id));
             }
-            Ok(ToolOutput {
-                content: json!({ "ok": true, "call": envelope.tool_call_id }),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(ToolOutput::success(
+                json!({ "ok": true, "call": envelope.tool_call_id }),
+            ))
         }
     }
 
@@ -670,6 +853,152 @@ mod tests {
             }
             other => panic!("expected Blocked, got {other:?}"),
         }
+    }
+
+    /// A permission denial must persist as a typed `permission_denied`
+    /// payload in the `ToolResult` event — embedders dispatching on
+    /// `error.kind` must never see a permission block retyped as
+    /// `execution_failed` (the legacy collapsed-string behaviour).
+    #[tokio::test]
+    async fn permission_block_persists_permission_denied_kind_in_event() {
+        let store = Arc::new(EventStore::new());
+        let mut loop_context = LoopContext::new("base");
+
+        let tool = ProbeTool::new("bash", ToolEffect::Process);
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(tool));
+        install_policy(
+            &registry,
+            PermissionPolicy::from_patterns(&["bash(rm *)"], &[], &[]),
+        );
+
+        let mut messages = Vec::new();
+        let config = AgentLoopConfig::default();
+        let response = response_with(tool_call("tc-deny-k", "bash", r#"{"command":"rm -rf /"}"#));
+        execute_planned_tool_batch(planned_request(
+            &registry,
+            store.as_ref(),
+            &mut messages,
+            &response,
+            &config,
+            &mut loop_context,
+        ))
+        .await
+        .expect("dispatch returns Ok");
+
+        let output = persisted_tool_result(&store, "bash");
+        let error = &output["error"];
+        assert_eq!(
+            error["kind"], "permission_denied",
+            "permission blocks must persist the typed kind: {output}",
+        );
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("denied by permissions.deny rule 'bash(rm *)'"),
+            "message must name the deny rule: {error}",
+        );
+        assert_eq!(
+            error["detail"]["rule"], "bash(rm *)",
+            "the matched rule must be machine-readable in detail: {error}",
+        );
+        let reparsed = crate::tool::failure::ToolErrorPayload::from_error_value(error)
+            .expect("persisted permission error re-types");
+        assert_eq!(
+            reparsed.kind,
+            crate::tool::failure::ToolErrorKind::PermissionDenied,
+            "from_error_value must classify the persisted error as permission_denied",
+        );
+    }
+
+    /// An ask-rule block without a consent handler is also a permission
+    /// denial and must carry the same typed kind plus the matched rule.
+    #[tokio::test]
+    async fn permission_ask_block_persists_permission_denied_kind_in_event() {
+        let store = Arc::new(EventStore::new());
+        let mut loop_context = LoopContext::new("base");
+
+        let tool = ProbeTool::new("write", ToolEffect::Write);
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(tool));
+        install_policy(
+            &registry,
+            PermissionPolicy::from_patterns(&[], &["write"], &[]),
+        );
+
+        let mut messages = Vec::new();
+        let config = AgentLoopConfig::default();
+        let response = response_with(tool_call("tc-ask-k", "write", r#"{"path":"a.rs"}"#));
+        execute_planned_tool_batch(planned_request(
+            &registry,
+            store.as_ref(),
+            &mut messages,
+            &response,
+            &config,
+            &mut loop_context,
+        ))
+        .await
+        .expect("dispatch returns Ok");
+
+        let error = &persisted_tool_result(&store, "write")["error"];
+        assert_eq!(error["kind"], "permission_denied", "{error}");
+        assert_eq!(error["detail"]["rule"], "write", "{error}");
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("requires consent; no interactive handler"),
+            "{error}",
+        );
+    }
+
+    /// A pre-tool hook block must persist as a typed `blocked` payload in
+    /// the `ToolResult` event, carrying the hook identity and the hook's
+    /// stated reason in detail — never the legacy collapsed string that
+    /// `from_error_value` retypes as `execution_failed`.
+    #[tokio::test]
+    async fn hook_block_persists_blocked_kind_in_event() {
+        let store = Arc::new(EventStore::new());
+        let mut loop_context = LoopContext::new("base");
+
+        let mut hook_registry = HookRegistry::new();
+        hook_registry.register(Hook::PreTool(Box::new(BlockEverything {
+            reason: "policy says no".to_owned(),
+        })));
+        loop_context.hooks = Some(Arc::new(hook_registry));
+
+        let executor = MockToolExecutor::empty();
+        let response = response_with(tool_call("tc-hb", "bash", r#"{"cmd":"ls"}"#));
+        dispatch(&executor, store.as_ref(), &mut loop_context, &response).await;
+
+        let error = &persisted_tool_result(&store, "bash")["error"];
+        assert_eq!(
+            error["kind"], "blocked",
+            "hook blocks must persist the typed kind: {error}",
+        );
+        assert_eq!(
+            error["detail"]["hook"], "pre_tool",
+            "the blocking hook must be machine-readable in detail: {error}",
+        );
+        assert_eq!(
+            error["detail"]["reason"], "policy says no",
+            "the hook's stated reason must be machine-readable in detail: {error}",
+        );
+        assert!(
+            error["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("policy says no"),
+            "the model-facing message must carry the hook's reason: {error}",
+        );
+        let reparsed = crate::tool::failure::ToolErrorPayload::from_error_value(error)
+            .expect("persisted hook-block error re-types");
+        assert_eq!(
+            reparsed.kind,
+            crate::tool::failure::ToolErrorKind::Blocked,
+            "from_error_value must classify the persisted error as blocked",
+        );
     }
 
     /// Pre-tool hook that proceeds — stands in for a consent handler.

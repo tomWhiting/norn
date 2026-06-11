@@ -260,11 +260,9 @@ mod tests {
             _envelope: &crate::tool::envelope::ToolEnvelope,
             _ctx: &crate::tool::context::ToolContext,
         ) -> Result<crate::tool::traits::ToolOutput, crate::error::ToolError> {
-            Ok(crate::tool::traits::ToolOutput {
-                content: serde_json::json!(null),
-                is_error: false,
-                duration: std::time::Duration::ZERO,
-            })
+            Ok(crate::tool::traits::ToolOutput::success(serde_json::json!(
+                null
+            )))
         }
     }
 

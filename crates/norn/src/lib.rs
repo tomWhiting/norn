@@ -6,7 +6,7 @@ pub mod context;
 pub mod error;
 pub mod integration;
 pub mod internal;
-pub mod r#loop;
+pub(crate) mod r#loop;
 pub mod profile;
 pub mod provider;
 pub mod rules;
@@ -21,5 +21,16 @@ pub mod util;
 
 #[cfg(test)]
 mod tests;
+
+/// The agent loop: runner, configuration, retry policy, conversation
+/// state, schema enforcement, compaction, and the inbound steering
+/// channel.
+///
+/// This is the public face of the internal `loop` module — exposed as
+/// `agent_loop` so embedders never have to escape the `loop` keyword
+/// with a raw identifier (`r#loop`).
+pub mod agent_loop {
+    pub use crate::r#loop::*;
+}
 
 pub use crate::profile::{Capability, Profile, PromptCommand, from_profile};

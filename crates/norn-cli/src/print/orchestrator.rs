@@ -1,7 +1,7 @@
 //! End-to-end print-mode orchestrator (NC-003 R4 / R9).
 //!
 //! This is the first brief that actually calls into libnorn's
-//! [`norn::r#loop::runner::run_agent_step`]. It owns:
+//! [`norn::agent_loop::runner::run_agent_step`]. It owns:
 //!
 //! 1. **Stdin handling** ([`compose_prompt`]): auto-detect piped stdin,
 //!    read it in full, and prepend it to any positional `PROMPT` using
@@ -31,8 +31,8 @@ use std::io::{IsTerminal, Read};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use norn::agent_loop::config::AgentStepResult;
 use norn::error::{NornError, ProviderError};
-use norn::r#loop::config::AgentStepResult;
 use norn::provider::usage::Usage;
 use norn::session::events::SessionEvent;
 use norn::session::store::EventStore;
@@ -359,22 +359,23 @@ async fn orchestrate(
             None
         };
 
-        let executor: &dyn norn::r#loop::runner::ToolExecutor = &*bundle.registry;
-        let result = norn::r#loop::runner::run_agent_step(norn::r#loop::runner::AgentStepRequest {
-            provider: built_provider.as_dyn(),
-            executor,
-            store: &session.store,
-            user_prompt: &current_prompt,
-            tools: &tools,
-            output_schema: active_schema.as_ref(),
-            model: &active_model,
-            config: &bundle.agent_config,
-            event_tx: Some(&root_sender),
-            inbound: None,
-            loop_context: &mut bundle.loop_context,
-            cancel: None,
-        })
-        .await;
+        let executor: &dyn norn::agent_loop::runner::ToolExecutor = &*bundle.registry;
+        let result =
+            norn::agent_loop::runner::run_agent_step(norn::agent_loop::runner::AgentStepRequest {
+                provider: built_provider.as_dyn(),
+                executor,
+                store: &session.store,
+                user_prompt: &current_prompt,
+                tools: &tools,
+                output_schema: active_schema.as_ref(),
+                model: &active_model,
+                config: &bundle.agent_config,
+                event_tx: Some(&root_sender),
+                inbound: None,
+                loop_context: &mut bundle.loop_context,
+                cancel: None,
+            })
+            .await;
 
         drop(root_sender);
         drop(tx);
@@ -405,7 +406,8 @@ async fn orchestrate(
         // through to disk (write-through) and — being index-registered —
         // accumulated the matching index delta (event count, token
         // totals). Appending or hand-reconciling here would double-write
-        // events (breaking `resume_session` on the duplicate-ID guard) or
+        // events (breaking `SessionManager::resume` on the duplicate-ID
+        // guard) or
         // double-count the index; the orchestrator only checkpoints the
         // store so the sink flushes its own pending delta now rather
         // than at drop. The slice is collected only for the output
@@ -427,7 +429,8 @@ async fn orchestrate(
             AgentStepResult::SchemaUnreachable { .. }
             | AgentStepResult::MaxIterationsReached { .. }
             | AgentStepResult::TimedOut { .. }
-            | AgentStepResult::Cancelled { .. } => ExitCode::AgentError,
+            | AgentStepResult::Cancelled { .. }
+            | AgentStepResult::Truncated { .. } => ExitCode::AgentError,
         };
 
         let step = StepOutput {
@@ -795,6 +798,7 @@ mod tests {
             partial_output: None,
             elapsed: std::time::Duration::from_mins(1),
             iterations: 5,
+            usage: Usage::default(),
         };
         assert_eq!(
             match &timed_out {
@@ -809,6 +813,20 @@ mod tests {
         };
         assert_eq!(
             match &cancelled {
+                AgentStepResult::Completed { .. } => ExitCode::Success,
+                _ => ExitCode::AgentError,
+            },
+            ExitCode::AgentError
+        );
+
+        let truncated = AgentStepResult::Truncated {
+            kind: norn::agent_loop::config::TruncationKind::MaxTokens,
+            partial_text: Some("partial".to_string()),
+            iterations: 1,
+            usage: Usage::default(),
+        };
+        assert_eq!(
+            match &truncated {
                 AgentStepResult::Completed { .. } => ExitCode::Success,
                 _ => ExitCode::AgentError,
             },

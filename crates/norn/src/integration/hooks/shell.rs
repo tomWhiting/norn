@@ -389,7 +389,7 @@ impl PostToolHook for ShellCommandHook {
         input.tool_call_id = Some(envelope.tool_call_id.clone());
         input.tool_output = Some(output.content.clone());
         input.tool_duration_ms = Some(duration_ms);
-        input.tool_is_error = Some(output.is_error);
+        input.tool_is_error = Some(output.is_error());
         let _ = self.execute(input).await;
     }
 }
@@ -560,7 +560,7 @@ impl PostToolFailureHook for ShellCommandHook {
         input.tool_call_id = Some(envelope.tool_call_id.clone());
         input.tool_output = Some(output.content.clone());
         input.tool_duration_ms = Some(duration_ms);
-        input.tool_is_error = Some(output.is_error);
+        input.tool_is_error = Some(output.is_error());
         let _ = self.execute(input).await;
     }
 }

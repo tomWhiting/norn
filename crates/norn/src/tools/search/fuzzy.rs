@@ -4,7 +4,6 @@
 //! best-first as `{path, score}` pairs.
 
 use std::path::Path;
-use std::time::Instant;
 
 use nucleo_matcher::pattern::{CaseMatching, Normalization, Pattern as NucleoPattern};
 use nucleo_matcher::{Config as NucleoConfig, Matcher as NucleoMatcher};
@@ -14,7 +13,7 @@ use serde_json::json;
 use crate::error::ToolError;
 use crate::tool::traits::ToolOutput;
 
-use super::helpers::{GlobFilter, compile_glob, elapsed, walk_collect_paths};
+use super::helpers::{GlobFilter, compile_glob, walk_collect_paths};
 
 /// A single fuzzy-match hit.
 #[derive(Debug, Serialize)]
@@ -31,7 +30,6 @@ pub(super) fn run_fuzzy_search(
     root: &Path,
     glob_filter: Option<&str>,
     max_results: u32,
-    started: Instant,
 ) -> Result<ToolOutput, ToolError> {
     let compiled_filter: Option<GlobFilter> = compile_glob(glob_filter)?;
 
@@ -57,12 +55,8 @@ pub(super) fn run_fuzzy_search(
         .map(|(path, score)| FuzzyMatch { path, score })
         .collect();
 
-    Ok(ToolOutput {
-        content: json!({
-            "matches": results,
-            "truncated": truncated,
-        }),
-        is_error: false,
-        duration: elapsed(started),
-    })
+    Ok(ToolOutput::success(json!({
+        "matches": results,
+        "truncated": truncated,
+    })))
 }

@@ -11,7 +11,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use norn::agent::registry::AgentRegistry;
-use norn::r#loop::runner::ToolExecutor;
+use norn::agent_loop::runner::ToolExecutor;
 use norn::provider::request::ToolDefinition;
 use norn::session::store::{DurabilityPolicy, EventStore};
 use norn::tools::lsp::{LspBackend, LspWorkspace, WorkspaceLspBackend};
@@ -28,7 +28,7 @@ use crate::runtime::{
     RuntimeBundle, RuntimeInputs, apply_system_prompt, build_runtime, install_agent_tool_infra,
     register_standard_tools,
 };
-use crate::session::{attach_sink, create_session, fork_session, resume_session};
+use crate::session::{CreateSessionOptions, OpenSession, SessionManager};
 
 /// Capacity of the agent-event broadcast channel shared by all agents.
 const AGENT_EVENT_CHANNEL_CAPACITY: usize = 4096;
@@ -215,19 +215,23 @@ struct TuiSessionHandle {
     persist_session_id: Option<String>,
 }
 
-/// Resolve the session for a TUI run, honoring `--no-session`,
-/// `--resume`, `--fork`, and `--session-name` exactly as the print
-/// orchestrator and REPL driver do — so the default interactive mode is
-/// no longer the one entry point that ignores them.
+/// Resolve the session for a TUI run through [`SessionManager`],
+/// honoring `--no-session`, `--resume`, `--fork`, and `--session-name`
+/// exactly as the print orchestrator does — so the default interactive
+/// mode is never the one entry point that ignores them.
 ///
 /// - `--no-session`: a fresh in-memory [`EventStore`] with no sink and no
 ///   on-disk record.
-/// - `--resume <id>`: replay the persisted session into a store, attach a
-///   write-through sink, and continue appending to the same file.
+/// - `--resume <id>`: replay the persisted session and continue
+///   appending to the same file through its write-through sink.
 /// - `--fork <id>`: copy the source session into a new one (with its
-///   `Fork` marker), attach a sink to the new file.
+///   `Fork` marker).
 /// - otherwise: create a fresh persisted session, honoring
 ///   `--session-name`.
+///
+/// Lines the tolerant reader skipped during a resume or fork replay are
+/// reported on stderr (this runs before the terminal enters raw mode) —
+/// a partial replay is never silent.
 ///
 /// # Errors
 ///
@@ -249,48 +253,50 @@ fn open_session(
     }
 
     let data_dir = crate::config::session_data_dir();
+    let manager = SessionManager::new(&data_dir);
 
-    if let Some(id) = cli.resume.as_deref() {
-        let (store, _events, entry) = resume_session(&data_dir, id)?;
-        let store = attach_sink(store, &data_dir, &entry.id, DurabilityPolicy::Flush)?;
-        return Ok(TuiSessionHandle {
-            store: Arc::new(store),
-            session_id: entry.id.clone(),
-            persist_data_dir: Some(data_dir),
-            persist_session_id: Some(entry.id),
-        });
-    }
-
-    if let Some(id) = cli.fork.as_deref() {
-        let (entry, store, _events) =
-            fork_session(&data_dir, id, bundle.model.clone(), working_dir)?;
-        let store = attach_sink(store, &data_dir, &entry.id, DurabilityPolicy::Flush)?;
-        return Ok(TuiSessionHandle {
-            store: Arc::new(store),
-            session_id: entry.id.clone(),
-            persist_data_dir: Some(data_dir),
-            persist_session_id: Some(entry.id),
-        });
-    }
-
-    let entry = create_session(
-        &data_dir,
-        bundle.model.clone(),
-        working_dir,
-        cli.session_name.clone(),
-    )?;
-    let store = attach_sink(
-        EventStore::new(),
-        &data_dir,
-        &entry.id,
-        DurabilityPolicy::Flush,
-    )?;
+    let opened = if let Some(id) = cli.resume.as_deref() {
+        manager.resume(id, DurabilityPolicy::Flush)?
+    } else if let Some(id) = cli.fork.as_deref() {
+        manager.fork(
+            id,
+            CreateSessionOptions {
+                model: bundle.model.clone(),
+                working_dir,
+                name: None,
+            },
+            DurabilityPolicy::Flush,
+        )?
+    } else {
+        manager.create(
+            CreateSessionOptions {
+                model: bundle.model.clone(),
+                working_dir,
+                name: cli.session_name.clone(),
+            },
+            DurabilityPolicy::Flush,
+        )?
+    };
+    warn_if_lines_skipped(&opened);
     Ok(TuiSessionHandle {
-        store: Arc::new(store),
-        session_id: entry.id.clone(),
+        store: Arc::new(opened.store),
+        session_id: opened.entry.id.clone(),
         persist_data_dir: Some(data_dir),
-        persist_session_id: Some(entry.id),
+        persist_session_id: Some(opened.entry.id),
     })
+}
+
+/// Surface a partial replay on stderr before the TUI takes over the
+/// terminal: the tolerant reader skips torn, corrupt, unknown, and
+/// duplicate lines instead of failing the load, and that count must
+/// reach the user.
+fn warn_if_lines_skipped(opened: &OpenSession) {
+    if opened.replay.skipped_lines > 0 {
+        eprintln!(
+            "norn: warning: {} corrupt or unreadable line(s) skipped while loading session {}",
+            opened.replay.skipped_lines, opened.entry.id,
+        );
+    }
 }
 
 /// Register the root agent in the shared registry so the TUI's

@@ -4,9 +4,12 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
+use super::catalog::ToolCatalogEntry;
 use super::context::ToolContext;
 use super::envelope::ToolEnvelope;
+use super::failure::ToolErrorPayload;
 use super::follow_up::FollowUpAction;
 use super::lifecycle::{PostValidateMode, PostValidateOutcome, PreValidateOutcome};
 use super::scheduling::ToolEffect;
@@ -46,15 +49,109 @@ pub enum ToolCategory {
 }
 
 /// The result of a tool execution.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+///
+/// Constructed through [`ToolOutput::success`] / [`ToolOutput::failure`] /
+/// [`ToolOutput::failure_with_content`] so that the typed failure payload
+/// and the model-facing content can never disagree: a failure always
+/// carries a [`ToolErrorPayload`] and always surfaces it in `content`
+/// under the `error` key (the codebase-wide error convention), so the
+/// structured payload survives into the `ToolResult` event for embedders
+/// to dispatch on.
+///
+/// Deliberately `Serialize`-only: deriving `Deserialize` would let a
+/// deserialized value carry a `content` that disagrees with `error`,
+/// bypassing the constructor invariant above. To rebuild a `ToolOutput`
+/// from persisted model-facing content, use [`ToolOutput::from_content`],
+/// which re-types the payload from the `error` key.
+///
+/// `duration` is stamped by the dispatching registry around the execute
+/// phase — tools do not measure themselves.
+#[derive(Clone, Debug, Serialize)]
 pub struct ToolOutput {
     /// Structured content returned by the tool.
-    pub content: serde_json::Value,
-    /// Whether this result represents an error reported to the model.
-    pub is_error: bool,
+    pub content: Value,
+    /// Typed failure payload when this result reports an error to the
+    /// model; `None` for successful results.
+    error: Option<ToolErrorPayload>,
     /// How long the execution took.
-    #[serde(with = "duration_millis")]
+    #[serde(serialize_with = "duration_millis::serialize")]
     pub duration: Duration,
+}
+
+impl ToolOutput {
+    /// A successful result carrying `content`.
+    #[must_use]
+    pub fn success(content: Value) -> Self {
+        Self {
+            content,
+            error: None,
+            duration: Duration::ZERO,
+        }
+    }
+
+    /// A failed result whose model-facing content is the payload itself,
+    /// rendered as `{"error": {kind, message, ...}}`.
+    #[must_use]
+    pub fn failure(error: ToolErrorPayload) -> Self {
+        let content = serde_json::json!({ "error": error.to_value() });
+        Self {
+            content,
+            error: Some(error),
+            duration: Duration::ZERO,
+        }
+    }
+
+    /// A failed result that keeps tool-specific `content` alongside the
+    /// payload.
+    ///
+    /// The payload is injected into object content under the `error` key
+    /// (replacing any pre-existing `error` value — the typed payload is
+    /// authoritative). Non-object content is wrapped as
+    /// `{"_original": <content>, "error": ...}`, mirroring the registry's
+    /// advisory-wrapping convention, so the error always reaches the model.
+    #[must_use]
+    pub fn failure_with_content(content: Value, error: ToolErrorPayload) -> Self {
+        let content = match content {
+            Value::Object(mut map) => {
+                map.insert("error".to_string(), error.to_value());
+                Value::Object(map)
+            }
+            other => serde_json::json!({ "_original": other, "error": error.to_value() }),
+        };
+        Self {
+            content,
+            error: Some(error),
+            duration: Duration::ZERO,
+        }
+    }
+
+    /// Reconstruct a `ToolOutput` from dispatched model-facing content
+    /// (e.g. for hook envelopes built after dispatch). Detects the
+    /// codebase-wide `error`-key convention and re-types the payload via
+    /// [`ToolErrorPayload::from_error_value`].
+    #[must_use]
+    pub fn from_content(content: Value) -> Self {
+        let error = content
+            .get("error")
+            .and_then(ToolErrorPayload::from_error_value);
+        Self {
+            content,
+            error,
+            duration: Duration::ZERO,
+        }
+    }
+
+    /// Whether this result reports an error to the model.
+    #[must_use]
+    pub fn is_error(&self) -> bool {
+        self.error.is_some()
+    }
+
+    /// The typed failure payload, when this result is an error.
+    #[must_use]
+    pub fn error(&self) -> Option<&ToolErrorPayload> {
+        self.error.as_ref()
+    }
 }
 
 /// The core abstraction for all Norn tools.
@@ -81,9 +178,13 @@ pub trait Tool: Send + Sync {
     ///
     /// Returns the tool's whole-tool effect. For a composite tool whose
     /// commands differ in effect, this is the conservative union of every
-    /// command's effect (a tool with any mutating command reports `Write`),
-    /// so a caller that cannot inspect the arguments never mis-schedules a
-    /// mutation as concurrent. Per-call precision is available through
+    /// command's effect per [`ToolEffect::combine`] — a tool with any
+    /// disk-mutating command reports at least
+    /// [`ToolEffect::Write`](super::scheduling::ToolEffect::Write), one
+    /// with any external-system mutation at least
+    /// [`ToolEffect::RemoteMutation`](super::scheduling::ToolEffect::RemoteMutation)
+    /// — so a caller that cannot inspect the arguments never mis-schedules
+    /// a mutation as concurrent. Per-call precision is available through
     /// [`Self::effect_for_args`].
     fn effect(&self) -> ToolEffect;
 
@@ -134,6 +235,24 @@ pub trait Tool: Send + Sync {
     /// `Report` for tools that create new files (`Write`).
     fn post_validate_mode(&self) -> PostValidateMode {
         PostValidateMode::Report
+    }
+
+    /// Catalog entries describing this tool for `tool_search`.
+    ///
+    /// The default derives a single top-level entry from [`Self::name`],
+    /// [`Self::description`], and [`Self::input_schema`] — field hints
+    /// (names, type hints, required-ness, descriptions, enum values) are
+    /// extracted from the schema, which the `ToolArgs` derive in turn
+    /// builds from the args struct. Composite tools return one additional
+    /// entry per subcommand (see
+    /// [`CompositeTool`](super::composite::CompositeTool), whose blanket
+    /// impl does this automatically).
+    fn catalog_entries(&self) -> Vec<ToolCatalogEntry> {
+        vec![ToolCatalogEntry::from_tool_schema(
+            self.name(),
+            self.description(),
+            &self.input_schema(),
+        )]
     }
 
     /// Compile-time pre-validation.
@@ -188,15 +307,10 @@ pub trait Tool: Send + Sync {
 mod duration_millis {
     use std::time::Duration;
 
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::Serializer;
 
     pub fn serialize<S: Serializer>(d: &Duration, s: S) -> Result<S::Ok, S::Error> {
         s.serialize_u64(u64::try_from(d.as_millis()).unwrap_or(u64::MAX))
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Duration, D::Error> {
-        let ms = u64::deserialize(d)?;
-        Ok(Duration::from_millis(ms))
     }
 }
 
@@ -227,6 +341,7 @@ mod duration_millis {
 )]
 mod tests {
     use super::*;
+    use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 
     fn _assert_object_safe(_: Box<dyn Tool + Send + Sync>) {}
 
@@ -241,7 +356,14 @@ mod tests {
             "fixture"
         }
         fn input_schema(&self) -> serde_json::Value {
-            serde_json::json!({})
+            serde_json::json!({
+                "type": "object",
+                "required": ["path"],
+                "properties": {
+                    "path": { "type": "string", "description": "Target path." }
+                },
+                "additionalProperties": false
+            })
         }
         fn effect(&self) -> ToolEffect {
             self.0
@@ -251,11 +373,7 @@ mod tests {
             _envelope: &ToolEnvelope,
             _ctx: &ToolContext,
         ) -> Result<ToolOutput, ToolError> {
-            Ok(ToolOutput {
-                content: serde_json::Value::Null,
-                is_error: false,
-                duration: Duration::default(),
-            })
+            Ok(ToolOutput::success(serde_json::Value::Null))
         }
     }
 
@@ -275,17 +393,109 @@ mod tests {
     }
 
     #[test]
-    fn tool_output_serde_roundtrip() -> Result<(), serde_json::Error> {
-        let output = ToolOutput {
-            content: serde_json::json!({"result": "ok"}),
-            is_error: false,
-            duration: Duration::from_millis(42),
-        };
-        let json = serde_json::to_string(&output)?;
-        let parsed: ToolOutput = serde_json::from_str(&json)?;
-        assert_eq!(parsed.content, serde_json::json!({"result": "ok"}));
-        assert!(!parsed.is_error);
-        assert_eq!(parsed.duration, Duration::from_millis(42));
+    fn default_catalog_entries_derive_fields_from_schema() {
+        let tool = EffectTool(ToolEffect::Write);
+        let entries = tool.catalog_entries();
+        assert_eq!(entries.len(), 1);
+        assert_eq!(entries[0].name, "effect_tool");
+        assert_eq!(entries[0].description, "fixture");
+        assert!(entries[0].parent_tool.is_none());
+        assert_eq!(entries[0].fields.len(), 1);
+        assert_eq!(entries[0].fields[0].name, "path");
+        assert_eq!(entries[0].fields[0].type_hint, "string");
+        assert!(entries[0].fields[0].required);
+        assert_eq!(entries[0].fields[0].description, "Target path.");
+    }
+
+    /// `ToolOutput` is Serialize-only (no `Deserialize` back door that
+    /// could desync `content` and `error`); the wire form carries the
+    /// content, the error payload, and the duration in milliseconds.
+    /// Reconstruction happens through `from_content`, which re-types the
+    /// error from the content's `error` key.
+    #[test]
+    fn tool_output_serializes_and_rebuilds_via_from_content() -> Result<(), serde_json::Error> {
+        let mut output = ToolOutput::success(serde_json::json!({"result": "ok"}));
+        output.duration = Duration::from_millis(42);
+        let json = serde_json::to_value(&output)?;
+        assert_eq!(json["content"], serde_json::json!({"result": "ok"}));
+        assert_eq!(json["error"], serde_json::Value::Null);
+        assert_eq!(json["duration"], 42);
+
+        let rebuilt = ToolOutput::from_content(json["content"].clone());
+        assert_eq!(rebuilt.content, output.content);
+        assert!(!rebuilt.is_error());
+        assert!(rebuilt.error().is_none());
+        Ok(())
+    }
+
+    #[test]
+    fn failure_embeds_payload_under_error_key() {
+        let payload = ToolErrorPayload::new(ToolErrorKind::NotFound, "no such task")
+            .with_detail(serde_json::json!({ "task_id": "t-1" }));
+        let output = ToolOutput::failure(payload.clone());
+        assert!(output.is_error());
+        assert_eq!(output.error(), Some(&payload));
+        assert_eq!(output.content["error"]["kind"], "not_found");
+        assert_eq!(output.content["error"]["message"], "no such task");
+        assert_eq!(output.content["error"]["detail"]["task_id"], "t-1");
+    }
+
+    #[test]
+    fn failure_with_content_injects_error_into_object_content() {
+        let payload = ToolErrorPayload::new(ToolErrorKind::Conflict, "already claimed");
+        let output = ToolOutput::failure_with_content(
+            serde_json::json!({ "action": "claim", "task_id": "t-2" }),
+            payload,
+        );
+        assert!(output.is_error());
+        assert_eq!(output.content["action"], "claim");
+        assert_eq!(output.content["task_id"], "t-2");
+        assert_eq!(output.content["error"]["kind"], "conflict");
+    }
+
+    #[test]
+    fn failure_with_content_wraps_non_object_content() {
+        let payload = ToolErrorPayload::new(ToolErrorKind::ExecutionFailed, "boom");
+        let output = ToolOutput::failure_with_content(serde_json::json!("raw text"), payload);
+        assert_eq!(output.content["_original"], "raw text");
+        assert_eq!(output.content["error"]["kind"], "execution_failed");
+    }
+
+    #[test]
+    fn from_content_retypes_error_payloads() {
+        let typed = ToolOutput::from_content(serde_json::json!({
+            "error": { "kind": "timeout", "message": "took too long" }
+        }));
+        assert!(typed.is_error());
+        assert_eq!(
+            typed.error().map(|e| e.kind.clone()),
+            Some(ToolErrorKind::Timeout)
+        );
+
+        let legacy = ToolOutput::from_content(serde_json::json!({ "error": "plain string" }));
+        assert!(legacy.is_error());
+        assert_eq!(
+            legacy.error().map(|e| e.kind.clone()),
+            Some(ToolErrorKind::ExecutionFailed)
+        );
+
+        let success = ToolOutput::from_content(serde_json::json!({ "result": "ok" }));
+        assert!(!success.is_error());
+    }
+
+    /// A failure's typed payload survives serialization and is fully
+    /// recoverable from the model-facing content alone via
+    /// `from_content` — the supported reconstruction path now that
+    /// `ToolOutput` no longer implements `Deserialize`.
+    #[test]
+    fn failure_payload_recoverable_from_serialized_content() -> Result<(), serde_json::Error> {
+        let payload = ToolErrorPayload::new(ToolErrorKind::Custom("member_suspended".into()), "x");
+        let output = ToolOutput::failure(payload.clone());
+        let json = serde_json::to_value(&output)?;
+        assert_eq!(json["error"]["kind"], "member_suspended");
+
+        let rebuilt = ToolOutput::from_content(json["content"].clone());
+        assert_eq!(rebuilt.error(), Some(&payload));
         Ok(())
     }
 }

@@ -17,11 +17,13 @@ use crate::session::store::EventStore;
 /// `from_event_index` (a watermark captured via [`EventStore::len`] before
 /// the tool batch ran).
 ///
-/// A failure is any [`SessionEvent::ToolResult`] whose output object carries
-/// a string `"error"` field — the encoding the dispatch pipeline uses for
-/// failed executions, permission blocks, and hook blocks. Each entry is
-/// formatted as `"{tool_name}: {error}"` so the monitor's normalization can
-/// distinguish different tools failing with similar messages.
+/// A failure is any [`SessionEvent::ToolResult`] whose output carries an
+/// `"error"` field in either dispatch encoding: the typed payload object
+/// (`{kind, message, ...}` — hard `ToolError`s and `ToolOutput::failure`
+/// results) or the legacy bare string (permission and hook blocks). Each
+/// entry is formatted as `"{tool_name}: {message}"` so the monitor's
+/// normalization can distinguish different tools failing with similar
+/// messages.
 pub(super) fn collect_tool_failures(store: &EventStore, from_event_index: usize) -> Vec<String> {
     let events = store.events();
     events
@@ -33,8 +35,8 @@ pub(super) fn collect_tool_failures(store: &EventStore, from_event_index: usize)
                 tool_name, output, ..
             } => output
                 .get("error")
-                .and_then(serde_json::Value::as_str)
-                .map(|err| format!("{tool_name}: {err}")),
+                .and_then(crate::tool::failure::ToolErrorPayload::from_error_value)
+                .map(|payload| format!("{tool_name}: {}", payload.message)),
             _ => None,
         })
         .collect()
@@ -87,12 +89,34 @@ mod tests {
     }
 
     #[test]
-    fn non_string_error_field_is_ignored() {
+    fn non_error_shaped_error_field_is_ignored() {
         let store = EventStore::new();
         store
             .append(tool_result("weird", serde_json::json!({"error": 42})))
             .expect("append");
         assert!(collect_tool_failures(&store, 0).is_empty());
+    }
+
+    #[test]
+    fn typed_payload_errors_are_collected() {
+        let store = EventStore::new();
+        store
+            .append(tool_result(
+                "edit",
+                serde_json::json!({
+                    "error": {
+                        "kind": "execution_failed",
+                        "message": "boom",
+                        "detail": { "path": "a.rs" },
+                    },
+                }),
+            ))
+            .expect("append");
+        assert_eq!(
+            collect_tool_failures(&store, 0),
+            vec!["edit: boom".to_string()],
+            "object-form error payloads must reach the repeated-failure monitor",
+        );
     }
 
     #[test]

@@ -31,7 +31,6 @@
 
 use std::path::Path;
 use std::sync::Arc;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
@@ -49,6 +48,7 @@ use crate::error::ToolError;
 use crate::tool::ToolArgs;
 use crate::tool::context::{ToolContext, ToolFlag};
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::FollowUpAction;
 use crate::tool::lifecycle::{
     CheckOverride, PostValidateMode, PostValidateOutcome, PreValidateOutcome,
@@ -170,7 +170,6 @@ impl Tool for ApplyPatchTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: PatchArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
             ToolError::ExecutionFailed {
                 reason: format!("invalid arguments: {e}"),
@@ -266,18 +265,21 @@ impl Tool for ApplyPatchTool {
                 "hunks_applied": total_hunks,
                 "lines_added": total_added,
                 "lines_removed": total_removed,
-                "diagnostics": all_diagnostics,
+                "diagnostics": all_diagnostics.clone(),
                 "resolution_details": resolution_details,
                 "check_overrides": check_overrides,
                 "committed": false,
                 "mode": mode_str,
                 "follow_up_id": follow_up_id,
             });
-            return Ok(ToolOutput {
-                content: payload,
-                is_error: true,
-                duration: started.elapsed(),
-            });
+            return Ok(ToolOutput::failure_with_content(
+                payload,
+                ToolErrorPayload::new(
+                    ToolErrorKind::ValidationFailed,
+                    "apply_patch rejected: staged content has syntax errors",
+                )
+                .with_detail(serde_json::json!({ "diagnostics": all_diagnostics })),
+            ));
         }
 
         if !all_diagnostics.is_empty() && allow_broken {
@@ -305,7 +307,7 @@ impl Tool for ApplyPatchTool {
             "hunks_applied": total_hunks,
             "lines_added": total_added,
             "lines_removed": total_removed,
-            "diagnostics": all_diagnostics,
+            "diagnostics": all_diagnostics.clone(),
             "resolution_details": resolution_details,
             "check_overrides": check_overrides,
             "committed": true,
@@ -327,11 +329,17 @@ impl Tool for ApplyPatchTool {
                 .collect::<Vec<_>>(),
         });
 
-        Ok(ToolOutput {
-            content: payload,
-            is_error: has_error_diagnostic,
-            duration: started.elapsed(),
-        })
+        if has_error_diagnostic {
+            return Ok(ToolOutput::failure_with_content(
+                payload,
+                ToolErrorPayload::new(
+                    ToolErrorKind::ValidationFailed,
+                    "patch committed with syntax errors (AllowBrokenAst override)",
+                )
+                .with_detail(serde_json::json!({ "diagnostics": all_diagnostics })),
+            ));
+        }
+        Ok(ToolOutput::success(payload))
     }
 
     async fn post_validate(&self, output: &ToolOutput, _ctx: &ToolContext) -> PostValidateOutcome {
@@ -473,7 +481,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(on_disk, modified);
@@ -497,7 +505,10 @@ mod tests {
         }));
 
         match tool.pre_validate(&env, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => {
                 assert!(reason.contains("not read"), "{reason}");
             }
             PreValidateOutcome::Proceed => panic!("expected Block"),
@@ -546,7 +557,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(out.is_error, "expected gate failure: {:?}", out.content);
+        assert!(out.is_error(), "expected gate failure: {:?}", out.content);
         assert_eq!(out.content["committed"], false);
         let diagnostics = out.content["diagnostics"].as_array().unwrap();
         assert!(!diagnostics.is_empty());
@@ -579,7 +590,7 @@ mod tests {
         let out = tool.execute(&env, &ctx).await.unwrap();
         // With AllowBrokenAst the patch commits but error-severity
         // diagnostics still mark the output as is_error=true.
-        assert!(out.is_error, "{:?}", out.content);
+        assert!(out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
         let overrides = out.content["check_overrides"].as_array().unwrap();
         assert_eq!(overrides.len(), 1);
@@ -656,11 +667,14 @@ mod tests {
         // Pre-validate must not complain about file-exists or read-before-edit.
         match tool.pre_validate(&env, &ctx).await {
             PreValidateOutcome::Proceed => {}
-            PreValidateOutcome::Block { reason } => panic!("expected Proceed, got Block: {reason}"),
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => panic!("expected Proceed, got Block: {reason}"),
         }
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
 
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
@@ -695,11 +709,14 @@ mod tests {
 
         match tool.pre_validate(&env, &ctx).await {
             PreValidateOutcome::Proceed => {}
-            PreValidateOutcome::Block { reason } => panic!("expected Proceed, got Block: {reason}"),
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => panic!("expected Proceed, got Block: {reason}"),
         }
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
         assert!(!path.exists(), "file should be removed from disk");
 
@@ -742,7 +759,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
 
         let modified_on_disk = tokio::fs::read_to_string(&modify_path).await.unwrap();
@@ -794,7 +811,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
 
         let modified_on_disk = tokio::fs::read_to_string(&modify_path).await.unwrap();
@@ -836,7 +853,10 @@ mod tests {
         }));
 
         match tool.pre_validate(&env, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => {
                 assert!(
                     reason.contains("deleted by block") && reason.contains("modified by block"),
                     "{reason}"
@@ -862,7 +882,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
         assert!(nested_path.exists());
         let on_disk = tokio::fs::read_to_string(&nested_path).await.unwrap();
@@ -885,7 +905,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(out.is_error, "expected gate failure: {:?}", out.content);
+        assert!(out.is_error(), "expected gate failure: {:?}", out.content);
         assert_eq!(out.content["committed"], false);
         let diagnostics = out.content["diagnostics"].as_array().unwrap();
         assert!(!diagnostics.is_empty());
@@ -912,7 +932,10 @@ mod tests {
         }));
 
         match tool.pre_validate(&env, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => {
                 assert!(reason.contains("already exists"), "{reason}");
             }
             PreValidateOutcome::Proceed => panic!("expected Block"),
@@ -991,7 +1014,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
 
         let details = out.content["resolution_details"].as_array().unwrap();
@@ -1036,7 +1059,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
 
         let details = out.content["resolution_details"].as_array().unwrap();
@@ -1138,7 +1161,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
         assert_eq!(out.content["mode"], "strict");
         assert_eq!(out.content["follow_up_id"], "apply_structural");
@@ -1227,7 +1250,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["committed"], true);
 
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
@@ -1272,7 +1295,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let on_disk = tokio::fs::read(&path).await.unwrap();
         assert_eq!(
             String::from_utf8(on_disk).unwrap(),
@@ -1304,7 +1327,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(on_disk, "ALPHA\nbeta", "no trailing newline appended");
     }
@@ -1336,7 +1359,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(on_disk, "alpha\nBETA", "no trailing newline on the result");
     }
@@ -1367,7 +1390,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(
             on_disk, "alpha\nbeta\ngamma\n",
@@ -1400,7 +1423,7 @@ mod tests {
         }));
 
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(on_disk, "alpha\nBETA", "trailing newline removed");
     }
@@ -1434,10 +1457,13 @@ mod tests {
 
         match tool.pre_validate(&env, &ctx).await {
             PreValidateOutcome::Proceed => {}
-            PreValidateOutcome::Block { reason } => panic!("expected Proceed, got Block: {reason}"),
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => panic!("expected Proceed, got Block: {reason}"),
         }
         let out = tool.execute(&env, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let on_disk = tokio::fs::read_to_string(&path).await.unwrap();
         assert_eq!(on_disk, "SELECT 1;\nSELECT 2;\n");
     }
@@ -1466,7 +1492,10 @@ mod tests {
         }));
 
         match tool.pre_validate(&env, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => {
                 assert!(reason.contains("working_dir refused"), "{reason}");
             }
             PreValidateOutcome::Proceed => panic!("expected Block"),
@@ -1495,7 +1524,10 @@ mod tests {
         let env = envelope_for(json!({ "patch": patch_text }));
 
         match tool.pre_validate(&env, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
+            PreValidateOutcome::Block(crate::tool::lifecycle::BlockDecision {
+                message: reason,
+                ..
+            }) => {
                 assert!(reason.contains("target refused"), "{reason}");
             }
             PreValidateOutcome::Proceed => panic!("expected Block"),

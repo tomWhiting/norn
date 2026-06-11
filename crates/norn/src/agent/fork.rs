@@ -375,8 +375,10 @@ pub(crate) fn format_fork_outcome(
 /// `fork_call_id` is the tool-call id the provider assigned to the parent's
 /// `fork` call (read off the parent's most-recent `AssistantMessage`'s
 /// `tool_calls`). `fork_id` is the registry id the fork tool reserved — it
-/// flows into the synthetic result's `fork_id` field so the child sees how
-/// it was created.
+/// flows into the synthetic result's `agent_id` field so the child sees how
+/// it was created. The field name matches the real fork tool output on the
+/// parent side (`{"agent_id": ...}`), so both replay sides of a
+/// `tool_name: "fork"` result share one vocabulary.
 ///
 /// The synthetic event is appended at the end of `events`. The caller is
 /// responsible for applying any [`ContextFilter`] *before* calling this
@@ -394,7 +396,7 @@ pub fn inject_synthetic_fork_result(
         tool_call_id: fork_call_id.to_owned(),
         tool_name: "fork".to_owned(),
         output: serde_json::json!({
-            "fork_id": fork_id.to_string(),
+            "agent_id": fork_id.to_string(),
             "status": "active",
             "message": FORK_SYNTHETIC_RESULT_MESSAGE,
         }),
@@ -908,7 +910,14 @@ mod tests {
             } => {
                 assert_eq!(tool_call_id, "tc-fork");
                 assert_eq!(tool_name, "fork");
-                assert_eq!(output["fork_id"], fork_id.to_string());
+                // Pinned vocabulary: the synthetic child-side result uses
+                // the same `agent_id` field as the parent-side fork tool
+                // output — never `fork_id`.
+                assert_eq!(output["agent_id"], fork_id.to_string());
+                assert!(
+                    output.get("fork_id").is_none(),
+                    "legacy fork_id field must not reappear",
+                );
                 assert_eq!(output["status"], "active");
                 assert_eq!(output["message"], FORK_SYNTHETIC_RESULT_MESSAGE);
             }

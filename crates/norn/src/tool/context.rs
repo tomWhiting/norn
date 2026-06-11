@@ -10,6 +10,7 @@ use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
 
 use super::lifecycle::{RuntimeOnSuccessAction, RuntimePostValidateCheck, RuntimePreValidateCheck};
+use crate::error::ToolError;
 
 /// Stable identifier for the current agent session, published through the
 /// [`ToolContext`] extension map for tools that need per-session storage.
@@ -88,8 +89,71 @@ impl Default for SharedWorkingDir {
 /// Embedders publish this through [`ToolContext::insert_extension`]. Tools such
 /// as `bash` merge it into child process environments without mutating the
 /// process-wide environment.
+///
+/// Construct with [`ProcessEnv::new`] from any iterator of key/value
+/// pairs and compose with [`ProcessEnv::merged`] — embedders never need
+/// to hand-assemble the inner map.
 #[derive(Clone, Debug, Default)]
 pub struct ProcessEnv(pub HashMap<OsString, OsString>);
+
+impl ProcessEnv {
+    /// Build a process environment from key/value pairs. Later duplicate
+    /// keys overwrite earlier ones, matching map-insert semantics.
+    pub fn new<I, K, V>(entries: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        Self(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into()))
+                .collect(),
+        )
+    }
+
+    /// Return a new environment with `entries` merged over this one:
+    /// keys in `entries` win conflicts with existing keys.
+    #[must_use]
+    pub fn merged<I, K, V>(&self, entries: I) -> Self
+    where
+        I: IntoIterator<Item = (K, V)>,
+        K: Into<OsString>,
+        V: Into<OsString>,
+    {
+        let mut env = self.0.clone();
+        env.extend(
+            entries
+                .into_iter()
+                .map(|(key, value)| (key.into(), value.into())),
+        );
+        Self(env)
+    }
+
+    /// Look up a variable by key.
+    #[must_use]
+    pub fn get(&self, key: impl AsRef<std::ffi::OsStr>) -> Option<&OsString> {
+        self.0.get(key.as_ref())
+    }
+
+    /// Iterate over all key/value pairs.
+    pub fn iter(&self) -> impl Iterator<Item = (&OsString, &OsString)> {
+        self.0.iter()
+    }
+
+    /// Whether the environment carries no variables.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Number of variables.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+}
 
 /// Context provided by the orchestrator for a tool invocation.
 ///
@@ -346,6 +410,31 @@ impl ToolContext {
         let any = guard.get(&TypeId::of::<T>())?;
         Arc::clone(any).downcast::<T>().ok()
     }
+
+    /// Retrieves a required extension, failing with a typed
+    /// [`ToolError::MissingExtension`] that names the absent type.
+    ///
+    /// This is the standard accessor for tools whose execution depends on
+    /// embedder-published infrastructure (stores, catalogs, providers):
+    /// use it instead of hand-rolling `get_extension(..).ok_or_else(..)`
+    /// so every missing-extension failure carries the same typed error
+    /// and the same model-facing message. Use [`Self::get_extension`]
+    /// only when absence is a legitimate state.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ToolError::MissingExtension`] carrying
+    /// [`std::any::type_name`] of `T` when no extension of type `T` has
+    /// been inserted.
+    pub fn require_extension<T>(&self) -> Result<Arc<T>, ToolError>
+    where
+        T: Any + Send + Sync,
+    {
+        self.get_extension::<T>()
+            .ok_or_else(|| ToolError::MissingExtension {
+                extension: std::any::type_name::<T>().to_string(),
+            })
+    }
 }
 
 #[cfg(test)]
@@ -440,6 +529,7 @@ mod tests {
         assert!(ctx.has_read_file(&parent));
     }
 
+    #[derive(Debug)]
     struct ExtA(u32);
     struct ExtB(&'static str);
 
@@ -456,6 +546,31 @@ mod tests {
 
         struct Missing;
         assert!(ctx.get_extension::<Missing>().is_none());
+    }
+
+    #[test]
+    fn require_extension_returns_present_extension() {
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(ExtA(7)));
+        let a = ctx.require_extension::<ExtA>().expect("ExtA present");
+        assert_eq!(a.0, 7);
+    }
+
+    #[test]
+    fn require_extension_missing_yields_typed_error_naming_type() {
+        let ctx = ToolContext::empty();
+        let err = ctx
+            .require_extension::<ExtA>()
+            .expect_err("ExtA not inserted");
+        match err {
+            ToolError::MissingExtension { extension } => {
+                assert!(
+                    extension.contains("ExtA"),
+                    "error must name the missing type: {extension}",
+                );
+            }
+            other => panic!("expected MissingExtension, got {other:?}"),
+        }
     }
 
     #[test]
@@ -556,5 +671,39 @@ mod tests {
         // unavailable). Both are acceptable per the documented default.
         let expected = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
         assert_eq!(wd, expected);
+    }
+
+    #[test]
+    fn process_env_new_collects_pairs_with_last_key_winning() {
+        let env = ProcessEnv::new([
+            ("PATH", "/usr/bin"),
+            ("HOME", "/home/a"),
+            ("HOME", "/home/b"),
+        ]);
+        assert_eq!(env.len(), 2);
+        assert_eq!(env.get("PATH"), Some(&OsString::from("/usr/bin")));
+        assert_eq!(env.get("HOME"), Some(&OsString::from("/home/b")));
+        assert!(!env.is_empty());
+    }
+
+    #[test]
+    fn process_env_merged_overlays_and_preserves_original() {
+        let base = ProcessEnv::new([("A", "1"), ("B", "2")]);
+        let merged = base.merged([("B", "overridden"), ("C", "3")]);
+        assert_eq!(merged.len(), 3);
+        assert_eq!(merged.get("A"), Some(&OsString::from("1")));
+        assert_eq!(merged.get("B"), Some(&OsString::from("overridden")));
+        assert_eq!(merged.get("C"), Some(&OsString::from("3")));
+        // The original is untouched — merged is a pure overlay.
+        assert_eq!(base.get("B"), Some(&OsString::from("2")));
+        assert!(base.get("C").is_none());
+    }
+
+    #[test]
+    fn process_env_default_is_empty_and_iterable() {
+        let env = ProcessEnv::default();
+        assert!(env.is_empty());
+        assert_eq!(env.len(), 0);
+        assert_eq!(env.iter().count(), 0);
     }
 }

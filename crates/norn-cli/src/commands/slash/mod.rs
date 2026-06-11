@@ -2,10 +2,10 @@
 //!
 //! Eleven CLI-built-in slash commands (`help`, `tools`, `model`, `schema`,
 //! `compact`, `clear`, `session`, `name`, `variables`, `exit`, `quit`) are
-//! registered as [`SlashCommandHandler::Custom`](norn::r#loop::commands::SlashCommandHandler)
+//! registered as [`SlashCommandHandler::Custom`](norn::agent_loop::commands::SlashCommandHandler)
 //! entries that capture shared mutable runtime state via [`SlashState`].
 //! Profile-registered slash commands flow into the same
-//! [`SlashCommandRegistry`](norn::r#loop::commands::SlashCommandRegistry)
+//! [`SlashCommandRegistry`](norn::agent_loop::commands::SlashCommandRegistry)
 //! via [`build_slash_registry`] — CLI builtins win on name collision so a
 //! user-defined `/help` never displaces the CLI surface.
 //!
@@ -16,7 +16,7 @@
 //!   CLI builtins and the per-handler closures.
 //! - [`dispatch`] — [`dispatch_input`] and the [`DispatchOutcome`] enum
 //!   used by the print orchestrator and REPL to intercept CLI builtins
-//!   before [`run_agent_step`](norn::r#loop::runner::run_agent_step).
+//!   before [`run_agent_step`](norn::agent_loop::runner::run_agent_step).
 
 pub mod actions;
 pub mod dispatch;

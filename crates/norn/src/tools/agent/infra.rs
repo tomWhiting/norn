@@ -54,12 +54,10 @@ pub struct AgentToolInfra {
 }
 
 /// Fetches the configured [`AgentToolInfra`] from the context, returning
-/// a typed [`ToolError::ExecutionFailed`] when none is present.
+/// a typed [`ToolError::MissingExtension`] naming the missing type when
+/// none is present.
 pub(super) fn infra_from(ctx: &ToolContext) -> Result<Arc<AgentToolInfra>, ToolError> {
-    ctx.get_extension::<AgentToolInfra>()
-        .ok_or_else(|| ToolError::ExecutionFailed {
-            reason: "agent runtime not configured in tool context".to_string(),
-        })
+    ctx.require_extension::<AgentToolInfra>()
 }
 
 /// Resolves a string identifier (path or raw UUID) to a registered agent.
@@ -166,16 +164,22 @@ impl ToolExecutor for SubAgentExecutor {
         };
         let ctx = self.child_context.as_ref();
 
-        if let PreValidateOutcome::Block { reason } = tool.pre_validate(&envelope, ctx).await {
-            return Err(ToolError::PreValidationFailed { reason });
+        if let PreValidateOutcome::Block(decision) = tool.pre_validate(&envelope, ctx).await {
+            return Err(ToolError::from(decision));
         }
         for check in &ctx.pre_checks {
-            if let PreValidateOutcome::Block { reason } = check.check(&envelope, ctx).await {
-                return Err(ToolError::PreValidationFailed { reason });
+            if let PreValidateOutcome::Block(decision) = check.check(&envelope, ctx).await {
+                return Err(ToolError::from(decision));
             }
         }
 
+        // Stamp execution duration exactly like `ToolRegistry`'s dispatch
+        // path: the executor measures so individual tools never time
+        // themselves, and the stamped value is visible to post-validate /
+        // on-success phases below.
+        let dispatch_started = std::time::Instant::now();
         let mut output = tool.execute(&envelope, ctx).await?;
+        output.duration = dispatch_started.elapsed();
 
         let mut errors: Vec<String> = Vec::new();
         let mut advisories: Vec<Advisory> = Vec::new();
@@ -225,7 +229,6 @@ impl ToolExecutor for SubAgentExecutor {
     clippy::uninlined_format_args
 )]
 mod tests {
-    use std::time::Duration;
 
     use parking_lot::Mutex;
 
@@ -270,11 +273,7 @@ mod tests {
             _envelope: &ToolEnvelope,
             _ctx: &ToolContext,
         ) -> Result<ToolOutput, ToolError> {
-            Ok(ToolOutput {
-                content: serde_json::json!({"ok": true}),
-                is_error: false,
-                duration: Duration::ZERO,
-            })
+            Ok(ToolOutput::success(serde_json::json!({"ok": true})))
         }
     }
 
@@ -353,6 +352,69 @@ mod tests {
             .get_extension::<AgentToolInfra>()
             .expect("child infra reachable from shared context");
         assert_eq!(shared_infra.agent_id, child_id);
+    }
+
+    /// Stub tool whose `on_success` records the stamped execution
+    /// duration, proving the executor measures dispatch like
+    /// `ToolRegistry` does.
+    struct DurationProbe {
+        seen_duration: Arc<Mutex<Option<std::time::Duration>>>,
+    }
+
+    #[async_trait]
+    impl Tool for DurationProbe {
+        fn name(&self) -> &'static str {
+            "duration_probe"
+        }
+        fn description(&self) -> &'static str {
+            "records the stamped duration it sees in on_success"
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn effect(&self) -> ToolEffect {
+            ToolEffect::ReadOnly
+        }
+        async fn execute(
+            &self,
+            _envelope: &ToolEnvelope,
+            _ctx: &ToolContext,
+        ) -> Result<ToolOutput, ToolError> {
+            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            Ok(ToolOutput::success(serde_json::json!({"ok": true})))
+        }
+        async fn on_success(&self, output: &ToolOutput, _ctx: &ToolContext) {
+            *self.seen_duration.lock() = Some(output.duration);
+        }
+    }
+
+    /// Duration parity with the registry dispatch path: the child
+    /// executor stamps execution duration on the output before the
+    /// on-success phase, so lifecycle hooks observe a real measurement
+    /// rather than the `Duration::ZERO` default.
+    #[tokio::test]
+    async fn sub_agent_executor_stamps_execution_duration() {
+        let seen_duration = Arc::new(Mutex::new(None));
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(DurationProbe {
+            seen_duration: Arc::clone(&seen_duration),
+        }));
+        let registry = Arc::new(registry);
+
+        let child_ctx = Arc::new(ToolContext::empty());
+        let executor = SubAgentExecutor::new(Arc::clone(&registry), None, child_ctx);
+        executor
+            .execute("duration_probe", "test-call", serde_json::json!({}))
+            .await
+            .expect("probe dispatch succeeds");
+
+        let stamped = seen_duration
+            .lock()
+            .expect("on_success must run and observe the output");
+        assert!(
+            stamped > std::time::Duration::ZERO,
+            "execution duration must be stamped before on_success, got {stamped:?}",
+        );
     }
 
     /// R2: a name outside the per-child allow-list surfaces as

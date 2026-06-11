@@ -8,7 +8,6 @@
 //! the tool output so reviewers can audit overrides.
 
 use std::path::Path;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -20,8 +19,9 @@ use super::validation::count_code_lines;
 use crate::error::ToolError;
 use crate::tool::context::{ToolContext, ToolFlag};
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::lifecycle::{
-    CheckOverride, PostValidateMode, PostValidateOutcome, PreValidateOutcome,
+    BlockDecision, CheckOverride, PostValidateMode, PostValidateOutcome, PreValidateOutcome,
 };
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
@@ -164,18 +164,21 @@ impl Tool for WriteTool {
         let args: WriteArgs = match serde_json::from_value(envelope.model_args.clone()) {
             Ok(args) => args,
             Err(e) => {
-                return PreValidateOutcome::Block {
-                    reason: format!("invalid arguments: {e}"),
-                };
+                return PreValidateOutcome::Block(
+                    BlockDecision::new(format!("invalid arguments: {e}"))
+                        .with_kind(ToolErrorKind::InvalidArguments),
+                );
             }
         };
 
         let path = ctx.resolve_path(&args.path);
 
         if let Err(reason) = check_confinement(ctx, &path) {
-            return PreValidateOutcome::Block {
-                reason: format!("Write blocked: {reason}"),
-            };
+            return PreValidateOutcome::Block(
+                BlockDecision::new(format!("Write blocked: {reason}"))
+                    .with_kind(ToolErrorKind::PermissionDenied)
+                    .with_detail(serde_json::json!({ "path": args.path })),
+            );
         }
 
         if ctx.has_flag(&ToolFlag::AllowOverwrite) {
@@ -192,12 +195,17 @@ impl Tool for WriteTool {
             return PreValidateOutcome::Proceed;
         }
 
-        PreValidateOutcome::Block {
-            reason: format!(
+        PreValidateOutcome::Block(
+            BlockDecision::new(format!(
                 "Write blocked: file {} exists and has not been read this session",
                 args.path
-            ),
-        }
+            ))
+            .with_guidance(
+                "Read the file with the read tool first, or have the orchestrator set \
+                 the AllowOverwrite flag.",
+            )
+            .with_detail(serde_json::json!({ "path": args.path })),
+        )
     }
 
     async fn execute(
@@ -205,7 +213,6 @@ impl Tool for WriteTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: WriteArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
             ToolError::ExecutionFailed {
                 reason: format!("invalid arguments: {e}"),
@@ -290,7 +297,7 @@ impl Tool for WriteTool {
             None => serde_json::Value::Null,
         };
 
-        let is_error = diagnostics
+        let has_error_diagnostic = diagnostics
             .iter()
             .any(|d| d.get("severity").and_then(serde_json::Value::as_str) == Some("error"));
 
@@ -303,11 +310,17 @@ impl Tool for WriteTool {
             "check_overrides": check_overrides,
         });
 
-        Ok(ToolOutput {
-            content: payload,
-            is_error,
-            duration: started.elapsed(),
-        })
+        if has_error_diagnostic {
+            return Ok(ToolOutput::failure_with_content(
+                payload,
+                ToolErrorPayload::new(
+                    ToolErrorKind::ValidationFailed,
+                    "file written with syntax errors",
+                )
+                .with_detail(serde_json::json!({ "diagnostics": diagnostics })),
+            ));
+        }
+        Ok(ToolOutput::success(payload))
     }
 
     async fn post_validate(&self, output: &ToolOutput, _ctx: &ToolContext) -> PostValidateOutcome {
@@ -410,8 +423,8 @@ mod tests {
 
         match tool.pre_validate(&envelope, &ctx).await {
             PreValidateOutcome::Proceed => {}
-            PreValidateOutcome::Block { reason } => {
-                panic!("expected Proceed, got Block({reason:?})")
+            PreValidateOutcome::Block(decision) => {
+                panic!("expected Proceed, got Block({:?})", decision.message)
             }
         }
     }
@@ -430,8 +443,12 @@ mod tests {
         let ctx = ToolContext::empty();
 
         match tool.pre_validate(&envelope, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
-                assert!(reason.contains("not been read"), "reason was {reason:?}");
+            PreValidateOutcome::Block(decision) => {
+                assert!(
+                    decision.message.contains("not been read"),
+                    "message was {:?}",
+                    decision.message
+                );
             }
             PreValidateOutcome::Proceed => panic!("expected Block, got Proceed"),
         }
@@ -439,8 +456,11 @@ mod tests {
         ctx.mark_file_read(&path);
         match tool.pre_validate(&envelope, &ctx).await {
             PreValidateOutcome::Proceed => {}
-            PreValidateOutcome::Block { reason } => {
-                panic!("expected Proceed after mark_file_read, got Block({reason:?})")
+            PreValidateOutcome::Block(decision) => {
+                panic!(
+                    "expected Proceed after mark_file_read, got Block({:?})",
+                    decision.message
+                )
             }
         }
     }
@@ -461,13 +481,16 @@ mod tests {
 
         match tool.pre_validate(&envelope, &ctx).await {
             PreValidateOutcome::Proceed => {}
-            PreValidateOutcome::Block { reason } => {
-                panic!("expected Proceed under AllowOverwrite, got Block({reason:?})")
+            PreValidateOutcome::Block(decision) => {
+                panic!(
+                    "expected Proceed under AllowOverwrite, got Block({:?})",
+                    decision.message
+                )
             }
         }
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "expected success: {:?}", out.content);
+        assert!(!out.is_error(), "expected success: {:?}", out.content);
         let overrides = out.content["check_overrides"].as_array().unwrap();
         assert_eq!(overrides.len(), 1);
         assert_eq!(overrides[0]["check_name"], "read_before_overwrite");
@@ -493,7 +516,7 @@ mod tests {
         let ctx = ToolContext::empty();
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(out.is_error);
+        assert!(out.is_error());
         let diagnostics = out.content["diagnostics"].as_array().unwrap();
         assert!(!diagnostics.is_empty());
         let first = &diagnostics[0];
@@ -532,7 +555,7 @@ mod tests {
         let ctx = ToolContext::empty();
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let diagnostics = out.content["diagnostics"].as_array().unwrap();
         assert!(diagnostics.is_empty());
 
@@ -555,7 +578,7 @@ mod tests {
         let ctx = ToolContext::empty();
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
     }
 
     #[tokio::test]
@@ -575,7 +598,11 @@ mod tests {
         let ctx = ToolContext::empty();
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "no limit means no error: {:?}", out.content);
+        assert!(
+            !out.is_error(),
+            "no limit means no error: {:?}",
+            out.content
+        );
         assert!(out.content["length_limit"].is_null());
         let diagnostics = out.content["diagnostics"].as_array().unwrap();
         assert!(diagnostics.iter().all(|d| {
@@ -637,7 +664,7 @@ mod tests {
         let ctx = ToolContext::empty();
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         let diagnostics = out.content["diagnostics"].as_array().unwrap();
         assert!(diagnostics.iter().all(|d| {
             d.get("code").and_then(serde_json::Value::as_str) != Some("file-length-exceeded")
@@ -726,8 +753,12 @@ mod tests {
         }));
 
         match tool.pre_validate(&envelope, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
-                assert!(reason.contains("outside the workspace"), "{reason}");
+            PreValidateOutcome::Block(decision) => {
+                assert!(
+                    decision.message.contains("outside the workspace"),
+                    "{}",
+                    decision.message
+                );
             }
             PreValidateOutcome::Proceed => panic!("expected Block"),
         }
@@ -753,8 +784,12 @@ mod tests {
         }));
 
         match tool.pre_validate(&envelope, &ctx).await {
-            PreValidateOutcome::Block { reason } => {
-                assert!(reason.contains("outside the workspace"), "{reason}");
+            PreValidateOutcome::Block(decision) => {
+                assert!(
+                    decision.message.contains("outside the workspace"),
+                    "{}",
+                    decision.message
+                );
             }
             PreValidateOutcome::Proceed => panic!("expected Block"),
         }
@@ -775,7 +810,7 @@ mod tests {
         }));
 
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(tokio::fs::read_to_string(&path).await.unwrap(), "fine");
     }
 
@@ -801,7 +836,7 @@ mod tests {
             "content": "#!/bin/sh\necho updated\n"
         }));
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
 
         let mode = tokio::fs::metadata(&path).await.unwrap().permissions();
         assert_eq!(

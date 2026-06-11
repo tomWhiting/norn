@@ -8,7 +8,6 @@
 
 use std::fmt::Write as _;
 use std::path::Path;
-use std::time::Instant;
 
 use async_trait::async_trait;
 use serde::Deserialize;
@@ -17,6 +16,7 @@ use super::confinement::check_confinement;
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
@@ -103,7 +103,6 @@ impl Tool for ReadTool {
         envelope: &ToolEnvelope,
         ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
-        let started = Instant::now();
         let args: ReadArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
             ToolError::ExecutionFailed {
                 reason: format!("invalid arguments: {e}"),
@@ -115,16 +114,14 @@ impl Tool for ReadTool {
         // Workspace confinement (opt-in): refuse before touching disk so
         // even metadata of out-of-root paths is never disclosed.
         if let Err(reason) = check_confinement(ctx, &path) {
-            let payload = serde_json::json!({
-                "path": args.path,
-                "kind": "confinement_refused",
-                "error": format!("read refused: {reason}"),
-            });
-            return Ok(ToolOutput {
-                content: payload,
-                is_error: true,
-                duration: started.elapsed(),
-            });
+            return Ok(ToolOutput::failure_with_content(
+                serde_json::json!({ "path": args.path, "kind": "confinement_refused" }),
+                ToolErrorPayload::new(
+                    ToolErrorKind::PermissionDenied,
+                    format!("read refused: {reason}"),
+                )
+                .with_detail(serde_json::json!({ "path": args.path })),
+            ));
         }
 
         // Image extension takes precedence over reading bytes.
@@ -134,26 +131,17 @@ impl Tool for ReadTool {
                 "kind": "image",
                 "message": format!("image file: {}", args.path),
             });
-            return Ok(ToolOutput {
-                content: payload,
-                is_error: false,
-                duration: started.elapsed(),
-            });
+            return Ok(ToolOutput::success(payload));
         }
 
         let bytes = match tokio::fs::read(&path).await {
             Ok(bytes) => bytes,
             Err(e) => {
-                let payload = serde_json::json!({
-                    "path": args.path,
-                    "kind": "io_error",
-                    "error": e.to_string(),
-                });
-                return Ok(ToolOutput {
-                    content: payload,
-                    is_error: true,
-                    duration: started.elapsed(),
-                });
+                return Ok(ToolOutput::failure_with_content(
+                    serde_json::json!({ "path": args.path, "kind": "io_error" }),
+                    ToolErrorPayload::new(ToolErrorKind::Io, e.to_string())
+                        .with_detail(serde_json::json!({ "path": args.path })),
+                ));
             }
         };
 
@@ -164,11 +152,7 @@ impl Tool for ReadTool {
                 "size_bytes": bytes.len(),
                 "message": format!("binary file ({} bytes)", bytes.len()),
             });
-            return Ok(ToolOutput {
-                content: payload,
-                is_error: false,
-                duration: started.elapsed(),
-            });
+            return Ok(ToolOutput::success(payload));
         }
 
         let text = match std::str::from_utf8(&bytes) {
@@ -179,11 +163,7 @@ impl Tool for ReadTool {
                     "kind": "binary",
                     "message": format!("file is not valid UTF-8: {e}"),
                 });
-                return Ok(ToolOutput {
-                    content: payload,
-                    is_error: false,
-                    duration: started.elapsed(),
-                });
+                return Ok(ToolOutput::success(payload));
             }
         };
 
@@ -195,15 +175,11 @@ impl Tool for ReadTool {
             "content": rendered,
         });
 
-        Ok(ToolOutput {
-            content: payload,
-            is_error: false,
-            duration: started.elapsed(),
-        })
+        Ok(ToolOutput::success(payload))
     }
 
     async fn on_success(&self, output: &ToolOutput, ctx: &ToolContext) {
-        if output.is_error {
+        if output.is_error() {
             return;
         }
         let Some(path_str) = output
@@ -339,7 +315,7 @@ mod tests {
         let ctx = ToolContext::empty();
         let out = tool.execute(&envelope, &ctx).await.unwrap();
 
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["kind"], "text");
         let content = out.content["content"].as_str().unwrap();
         assert!(content.starts_with("1\talpha\n"));
@@ -360,7 +336,7 @@ mod tests {
         let ctx = ToolContext::empty();
         let out = tool.execute(&envelope, &ctx).await.unwrap();
 
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["kind"], "binary");
     }
 
@@ -377,7 +353,7 @@ mod tests {
         let ctx = ToolContext::empty();
         let out = tool.execute(&envelope, &ctx).await.unwrap();
 
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         assert_eq!(out.content["kind"], "image");
     }
 
@@ -395,7 +371,7 @@ mod tests {
         let ctx = ToolContext::empty();
         let out = tool.execute(&envelope, &ctx).await.unwrap();
 
-        assert!(!out.is_error);
+        assert!(!out.is_error());
         let content = out.content["content"].as_str().unwrap();
         assert!(content.contains("2\ttwo\n"));
         assert!(content.contains("3\tthree\n"));
@@ -437,7 +413,7 @@ mod tests {
         let ctx = ToolContext::empty();
         let out = tool.execute(&envelope, &ctx).await.unwrap();
 
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert_eq!(out.content["kind"], "io_error");
     }
 
@@ -479,7 +455,7 @@ mod tests {
 
         let envelope = envelope_for(json!({ "path": "/etc/passwd" }));
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(out.is_error);
+        assert!(out.is_error());
         assert_eq!(out.content["kind"], "confinement_refused");
         // The refused path must not be marked as read.
         tool.on_success(&out, &ctx).await;
@@ -498,7 +474,7 @@ mod tests {
 
         let envelope = envelope_for(json!({ "path": path.to_string_lossy() }));
         let out = tool.execute(&envelope, &ctx).await.unwrap();
-        assert!(!out.is_error, "{:?}", out.content);
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["kind"], "text");
     }
 

@@ -43,6 +43,7 @@ use crate::system_prompt::builder::{
     ExecutionMode, SystemPromptInputs, ToolPromptEntry, build_system_prompt,
 };
 use crate::system_prompt::environment::EnvironmentConfig;
+use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 use crate::tool::context::{SessionId, SharedWorkingDir, ToolContext};
 use crate::tool::lifecycle::RuntimePostValidateCheck;
 use crate::tool::registry::ToolRegistry;
@@ -55,7 +56,6 @@ use crate::tools::diagnostics::{
 };
 use crate::tools::lsp::{LspBackend, LspWorkspace};
 use crate::tools::registry_builder::register_standard_tools;
-use crate::tools::tool_search::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 
 /// A deferred installer that publishes a typed extension on the agent's
 /// shared [`ToolContext`] at build time. Stored by
@@ -412,7 +412,11 @@ pub(crate) fn effective_agent_config(
 /// Populate the loop context's execution infrastructure: retry policy
 /// (explicit, else the runtime base's, else default), token estimator,
 /// context-edit tracker, diagnostics, working dir, variable store, and
-/// environment config. Returns the session id minted by the variable store.
+/// environment config. Returns the session id: `session_id_override`
+/// when given (the persisted session's index-entry id from
+/// `open_session`), otherwise the id minted by the variable store. The
+/// returned id, the `{{session_id}}` variable, and the system prompt
+/// environment always agree.
 pub(crate) fn populate_loop_context(
     loop_context: &mut LoopContext,
     retry_policy: Option<RetryPolicy>,
@@ -420,6 +424,7 @@ pub(crate) fn populate_loop_context(
     diagnostics: Option<&Arc<DiagnosticCollector>>,
     shared_wd: &SharedWorkingDir,
     model: &str,
+    session_id_override: Option<&str>,
 ) -> String {
     loop_context.retry_policy = retry_policy.unwrap_or_else(|| {
         runtime_base.map_or_else(RetryPolicy::default, |base| base.retry_policy.clone())
@@ -428,7 +433,11 @@ pub(crate) fn populate_loop_context(
     loop_context.context_edits = Some(ContextEdits::new());
     loop_context.diagnostics = diagnostics.map(Arc::clone);
     loop_context.working_dir = shared_wd.clone();
-    let variables = Arc::new(VariableStore::with_builtins().with_working_dir(shared_wd.clone()));
+    let mut variables = VariableStore::with_builtins().with_working_dir(shared_wd.clone());
+    if let Some(id) = session_id_override {
+        variables = variables.with_session_id(id);
+    }
+    let variables = Arc::new(variables);
     let session_id = variables.session_id().to_owned();
     loop_context.variables = Some(variables);
     loop_context.environment = Some(EnvironmentConfig {
@@ -560,18 +569,23 @@ fn merge_agent_config(mut base: AgentLoopConfig, explicit: AgentLoopConfig) -> A
     if explicit.server_compaction_threshold_tokens.is_some() {
         base.server_compaction_threshold_tokens = explicit.server_compaction_threshold_tokens;
     }
+    if explicit.output_schema.is_some() {
+        base.output_schema = explicit.output_schema;
+    }
     base
 }
 
 /// Publish the tool catalog (registry tools plus consumer extras) on `ctx`.
+///
+/// Entries come from each tool's
+/// [`Tool::catalog_entries`](crate::tool::traits::Tool::catalog_entries),
+/// so field hints and composite subcommand entries are derived from the
+/// tools' own schemas.
 pub(crate) fn install_tool_catalog(registry: &ToolRegistry, ctx: &ToolContext) {
     let mut entries: Vec<ToolCatalogEntry> = registry
         .names()
-        .filter_map(|name| {
-            registry
-                .get(name)
-                .map(|tool| ToolCatalogEntry::tool(tool.name(), tool.description()))
-        })
+        .filter_map(|name| registry.get(name))
+        .flat_map(Tool::catalog_entries)
         .collect();
 
     if let Some(extras) = ctx.get_extension::<ToolCatalogExtras>() {

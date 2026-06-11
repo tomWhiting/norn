@@ -41,7 +41,15 @@ impl ToolRenderer for ReadRenderer {
             }
             "image" => format!("> {path}  [image]"),
             "io_error" => {
-                let error = result.get("error").and_then(Value::as_str).unwrap_or("");
+                // The `error` field is the typed payload object
+                // ({kind, message, ...}); a bare string is the legacy
+                // gating form, kept as a fallback.
+                let error_field = result.get("error");
+                let error = error_field
+                    .and_then(|v| v.get("message"))
+                    .and_then(Value::as_str)
+                    .or_else(|| error_field.and_then(Value::as_str))
+                    .unwrap_or("");
                 format!("{}✗ > {path}  {error}{}", fg(RED, caps), fg_reset())
             }
             _ => {
@@ -154,12 +162,26 @@ mod tests {
         );
         assert!(binary.contains("[binary, 4096 bytes]"));
 
+        // Typed payload form — what the read tool emits.
         let io_err = ReadRenderer.header_line(
+            &json!({ "path": "gone.rs" }),
+            &json!({
+                "path": "gone.rs",
+                "kind": "io_error",
+                "error": { "kind": "io", "message": "No such file" },
+            }),
+            10,
+            &caps(),
+        );
+        assert!(io_err.contains("No such file"), "{io_err}");
+
+        // Legacy bare-string form still renders.
+        let io_err_legacy = ReadRenderer.header_line(
             &json!({ "path": "gone.rs" }),
             &json!({ "path": "gone.rs", "kind": "io_error", "error": "No such file" }),
             10,
             &caps(),
         );
-        assert!(io_err.contains("No such file"));
+        assert!(io_err_legacy.contains("No such file"), "{io_err_legacy}");
     }
 }

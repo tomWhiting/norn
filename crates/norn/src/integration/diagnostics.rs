@@ -119,7 +119,11 @@ impl NornDiagnostic {
     #[must_use]
     pub fn from_tool_error(tool_name: impl Into<String>, err: &ToolError) -> Self {
         match err {
-            ToolError::PreValidationFailed { reason } => Self::from_tool_block(tool_name, reason),
+            ToolError::PreValidationFailed { payload } => {
+                let mut diagnostic = Self::from_tool_block(tool_name, payload.message.clone());
+                diagnostic.suggestion = payload.guidance().map(str::to_owned);
+                diagnostic
+            }
             ToolError::PostValidationFailed {
                 reason,
                 committed_output,
@@ -189,6 +193,23 @@ impl NornDiagnostic {
                 file_path: None,
                 suggestion: None,
             },
+            ToolError::MissingExtension { extension } => {
+                let tool = tool_name.into();
+                Self {
+                    severity: DiagnosticSeverity::Error,
+                    code: "tool-missing-extension".to_owned(),
+                    message: format!(
+                        "tool '{tool}' requires a tool-context extension that is not \
+                         configured: {extension}"
+                    ),
+                    source_tool: Some(tool),
+                    file_path: None,
+                    suggestion: Some(format!(
+                        "publish `{extension}` on the shared ToolContext (e.g. via \
+                         `ToolContext::insert_extension`) before dispatching this tool"
+                    )),
+                }
+            }
         }
     }
 }
@@ -375,12 +396,21 @@ mod tests {
 
     #[test]
     fn from_tool_error_pre_validation_uses_tool_blocked() {
+        use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
+
         let err = ToolError::PreValidationFailed {
-            reason: "must read first".to_owned(),
+            payload: ToolErrorPayload::new(ToolErrorKind::Blocked, "must read first")
+                .with_detail(serde_json::json!({ "guidance": "read the file first" })),
         };
         let diag = NornDiagnostic::from_tool_error("write", &err);
         assert_eq!(diag.code, "tool-blocked");
         assert_eq!(diag.severity, DiagnosticSeverity::Warning);
+        assert!(diag.message.contains("must read first"), "{}", diag.message);
+        assert_eq!(
+            diag.suggestion.as_deref(),
+            Some("read the file first"),
+            "block guidance must surface as the diagnostic suggestion",
+        );
     }
 
     #[test]
