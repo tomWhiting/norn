@@ -5,8 +5,8 @@
 `2861545` (Phase 2 typed API, §7), `fd1c587`/`a01cd43`/`2a2a7a2`/`ae6c02c`
 (Wave 3 batches, §8.3–§8.5), `74763c9` (W3.5 cascade + envelope fix,
 §8.6–§8.7), `7283e88` (W3.7 surfaces + explicit session IDs, §8.8–§8.9).
-§8.10 (W3.6 usage rollup — **the §8.2 breaking change**) lands with the
-commit that introduces it; Wave 3 is complete at that commit.
+`fcea51d` (W3.6 usage rollup — **the §8.2 breaking change**, §8.10).
+**Wave 3 is complete at `fcea51d`.**
 **WARNING — do not pin exactly `74763c9`:** that commit declares
 `mod agents_messages;` but the module file landed in `7283e88`, so
 `74763c9` does not build from a clean checkout (and will trip bisects).
@@ -336,8 +336,7 @@ parent-configured budgets).
 - **BREAKING: `SubagentLifecycle::Completed` gains `subtree_usage`**
   (aggregated descendant usage) — coordinate your match/deserialization
   update with the pin bump when Wave 3 lands; we will flag the exact
-  commit in this document. **FLAGGED — LANDED: see §8.10** (the W3.6
-  commit, immediately after `7283e88`; its hash is recorded there).
+  commit in this document. **FLAGGED — LANDED at `fcea51d`: see §8.10.**
 - **BREAKING: `signal_agent` will be deleted** in the same wave, replaced
   by `send_message` (target path/UUID/"parent", kind `steer`/`update`,
   scope enforced from spawn-time policy). **SUPERSEDED — the final name
@@ -604,9 +603,9 @@ All additive; nothing breaks. Four pieces:
   everywhere else. Embedder surfaces are unchanged: a meridian root
   still opts in via `AgentBuilder::inbound_capacity` (§8.4).
 
-## 8.10 W3.6 landed — usage rollup (THE §8.2 BREAKING CHANGE). Wave 3 complete.
+## 8.10 W3.6 landed at `fcea51d` — usage rollup (THE §8.2 BREAKING CHANGE). Wave 3 complete.
 
-This is the commit §8.2 promised to flag: **`SubagentLifecycle::Completed`
+`fcea51d` is the commit §8.2 promised to flag: **`SubagentLifecycle::Completed`
 now carries `subtree_usage: Usage`** — update your match/deserialization
 with this pin bump.
 
