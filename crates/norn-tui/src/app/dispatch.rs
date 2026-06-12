@@ -492,6 +492,7 @@ mod tests {
                     max_concurrent_children: 32,
                 },
                 inbound_capacity: 32,
+                loop_config: None,
             },
             None,
         )
@@ -512,6 +513,7 @@ mod tests {
                     max_concurrent_children: 32,
                 },
                 inbound_capacity: 32,
+                loop_config: None,
             },
             None,
         )

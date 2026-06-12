@@ -157,7 +157,7 @@ impl Tool for ForkTool {
                     "type": "object",
                     "required": ["messaging", "delegation", "inbound_capacity"],
                     "additionalProperties": false,
-                    "description": "Optional narrowed policy for this fork. Omit to grant your own policy with delegation depth reduced by one level. Every field must be within your own granted budget — widening fails.",
+                    "description": "Optional narrowed policy for this fork. Omit to grant your own policy with delegation depth reduced by one level. Every field except loop_config must be within your own granted budget — widening fails. Supplying child_policy is a complete replacement: without loop_config it clears any inherited loop overrides — restate them to keep them.",
                     "properties": {
                         "messaging": {
                             "type": "string",
@@ -185,6 +185,28 @@ impl Tool for ForkTool {
                             "type": "integer",
                             "minimum": 1,
                             "description": "Bounded capacity of the fork's inbound message channel. Must be at most your own granted capacity."
+                        },
+                        "loop_config": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "description": "Optional loop-shaping overrides for the fork. Not a narrowing axis: any value is accepted regardless of your own loop config. Each field is optional; an unset field keeps the library default (today's behavior). Omit entirely to run the fork on default loop limits — and note that supplying child_policy without this key clears any loop overrides the fork would have inherited; restate them to keep them.",
+                            "properties": {
+                                "max_iterations": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Hard cap on provider round-trips within one of the fork's steps. Unset = uncapped."
+                                },
+                                "step_timeout_secs": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Wall-clock cap in seconds on each of the fork's steps. Unset = uncapped."
+                                },
+                                "linger_secs": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Linger deadline in seconds: the fork waits this long at each would-stop boundary for late messages and its own children's results before stopping. Grant this to a fork that delegates, so its children's late results are delivered instead of lost. Unset = the fork returns the moment its model stops."
+                                }
+                            }
                         }
                     }
                 }
@@ -498,6 +520,7 @@ impl Tool for ForkTool {
                 hooks,
                 router: Arc::clone(&infra.router),
                 cancel: fork_cancel,
+                loop_config: fork_policy.loop_config,
             },
             inbound_tx,
         );
@@ -640,6 +663,7 @@ mod tests {
                     max_concurrent_children: 32,
                 },
                 inbound_capacity: 32,
+                loop_config: None,
             },
             child_result_capacity: 256,
         }
@@ -2721,6 +2745,109 @@ mod tests {
             .remove(fork_id)
             .expect("handle");
         handle.join_handle.await.expect("join");
+    }
+
+    /// R5 on the fork surface: a per-fork
+    /// `child_policy.loop_config.max_iterations` is stamped on the
+    /// fork's grant (registry ground truth) and actually binds — the
+    /// fork's schema loop would need a second round-trip to produce its
+    /// structured output, the granted cap of 1 forbids it, and the typed
+    /// `MaxIterationsReached` failure is delivered honestly through the
+    /// result channel.
+    #[tokio::test]
+    async fn fork_granted_max_iterations_binds() {
+        use crate::agent::child_policy::ChildLoopConfig;
+        use crate::agent::output::AgentStopReason;
+        use crate::agent::result_channel::ChildResultSender;
+
+        // First turn ends with plain text (no structured_output call):
+        // in schema mode the loop would nudge and call again — the
+        // second (scripted) turn must never be requested under the cap.
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "not structured".to_string(),
+                },
+                ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    usage: Usage::default(),
+                    response_id: None,
+                },
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "never reached".to_string(),
+                },
+                ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    usage: Usage::default(),
+                    response_id: None,
+                },
+            ],
+        ]));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({
+                    "request": "r", "model": "gpt-5.5", "requirements": [],
+                    "child_policy": {
+                        "messaging": "siblings_and_parent",
+                        "delegation": {
+                            "remaining_depth": 0,
+                            "max_concurrent_children": 32,
+                        },
+                        "inbound_capacity": 32,
+                        "loop_config": { "max_iterations": 1 },
+                    },
+                })),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        assert!(!out.is_error(), "{:?}", out.content);
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(fork_id)
+                .expect("entry")
+                .policy
+                .loop_config,
+            Some(ChildLoopConfig {
+                max_iterations: Some(1),
+                step_timeout_secs: None,
+                linger_secs: None,
+            }),
+            "the granted loop_config is registry ground truth",
+        );
+
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+
+        assert_eq!(
+            agent_registry.read().get(fork_id).expect("entry").status,
+            AgentStatus::Failed,
+            "a capped-out fork is an honest failure",
+        );
+        let result = rx.try_recv().expect("result delivered");
+        assert!(!result.succeeded);
+        assert_eq!(result.stop, Some(AgentStopReason::MaxIterationsReached));
     }
 
     /// Routes provider scripts so a mid-tree fork and the grandchild it

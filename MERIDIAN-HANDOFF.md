@@ -351,9 +351,10 @@ parent-configured budgets).
   capacities) becomes builder-required — build error if spawn tools are
   registered without it. Documented proposals match today's behavior
   (depth 1, 32 children, capacities 32/256).
-- Tracked deferral you should know about: children do NOT inherit the
-  parent's `AgentLoopConfig` (`max_iterations`/`step_timeout`) and won't
-  in Wave 3 either; per-child loop config is deferred to the following
+- ~~Tracked deferral~~ **CLOSED — see §8.11** (per-child `loop_config`
+  including linger landed after Wave 3). Original note: children do NOT
+  inherit the parent's `AgentLoopConfig` (`max_iterations`/`step_timeout`)
+  and won't in Wave 3 either; per-child loop config is deferred to the following
   wave and recorded in the design doc.
 
 ## 8.3 Wave 3 batch 1 landed (W3.0 + W3.1 + W3.3) — adapt when you bump past it
@@ -641,5 +642,36 @@ with this pin bump.
 
 **Wave 3 is complete** with this commit: messaging (§8.3–§8.4),
 recursion (§8.5), cancellation cascade (§8.6), surfaces (§8.9), and the
-usage rollup. The tracked R5 deferral (per-child `AgentLoopConfig`
-including linger) remains open and is due in the next wave.
+usage rollup. ~~The tracked R5 deferral remains open~~ — **R5 is now
+closed too: see §8.11.**
+
+## 8.11 R5 closed — per-child loop config, including linger (additive)
+
+The Wave 3 tracked deferral is closed; the coordination surface has no
+remaining obligations. All additive — `loop_config` is optional and
+unset means exactly the pre-R5 behavior.
+
+- **`ChildPolicy` gains `loop_config: Option<ChildLoopConfig>`** —
+  `{ max_iterations, step_timeout_secs, linger_secs }`, each field
+  optional, integer **seconds**. It is a typed subset: harness-only
+  loop knobs (schema tool name, cache key, compaction) remain
+  un-suppliable per spawn. `ChildPolicy` now serializes the key as
+  `"loop_config": null` when unset; pre-R5 JSON without the key
+  deserializes fine. If you construct `ChildPolicy` literals, add the
+  field (`loop_config: None` = status quo); `ChildLoopConfig` is
+  re-exported from `norn::agent`.
+- **Children can now linger**: grant `linger_secs` to any child you
+  expect to delegate and it waits at its stop boundaries for its own
+  children's late results (the orphaned-grandchild gap §8.5 recorded is
+  closed; the drained subtree's usage rolls up per §8.10). Caps bind
+  with honest typed outcomes (`MaxIterationsReached` / `TimedOut`
+  delivered as failed results).
+- **Not a narrowing axis** (deliberate, review-verified): `loop_config`
+  inherits unchanged and a per-spawn `child_policy` may set OR CLEAR it
+  freely — `child_policy` is a complete replacement, not a merge. Do
+  not rely on an envelope `loop_config` as a subtree-wide cost control;
+  the enforced budgets remain delegation depth/children and messaging
+  scope.
+- rhai parity: host-granted `loop_config` rides script-spawn derivation
+  and binds; script children that stop on a cap now record registry
+  `Failed` (matching the spawn/fork wrappers), never a fake `Completed`.

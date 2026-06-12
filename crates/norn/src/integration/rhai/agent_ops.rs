@@ -17,9 +17,7 @@ use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::error::NornError;
 use crate::r#loop::LoopContext;
 use crate::r#loop::inbound::{ChannelMessage, MessageKind};
-use crate::r#loop::runner::{
-    AgentLoopConfig, AgentStepRequest, AgentStepResult, ToolExecutor, run_agent_step,
-};
+use crate::r#loop::runner::{AgentStepRequest, AgentStepResult, ToolExecutor, run_agent_step};
 use crate::provider::agent_event::AgentMessageLifecycle;
 use crate::session::store::EventStore;
 use crate::tool::context::ToolContext;
@@ -302,6 +300,12 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         .child_policy
         .grant_for_child(None)
         .map_err(|e| Box::new(rhai_error(format!("spawn_agent: {e}"))))?;
+    // R5: the granted loop overrides ride the derivation unchanged (rhai
+    // spawns have no per-spawn `child_policy` narrowing parameter yet —
+    // named follow-up — so the inherited grant is the only source). The
+    // resolved config is built inside the task below, exactly like the
+    // spawn/fork launch wrappers.
+    let child_loop_config = child_grant.loop_config;
     let guard = AgentRegistry::reserve(
         &ctx.registry,
         path,
@@ -354,6 +358,12 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             let executor = SubAgentExecutor::new(registry_for_executor, tools, child_context);
             let child_store = EventStore::new();
             let mut loop_ctx = LoopContext::new("You are a sub-agent. Complete the task and stop.");
+            // R5: the child's loop config is the granted ChildLoopConfig
+            // applied onto AgentLoopConfig::default(); an absent grant is
+            // byte-for-byte the default — the pre-R5 behavior. Same
+            // resolution as the spawn/fork launch wrappers.
+            let child_config =
+                crate::agent::child_policy::ChildLoopConfig::resolve(child_loop_config);
             let outcome = run_agent_step(AgentStepRequest {
                 provider: provider.as_ref(),
                 executor: &executor,
@@ -362,7 +372,7 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
                 tools: &[],
                 output_schema: None,
                 model: &model_for_task,
-                config: &AgentLoopConfig::default(),
+                config: &child_config,
                 event_tx: None,
                 inbound: None,
                 loop_context: &mut loop_ctx,
@@ -374,13 +384,41 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             // spawn/fork wrappers: this task is the sole owner of the child's
             // terminal sequence, so a failed transition means another actor
             // mutated the entry and is logged as the violation it is.
+            //
+            // Status classification mirrors the spawn/fork wrappers
+            // (`extract_outcome_summary`): only a genuine `Completed` step
+            // is a registry `Completed` — every stopped variant
+            // (MaxIterationsReached / TimedOut / Truncated / Cancelled /
+            // SchemaUnreachable) is a Failed run. Pre-R5 the stopped
+            // variants were structurally unreachable here (script children
+            // always ran uncapped defaults); a host-granted `loop_config`
+            // makes them real, and a capped-out child reported `Completed`
+            // would be a silent failure in registry ground truth (REVIEW
+            // R5 HIGH-1).
             match &outcome {
-                Ok(_) => {
+                Ok(AgentStepResult::Completed { .. }) => {
                     let mut reg = agent_registry.write();
                     let transition = reg
                         .mark_completing(real_id)
                         .and_then(|()| reg.mark_completed(real_id));
                     if let Err(e) = transition {
+                        crate::tools::agent::reclaim::log_terminal_transition_violation(
+                            &reg,
+                            real_id,
+                            "rhai spawn_agent",
+                            &e,
+                        );
+                    }
+                }
+                Ok(stopped) => {
+                    let mut reg = agent_registry.write();
+                    if let Err(e) = reg.mark_failed(real_id) {
+                        tracing::error!(
+                            child_id = %real_id,
+                            stopped = ?std::mem::discriminant(stopped),
+                            "rhai spawn_agent: child stopped without completing and \
+                             its terminal mark was stolen",
+                        );
                         crate::tools::agent::reclaim::log_terminal_transition_violation(
                             &reg,
                             real_id,
@@ -465,6 +503,7 @@ fn map_get_string_vec(map: &Map, key: &str) -> Option<Vec<String>> {
 )]
 mod tests {
     use std::sync::Arc;
+    use std::time::Duration;
 
     use uuid::Uuid;
 
@@ -503,6 +542,7 @@ mod tests {
                     max_concurrent_children: 8,
                 },
                 inbound_capacity: 8,
+                loop_config: None,
             },
         }
     }
@@ -786,6 +826,110 @@ mod tests {
             entry.path.starts_with("/spawn/"),
             "an unregistered host has no path prefix: {}",
             entry.path,
+        );
+    }
+
+    /// R5 parity on the script surface: the host policy's `loop_config`
+    /// rides the inherit-with-decrement derivation into the child's
+    /// grant (registry ground truth) and actually binds on the script
+    /// child's run — a granted `max_iterations = 1` stops the child
+    /// after exactly one provider call where the scripted conversation
+    /// would otherwise take two.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn spawn_agent_grants_and_enforces_host_loop_config() {
+        use crate::agent::child_policy::ChildLoopConfig;
+        use crate::provider::events::{ProviderEvent, StopReason};
+        use crate::provider::usage::Usage;
+
+        // Two scripted turns: a tool call (which would force a second
+        // provider round-trip) then text. The granted cap of 1 means the
+        // second turn must never be requested.
+        let provider = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc1".to_owned(),
+                    name: Some("nonexistent".to_owned()),
+                    arguments_delta: "{}".to_owned(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                ProviderEvent::Done {
+                    stop_reason: StopReason::ToolUse,
+                    usage: Usage::default(),
+                    response_id: None,
+                },
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "never reached".to_owned(),
+                },
+                ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    usage: Usage::default(),
+                    response_id: None,
+                },
+            ],
+        ]));
+        let mut ctx = build_context_with_provider(Arc::<MockProvider>::clone(&provider));
+        let granted = ChildLoopConfig {
+            max_iterations: Some(1),
+            step_timeout_secs: None,
+            linger_secs: None,
+        };
+        ctx.child_policy.loop_config = Some(granted);
+        let engine = build_norn_engine(&ctx);
+        let registry = Arc::clone(&ctx.registry);
+
+        let handle = engine
+            .eval::<crate::integration::rhai::AgentHandle>(
+                r#"spawn_agent(#{ task: "t", model: "claude" })"#,
+            )
+            .expect("spawn succeeds");
+        let child_id = handle.id();
+
+        // The derivation carried the host's loop_config through unchanged.
+        assert_eq!(
+            registry
+                .read()
+                .get(child_id)
+                .expect("entry registered")
+                .policy
+                .loop_config,
+            Some(granted),
+        );
+
+        // The script child runs detached; wait for its terminal mark.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            if registry
+                .read()
+                .get(child_id)
+                .is_some_and(|entry| entry.status.is_terminal())
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "script child never reached a terminal status",
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(
+            provider.call_count(),
+            1,
+            "the granted max_iterations = 1 must stop the child after one provider call",
+        );
+        // REVIEW R5 HIGH-1: a capped-out script child is a FAILED run in
+        // registry ground truth — `MaxIterationsReached` must never be
+        // recorded as `Completed` (the agents tool, status surfaces, and
+        // close decisions all read this status).
+        assert_eq!(
+            registry
+                .read()
+                .get(child_id)
+                .expect("terminal entry observable")
+                .status,
+            crate::agent::registry::AgentStatus::Failed,
+            "a child stopped by its iteration cap completed nothing",
         );
     }
 }

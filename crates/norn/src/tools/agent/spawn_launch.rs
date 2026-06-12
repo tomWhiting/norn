@@ -20,13 +20,14 @@ use super::reclaim::{ReclaimHandshake, reclaim_delivered_child};
 use super::spawn_outcome::{
     extract_outcome_summary, mark_terminal_in_registry, panicked_outcome_summary,
 };
+use crate::agent::child_policy::ChildLoopConfig;
 use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
 use crate::r#loop::inbound::inbound_channel;
 use crate::r#loop::loop_context::LoopContext;
-use crate::r#loop::runner::{AgentLoopConfig, AgentStepRequest, run_agent_step};
+use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
@@ -102,6 +103,16 @@ pub(super) struct ChildLaunch {
     /// [`ChildPolicy::inbound_capacity`](crate::agent::child_policy::ChildPolicy::inbound_capacity)
     /// (DECISION M4 — never a hardcoded library value).
     pub(super) inbound_capacity: usize,
+    /// The granted per-child loop overrides, from the granted
+    /// [`ChildPolicy::loop_config`](crate::agent::child_policy::ChildPolicy::loop_config)
+    /// (R5 closure). The wrapper resolves it via
+    /// [`ChildLoopConfig::resolve`]: `None` → the child runs
+    /// [`AgentLoopConfig::default()`](crate::r#loop::runner::AgentLoopConfig)
+    /// exactly as before R5; `Some` applies the granted subset
+    /// (`max_iterations`, `step_timeout`, `linger`) onto that default —
+    /// a granted linger lets this child wait at its stop boundaries for
+    /// its own children's late results.
+    pub(super) loop_config: Option<ChildLoopConfig>,
     /// The child's run-cancellation token (W3.5 cancellation cascade):
     /// created by the spawn tool as a child of the spawner's published
     /// [`AgentCancellation`](super::infra::AgentCancellation) token —
@@ -141,6 +152,7 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         lifecycle,
         router,
         inbound_capacity,
+        loop_config,
         cancel,
     } = launch;
 
@@ -184,6 +196,10 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         // delivery, status broadcast, registry transition, reclamation —
         // so observers never see a dangling `Started`.
         let inner = tokio::spawn(async move {
+            // R5: the child's loop config is the granted ChildLoopConfig
+            // applied onto AgentLoopConfig::default(); an absent grant is
+            // byte-for-byte the default — the pre-R5 behavior.
+            let child_config = ChildLoopConfig::resolve(loop_config);
             run_agent_step(AgentStepRequest {
                 provider: provider.as_ref(),
                 executor: &executor,
@@ -192,7 +208,7 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
                 tools: &tool_defs,
                 output_schema: output_schema.as_ref(),
                 model: &model,
-                config: &AgentLoopConfig::default(),
+                config: &child_config,
                 event_tx: event_sender.as_ref(),
                 inbound: Some(&mut inbound_rx),
                 loop_context: &mut loop_ctx,
@@ -291,15 +307,17 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
                 usage: summary.usage,
                 subtree_usage,
             };
-            // A send into a dropped receiver is the R5 orphaned-result
-            // gap: the parent's run ended before this child finished
-            // (children run default loop limits and a non-root parent
-            // cannot linger until R5 closes). A cascaded cancel (W3.5)
-            // hits this path by design — a cancelled mid-tree parent's
-            // loop ends and drops its receiver while this child's own
-            // cancelled run is still wrapping up. Error-logged, never
-            // silent; reclamation below still runs — nothing can observe
-            // the entry through the channel anymore.
+            // A send into a dropped receiver means the parent's run ended
+            // before this child finished. Since R5 closed, a parent at
+            // any depth can be granted a linger (child_policy.loop_config)
+            // to wait for exactly this result; a parent that was granted
+            // none — or whose linger deadline expired — still loses it.
+            // A cascaded cancel (W3.5) hits this path by design — a
+            // cancelled mid-tree parent's loop ends and drops its
+            // receiver while this child's own cancelled run is still
+            // wrapping up. Error-logged, never silent; reclamation below
+            // still runs — nothing can observe the entry through the
+            // channel anymore.
             if let Err(e) = sender.0.send(result).await {
                 tracing::error!(
                     child_id = %child_id,

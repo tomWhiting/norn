@@ -664,6 +664,17 @@ mod tests {
         assert_eq!(g["path"], "/root/spawn/c/spawn/g1");
         // Granted budgets decrement per level (root test policy is depth 5).
         assert_eq!(g["policy"]["delegation"]["remaining_depth"], 3);
+        // R5: the rendered policy carries loop_config explicitly — null
+        // when the agent runs library defaults, never silently omitted.
+        assert!(
+            g["policy"]
+                .as_object()
+                .expect("policy object")
+                .contains_key("loop_config"),
+            "the policy rendering must surface loop_config: {:?}",
+            g["policy"],
+        );
+        assert_eq!(g["policy"]["loop_config"], serde_json::Value::Null);
         let reclaimed = find(agents, reclaimed_grandchild).expect("reclaimed grandchild visible");
         assert_eq!(reclaimed["reclaimed"], true);
         assert_eq!(reclaimed["parent_id"], child.to_string());

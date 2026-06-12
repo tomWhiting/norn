@@ -107,6 +107,7 @@ pub fn cli_coordination_envelope() -> CoordinationEnvelope {
                 max_concurrent_children: 32,
             },
             inbound_capacity: 32,
+            loop_config: None,
         },
         child_result_capacity: 256,
     }

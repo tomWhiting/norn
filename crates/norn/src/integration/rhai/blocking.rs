@@ -169,6 +169,7 @@ mod tests {
                     max_concurrent_children: 8,
                 },
                 inbound_capacity: 8,
+                loop_config: None,
             },
         }
     }

@@ -76,7 +76,10 @@ pub struct NornRhaiContext {
     /// (inherit-with-decrement, exactly like the spawn/fork tools). The
     /// embedder supplies it deliberately — typically the same
     /// `child_policy` as its builder envelope; Norn never assumes one
-    /// (W3.4).
+    /// (W3.4). Its optional `loop_config` (R5) rides the derivation
+    /// unchanged: a script-spawned child runs the granted loop overrides
+    /// applied onto `AgentLoopConfig::default()`, or the plain default
+    /// when unset — exactly the pre-R5 behavior.
     pub child_policy: ChildPolicy,
 }
 

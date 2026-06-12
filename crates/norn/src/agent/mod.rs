@@ -22,7 +22,9 @@ pub use crate::r#loop::config::TruncationKind;
 pub use crate::r#loop::inbound::{ChannelMessage, InboundSender, MessageKind};
 pub use assembly::validate_workspace_root;
 pub use builder::AgentBuilder;
-pub use child_policy::{ChildPolicy, CoordinationEnvelope, DelegationBudget, MessagingScope};
+pub use child_policy::{
+    ChildLoopConfig, ChildPolicy, CoordinationEnvelope, DelegationBudget, MessagingScope,
+};
 pub use fork::{
     ContextFilter, FORK_SYNTHETIC_RESULT_MESSAGE, FORK_SYSTEM_PREAMBLE, ForkRequirement,
     ParentSystemInstruction, build_fork_output_schema, combine_system_instruction,

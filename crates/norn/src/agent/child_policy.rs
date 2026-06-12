@@ -3,7 +3,9 @@
 //!
 //! [`ChildPolicy`] bundles the messaging scope (Feature 1 — inter-agent
 //! messaging), the delegation budget (Feature 2 — recursive delegation),
-//! and the child's inbound-channel capacity into a single shape. The root
+//! the child's inbound-channel capacity, and the optional per-child
+//! loop-shaping overrides ([`ChildLoopConfig`], R5) into a single shape.
+//! The root
 //! envelope is builder-set and **required** whenever the agent-coordination
 //! runtime is wired
 //! ([`AgentBuilder::agent_registry`](crate::agent::builder::AgentBuilder::agent_registry)):
@@ -19,7 +21,12 @@
 //! tools' per-spawn `child_policy` narrowing argument mirrors
 //! [`ChildPolicy`] 1:1 at the JSON layer (DECISION R2).
 
+use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
+
+use crate::r#loop::linger::LingerPolicy;
+use crate::r#loop::runner::AgentLoopConfig;
 
 /// A per-spawn `child_policy` argument that would exceed the spawning
 /// agent's own granted [`ChildPolicy`] — narrowing violations, refused
@@ -177,6 +184,106 @@ pub struct DelegationBudget {
     pub max_concurrent_children: usize,
 }
 
+/// Per-child loop-shaping overrides — the model-suppliable, serde-stable
+/// SUBSET of [`AgentLoopConfig`] a parent may grant a child (R5 closure,
+/// 2026-06-13).
+///
+/// This is deliberately **not** the full [`AgentLoopConfig`]: that struct
+/// carries harness-only concerns (`schema_tool_name`, `cache_key`,
+/// compaction thresholds, conversation-state mode, `output_schema`) that a
+/// model-supplied per-spawn argument must never control. The subset is
+/// exactly the execution-shaping knobs:
+///
+/// - [`Self::max_iterations`] — provider round-trip cap per step,
+/// - [`Self::step_timeout_secs`] — wall-clock cap per step,
+/// - [`Self::linger_secs`] — the deadline for an opt-in
+///   [`LingerPolicy`], letting a **mid-tree** agent wait at its would-stop
+///   boundaries for its own children's late results (before R5 only the
+///   root could linger, so late grandchild results orphaned at the child
+///   level).
+///
+/// Every field is optional; an unset field defers to
+/// [`AgentLoopConfig::default()`] for that knob — exactly the
+/// pre-R5 behavior, not an invented default (children have always run
+/// `AgentLoopConfig::default()`).
+///
+/// **No narrowing rules** (deliberate, R5): [`ChildPolicy::grant_for_child`]
+/// passes this through unchanged on inherit-with-decrement, and a
+/// per-spawn `child_policy` argument may set any value regardless of the
+/// spawner's own. Loop config is execution shaping, not authority: the
+/// security surface is the delegation budget (depth/children, strictly
+/// narrowed) and the messaging scope (strictly narrowed). Iteration and
+/// time caps only shape how a child spends the spawner's own subtree
+/// budget — and children already ran unconstrained
+/// `AgentLoopConfig::default()` before R5, so an unconstrained override
+/// widens nothing.
+///
+/// Durations are integers in **seconds**, matching the codebase's
+/// model-facing duration convention (the `bash` tool's `timeout` and the
+/// web `fetch` tool's `timeout` are both integer seconds); the unit is in
+/// the field name so the wire shape is self-describing.
+///
+/// Interaction note: a child granted both `max_iterations` and
+/// `linger_secs` can drain a late child result at a would-stop boundary
+/// (the linger's purpose) and then immediately stop at the top-of-loop
+/// iteration check without acting on it — typed, honest, and
+/// usage-complete (the drained subtree still rolls up), but budget the
+/// cap with at least one iteration of headroom when the child must
+/// *respond* to what it lingered for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChildLoopConfig {
+    /// Optional hard cap on provider round-trips within one of the
+    /// child's steps. Unset → the library default (uncapped).
+    #[serde(default)]
+    pub max_iterations: Option<u32>,
+    /// Optional wall-clock cap, in seconds, on each of the child's
+    /// steps. Unset → the library default (uncapped).
+    #[serde(default)]
+    pub step_timeout_secs: Option<u64>,
+    /// Optional linger deadline, in seconds: when set, the child's loop
+    /// waits at its would-stop boundaries (up to this long per boundary)
+    /// for late inbound messages and its own children's results instead
+    /// of returning immediately — see [`LingerPolicy`]. Unset → the
+    /// child returns the moment its model would stop (the historical
+    /// behavior; its children's late results are then undeliverable).
+    #[serde(default)]
+    pub linger_secs: Option<u64>,
+}
+
+impl ChildLoopConfig {
+    /// Build the child's effective [`AgentLoopConfig`]: this granted
+    /// subset applied onto [`AgentLoopConfig::default()`]. Every unset
+    /// field keeps the library default — byte-for-byte what a child ran
+    /// before R5.
+    #[must_use]
+    pub fn to_loop_config(self) -> AgentLoopConfig {
+        let mut config = AgentLoopConfig::default();
+        if let Some(max_iterations) = self.max_iterations {
+            config.max_iterations = Some(max_iterations);
+        }
+        if let Some(secs) = self.step_timeout_secs {
+            config.step_timeout = Some(Duration::from_secs(secs));
+        }
+        if let Some(secs) = self.linger_secs {
+            config.linger = Some(LingerPolicy {
+                deadline: Duration::from_secs(secs),
+            });
+        }
+        config
+    }
+
+    /// Resolve a granted optional override into the child's effective
+    /// loop config: `None` → [`AgentLoopConfig::default()`] exactly (the
+    /// status quo for every pre-R5 grant), `Some` →
+    /// [`Self::to_loop_config`]. The single assembly point every child
+    /// launch path (spawn, fork, rhai) uses.
+    #[must_use]
+    pub fn resolve(granted: Option<Self>) -> AgentLoopConfig {
+        granted.map_or_else(AgentLoopConfig::default, Self::to_loop_config)
+    }
+}
+
 /// The per-child policy a parent stamps on a child at spawn/fork time.
 ///
 /// One coherent shape covering messaging scope, delegation budget, and the
@@ -200,17 +307,10 @@ pub struct DelegationBudget {
 ///         max_concurrent_children: 32,
 ///     },
 ///     inbound_capacity: 32,
+///     loop_config: None,
 /// };
 /// # let _ = envelope;
 /// ```
-///
-/// **Reserved (TRACKED DEFERRAL R5, approved 2026-06-12):** a future wave
-/// adds an optional per-child `loop_config` override here (children
-/// currently run `AgentLoopConfig::default()` and do **not** inherit the
-/// parent's `max_iterations` / `step_timeout`). Adding that `Option` field
-/// is non-breaking for both the Rust type and the serde surface; until it
-/// lands, spawn/fork guidance must state that children ignore the parent's
-/// loop limits.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChildPolicy {
@@ -222,6 +322,19 @@ pub struct ChildPolicy {
     /// (a zero-capacity channel cannot exist); validated at build time.
     /// Documented proposal: 32 — today's production-proven buffer.
     pub inbound_capacity: usize,
+    /// Optional per-child loop-shaping overrides (R5 closure): when this
+    /// grant's `loop_config` is set, the child's launch wrapper builds
+    /// its [`AgentLoopConfig`] by applying the subset onto
+    /// [`AgentLoopConfig::default()`] — see [`ChildLoopConfig::resolve`].
+    /// `None` means the child runs `AgentLoopConfig::default()`
+    /// byte-for-byte, exactly the pre-R5 behavior; absent in JSON
+    /// deserializes to `None`, so envelopes and per-spawn arguments
+    /// written before R5 keep their meaning unchanged.
+    ///
+    /// Not subject to narrowing — see [`ChildLoopConfig`] for the
+    /// execution-shaping-not-authority rationale.
+    #[serde(default)]
+    pub loop_config: Option<ChildLoopConfig>,
 }
 
 impl ChildPolicy {
@@ -238,14 +351,16 @@ impl ChildPolicy {
     ///   the child receives the spawner's own policy with
     ///   `delegation.remaining_depth` reduced by exactly one level, per
     ///   [`DelegationBudget::remaining_depth`]'s decrement-per-level
-    ///   contract. Messaging scope, concurrency cap, and inbound
-    ///   capacity are inherited unchanged.
+    ///   contract. Messaging scope, concurrency cap, inbound capacity,
+    ///   and `loop_config` are inherited unchanged.
     /// - **`Some` (narrowing only):** the request is validated against
     ///   the spawner's own grant — depth strictly decremented
     ///   (`requested.remaining_depth ≤ self.remaining_depth - 1`),
     ///   concurrency / inbound capacity at most the spawner's own, scope
     ///   contained in the spawner's own. A parent can tighten, never
-    ///   widen.
+    ///   widen. `loop_config` is exempt from narrowing and taken
+    ///   verbatim from the request (R5): it is execution shaping, not
+    ///   authority — see [`ChildLoopConfig`].
     ///
     /// # Errors
     ///
@@ -266,6 +381,7 @@ impl ChildPolicy {
                     max_concurrent_children: own.max_concurrent_children,
                 },
                 inbound_capacity: self.inbound_capacity,
+                loop_config: self.loop_config,
             });
         };
         if requested.delegation.remaining_depth > own.remaining_depth - 1 {
@@ -342,6 +458,7 @@ mod tests {
                 max_concurrent_children: 32,
             },
             inbound_capacity: 32,
+            loop_config: None,
         };
         let json = serde_json::to_value(&policy).expect("serializes");
         assert_eq!(
@@ -353,10 +470,143 @@ mod tests {
                     "max_concurrent_children": 32,
                 },
                 "inbound_capacity": 32,
+                "loop_config": null,
             }),
         );
         let back: ChildPolicy = serde_json::from_value(json).expect("round-trips");
         assert_eq!(back, policy);
+    }
+
+    /// Serde shape pinning for [`ChildLoopConfig`] (R5): it is both
+    /// model-suppliable (per-spawn `child_policy.loop_config`) and
+    /// envelope-carried, so the wire shape is a stable contract in both
+    /// directions — durations as integer seconds, explicit-unit field
+    /// names.
+    #[test]
+    fn child_loop_config_serde_shape_is_stable() {
+        let full = ChildLoopConfig {
+            max_iterations: Some(12),
+            step_timeout_secs: Some(300),
+            linger_secs: Some(45),
+        };
+        let json = serde_json::to_value(full).expect("serializes");
+        assert_eq!(
+            json,
+            serde_json::json!({
+                "max_iterations": 12,
+                "step_timeout_secs": 300,
+                "linger_secs": 45,
+            }),
+        );
+        let back: ChildLoopConfig = serde_json::from_value(json).expect("round-trips");
+        assert_eq!(back, full);
+
+        // Every field is independently optional: an empty object is the
+        // all-unset config (= library defaults), and partial objects
+        // deserialize with the remaining fields unset.
+        let empty: ChildLoopConfig = serde_json::from_value(serde_json::json!({})).expect("empty");
+        assert_eq!(
+            empty,
+            ChildLoopConfig {
+                max_iterations: None,
+                step_timeout_secs: None,
+                linger_secs: None,
+            },
+        );
+        let partial: ChildLoopConfig =
+            serde_json::from_value(serde_json::json!({ "linger_secs": 10 })).expect("partial");
+        assert_eq!(partial.linger_secs, Some(10));
+        assert_eq!(partial.max_iterations, None);
+        assert_eq!(partial.step_timeout_secs, None);
+    }
+
+    /// A `child_policy` JSON written before R5 (no `loop_config` key)
+    /// deserializes with `loop_config: None` — existing envelopes and
+    /// per-spawn arguments keep their meaning unchanged.
+    #[test]
+    fn child_policy_without_loop_config_deserializes_to_none() {
+        let policy: ChildPolicy = serde_json::from_value(serde_json::json!({
+            "messaging": "parent_only",
+            "delegation": { "remaining_depth": 0, "max_concurrent_children": 1 },
+            "inbound_capacity": 8,
+        }))
+        .expect("pre-R5 shape still deserializes");
+        assert_eq!(policy.loop_config, None);
+    }
+
+    /// Typos *inside* `loop_config` are rejected at the deserialization
+    /// boundary, exactly like typos at the `child_policy` level — a
+    /// misspelled knob must fail loudly, never silently leave the child
+    /// on library defaults where the caller intended a cap.
+    #[test]
+    fn child_loop_config_rejects_unknown_fields() {
+        let result: Result<ChildLoopConfig, _> = serde_json::from_value(serde_json::json!({
+            "max_iterations": 3,
+            "linger_seconds": 10,
+        }));
+        let err = result.expect_err("unknown field must be rejected");
+        assert!(
+            err.to_string().contains("linger_seconds"),
+            "error names the unknown field: {err}",
+        );
+    }
+
+    /// `loop_config: None` resolves to `AgentLoopConfig::default()`
+    /// byte-for-byte — the pre-R5 status quo, pinned through the
+    /// serialized form so any drift in any field fails here.
+    #[test]
+    fn loop_config_none_resolves_to_default_config_exactly() {
+        let resolved = ChildLoopConfig::resolve(None);
+        assert_eq!(
+            serde_json::to_value(&resolved).expect("serializes"),
+            serde_json::to_value(AgentLoopConfig::default()).expect("serializes"),
+            "None must be byte-for-byte AgentLoopConfig::default()",
+        );
+        // The all-unset subset is identical to None: unset fields defer
+        // to the library default, never to an invented value.
+        let empty = ChildLoopConfig {
+            max_iterations: None,
+            step_timeout_secs: None,
+            linger_secs: None,
+        };
+        assert_eq!(
+            serde_json::to_value(ChildLoopConfig::resolve(Some(empty))).expect("serializes"),
+            serde_json::to_value(AgentLoopConfig::default()).expect("serializes"),
+        );
+    }
+
+    /// Set fields land on exactly their `AgentLoopConfig` counterparts
+    /// (seconds → `Duration`, linger seconds → `LingerPolicy.deadline`)
+    /// and nothing else moves off the default.
+    #[test]
+    fn loop_config_overrides_apply_onto_default() {
+        let resolved = ChildLoopConfig::resolve(Some(ChildLoopConfig {
+            max_iterations: Some(7),
+            step_timeout_secs: Some(90),
+            linger_secs: Some(45),
+        }));
+        assert_eq!(resolved.max_iterations, Some(7));
+        assert_eq!(resolved.step_timeout, Some(Duration::from_secs(90)));
+        assert_eq!(
+            resolved.linger,
+            Some(LingerPolicy {
+                deadline: Duration::from_secs(45),
+            }),
+        );
+        // The harness-only knobs are untouched library defaults.
+        let default = AgentLoopConfig::default();
+        assert_eq!(
+            resolved.schema_attempt_budget,
+            default.schema_attempt_budget
+        );
+        assert_eq!(resolved.schema_tool_name, default.schema_tool_name);
+        assert_eq!(resolved.cache_key, default.cache_key);
+        assert_eq!(
+            resolved.auto_compact_keep_recent_turns,
+            default.auto_compact_keep_recent_turns,
+        );
+        assert_eq!(resolved.context_window_limit, default.context_window_limit);
+        assert!(resolved.output_schema.is_none());
     }
 
     #[test]
@@ -382,11 +632,11 @@ mod tests {
             "messaging": "parent_only",
             "delegation": { "remaining_depth": 0, "max_concurrent_children": 1 },
             "inbound_capacity": 8,
-            "loop_config": {},
+            "loop_confg": {},
         }));
         let err = result.expect_err("unknown field must be rejected");
         assert!(
-            err.to_string().contains("loop_config"),
+            err.to_string().contains("loop_confg"),
             "error names the unknown field: {err}",
         );
     }
@@ -409,6 +659,7 @@ mod tests {
                 max_concurrent_children: 8,
             },
             inbound_capacity: 16,
+            loop_config: None,
         }
     }
 
@@ -459,11 +710,71 @@ mod tests {
                 max_concurrent_children: 2,
             },
             inbound_capacity: 4,
+            loop_config: None,
         };
         let grant = policy(3)
             .grant_for_child(Some(requested.clone()))
             .expect("valid narrowing accepted");
         assert_eq!(grant, requested);
+    }
+
+    /// R5 derivation: the default inherit-with-decrement carries the
+    /// spawner's `loop_config` through unchanged, level after level.
+    #[test]
+    fn grant_for_child_inherits_loop_config_unchanged() {
+        let configured = ChildLoopConfig {
+            max_iterations: Some(4),
+            step_timeout_secs: Some(60),
+            linger_secs: Some(15),
+        };
+        let mut spawner = policy(3);
+        spawner.loop_config = Some(configured);
+
+        let grant = spawner.grant_for_child(None).expect("grant");
+        assert_eq!(grant.loop_config, Some(configured));
+        let grandchild = grant.grant_for_child(None).expect("grandchild grant");
+        assert_eq!(
+            grandchild.loop_config,
+            Some(configured),
+            "loop_config passes through every derivation level unchanged",
+        );
+    }
+
+    /// R5: a per-spawn request may set any `loop_config` regardless of
+    /// the spawner's own — loop config is execution shaping, not
+    /// authority, so it is exempt from the narrowing checks (the
+    /// delegation/messaging fields of the same request are still
+    /// enforced).
+    #[test]
+    fn grant_for_child_request_sets_loop_config_freely() {
+        // Spawner has no loop_config; the request grants one anyway —
+        // including a linger, the field that lets a mid-tree child wait
+        // for its own children's late results.
+        let spawner = policy(2);
+        assert_eq!(spawner.loop_config, None);
+        let mut requested = policy(1);
+        requested.loop_config = Some(ChildLoopConfig {
+            max_iterations: Some(100),
+            step_timeout_secs: Some(3600),
+            linger_secs: Some(120),
+        });
+        let grant = spawner
+            .grant_for_child(Some(requested.clone()))
+            .expect("loop_config is not a narrowing axis");
+        assert_eq!(grant, requested);
+
+        // And the reverse: a spawner with a tight loop_config may grant
+        // a child none at all (the child then runs library defaults).
+        let mut tight = policy(2);
+        tight.loop_config = Some(ChildLoopConfig {
+            max_iterations: Some(1),
+            step_timeout_secs: Some(1),
+            linger_secs: None,
+        });
+        let unset = tight
+            .grant_for_child(Some(policy(1)))
+            .expect("clearing loop_config is allowed");
+        assert_eq!(unset.loop_config, None);
     }
 
     /// Every widening direction is refused with the typed violation that

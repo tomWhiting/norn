@@ -292,6 +292,17 @@ async fn await_linger_wake(
     cancel: Option<&CancellationToken>,
     deadline: Duration,
 ) -> LingerWake {
+    // Structurally empty wake set: no cancel token, no child-result
+    // channel, no inbound channel — nothing can EVER arrive, so the
+    // sleep would be pure dead wall-clock at every would-stop boundary
+    // (acute on the rhai surface, whose script children run with none
+    // of the three). Expire immediately instead of serving the full
+    // deadline; the boundary sweep after the wake is still a no-op-safe
+    // pass (REVIEW R5 MEDIUM-1). The grant itself stays visible in the
+    // registry — this short-circuits the wait, not the policy.
+    if cancel.is_none() && child_rx.is_none() && inbound.is_none() {
+        return LingerWake::DeadlineExpired;
+    }
     let sleep = tokio::time::sleep(deadline);
     tokio::pin!(sleep);
     // Disabling the inbound arm must not consume `*inbound` — the
@@ -518,10 +529,22 @@ mod tests {
         sender.await.expect("join").expect("send");
     }
 
+    /// REVIEW R5 MEDIUM-1: a structurally empty wake set (no cancel
+    /// token, no child channel, no inbound) can never be woken — the
+    /// linger expires IMMEDIATELY, consuming none of the deadline,
+    /// instead of serving an hour of uninterruptible dead wall-clock at
+    /// every would-stop boundary (the rhai surface hits exactly this
+    /// shape). Pinned via virtual time: zero clock advance.
     #[tokio::test(start_paused = true)]
     async fn no_wake_sources_expires_at_deadline() {
-        let wake = await_linger_wake(None, &mut None, None, Duration::from_millis(100)).await;
+        let before = tokio::time::Instant::now();
+        let wake = await_linger_wake(None, &mut None, None, Duration::from_hours(1)).await;
         assert!(matches!(wake, LingerWake::DeadlineExpired));
+        assert_eq!(
+            tokio::time::Instant::now(),
+            before,
+            "an unwakeable linger must not consume the deadline",
+        );
     }
 
     #[tokio::test(start_paused = true)]

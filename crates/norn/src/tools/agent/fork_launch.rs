@@ -21,13 +21,14 @@ use super::handle::{AgentHandle, ChildBranchMetadata};
 use super::infra::SubAgentExecutor;
 use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
 use super::reclaim::{ReclaimHandshake, reclaim_delivered_child};
+use crate::agent::child_policy::ChildLoopConfig;
 use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
 use crate::r#loop::inbound::{InboundChannel, InboundSender};
 use crate::r#loop::loop_context::LoopContext;
-use crate::r#loop::runner::{AgentLoopConfig, AgentStepRequest, run_agent_step};
+use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
@@ -88,6 +89,15 @@ pub(super) struct ForkLaunch {
     /// [`AgentHandle`]; a clone rides into the inner run's
     /// [`AgentStepRequest`]. Mirrors the spawn launch.
     pub(super) cancel: tokio_util::sync::CancellationToken,
+    /// The granted per-fork loop overrides, from the granted
+    /// [`ChildPolicy::loop_config`](crate::agent::child_policy::ChildPolicy::loop_config)
+    /// (R5 closure). Resolved via [`ChildLoopConfig::resolve`]: `None` →
+    /// the fork runs
+    /// [`AgentLoopConfig::default()`](crate::r#loop::runner::AgentLoopConfig)
+    /// exactly as before R5; `Some` applies the granted subset
+    /// (`max_iterations`, `step_timeout`, `linger`) onto that default.
+    /// Mirrors the spawn launch.
+    pub(super) loop_config: Option<ChildLoopConfig>,
 }
 
 /// Launch the fork on its own `tokio::spawn` task and build the parent-side
@@ -116,6 +126,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         hooks,
         router,
         cancel,
+        loop_config,
     } = launch;
 
     let handle_store = Arc::clone(&child_store);
@@ -156,6 +167,10 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // transition, reclamation — so observers never see a dangling
         // `Started`. Mirrors the spawn wrapper.
         let inner = tokio::spawn(async move {
+            // R5: the fork's loop config is the granted ChildLoopConfig
+            // applied onto AgentLoopConfig::default(); an absent grant is
+            // byte-for-byte the default — the pre-R5 behavior.
+            let fork_config = ChildLoopConfig::resolve(loop_config);
             run_agent_step(AgentStepRequest {
                 provider: provider.as_ref(),
                 executor: &executor,
@@ -164,7 +179,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 tools: &tool_defs,
                 output_schema: Some(&output_schema),
                 model: &model,
-                config: &AgentLoopConfig::default(),
+                config: &fork_config,
                 event_tx: event_sender.as_ref(),
                 inbound: Some(&mut inbound_rx),
                 loop_context: &mut loop_ctx,
@@ -257,14 +272,16 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 usage: outcome.usage.clone(),
                 subtree_usage,
             };
-            // A send into a dropped receiver is the R5 orphaned-result
-            // gap: the parent's run ended before this fork finished
-            // (children run default loop limits and a non-root parent
-            // cannot linger until R5 closes). A cascaded cancel (W3.5)
-            // hits this path by design — a cancelled mid-tree parent's
-            // loop ends and drops its receiver while this fork's own
-            // cancelled run is still wrapping up. Error-logged, never
-            // silent; reclamation below still runs.
+            // A send into a dropped receiver means the parent's run
+            // ended before this fork finished. Since R5 closed, a parent
+            // at any depth can be granted a linger
+            // (child_policy.loop_config) to wait for exactly this result;
+            // a parent that was granted none — or whose linger deadline
+            // expired — still loses it. A cascaded cancel (W3.5) hits
+            // this path by design — a cancelled mid-tree parent's loop
+            // ends and drops its receiver while this fork's own cancelled
+            // run is still wrapping up. Error-logged, never silent;
+            // reclamation below still runs.
             if let Err(e) = sender.0.send(result).await {
                 tracing::error!(
                     fork_id = %fork_id,

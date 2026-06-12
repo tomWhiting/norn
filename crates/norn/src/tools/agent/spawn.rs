@@ -260,7 +260,7 @@ impl Tool for SpawnAgentTool {
                     "type": "object",
                     "required": ["messaging", "delegation", "inbound_capacity"],
                     "additionalProperties": false,
-                    "description": "Optional narrowed policy for this child. Omit to grant your own policy with delegation depth reduced by one level. Every field must be within your own granted budget — widening fails.",
+                    "description": "Optional narrowed policy for this child. Omit to grant your own policy with delegation depth reduced by one level. Every field except loop_config must be within your own granted budget — widening fails. Supplying child_policy is a complete replacement: without loop_config it clears any inherited loop overrides — restate them to keep them.",
                     "properties": {
                         "messaging": {
                             "type": "string",
@@ -288,6 +288,28 @@ impl Tool for SpawnAgentTool {
                             "type": "integer",
                             "minimum": 1,
                             "description": "Bounded capacity of the child's inbound message channel. Must be at most your own granted capacity."
+                        },
+                        "loop_config": {
+                            "type": "object",
+                            "additionalProperties": false,
+                            "description": "Optional loop-shaping overrides for the child. Not a narrowing axis: any value is accepted regardless of your own loop config. Each field is optional; an unset field keeps the library default (today's behavior). Omit entirely to run the child on default loop limits — and note that supplying child_policy without this key clears any loop overrides the child would have inherited; restate them to keep them.",
+                            "properties": {
+                                "max_iterations": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Hard cap on provider round-trips within one of the child's steps. Unset = uncapped."
+                                },
+                                "step_timeout_secs": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Wall-clock cap in seconds on each of the child's steps. Unset = uncapped."
+                                },
+                                "linger_secs": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Linger deadline in seconds: the child waits this long at each would-stop boundary for late messages and its own children's results before stopping. Grant this to a child that delegates, so its children's late results are delivered instead of lost. Unset = the child returns the moment its model stops."
+                                }
+                            }
                         }
                     }
                 }
@@ -586,6 +608,7 @@ impl Tool for SpawnAgentTool {
             lifecycle,
             router: Arc::clone(&infra.router),
             inbound_capacity: child_policy.inbound_capacity,
+            loop_config: child_policy.loop_config,
             cancel: child_cancel,
         });
         handles.insert(handle);
@@ -716,6 +739,7 @@ mod tests {
                     max_concurrent_children: 32,
                 },
                 inbound_capacity: 32,
+                loop_config: None,
             },
             child_result_capacity: 256,
         }
@@ -4674,6 +4698,489 @@ mod tests {
                 .expect("entry observable (no reclaim marker installed)")
                 .status,
             AgentStatus::Failed,
+        );
+    }
+
+    // -- R5 closure: per-child loop config (including linger) ---------------
+
+    /// Routes provider scripts for the mid-tree linger test. The
+    /// grandchild's stream is gated on the child's would-stop turn having
+    /// been *requested* (child_calls >= 2) plus a real delay, so the
+    /// grandchild's result arrives only after the child's model has
+    /// stopped — the child holds it at its stop boundary solely because
+    /// its granted `child_policy.loop_config.linger_secs` is in effect.
+    /// Distinct usage per level/call so the W3.6 rollup through the
+    /// lingering child is pinned numerically.
+    struct LingerTreeProvider {
+        child_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Provider for LingerTreeProvider {
+        fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            use std::sync::atomic::Ordering as AtomicOrdering;
+            let last = request
+                .messages
+                .last()
+                .and_then(|m| m.content.clone())
+                .unwrap_or_default();
+            if last == "linger-grandchild-task" {
+                let calls = Arc::clone(&self.child_calls);
+                let s = stream::once(async move {
+                    // Hold the grandchild until the child's would-stop
+                    // turn has been requested, then add a real delay so
+                    // the child is parked in its linger await (not its
+                    // non-blocking boundary sweep) when this completes.
+                    for _ in 0..2400 {
+                        if calls.load(AtomicOrdering::SeqCst) >= 2 {
+                            break;
+                        }
+                        tokio::time::sleep(Duration::from_millis(10)).await;
+                    }
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                })
+                .flat_map(|()| {
+                    stream::iter(vec![
+                        Ok(ProviderEvent::TextDelta {
+                            text: "grandchild late report".to_string(),
+                        }),
+                        Ok(done_with(StopReason::EndTurn, 7, 3)),
+                    ])
+                });
+                return Ok(Box::pin(s));
+            }
+            let call = self.child_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            match call {
+                0 => Ok(Box::pin(stream::iter(vec![
+                    Ok(ProviderEvent::ToolCallDelta {
+                        item_id: "tc-linger-grandchild".to_string(),
+                        name: Some("spawn_agent".to_string()),
+                        arguments_delta: json!({
+                            "task": "linger-grandchild-task",
+                            "model": "haiku",
+                            "role": "leaf",
+                            // Per-spawn clearing of the inherited linger:
+                            // the leaf grandchild must not linger itself,
+                            // or its own (empty) boundary wait would
+                            // outlast the child's deadline.
+                            "child_policy": {
+                                "messaging": "siblings_and_parent",
+                                "delegation": {
+                                    "remaining_depth": 0,
+                                    "max_concurrent_children": 32,
+                                },
+                                "inbound_capacity": 32,
+                            },
+                        })
+                        .to_string(),
+                        kind: crate::provider::request::ToolCallKind::Function,
+                    }),
+                    Ok(done_with(StopReason::ToolUse, 100, 50)),
+                ]))),
+                1 => Ok(Box::pin(stream::iter(vec![
+                    Ok(ProviderEvent::TextDelta {
+                        text: "child would stop here".to_string(),
+                    }),
+                    Ok(done_with(StopReason::EndTurn, 200, 60)),
+                ]))),
+                _ => Ok(Box::pin(stream::iter(vec![
+                    Ok(ProviderEvent::TextDelta {
+                        text: "child done with grandchild result".to_string(),
+                    }),
+                    Ok(done_with(StopReason::EndTurn, 300, 70)),
+                ]))),
+            }
+        }
+    }
+
+    /// R5 end-to-end, the §"Messaging × recursion" item 5 scenario that
+    /// was unachievable before per-child loop config: a depth-2 tree
+    /// where the **child** (not the root) is granted linger via the
+    /// per-spawn `child_policy.loop_config`, its model stops before the
+    /// grandchild finishes, and the lingering child drains the late
+    /// grandchild result, runs another turn, and delivers a complete
+    /// subtree to the root — with the grandchild's `subtree_usage` rolled
+    /// up through the lingering child (W3.6).
+    #[tokio::test]
+    async fn mid_tree_child_granted_linger_drains_late_grandchild_result() {
+        use crate::agent::child_policy::ChildLoopConfig;
+
+        let agent_registry = AgentRegistry::shared();
+        let provider: Arc<dyn Provider> = Arc::new(LingerTreeProvider {
+            child_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        });
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(SpawnAgentTool::new()));
+        let root_id = Uuid::new_v4();
+        let ctx = parent_ctx(
+            provider,
+            root_id,
+            &agent_registry,
+            Arc::new(tool_registry),
+            Arc::new(MessageRouter::new()),
+        );
+        let mut envelope = test_envelope();
+        envelope.child_policy.delegation.remaining_depth = 2;
+        ctx.insert_extension(Arc::new(envelope));
+
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        // Session tree so the child's conversation store stays reachable
+        // for the injected-frame assertion.
+        let tree = Arc::new(SessionTree::new(SessionMetadata {
+            created_at: Utc::now(),
+            model: "opus".to_string(),
+            role: Some("root".to_string()),
+            status: SessionStatus::Active,
+        }));
+        let root_session = tree.root();
+        ctx.insert_extension(Arc::new(SharedSessionTree {
+            tree: Arc::clone(&tree),
+            session_id: root_session,
+        }));
+
+        // The mid-tree child is granted a linger through the per-spawn
+        // child_policy argument — the exact surface R5 adds.
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "child-task", "model": "haiku", "role": "lead",
+                    "child_policy": {
+                        "messaging": "siblings_and_parent",
+                        "delegation": {
+                            "remaining_depth": 1,
+                            "max_concurrent_children": 32,
+                        },
+                        "inbound_capacity": 32,
+                        "loop_config": { "linger_secs": 2 },
+                    },
+                })),
+                &ctx,
+            )
+            .await
+            .expect("spawn child");
+        assert!(!out.is_error(), "{:?}", out.content);
+        let child_id =
+            Uuid::parse_str(out.content["agent_id"].as_str().expect("id")).expect("uuid");
+
+        // The granted loop_config is registry ground truth on the
+        // child's entry (the `agents` tool renders this policy).
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("child entry")
+                .policy
+                .loop_config,
+            Some(ChildLoopConfig {
+                max_iterations: None,
+                step_timeout_secs: None,
+                linger_secs: Some(2),
+            }),
+        );
+
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .expect("handles")
+            .remove(child_id)
+            .expect("handle stored");
+        handle.join_handle.await.expect("child task joins");
+
+        // The complete subtree reached the root as exactly one result:
+        // the child's final answer, produced *after* the late grandchild
+        // result was drained at the lingering stop boundary.
+        let child_result = rx.try_recv().expect("the child's result is delivered");
+        assert_eq!(child_result.agent_id, child_id);
+        assert!(child_result.succeeded, "{:?}", child_result.error);
+        assert!(
+            child_result
+                .formatted_message
+                .contains("child done with grandchild result"),
+            "the child's post-linger turn is the delivered result: {}",
+            child_result.formatted_message,
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "the grandchild's result must never reach the root directly",
+        );
+
+        // W3.6 rollup through the lingering child: own usage is the
+        // child's three provider calls; subtree adds the grandchild's.
+        assert_eq!(child_result.usage.input_tokens, 600, "100+200+300 own");
+        assert_eq!(child_result.usage.output_tokens, 180, "50+60+70 own");
+        assert_eq!(
+            child_result.subtree_usage.input_tokens, 607,
+            "own + the lingered-for grandchild subtree (7)",
+        );
+        assert_eq!(child_result.subtree_usage.output_tokens, 183);
+
+        // The grandchild's framed result was injected into the *child's*
+        // conversation through the normal drain path.
+        let child_sessions = tree.list_children(root_session);
+        assert_eq!(child_sessions.len(), 1, "child branched under the root");
+        let child_store = tree.get_store(child_sessions[0]).expect("child store");
+        let injected = child_store.events().iter().any(|event| {
+            matches!(
+                event,
+                SessionEvent::UserMessage { content, .. }
+                    if content.contains("<agent_result")
+                        && content.contains("grandchild late report")
+            )
+        });
+        assert!(
+            injected,
+            "the late grandchild result must be injected into the lingering child's conversation",
+        );
+    }
+
+    /// R5: a granted `loop_config.max_iterations` actually binds on the
+    /// child — the cap is reached, the run stops with the typed
+    /// `MaxIterationsReached` outcome, and the failure is delivered
+    /// honestly through the result channel. Also pins that the granted
+    /// loop_config is stamped on the child's registry entry.
+    #[tokio::test]
+    async fn granted_max_iterations_binds_on_child() {
+        use crate::agent::child_policy::ChildLoopConfig;
+        use crate::agent::output::AgentStopReason;
+
+        // The child calls a tool on its first iteration, so finishing
+        // would need a second provider round-trip — which the granted
+        // cap of 1 forbids.
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc1".to_string(),
+                    name: Some("echo".to_string()),
+                    arguments_delta: "{}".to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "never reached".to_string(),
+                },
+                done_event(),
+            ],
+        ]));
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(EchoStubTool { tool_name: "echo" }));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(tool_registry),
+            Arc::new(MessageRouter::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({
+                "task": "capped", "model": "haiku", "role": "worker",
+                "child_policy": {
+                    "messaging": "siblings_and_parent",
+                    "delegation": {
+                        "remaining_depth": 0,
+                        "max_concurrent_children": 32,
+                    },
+                    "inbound_capacity": 32,
+                    "loop_config": { "max_iterations": 1 },
+                },
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("entry")
+                .policy
+                .loop_config,
+            Some(ChildLoopConfig {
+                max_iterations: Some(1),
+                step_timeout_secs: None,
+                linger_secs: None,
+            }),
+            "the granted loop_config is registry ground truth",
+        );
+        assert_eq!(
+            agent_registry.read().get(child_id).expect("entry").status,
+            AgentStatus::Failed,
+            "a capped-out child is an honest failure, never a fake completion",
+        );
+        let result = rx.try_recv().expect("result delivered");
+        assert!(!result.succeeded);
+        assert_eq!(result.stop, Some(AgentStopReason::MaxIterationsReached));
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("max-iterations")),
+            "the failure names the cap: {:?}",
+            result.error,
+        );
+    }
+
+    /// R5: a granted `loop_config.step_timeout_secs` actually binds on
+    /// the child — a child whose provider never responds is cut off at
+    /// the granted wall-clock cap with the typed `TimedOut` outcome,
+    /// delivered honestly as a failed result.
+    #[tokio::test]
+    async fn granted_step_timeout_binds_on_child() {
+        use crate::agent::output::AgentStopReason;
+
+        // A gate that is never released: without the granted timeout the
+        // child would hang forever.
+        let provider: Arc<dyn Provider> = Arc::new(GatedProvider {
+            gate: Arc::new(tokio::sync::Notify::new()),
+            responses: StdMutex::new(vec![vec![done_event()]]),
+        });
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({
+                "task": "will time out", "model": "haiku", "role": "worker",
+                "child_policy": {
+                    "messaging": "siblings_and_parent",
+                    "delegation": {
+                        "remaining_depth": 0,
+                        "max_concurrent_children": 32,
+                    },
+                    "inbound_capacity": 32,
+                    "loop_config": { "step_timeout_secs": 1 },
+                },
+            }),
+        )
+        .await;
+
+        assert_eq!(
+            agent_registry.read().get(child_id).expect("entry").status,
+            AgentStatus::Failed,
+        );
+        let result = rx.try_recv().expect("result delivered");
+        assert!(!result.succeeded);
+        assert!(
+            matches!(result.stop, Some(AgentStopReason::TimedOut { .. })),
+            "typed timeout outcome expected, got {:?}",
+            result.stop,
+        );
+        assert!(
+            result
+                .error
+                .as_deref()
+                .is_some_and(|e| e.contains("timed out")),
+            "the failure names the timeout: {:?}",
+            result.error,
+        );
+    }
+
+    /// R5 × deny_unknown_fields: a typo'd knob *inside*
+    /// `child_policy.loop_config` is rejected at the argument boundary —
+    /// nothing is reserved, and the failure names the unknown field
+    /// instead of silently leaving the child on library defaults.
+    #[tokio::test]
+    async fn spawn_rejects_unknown_loop_config_fields() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = SpawnAgentTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "x", "model": "haiku", "role": "worker",
+                    "child_policy": {
+                        "messaging": "siblings_and_parent",
+                        "delegation": {
+                            "remaining_depth": 0,
+                            "max_concurrent_children": 32,
+                        },
+                        "inbound_capacity": 32,
+                        "loop_config": { "linger_seconds": 5 },
+                    },
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("a typo'd loop_config knob must fail loudly");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(
+                    reason.contains("linger_seconds"),
+                    "the failure names the unknown field: {reason}",
+                );
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+        assert!(
+            agent_registry.read().is_empty(),
+            "a refused spawn reserves nothing",
+        );
+    }
+
+    /// R5 status quo: a spawn without `loop_config` stamps
+    /// `loop_config: None` on the child's grant — the launch then runs
+    /// `AgentLoopConfig::default()` byte-for-byte (pinned at unit level
+    /// by `loop_config_none_resolves_to_default_config_exactly`), so
+    /// existing spawns are behaviorally untouched by R5.
+    #[tokio::test]
+    async fn spawn_without_loop_config_stamps_none() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_string(),
+            },
+            done_event(),
+        ]]));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "plain", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("entry")
+                .policy
+                .loop_config,
+            None,
+            "inherit-with-decrement from an envelope without loop_config grants None",
         );
     }
 }

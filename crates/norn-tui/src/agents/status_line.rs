@@ -521,6 +521,7 @@ mod tests {
                     max_concurrent_children: 32,
                 },
                 inbound_capacity: 32,
+                loop_config: None,
             },
             None,
         )
@@ -556,6 +557,7 @@ mod tests {
                     max_concurrent_children: 32,
                 },
                 inbound_capacity: 32,
+                loop_config: None,
             },
             None,
         )
@@ -653,6 +655,7 @@ mod tests {
                     max_concurrent_children: 32,
                 },
                 inbound_capacity: 32,
+                loop_config: None,
             },
         };
         let line = format_status_line(&entry, None, 0, 0, Utc::now(), 1);
@@ -684,6 +687,7 @@ mod tests {
                     max_concurrent_children: 32,
                 },
                 inbound_capacity: 32,
+                loop_config: None,
             },
         };
         let line = format_status_line(&entry, None, 0, 0, Utc::now(), 1);

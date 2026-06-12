@@ -339,6 +339,7 @@ mod tests {
                 max_concurrent_children: 2,
             },
             inbound_capacity: 1,
+            loop_config: None,
         };
 
         let live = AgentRegistry::reserve(

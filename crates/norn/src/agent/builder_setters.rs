@@ -457,6 +457,7 @@ impl AgentBuilder {
     ///         max_concurrent_children: 32,
     ///     },
     ///     inbound_capacity: 32,
+    ///     loop_config: None,
     /// };
     /// # let _ = policy;
     /// ```
