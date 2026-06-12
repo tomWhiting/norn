@@ -129,7 +129,8 @@ pub struct Cli {
         long,
         num_args = 0..=1,
         default_missing_value = "",
-        value_name = "ID|NAME"
+        value_name = "ID|NAME",
+        conflicts_with = "fork"
     )]
     pub resume: Option<String>,
 
@@ -138,12 +139,23 @@ pub struct Cli {
     pub fork: Option<String>,
 
     /// Do not persist this session to disk.
-    #[arg(long)]
+    #[arg(long, conflicts_with_all = ["resume", "fork"])]
     pub no_session: bool,
 
     /// Human-readable name for the session.
     #[arg(long, value_name = "TEXT")]
     pub session_name: Option<String>,
+
+    /// Create the session under this exact ID (fails if it already
+    /// exists; resume an existing session with --resume). The ID names
+    /// the on-disk session file, so it must start with a letter or
+    /// digit and contain only `[A-Za-z0-9._-]`.
+    #[arg(
+        long,
+        value_name = "ID",
+        conflicts_with_all = ["resume", "fork", "no_session"]
+    )]
+    pub session_id: Option<String>,
 
     /// Provider backend selection.
     #[arg(long, value_name = "PROVIDER", value_enum)]

@@ -23,7 +23,7 @@
 //! `overflow_count`. Rendering the `⋯ N more active agents` summary row
 //! is the panel's responsibility (see [`crate::agents::status_line`]).
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use chrono::{DateTime, Utc};
@@ -171,6 +171,95 @@ pub fn collapse(entries: &[CandidateEntry], now: Instant) -> CollapsedView {
     }
 }
 
+/// Order the visible slice for display and assign each row its indent
+/// depth.
+///
+/// [`collapse`] decides *which* rows show (priority order); this decides
+/// the *order and indentation* they render with: a depth-first walk
+/// placing every entry directly under its nearest **visible** ancestor,
+/// so arbitrary-depth delegation trees (W3.4) read as real trees.
+/// Genealogy is the `parent_of` map — registry `parent_id` links,
+/// including reclaimed ancestors — never path-segment counting, which
+/// over-indents the auto-generated `/root/spawn/{id}/spawn/{id}` path
+/// shapes (the literal `spawn`/`fork` namespace segments are not
+/// levels).
+///
+/// Sibling order under one anchor preserves the selection (priority)
+/// order from [`collapse`], so the depth-1 panel renders exactly as it
+/// did before recursion existed. An entry whose ancestor chain contains
+/// no visible member anchors at the top level, in selection order — its
+/// row is then unindented rather than floating at a depth with no
+/// visible parent above it.
+#[must_use]
+pub fn order_for_display<S: std::hash::BuildHasher>(
+    visible: Vec<CandidateEntry>,
+    parent_of: &HashMap<Uuid, Option<Uuid>, S>,
+) -> Vec<(CandidateEntry, usize)> {
+    let ids: HashSet<Uuid> = visible.iter().map(|e| e.id).collect();
+    let mut top: Vec<usize> = Vec::new();
+    let mut children: HashMap<Uuid, Vec<usize>> = HashMap::new();
+    for (idx, entry) in visible.iter().enumerate() {
+        // Walk parent links to the nearest visible ancestor. The links
+        // form a forest (each agent has exactly one parent), so the walk
+        // terminates; the hop bound is a defensive guard, not a
+        // semantic limit.
+        let mut anchor = None;
+        let mut cursor = entry.parent_id;
+        for _ in 0..=parent_of.len() {
+            match cursor {
+                Some(id) if ids.contains(&id) => {
+                    anchor = Some(id);
+                    break;
+                }
+                Some(id) => cursor = parent_of.get(&id).copied().flatten(),
+                None => break,
+            }
+        }
+        match anchor {
+            // An entry can never anchor on itself: the walk starts at
+            // its parent.
+            Some(id) => children.entry(id).or_default().push(idx),
+            None => top.push(idx),
+        }
+    }
+
+    // Depth-first emit; reverse pushes so the first-selected sibling is
+    // visited first.
+    let mut slots: Vec<Option<CandidateEntry>> = visible.into_iter().map(Some).collect();
+    let mut out: Vec<(CandidateEntry, usize)> = Vec::with_capacity(slots.len());
+    let mut stack: Vec<(usize, usize)> = top.iter().rev().map(|&idx| (idx, 0)).collect();
+    while let Some((idx, depth)) = stack.pop() {
+        let Some(entry) = slots[idx].take() else {
+            // Unreachable by construction (each index is grouped exactly
+            // once); guarded so a future bug drops a row visibly in
+            // tests rather than panicking the render loop.
+            tracing::error!("order_for_display: visible index emitted twice");
+            continue;
+        };
+        let id = entry.id;
+        out.push((entry, depth));
+        if let Some(kids) = children.get(&id) {
+            stack.extend(kids.iter().rev().map(|&k| (k, depth + 1)));
+        }
+    }
+    // Symmetric guard to the double-emit check above: a row whose anchor
+    // chain never reaches `top` (a parent-link cycle among visible
+    // entries — structurally unconstructable today, since a parent must
+    // exist before its child) would otherwise vanish silently. Emit any
+    // survivor unindented and say so.
+    for slot in &mut slots {
+        if let Some(entry) = slot.take() {
+            tracing::error!(
+                agent_id = %entry.id,
+                "order_for_display: visible row unreachable from the top \
+                 level (parent-link cycle?); emitting unindented",
+            );
+            out.push((entry, 0));
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -292,6 +381,98 @@ mod tests {
         assert_eq!(view.visible.len(), 2);
         assert!(view.visible.iter().any(|e| e.id == completed_id));
         assert_eq!(view.overflow_count, 0);
+    }
+
+    // ---------------- order_for_display (W3.7 deep trees) ----------------
+
+    fn parent_map(entries: &[CandidateEntry]) -> std::collections::HashMap<Uuid, Option<Uuid>> {
+        entries.iter().map(|e| (e.id, e.parent_id)).collect()
+    }
+
+    /// A three-level chain renders in preorder with one indent level per
+    /// genealogical hop — regardless of selection order.
+    #[test]
+    fn order_for_display_nests_grandchildren_under_their_parent() {
+        let now = Instant::now();
+        let root = candidate(None, 100, AgentStatus::Active, now);
+        let child = candidate(Some(root.id), 50, AgentStatus::Active, now);
+        let grandchild = candidate(Some(child.id), 10, AgentStatus::Active, now);
+        let all = vec![root.clone(), child.clone(), grandchild.clone()];
+        let map = parent_map(&all);
+
+        // Selection order from collapse puts the most recent spawn
+        // (grandchild) before its parent; display must reorder.
+        let visible = vec![root.clone(), grandchild.clone(), child.clone()];
+        let ordered = order_for_display(visible, &map);
+        let ids: Vec<(Uuid, usize)> = ordered.iter().map(|(e, d)| (e.id, *d)).collect();
+        assert_eq!(
+            ids,
+            vec![(root.id, 0), (child.id, 1), (grandchild.id, 2)],
+            "preorder with genealogical depth"
+        );
+    }
+
+    /// Sibling order under one anchor preserves the selection order —
+    /// the depth-1 panel renders exactly as before recursion existed.
+    #[test]
+    fn order_for_display_preserves_sibling_selection_order() {
+        let now = Instant::now();
+        let root = candidate(None, 100, AgentStatus::Active, now);
+        let a = candidate(Some(root.id), 30, AgentStatus::Active, now);
+        let b = candidate(Some(root.id), 20, AgentStatus::Active, now);
+        let c = candidate(Some(root.id), 10, AgentStatus::Active, now);
+        let all = vec![root.clone(), a.clone(), b.clone(), c.clone()];
+        let map = parent_map(&all);
+
+        let visible = vec![root.clone(), c.clone(), b.clone(), a.clone()];
+        let ordered = order_for_display(visible, &map);
+        let ids: Vec<Uuid> = ordered.iter().map(|(e, _)| e.id).collect();
+        assert_eq!(ids, vec![root.id, c.id, b.id, a.id]);
+        assert!(ordered.iter().skip(1).all(|(_, d)| *d == 1));
+    }
+
+    /// A grandchild whose parent is NOT visible (overflowed or held out)
+    /// anchors under its nearest visible ancestor — the root — at that
+    /// anchor's depth + 1, never floating at an orphan indent.
+    #[test]
+    fn order_for_display_anchors_at_nearest_visible_ancestor() {
+        let now = Instant::now();
+        let root = candidate(None, 100, AgentStatus::Active, now);
+        let hidden_child = candidate(Some(root.id), 50, AgentStatus::Active, now);
+        let grandchild = candidate(Some(hidden_child.id), 10, AgentStatus::Active, now);
+        // The full genealogy is known (hidden_child in the map) but only
+        // root + grandchild are visible.
+        let all = vec![root.clone(), hidden_child, grandchild.clone()];
+        let map = parent_map(&all);
+
+        let ordered = order_for_display(vec![root.clone(), grandchild.clone()], &map);
+        assert_eq!(ordered[0].0.id, root.id);
+        assert_eq!(ordered[0].1, 0);
+        assert_eq!(ordered[1].0.id, grandchild.id);
+        assert_eq!(ordered[1].1, 1, "anchors one level under the root");
+    }
+
+    /// A broken ancestor chain (mid-chain agent unknown to the map —
+    /// e.g. reclaimed with no tombstone surviving) lands the entry at
+    /// the top level rather than dropping it.
+    #[test]
+    fn order_for_display_tops_out_entries_with_broken_chains() {
+        let now = Instant::now();
+        let root = candidate(None, 100, AgentStatus::Active, now);
+        let orphan = candidate(Some(Uuid::new_v4()), 10, AgentStatus::Active, now);
+        let map = parent_map(std::slice::from_ref(&root));
+
+        let orphan_id = orphan.id;
+        let ordered = order_for_display(vec![root, orphan], &map);
+        assert_eq!(ordered.len(), 2, "nothing is dropped");
+        assert_eq!(ordered[1].0.id, orphan_id);
+        assert_eq!(ordered[1].1, 0, "broken chain renders unindented");
+    }
+
+    #[test]
+    fn order_for_display_empty_input_is_empty() {
+        let map = std::collections::HashMap::new();
+        assert!(order_for_display(Vec::new(), &map).is_empty());
     }
 
     #[test]

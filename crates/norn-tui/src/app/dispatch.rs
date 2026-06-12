@@ -16,7 +16,9 @@ use std::time::{Duration, Instant};
 
 use norn::agent_loop::config::AgentStepResult;
 use norn::error::{NornError, ProviderError};
-use norn::provider::agent_event::{AgentEvent, AgentEventKind, SubagentLifecycle};
+use norn::provider::agent_event::{
+    AgentEvent, AgentEventKind, AgentMessageLifecycle, SubagentLifecycle,
+};
 use norn::provider::events::ProviderEvent;
 use norn::provider::usage::Usage;
 
@@ -62,20 +64,53 @@ pub fn handle_agent_event(
             handle_child_event(state, agent_event.agent_id, &agent_event.agent_role, event);
         }
         AgentEventKind::Subagent(lifecycle) => handle_subagent_lifecycle(state, &lifecycle),
-        // Inter-agent message events (W3.1) carry no TUI surface yet —
-        // the Wave 3 surfaces step (W3.7) renders message edges in the
-        // agents tree. The audit trail lives in the session stores; the
-        // live event is traced so it is observable, not dropped.
+        // Inter-agent message events (W3.1) surface in the activity log
+        // — the same panel that shows tool-call initiations — so the
+        // operator sees who messaged whom live. The durable record is
+        // the agent_message.* audit trail in the session stores.
         AgentEventKind::Message(lifecycle) => {
-            tracing::debug!(
-                agent_id = %agent_event.agent_id,
-                message_id = %lifecycle.message_id(),
-                event_type = lifecycle.session_event_type(),
-                "agent message event (TUI surface lands in W3.7)",
-            );
+            state.activity_log.push(message_activity_entry(
+                &agent_event.agent_role,
+                &lifecycle,
+                Instant::now(),
+            ));
         }
     }
     Ok(())
+}
+
+/// Build the activity-log row for an inter-agent message event.
+///
+/// `Sent` rows show recipient and kind in the name column and the
+/// message content as the description (the renderer truncates long
+/// content); the recipient label comes from the audit payload, which the
+/// harness resolved from registry ground truth at send time. `Delivered`
+/// rows confirm injection on the recipient's side with the router
+/// sequence. The row's `[agent]` label is the broadcast wrapper's role
+/// tag — the sender's for `Sent`, the recipient's for `Delivered` —
+/// matching every other activity entry's attribution.
+fn message_activity_entry(
+    agent_role: &str,
+    lifecycle: &AgentMessageLifecycle,
+    at: Instant,
+) -> ActivityLogEntry {
+    let (label, description) = match lifecycle {
+        AgentMessageLifecycle::Sent {
+            to, kind, content, ..
+        } => (
+            format!("msg:{} → {to}", kind.as_str()),
+            Some(content.clone()),
+        ),
+        AgentMessageLifecycle::Delivered { seq, .. } => {
+            (format!("msg delivered (seq {seq})"), None)
+        }
+    };
+    ActivityLogEntry {
+        agent_role: agent_role.to_string(),
+        tool_name: label,
+        description,
+        at,
+    }
 }
 
 /// Route a typed subagent lifecycle event to the status panel.
@@ -572,6 +607,73 @@ mod tests {
             out.contains("7k"),
             "Combined 7k tokens (5k in + 2k out) must surface: {out:?}"
         );
+    }
+
+    // ---------------- Inter-agent message events (W3.7) ----------------
+
+    #[test]
+    fn message_sent_event_renders_recipient_kind_and_content() {
+        let lifecycle = AgentMessageLifecycle::Sent {
+            message_id: uuid::Uuid::from_u128(9),
+            from_id: uuid::Uuid::from_u128(1),
+            from: "/root/spawn/worker".to_owned(),
+            to_id: uuid::Uuid::from_u128(2),
+            to: "root".to_owned(),
+            kind: norn::agent_loop::inbound::MessageKind::Steer,
+            seq: 7,
+            content: "blocked on schema review".to_owned(),
+            sent_at: chrono::Utc::now(),
+        };
+        let entry = message_activity_entry("spawn/haiku", &lifecycle, std::time::Instant::now());
+        assert_eq!(entry.agent_role, "spawn/haiku");
+        assert_eq!(entry.tool_name, "msg:steer → root");
+        assert_eq!(
+            entry.description.as_deref(),
+            Some("blocked on schema review")
+        );
+    }
+
+    #[test]
+    fn message_delivered_event_renders_confirmation_with_seq() {
+        let lifecycle = AgentMessageLifecycle::Delivered {
+            message_id: uuid::Uuid::from_u128(9),
+            from_id: uuid::Uuid::from_u128(1),
+            to_id: uuid::Uuid::from_u128(2),
+            seq: 7,
+            delivered_at: chrono::Utc::now(),
+        };
+        let entry = message_activity_entry("root", &lifecycle, std::time::Instant::now());
+        assert_eq!(entry.agent_role, "root");
+        assert_eq!(entry.tool_name, "msg delivered (seq 7)");
+        assert!(entry.description.is_none());
+    }
+
+    /// The full dispatch path: a Message-kind agent event lands in the
+    /// activity log (the arm needs no terminal guard, so it is
+    /// exercisable end-to-end, unlike the provider-event arms).
+    #[test]
+    fn message_event_pushes_activity_log_entry_via_helper() {
+        let (mut state, _root_id) = state_with_one_child();
+        let lifecycle = AgentMessageLifecycle::Sent {
+            message_id: uuid::Uuid::from_u128(9),
+            from_id: uuid::Uuid::from_u128(1),
+            from: "/root/child".to_owned(),
+            to_id: uuid::Uuid::from_u128(2),
+            to: "/root/other".to_owned(),
+            kind: norn::agent_loop::inbound::MessageKind::Update,
+            seq: 1,
+            content: "fyi".to_owned(),
+            sent_at: chrono::Utc::now(),
+        };
+        state.activity_log.push(message_activity_entry(
+            "spawn/haiku",
+            &lifecycle,
+            std::time::Instant::now(),
+        ));
+        assert_eq!(state.activity_log.len(), 1);
+        let entry = state.activity_log.entries().front().unwrap();
+        assert_eq!(entry.tool_name, "msg:update → /root/other");
+        assert_eq!(entry.description.as_deref(), Some("fyi"));
     }
 
     // ---------------- Activity log wire-up (Task 2 interim) ----------------

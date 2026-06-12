@@ -36,6 +36,7 @@ use norn::agent::child_policy::{
 use norn::agent::message_router::MessageRouter;
 use norn::agent::registry::AgentRegistry;
 use norn::agent::result_channel::ChildResultSender;
+use norn::agent_loop::inbound::{InboundChannel, inbound_channel};
 use norn::config::NornSettings;
 use norn::integration::DiagnosticCollector;
 use norn::integration::hooks::HookRegistry;
@@ -133,11 +134,43 @@ pub fn cli_coordination_envelope() -> CoordinationEnvelope {
 /// from this registry and dispatch them against their own per-child
 /// `ToolContext` (the Path 3 identity fix).
 ///
-/// The CLI's root agent runs without an inbound channel, so no root route
-/// is registered in the [`MessageRouter`]: a child messaging `"parent"`
-/// receives the honest `NotRouted` failure rather than queueing into a
-/// channel nothing drains. Wiring a root inbound channel for the CLI
-/// drivers is a separate, deliberate feature.
+/// The CLI's root agent has a real inbound channel (W3.7): this function
+/// creates it, sized from the envelope's `child_policy.inbound_capacity`
+/// (never an invented constant — the same buffer every child's inbound
+/// channel uses), registers its sender in the [`MessageRouter`] under the
+/// root's id, and returns the receiver half. The caller — the driver
+/// that runs root steps — MUST thread the returned [`InboundChannel`]
+/// into every root
+/// [`AgentStepRequest::inbound`](norn::agent_loop::runner::AgentStepRequest),
+/// so a child granted `parent_only` or `siblings_and_parent` calling
+/// `signal_agent(to: "parent")` drains into the root's loop through the
+/// same framed `<agent_message>` injection path as every other recipient.
+/// This mirrors what `AgentBuilder::build` does on the library surface
+/// when `.inbound_capacity(..)` is configured.
+///
+/// **Route ownership**: the root's route is registered here, during
+/// assembly — before the root's first step can run — and is never
+/// explicitly deregistered. Like the library root (see
+/// `install_agent_infra` in `norn::agent`), the root has no completion
+/// wrapper: its route is process-lifetime, living exactly as long as the
+/// driver that owns the returned receiver. When the driver drops the
+/// receiver at teardown, the router detects the closed channel lazily on
+/// the next delivery attempt and removes the stale route
+/// (`RouteError::ChannelClosed`). Single ownership: nothing else ever
+/// registers or removes the root's route.
+///
+/// Returns `None` in exactly two states, neither of which a production
+/// CLI path produces: the registry exposes no shared context (no
+/// infrastructure is installed at all — there is no router for a route
+/// to be missing from), or the envelope carries a zero
+/// `inbound_capacity` (rejected by the library builder and never emitted
+/// by [`cli_coordination_envelope`]; error-logged here instead of
+/// panicking inside the channel constructor). Every CLI assembly path
+/// that installs the agent tools therefore also wires the root route.
+#[must_use = "dropping the root inbound channel kills the root's route: child \
+              signal_agent(to: \"parent\") sends would fail as ChannelClosed \
+              instead of draining into the root's steps — thread it into \
+              AgentStepRequest.inbound"]
 pub fn install_agent_tool_infra(
     registry: &ToolRegistry,
     provider: Arc<dyn Provider>,
@@ -146,15 +179,40 @@ pub fn install_agent_tool_infra(
     tool_registry: Arc<ToolRegistry>,
     agent_registry: Arc<RwLock<AgentRegistry>>,
     envelope: CoordinationEnvelope,
-) {
-    let Some(shared) = registry.shared_context() else {
-        return;
-    };
+) -> Option<InboundChannel> {
+    let shared = registry.shared_context()?;
     shared.insert_extension(Arc::new(SharedProvider(Arc::clone(&provider))));
+    let inbound_capacity = envelope.child_policy.inbound_capacity;
     shared.insert_extension(Arc::new(envelope));
+    let router = Arc::new(MessageRouter::new());
+    // The root's inbound channel, sized from the envelope exactly as
+    // every child's is. The bounded-channel constructor requires a
+    // non-zero capacity; the library builder rejects a zero-capacity
+    // envelope at build time and `cli_coordination_envelope` pins 32,
+    // so the guard below never fires on a production path — it exists
+    // so a malformed envelope degrades to the honest pre-W3.7 state
+    // (NotRouted, error-logged) instead of panicking mid-assembly.
+    // The envelope was already published above even in the degraded
+    // case — safe, because spawn/fork grant validation independently
+    // rejects inbound_capacity == 0 (ChildPolicy schema minimum 1 and
+    // grant_for_child), so no child channel is ever built from the
+    // malformed value.
+    let root_inbound_rx = if inbound_capacity == 0 {
+        tracing::error!(
+            root_id = %agent_id,
+            "coordination envelope carries child_policy.inbound_capacity = 0; \
+             refusing to create the root inbound channel — child→root \
+             signal_agent will fail with the typed NotRouted reason",
+        );
+        None
+    } else {
+        let (root_inbound_tx, rx) = inbound_channel(inbound_capacity);
+        router.register(agent_id, root_inbound_tx);
+        Some(rx)
+    };
     let infra = AgentToolInfra {
         registry: agent_registry,
-        router: Arc::new(MessageRouter::new()),
+        router,
         provider,
         event_store,
         agent_id,
@@ -163,6 +221,7 @@ pub fn install_agent_tool_infra(
         tool_registry: Some(tool_registry),
     };
     shared.insert_extension(Arc::new(infra));
+    root_inbound_rx
 }
 
 /// Install a [`ChildResultSender`] on the registry's shared

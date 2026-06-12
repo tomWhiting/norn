@@ -106,6 +106,13 @@ pub(super) fn rotate_store_dependents(
             // the rotated-out conversation and remain queryable.
             tree.replace_root_log(Arc::clone(&action_log));
         }
+        // Router + root identity are deliberately reused across the
+        // rotation, so the root's inbound route (W3.7) — and anything
+        // buffered in it — survives `/new` into the next conversation.
+        // Known seam: a message sent pre-rotation and drained
+        // post-rotation writes its `agent_message.delivered` audit into
+        // the NEW store while the matching `sent` lives in the old one;
+        // each store stays individually honest.
         if let Some(old_infra) = ctx.get_extension::<AgentToolInfra>() {
             ctx.insert_extension(Arc::new(AgentToolInfra {
                 registry: Arc::clone(&old_infra.registry),

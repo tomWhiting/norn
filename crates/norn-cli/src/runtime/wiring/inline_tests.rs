@@ -28,7 +28,7 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![]));
         let agent_id = Uuid::new_v4();
 
-        install_agent_tool_infra(
+        let root_inbound = install_agent_tool_infra(
             &registry,
             provider,
             Arc::new(EventStore::new()),
@@ -36,6 +36,10 @@ mod tests {
             Arc::clone(&tool_registry),
             AgentRegistry::shared(),
             crate::runtime::cli_coordination_envelope(),
+        );
+        assert!(
+            root_inbound.is_some(),
+            "a registry with a shared context always wires the root inbound channel",
         );
 
         let shared = registry
@@ -62,6 +66,169 @@ mod tests {
             *envelope,
             crate::runtime::cli_coordination_envelope(),
             "the published envelope carries the CLI's deliberate values verbatim",
+        );
+    }
+
+    /// A [`norn::agent_loop::inbound::ChannelMessage`] as the
+    /// `signal_agent` tool would build it for the root recipient; the
+    /// router stamps `to_id` and mints `seq` at delivery.
+    fn root_bound_message(content: &str) -> norn::agent_loop::inbound::ChannelMessage {
+        norn::agent_loop::inbound::ChannelMessage {
+            id: Uuid::new_v4(),
+            sender_id: Uuid::new_v4(),
+            from: "/root/spawn/child".to_owned(),
+            role: Some("worker".to_owned()),
+            to_id: Uuid::nil(),
+            content: content.to_owned(),
+            kind: norn::agent_loop::inbound::MessageKind::Steer,
+            seq: None,
+            timestamp: chrono::Utc::now(),
+        }
+    }
+
+    /// Shared installation for the W3.7 root-inbound wire tests: a fresh
+    /// registry assembled exactly as the CLI drivers assemble it, with
+    /// the CLI's deliberate envelope.
+    fn installed_root_inbound(
+        agent_id: Uuid,
+    ) -> (
+        ToolRegistry,
+        Option<norn::agent_loop::inbound::InboundChannel>,
+    ) {
+        use norn::provider::mock::MockProvider;
+        let registry = ToolRegistry::new();
+        let tool_registry = Arc::new(ToolRegistry::new());
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![]));
+        let root_inbound = install_agent_tool_infra(
+            &registry,
+            provider,
+            Arc::new(EventStore::new()),
+            agent_id,
+            tool_registry,
+            AgentRegistry::shared(),
+            crate::runtime::cli_coordination_envelope(),
+        );
+        (registry, root_inbound)
+    }
+
+    /// W3.7 root inbound wiring: assembly registers a live root route in
+    /// the [`norn::agent::message_router::MessageRouter`] under the
+    /// root's id, and the channel's capacity is exactly the published
+    /// envelope's `child_policy.inbound_capacity` — proven by filling it
+    /// to the brim (every send accepted, sequence numbers minted in
+    /// order) and observing the typed `ChannelFull` on the next send.
+    /// An unrelated id stays honestly `NotRouted`.
+    #[test]
+    fn install_agent_tool_infra_registers_root_route_with_envelope_capacity() {
+        use norn::agent::message_router::RouteError;
+
+        let root_id = Uuid::new_v4();
+        let (registry, root_inbound) = installed_root_inbound(root_id);
+        let _root_inbound = root_inbound.expect("root inbound channel wired");
+
+        let shared = registry.shared_context().expect("shared context");
+        let infra = shared
+            .get_extension::<AgentToolInfra>()
+            .expect("AgentToolInfra installed");
+        assert!(
+            infra.router.is_routed(root_id),
+            "the root's inbound sender must be registered under the root id",
+        );
+
+        let capacity = crate::runtime::cli_coordination_envelope()
+            .child_policy
+            .inbound_capacity;
+        for n in 1..=capacity {
+            let seq = infra
+                .router
+                .try_deliver(root_id, root_bound_message(&format!("msg {n}")))
+                .unwrap_or_else(|err| panic!("send {n} of {capacity} must fit: {err}"));
+            let expected = u64::try_from(n).expect("test capacity fits in u64");
+            assert_eq!(seq, expected, "sequence numbers mint in send order");
+        }
+        assert_eq!(
+            infra
+                .router
+                .try_deliver(root_id, root_bound_message("one past capacity")),
+            Err(RouteError::ChannelFull { agent_id: root_id }),
+            "send {} must report the typed ChannelFull — the channel is sized \
+             from the envelope, not an invented constant",
+            capacity + 1,
+        );
+
+        let stranger = Uuid::new_v4();
+        assert_eq!(
+            infra
+                .router
+                .try_deliver(stranger, root_bound_message("nobody home")),
+            Err(RouteError::NotRouted { agent_id: stranger }),
+            "ids without a route keep the honest NotRouted failure",
+        );
+    }
+
+    /// W3.7 root inbound wiring: a message routed to the root's id lands
+    /// in the very channel the driver drains — the returned
+    /// [`norn::agent_loop::inbound::InboundChannel`] that the print
+    /// orchestrator and the TUI event loop thread into the root's
+    /// `AgentStepRequest.inbound` — stamped with the root as recipient
+    /// and the router-minted sequence number.
+    #[test]
+    fn routed_root_message_lands_in_the_drained_channel() {
+        let root_id = Uuid::new_v4();
+        let (registry, root_inbound) = installed_root_inbound(root_id);
+        let mut root_inbound = root_inbound.expect("root inbound channel wired");
+
+        let shared = registry.shared_context().expect("shared context");
+        let infra = shared
+            .get_extension::<AgentToolInfra>()
+            .expect("AgentToolInfra installed");
+        infra
+            .router
+            .try_deliver(root_id, root_bound_message("status update for parent"))
+            .expect("routed delivery to the root succeeds");
+
+        let drained = root_inbound.drain();
+        assert_eq!(drained.len(), 1, "exactly the routed message drains");
+        assert_eq!(drained[0].content, "status update for parent");
+        assert_eq!(drained[0].to_id, root_id, "router stamps the recipient");
+        assert_eq!(drained[0].seq, Some(1), "router mints the first sequence");
+        assert_eq!(
+            drained[0].kind,
+            norn::agent_loop::inbound::MessageKind::Steer,
+        );
+    }
+
+    /// W3.7 route ownership: the root's route lives exactly as long as
+    /// the driver-owned receiver. Dropping the receiver (driver
+    /// teardown) is detected lazily on the next delivery as the typed
+    /// `ChannelClosed`, which removes the stale route so later sends
+    /// fail fast as `NotRouted` — the same lifecycle the library root
+    /// has (`install_agent_infra`), with no explicit deregistration.
+    #[test]
+    fn dropping_the_root_receiver_closes_the_route_honestly() {
+        use norn::agent::message_router::RouteError;
+
+        let root_id = Uuid::new_v4();
+        let (registry, root_inbound) = installed_root_inbound(root_id);
+        drop(root_inbound.expect("root inbound channel wired"));
+
+        let shared = registry.shared_context().expect("shared context");
+        let infra = shared
+            .get_extension::<AgentToolInfra>()
+            .expect("AgentToolInfra installed");
+        assert_eq!(
+            infra
+                .router
+                .try_deliver(root_id, root_bound_message("after teardown")),
+            Err(RouteError::ChannelClosed { agent_id: root_id }),
+            "the dropped receiver surfaces as the typed ChannelClosed",
+        );
+        assert_eq!(
+            infra
+                .router
+                .try_deliver(root_id, root_bound_message("after lazy cleanup")),
+            Err(RouteError::NotRouted { agent_id: root_id }),
+            "the stale route is removed on the failed delivery",
         );
     }
 

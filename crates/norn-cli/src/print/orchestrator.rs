@@ -321,7 +321,14 @@ async fn orchestrate(
     // throwaway UUID or the nil UUID.
     let agent_registry = norn::agent::registry::AgentRegistry::shared();
     let root_id = register_root_agent(&agent_registry, &active_model)?;
-    install_agent_tool_infra(
+    // W3.7 root inbound wiring: the returned receiver is the root's
+    // inbound channel — its sender is registered in the MessageRouter
+    // under `root_id`, so a child's `signal_agent(to: "parent")` lands
+    // here. The orchestrator owns the receiver for the whole run and
+    // threads it into the root step below; the route is process-lifetime
+    // (never deregistered — the router lazily removes it on the first
+    // delivery after this function returns and drops the receiver).
+    let mut root_inbound = install_agent_tool_infra(
         &bundle.registry,
         built_provider.as_arc(),
         Arc::clone(&session.store),
@@ -376,7 +383,10 @@ async fn orchestrate(
                 model: &active_model,
                 config: &bundle.agent_config,
                 event_tx: Some(&root_sender),
-                inbound: None,
+                // The root's inbound channel from install_agent_tool_infra:
+                // child→root messages drain at this step's boundaries
+                // through the framed <agent_message> injection path.
+                inbound: root_inbound.as_mut(),
                 loop_context: &mut bundle.loop_context,
                 cancel: None,
             })

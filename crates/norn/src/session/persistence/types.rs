@@ -96,6 +96,20 @@ pub enum SessionPersistError {
         reason: String,
     },
 
+    /// A caller-supplied session ID is already in use — indexed, or
+    /// present on disk as an orphan `{id}.jsonl` session file. The
+    /// create-exactly-this path
+    /// ([`SessionManager::create_with_id`](crate::session::SessionManager::create_with_id))
+    /// never attaches to prior history in either form — choose a new ID
+    /// (or, for an indexed session, resume it).
+    #[error(
+        "session id '{id}' is already in use; choose a new id (or resume the existing session)"
+    )]
+    IdExists {
+        /// The colliding identifier.
+        id: String,
+    },
+
     /// Attempted to fork a session that has no events.
     #[error("cannot fork session '{id}': source has no events")]
     EmptySource {

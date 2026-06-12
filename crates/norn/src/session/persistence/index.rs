@@ -164,6 +164,34 @@ pub fn insert_index_entry_if_absent(
     Ok(None)
 }
 
+/// Insert `entry` for a **brand-new** session, refusing typed when the
+/// ID is already in use — in the index *or* as an orphan `{id}.jsonl`
+/// session file on disk (an index wipe/restore or a hand-copied file
+/// leaves exactly that state, and the sink would otherwise silently
+/// **append** to the foreign history). Both checks and the append hold
+/// the inter-process index lock, so two racing creates with the same ID
+/// can never both succeed (the create-exactly-this primitive — see
+/// [`SessionManager::create_with_id`](crate::session::SessionManager::create_with_id)).
+///
+/// # Errors
+///
+/// [`SessionPersistError::IdExists`] when the ID is taken (nothing is
+/// written), plus index I/O failures.
+pub fn insert_index_entry_for_new_session(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+) -> Result<(), SessionPersistError> {
+    let _lock = lock_index(data_dir)?;
+    if read_index(data_dir)?.iter().any(|e| e.id == entry.id)
+        || super::io::session_file_path(data_dir, &entry.id).exists()
+    {
+        return Err(SessionPersistError::IdExists {
+            id: entry.id.clone(),
+        });
+    }
+    append_entry_assuming_locked(data_dir, entry)
+}
+
 /// The raw `O_APPEND` index-entry write shared by [`append_index_entry`]
 /// and [`insert_index_entry_if_absent`]. The caller MUST already hold the
 /// inter-process index lock — the lock is not re-entrant (each

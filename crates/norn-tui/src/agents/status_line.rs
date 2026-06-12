@@ -115,18 +115,6 @@ fn clear_row<W: io::Write>(row: u16, writer: &mut W) -> io::Result<()> {
     write!(writer, "{}{}", cursor_to(row), erase_line())
 }
 
-/// Number of tree-depth indent units in `path`.
-///
-/// Each non-empty `/`-separated segment is one level, less one for the
-/// root segment itself. `/root` → 0, `/root/child` → 1, `/root/a/b` →
-/// 2. An empty path returns 0.
-fn agent_depth(path: &str) -> usize {
-    path.split('/')
-        .filter(|s| !s.is_empty())
-        .count()
-        .saturating_sub(1)
-}
-
 /// Last path segment as the agent's display name.
 ///
 /// Mirrors the design's `path.rsplit('/').next().unwrap_or(path)`
@@ -187,14 +175,22 @@ fn activity_text(activity: Option<&AgentActivity>) -> String {
 /// and dim attributes are applied around this string by
 /// [`AgentStatusPanel::render`]; tests inspecting the textual form can
 /// rely on byte-for-byte prefixes.
+///
+/// `depth` is the row's display depth from
+/// [`tree::order_for_display`] — genealogical (`parent_id`-derived)
+/// nesting under the nearest visible ancestor, two spaces per level.
+/// It is deliberately not derived from the registry path: auto-generated
+/// paths interleave literal `spawn`/`fork` namespace segments
+/// (`/root/spawn/{id}/spawn/{id}`), so segment counting over-indents,
+/// and explicit `path` arguments need not nest under the spawner at all.
 fn format_status_line(
     entry: &AgentEntry,
     activity: Option<&AgentActivity>,
     input_tokens: u64,
     output_tokens: u64,
     now: DateTime<Utc>,
+    depth: usize,
 ) -> String {
-    let depth = agent_depth(&entry.path);
     let indent = " ".repeat(2 * depth);
     let icon = icon_for(entry.status);
     let name = agent_name(&entry.path);
@@ -351,12 +347,29 @@ impl AgentStatusPanel {
     ) -> io::Result<()> {
         let entries_by_id: HashMap<Uuid, &AgentEntry> = entries.iter().map(|e| (e.id, e)).collect();
 
+        // Genealogy for ordering/indentation: live + terminal entries
+        // plus completion records, so an ancestor chain crossing a
+        // reclaimed mid-tree agent still resolves (W3.4 trees nest to
+        // any depth and inner nodes can finish before their children).
+        let parent_of: HashMap<Uuid, Option<Uuid>> = {
+            let mut map: HashMap<Uuid, Option<Uuid>> = self
+                .registry
+                .read()
+                .tombstones()
+                .into_iter()
+                .map(|t| (t.id, t.parent_id))
+                .collect();
+            map.extend(entries.iter().map(|e| (e.id, e.parent_id)));
+            map
+        };
+        let ordered = tree::order_for_display(view.visible.clone(), &parent_of);
+
         let mut row = top_row;
-        for candidate in &view.visible {
+        for (candidate, depth) in &ordered {
             if let Some(entry) = entries_by_id.get(&candidate.id) {
                 let activity = self.activity.get(&candidate.id);
                 let (input, output) = self.tokens.get(&candidate.id).copied().unwrap_or((0, 0));
-                let line = format_status_line(entry, activity, input, output, now_utc);
+                let line = format_status_line(entry, activity, input, output, now_utc, *depth);
                 Self::write_styled_line(row, writer, caps, entry.status, activity, &line)?;
             } else {
                 // Entry vanished between snapshot and re-read — clear
@@ -518,6 +531,18 @@ mod tests {
     }
 
     fn confirm_child(registry: &Arc<RwLock<AgentRegistry>>, path: &str, parent: Uuid) -> Uuid {
+        confirm_child_with_depth(registry, path, parent, 4)
+    }
+
+    /// Reserve + confirm a child whose stamped budget has
+    /// `remaining_depth: depth`. The registry enforces narrowing
+    /// (child ≤ spawner − 1), so deeper levels pass a smaller depth.
+    fn confirm_child_with_depth(
+        registry: &Arc<RwLock<AgentRegistry>>,
+        path: &str,
+        parent: Uuid,
+        depth: u32,
+    ) -> Uuid {
         let guard = AgentRegistry::reserve(
             registry,
             path.to_string(),
@@ -527,7 +552,7 @@ mod tests {
             norn::agent::child_policy::ChildPolicy {
                 messaging: norn::agent::child_policy::MessagingScope::SiblingsAndParent,
                 delegation: norn::agent::child_policy::DelegationBudget {
-                    remaining_depth: 4,
+                    remaining_depth: depth,
                     max_concurrent_children: 32,
                 },
                 inbound_capacity: 32,
@@ -552,14 +577,6 @@ mod tests {
         assert_eq!(icon_for(AgentStatus::Completing), '●');
         assert_eq!(icon_for(AgentStatus::Completed), '✓');
         assert_eq!(icon_for(AgentStatus::Failed), '✗');
-    }
-
-    #[test]
-    fn agent_depth_counts_nonempty_segments_minus_one() {
-        assert_eq!(agent_depth("/root"), 0);
-        assert_eq!(agent_depth("/root/child"), 1);
-        assert_eq!(agent_depth("/root/child/grandchild"), 2);
-        assert_eq!(agent_depth(""), 0);
     }
 
     #[test]
@@ -638,10 +655,42 @@ mod tests {
                 inbound_capacity: 32,
             },
         };
-        let line = format_status_line(&entry, None, 0, 0, Utc::now());
+        let line = format_status_line(&entry, None, 0, 0, Utc::now(), 1);
         assert!(
             line.starts_with("  ●"),
             "expected 2-space indent + ●, got: {line:?}"
+        );
+    }
+
+    /// W3.4 auto-generated paths carry literal `spawn`/`fork` namespace
+    /// segments (`/root/spawn/{id}`); indentation must come from the
+    /// genealogical depth parameter, never from counting path segments
+    /// (which would indent this depth-1 child two levels).
+    #[test]
+    fn status_line_indent_uses_genealogical_depth_not_path_segments() {
+        let entry = AgentEntry {
+            id: Uuid::new_v4(),
+            path: "/root/spawn/0a1b2c3d".to_string(),
+            role: "worker".to_string(),
+            status: AgentStatus::Active,
+            model: "claude".to_string(),
+            spawned_at: Utc::now(),
+            parent_id: Some(Uuid::new_v4()),
+            completed_at: None,
+            policy: norn::agent::child_policy::ChildPolicy {
+                messaging: norn::agent::child_policy::MessagingScope::SiblingsAndParent,
+                delegation: norn::agent::child_policy::DelegationBudget {
+                    remaining_depth: 0,
+                    max_concurrent_children: 32,
+                },
+                inbound_capacity: 32,
+            },
+        };
+        let line = format_status_line(&entry, None, 0, 0, Utc::now(), 1);
+        assert!(
+            line.starts_with("  ●"),
+            "depth-1 child of root indents one level regardless of its \
+             path shape, got: {line:?}"
         );
     }
 
@@ -762,6 +811,68 @@ mod tests {
         assert!(
             out.contains("idle-child"),
             "child name must appear, got: {out:?}"
+        );
+    }
+
+    /// A depth-2 tree (W3.4 recursion) paints in genealogical preorder
+    /// with one indent level per hop, even though the auto-path shapes
+    /// contain literal `spawn` namespace segments.
+    #[test]
+    fn render_paints_deep_tree_in_preorder_with_genealogical_indent() {
+        let registry = fresh_registry();
+        let root = confirm_root(&registry);
+        let child = confirm_child(&registry, "/root/spawn/mid", root);
+        let _grandchild =
+            confirm_child_with_depth(&registry, "/root/spawn/mid/spawn/leaf", child, 3);
+
+        let mut panel = AgentStatusPanel::new(registry);
+        let mut buf: Vec<u8> = Vec::new();
+        let caps = TerminalCaps::baseline();
+        panel
+            .render(0, &mut buf, &caps, Instant::now(), Utc::now())
+            .expect("render");
+        let out = String::from_utf8(buf).expect("utf8");
+
+        let root_pos = out.find("root  ").expect("root row");
+        let mid_pos = out.find("  ● mid").expect("child row indented one level");
+        let leaf_pos = out
+            .find("    ● leaf")
+            .expect("grandchild row indented two levels");
+        assert!(
+            root_pos < mid_pos && mid_pos < leaf_pos,
+            "rows must paint in preorder: {out:?}"
+        );
+        assert!(
+            !out.contains("      ● "),
+            "no row may over-indent from path-segment counting: {out:?}"
+        );
+    }
+
+    /// A reclaimed mid-tree parent (tombstone genealogy) still anchors
+    /// its live child under the root instead of dropping or floating it.
+    #[test]
+    fn render_anchors_child_of_reclaimed_parent_under_root() {
+        let registry = fresh_registry();
+        let root = confirm_root(&registry);
+        let mid = confirm_child(&registry, "/root/spawn/mid", root);
+        let _leaf = confirm_child_with_depth(&registry, "/root/spawn/mid/spawn/leaf", mid, 3);
+        {
+            let mut reg = registry.write();
+            reg.mark_completed(mid).expect("complete mid");
+            assert!(reg.remove_terminal(mid), "reclaim mid");
+        }
+
+        let mut panel = AgentStatusPanel::new(registry);
+        let mut buf: Vec<u8> = Vec::new();
+        let caps = TerminalCaps::baseline();
+        panel
+            .render(0, &mut buf, &caps, Instant::now(), Utc::now())
+            .expect("render");
+        let out = String::from_utf8(buf).expect("utf8");
+        assert!(
+            out.contains("  ● leaf"),
+            "leaf anchors one level under the root (its visible \
+             ancestor) via the tombstone's parent link: {out:?}"
         );
     }
 

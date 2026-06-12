@@ -45,8 +45,8 @@ use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
 
 use super::persistence::index::{
-    append_index_entry, insert_index_entry_if_absent, read_index, remove_index_entry,
-    resolve_session, sum_usage_from_events, update_index_entry,
+    append_index_entry, insert_index_entry_for_new_session, insert_index_entry_if_absent,
+    read_index, remove_index_entry, resolve_session, sum_usage_from_events, update_index_entry,
 };
 use super::persistence::io::{append_events, read_session_events, session_file_path};
 use super::persistence::types::{
@@ -153,6 +153,41 @@ impl SessionManager {
         let entry = new_index_entry(Uuid::now_v7().to_string(), options);
         append_index_entry(&self.data_dir, &entry)?;
         self.open_fresh(entry, durability)
+    }
+
+    /// Create a fresh session under the **caller-supplied** ID `id`,
+    /// refusing to proceed when the ID is already in use — indexed *or*
+    /// present on disk as an orphan `{id}.jsonl` session file (an index
+    /// wipe/restore leaves exactly that state; the sink would otherwise
+    /// silently append to the foreign history and a later resume would
+    /// replay it as this session's own).
+    ///
+    /// This is the create-exactly-this primitive for callers that mint
+    /// their own session identifiers (e.g. a workflow passing
+    /// `--session-id wf-1234`) and want an existing ID to fail loudly
+    /// rather than silently attach to prior history — the complement of
+    /// [`Self::open_or_resume`], which converges on one session
+    /// idempotently. Both existence checks and the insert hold the
+    /// inter-process index lock together, so two concurrent creates with
+    /// the same ID cannot both succeed.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionPersistError::InvalidSessionId`] under exactly the
+    /// [`Self::open_or_resume`] rules (the ID becomes the `{id}.jsonl`
+    /// file name), [`SessionPersistError::IdExists`] when the ID is
+    /// taken in either form, plus the same I/O errors as
+    /// [`Self::create`].
+    pub fn create_with_id(
+        &self,
+        id: &str,
+        options: CreateSessionOptions,
+        durability: DurabilityPolicy,
+    ) -> Result<OpenSession, SessionPersistError> {
+        validate_explicit_session_id(id)?;
+        let candidate = new_index_entry(id.to_owned(), options);
+        insert_index_entry_for_new_session(&self.data_dir, &candidate)?;
+        self.open_fresh(candidate, durability)
     }
 
     /// Resume a persisted session: resolve `id_or_name` (empty string =
@@ -596,6 +631,83 @@ mod tests {
             .unwrap();
         let resolved = manager.resolve("nightly").unwrap();
         assert_eq!(resolved.id, opened.entry.id);
+    }
+
+    /// `create_with_id`: the caller's exact ID names the session and its
+    /// file; a second create with the same ID fails typed (never
+    /// attaching to the first session's history); validation matches the
+    /// `open_or_resume` rules.
+    #[test]
+    fn create_with_id_uses_exact_id_and_refuses_collision() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionManager::new(tmp.path());
+        let opened = manager
+            .create_with_id("wf-build-1234", options("gpt"), DurabilityPolicy::Flush)
+            .unwrap();
+        assert_eq!(opened.entry.id, "wf-build-1234");
+        opened.store.append(user_msg("step one")).unwrap();
+        drop(opened);
+
+        // Resumable by the caller-chosen ID.
+        let resumed = manager
+            .resume("wf-build-1234", DurabilityPolicy::Flush)
+            .unwrap();
+        assert_eq!(resumed.replay.replayed_events, 1);
+        drop(resumed);
+
+        // Create-exactly-this: the collision is a typed refusal and the
+        // existing session's history is untouched.
+        let err = manager
+            .create_with_id("wf-build-1234", options("gpt"), DurabilityPolicy::Flush)
+            .expect_err("an existing id must fail loudly");
+        assert!(
+            matches!(&err, SessionPersistError::IdExists { id } if id == "wf-build-1234"),
+            "expected IdExists, got {err:?}",
+        );
+        let read = read_session_events(tmp.path(), "wf-build-1234").unwrap();
+        assert_eq!(read.events.len(), 1, "prior history untouched");
+
+        let invalid = manager
+            .create_with_id("../escape", options("gpt"), DurabilityPolicy::Flush)
+            .expect_err("path-capable ids are rejected");
+        assert!(
+            matches!(invalid, SessionPersistError::InvalidSessionId { .. }),
+            "expected InvalidSessionId, got {invalid:?}",
+        );
+    }
+
+    /// H1 regression: an orphan `{id}.jsonl` on disk with NO index entry
+    /// (index wipe/restore, hand-copied file) must refuse the create —
+    /// the sink appends to existing files, so proceeding would silently
+    /// graft the foreign history onto the new session.
+    #[test]
+    fn create_with_id_refuses_orphan_session_file() {
+        use std::io::Write as _;
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionManager::new(tmp.path());
+
+        let orphan_path = tmp.path().join("wf-restored-7.jsonl");
+        let mut file = std::fs::File::create(&orphan_path).unwrap();
+        writeln!(file, "{{\"format_version\":1}}").unwrap();
+        drop(file);
+
+        let err = manager
+            .create_with_id("wf-restored-7", options("gpt"), DurabilityPolicy::Flush)
+            .expect_err("an orphan session file must refuse the create");
+        assert!(
+            matches!(&err, SessionPersistError::IdExists { id } if id == "wf-restored-7"),
+            "expected IdExists, got {err:?}",
+        );
+        assert!(
+            manager.list().unwrap().is_empty(),
+            "the refusal must not have written an index entry",
+        );
+        let on_disk = std::fs::read_to_string(&orphan_path).unwrap();
+        assert_eq!(
+            on_disk.lines().count(),
+            1,
+            "the orphan file must be untouched",
+        );
     }
 
     #[test]

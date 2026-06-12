@@ -124,7 +124,15 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     // infra so spawn-time policy reads resolve (W3.2).
     let envelope = crate::runtime::cli_coordination_envelope();
     let child_result_capacity = envelope.child_result_capacity;
-    install_agent_tool_infra(
+    // W3.7 root inbound wiring: the returned receiver is the root's
+    // inbound channel — its sender is registered in the MessageRouter
+    // under `root_id`, so a child's `signal_agent(to: "parent")` lands
+    // here. It is handed to the TUI event loop (TuiInputs.root_inbound),
+    // which threads it into every root step; the route is
+    // process-lifetime and survives `/new` rotation untouched, because
+    // rotation reuses both the router and the root identity
+    // (norn-tui's `rotate_store_dependents`).
+    let root_inbound = install_agent_tool_infra(
         &bundle.registry,
         built_provider.as_arc(),
         Arc::clone(&store),
@@ -195,6 +203,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         session_id: persist_session_id,
         root_event_sender,
         agent_event_rx,
+        root_inbound,
     };
 
     norn_tui::run_app(tui_inputs).await?;
@@ -232,6 +241,11 @@ struct TuiSessionHandle {
 ///   appending to the same file through its write-through sink.
 /// - `--fork <id>`: copy the source session into a new one (with its
 ///   `Fork` marker).
+/// - `--session-id <id>`: create a fresh persisted session under the
+///   caller's exact ID — a typed failure when the ID already exists
+///   (create-exactly-this, same semantics as print mode; clap rejects
+///   combining it with `--resume`/`--fork`/`--no-session`). Honors
+///   `--session-name`.
 /// - otherwise: create a fresh persisted session, honoring
 ///   `--session-name`.
 ///
@@ -270,6 +284,16 @@ fn open_session(
                 model: bundle.model.clone(),
                 working_dir,
                 name: None,
+            },
+            DurabilityPolicy::Flush,
+        )?
+    } else if let Some(id) = cli.session_id.as_deref() {
+        manager.create_with_id(
+            id,
+            CreateSessionOptions {
+                model: bundle.model.clone(),
+                working_dir,
+                name: cli.session_name.clone(),
             },
             DurabilityPolicy::Flush,
         )?

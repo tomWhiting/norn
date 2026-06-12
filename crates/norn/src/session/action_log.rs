@@ -202,6 +202,26 @@ pub struct ActionLogContext {
     pub post_validate_outcome: Option<serde_json::Value>,
 }
 
+/// One [`SessionEvent::Custom`](crate::session::events::SessionEvent::Custom)
+/// surfaced by the `action_log` tool's `events` query.
+///
+/// Wave 3 made the session's Custom audit events first-class on the
+/// query surface: subagent lifecycle (`subagent.started` /
+/// `subagent.completed`), inter-agent messaging (`agent_message.sent` /
+/// `agent_message.delivered`), and any embedder-defined event types.
+/// The record carries the payload verbatim — these payloads are the
+/// serde-stable audit contract, so no lossy summarisation happens here.
+#[derive(Clone, Debug, Serialize)]
+pub struct CustomEventRecord {
+    /// Application-defined event-type discriminator (e.g.
+    /// `"agent_message.sent"`).
+    pub event_type: String,
+    /// When the event was appended to the store.
+    pub timestamp: DateTime<Utc>,
+    /// The event's structured payload, verbatim.
+    pub data: serde_json::Value,
+}
+
 /// Parameters for [`ActionLog::record_completion`].
 pub struct CompletionRecord<'a> {
     /// Name of the tool that was invoked.
@@ -519,6 +539,36 @@ impl ActionLog {
             self.mutation_ledger
                 .entry(&self.working_dir.get().join(file_path))
         }
+    }
+
+    /// Return every [`SessionEvent::Custom`](crate::session::events::SessionEvent::Custom)
+    /// in this log's backing event store, in store (append) order.
+    ///
+    /// This is the data source for the `action_log` tool's `events`
+    /// query: it makes the typed Custom audit events — subagent
+    /// lifecycle, `agent_message.sent`/`agent_message.delivered`, and
+    /// embedder-defined types — queryable instead of invisible. The scan
+    /// reads the store at call time, so events appended by other parts
+    /// of the runtime (e.g. message audit writes into this agent's
+    /// store) are always visible without any registration step.
+    #[must_use]
+    pub fn custom_events(&self) -> Vec<CustomEventRecord> {
+        self.event_store
+            .events()
+            .into_iter()
+            .filter_map(|event| match event {
+                crate::session::events::SessionEvent::Custom {
+                    base,
+                    event_type,
+                    data,
+                } => Some(CustomEventRecord {
+                    event_type,
+                    timestamp: base.timestamp,
+                    data,
+                }),
+                _ => None,
+            })
+            .collect()
     }
 
     /// Look up a single follow-up action by `tool_call_id` and `action_name`,
@@ -1661,6 +1711,60 @@ mod tests {
         let after = log.unexpired_follow_ups(identity, None);
         assert_eq!(after.len(), 1);
         assert_eq!(after[0].action.action, "undo");
+    }
+
+    #[test]
+    fn custom_events_returns_only_custom_variants_in_store_order() {
+        let store = Arc::new(EventStore::new());
+        store
+            .append(SessionEvent::ToolResult {
+                base: EventBase::new(None),
+                tool_call_id: "tc-1".to_owned(),
+                tool_name: "read".to_owned(),
+                output: serde_json::json!({}),
+                duration_ms: 1,
+            })
+            .unwrap();
+        store
+            .append(SessionEvent::Custom {
+                base: EventBase::new(None),
+                event_type: "agent_message.sent".to_owned(),
+                data: serde_json::json!({ "seq": 1 }),
+            })
+            .unwrap();
+        store
+            .append(SessionEvent::Custom {
+                base: EventBase::new(None),
+                event_type: "subagent.completed".to_owned(),
+                data: serde_json::json!({ "succeeded": true }),
+            })
+            .unwrap();
+
+        let log = ActionLog::new(Arc::clone(&store));
+        let events = log.custom_events();
+        assert_eq!(events.len(), 2, "only Custom variants surface");
+        assert_eq!(events[0].event_type, "agent_message.sent");
+        assert_eq!(events[0].data, serde_json::json!({ "seq": 1 }));
+        assert_eq!(events[1].event_type, "subagent.completed");
+        assert!(
+            events[0].timestamp <= events[1].timestamp,
+            "store order preserved"
+        );
+    }
+
+    #[test]
+    fn custom_events_sees_events_appended_after_construction() {
+        let store = Arc::new(EventStore::new());
+        let log = ActionLog::new(Arc::clone(&store));
+        assert!(log.custom_events().is_empty());
+        store
+            .append(SessionEvent::Custom {
+                base: EventBase::new(None),
+                event_type: "agent_message.delivered".to_owned(),
+                data: serde_json::json!({}),
+            })
+            .unwrap();
+        assert_eq!(log.custom_events().len(), 1, "scan is live, not cached");
     }
 
     #[test]

@@ -1,11 +1,17 @@
 # Meridian Handoff — norn Phase 0+1 hardening + Phase 2 typed API
 
-**Date:** 2026-06-12 (Phase 2 section added same day)
-**Pin:** the current `main` head of `tomWhiting/norn` (≥ `2861545`, the
-Phase 2 code commit; later commits to date are documentation-only).
-**Status:** Phase 1 and Phase 2 each Fable-reviewed to READY across multiple
-rounds, all findings fixed; gates green — clippy `--workspace -D warnings`
-clean, fmt clean, **3083 tests / 0 failures**.
+**Date:** 2026-06-12, updated 2026-06-13 (§8 grows per Wave 3 step)
+**Pin:** the current `main` head of `tomWhiting/norn`. Milestone commits:
+`2861545` (Phase 2 typed API, §7), `fd1c587`/`a01cd43`/`2a2a7a2`/`ae6c02c`
+(Wave 3 batches, §8.3–§8.5), `74763c9` (W3.5 cascade + envelope fix,
+§8.6–§8.7). §8.8–§8.9 land with the W3.7 commit after it.
+**WARNING — do not pin exactly `74763c9`:** that commit declares
+`mod agents_messages;` but the module file landed in the following
+commit, so `74763c9` does not build from a clean checkout (and will trip
+bisects). Pin the W3.7 commit or later.
+**Status:** every landed step Fable-reviewed to READY, all findings fixed;
+gates green at each commit — clippy `--workspace -D warnings` clean, fmt
+clean, **3347 tests / 0 failures** at the W3.7 tree.
 
 This document is for the agent working on the meridian/yggdrasil side. It
 lists what changed in norn that affects you, what you must adapt when you bump
@@ -434,7 +440,10 @@ briefly `send_message` in between, never in anything you should pin):
   configured"). If meridian grants children `siblings_and_parent` or
   `parent_only` and wants child→parent messaging to work, set
   `AgentBuilder::inbound_capacity` on the root and drain the channel.
-  Tracked follow-up for norn's own CLI drivers.
+  The follow-up for norn's own CLI drivers is **CLOSED by W3.7 (§8.9)**:
+  norn-cli/norn-tui now wire the root inbound channel themselves. The
+  library-surface guidance above is unchanged — an embedder root still
+  opts in via `inbound_capacity`.
 
 ## 8.5 W3.4 landed — delegation budgets + recursion functional
 
@@ -542,3 +551,53 @@ were unexpected)` whenever an output schema set
   `properties`) pass the check, but the two reserved names remain
   claimed at the top level: a data entry under either name is stripped
   before validation. Documented on `wrap_schema_with_envelope`.
+
+## 8.8 Explicit session IDs on the CLI (additive)
+
+- `SessionManager::create_with_id(id, options, durability)` — the
+  create-exactly-this complement of `open_or_resume`: same ID
+  validation, same locked existence check, but an existing ID is a typed
+  refusal (`SessionPersistError::IdExists`, new variant — additive
+  unless you match the enum exhaustively) instead of a resume.
+- norn-cli gains `--session-id <ID>` (conflicts with
+  `--resume`/`--fork`/`--no-session`), wired to `create_with_id`, for
+  workflows that mint their own session identifiers. Capture of
+  generated IDs is unchanged: `--output-format json` → `.session_id`.
+
+## 8.9 W3.7 landed — observability surfaces over the Wave 3 machinery
+
+All additive; nothing breaks. Four pieces:
+
+- **`agents` tool: new `messages` action.** `agents(action: "messages")`
+  renders inter-agent messaging as sender → recipient edges derived
+  READ-ONLY from the `agent_message.sent`/`agent_message.delivered`
+  audit events in the **calling agent's own store**. Honesty contract:
+  dual-store audit means one store cannot attest everything — counts the
+  caller's store cannot hold are JSON `null` ("not knowable from your
+  audit store"), never zero. No new events are emitted; the router is
+  never touched. (The tool's `list` output remains a flat,
+  spawn-time-ordered array — it was already subtree-complete at any
+  depth; the depth-aware *tree rendering* is the TUI bullet below.)
+- **`action_log` tool: new `events` query mode.** Queries the session's
+  Custom audit events — typed subagent lifecycle
+  (`subagent.started`/`subagent.completed`), the Wave 3 message audit
+  trail (`agent_message.sent`/`agent_message.delivered`), and any
+  embedder-defined Custom event types — payloads verbatim (they are the
+  serde-stable audit contract). `filter.event_type` narrows to one
+  type, `filter.last` bounds the result; tool-call-shaped filter fields
+  on an `events` query are a typed rejection, never silently ignored.
+  The `scope` federation (`children` / `all` / one descendant by path
+  or UUID) covers `events` like every other mode.
+- **TUI**: renders live `AgentEventKind::Message` broadcasts, and its
+  agents panel now renders arbitrary-depth trees
+  (`/root/spawn/{a}/fork/{b}`) by genealogical depth. norn-internal; no
+  meridian surface.
+- **CLI root inbound wiring (closes the §8.4 follow-up).** norn's own
+  CLI/TUI drivers now create the root's inbound channel (sized from the
+  published envelope's `child_policy.inbound_capacity`, never a
+  constant), register it in the MessageRouter under the root id at
+  assembly, and drain it through the root's `AgentStepRequest.inbound`
+  — so `signal_agent(to: "parent")` from a child delivers on
+  interactive surfaces through the same `<agent_message>` framing as
+  everywhere else. Embedder surfaces are unchanged: a meridian root
+  still opts in via `AgentBuilder::inbound_capacity` (§8.4).

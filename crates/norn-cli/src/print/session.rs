@@ -42,7 +42,8 @@ fn working_dir_string() -> Result<String, PrintError> {
 }
 
 /// Resolve the print-mode session through [`SessionManager`], honoring
-/// `--no-session`, `--resume`, `--fork`, and `--session-name`.
+/// `--no-session`, `--resume`, `--fork`, `--session-id`, and
+/// `--session-name`.
 ///
 /// - `--no-session`: a fresh in-memory [`EventStore`] with no sink and no
 ///   on-disk record.
@@ -50,6 +51,10 @@ fn working_dir_string() -> Result<String, PrintError> {
 ///   through its write-through sink.
 /// - `--fork <id>`: copy the source session (with its `Fork` marker) into
 ///   a new one.
+/// - `--session-id <id>`: create a fresh persisted session under the
+///   caller's exact ID — a typed failure when the ID already exists
+///   (create-exactly-this; clap rejects combining it with
+///   `--resume`/`--fork`/`--no-session`). Honors `--session-name`.
 /// - otherwise: create a fresh persisted session, honoring
 ///   `--session-name`.
 ///
@@ -83,6 +88,16 @@ pub(crate) fn open_session(cli: &Cli, bundle: &RuntimeBundle) -> Result<SessionH
                 model: bundle.model.clone(),
                 working_dir: working_dir_string()?,
                 name: None,
+            },
+            DurabilityPolicy::Flush,
+        )?
+    } else if let Some(id) = cli.session_id.as_deref() {
+        manager.create_with_id(
+            id,
+            CreateSessionOptions {
+                model: bundle.model.clone(),
+                working_dir: working_dir_string()?,
+                name: cli.session_name.clone(),
             },
             DurabilityPolicy::Flush,
         )?
@@ -222,6 +237,57 @@ mod tests {
             "usage totals must be summed exactly once",
         );
         assert_eq!(indexed.total_output_tokens, 40);
+    }
+
+    /// `--session-id` creates the session under the caller's exact ID
+    /// (resumable by it), and a second create with the same ID is a
+    /// typed failure — never a silent attach to the first session.
+    #[test]
+    #[serial_test::serial]
+    fn session_id_flag_creates_exactly_that_session_once() {
+        let _guard = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = Cli::try_parse_from(["norn", "--session-id", "wf-run-42"]).unwrap();
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        let session = open_session(&cli, &bundle).unwrap();
+        assert_eq!(session.id(), Some("wf-run-42"));
+        drop(session);
+
+        let Err(err) = open_session(&cli, &bundle) else {
+            panic!("an existing --session-id must fail loudly");
+        };
+        assert!(
+            format!("{err:?}").contains("wf-run-42"),
+            "the failure names the colliding id: {err:?}",
+        );
+
+        let resume_cli = Cli::try_parse_from(["norn", "--resume", "wf-run-42"]).unwrap();
+        let resumed = open_session(&resume_cli, &bundle).unwrap();
+        assert_eq!(
+            resumed.id(),
+            Some("wf-run-42"),
+            "the caller-chosen id is resumable",
+        );
+    }
+
+    /// clap rejects every contradictory pairing of the session-control
+    /// flags — `--session-id` against all three, and the older trio
+    /// against each other (previously silently prioritized by branch
+    /// order in `open_session`).
+    #[test]
+    fn session_control_flags_conflict_pairwise() {
+        for combo in [
+            ["norn", "--session-id", "x", "--resume"].as_slice(),
+            ["norn", "--session-id", "x", "--fork"].as_slice(),
+            ["norn", "--session-id", "x", "--no-session"].as_slice(),
+            ["norn", "--resume", "a", "--fork", "b"].as_slice(),
+            ["norn", "--resume", "a", "--no-session"].as_slice(),
+            ["norn", "--fork", "a", "--no-session"].as_slice(),
+        ] {
+            assert!(
+                Cli::try_parse_from(combo.iter().copied()).is_err(),
+                "expected a parse conflict for {combo:?}",
+            );
+        }
     }
 
     /// `--no-session` opens a sink-less in-memory store and records

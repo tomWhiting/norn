@@ -6,7 +6,7 @@
 //! builder. It never holds the log itself, mirroring `tool_search`'s use of
 //! a context-published catalogue.
 //!
-//! Five query modes are supported:
+//! Six query modes are supported:
 //!
 //! * `list` — Level 1 compact summaries (via
 //!   [`ActionLogEntry::compact_json`](crate::session::action_log::ActionLogEntry::compact_json)),
@@ -23,6 +23,14 @@
 //!   expiry checked at query time, via [`ActionLog::unexpired_follow_ups`].
 //!   `filter.tool` scopes to the registering tool and `filter.outcome` to the
 //!   original call's outcome.
+//! * `events` — the session's Custom audit events, via
+//!   [`ActionLog::custom_events`]: typed subagent lifecycle records
+//!   (`subagent.started` / `subagent.completed`), the Wave 3 inter-agent
+//!   message audit trail (`agent_message.sent` / `agent_message.delivered`),
+//!   and any embedder-defined event types — payloads verbatim (they are the
+//!   serde-stable audit contract). `filter.event_type` narrows to one type
+//!   and `filter.last` bounds the result; the other filter fields describe
+//!   tool calls and are rejected with a typed failure, never ignored.
 //!
 //! # Scope (federated queries over the agent subtree)
 //!
@@ -30,7 +38,7 @@
 //! in the session-wide
 //! [`ActionLogTree`](crate::session::action_log_tree::ActionLogTree). The
 //! optional `scope` argument widens `list` / `detail` / `context` /
-//! `mutations` from the caller's own log (the default — exactly the
+//! `mutations` / `events` from the caller's own log (the default — exactly the
 //! pre-scope behaviour) to `children` (self + direct children), `all` (the
 //! whole subtree), or one specific descendant by registry path or UUID.
 //! Federated `list` results interleave by timestamp and label every entry
@@ -51,8 +59,8 @@ use serde::Deserialize;
 use crate::error::ToolError;
 use crate::session::action_log::ActionLog;
 use crate::session::action_log_scope::{
-    ActionLogFilter, ScopedLog, collect_labeled_entries, collect_mutations, find_context,
-    find_detail,
+    ActionLogFilter, ScopedLog, collect_labeled_entries, collect_labeled_events, collect_mutations,
+    find_context, find_detail,
 };
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
@@ -83,9 +91,11 @@ impl Default for ActionLogTool {
 /// Model-supplied arguments for an `action_log` call.
 #[derive(Debug, Deserialize)]
 struct ActionLogArgs {
-    /// One of `list`, `detail`, `context`, `mutations`, `follow_ups`.
+    /// One of `list`, `detail`, `context`, `mutations`, `follow_ups`,
+    /// `events`.
     query: String,
-    /// Optional scoping filter for `list`, `mutations`, and `follow_ups` queries.
+    /// Optional scoping filter for `list`, `mutations`, `follow_ups`,
+    /// and `events` queries.
     #[serde(default)]
     filter: Option<ActionLogFilter>,
     /// Tool-call id required by `detail` and `context`; ignored by `list`.
@@ -105,6 +115,20 @@ fn missing_call_id(query: &str) -> ToolOutput {
             format!("call_id required for {query} query"),
         )
         .with_detail(serde_json::json!({ "query": query })),
+    )
+}
+
+/// Build the structured error [`ToolOutput`] for a filter field supplied
+/// to a query it does not apply to. Inapplicable filters fail loudly —
+/// silently ignoring one would report results the caller believes are
+/// narrowed when they are not.
+fn inapplicable_filter(query: &str, field: &str, hint: &str) -> ToolOutput {
+    ToolOutput::failure(
+        ToolErrorPayload::new(
+            ToolErrorKind::InvalidArguments,
+            format!("filter.{field} does not apply to the {query} query; {hint}"),
+        )
+        .with_detail(serde_json::json!({ "query": query, "field": field })),
     )
 }
 
@@ -187,6 +211,22 @@ fn run_query(
         }
         Ok(ToolOutput::success(output))
     };
+    // `filter.event_type` describes Custom session events; on any
+    // recognized tool-call query it is a typed failure, never a silent
+    // no-op (unknown queries keep their own unknown-query error below).
+    if args.query != "events"
+        && matches!(
+            args.query.as_str(),
+            "list" | "detail" | "context" | "mutations" | "follow_ups"
+        )
+        && args.filter.as_ref().is_some_and(|f| f.event_type.is_some())
+    {
+        return Ok(inapplicable_filter(
+            &args.query,
+            "event_type",
+            "it narrows the events query only",
+        ));
+    }
     match args.query.as_str() {
         "list" => {
             // A single scoped log (self, or one specific agent) keeps
@@ -302,6 +342,54 @@ fn run_query(
             }
             finish(output)
         }
+        "events" => {
+            if let Some(filter) = &args.filter {
+                let inapplicable = [
+                    ("tool", filter.tool.is_some()),
+                    ("outcome", filter.outcome.is_some()),
+                    ("file", filter.file.is_some()),
+                    ("since", filter.since.is_some()),
+                ];
+                for (field, present) in inapplicable {
+                    if present {
+                        return Ok(inapplicable_filter(
+                            "events",
+                            field,
+                            "session events are not tool calls; use filter.event_type \
+                             and filter.last",
+                        ));
+                    }
+                }
+            }
+            let merged = collect_labeled_events(scoped);
+            let filtered = match &args.filter {
+                Some(filter) => filter.apply_events(merged),
+                None => merged,
+            };
+            let events: Vec<serde_json::Value> = filtered
+                .iter()
+                .map(|le| {
+                    let mut value = serde_json::json!({
+                        "type": le.record.event_type,
+                        "ts": le.record.timestamp.to_rfc3339(),
+                        "data": le.record.data,
+                    });
+                    if scope_echo.is_some() {
+                        value["agent"] = serde_json::json!(scoped[le.agent_idx].label);
+                    }
+                    value
+                })
+                .collect();
+            let mut output = serde_json::json!({
+                "query": "events",
+                "count": events.len(),
+                "events": events,
+            });
+            if scope_echo.is_some() {
+                output["agents"] = serde_json::Value::Array(agents_legend(scoped));
+            }
+            finish(output)
+        }
         "follow_ups" => match scope_echo {
             Some(echo) => Ok(ToolOutput::failure(
                 ToolErrorPayload::new(
@@ -315,7 +403,8 @@ fn run_query(
         },
         other => Err(ToolError::ExecutionFailed {
             reason: format!(
-                "unknown query '{other}': expected list, detail, context, mutations, or follow_ups"
+                "unknown query '{other}': expected list, detail, context, mutations, \
+                 follow_ups, or events"
             ),
         }),
     }
@@ -338,12 +427,17 @@ impl Tool for ActionLogTool {
          disk, optionally scoped to one path via filter.file; `follow_ups` \
          returns the still-valid deferred actions (e.g. undo) registered by \
          earlier calls, with expiry checked at query time and optional \
-         `filter.tool`/`filter.outcome` scoping. The optional `scope` widens \
-         list/detail/context/mutations beyond your own log: `children` (you \
-         plus your direct sub-agents), `all` (your whole sub-agent subtree), \
-         or one specific sub-agent by path or UUID. Federated results are \
-         labeled per agent and interleaved by time; you can never query a \
-         parent's or sibling's log."
+         `filter.tool`/`filter.outcome` scoping; `events` returns the \
+         session's typed audit events — subagent lifecycle \
+         (subagent.started/completed) and inter-agent messaging \
+         (agent_message.sent/delivered) — with optional \
+         `filter.event_type` and `filter.last` narrowing. The optional \
+         `scope` widens list/detail/context/mutations/events beyond your \
+         own log: `children` (you plus your direct sub-agents), `all` \
+         (your whole sub-agent subtree), or one specific sub-agent by \
+         path or UUID. Federated results are labeled per agent and \
+         interleaved by time; you can never query a parent's or \
+         sibling's log."
     }
 
     fn category(&self) -> ToolCategory {
@@ -357,12 +451,12 @@ impl Tool for ActionLogTool {
             "properties": {
                 "query": {
                     "type": "string",
-                    "enum": ["list", "detail", "context", "mutations", "follow_ups"],
-                    "description": "list: Level 1 summaries with optional filter. detail: Level 2 data for one call_id. context: Level 3 data for one call_id. mutations: file-change ledger with live revert status, optionally scoped by filter.file. follow_ups: unexpired follow-up actions, optionally scoped by filter.tool (registering tool) and filter.outcome."
+                    "enum": ["list", "detail", "context", "mutations", "follow_ups", "events"],
+                    "description": "list: Level 1 summaries with optional filter. detail: Level 2 data for one call_id. context: Level 3 data for one call_id. mutations: file-change ledger with live revert status, optionally scoped by filter.file. follow_ups: unexpired follow-up actions, optionally scoped by filter.tool (registering tool) and filter.outcome. events: the session's typed Custom audit events (subagent.started/completed, agent_message.sent/delivered, embedder-defined types) with payloads verbatim, optionally scoped by filter.event_type and filter.last."
                 },
                 "filter": {
                     "type": "object",
-                    "description": "Optional scoping for list, mutations, and follow_ups queries. Fields combine with AND. For follow_ups, only tool (the registering tool's name) and outcome (the original call's outcome) apply.",
+                    "description": "Optional scoping for list, mutations, follow_ups, and events queries. Fields combine with AND. For follow_ups, only tool (the registering tool's name) and outcome (the original call's outcome) apply. For events, only event_type and last apply — the other fields describe tool calls and are rejected.",
                     "properties": {
                         "tool": {
                             "type": "string",
@@ -385,6 +479,10 @@ impl Tool for ActionLogTool {
                             "type": "integer",
                             "minimum": 1,
                             "description": "Return only the most recent N entries."
+                        },
+                        "event_type": {
+                            "type": "string",
+                            "description": "events query only: return only Custom session events with exactly this event_type, e.g. \"agent_message.sent\", \"agent_message.delivered\", \"subagent.started\", \"subagent.completed\". Rejected on every other query."
                         }
                     },
                     "additionalProperties": false
@@ -395,7 +493,7 @@ impl Tool for ActionLogTool {
                 },
                 "scope": {
                     "type": "string",
-                    "description": "Which agent's logs to query. Omit or \"self\" (default): your own log only — identical output shape to omitting scope. \"children\": you plus your direct sub-agents. \"all\": your entire sub-agent subtree. Or a specific sub-agent's registry path (e.g. \"/smoke/child\") or UUID, returning that agent's own log. Applies to list, detail, context, and mutations; not supported for follow_ups. Federated list entries interleave by timestamp and carry an \"agent\" label (registry path, \"root\" for the root agent, or bare UUID), with a per-agent \"agents\" legend (role included only when set). Scope never reaches upward: a parent's or sibling's log is not queryable. Finished/reclaimed sub-agents remain queryable for the whole session. For cross-agent mutations queries, pass filter.file as an absolute path (each agent's ledger records paths against its own working directory)."
+                    "description": "Which agent's logs to query. Omit or \"self\" (default): your own log only — identical output shape to omitting scope. \"children\": you plus your direct sub-agents. \"all\": your entire sub-agent subtree. Or a specific sub-agent's registry path (e.g. \"/smoke/child\") or UUID, returning that agent's own log. Applies to list, detail, context, mutations, and events; not supported for follow_ups. Federated list entries interleave by timestamp and carry an \"agent\" label (registry path, \"root\" for the root agent, or bare UUID), with a per-agent \"agents\" legend (role included only when set). Scope never reaches upward: a parent's or sibling's log is not queryable. Finished/reclaimed sub-agents remain queryable for the whole session. For cross-agent mutations queries, pass filter.file as an absolute path (each agent's ledger records paths against its own working directory)."
                 }
             },
             "additionalProperties": false
@@ -979,10 +1077,17 @@ mod tests {
                 json!("detail"),
                 json!("context"),
                 json!("mutations"),
-                json!("follow_ups")
+                json!("follow_ups"),
+                json!("events")
             ]
         );
         assert_eq!(schema["required"], json!(["query"]));
+        assert!(
+            schema["properties"]["filter"]["properties"]["event_type"]["description"]
+                .as_str()
+                .is_some_and(|d| d.contains("agent_message.sent")),
+            "filter.event_type documents the message audit types"
+        );
     }
 
     fn seed_follow_up(
@@ -1630,6 +1735,201 @@ mod tests {
         assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["count"], 1);
         assert_eq!(out.content["entries"][0]["id"], "g-1");
+    }
+
+    // ----- events (Custom audit events, W3.7) --------------------------------
+
+    fn append_custom(store: &EventStore, event_type: &str, data: Value) {
+        store
+            .append(crate::session::events::SessionEvent::Custom {
+                base: crate::session::events::EventBase::new(None),
+                event_type: event_type.to_owned(),
+                data,
+            })
+            .expect("append custom event");
+    }
+
+    /// Events are served verbatim from the backing store in append
+    /// order, with type and timestamp.
+    #[tokio::test]
+    async fn events_query_returns_custom_events_verbatim() {
+        let store = Arc::new(EventStore::new());
+        let log = Arc::new(ActionLog::new(Arc::clone(&store)));
+        append_custom(
+            &store,
+            "agent_message.sent",
+            json!({ "phase": "sent", "seq": 1 }),
+        );
+        append_custom(&store, "subagent.started", json!({ "phase": "started" }));
+
+        let ctx = ctx_with(Arc::clone(&log));
+        let out = run(&ctx, json!({ "query": "events" })).await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["query"], "events");
+        assert_eq!(out.content["count"], 2);
+        let events = out.content["events"].as_array().unwrap();
+        assert_eq!(events[0]["type"], "agent_message.sent");
+        assert_eq!(events[0]["data"]["seq"], 1);
+        assert!(events[0]["ts"].as_str().is_some());
+        assert_eq!(events[1]["type"], "subagent.started");
+        // Self-scope output carries no agent labels, matching list.
+        assert!(events[0].get("agent").is_none());
+        assert!(out.content.get("agents").is_none());
+    }
+
+    /// `filter.event_type` narrows to one type; `filter.last` bounds.
+    #[tokio::test]
+    async fn events_query_filters_by_event_type_and_last() {
+        let store = Arc::new(EventStore::new());
+        let log = Arc::new(ActionLog::new(Arc::clone(&store)));
+        for seq in 0..3 {
+            append_custom(
+                &store,
+                "agent_message.sent",
+                json!({ "phase": "sent", "seq": seq }),
+            );
+        }
+        append_custom(
+            &store,
+            "agent_message.delivered",
+            json!({ "phase": "delivered" }),
+        );
+
+        let ctx = ctx_with(Arc::clone(&log));
+        let out = run(
+            &ctx,
+            json!({ "query": "events", "filter": { "event_type": "agent_message.sent" } }),
+        )
+        .await;
+        assert_eq!(out.content["count"], 3, "{:?}", out.content);
+
+        let out = run(
+            &ctx,
+            json!({
+                "query": "events",
+                "filter": { "event_type": "agent_message.sent", "last": 2 },
+            }),
+        )
+        .await;
+        assert_eq!(out.content["count"], 2);
+        let events = out.content["events"].as_array().unwrap();
+        // The most recent two, still chronological.
+        assert_eq!(events[0]["data"]["seq"], 1);
+        assert_eq!(events[1]["data"]["seq"], 2);
+    }
+
+    /// An event type with no matches (or an empty store) yields an
+    /// honest zero, not an error.
+    #[tokio::test]
+    async fn events_query_empty_result_has_zero_count() {
+        let log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        let ctx = ctx_with(Arc::clone(&log));
+        let out = run(
+            &ctx,
+            json!({ "query": "events", "filter": { "event_type": "agent_message.sent" } }),
+        )
+        .await;
+        assert!(!out.is_error());
+        assert_eq!(out.content["count"], 0);
+        assert_eq!(out.content["events"], json!([]));
+    }
+
+    /// Tool-call filter fields on the events query fail typed — never a
+    /// silent no-op that pretends to have narrowed.
+    #[tokio::test]
+    async fn events_query_rejects_tool_call_filter_fields() {
+        let log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        let ctx = ctx_with(Arc::clone(&log));
+        for (field, filter) in [
+            ("tool", json!({ "tool": "edit" })),
+            ("outcome", json!({ "outcome": "success" })),
+            ("file", json!({ "file": "a.rs" })),
+            ("since", json!({ "since": "tc-1" })),
+        ] {
+            let out = run(&ctx, json!({ "query": "events", "filter": filter })).await;
+            assert!(out.is_error(), "filter.{field} must be rejected");
+            assert_eq!(out.content["error"]["kind"], "invalid_arguments");
+            assert_eq!(out.content["error"]["detail"]["field"], field);
+        }
+    }
+
+    /// `filter.event_type` on a tool-call query fails typed for the same
+    /// reason.
+    #[tokio::test]
+    async fn event_type_filter_rejected_on_tool_call_queries() {
+        let log = populated_log();
+        let ctx = ctx_with(Arc::clone(&log));
+        for query in ["list", "mutations", "follow_ups"] {
+            let out = run(
+                &ctx,
+                json!({ "query": query, "filter": { "event_type": "agent_message.sent" } }),
+            )
+            .await;
+            assert!(out.is_error(), "{query} must reject filter.event_type");
+            assert_eq!(out.content["error"]["kind"], "invalid_arguments");
+            assert_eq!(out.content["error"]["detail"]["field"], "event_type");
+        }
+    }
+
+    /// Federated events: a parent's `scope: "all"` interleaves its own
+    /// and its child's Custom events by timestamp, labeled per agent —
+    /// this is how a parent reads `agent_message.delivered` records that
+    /// only exist in the child's store.
+    #[tokio::test]
+    async fn scope_all_federates_events_with_labels() {
+        let fam = family();
+        // Root store: a sent audit record (granting-parent copy).
+        let root_store = Arc::new(EventStore::new());
+        let root_log = Arc::new(ActionLog::new(Arc::clone(&root_store)));
+        append_custom(
+            &root_store,
+            "agent_message.sent",
+            json!({ "phase": "sent", "seq": 1 }),
+        );
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        // Child store: the delivery record.
+        let child_store = Arc::new(EventStore::new());
+        let child_log = Arc::new(ActionLog::new(Arc::clone(&child_store)));
+        append_custom(
+            &child_store,
+            "agent_message.delivered",
+            json!({ "phase": "delivered", "seq": 1 }),
+        );
+        // Swap freshly-stored logs into the family tree (the family
+        // helper's logs have storeless seeds).
+        let tree = Arc::new(ActionLogTree::new(fam.root_id));
+        tree.register(fam.root_id, None, Arc::clone(&root_log));
+        tree.register(fam.child_id, Some(fam.root_id), child_log);
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::clone(&root_log));
+        ctx.insert_extension(infra_for(fam.root_id, None, &fam.registry));
+        ctx.insert_extension(tree);
+
+        let out = run(&ctx, json!({ "query": "events", "scope": "all" })).await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["scope"], "all");
+        assert_eq!(out.content["count"], 2);
+        let events = out.content["events"].as_array().unwrap();
+        assert_eq!(events[0]["type"], "agent_message.sent");
+        assert_eq!(events[0]["agent"], "root");
+        assert_eq!(events[1]["type"], "agent_message.delivered");
+        assert_eq!(events[1]["agent"], "/smoke/child");
+        let agents = out.content["agents"].as_array().unwrap();
+        assert_eq!(agents.len(), 2);
+    }
+
+    /// The events query respects the same subtree boundary as the rest
+    /// of the scope surface.
+    #[tokio::test]
+    async fn scope_events_blocked_for_parent_query() {
+        let fam = family();
+        let out = run(
+            &fam.child_ctx,
+            json!({ "query": "events", "scope": fam.root_id.to_string() }),
+        )
+        .await;
+        assert!(out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["error"]["kind"], "permission_denied");
     }
 
     /// The scope property is documented in the input schema.

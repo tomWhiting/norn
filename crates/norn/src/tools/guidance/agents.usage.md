@@ -4,4 +4,6 @@ list returns every visible agent. A live agent carries id, path, role, model, st
 
 get takes agent_id — a hierarchical registry path (e.g. "/workers/analyzer") or UUID — and returns the same record shape. A child that finished but was not yet reclaimed reports its full entry with its real terminal status; a reclaimed child reports its completion record. not_found is returned only for identifiers no agent in this session ever had — a finished agent always resolves to its record.
 
-Both commands are read-only: nothing is messaged, closed, or reclaimed by looking.
+messages summarizes inter-agent messaging as edges: one entry per sender → recipient pair with "from"/"to" labels (recorded at send time), "sent" count, per-kind counts ("kinds": steer/update), "delivered" count, first/last activity timestamps, and the highest sequence number. Edges are derived from the audit events in your own store, which holds exactly: messages you sent, messages your direct children exchanged (you granted their messaging scope), and deliveries to you. A null "sent" or "delivered" means that count is not knowable from your store — deliveries to a child are recorded in that child's store, and your deeper descendants' traffic is audited by the parent that granted it — never that nothing happened. A "malformed" count appears only if audit events failed to parse. To inspect deeper traffic, ask the subtree owner (signal it) or query the action_log events of a descendant.
+
+All commands are read-only: nothing is messaged, closed, or reclaimed by looking.

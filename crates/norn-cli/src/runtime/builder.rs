@@ -1439,7 +1439,9 @@ command = "echo cwd"
         let cli = cli_from(&["norn"]);
         let bundle = bundle_with_standard_tools(&cli);
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![]));
-        crate::runtime::install_agent_tool_infra(
+        // Bind the root inbound channel for the test's duration so the
+        // root route stays live (dropping the receiver closes it).
+        let root_inbound = crate::runtime::install_agent_tool_infra(
             &bundle.registry,
             provider,
             Arc::new(norn::session::store::EventStore::new()),
@@ -1447,6 +1449,10 @@ command = "echo cwd"
             Arc::clone(&bundle.registry),
             norn::agent::registry::AgentRegistry::shared(),
             crate::runtime::cli_coordination_envelope(),
+        );
+        assert!(
+            root_inbound.is_some(),
+            "install on a registry with a shared context wires the root inbound channel",
         );
 
         let executor: &dyn ToolExecutor = &*bundle.registry;

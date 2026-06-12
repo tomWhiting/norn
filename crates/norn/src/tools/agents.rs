@@ -64,6 +64,12 @@ pub enum AgentsCommand {
         /// "/workers/analyzer") or UUID.
         agent_id: String,
     },
+    /// Summarize inter-agent messaging as sender → recipient edges,
+    /// derived read-only from the message audit events in your own
+    /// store: messages you sent, messages your direct children exchanged
+    /// (you granted their scope), and deliveries to you. A null count
+    /// means "not knowable from your store", never zero.
+    Messages,
 }
 
 /// Result of resolving an identifier against the registry.
@@ -250,7 +256,9 @@ impl CompositeTool for AgentsTool {
 
     fn command_effect(&self, command: &AgentsCommand) -> ToolEffect {
         match command {
-            AgentsCommand::List | AgentsCommand::Get { .. } => ToolEffect::ReadOnly,
+            AgentsCommand::List | AgentsCommand::Get { .. } | AgentsCommand::Messages => {
+                ToolEffect::ReadOnly
+            }
         }
     }
 
@@ -333,6 +341,27 @@ impl CompositeTool for AgentsTool {
                     "agent": agent,
                 })))
             }
+            AgentsCommand::Messages => {
+                // The audit events are read from the caller's own store
+                // (sender copies, scope-granted child copies, and
+                // deliveries to the caller) — see the module docs of
+                // `agents_messages` for exactly what one store attests.
+                let events = infra.event_store.events();
+                let derived = {
+                    let reg = infra.registry.read();
+                    crate::tools::agents_messages::derive_message_edges(&events, caller, &reg)
+                };
+                let mut output = serde_json::json!({
+                    "action": "messages",
+                    "caller_id": caller.to_string(),
+                    "count": derived.edges.len(),
+                    "edges": derived.edges,
+                });
+                if derived.malformed > 0 {
+                    output["malformed"] = serde_json::json!(derived.malformed);
+                }
+                Ok(ToolOutput::success(output))
+            }
         }
     }
 }
@@ -342,7 +371,9 @@ impl CompositeTool for AgentsTool {
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
-    clippy::clone_on_ref_ptr
+    clippy::clone_on_ref_ptr,
+    clippy::doc_markdown,
+    clippy::too_many_arguments
 )]
 mod tests {
     use std::sync::Arc;
@@ -409,7 +440,7 @@ mod tests {
         let schema = as_tool(&tool).input_schema();
         assert_eq!(schema["type"], "object");
         let variants = schema["oneOf"].as_array().expect("oneOf array");
-        assert_eq!(variants.len(), 2);
+        assert_eq!(variants.len(), 3);
 
         let get = variants
             .iter()
@@ -422,6 +453,12 @@ mod tests {
             .find(|v| v["properties"]["action"]["const"] == "list")
             .expect("list variant");
         assert_eq!(list["required"], json!(["action"]));
+
+        let messages = variants
+            .iter()
+            .find(|v| v["properties"]["action"]["const"] == "messages")
+            .expect("messages variant");
+        assert_eq!(messages["required"], json!(["action"]));
     }
 
     /// Contract pin (doc-mandated for every `CompositeTool` impl): the
@@ -436,6 +473,7 @@ mod tests {
                 AgentsCommand::Get {
                     agent_id: "/a".to_owned(),
                 },
+                AgentsCommand::Messages,
             ],
         );
     }
@@ -451,6 +489,10 @@ mod tests {
         );
         assert_eq!(
             dyn_tool.effect_for_args(&json!({"action": "get", "agent_id": "/a"})),
+            ToolEffect::ReadOnly,
+        );
+        assert_eq!(
+            dyn_tool.effect_for_args(&json!({"action": "messages"})),
             ToolEffect::ReadOnly,
         );
         // Malformed args fall back to the conservative effect — still
@@ -845,6 +887,170 @@ mod tests {
         assert!(out.is_error());
         let payload = out.error().expect("typed payload");
         assert_eq!(payload.kind, ToolErrorKind::InvalidArguments);
-        assert_eq!(payload.detail["valid_commands"], json!(["list", "get"]));
+        assert_eq!(
+            payload.detail["valid_commands"],
+            json!(["list", "get", "messages"])
+        );
+    }
+
+    // -- messages -----------------------------------------------------------
+
+    use chrono::Utc;
+
+    use crate::r#loop::inbound::MessageKind;
+    use crate::provider::agent_event::{
+        AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AGENT_MESSAGE_SENT_EVENT_TYPE, AgentMessageLifecycle,
+    };
+    use crate::session::events::{EventBase, SessionEvent};
+
+    fn append_sent(
+        store: &EventStore,
+        message_id: Uuid,
+        from_id: Uuid,
+        from: &str,
+        to_id: Uuid,
+        to: &str,
+        kind: MessageKind,
+        seq: u64,
+    ) {
+        let lifecycle = AgentMessageLifecycle::Sent {
+            message_id,
+            from_id,
+            from: from.to_owned(),
+            to_id,
+            to: to.to_owned(),
+            kind,
+            seq,
+            content: "status".to_owned(),
+            sent_at: Utc::now(),
+        };
+        store
+            .append(SessionEvent::Custom {
+                base: EventBase::new(None),
+                event_type: AGENT_MESSAGE_SENT_EVENT_TYPE.to_owned(),
+                data: serde_json::to_value(&lifecycle).expect("serializable"),
+            })
+            .expect("append sent");
+    }
+
+    fn append_delivered(
+        store: &EventStore,
+        message_id: Uuid,
+        from_id: Uuid,
+        to_id: Uuid,
+        seq: u64,
+    ) {
+        let lifecycle = AgentMessageLifecycle::Delivered {
+            message_id,
+            from_id,
+            to_id,
+            seq,
+            delivered_at: Utc::now(),
+        };
+        store
+            .append(SessionEvent::Custom {
+                base: EventBase::new(None),
+                event_type: AGENT_MESSAGE_DELIVERED_EVENT_TYPE.to_owned(),
+                data: serde_json::to_value(&lifecycle).expect("serializable"),
+            })
+            .expect("append delivered");
+    }
+
+    /// End-to-end through the tool: a child→caller message (granted sent
+    /// copy + recipient delivered copy) and a child→child message
+    /// (granted sent copy only) render as two honest edges.
+    #[tokio::test]
+    async fn messages_renders_edges_from_own_audit_store() {
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
+        let caller = infra.agent_id;
+        let a = register_agent(&registry, "/me/a", Some(caller));
+        let b = register_agent(&registry, "/me/b", Some(caller));
+
+        let m1 = Uuid::new_v4();
+        append_sent(
+            &infra.event_store,
+            m1,
+            a,
+            "/me/a",
+            caller,
+            "root",
+            MessageKind::Steer,
+            1,
+        );
+        append_delivered(&infra.event_store, m1, a, caller, 1);
+        append_sent(
+            &infra.event_store,
+            Uuid::new_v4(),
+            a,
+            "/me/a",
+            b,
+            "/me/b",
+            MessageKind::Update,
+            1,
+        );
+
+        let ctx = ctx_for(infra);
+        let out = execute(&AgentsTool::new(), json!({"action": "messages"}), &ctx).await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["action"], "messages");
+        assert_eq!(out.content["caller_id"], caller.to_string());
+        assert_eq!(out.content["count"], 2);
+        assert!(
+            out.content.get("malformed").is_none(),
+            "no malformed key when every event parses: {:?}",
+            out.content,
+        );
+
+        let edges = out.content["edges"].as_array().expect("edges array");
+        let to_caller = edges
+            .iter()
+            .find(|e| e["to_id"] == caller.to_string())
+            .expect("child→caller edge");
+        assert_eq!(to_caller["from"], "/me/a");
+        assert_eq!(to_caller["sent"], 1);
+        assert_eq!(to_caller["kinds"]["steer"], 1);
+        assert_eq!(to_caller["delivered"], 1);
+
+        let sibling = edges
+            .iter()
+            .find(|e| e["to_id"] == b.to_string())
+            .expect("child→child edge");
+        assert_eq!(sibling["sent"], 1);
+        assert_eq!(sibling["kinds"]["update"], 1);
+        assert!(
+            sibling["delivered"].is_null(),
+            "sibling delivery is recorded in the recipient's store, not ours: {sibling}",
+        );
+    }
+
+    /// An empty audit store answers honestly with zero edges.
+    #[tokio::test]
+    async fn messages_with_no_audit_events_is_empty() {
+        let (infra, _registry, _router) = build_infra(Uuid::new_v4());
+        let ctx = ctx_for(infra);
+        let out = execute(&AgentsTool::new(), json!({"action": "messages"}), &ctx).await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["count"], 0);
+        assert_eq!(out.content["edges"], json!([]));
+    }
+
+    /// Unparseable agent_message payloads surface a malformed count in
+    /// the output instead of vanishing.
+    #[tokio::test]
+    async fn messages_surfaces_malformed_count() {
+        let (infra, _registry, _router) = build_infra(Uuid::new_v4());
+        infra
+            .event_store
+            .append(SessionEvent::Custom {
+                base: EventBase::new(None),
+                event_type: AGENT_MESSAGE_SENT_EVENT_TYPE.to_owned(),
+                data: json!({ "phase": "bogus" }),
+            })
+            .expect("append");
+        let ctx = ctx_for(infra);
+        let out = execute(&AgentsTool::new(), json!({"action": "messages"}), &ctx).await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["count"], 0);
+        assert_eq!(out.content["malformed"], 1);
     }
 }

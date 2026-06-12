@@ -28,6 +28,7 @@ use uuid::Uuid;
 
 use norn::agent::registry::AgentRegistry;
 use norn::agent_loop::config::AgentLoopConfig;
+use norn::agent_loop::inbound::InboundChannel;
 use norn::agent_loop::loop_context::LoopContext;
 use norn::agent_loop::runner::{AgentStepRequest, AgentStepResult, ToolExecutor, run_agent_step};
 use norn::provider::request::ToolDefinition;
@@ -96,6 +97,18 @@ pub struct TuiInputs {
     /// children). Lives across turns so child events arriving between
     /// turns are not lost.
     pub agent_event_rx: broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
+    /// The root agent's inbound channel (W3.7), created by norn-cli's
+    /// `install_agent_tool_infra`, which registered the sender half in
+    /// the `MessageRouter` under `root_id`. Threaded into every root
+    /// `run_agent_step` so a child's `signal_agent(to: "parent")` drains
+    /// at the root's step boundaries through the framed
+    /// `<agent_message>` injection path; messages arriving between turns
+    /// buffer (bounded by the coordination envelope's
+    /// `inbound_capacity`) and drain in the next turn. `None` only when
+    /// the driver's assembly could not wire a route (no shared tool
+    /// context) — child→root sends then fail with the typed `NotRouted`
+    /// reason, exactly the pre-wiring behavior.
+    pub root_inbound: Option<InboundChannel>,
 }
 
 /// Render-tick cadence — 120 fps for tear-free panel redraws and
@@ -161,6 +174,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         data_dir: inputs.data_dir,
         session_id: inputs.session_id,
         root_event_sender: inputs.root_event_sender,
+        root_inbound: inputs.root_inbound,
     };
 
     if let Some(prompt) = inputs.initial_prompt
@@ -249,6 +263,14 @@ pub(super) struct RuntimeRefs {
     /// Root agent's event sender — passed to `run_agent_step` so the
     /// root's `ProviderEvent` values are tagged and broadcast.
     pub(super) root_event_sender: norn::provider::agent_event::AgentEventSender,
+    /// Root agent's inbound channel (W3.7) — owned here for the app's
+    /// lifetime (the route registered under the root's id in the
+    /// `MessageRouter` lives exactly as long as this receiver) and
+    /// passed to every root `run_agent_step` so child→root messages
+    /// drain at step boundaries. Survives `/new` rotation: rotation
+    /// reuses the router and the root identity, so the route stays
+    /// valid across store swaps.
+    pub(super) root_inbound: Option<InboundChannel>,
 }
 
 /// Outer loop — input dispatch + render ticks between turns.
@@ -515,7 +537,12 @@ async fn run_turn(
             model: &model,
             config: &agent_config,
             event_tx: Some(&runtime.root_event_sender),
-            inbound: None,
+            // The root's inbound channel: child→root signal_agent
+            // messages (and anything buffered between turns) drain at
+            // this step's boundaries through the framed <agent_message>
+            // injection path. A mid-step Steer wakes the existing
+            // inbound machinery; no loop code is TUI-specific.
+            inbound: runtime.root_inbound.as_mut(),
             loop_context: &mut runtime.loop_context,
             cancel: None,
         });

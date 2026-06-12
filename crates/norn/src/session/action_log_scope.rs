@@ -18,7 +18,9 @@ use std::sync::Arc;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use crate::session::action_log::{ActionLog, ActionLogContext, ActionLogDetail, ActionLogEntry};
+use crate::session::action_log::{
+    ActionLog, ActionLogContext, ActionLogDetail, ActionLogEntry, CustomEventRecord,
+};
 use crate::session::mutation_ledger::MutationLedgerEntry;
 
 /// One agent's log inside a federated query scope, with the label the
@@ -48,9 +50,19 @@ pub struct LabeledEntry {
     pub entry: ActionLogEntry,
 }
 
-/// Optional scoping filter for `list`, `mutations`, and `follow_ups`
-/// queries of the `action_log` tool. All fields are optional and combine
-/// with AND semantics; an absent filter returns every entry.
+/// A Custom session event paired with the index of the [`ScopedLog`]
+/// whose store it came from — the events-query counterpart of
+/// [`LabeledEntry`], with identical attribution semantics.
+pub struct LabeledEvent {
+    /// Index into the scope slice identifying the owning agent.
+    pub agent_idx: usize,
+    /// The event record itself.
+    pub record: CustomEventRecord,
+}
+
+/// Optional scoping filter for `list`, `mutations`, `follow_ups`, and
+/// `events` queries of the `action_log` tool. All fields are optional
+/// and combine with AND semantics; an absent filter returns every entry.
 #[derive(Debug, Default, Deserialize)]
 pub struct ActionLogFilter {
     /// Keep only entries whose `tool_name` equals this value.
@@ -74,6 +86,11 @@ pub struct ActionLogFilter {
     /// After all other filters, keep only the most recent `last` entries.
     #[serde(default)]
     pub last: Option<u32>,
+    /// `events` query only: keep only Custom events whose `event_type`
+    /// equals this value (e.g. `"agent_message.sent"`). The tool rejects
+    /// this field on every other query — it never silently no-ops.
+    #[serde(default)]
+    pub event_type: Option<String>,
 }
 
 impl ActionLogFilter {
@@ -129,6 +146,29 @@ impl ActionLogFilter {
         }
         filtered
     }
+
+    /// Apply the events-query subset of the filter (`event_type`, then
+    /// `last`) to a merged, chronologically ordered event list.
+    ///
+    /// Only these two fields apply to Custom session events — the others
+    /// describe tool-call entries (`tool`, `outcome`, `file`) or are
+    /// positional over tool-call ids (`since`), and the tool rejects
+    /// them for the `events` query with a typed failure rather than
+    /// ignoring them here.
+    #[must_use]
+    pub fn apply_events(&self, events: Vec<LabeledEvent>) -> Vec<LabeledEvent> {
+        let mut filtered = events;
+        if let Some(event_type) = &self.event_type {
+            filtered.retain(|le| le.record.event_type == *event_type);
+        }
+        if let Some(last) = self.last {
+            let last = usize::try_from(last).unwrap_or(usize::MAX);
+            if filtered.len() > last {
+                filtered.drain(0..filtered.len() - last);
+            }
+        }
+        filtered
+    }
 }
 
 /// Collect the Level 1 entries of every log in `scoped`, in scope order,
@@ -173,6 +213,30 @@ fn merge_timeline(mut entries: Vec<LabeledEntry>, log_count: usize) -> Vec<Label
         entries.sort_by_key(|le| le.entry.timestamp);
     }
     entries
+}
+
+/// Collect every Custom session event of every log in `scoped`, in
+/// scope order, merging into one timestamp-ordered timeline only when
+/// the scope spans more than one log — the same ordering contract as
+/// [`collect_labeled_entries`]: a single store's append order is the
+/// audit ground truth, and the timestamp merge (stable sort) exists
+/// solely to interleave several stores.
+#[must_use]
+pub fn collect_labeled_events(scoped: &[ScopedLog]) -> Vec<LabeledEvent> {
+    let mut out = Vec::new();
+    for (agent_idx, scoped_log) in scoped.iter().enumerate() {
+        out.extend(
+            scoped_log
+                .log
+                .custom_events()
+                .into_iter()
+                .map(|record| LabeledEvent { agent_idx, record }),
+        );
+    }
+    if scoped.len() > 1 {
+        out.sort_by_key(|le| le.record.timestamp);
+    }
+    out
 }
 
 /// Resolve a Level 2 detail look-up across the scope, returning the
@@ -433,6 +497,78 @@ mod tests {
         assert_eq!(collected[0].1.file_path, parent_file);
         assert_eq!(collected[1].0, 1);
         assert_eq!(collected[1].1.file_path, child_file);
+    }
+
+    fn log_with_events(types: &[&str]) -> Arc<ActionLog> {
+        let store = Arc::new(EventStore::new());
+        let log = Arc::new(ActionLog::new(Arc::clone(&store)));
+        for event_type in types {
+            store
+                .append(crate::session::events::SessionEvent::Custom {
+                    base: crate::session::events::EventBase::new(None),
+                    event_type: (*event_type).to_owned(),
+                    data: serde_json::json!({}),
+                })
+                .unwrap();
+        }
+        log
+    }
+
+    /// Multi-log event federation merges by timestamp with attribution;
+    /// a single log keeps store order.
+    #[test]
+    fn collect_labeled_events_merges_across_logs_with_attribution() {
+        let parent = log_with_events(&["agent_message.sent"]);
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        let child = log_with_events(&["agent_message.delivered"]);
+        let scope = vec![scoped("root", parent), scoped("/spawn/child", child)];
+        let merged = collect_labeled_events(&scope);
+        assert_eq!(merged.len(), 2);
+        assert_eq!(merged[0].record.event_type, "agent_message.sent");
+        assert_eq!(merged[0].agent_idx, 0);
+        assert_eq!(merged[1].record.event_type, "agent_message.delivered");
+        assert_eq!(merged[1].agent_idx, 1);
+    }
+
+    #[test]
+    fn apply_events_filters_by_type_then_bounds_by_last() {
+        let log = log_with_events(&[
+            "agent_message.sent",
+            "subagent.started",
+            "agent_message.sent",
+            "agent_message.sent",
+        ]);
+        let scope = vec![scoped("root", log)];
+
+        let filter = ActionLogFilter {
+            event_type: Some("agent_message.sent".to_owned()),
+            ..ActionLogFilter::default()
+        };
+        let filtered = filter.apply_events(collect_labeled_events(&scope));
+        assert_eq!(filtered.len(), 3);
+        assert!(
+            filtered
+                .iter()
+                .all(|le| le.record.event_type == "agent_message.sent")
+        );
+
+        let filter = ActionLogFilter {
+            event_type: Some("agent_message.sent".to_owned()),
+            last: Some(2),
+            ..ActionLogFilter::default()
+        };
+        assert_eq!(filter.apply_events(collect_labeled_events(&scope)).len(), 2);
+
+        // A type with no matches yields an honest empty set.
+        let filter = ActionLogFilter {
+            event_type: Some("never.recorded".to_owned()),
+            ..ActionLogFilter::default()
+        };
+        assert!(
+            filter
+                .apply_events(collect_labeled_events(&scope))
+                .is_empty()
+        );
     }
 
     #[test]
