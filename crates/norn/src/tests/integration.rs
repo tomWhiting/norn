@@ -127,7 +127,7 @@ fn tool_def(name: &str, description: &str) -> ToolDefinition {
 #[track_caller]
 fn assert_completed(result: AgentStepResult) -> (Value, Usage) {
     match result {
-        AgentStepResult::Completed { output, usage } => (output, usage),
+        AgentStepResult::Completed { output, usage, .. } => (output, usage),
         other => panic!("expected AgentStepResult::Completed, got: {other:?}"),
     }
 }

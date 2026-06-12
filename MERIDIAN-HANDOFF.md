@@ -4,14 +4,15 @@
 **Pin:** the current `main` head of `tomWhiting/norn`. Milestone commits:
 `2861545` (Phase 2 typed API, §7), `fd1c587`/`a01cd43`/`2a2a7a2`/`ae6c02c`
 (Wave 3 batches, §8.3–§8.5), `74763c9` (W3.5 cascade + envelope fix,
-§8.6–§8.7). §8.8–§8.9 land with the W3.7 commit after it.
+§8.6–§8.7), `7283e88` (W3.7 surfaces + explicit session IDs, §8.8–§8.9).
+§8.10 (W3.6 usage rollup — **the §8.2 breaking change**) lands with the
+commit that introduces it; Wave 3 is complete at that commit.
 **WARNING — do not pin exactly `74763c9`:** that commit declares
-`mod agents_messages;` but the module file landed in the following
-commit, so `74763c9` does not build from a clean checkout (and will trip
-bisects). Pin the W3.7 commit or later.
+`mod agents_messages;` but the module file landed in `7283e88`, so
+`74763c9` does not build from a clean checkout (and will trip bisects).
 **Status:** every landed step Fable-reviewed to READY, all findings fixed;
 gates green at each commit — clippy `--workspace -D warnings` clean, fmt
-clean, **3347 tests / 0 failures** at the W3.7 tree.
+clean, **3358 tests / 0 failures** at the Wave 3 completion tree.
 
 This document is for the agent working on the meridian/yggdrasil side. It
 lists what changed in norn that affects you, what you must adapt when you bump
@@ -335,7 +336,8 @@ parent-configured budgets).
 - **BREAKING: `SubagentLifecycle::Completed` gains `subtree_usage`**
   (aggregated descendant usage) — coordinate your match/deserialization
   update with the pin bump when Wave 3 lands; we will flag the exact
-  commit in this document.
+  commit in this document. **FLAGGED — LANDED: see §8.10** (the W3.6
+  commit, immediately after `7283e88`; its hash is recorded there).
 - **BREAKING: `signal_agent` will be deleted** in the same wave, replaced
   by `send_message` (target path/UUID/"parent", kind `steer`/`update`,
   scope enforced from spawn-time policy). **SUPERSEDED — the final name
@@ -601,3 +603,44 @@ All additive; nothing breaks. Four pieces:
   interactive surfaces through the same `<agent_message>` framing as
   everywhere else. Embedder surfaces are unchanged: a meridian root
   still opts in via `AgentBuilder::inbound_capacity` (§8.4).
+
+## 8.10 W3.6 landed — usage rollup (THE §8.2 BREAKING CHANGE). Wave 3 complete.
+
+This is the commit §8.2 promised to flag: **`SubagentLifecycle::Completed`
+now carries `subtree_usage: Usage`** — update your match/deserialization
+with this pin bump.
+
+- **`SubagentLifecycle::Completed.subtree_usage`** = the child's own
+  provider spend **plus** everything its descendants delivered (each
+  agent's spend counted exactly once at every ancestor; pinned by a
+  depth-2 exact-once test and a 200-tree associativity property test).
+  The field is **required on deserialization — deliberately no
+  `#[serde(default)]`**: a consumer replaying pre-W3.6 `subagent.completed`
+  audit records through the new type fails loudly instead of reading
+  fabricated zeros (zeros mean "unknown" on this contract, so a silent
+  default would inject false unknowns). norn itself never deserializes
+  stored lifecycle events (resume treats them as opaque Custom data) —
+  if meridian does, gate on the field's presence when reading pre-W3.6
+  history.
+- **`ChildAgentResult` gains `subtree_usage`** (same semantics); its
+  `usage` stays own-calls-only. The zeros-mean-unknown caveat extends:
+  a panicked/hard-errored mid-tree agent reports its own usage as
+  unknown-zeros while its children's **delivered** subtree usage is
+  still folded in — partial truth beats silent loss.
+- **Every `AgentStepResult` arm gains `children_usage: Usage`** next to
+  `usage` — the subtree spend delivered into **that step** (the
+  accumulator resets at every `run_agent_step` entry, so reused
+  contexts never leak an earlier turn's children into a later snapshot).
+  Exhaustive matches on these arms need the new field.
+- `AgentOutput.usage` / the CLI print envelope stay own-calls-only by
+  design (documented pointers added) — read delegation-tree totals from
+  the lifecycle events or child results.
+- `Usage` addition now **saturates** on the token fields instead of
+  debug-panicking/release-wrapping — relevant only at ~1.8e19 tokens,
+  but a tree rollup sums through this impl and saturation is the honest
+  semantics for a spend ceiling.
+
+**Wave 3 is complete** with this commit: messaging (§8.3–§8.4),
+recursion (§8.5), cancellation cascade (§8.6), surfaces (§8.9), and the
+usage rollup. The tracked R5 deferral (per-child `AgentLoopConfig`
+including linger) remains open and is due in the next wave.

@@ -42,8 +42,24 @@ pub struct ChildAgentResult {
     /// when the run ended in a hard
     /// [`NornError`](crate::error::NornError) or the child's wrapper task
     /// panicked — the runner's `Err` path carries no usage, so zeros mean
-    /// "unknown", not "no tokens consumed".
+    /// "unknown", not "no tokens consumed". Own calls only — descendant
+    /// spend lives exclusively on [`Self::subtree_usage`], never here, so
+    /// the two fields can be summed without double-counting.
     pub usage: Usage,
+    /// Aggregated usage of the child's entire delegation subtree (W3.6
+    /// usage rollup): the child's own [`Self::usage`] **plus** the sum of
+    /// `subtree_usage` over every [`ChildAgentResult`] the child itself
+    /// received. Each agent's own spend is counted exactly once, at its
+    /// own level — a parent's `usage` never includes children, and the
+    /// aggregation is explicit here.
+    ///
+    /// The zeros-mean-unknown caveat on [`Self::usage`] extends here
+    /// exactly: a child whose run panicked or hard-errored contributes
+    /// unknown-zeros for its *own* spend, but the `subtree_usage` of
+    /// every result its loop had already drained is still folded in —
+    /// partial truth beats silent loss. Results a panicked child never
+    /// drained are genuinely unaccounted for.
+    pub subtree_usage: Usage,
 }
 
 /// Build the harness-framed injection text for a child-agent result.
@@ -98,6 +114,7 @@ mod tests {
             error: None,
             stop: None,
             usage: Usage::default(),
+            subtree_usage: Usage::default(),
         }
     }
 

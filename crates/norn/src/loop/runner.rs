@@ -180,6 +180,17 @@ pub async fn run_agent_step(request: AgentStepRequest<'_>) -> Result<AgentStepRe
     let timeout_state = crate::r#loop::compaction::shared_timeout_state();
     let started = std::time::Instant::now();
     let store = request.store;
+    // Cheap-clone handle to the loop's children-usage accumulator,
+    // captured before `request` moves into the inner future: when the
+    // timeout fires, the inner future (and its `&mut LoopContext`) is
+    // dropped, but the shared accumulator still reports every child
+    // subtree folded before the budget elapsed (W3.6).
+    let children_usage = request.loop_context.children_usage.clone();
+    // Per-step contract (REVIEW W3.6 HIGH-1): every result arm reports
+    // the children delivered into THIS step only. A reused LoopContext
+    // (interactive surfaces run many steps over one context) would
+    // otherwise leak turn 1's children into every later snapshot.
+    children_usage.reset();
     let result = if let Some(budget) = request.config.step_timeout {
         let inner = run_agent_step_inner(request, Arc::clone(&timeout_state));
         if let Ok(result) = tokio::time::timeout(budget, inner).await {
@@ -191,6 +202,7 @@ pub async fn run_agent_step(request: AgentStepRequest<'_>) -> Result<AgentStepRe
                 iterations: snapshot.iterations,
                 partial_output: snapshot.last_assistant_text.clone().map(Value::String),
                 usage: snapshot.usage.clone(),
+                children_usage: children_usage.snapshot(),
             })
         }
     } else {
@@ -281,6 +293,7 @@ async fn run_agent_step_inner(
         loop_context.child_result_rx.as_mut(),
         loop_context.hooks.as_deref(),
         None,
+        &loop_context.children_usage,
     )
     .await?;
 
@@ -304,11 +317,17 @@ async fn run_agent_step_inner(
         // iteration has already returned by the time we land here, so
         // tools complete in full before this returns Cancelled.
         if cancel.as_ref().is_some_and(CancellationToken::is_cancelled) {
-            return Ok(AgentStepResult::Cancelled { usage: total_usage });
+            return Ok(AgentStepResult::Cancelled {
+                usage: total_usage,
+                children_usage: loop_context.children_usage.snapshot(),
+            });
         }
 
         if config.max_iterations.is_some_and(|max| iterations >= max) {
-            return Ok(AgentStepResult::MaxIterationsReached { usage: total_usage });
+            return Ok(AgentStepResult::MaxIterationsReached {
+                usage: total_usage,
+                children_usage: loop_context.children_usage.snapshot(),
+            });
         }
         iterations += 1;
         timeout_state.lock().iterations = iterations as usize;
@@ -459,7 +478,10 @@ async fn run_agent_step_inner(
                 Some(token) => tokio::select! {
                     biased;
                     () = token.cancelled() => {
-                        return Ok(AgentStepResult::Cancelled { usage: total_usage });
+                        return Ok(AgentStepResult::Cancelled {
+                            usage: total_usage,
+                            children_usage: loop_context.children_usage.snapshot(),
+                        });
                     }
                     result = provider_fut => result?,
                 },
@@ -606,7 +628,10 @@ async fn run_agent_step_inner(
                 {
                     BoundaryOutcome::Continue => continue,
                     BoundaryOutcome::Cancelled => {
-                        return Ok(AgentStepResult::Cancelled { usage: total_usage });
+                        return Ok(AgentStepResult::Cancelled {
+                            usage: total_usage,
+                            children_usage: loop_context.children_usage.snapshot(),
+                        });
                     }
                     BoundaryOutcome::Stop => {}
                 }
@@ -621,6 +646,7 @@ async fn run_agent_step_inner(
                 return Ok(AgentStepResult::Completed {
                     output,
                     usage: total_usage,
+                    children_usage: loop_context.children_usage.snapshot(),
                 });
             }
 
@@ -650,6 +676,7 @@ async fn run_agent_step_inner(
                         validation_errors: errors,
                         attempts: budget_consumed,
                         usage: total_usage,
+                        children_usage: loop_context.children_usage.snapshot(),
                     });
                 }
 
@@ -758,7 +785,10 @@ async fn run_agent_step_inner(
                     {
                         BoundaryOutcome::Continue => continue,
                         BoundaryOutcome::Cancelled => {
-                            return Ok(AgentStepResult::Cancelled { usage: total_usage });
+                            return Ok(AgentStepResult::Cancelled {
+                                usage: total_usage,
+                                children_usage: loop_context.children_usage.snapshot(),
+                            });
                         }
                         BoundaryOutcome::Stop => {}
                     }
@@ -773,6 +803,7 @@ async fn run_agent_step_inner(
                     return Ok(AgentStepResult::Completed {
                         output: Value::String(response.text),
                         usage: total_usage,
+                        children_usage: loop_context.children_usage.snapshot(),
                     });
                 }
 
@@ -786,6 +817,7 @@ async fn run_agent_step_inner(
                         ],
                         attempts: budget_consumed,
                         usage: total_usage,
+                        children_usage: loop_context.children_usage.snapshot(),
                     });
                 }
 
@@ -840,6 +872,7 @@ async fn run_agent_step_inner(
                     partial_text: (!response.text.is_empty()).then(|| response.text.clone()),
                     iterations,
                     usage: total_usage,
+                    children_usage: loop_context.children_usage.snapshot(),
                 });
             }
 
@@ -899,7 +932,10 @@ async fn run_agent_step_inner(
                 {
                     BoundaryOutcome::Continue => continue,
                     BoundaryOutcome::Cancelled => {
-                        return Ok(AgentStepResult::Cancelled { usage: total_usage });
+                        return Ok(AgentStepResult::Cancelled {
+                            usage: total_usage,
+                            children_usage: loop_context.children_usage.snapshot(),
+                        });
                     }
                     BoundaryOutcome::Stop => {}
                 }
@@ -914,6 +950,7 @@ async fn run_agent_step_inner(
                 return Ok(AgentStepResult::Completed {
                     output,
                     usage: total_usage,
+                    children_usage: loop_context.children_usage.snapshot(),
                 });
             }
         }
@@ -1004,7 +1041,7 @@ mod tests {
     /// Extract output and usage from a Completed result, or fail the test.
     #[track_caller]
     fn assert_completed(result: AgentStepResult) -> (Value, Usage) {
-        let AgentStepResult::Completed { output, usage } = result else {
+        let AgentStepResult::Completed { output, usage, .. } = result else {
             let msg = format!("expected Completed, got {result:?}");
             // assert! with a non-const expression is needed here
             assert!(msg.is_empty(), "{msg}");
@@ -1023,6 +1060,7 @@ mod tests {
             validation_errors,
             attempts,
             usage,
+            ..
         } = result
         else {
             let msg = format!("expected SchemaUnreachable, got {result:?}");
@@ -1101,6 +1139,7 @@ mod tests {
             .ok()
             .unwrap_or(AgentStepResult::MaxIterationsReached {
                 usage: Usage::default(),
+                children_usage: Usage::default(),
             })
     }
 
@@ -4126,6 +4165,7 @@ mod tests {
                 partial_text,
                 iterations,
                 usage,
+                ..
             } => {
                 assert_eq!(kind, TruncationKind::MaxTokens);
                 assert_eq!(partial_text.as_deref(), Some("partial answ"));
@@ -4672,5 +4712,177 @@ mod tests {
             }),
             "function mode needs no surface correction",
         );
+    }
+
+    // -- W3.6: pre-loop child-result drain folds children_usage ----------
+
+    /// Child results already buffered when the step starts are drained
+    /// by the runner's pre-loop sweep; each drained result's
+    /// `subtree_usage` must be folded into the step's `children_usage`
+    /// (summed across the batch) while the step's own `usage` stays
+    /// own-calls-only — the two never mix.
+    #[tokio::test]
+    async fn buffered_child_results_fold_into_children_usage_at_step_start() {
+        use crate::agent::result_channel::ChildAgentResult;
+        use uuid::Uuid;
+
+        let provider = MockProvider::new(vec![vec![
+            text_delta("done"),
+            done_event(StopReason::EndTurn),
+        ]]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        for (input, output) in [(7_u64, 3_u64), (11, 6)] {
+            tx.send(ChildAgentResult {
+                agent_id: Uuid::new_v4(),
+                agent_role: "spawn/worker".to_string(),
+                succeeded: true,
+                formatted_message: "child done".to_string(),
+                error: None,
+                stop: None,
+                usage: Usage {
+                    input_tokens: input,
+                    output_tokens: output,
+                    ..Usage::default()
+                },
+                subtree_usage: Usage {
+                    input_tokens: input,
+                    output_tokens: output,
+                    ..Usage::default()
+                },
+            })
+            .await
+            .expect("send buffered result");
+        }
+        drop(tx);
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.child_result_rx = Some(rx);
+
+        let result = run_agent_step(AgentStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "prompt",
+            tools: &[],
+            output_schema: None,
+            model: "test-model",
+            config: &default_config(),
+            event_tx: None,
+            inbound: None,
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+        .expect("step completes");
+
+        let AgentStepResult::Completed {
+            usage,
+            children_usage,
+            ..
+        } = result
+        else {
+            panic!("expected Completed");
+        };
+        assert_eq!(usage.input_tokens, 10, "own usage is own calls only");
+        assert_eq!(usage.output_tokens, 5);
+        assert_eq!(
+            children_usage.input_tokens, 18,
+            "both buffered subtrees fold exactly once: 7 + 11",
+        );
+        assert_eq!(children_usage.output_tokens, 9, "3 + 6");
+    }
+
+    /// REVIEW W3.6 HIGH-1 regression: every step's `children_usage`
+    /// covers ONLY the results delivered into that step. A reused
+    /// `LoopContext` (interactive sessions run many steps over one
+    /// context) must not carry step 1's children into step 2's
+    /// snapshot — pre-fix, the accumulator was monotonic for the
+    /// context's lifetime and did exactly that.
+    #[tokio::test]
+    async fn reused_loop_context_reports_each_steps_children_only() {
+        use crate::agent::result_channel::ChildAgentResult;
+        use uuid::Uuid;
+
+        let child_result = |input: u64, output: u64| ChildAgentResult {
+            agent_id: Uuid::new_v4(),
+            agent_role: "spawn/worker".to_string(),
+            succeeded: true,
+            formatted_message: "child done".to_string(),
+            error: None,
+            stop: None,
+            usage: Usage {
+                input_tokens: input,
+                output_tokens: output,
+                ..Usage::default()
+            },
+            subtree_usage: Usage {
+                input_tokens: input,
+                output_tokens: output,
+                ..Usage::default()
+            },
+        };
+
+        let provider = MockProvider::new(vec![
+            vec![text_delta("turn one"), done_event(StopReason::EndTurn)],
+            vec![text_delta("turn two"), done_event(StopReason::EndTurn)],
+        ]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.child_result_rx = Some(rx);
+
+        tx.send(child_result(7, 3)).await.expect("send step 1");
+        let step_one = run_agent_step(AgentStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "first",
+            tools: &[],
+            output_schema: None,
+            model: "test-model",
+            config: &default_config(),
+            event_tx: None,
+            inbound: None,
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+        .expect("step one completes");
+        let AgentStepResult::Completed { children_usage, .. } = step_one else {
+            panic!("expected Completed");
+        };
+        assert_eq!(children_usage.input_tokens, 7, "step 1 sees its child");
+
+        tx.send(child_result(11, 6)).await.expect("send step 2");
+        let step_two = run_agent_step(AgentStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "second",
+            tools: &[],
+            output_schema: None,
+            model: "test-model",
+            config: &default_config(),
+            event_tx: None,
+            inbound: None,
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+        .expect("step two completes");
+        let AgentStepResult::Completed { children_usage, .. } = step_two else {
+            panic!("expected Completed");
+        };
+        assert_eq!(
+            children_usage.input_tokens, 11,
+            "step 2 reports ONLY step 2's delivery — 18 here means \
+             step 1's child leaked across the reset boundary",
+        );
+        assert_eq!(children_usage.output_tokens, 6);
     }
 }

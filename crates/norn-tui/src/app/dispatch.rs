@@ -410,6 +410,7 @@ mod tests {
         let step = AgentStepResult::Completed {
             usage,
             output: Value::Null,
+            children_usage: Usage::default(),
         };
         let extracted = extract_usage(&step);
         assert_eq!(extracted.input_tokens, 12);
@@ -427,6 +428,7 @@ mod tests {
                 output_tokens: 11,
                 ..Usage::default()
             },
+            children_usage: Usage::default(),
         };
         let extracted = extract_usage(&step);
         assert_eq!(extracted.input_tokens, 7);
@@ -444,6 +446,7 @@ mod tests {
                 output_tokens: 9,
                 ..Usage::default()
             },
+            children_usage: Usage::default(),
         };
         let extracted = extract_usage(&step);
         assert_eq!(extracted.input_tokens, 5);

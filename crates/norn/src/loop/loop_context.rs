@@ -222,6 +222,22 @@ pub struct LoopContext {
     pub child_result_rx:
         Option<tokio::sync::mpsc::Receiver<crate::agent::result_channel::ChildAgentResult>>,
 
+    /// Accumulated `subtree_usage` of every child result delivered into
+    /// this loop (W3.6 usage rollup).
+    ///
+    /// [`drain_child_results`](crate::r#loop) — the single injection path
+    /// for child results, mid-run and lingering alike — folds each
+    /// drained result's
+    /// [`subtree_usage`](crate::agent::result_channel::ChildAgentResult::subtree_usage)
+    /// in here, and every [`AgentStepResult`](crate::r#loop::config::AgentStepResult)
+    /// arm carries a snapshot alongside its own-calls-only `usage`, so
+    /// the spawn/fork completion wrappers can compute
+    /// `subtree_usage = total_usage + children_usage` without reaching
+    /// into the loop. Deliberately a shared handle, not a plain value:
+    /// the wrapper's clone survives a panicking loop task so delivered
+    /// descendant spend is never silently lost (see [`ChildrenUsage`]).
+    pub children_usage: crate::r#loop::children_usage::ChildrenUsage,
+
     /// Per-agent working directory shared with [`ToolContext`].
     ///
     /// Bash's `cd` parsing updates this; subsequent prompt commands,
@@ -265,6 +281,7 @@ impl LoopContext {
             environment: None,
             collaboration_mode: CollaborationMode::default(),
             child_result_rx: None,
+            children_usage: crate::r#loop::children_usage::ChildrenUsage::default(),
             working_dir: crate::tool::context::SharedWorkingDir::default(),
         }
     }
@@ -621,6 +638,8 @@ mod tests {
         assert!(ctx.environment.is_none());
         assert_eq!(ctx.collaboration_mode, CollaborationMode::Default);
         assert!(ctx.child_result_rx.is_none());
+        assert_eq!(ctx.children_usage.snapshot().input_tokens, 0);
+        assert_eq!(ctx.children_usage.snapshot().output_tokens, 0);
         assert!(ctx.system_sections.is_empty());
         assert_eq!(ctx.system_instruction(), "");
     }

@@ -20,12 +20,19 @@ pub struct Usage {
 impl std::ops::Add for Usage {
     type Output = Self;
 
+    // Token fields saturate: a spend total pinned at u64::MAX is honest
+    // ("at least this much"), while debug-panic/release-wrap on plain
+    // `+` would either violate the workspace's no-panic rule or wrap a
+    // tree rollup (W3.6 sums whole subtrees through this impl) around
+    // to a small lie.
     fn add(self, rhs: Self) -> Self::Output {
         Self {
-            input_tokens: self.input_tokens + rhs.input_tokens,
-            output_tokens: self.output_tokens + rhs.output_tokens,
-            cache_read_tokens: self.cache_read_tokens + rhs.cache_read_tokens,
-            cache_write_tokens: self.cache_write_tokens + rhs.cache_write_tokens,
+            input_tokens: self.input_tokens.saturating_add(rhs.input_tokens),
+            output_tokens: self.output_tokens.saturating_add(rhs.output_tokens),
+            cache_read_tokens: self.cache_read_tokens.saturating_add(rhs.cache_read_tokens),
+            cache_write_tokens: self
+                .cache_write_tokens
+                .saturating_add(rhs.cache_write_tokens),
             cost_usd: match (self.cost_usd, rhs.cost_usd) {
                 (Some(a), Some(b)) => Some(a + b),
                 (Some(a), None) | (None, Some(a)) => Some(a),

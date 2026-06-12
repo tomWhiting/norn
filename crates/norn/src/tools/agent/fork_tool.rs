@@ -1941,6 +1941,7 @@ mod tests {
                 started_at,
                 completed_at,
                 usage,
+                subtree_usage,
                 succeeded,
                 error,
                 stop,
@@ -1954,6 +1955,11 @@ mod tests {
                 assert!(stop.is_none());
                 assert_eq!(usage.input_tokens, 5, "per-fork usage must surface");
                 assert_eq!(usage.output_tokens, 2);
+                assert_eq!(
+                    subtree_usage.input_tokens, 5,
+                    "a childless fork's subtree usage equals its own usage",
+                );
+                assert_eq!(subtree_usage.output_tokens, 2);
             }
             other => panic!("expected Completed, got {other:?}"),
         }
@@ -1983,11 +1989,14 @@ mod tests {
             "the ForkComplete completion reference is still appended",
         );
 
-        // The result channel carries the same per-fork usage.
+        // The result channel carries the same per-fork usage, and the
+        // childless fork's subtree total equals its own usage (W3.6).
         let result = rx.try_recv().expect("result on the channel");
         assert_eq!(result.agent_id, fork_id);
         assert_eq!(result.usage.input_tokens, 5);
         assert_eq!(result.usage.output_tokens, 2);
+        assert_eq!(result.subtree_usage.input_tokens, 5);
+        assert_eq!(result.subtree_usage.output_tokens, 2);
     }
 
     /// Terminal-transition race repro (production WARNs
@@ -2872,6 +2881,20 @@ mod tests {
         assert!(
             rx.try_recv().is_err(),
             "the grandchild's result must never reach the root directly",
+        );
+        // W3.6 rollup on the fork surface: the grandchild's run made one
+        // provider call at (5, 2) (`ForkTreeProvider`'s grandchild turn),
+        // so the fork's subtree total is exactly its own usage plus that
+        // one delivered subtree — each level counted once, never folded
+        // into the fork's own `usage`.
+        assert_eq!(
+            result.subtree_usage.input_tokens,
+            result.usage.input_tokens + 5,
+            "fork subtree = own + grandchild, exactly once",
+        );
+        assert_eq!(
+            result.subtree_usage.output_tokens,
+            result.usage.output_tokens + 2,
         );
 
         let injected = fork_store.events().iter().any(|event| {

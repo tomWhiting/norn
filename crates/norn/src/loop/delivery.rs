@@ -175,12 +175,26 @@ pub(super) async fn flush_inbound_messages(
 /// is persisted as one `UserMessage` event and pushed as one user-role
 /// message — keeping the persisted event stream and the live conversation
 /// in 1:1 correspondence (a requirement of in-flight compaction mapping).
+///
+/// W3.6 usage rollup: every drained result's
+/// [`subtree_usage`](crate::agent::result_channel::ChildAgentResult::subtree_usage)
+/// — seed included — is folded into `children_usage`
+/// ([`LoopContext::children_usage`](crate::r#loop::loop_context::LoopContext)).
+/// Because this function is the single consumer of the bounded result
+/// channel **while the receiver is installed on the loop**, and every
+/// result it consumes passes through it exactly once, each child
+/// subtree is folded exactly once — no double-counting is structurally
+/// possible. (A driver may take the receiver out of the `LoopContext`
+/// and consume results externally between steps — the TUI does — in
+/// which case those results are injected by the driver and deliberately
+/// never folded: nothing reads a root's own rollup.)
 pub(super) async fn drain_child_results(
     store: &EventStore,
     messages: &mut Vec<Message>,
     rx: Option<&mut tokio::sync::mpsc::Receiver<crate::agent::result_channel::ChildAgentResult>>,
     hooks: Option<&HookRegistry>,
     seed: Option<crate::agent::result_channel::ChildAgentResult>,
+    children_usage: &crate::r#loop::children_usage::ChildrenUsage,
 ) -> Result<bool, SessionError> {
     let mut batch: Vec<crate::agent::result_channel::ChildAgentResult> = seed.into_iter().collect();
     if let Some(rx) = rx {
@@ -190,6 +204,9 @@ pub(super) async fn drain_child_results(
     }
     if batch.is_empty() {
         return Ok(false);
+    }
+    for result in &batch {
+        children_usage.add(&result.subtree_usage);
     }
 
     let formatted = if batch.len() == 1 {

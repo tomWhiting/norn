@@ -136,8 +136,28 @@ pub enum SubagentLifecycle {
         /// Wall-clock completion time.
         completed_at: DateTime<Utc>,
         /// Accumulated token usage across every provider call the child
-        /// made.
+        /// made — own calls only; descendant spend lives exclusively on
+        /// `subtree_usage`.
         usage: Usage,
+        /// Aggregated usage of the child's entire delegation subtree
+        /// (W3.6 usage rollup, DECISION R4): `usage` plus the summed
+        /// `subtree_usage` of every child result this child's own loop
+        /// delivered. Each agent's own spend is counted exactly once,
+        /// at its own level. The zeros-mean-unknown caveat propagates:
+        /// a panicked or hard-errored child contributes unknown-zeros
+        /// for its own spend while delivered descendant subtrees are
+        /// still folded in.
+        ///
+        /// **Breaking schema change** to this documented-stable event,
+        /// pre-announced in MERIDIAN-HANDOFF §8.2. Deliberately a
+        /// required field with no `#[serde(default)]`: no norn path
+        /// deserializes stored `subagent.completed` events (resume
+        /// replays them as opaque `SessionEvent::Custom` data), and a
+        /// store-only consumer replaying pre-W3.6 events through this
+        /// type should fail loudly at the announced break rather than
+        /// silently read fabricated zeros. The write side always
+        /// populates it.
+        subtree_usage: Usage,
         /// Whether the child's run completed successfully.
         succeeded: bool,
         /// Explanatory error when `succeeded` is `false`.
@@ -541,6 +561,11 @@ mod tests {
                 output_tokens: 5,
                 ..Usage::default()
             },
+            subtree_usage: Usage {
+                input_tokens: 17,
+                output_tokens: 8,
+                ..Usage::default()
+            },
             succeeded: false,
             error: Some("fork reached its max-iterations cap".to_owned()),
             stop: Some(AgentStopReason::MaxIterationsReached),
@@ -550,6 +575,8 @@ mod tests {
         assert_eq!(value["descriptor"]["kind"], "fork");
         assert_eq!(value["usage"]["input_tokens"], 10);
         assert_eq!(value["usage"]["output_tokens"], 5);
+        assert_eq!(value["subtree_usage"]["input_tokens"], 17);
+        assert_eq!(value["subtree_usage"]["output_tokens"], 8);
         assert_eq!(value["succeeded"], false);
         assert_eq!(value["stop"]["reason"], "max_iterations_reached");
         assert_eq!(value["completed_at"], "2026-06-12T10:00:05Z");
@@ -561,14 +588,55 @@ mod tests {
                 succeeded,
                 stop,
                 usage,
+                subtree_usage,
                 ..
             } => {
                 assert!(!succeeded);
                 assert_eq!(stop, Some(AgentStopReason::MaxIterationsReached));
                 assert_eq!(usage.input_tokens, 10);
+                assert_eq!(subtree_usage.input_tokens, 17);
             }
             SubagentLifecycle::Started { .. } => panic!("expected completed phase"),
         }
+    }
+
+    /// DECISION R4 (W3.6): `subtree_usage` is a **required** field on
+    /// the `completed` phase — a pre-W3.6 serialized event without it
+    /// must fail to deserialize loudly instead of silently reading
+    /// fabricated zeros. The break is pre-announced in
+    /// MERIDIAN-HANDOFF §8.2; consumers update their match alongside
+    /// the pin bump.
+    #[test]
+    fn completed_without_subtree_usage_is_rejected() {
+        let legacy = serde_json::json!({
+            "phase": "completed",
+            "parent_id": "00000000-0000-0000-0000-000000000001",
+            "child_id": "00000000-0000-0000-0000-000000000002",
+            "descriptor": {
+                "kind": "spawn",
+                "role": "researcher",
+                "model": "haiku",
+                "profile": null,
+            },
+            "started_at": "2026-06-12T10:00:00Z",
+            "completed_at": "2026-06-12T10:00:05Z",
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "cost_usd": null,
+            },
+            "succeeded": true,
+            "error": null,
+            "stop": null,
+        });
+        let result: Result<SubagentLifecycle, _> = serde_json::from_value(legacy);
+        let err = result.expect_err("pre-W3.6 completed events must be rejected, not zero-filled");
+        assert!(
+            err.to_string().contains("subtree_usage"),
+            "the error must name the missing field: {err}",
+        );
     }
 
     /// The serialized message-Sent shape is the stable contract audit

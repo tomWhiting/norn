@@ -93,6 +93,14 @@ pub struct AgentOutput {
     /// Accumulated token usage across every provider call in the step,
     /// populated on completed *and* stopped runs (including timeouts,
     /// whose usage is tracked through the loop's shared timeout state).
+    ///
+    /// **Own calls only, by design** (W3.6): spend from delegated
+    /// children is not folded in here. For delegation-tree totals read
+    /// `subtree_usage` on each
+    /// [`SubagentLifecycle::Completed`](crate::provider::agent_event::SubagentLifecycle)
+    /// event (live broadcast and `subagent.completed` audit record) or
+    /// on each delivered
+    /// [`ChildAgentResult`](crate::agent::result_channel::ChildAgentResult).
     pub usage: Usage,
 
     /// The session event store, returned so callers can resume the session
@@ -176,7 +184,7 @@ impl RunOutcome {
             },
         };
         let outcome = match result {
-            AgentStepResult::Completed { output, usage } => Self::Completed(AgentOutput {
+            AgentStepResult::Completed { output, usage, .. } => Self::Completed(AgentOutput {
                 output,
                 usage,
                 event_store: None,
@@ -186,6 +194,7 @@ impl RunOutcome {
                 validation_errors,
                 attempts,
                 usage,
+                ..
             } => stopped(
                 AgentStopReason::SchemaUnreachable {
                     validation_errors,
@@ -194,7 +203,7 @@ impl RunOutcome {
                 best_attempt.unwrap_or(Value::Null),
                 usage,
             ),
-            AgentStepResult::MaxIterationsReached { usage } => {
+            AgentStepResult::MaxIterationsReached { usage, .. } => {
                 stopped(AgentStopReason::MaxIterationsReached, Value::Null, usage)
             }
             AgentStepResult::TimedOut {
@@ -202,6 +211,7 @@ impl RunOutcome {
                 iterations,
                 partial_output,
                 usage,
+                ..
             } => stopped(
                 AgentStopReason::TimedOut {
                     elapsed,
@@ -210,7 +220,7 @@ impl RunOutcome {
                 partial_output.unwrap_or(Value::Null),
                 usage,
             ),
-            AgentStepResult::Cancelled { usage } => {
+            AgentStepResult::Cancelled { usage, .. } => {
                 stopped(AgentStopReason::Cancelled, Value::Null, usage)
             }
             AgentStepResult::Truncated {
@@ -218,6 +228,7 @@ impl RunOutcome {
                 partial_text,
                 iterations,
                 usage,
+                ..
             } => stopped(
                 AgentStopReason::Truncated { kind, iterations },
                 partial_text.map_or(Value::Null, Value::String),
@@ -338,6 +349,7 @@ mod tests {
         let result = AgentStepResult::Completed {
             output: serde_json::json!({"answer": 42}),
             usage: sample_usage(),
+            children_usage: Usage::default(),
         };
         let outcome = RunOutcome::from_step_result(result, Some(EventStore::new()));
         assert!(outcome.is_completed());
@@ -359,6 +371,7 @@ mod tests {
             validation_errors: vec!["missing field x".to_string()],
             attempts: 3,
             usage: sample_usage(),
+            children_usage: Usage::default(),
         };
         let outcome = RunOutcome::from_step_result(result, None);
         assert!(!outcome.is_completed());
@@ -386,6 +399,7 @@ mod tests {
             validation_errors: Vec::new(),
             attempts: 1,
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         let outcome = RunOutcome::from_step_result(result, None);
         assert_eq!(outcome.output().output, Value::Null);
@@ -395,6 +409,7 @@ mod tests {
     fn max_iterations_stops_with_usage() {
         let result = AgentStepResult::MaxIterationsReached {
             usage: sample_usage(),
+            children_usage: Usage::default(),
         };
         let outcome = RunOutcome::from_step_result(result, None);
         assert_eq!(
@@ -412,6 +427,7 @@ mod tests {
             iterations: 2,
             partial_output: Some(serde_json::json!("partial text")),
             usage: sample_usage(),
+            children_usage: Usage::default(),
         };
         let outcome = RunOutcome::from_step_result(result, None);
         assert_eq!(
@@ -431,6 +447,7 @@ mod tests {
     fn cancelled_stops_with_null_output_and_usage() {
         let result = AgentStepResult::Cancelled {
             usage: sample_usage(),
+            children_usage: Usage::default(),
         };
         let outcome = RunOutcome::from_step_result(result, None);
         assert_eq!(outcome.stop_reason(), Some(&AgentStopReason::Cancelled));
@@ -445,6 +462,7 @@ mod tests {
             partial_text: Some("partial answ".to_string()),
             iterations: 1,
             usage: sample_usage(),
+            children_usage: Usage::default(),
         };
         let outcome = RunOutcome::from_step_result(result, None);
         assert!(!outcome.is_completed());
@@ -470,6 +488,7 @@ mod tests {
             partial_text: None,
             iterations: 1,
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         let outcome = RunOutcome::from_step_result(result, None);
         assert_eq!(outcome.output().output, Value::Null);
@@ -479,6 +498,7 @@ mod tests {
     fn stopped_arm_carries_event_store() {
         let result = AgentStepResult::Cancelled {
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         let store = store_with(&["progress so far"]);
         let outcome = RunOutcome::from_step_result(result, Some(store));
@@ -523,6 +543,7 @@ mod tests {
         let result = AgentStepResult::Completed {
             output: Value::Null,
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         let store = store_with(&["first reply", "second reply"]);
         let outcome = RunOutcome::from_step_result(result, Some(store));
@@ -534,6 +555,7 @@ mod tests {
         let result = AgentStepResult::Completed {
             output: Value::Null,
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         // A trailing tool-call-only turn produces an empty-content
         // AssistantMessage; .text() must skip it and surface the prior text.
@@ -547,6 +569,7 @@ mod tests {
         let result = AgentStepResult::Completed {
             output: Value::Null,
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         let outcome = RunOutcome::from_step_result(result, None);
         assert!(outcome.output().text().is_none());
@@ -557,6 +580,7 @@ mod tests {
         let result = AgentStepResult::Completed {
             output: Value::Null,
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         let store = store_with(&[]);
         let outcome = RunOutcome::from_step_result(result, Some(store));

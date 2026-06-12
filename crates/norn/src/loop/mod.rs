@@ -2,6 +2,7 @@
 
 pub use crate::error::SchemaError;
 
+pub use crate::r#loop::children_usage::ChildrenUsage;
 pub use crate::r#loop::commands::{
     CustomSlashHandler, PreprocessResult, SlashCommand, SlashCommandHandler, SlashCommandRegistry,
     preprocess_input,
@@ -21,6 +22,7 @@ pub use crate::r#loop::retry::{RetryPolicy, RetryableError, retry_with_backoff};
 pub use crate::r#loop::tokens::{SimpleTokenEstimator, TokenEstimator, estimate_prompt_tokens};
 
 pub mod assembly;
+pub mod children_usage;
 mod classify;
 
 pub mod commands;

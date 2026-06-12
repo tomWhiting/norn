@@ -235,6 +235,15 @@ pub(crate) struct ForkOutcome {
     pub(crate) status: AgentStatus,
     pub(crate) result_summary: serde_json::Value,
     pub(crate) usage: Usage,
+    /// Summed `subtree_usage` of every grandchild result the fork's loop
+    /// delivered (W3.6 usage rollup) — from the
+    /// [`AgentStepResult`] arm on every loop outcome, and from the
+    /// wrapper's shared
+    /// [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+    /// snapshot on the hard-error and panic paths. Disjoint from
+    /// [`Self::usage`]: `usage + children_usage` is the fork's subtree
+    /// total with each agent counted exactly once.
+    pub(crate) children_usage: Usage,
     pub(crate) duration: std::time::Duration,
     pub(crate) error_message: Option<String>,
     /// Typed stop reason when the fork's run stopped early without
@@ -255,22 +264,32 @@ pub(crate) struct ForkOutcome {
 /// Pure — the registry transition lives in [`mark_fork_terminal`] so the
 /// wrapper can fire `SubagentHook::on_subagent_stop` between projection
 /// and marking (a hook Block suppresses the transition, mirroring spawn).
+///
+/// `delivered_children_usage` is the wrapper's snapshot of the fork's
+/// shared [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+/// accumulator, used only on the hard-error arm where no step result
+/// exists to carry `children_usage` out of the loop (W3.6); every `Ok`
+/// arm reads the authoritative value from the step result.
 pub(super) fn project_fork_outcome(
     outcome: Result<AgentStepResult, NornError>,
     started: Instant,
+    delivered_children_usage: Usage,
 ) -> ForkOutcome {
     let duration = started.elapsed();
     match outcome {
         Ok(result) => classify_step_result(result, duration),
         // Hard error: `run_agent_step`'s `Err` path carries no usage, so
-        // tokens consumed before a mid-run error are unrecoverable here —
-        // `Usage::default()` means "unknown", not "none consumed" (same
-        // limitation as `extract_outcome_summary` on the spawn side; the
-        // `ForkComplete` event and lifecycle `Completed` inherit it).
+        // tokens the fork itself consumed before a mid-run error are
+        // unrecoverable here — `Usage::default()` means "unknown", not
+        // "none consumed" (same limitation as `extract_outcome_summary`
+        // on the spawn side; the `ForkComplete` event and lifecycle
+        // `Completed` inherit it). Delivered grandchild subtrees survive
+        // on the shared accumulator and are folded in (W3.6).
         Err(err) => ForkOutcome {
             status: AgentStatus::Failed,
             result_summary: serde_json::Value::Null,
             usage: Usage::default(),
+            children_usage: delivered_children_usage,
             duration,
             error_message: Some(err.to_string()),
             stop: None,
@@ -311,16 +330,22 @@ pub(super) fn mark_fork_terminal(
 /// delivers. Mirrors `panicked_outcome_summary` on the spawn side: the
 /// wrapper still appends `ForkComplete`, emits the lifecycle `Completed`,
 /// delivers the result, and transitions the registry, so observers never
-/// see a dangling `Started`. Usage is [`Usage::default`] (unknown — the
-/// panicked task took its accumulated usage with it).
+/// see a dangling `Started`. Own usage is [`Usage::default`] (unknown —
+/// the panicked task took its accumulated usage with it), while
+/// `delivered_children_usage` — the wrapper's snapshot of the shared
+/// [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+/// accumulator, which survives the unwound task — still carries every
+/// grandchild subtree the fork's loop delivered before the panic (W3.6).
 pub(super) fn panicked_fork_outcome(
     join_error: &tokio::task::JoinError,
     duration: std::time::Duration,
+    delivered_children_usage: Usage,
 ) -> ForkOutcome {
     ForkOutcome {
         status: AgentStatus::Failed,
         result_summary: serde_json::Value::Null,
         usage: Usage::default(),
+        children_usage: delivered_children_usage,
         duration,
         error_message: Some(format!(
             "fork task terminated without an outcome (panicked or aborted): {join_error}"
@@ -333,89 +358,119 @@ pub(super) fn panicked_fork_outcome(
 /// projection. Pure — no registry side effects — so every variant's mapping
 /// is unit-testable.
 fn classify_step_result(result: AgentStepResult, duration: std::time::Duration) -> ForkOutcome {
-    let project = |status: AgentStatus,
-                   result_summary: serde_json::Value,
-                   usage: Usage,
-                   error_message: Option<String>,
-                   stop: Option<AgentStopReason>| ForkOutcome {
-        status,
-        result_summary,
-        usage,
+    struct Projection {
+        status: AgentStatus,
+        result_summary: serde_json::Value,
+        usage: Usage,
+        children_usage: Usage,
+        error_message: Option<String>,
+        stop: Option<AgentStopReason>,
+    }
+    let project = |p: Projection| ForkOutcome {
+        status: p.status,
+        result_summary: p.result_summary,
+        usage: p.usage,
+        children_usage: p.children_usage,
         duration,
-        error_message,
-        stop,
+        error_message: p.error_message,
+        stop: p.stop,
     };
     match result {
-        AgentStepResult::Completed { output, usage } => {
-            project(AgentStatus::Completed, output, usage, None, None)
-        }
+        AgentStepResult::Completed {
+            output,
+            usage,
+            children_usage,
+        } => project(Projection {
+            status: AgentStatus::Completed,
+            result_summary: output,
+            usage,
+            children_usage,
+            error_message: None,
+            stop: None,
+        }),
         AgentStepResult::SchemaUnreachable {
             best_attempt,
             validation_errors,
             attempts,
             usage,
-        } => project(
-            AgentStatus::Failed,
-            best_attempt.unwrap_or(serde_json::Value::Null),
+            children_usage,
+        } => project(Projection {
+            status: AgentStatus::Failed,
+            result_summary: best_attempt.unwrap_or(serde_json::Value::Null),
             usage,
-            Some(format!(
+            children_usage,
+            error_message: Some(format!(
                 "fork could not produce schema-valid output after {attempts} attempts: {}",
                 validation_errors.join("; "),
             )),
-            Some(AgentStopReason::SchemaUnreachable {
+            stop: Some(AgentStopReason::SchemaUnreachable {
                 validation_errors,
                 attempts,
             }),
-        ),
-        AgentStepResult::MaxIterationsReached { usage } => project(
-            AgentStatus::Failed,
-            serde_json::Value::Null,
+        }),
+        AgentStepResult::MaxIterationsReached {
             usage,
-            Some("fork reached its max-iterations cap before completing its task".to_owned()),
-            Some(AgentStopReason::MaxIterationsReached),
-        ),
+            children_usage,
+        } => project(Projection {
+            status: AgentStatus::Failed,
+            result_summary: serde_json::Value::Null,
+            usage,
+            children_usage,
+            error_message: Some(
+                "fork reached its max-iterations cap before completing its task".to_owned(),
+            ),
+            stop: Some(AgentStopReason::MaxIterationsReached),
+        }),
         AgentStepResult::TimedOut {
             elapsed,
             iterations,
             partial_output,
             usage,
-        } => project(
-            AgentStatus::Failed,
-            partial_output.unwrap_or(serde_json::Value::Null),
+            children_usage,
+        } => project(Projection {
+            status: AgentStatus::Failed,
+            result_summary: partial_output.unwrap_or(serde_json::Value::Null),
             usage,
-            Some(format!(
+            children_usage,
+            error_message: Some(format!(
                 "fork timed out after {:.1}s ({iterations} iterations completed); any partial \
                  output is recorded on the fork's session branch",
                 elapsed.as_secs_f64(),
             )),
-            Some(AgentStopReason::TimedOut {
+            stop: Some(AgentStopReason::TimedOut {
                 elapsed,
                 iterations,
             }),
-        ),
-        AgentStepResult::Cancelled { usage } => project(
-            AgentStatus::Failed,
-            serde_json::Value::Null,
+        }),
+        AgentStepResult::Cancelled {
             usage,
-            Some("fork was cancelled before completing its task".to_owned()),
-            Some(AgentStopReason::Cancelled),
-        ),
+            children_usage,
+        } => project(Projection {
+            status: AgentStatus::Failed,
+            result_summary: serde_json::Value::Null,
+            usage,
+            children_usage,
+            error_message: Some("fork was cancelled before completing its task".to_owned()),
+            stop: Some(AgentStopReason::Cancelled),
+        }),
         AgentStepResult::Truncated {
             kind,
             partial_text,
             iterations,
             usage,
-        } => project(
-            AgentStatus::Failed,
-            partial_text.map_or(serde_json::Value::Null, serde_json::Value::String),
+            children_usage,
+        } => project(Projection {
+            status: AgentStatus::Failed,
+            result_summary: partial_text.map_or(serde_json::Value::Null, serde_json::Value::String),
             usage,
-            Some(format!(
+            children_usage,
+            error_message: Some(format!(
                 "fork output was truncated ({}) before it completed its task; the partial \
                  output is recorded on the fork's session branch",
                 kind.as_str(),
             )),
-            Some(AgentStopReason::Truncated { kind, iterations }),
-        ),
+            stop: Some(AgentStopReason::Truncated { kind, iterations }),
+        }),
     }
 }
 
@@ -652,7 +707,7 @@ mod tests {
 
     fn finish(result: AgentStepResult) -> Result<ForkOutcome, String> {
         let (registry, fork_id) = registry_with_fork()?;
-        let outcome = project_fork_outcome(Ok(result), Instant::now());
+        let outcome = project_fork_outcome(Ok(result), Instant::now(), Usage::default());
         mark_fork_terminal(&registry, fork_id, outcome.status);
         // Terminal transitions free the path and leave the entry observable
         // (terminal status) until an observer reclaims it (fix 10).
@@ -705,6 +760,7 @@ mod tests {
         let outcome = finish(AgentStepResult::Completed {
             output: serde_json::json!({"response": "done", "requirements": {}}),
             usage: Usage::default(),
+            children_usage: Usage::default(),
         })?;
         if outcome.status != AgentStatus::Completed {
             return Err(format!("expected Completed, got {:?}", outcome.status));
@@ -724,6 +780,7 @@ mod tests {
     fn finish_fork_max_iterations_is_failure() -> Result<(), String> {
         let outcome = finish(AgentStepResult::MaxIterationsReached {
             usage: Usage::default(),
+            children_usage: Usage::default(),
         })?;
         assert_failure(&outcome, "max-iterations")
     }
@@ -737,6 +794,7 @@ mod tests {
             validation_errors: vec!["missing field `requirements`".to_owned()],
             attempts: 3,
             usage: Usage::default(),
+            children_usage: Usage::default(),
         })?;
         assert_failure(&outcome, "schema-valid")?;
         if outcome.result_summary.get("response").is_none() {
@@ -759,6 +817,10 @@ mod tests {
             partial_output: Some(serde_json::json!("partial text")),
             usage: Usage {
                 input_tokens: 50,
+                ..Usage::default()
+            },
+            children_usage: Usage {
+                input_tokens: 6,
                 ..Usage::default()
             },
         })?;
@@ -789,6 +851,7 @@ mod tests {
     fn finish_fork_cancelled_is_failure() -> Result<(), String> {
         let outcome = finish(AgentStepResult::Cancelled {
             usage: Usage::default(),
+            children_usage: Usage::default(),
         })?;
         assert_failure(&outcome, "cancelled")?;
         if outcome.stop != Some(AgentStopReason::Cancelled) {
@@ -814,6 +877,7 @@ mod tests {
                 output_tokens: 9,
                 ..Usage::default()
             },
+            children_usage: Usage::default(),
         })?;
         assert_failure(&outcome, "truncated")?;
         if outcome.result_summary != serde_json::json!("cut short") {
@@ -845,6 +909,11 @@ mod tests {
                 reason: "disk gone".to_owned(),
             })),
             Instant::now(),
+            Usage {
+                input_tokens: 7,
+                output_tokens: 3,
+                ..Usage::default()
+            },
         );
         mark_fork_terminal(&registry, fork_id, outcome.status);
         let status = registry
@@ -869,7 +938,15 @@ mod tests {
         let join_error = tokio::spawn(async { panic!("dependency exploded") })
             .await
             .expect_err("task must panic");
-        let outcome = panicked_fork_outcome(&join_error, std::time::Duration::from_millis(7));
+        let outcome = panicked_fork_outcome(
+            &join_error,
+            std::time::Duration::from_millis(7),
+            Usage {
+                input_tokens: 7,
+                output_tokens: 3,
+                ..Usage::default()
+            },
+        );
         if outcome.status != AgentStatus::Failed {
             return Err(format!("expected Failed, got {:?}", outcome.status));
         }

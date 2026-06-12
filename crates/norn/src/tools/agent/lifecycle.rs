@@ -84,6 +84,15 @@ pub(super) struct SubagentCompletion {
     /// (timeout, cancellation, truncation, schema exhaustion, max
     /// iterations) does carry real accumulated usage.
     pub(super) usage: Usage,
+    /// Aggregated usage of the child's entire delegation subtree (W3.6):
+    /// [`Self::usage`] plus the summed `subtree_usage` of every result
+    /// the child's own loop delivered. Computed by the wrapper as
+    /// `usage + children_usage`; on the panic/hard-error paths the own
+    /// component is unknown-zeros while delivered descendant subtrees
+    /// are still folded in (read from the shared
+    /// [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+    /// accumulator, which survives the unwound task).
+    pub(super) subtree_usage: Usage,
     /// Whether the child's run completed successfully.
     pub(super) succeeded: bool,
     /// Explanatory error when `succeeded` is `false`.
@@ -157,6 +166,7 @@ impl LifecycleEmitter {
             started_at: self.started_at,
             completed_at: Utc::now(),
             usage: completion.usage,
+            subtree_usage: completion.subtree_usage,
             succeeded: completion.succeeded,
             error: completion.error,
             stop: completion.stop,
@@ -248,6 +258,11 @@ mod tests {
                 output_tokens: 3,
                 ..Usage::default()
             },
+            subtree_usage: Usage {
+                input_tokens: 12,
+                output_tokens: 5,
+                ..Usage::default()
+            },
             succeeded: true,
             error: None,
             stop: None,
@@ -271,6 +286,7 @@ mod tests {
         match second.event {
             AgentEventKind::Subagent(SubagentLifecycle::Completed {
                 usage,
+                subtree_usage,
                 succeeded,
                 started_at,
                 completed_at,
@@ -278,6 +294,10 @@ mod tests {
             }) => {
                 assert!(succeeded);
                 assert_eq!(usage.input_tokens, 7);
+                assert_eq!(
+                    subtree_usage.input_tokens, 12,
+                    "the wrapper-computed subtree total rides on the lifecycle event",
+                );
                 assert!(completed_at >= started_at, "timestamps must be ordered");
             }
             other => panic!("expected completed lifecycle, got {other:?}"),
@@ -304,6 +324,7 @@ mod tests {
                 assert_eq!(data["phase"], "completed");
                 assert_eq!(data["succeeded"], true);
                 assert_eq!(data["usage"]["input_tokens"], 7);
+                assert_eq!(data["subtree_usage"]["input_tokens"], 12);
             }
             other => panic!("expected Custom completed event, got {other:?}"),
         }
@@ -316,6 +337,7 @@ mod tests {
         emitter.emit_started();
         emitter.emit_completed(SubagentCompletion {
             usage: Usage::default(),
+            subtree_usage: Usage::default(),
             succeeded: false,
             error: Some("provider exploded".to_owned()),
             stop: None,

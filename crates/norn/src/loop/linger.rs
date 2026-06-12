@@ -189,6 +189,7 @@ pub(super) async fn resolve_stop_boundary(
                 loop_context.child_result_rx.as_mut(),
                 loop_context.hooks.as_deref(),
                 Some(*first),
+                &loop_context.children_usage,
             )
             .await?;
             Ok(BoundaryOutcome::Continue)
@@ -274,6 +275,7 @@ async fn sweep(
         loop_context.child_result_rx.as_mut(),
         loop_context.hooks.as_deref(),
         None,
+        &loop_context.children_usage,
     )
     .await
 }
@@ -420,6 +422,7 @@ mod tests {
             error: None,
             stop: None,
             usage: Usage::default(),
+            subtree_usage: Usage::default(),
         }
     }
 
@@ -625,8 +628,13 @@ mod tests {
 
         let sender = tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(50)).await;
-            tx.send(child_result("spawn/worker", "child finished"))
-                .await
+            let mut late = child_result("spawn/worker", "child finished");
+            late.subtree_usage = Usage {
+                input_tokens: 9,
+                output_tokens: 4,
+                ..Usage::default()
+            };
+            tx.send(late).await
         });
 
         let config = linger_config(Duration::from_mins(1));
@@ -648,10 +656,23 @@ mod tests {
             .expect("sender task")
             .expect("child-result send must succeed while the parent lingers");
 
-        let AgentStepResult::Completed { output, .. } = result else {
+        let AgentStepResult::Completed {
+            output,
+            children_usage,
+            ..
+        } = result
+        else {
             panic!("expected Completed");
         };
         assert_eq!(output, Value::String("second".to_string()));
+        // W3.6: the linger's seeded delivery goes through the same drain
+        // path as a mid-run delivery, so the seed's subtree usage is
+        // folded into the step's children_usage.
+        assert_eq!(
+            children_usage.input_tokens, 9,
+            "the linger-seeded result's subtree usage must be folded",
+        );
+        assert_eq!(children_usage.output_tokens, 4);
         assert_eq!(
             provider.call_count(),
             2,
@@ -878,7 +899,7 @@ mod tests {
         .await;
         canceller.await.expect("canceller task");
 
-        let AgentStepResult::Cancelled { usage } = result else {
+        let AgentStepResult::Cancelled { usage, .. } = result else {
             panic!("expected Cancelled");
         };
         assert_eq!(
@@ -923,7 +944,7 @@ mod tests {
         .await;
         canceller.await.expect("canceller task");
 
-        let AgentStepResult::Cancelled { usage } = result else {
+        let AgentStepResult::Cancelled { usage, .. } = result else {
             panic!("expected Cancelled, got {result:?}");
         };
         assert_eq!(
@@ -967,12 +988,13 @@ mod tests {
         })
         .await;
 
-        let AgentStepResult::Completed { output, usage } = result else {
+        let AgentStepResult::Completed { output, usage, .. } = result else {
             panic!("expected Completed");
         };
         let AgentStepResult::Completed {
             output: base_output,
             usage: base_usage,
+            ..
         } = base_result
         else {
             panic!("expected Completed baseline");

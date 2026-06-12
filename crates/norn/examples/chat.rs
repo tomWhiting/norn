@@ -107,7 +107,7 @@ async fn main() {
         .await;
 
         match result {
-            Ok(AgentStepResult::Completed { output, usage }) => {
+            Ok(AgentStepResult::Completed { output, usage, .. }) => {
                 let fallback = output.to_string();
                 let text = output.as_str().unwrap_or(&fallback);
                 println!("\n{text}\n");

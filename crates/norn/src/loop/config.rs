@@ -233,6 +233,15 @@ impl Default for AgentLoopConfig {
 }
 
 /// Outcome of a single agent loop step.
+///
+/// Every arm carries the same usage pair (W3.6 usage rollup): `usage` is
+/// the step's **own** provider spend, and `children_usage` is the sum of
+/// [`subtree_usage`](crate::agent::result_channel::ChildAgentResult::subtree_usage)
+/// over every child result delivered into the step. The two are disjoint
+/// by construction — own spend never includes children, child subtrees
+/// never include this step — so the spawn/fork completion wrappers (and
+/// embedders) compute the step's subtree total as `usage +
+/// children_usage` without reaching into the loop.
 #[derive(Debug)]
 pub enum AgentStepResult {
     /// The model produced valid structured output (or text in no-schema mode).
@@ -241,6 +250,9 @@ pub enum AgentStepResult {
         output: Value,
         /// Accumulated token usage across all provider calls in this step.
         usage: Usage,
+        /// Summed `subtree_usage` of every child result delivered into
+        /// this step. Disjoint from `usage` (own calls only).
+        children_usage: Usage,
     },
 
     /// The schema enforcement budget was exhausted without valid output.
@@ -253,12 +265,18 @@ pub enum AgentStepResult {
         attempts: u32,
         /// Accumulated token usage across all provider calls.
         usage: Usage,
+        /// Summed `subtree_usage` of every child result delivered into
+        /// this step. Disjoint from `usage` (own calls only).
+        children_usage: Usage,
     },
 
     /// The optional max-iterations cap was reached.
     MaxIterationsReached {
         /// Accumulated token usage across all provider calls.
         usage: Usage,
+        /// Summed `subtree_usage` of every child result delivered into
+        /// this step. Disjoint from `usage` (own calls only).
+        children_usage: Usage,
     },
 
     /// The configured `step_timeout` elapsed before the loop completed.
@@ -273,6 +291,10 @@ pub enum AgentStepResult {
         /// Accumulated token usage across all provider calls that
         /// completed before the timeout fired.
         usage: Usage,
+        /// Summed `subtree_usage` of every child result delivered into
+        /// this step before the timeout fired. Disjoint from `usage`
+        /// (own calls only).
+        children_usage: Usage,
     },
 
     /// The model stopped deterministically before completing its output —
@@ -297,6 +319,9 @@ pub enum AgentStepResult {
         /// Accumulated token usage across all provider calls, including
         /// the truncated call.
         usage: Usage,
+        /// Summed `subtree_usage` of every child result delivered into
+        /// this step. Disjoint from `usage` (own calls only).
+        children_usage: Usage,
     },
 
     /// Cooperative cancellation fired via the
@@ -314,6 +339,10 @@ pub enum AgentStepResult {
         /// completed before cancellation. Empty when the token was
         /// already cancelled before the first iteration ran.
         usage: Usage,
+        /// Summed `subtree_usage` of every child result delivered into
+        /// this step before cancellation. Disjoint from `usage` (own
+        /// calls only).
+        children_usage: Usage,
     },
 }
 

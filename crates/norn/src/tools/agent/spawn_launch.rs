@@ -167,6 +167,14 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let run_cancel = cancel.clone();
 
     let join_handle = tokio::spawn(async move {
+        // W3.6 usage rollup: cheap-clone handle to the child's
+        // children-usage accumulator, captured before `loop_ctx` moves
+        // into the inner task. The loop folds every delivered grandchild
+        // `subtree_usage` into it; the wrapper reads it below even when
+        // the inner task panics or the run hard-errors (the arms of a
+        // normal `AgentStepResult` carry the same value — the snapshot
+        // is the fallback for the no-result paths).
+        let delivered_children = loop_ctx.children_usage.clone();
         // Panic isolation: the agent step runs on its own inner task so a
         // panic inside a tool or provider (workspace code denies panics,
         // but a dependency inside the child's task can still unwind)
@@ -223,18 +231,26 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         };
 
         let summary = match outcome {
-            Ok(step_outcome) => extract_outcome_summary(step_outcome),
+            Ok(step_outcome) => {
+                extract_outcome_summary(step_outcome, delivered_children.snapshot())
+            }
             Err(join_error) => {
                 tracing::error!(
                     child_id = %child_id,
                     error = %join_error,
                     "spawn_agent: child task panicked or was aborted before completing",
                 );
-                panicked_outcome_summary(&join_error)
+                panicked_outcome_summary(&join_error, delivered_children.snapshot())
             }
         };
         let terminal_status = summary.status;
         let succeeded = terminal_status == AgentStatus::Completed;
+        // W3.6: the child's subtree total — its own provider spend plus
+        // everything its descendants delivered. Own usage stays
+        // own-calls-only on `summary.usage`; the aggregation is explicit
+        // here and computed exactly once per child, so no level ever
+        // double-counts.
+        let subtree_usage = summary.usage.clone() + summary.children_usage.clone();
 
         if !stop_blocked {
             mark_terminal_in_registry(&agent_registry, child_id, terminal_status);
@@ -245,6 +261,7 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         // the registry transition above, not the observable outcome.
         lifecycle.emit_completed(SubagentCompletion {
             usage: summary.usage.clone(),
+            subtree_usage: subtree_usage.clone(),
             succeeded,
             error: summary.error.clone(),
             stop: summary.stop.clone(),
@@ -272,6 +289,7 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
                 error: summary.error,
                 stop: summary.stop,
                 usage: summary.usage,
+                subtree_usage,
             };
             // A send into a dropped receiver is the R5 orphaned-result
             // gap: the parent's run ended before this child finished

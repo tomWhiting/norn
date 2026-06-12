@@ -53,15 +53,14 @@ pub fn result_label(result: &AgentStepResult) -> &'static str {
 #[must_use]
 pub fn extract_output_and_usage(result: &AgentStepResult) -> (Option<Value>, Usage) {
     match result {
-        AgentStepResult::Completed { output, usage } => (Some(output.clone()), usage.clone()),
+        AgentStepResult::Completed { output, usage, .. } => (Some(output.clone()), usage.clone()),
         AgentStepResult::SchemaUnreachable {
             best_attempt,
             usage,
             ..
         } => (best_attempt.clone(), usage.clone()),
-        AgentStepResult::MaxIterationsReached { usage } | AgentStepResult::Cancelled { usage } => {
-            (None, usage.clone())
-        }
+        AgentStepResult::MaxIterationsReached { usage, .. }
+        | AgentStepResult::Cancelled { usage, .. } => (None, usage.clone()),
         AgentStepResult::TimedOut {
             partial_output,
             usage,
@@ -850,6 +849,7 @@ mod tests {
             result_label(&AgentStepResult::Completed {
                 output: json!(null),
                 usage: Usage::default(),
+                children_usage: Usage::default(),
             }),
             "completed"
         );
@@ -859,12 +859,14 @@ mod tests {
                 validation_errors: vec![],
                 attempts: 0,
                 usage: Usage::default(),
+                children_usage: Usage::default(),
             }),
             "schema_unreachable"
         );
         assert_eq!(
             result_label(&AgentStepResult::MaxIterationsReached {
                 usage: Usage::default(),
+                children_usage: Usage::default(),
             }),
             "max_iterations"
         );
@@ -874,12 +876,14 @@ mod tests {
                 iterations: 0,
                 partial_output: None,
                 usage: Usage::default(),
+                children_usage: Usage::default(),
             }),
             "timed_out"
         );
         assert_eq!(
             result_label(&AgentStepResult::Cancelled {
                 usage: Usage::default(),
+                children_usage: Usage::default(),
             }),
             "cancelled"
         );
@@ -889,6 +893,7 @@ mod tests {
                 partial_text: None,
                 iterations: 0,
                 usage: Usage::default(),
+                children_usage: Usage::default(),
             }),
             "truncated"
         );
@@ -908,6 +913,7 @@ mod tests {
             iterations: 2,
             partial_output: Some(json!("half done")),
             usage: usage.clone(),
+            children_usage: Usage::default(),
         });
         assert_eq!(output, Some(json!("half done")));
         assert_eq!(extracted.input_tokens, 21);
@@ -917,6 +923,7 @@ mod tests {
             partial_text: Some("cut short".to_string()),
             iterations: 1,
             usage,
+            children_usage: Usage::default(),
         });
         assert_eq!(output, Some(json!("cut short")));
         assert_eq!(extracted.output_tokens, 8);

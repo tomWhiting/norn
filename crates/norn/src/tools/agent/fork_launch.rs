@@ -140,6 +140,12 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
 
     let join_handle = tokio::spawn(async move {
         let started = Instant::now();
+        // W3.6 usage rollup: cheap-clone handle to the fork's
+        // children-usage accumulator, captured before `loop_ctx` moves
+        // into the inner task — read below as the fallback for the
+        // panic and hard-error paths, where no `AgentStepResult` exists
+        // to carry the delivered grandchild subtrees out of the loop.
+        let delivered_children = loop_ctx.children_usage.clone();
         // Panic isolation: the agent step runs on its own inner task so a
         // panic inside a tool or provider (workspace code denies panics,
         // but a dependency inside the fork's task can still unwind)
@@ -178,7 +184,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                         "fork: run_agent_step failed",
                     );
                 }
-                project_fork_outcome(step_result, started)
+                project_fork_outcome(step_result, started, delivered_children.snapshot())
             }
             Err(join_error) => {
                 tracing::error!(
@@ -187,9 +193,18 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                     error = %join_error,
                     "fork: child task panicked or was aborted before completing",
                 );
-                panicked_fork_outcome(&join_error, started.elapsed())
+                panicked_fork_outcome(
+                    &join_error,
+                    started.elapsed(),
+                    delivered_children.snapshot(),
+                )
             }
         };
+        // W3.6: the fork's subtree total — its own provider spend plus
+        // everything its descendants delivered. Own usage stays
+        // own-calls-only on `outcome.usage`; the aggregation is explicit
+        // here and computed exactly once per fork.
+        let subtree_usage = outcome.usage.clone() + outcome.children_usage.clone();
 
         // The fork's loop has ended: nothing will ever drain its inbound
         // channel again, so the route is removed now — unconditionally,
@@ -223,6 +238,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // usage, terminal outcome, and typed stop reason.
         lifecycle.emit_completed(SubagentCompletion {
             usage: outcome.usage.clone(),
+            subtree_usage: subtree_usage.clone(),
             succeeded: outcome.status == AgentStatus::Completed,
             error: outcome.error_message.clone(),
             stop: outcome.stop.clone(),
@@ -239,6 +255,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 error,
                 stop: outcome.stop.clone(),
                 usage: outcome.usage.clone(),
+                subtree_usage,
             };
             // A send into a dropped receiver is the R5 orphaned-result
             // gap: the parent's run ended before this fork finished

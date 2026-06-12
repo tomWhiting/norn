@@ -769,6 +769,7 @@ mod tests {
         let completed = AgentStepResult::Completed {
             output: serde_json::json!("done"),
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         assert_eq!(
             match &completed {
@@ -781,6 +782,7 @@ mod tests {
         let schema = AgentStepResult::SchemaUnreachable {
             best_attempt: None,
             usage: Usage::default(),
+            children_usage: Usage::default(),
             attempts: 0,
             validation_errors: Vec::new(),
         };
@@ -794,6 +796,7 @@ mod tests {
 
         let max_iter = AgentStepResult::MaxIterationsReached {
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         assert_eq!(
             match &max_iter {
@@ -808,6 +811,7 @@ mod tests {
             elapsed: std::time::Duration::from_mins(1),
             iterations: 5,
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         assert_eq!(
             match &timed_out {
@@ -819,6 +823,7 @@ mod tests {
 
         let cancelled = AgentStepResult::Cancelled {
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         assert_eq!(
             match &cancelled {
@@ -833,6 +838,7 @@ mod tests {
             partial_text: Some("partial".to_string()),
             iterations: 1,
             usage: Usage::default(),
+            children_usage: Usage::default(),
         };
         assert_eq!(
             match &truncated {

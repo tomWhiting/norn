@@ -128,7 +128,7 @@ async fn main() {
     eprintln!("[4/5] Agent step complete.\n");
 
     match result {
-        Ok(AgentStepResult::Completed { output, usage }) => {
+        Ok(AgentStepResult::Completed { output, usage, .. }) => {
             eprintln!("[5/5] SUCCESS — Completed");
             eprintln!(
                 "  Output: {}",
@@ -144,6 +144,7 @@ async fn main() {
             validation_errors,
             attempts,
             usage,
+            ..
         }) => {
             eprintln!("[5/5] SCHEMA UNREACHABLE after {attempts} attempts");
             eprintln!("  Errors: {validation_errors:?}");
@@ -159,7 +160,7 @@ async fn main() {
             );
             std::process::exit(1);
         }
-        Ok(AgentStepResult::MaxIterationsReached { usage }) => {
+        Ok(AgentStepResult::MaxIterationsReached { usage, .. }) => {
             eprintln!("[5/5] MAX ITERATIONS REACHED");
             eprintln!(
                 "  Tokens: {} in / {} out",
@@ -172,6 +173,7 @@ async fn main() {
             iterations,
             partial_output,
             usage,
+            ..
         }) => {
             eprintln!("[5/5] TIMED OUT after {elapsed:?} ({iterations} iterations)");
             if let Some(partial) = partial_output {
@@ -186,7 +188,7 @@ async fn main() {
             );
             std::process::exit(1);
         }
-        Ok(AgentStepResult::Cancelled { usage }) => {
+        Ok(AgentStepResult::Cancelled { usage, .. }) => {
             eprintln!("[5/5] CANCELLED");
             eprintln!(
                 "  Tokens: {} in / {} out",
@@ -199,6 +201,7 @@ async fn main() {
             partial_text,
             iterations,
             usage,
+            ..
         }) => {
             eprintln!(
                 "[5/5] TRUNCATED ({}) after {iterations} iterations",
