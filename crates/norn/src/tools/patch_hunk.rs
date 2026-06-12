@@ -106,17 +106,24 @@ pub(super) fn parse_semantic_anchor(header: &str) -> Option<String> {
     (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
+/// The hunk header shape the parser requires, quoted in error messages so a
+/// failing caller learns the fix without consulting external docs.
+const HUNK_HEADER_FORM: &str = "@@ -<old_start>[,<old_count>] +<new_start>[,<new_count>] @@";
+
 /// Parse the `@@` header line to extract the 1-based old start line and the
 /// semantic anchor.
 pub(super) fn parse_hunk_header(line: &str) -> Result<(usize, Option<String>), String> {
     let stripped = line.trim_start_matches('@').trim_start();
-    let old_part = stripped
-        .strip_prefix('-')
-        .ok_or_else(|| format!("malformed hunk header: {line}"))?;
+    let old_part = stripped.strip_prefix('-').ok_or_else(|| {
+        format!("malformed hunk header: expected `{HUNK_HEADER_FORM}`, got `{line}`")
+    })?;
     let start_str = old_part.split([',', ' ']).next().unwrap_or("1");
-    let old_start = start_str
-        .parse::<usize>()
-        .map_err(|e| format!("bad start line in hunk header: {e}"))?;
+    let old_start = start_str.parse::<usize>().map_err(|e| {
+        format!(
+            "bad start line in hunk header `{line}`: {e}; expected `{HUNK_HEADER_FORM}` \
+             with a numeric <old_start>"
+        )
+    })?;
 
     Ok((old_start, parse_semantic_anchor(line)))
 }
@@ -128,7 +135,9 @@ pub(super) fn parse_hunk_header(line: &str) -> Result<(usize, Option<String>), S
 fn record_newline_marker(hunk: &mut ParsedHunk, marker_line: &str) -> Result<(), String> {
     let Some(prev) = hunk.lines.last() else {
         return Err(format!(
-            "'{marker_line}' marker without a preceding diff line"
+            "'{marker_line}' marker without a preceding diff line: it must directly follow \
+             the context (' '), removal ('-'), or addition ('+') line it annotates, not open \
+             a hunk"
         ));
     };
     match prev {
@@ -207,6 +216,44 @@ mod tests {
         let (start, anchor) = parse_hunk_header("@@ -1,3 +1,3 @@").unwrap();
         assert_eq!(start, 1);
         assert!(anchor.is_none());
+    }
+
+    #[test]
+    fn bare_at_at_header_error_teaches_expected_form() {
+        let err = parse_hunk_header("@@").unwrap_err();
+        assert_eq!(
+            err,
+            "malformed hunk header: expected `@@ -<old_start>[,<old_count>] \
+             +<new_start>[,<new_count>] @@`, got `@@`"
+        );
+    }
+
+    #[test]
+    fn bare_at_at_header_in_block_surfaces_teaching_error() {
+        let block = "\
+--- a/f.txt
++++ b/f.txt
+@@
+-old
++new
+";
+        let err = parse_unified_hunks(block).unwrap_err();
+        assert!(
+            err.contains("expected `@@ -<old_start>[,<old_count>] +<new_start>[,<new_count>] @@`"),
+            "{err}"
+        );
+        assert!(err.contains("got `@@`"), "{err}");
+    }
+
+    #[test]
+    fn non_numeric_start_error_names_line_and_expected_form() {
+        let err = parse_hunk_header("@@ -abc,3 +1,3 @@").unwrap_err();
+        assert!(err.contains("`@@ -abc,3 +1,3 @@`"), "{err}");
+        assert!(
+            err.contains("expected `@@ -<old_start>[,<old_count>] +<new_start>[,<new_count>] @@`"),
+            "{err}"
+        );
+        assert!(err.contains("numeric <old_start>"), "{err}");
     }
 
     #[test]
@@ -316,6 +363,7 @@ mod tests {
 ";
         let err = parse_unified_hunks(block).unwrap_err();
         assert!(err.contains("without a preceding diff line"), "{err}");
+        assert!(err.contains("must directly follow"), "{err}");
     }
 
     #[test]

@@ -33,7 +33,7 @@ pub use instance::Agent;
 pub use mailbox::{Mailbox, MailboxMessage};
 pub use monitor::{MonitorConfig, MonitorHandle, MonitorStatus, run_monitored};
 pub use output::{AgentOutput, AgentStopReason, RunOutcome};
-pub use registry::{AgentEntry, AgentRegistry, AgentStatus, SpawnGuard};
+pub use registry::{AgentEntry, AgentRegistry, AgentStatus, AgentTombstone, SpawnGuard};
 pub use result_channel::{CHILD_RESULT_CHANNEL_CAPACITY, ChildAgentResult, ChildResultSender};
 pub use resume::rebuild_action_log;
 pub use session_spec::SessionSpec;

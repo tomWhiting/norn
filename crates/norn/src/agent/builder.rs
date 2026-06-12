@@ -49,8 +49,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::agent::assembly::{
-    AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay, ToolContextParts,
-    apply_base_to_loop_context, assemble_tool_context, build_base_tool_registry,
+    AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay, SystemPromptInstall,
+    ToolContextParts, apply_base_to_loop_context, assemble_tool_context, build_base_tool_registry,
     collect_tool_definitions, effective_agent_config, install_agent_infra,
     install_runtime_base_extensions, install_system_prompt, install_tool_catalog,
     populate_loop_context, resolve_base_profile, resolve_runtime_overlay, resolve_working_dir,
@@ -365,14 +365,22 @@ impl AgentBuilder {
         // is read from the same source for the same reason.
         let has_auto_compact = config_override.auto_compact_threshold_pct.is_some()
             && config_override.context_window_limit.is_some();
+        // The provider is bound here, so the prompt's tools section is
+        // resolved against its capabilities — hosted-replaced tools are
+        // described as provider-native, never as callable functions. A
+        // session resume re-enters this build with the provider being
+        // re-bound, so the section is recomputed rather than carried over.
         install_system_prompt(
             &mut loop_context,
-            &registry,
-            self.execution_mode,
-            config_override.output_schema.is_some(),
-            self.system_prompt,
-            self.append_system_prompt,
-            has_auto_compact,
+            SystemPromptInstall {
+                registry: &registry,
+                mode: self.execution_mode,
+                has_output_schema: config_override.output_schema.is_some(),
+                system_prompt_override: self.system_prompt,
+                append_system_prompt: self.append_system_prompt,
+                has_auto_compact,
+                capabilities: self.provider.capabilities(),
+            },
         );
 
         let tool_defs = collect_tool_definitions(&registry);
@@ -2235,6 +2243,154 @@ mod tests {
             source_after.events.len(),
             source_len,
             "the fork's run must not touch the source session",
+        );
+    }
+
+    /// Read the catalog description `tool_search` reports for `web_search`
+    /// through the built agent's live tool context.
+    async fn catalog_web_search_description(agent: &Agent) -> String {
+        use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+
+        let ctx = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context");
+        let tool = agent
+            .registry
+            .get("tool_search")
+            .expect("tool_search registered");
+        let envelope = ToolEnvelope {
+            tool_call_id: "surface-test".to_string(),
+            tool_name: "tool_search".to_string(),
+            model_args: serde_json::json!({"query": "", "max_results": 500}),
+            runtime_inputs: RuntimeInputs::default(),
+            metadata: Value::Null,
+        };
+        let out = tool
+            .execute(&envelope, ctx.as_ref())
+            .await
+            .expect("tool_search runs through the built context");
+        out.content["results"]
+            .as_array()
+            .expect("results array")
+            .iter()
+            .find(|result| result["name"] == "web_search")
+            .expect("web_search entry present in catalog dump")["description"]
+            .as_str()
+            .expect("description is a string")
+            .to_owned()
+    }
+
+    /// The same registry resolved against two capability sets — hosted web
+    /// search on and off — must flip all three projections of the resolved
+    /// tool surface: the system-prompt tools section, the `tool_search`
+    /// catalog, and the provider request definitions. The second build is a
+    /// resume-style rebuild (`.session(store)` from the first run), proving
+    /// a provider change between resumes re-resolves the whole surface and
+    /// nothing stale is carried over.
+    #[tokio::test]
+    async fn provider_capability_switch_flips_all_three_projections_across_resume() {
+        use crate::provider::mock::MockProvider;
+        use crate::provider::tools::{
+            HostedToolDefinition, ProviderCapabilities, ProviderToolDefinition,
+        };
+
+        // --- Hosted-capable provider: every projection shows the hosted truth.
+        let hosted_provider = Arc::new(MockProvider::with_capabilities(
+            text_completion("first"),
+            ProviderCapabilities {
+                hosted_web_search: true,
+                ..ProviderCapabilities::default()
+            },
+        ));
+        let agent = AgentBuilder::new(Arc::clone(&hosted_provider) as Arc<dyn Provider>)
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .build()
+            .expect("hosted build succeeds");
+
+        let prompt = agent.loop_context.base_system_instruction();
+        assert!(
+            prompt.contains("not a callable function"),
+            "hosted prompt must carry the provider truth for web_search",
+        );
+        assert!(
+            !prompt.contains("Search the public web"),
+            "the function-mode description must not survive hosted reframing",
+        );
+
+        let description = catalog_web_search_description(&agent).await;
+        assert!(
+            description.contains("not a callable function"),
+            "hosted catalog entry must carry the provider truth: {description}",
+        );
+
+        let outcome = agent.run("go").await.expect("hosted run succeeds");
+        let requests = hosted_provider.requests().expect("requests recorded");
+        let wire = &requests[0].tools;
+        assert!(
+            wire.iter().any(|tool| matches!(
+                tool,
+                ProviderToolDefinition::Hosted(HostedToolDefinition::WebSearch(_))
+            )),
+            "hosted provider must receive the hosted web-search tool",
+        );
+        assert!(
+            !wire.iter().any(|tool| matches!(
+                tool,
+                ProviderToolDefinition::Function(function) if function.name == "web_search"
+            )),
+            "the web_search function definition must not also be sent",
+        );
+
+        // --- Resume-style rebuild against a provider WITHOUT hosted search:
+        // every projection flips back to the callable-function truth.
+        let store = outcome
+            .into_output()
+            .event_store
+            .expect("event store returned");
+        let plain_provider = Arc::new(MockProvider::new(text_completion("second")));
+        let agent = AgentBuilder::new(Arc::clone(&plain_provider) as Arc<dyn Provider>)
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .session(store)
+            .build()
+            .expect("resumed build succeeds");
+
+        let prompt = agent.loop_context.base_system_instruction();
+        assert!(
+            prompt.contains("Search the public web"),
+            "function-mode prompt must list web_search as a callable function",
+        );
+        assert!(
+            !prompt.contains("not a callable function"),
+            "no hosted framing may leak across the provider switch",
+        );
+
+        let description = catalog_web_search_description(&agent).await;
+        assert!(
+            description.contains("Search the public web"),
+            "function-mode catalog entry must keep the function description: {description}",
+        );
+        assert!(!description.contains("not a callable function"));
+
+        let outcome = agent.run("again").await.expect("resumed run succeeds");
+        assert!(outcome.is_completed());
+        let requests = plain_provider.requests().expect("requests recorded");
+        let wire = &requests[0].tools;
+        assert!(
+            wire.iter().any(|tool| matches!(
+                tool,
+                ProviderToolDefinition::Function(function) if function.name == "web_search"
+            )),
+            "without the capability web_search is sent as a function tool",
+        );
+        assert!(
+            !wire.iter().any(|tool| matches!(
+                tool,
+                ProviderToolDefinition::Hosted(HostedToolDefinition::WebSearch(_))
+            )),
+            "no hosted definition may be sent without the capability",
         );
     }
 }

@@ -3,3 +3,5 @@ Fork splits your session at the current point in time. The fork inherits your co
 Provide a requirements array to define what the fork must deliver. Each requirement gets a completion record in the structured output.
 
 Do not fork for work that is independent of your conversation context — use spawn_agent instead.
+
+Forks are children and children cannot create their own children (no spawn_agent or fork from inside a fork). Plan delegation one layer at a time.

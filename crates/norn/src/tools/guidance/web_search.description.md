@@ -1,1 +1,1 @@
-Search the web and return ranked results with titles, URLs, and snippets. Delegates to the provider's server-side search when available; falls back to a DuckDuckGo HTML scraper otherwise.
+Search the public web for a query and return ranked results with titles, URLs, and snippets.

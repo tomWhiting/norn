@@ -10,7 +10,6 @@
 //! [`crate::tools::agent::fork_tool::ForkTool::execute`] reads top-to-bottom
 //! while staying inside the per-file 500-line production-code limit (CO5).
 
-use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -22,7 +21,9 @@ use uuid::Uuid;
 use super::handle::{AgentHandle, AgentHandles, ChildBranchMetadata, SharedSessionTree};
 use super::infra::{AgentToolInfra, SubAgentExecutor};
 use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
-use super::reclaim::reclaim_delivered_child;
+use super::reclaim::{
+    ReclaimHandshake, log_terminal_transition_violation, reclaim_delivered_child,
+};
 use crate::agent::fork::{ContextFilter, ParentSystemInstruction};
 use crate::agent::output::AgentStopReason;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
@@ -44,33 +45,12 @@ use crate::session::store::EventStore;
 use crate::session::tree::{BranchConfig, SessionId, SessionMetadata, SessionStatus};
 use crate::tool::catalog::SharedToolCatalog;
 use crate::tool::context::{SharedWorkingDir, ToolContext};
-use crate::tool::registry::ToolRegistry;
 use crate::tool::scheduling::ToolEffectIndex;
 use crate::tools::task::SharedTaskStore;
 
 /// Bounded capacity of the fork's inbound steering channel — mirrors the
 /// value used by [`super::spawn`] so the two surfaces behave identically.
 pub(super) const FORK_INBOUND_BUFFER: usize = 32;
-
-/// Project the parent registry's tools through the optional allow-list (R8).
-pub(super) fn build_fork_tool_definitions(
-    registry: &ToolRegistry,
-    allow_list: Option<&[String]>,
-) -> Vec<ToolDefinition> {
-    let allow_set: Option<HashSet<&str>> =
-        allow_list.map(|names| names.iter().map(String::as_str).collect());
-    registry
-        .names()
-        .filter(|name| allow_set.as_ref().is_none_or(|set| set.contains(name)))
-        .filter_map(|name| {
-            registry.get(name).map(|tool| ToolDefinition {
-                name: tool.name().to_owned(),
-                description: tool.description().to_owned(),
-                parameters: crate::tool::wrap_schema_with_envelope(tool.input_schema()),
-            })
-        })
-        .collect()
-}
 
 /// Construct the per-fork [`ToolContext`](crate::tool::context::ToolContext) (R3).
 ///
@@ -266,7 +246,12 @@ pub(super) fn project_fork_outcome(
 
 /// Apply the fork's terminal registry transition for `status`
 /// (`Completed` walks Completing → Completed; anything else marks
-/// `Failed`). Transition failures are logged, never propagated — the
+/// `Failed`).
+///
+/// The wrapper is the sole owner of a live fork's terminal transition
+/// (see [`super::reclaim`]), so a transition failure here is an
+/// invariant violation: it is logged loudly via
+/// [`log_terminal_transition_violation`] but never propagated — the
 /// wrapper still owes result delivery.
 pub(super) fn mark_fork_terminal(
     registry: &RwLock<AgentRegistry>,
@@ -276,13 +261,13 @@ pub(super) fn mark_fork_terminal(
     let mut reg = registry.write();
     if status == AgentStatus::Completed {
         if let Err(e) = reg.mark_completing(fork_id) {
-            tracing::warn!(fork_id = %fork_id, error = %e, "fork: mark_completing failed");
+            log_terminal_transition_violation(&reg, fork_id, "fork", &e);
         }
         if let Err(e) = reg.mark_completed(fork_id) {
-            tracing::warn!(fork_id = %fork_id, error = %e, "fork: mark_completed failed");
+            log_terminal_transition_violation(&reg, fork_id, "fork", &e);
         }
     } else if let Err(e) = reg.mark_failed(fork_id) {
-        tracing::warn!(fork_id = %fork_id, error = %e, "fork: mark_failed failed");
+        log_terminal_transition_violation(&reg, fork_id, "fork", &e);
     }
 }
 
@@ -455,10 +440,11 @@ pub(super) struct ForkLaunch {
     pub(super) event_sender: Option<AgentEventSender>,
     /// `Some` when the runtime declared
     /// [`ReclaimOnResultDelivery`](super::reclaim::ReclaimOnResultDelivery)
-    /// and a result channel exists: after delivering the fork's result
-    /// the wrapper reclaims the registry entry and drops the
-    /// parent-held handle (see [`super::reclaim`]).
-    pub(super) reclaim_handles: Option<Arc<AgentHandles>>,
+    /// and a result channel exists: after delivering the fork's result —
+    /// and after the tool's handle-installed ack — the wrapper reclaims
+    /// the registry entry and drops the parent-held handle (see
+    /// [`super::reclaim`]).
+    pub(super) reclaim: Option<ReclaimHandshake>,
     /// Typed lifecycle emitter — `Started` was already emitted by the
     /// tool before launch; the wrapper emits `Completed` once the run
     /// reaches a terminal outcome.
@@ -495,7 +481,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         parent_id,
         forked_session_id,
         event_sender,
-        reclaim_handles,
+        reclaim,
         lifecycle,
         hooks,
     } = launch;
@@ -503,6 +489,16 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
     let handle_store = Arc::clone(&child_store);
     let (status_tx, status_rx) = watch::channel(AgentStatus::Active);
     let agent_role = format!("fork/{model}");
+    // Cooperative cancellation: the trigger lives on the parent-held
+    // AgentHandle and a clone rides into the inner run's AgentStepRequest,
+    // so `close_agent` can terminate the run itself — not just the wrapper
+    // task. The loop observes the token at the top of every iteration and
+    // races it (cancel-priority) against the in-flight provider call,
+    // returning `AgentStepResult::Cancelled`, which the wrapper records as
+    // the run's real outcome through its normal terminal sequence below.
+    // Mirrors the spawn wrapper.
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let run_cancel = cancel.clone();
 
     let join_handle = tokio::spawn(async move {
         let started = Instant::now();
@@ -528,7 +524,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 event_tx: event_sender.as_ref(),
                 inbound: Some(&mut inbound_rx),
                 loop_context: &mut loop_ctx,
-                cancel: None,
+                cancel: Some(run_cancel),
             })
             .await
         });
@@ -612,15 +608,31 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // Delivery-anchored reclamation (embedded/headless runtimes):
         // the parent's record of this fork is now the delivered result
         // plus the ForkComplete event on its timeline, so the registry
-        // entry and the parent-held handle can go. Runs after the
-        // terminal status broadcast so the fork tool's post-insert check
-        // observes a consistent order; skipped when a stop hook
-        // suppressed the terminal transition (the fork is then
+        // entry and the parent-held handle can go. Skipped when a stop
+        // hook suppressed the terminal transition (the fork is then
         // deliberately left observable and non-terminal — mirrors
         // spawn). A failed result send means the receiver is gone —
         // reclaiming is still correct.
-        if !stop_blocked && let Some(parent_handles) = reclaim_handles {
-            reclaim_delivered_child(&agent_registry, &parent_handles, fork_id);
+        //
+        // The wrapper is the sole reclaimer (see super::reclaim): it
+        // first awaits the tool's handle-installed ack so a fork that
+        // finished before `AgentHandles::insert` ran is still reclaimed
+        // with the handle present — no second actor ever reclaims
+        // concurrently, and nothing infers state from registry-entry
+        // absence.
+        if !stop_blocked && let Some(handshake) = reclaim {
+            if handshake.handle_installed.await.is_err() {
+                // The tool's execute was torn down between launching the
+                // wrapper and storing the handle (e.g. the parent task
+                // was cancelled mid-launch): there is no handle to drop,
+                // but the registry entry still must not leak.
+                tracing::warn!(
+                    fork_id = %fork_id,
+                    "fork: handle-installed ack dropped before launch completed; \
+                     reclaiming without a stored handle",
+                );
+            }
+            reclaim_delivered_child(&agent_registry, &handshake.handles, fork_id);
         }
     });
 
@@ -628,6 +640,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         agent_id: fork_id,
         status_rx,
         inbound_tx,
+        cancel,
         join_handle,
         event_store: handle_store,
         branch_metadata: ChildBranchMetadata {
@@ -643,6 +656,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
 mod tests {
     use super::*;
     use crate::agent::fork::format_fork_outcome;
+    use crate::tool::registry::ToolRegistry;
 
     /// Permission-escape regression (blocker): the consent-boundary
     /// [`PermissionPolicy`] and the scheduling [`ToolEffectIndex`] must

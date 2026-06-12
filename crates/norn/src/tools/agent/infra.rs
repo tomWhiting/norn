@@ -14,7 +14,7 @@ use parking_lot::RwLock;
 use uuid::Uuid;
 
 use crate::agent::mailbox::Mailbox;
-use crate::agent::registry::AgentRegistry;
+use crate::agent::registry::{AgentEntry, AgentRegistry, AgentTombstone};
 use crate::error::ToolError;
 use crate::r#loop::runner::ToolExecutor;
 use crate::provider::traits::Provider;
@@ -60,24 +60,61 @@ pub(super) fn infra_from(ctx: &ToolContext) -> Result<Arc<AgentToolInfra>, ToolE
     ctx.require_extension::<AgentToolInfra>()
 }
 
-/// Resolves a string identifier (path or raw UUID) to a registered agent.
-pub(super) fn resolve_agent_id(
+/// Result of resolving a string identifier against the agent registry.
+pub(super) enum ResolvedAgent {
+    /// The identifier names a registered agent — live, or terminal but
+    /// not yet reclaimed (its entry still carries the real outcome).
+    Live(AgentEntry),
+    /// The identifier names an agent that finished and was reclaimed;
+    /// the registry retains its completion record
+    /// ([`AgentTombstone`](crate::agent::registry::AgentTombstone)).
+    Reclaimed(AgentTombstone),
+}
+
+/// Resolves a string identifier (hierarchical path or raw UUID) against
+/// the registry, including agents that already finished.
+///
+/// Resolution order: live holder of the path → terminal-but-unreclaimed
+/// holder of the path → completion record of the most recently reclaimed
+/// holder → (for UUIDs) registered entry → completion record.
+///
+/// "Not registered" is only ever reported for identifiers with no record
+/// at all: an agent that completed and was reclaimed resolves to
+/// [`ResolvedAgent::Reclaimed`] so callers tell the truth about it
+/// ("already completed at \<ts\>") instead of denying it ever existed.
+pub(super) fn resolve_agent(
     registry: &Arc<RwLock<AgentRegistry>>,
     identifier: &str,
-) -> Result<Uuid, ToolError> {
-    if let Some(entry) = registry.read().get_by_path(identifier) {
-        return Ok(entry.id);
+) -> Result<ResolvedAgent, ToolError> {
+    let reg = registry.read();
+    if let Some(entry) = reg.get_by_path(identifier) {
+        return Ok(ResolvedAgent::Live(entry));
+    }
+    if let Some(entry) = reg.get_terminal_by_path(identifier) {
+        return Ok(ResolvedAgent::Live(entry));
+    }
+    if let Some(tombstone) = reg.tombstone_by_path(identifier) {
+        return Ok(ResolvedAgent::Reclaimed(tombstone));
     }
     if let Ok(uuid) = Uuid::parse_str(identifier) {
-        if registry.read().get(uuid).is_some() {
-            return Ok(uuid);
+        if let Some(entry) = reg.get(uuid) {
+            return Ok(ResolvedAgent::Live(entry));
+        }
+        if let Some(tombstone) = reg.tombstone(uuid) {
+            return Ok(ResolvedAgent::Reclaimed(tombstone));
         }
         return Err(ToolError::ExecutionFailed {
-            reason: format!("agent id '{identifier}' not registered"),
+            reason: format!(
+                "agent id '{identifier}' is not registered and has no completion \
+                 record — no agent with this id has run in this session"
+            ),
         });
     }
     Err(ToolError::ExecutionFailed {
-        reason: format!("could not resolve agent '{identifier}' by path or UUID"),
+        reason: format!(
+            "could not resolve agent '{identifier}' by path or UUID: no agent with \
+             this identifier is registered or has completed in this session"
+        ),
     })
 }
 

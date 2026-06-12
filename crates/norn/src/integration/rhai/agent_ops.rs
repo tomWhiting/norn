@@ -129,31 +129,35 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             })
             .await;
 
+            // Terminal transitions share the single-owner invariant with the
+            // spawn/fork wrappers: this task is the sole owner of the child's
+            // terminal sequence, so a failed transition means another actor
+            // mutated the entry and is logged as the violation it is.
             match &outcome {
                 Ok(_) => {
                     let mut reg = agent_registry.write();
-                    if let Err(e) = reg.mark_completing(real_id) {
-                        tracing::warn!(
-                            child_id = %real_id,
-                            error = %e,
-                            "spawn_agent: mark_completing failed"
-                        );
-                    } else if let Err(e) = reg.mark_completed(real_id) {
-                        tracing::warn!(
-                            child_id = %real_id,
-                            error = %e,
-                            "spawn_agent: mark_completed failed"
+                    let transition = reg
+                        .mark_completing(real_id)
+                        .and_then(|()| reg.mark_completed(real_id));
+                    if let Err(e) = transition {
+                        crate::tools::agent::reclaim::log_terminal_transition_violation(
+                            &reg,
+                            real_id,
+                            "rhai spawn_agent",
+                            &e,
                         );
                     }
                 }
-                Err(e) => {
+                Err(run_error) => {
                     let mut reg = agent_registry.write();
-                    if let Err(mark_err) = reg.mark_failed(real_id) {
-                        tracing::warn!(
-                            child_id = %real_id,
-                            error = %mark_err,
-                            run_error = %e,
-                            "spawn_agent: mark_failed failed",
+                    if let Err(e) = reg.mark_failed(real_id) {
+                        tracing::error!(child_id = %real_id, run_error = %run_error,
+                            "rhai spawn_agent: child run failed and its terminal mark was stolen");
+                        crate::tools::agent::reclaim::log_terminal_transition_violation(
+                            &reg,
+                            real_id,
+                            "rhai spawn_agent",
+                            &e,
                         );
                     }
                 }

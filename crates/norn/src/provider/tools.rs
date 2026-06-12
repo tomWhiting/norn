@@ -1,10 +1,14 @@
-//! Provider-facing tool definitions and capability-based projection.
+//! Provider-facing tool definitions and capabilities.
+//!
+//! The capability-based projection of registry tools into this surface
+//! lives in [`super::surface`] — the single resolution step the provider
+//! request, the tool catalog, and the system-prompt tools section all
+//! derive from.
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use super::request::ToolDefinition;
-use crate::tools::web::WEB_SEARCH_TOOL_NAME;
 
 /// Provider capabilities that affect request construction.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -135,90 +139,4 @@ pub enum WebSearchContentType {
     Text,
     /// Search page image content.
     Image,
-}
-
-/// Projects local runtime tools into the provider-facing tool surface.
-#[must_use]
-pub fn resolve_provider_tools(
-    tools: &[ToolDefinition],
-    capabilities: ProviderCapabilities,
-) -> Vec<ProviderToolDefinition> {
-    tools
-        .iter()
-        .cloned()
-        .map(|tool| {
-            if capabilities.hosted_web_search && tool.name == WEB_SEARCH_TOOL_NAME {
-                ProviderToolDefinition::Hosted(HostedToolDefinition::WebSearch(
-                    HostedWebSearchTool::default(),
-                ))
-            } else {
-                ProviderToolDefinition::Function(tool)
-            }
-        })
-        .collect()
-}
-
-#[cfg(test)]
-#[allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::clone_on_ref_ptr,
-    clippy::no_effect_underscore_binding,
-    clippy::useless_vec,
-    clippy::missing_const_for_fn,
-    clippy::duration_suboptimal_units,
-    clippy::needless_pass_by_value,
-    clippy::similar_names,
-    clippy::redundant_closure_for_method_calls,
-    clippy::used_underscore_items,
-    clippy::unnecessary_literal_bound,
-    clippy::items_after_statements,
-    clippy::err_expect,
-    clippy::get_unwrap,
-    clippy::doc_markdown,
-    clippy::unnecessary_trailing_comma,
-    clippy::uninlined_format_args,
-    clippy::wildcard_enum_match_arm,
-    clippy::collapsible_if,
-    clippy::match_wildcard_for_single_variants
-)]
-mod tests {
-    use super::*;
-
-    fn tool(name: &str) -> ToolDefinition {
-        ToolDefinition {
-            name: name.to_owned(),
-            description: "tool".to_owned(),
-            parameters: serde_json::json!({"type": "object"}),
-        }
-    }
-
-    #[test]
-    fn keeps_web_search_as_function_without_provider_capability() {
-        let resolved = resolve_provider_tools(
-            &[tool(WEB_SEARCH_TOOL_NAME)],
-            ProviderCapabilities::default(),
-        );
-        assert!(matches!(
-            resolved.as_slice(),
-            [ProviderToolDefinition::Function(function)] if function.name == WEB_SEARCH_TOOL_NAME
-        ));
-    }
-
-    #[test]
-    fn converts_web_search_to_hosted_when_provider_supports_it() {
-        let resolved = resolve_provider_tools(
-            &[tool("read_file"), tool(WEB_SEARCH_TOOL_NAME)],
-            ProviderCapabilities::openai_responses(),
-        );
-
-        assert!(matches!(
-            resolved.as_slice(),
-            [
-                ProviderToolDefinition::Function(function),
-                ProviderToolDefinition::Hosted(HostedToolDefinition::WebSearch(_)),
-            ] if function.name == "read_file"
-        ));
-    }
 }

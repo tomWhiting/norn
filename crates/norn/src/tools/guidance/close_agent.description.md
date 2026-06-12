@@ -1,1 +1,1 @@
-Request that the named agent wrap up by transitioning its registry status to Completing. The agent's loop observes the status change and concludes at its next check.
+Shut down a running agent you spawned or forked, plus its descendants. For children whose handle you hold, the close cancels the child's run and waits for its outcome to be recorded; the close reports per-agent results.

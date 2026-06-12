@@ -610,6 +610,7 @@ mod tests {
             model: "claude".to_string(),
             spawned_at: Utc::now(),
             parent_id: Some(Uuid::new_v4()),
+            completed_at: None,
         };
         let line = format_status_line(&entry, None, 0, 0, Utc::now());
         assert!(

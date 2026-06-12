@@ -10,6 +10,7 @@
 use parking_lot::RwLock;
 use uuid::Uuid;
 
+use super::reclaim::log_terminal_transition_violation;
 use crate::agent::output::AgentStopReason;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::error::NornError;
@@ -22,33 +23,27 @@ use crate::provider::usage::Usage;
 /// [`HookOutcome::Block`](crate::integration::hooks::HookOutcome::Block)
 /// can suppress the registry transition while the outcome summary
 /// still surfaces on the result channel.
+///
+/// The wrapper is the sole owner of a live child's terminal transition
+/// (see [`super::reclaim`]), so a transition failure here is an
+/// invariant violation: it is logged loudly via
+/// [`log_terminal_transition_violation`] but never propagated — the
+/// wrapper still owes result delivery.
 pub(super) fn mark_terminal_in_registry(
     registry: &RwLock<AgentRegistry>,
     child_id: Uuid,
     terminal_status: AgentStatus,
 ) {
+    let mut reg = registry.write();
     if terminal_status == AgentStatus::Completed {
-        let mut reg = registry.write();
         if let Err(e) = reg.mark_completing(child_id) {
-            tracing::warn!(
-                child_id = %child_id,
-                error = %e,
-                "spawn_agent: mark_completing failed",
-            );
+            log_terminal_transition_violation(&reg, child_id, "spawn_agent", &e);
         }
         if let Err(e) = reg.mark_completed(child_id) {
-            tracing::warn!(
-                child_id = %child_id,
-                error = %e,
-                "spawn_agent: mark_completed failed",
-            );
+            log_terminal_transition_violation(&reg, child_id, "spawn_agent", &e);
         }
-    } else if let Err(mark_err) = registry.write().mark_failed(child_id) {
-        tracing::warn!(
-            child_id = %child_id,
-            error = %mark_err,
-            "spawn_agent: mark_failed failed after sub-agent failure",
-        );
+    } else if let Err(e) = reg.mark_failed(child_id) {
+        log_terminal_transition_violation(&reg, child_id, "spawn_agent", &e);
     }
 }
 

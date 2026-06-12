@@ -536,18 +536,7 @@ fn register_root_agent(
 fn collect_tool_definitions(
     bundle: &RuntimeBundle,
 ) -> Vec<norn::provider::request::ToolDefinition> {
-    let names: Vec<String> = bundle.registry.names().map(str::to_owned).collect();
-    let mut definitions = Vec::with_capacity(names.len());
-    for name in names {
-        if let Some(tool) = bundle.registry.get(&name) {
-            definitions.push(norn::provider::request::ToolDefinition {
-                name: tool.name().to_owned(),
-                description: tool.description().to_owned(),
-                parameters: norn::tool::wrap_schema_with_envelope(tool.input_schema()),
-            });
-        }
-    }
-    definitions
+    norn::provider::collect_function_definitions(&bundle.registry, None)
 }
 
 /// Flush the store's persistence sink: pending durability work and the

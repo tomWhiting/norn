@@ -7,7 +7,12 @@
 //! reclaimed by exactly one owner per launch path:
 //!
 //! - **`close_agent`** — the closer reclaims immediately (it owns the
-//!   lifecycle end it forced).
+//!   lifecycle end it forced). For children it holds the handle of, the
+//!   closer aborts the wrapper task and *joins* it before touching the
+//!   registry, so the wrapper and the closer can never race over the
+//!   terminal transition. Reclamation leaves an
+//!   [`AgentTombstone`](crate::agent::registry::AgentTombstone) so the
+//!   completion stays reportable.
 //! - **TUI / external status observers** — when *no*
 //!   [`ReclaimOnResultDelivery`] marker is installed, naturally-finished
 //!   children stay in the registry with terminal status so a polling
@@ -33,16 +38,38 @@
 //!   reclaims in this mode (there was no delivery to anchor it to), even
 //!   when the marker is installed.
 //!
+//! # Single-owner terminal sequence
+//!
+//! The spawn/fork completion wrapper is the **sole owner** of a
+//! naturally-finishing child's terminal sequence: registry mark →
+//! completion event → lifecycle emit → result delivery → status broadcast
+//! → reclamation, strictly in that order on the wrapper task. The
+//! launching tool never reclaims from its own execute path; instead it
+//! signals the wrapper through an explicit handshake (a oneshot ack sent
+//! after [`AgentHandles::insert`](super::handle::AgentHandles::insert)),
+//! and the wrapper defers its reclamation pass until that ack arrives —
+//! so the wrapper is guaranteed to find the handle even when the child
+//! finishes before the tool has stored it. Nothing infers lifecycle
+//! state from a registry entry's *absence*: an entry missing at
+//! terminal-transition time is an invariant violation and is logged as
+//! an error, never silently tolerated.
+//!
 //! In `SessionTree` mode the child's audit trail outlives reclamation —
 //! the handle's `EventStore` aliases the tree's branch store. In
 //! standalone mode the delivered result message is the parent's record;
-//! dropping the handle releases the child's private store.
+//! dropping the handle releases the child's private store. Either way
+//! the registry retains an
+//! [`AgentTombstone`](crate::agent::registry::AgentTombstone) so
+//! coordination tools can report the completion honestly for the rest of
+//! the session.
+
+use std::sync::Arc;
 
 use parking_lot::RwLock;
 use uuid::Uuid;
 
 use super::handle::AgentHandles;
-use crate::agent::registry::AgentRegistry;
+use crate::agent::registry::{AgentRegistry, StatusTransitionError};
 
 /// Marker [`ToolContext`](crate::tool::context::ToolContext) extension:
 /// reclaim a naturally-finished child's registry entry and parent-held
@@ -57,14 +84,74 @@ use crate::agent::registry::AgentRegistry;
 /// ownership rule.
 pub struct ReclaimOnResultDelivery;
 
+/// Wrapper-side half of the launch handshake for delivery-anchored
+/// reclamation.
+///
+/// Built by the launching tool when [`ReclaimOnResultDelivery`] is in
+/// force: the parent's handle map to reclaim from, plus the receiver the
+/// tool resolves immediately after
+/// [`AgentHandles::insert`](super::handle::AgentHandles::insert) has
+/// stored the child's handle. The completion wrapper awaits
+/// [`Self::handle_installed`] before its reclamation pass, so even a
+/// child that finishes before the tool has stored the handle is
+/// reclaimed by exactly one owner — the wrapper — with the handle
+/// guaranteed to be present. The receiver completes with an error only
+/// when the tool's execute was torn down before storing the handle
+/// (e.g. the parent task was cancelled mid-launch); the wrapper then
+/// reclaims the registry entry alone.
+pub(super) struct ReclaimHandshake {
+    /// The launching agent's handle map.
+    pub(super) handles: Arc<AgentHandles>,
+    /// Resolved by the launching tool once the child's handle is stored.
+    pub(super) handle_installed: tokio::sync::oneshot::Receiver<()>,
+}
+
+/// Log a failed terminal transition as the invariant violation it is.
+///
+/// The completion wrapper is the sole owner of a live child's terminal
+/// transition: `close_agent` joins the wrapper before touching the
+/// registry, [`SpawnGuard`](crate::agent::registry::SpawnGuard) rollback
+/// only ever removes `Spawning` reservations, and
+/// [`AgentRegistry::remove_terminal`] never removes non-terminal
+/// entries. A transition failure therefore means another actor mutated
+/// an entry it does not own; the log carries the entry's
+/// [`AgentTombstone`](crate::agent::registry::AgentTombstone) when one
+/// exists so the conflicting owner is identifiable. `surface` names the
+/// launch surface (`"fork"` / `"spawn_agent"`) for log correlation.
+pub(crate) fn log_terminal_transition_violation(
+    registry: &AgentRegistry,
+    child_id: Uuid,
+    surface: &str,
+    error: &StatusTransitionError,
+) {
+    if let Some(tombstone) = registry.tombstone(child_id) {
+        tracing::error!(
+            child_id = %child_id,
+            error = %error,
+            tombstone_path = %tombstone.path,
+            tombstone_status = ?tombstone.status,
+            tombstone_completed_at = %tombstone.completed_at,
+            "{surface}: invariant violation: terminal transition failed — the entry \
+             was already terminally recorded and reclaimed by another actor",
+        );
+    } else {
+        tracing::error!(
+            child_id = %child_id,
+            error = %error,
+            "{surface}: invariant violation: terminal transition failed — the \
+             completion wrapper is the sole owner of this entry's terminal sequence",
+        );
+    }
+}
+
 /// Reclaim one delivered child: drop the parent-held
 /// [`AgentHandle`](super::handle::AgentHandle) (if still tracked) and
-/// remove the child's terminal registry entry.
+/// remove the child's terminal registry entry, leaving an
+/// [`AgentTombstone`](crate::agent::registry::AgentTombstone).
 ///
-/// Idempotent and safe to call from both the child wrapper task and the
-/// spawning tool's execute path — whichever runs last completes the
-/// reclamation, which is what closes the insert/finish race between
-/// `AgentHandles::insert` and a fast-finishing child.
+/// Called exclusively from the spawn/fork completion wrapper, after the
+/// terminal mark, result delivery, and the handle-installed ack from the
+/// launching tool (see the module docs). Idempotent —
 /// [`AgentRegistry::remove_terminal`] never removes non-terminal
 /// entries, so a hook-suppressed (still Active) child is never reclaimed
 /// by accident.
@@ -78,19 +165,4 @@ pub(super) fn reclaim_delivered_child(
     // EventStore.
     drop(handles.remove(child_id));
     registry.write().remove_terminal(child_id);
-}
-
-/// True when the registry no longer needs the parent to keep the child
-/// observable: the entry is terminal (awaiting reclamation) or already
-/// reclaimed. Used by the spawning tool's execute path to close the race
-/// where the child finishes — and the wrapper's own reclamation runs —
-/// before `AgentHandles::insert` has stored the handle.
-pub(super) fn entry_terminal_or_reclaimed(
-    registry: &RwLock<AgentRegistry>,
-    child_id: Uuid,
-) -> bool {
-    registry
-        .read()
-        .get(child_id)
-        .is_none_or(|entry| entry.status.is_terminal())
 }

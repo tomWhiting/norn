@@ -14,10 +14,15 @@ pub use self::request::{
     AssistantToolCall, Message, MessageRole, ProviderConfig, ProviderOptions, ProviderRequest,
     ReasoningEffort, ReasoningSummary, SecretString, ToolDefinition,
 };
+pub use self::surface::{
+    ResolvedTool, ResolvedToolSurface, ToolPresentation, collect_function_definitions,
+    hosted_surface_description, hosted_surface_usage, hosted_tools_prompt_section,
+    reframe_catalog_entries, reframe_prompt_entries, resolve_tool_presentation,
+};
 pub use self::tools::{
     HostedToolDefinition, HostedWebSearchTool, ProviderCapabilities, ProviderToolDefinition,
     WebSearchContentType, WebSearchContextSize, WebSearchFilters, WebSearchUserLocation,
-    WebSearchUserLocationType, resolve_provider_tools,
+    WebSearchUserLocationType,
 };
 pub use self::traits::{Provider, ProviderStream};
 pub use self::usage::Usage;
@@ -31,6 +36,7 @@ pub mod mock;
 pub mod openai;
 pub mod openai_oauth;
 pub mod request;
+pub mod surface;
 pub mod tools;
 pub mod traits;
 pub mod usage;

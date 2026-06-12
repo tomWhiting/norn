@@ -36,7 +36,7 @@ use crate::provider::events::StopReason;
 use crate::provider::request::{
     AssistantToolCall, Message, MessageRole, ProviderRequest, ToolDefinition,
 };
-use crate::provider::tools::resolve_provider_tools;
+use crate::provider::surface::{ResolvedToolSurface, hosted_tools_prompt_section};
 use crate::provider::traits::Provider;
 use crate::provider::usage::Usage;
 use crate::rules::types::RuleInjection;
@@ -316,6 +316,17 @@ async fn run_agent_step_inner(
         loop_context.inject_environment_section();
         loop_context.inject_collaboration_mode();
 
+        // Provider tool surface, recomputed every iteration from the live
+        // provider's capabilities — the same cadence as the wire resolution
+        // below — so a provider rebind (or a launch path whose static
+        // prompt was assembled before the provider was bound) can never
+        // leave a stale function-style framing of a hosted tool standing.
+        // `None` (nothing hosted) injects nothing: function mode is what
+        // the static tools section already describes.
+        if let Some(section) = hosted_tools_prompt_section(&all_tools, provider.capabilities()) {
+            loop_context.append_system_section(section);
+        }
+
         // Evaluate runtime prompt commands before applying Before-timing
         // rule injections so their stdout becomes part of the dynamic
         // section stack the rest of this iteration builds on. Failures are
@@ -357,7 +368,9 @@ async fn run_agent_step_inner(
             all_tools.clone()
         };
 
-        let provider_tools = resolve_provider_tools(&iteration_tools, provider.capabilities());
+        let provider_tools =
+            ResolvedToolSurface::resolve(&iteration_tools, provider.capabilities())
+                .provider_definitions();
 
         // R3 + R4 + REVIEW 6b: token estimation, the token-warning event,
         // the auto-compaction trigger (including the LLM summarization
@@ -4526,6 +4539,130 @@ mod tests {
                     .is_some_and(|c| c.contains("seed question 0"))
             }),
             "compacted history must not be replayed",
+        );
+    }
+
+    // -- Provider tool surface: wire and prompt recomputed per request
+    //    from the live provider's capabilities --------------------------
+
+    fn web_search_tool_def() -> ToolDefinition {
+        ToolDefinition {
+            name: "web_search".to_string(),
+            description: "Search the public web.".to_string(),
+            parameters: serde_json::json!({"type": "object"}),
+        }
+    }
+
+    #[tokio::test]
+    async fn hosted_capability_swaps_wire_tool_and_injects_surface_section() {
+        use crate::provider::tools::{
+            HostedToolDefinition, ProviderCapabilities, ProviderToolDefinition,
+        };
+
+        let provider = MockProvider::with_capabilities(
+            vec![vec![text_delta("done"), done_event(StopReason::EndTurn)]],
+            ProviderCapabilities {
+                hosted_web_search: true,
+                ..ProviderCapabilities::default()
+            },
+        );
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+
+        let result = run_step(
+            &provider,
+            &executor,
+            &store,
+            &[read_file_tool_def(), web_search_tool_def()],
+            None,
+            &default_config(),
+            None,
+        )
+        .await;
+        assert_completed(result);
+
+        let requests = provider.requests().expect("requests recorded");
+        let request = &requests[0];
+        assert!(
+            matches!(
+                request.tools.as_slice(),
+                [
+                    ProviderToolDefinition::Function(read),
+                    ProviderToolDefinition::Hosted(HostedToolDefinition::WebSearch(_)),
+                ] if read.name == "read_file"
+            ),
+            "hosted-capable provider must receive the hosted replacement: {:?}",
+            request.tools,
+        );
+        // The per-iteration surface note rides on the dynamic-context
+        // Developer message, never on the cache-stable System message.
+        assert!(
+            request.messages.iter().any(|m| {
+                m.role == MessageRole::Developer
+                    && m.content
+                        .as_deref()
+                        .is_some_and(|c| c.contains("# Provider Tool Surface"))
+            }),
+            "the hosted surface note must reach the request's developer context",
+        );
+        assert!(
+            !request.messages.iter().any(|m| {
+                m.role == MessageRole::System
+                    && m.content
+                        .as_deref()
+                        .is_some_and(|c| c.contains("# Provider Tool Surface"))
+            }),
+            "the surface note is dynamic — the System message stays cache-stable",
+        );
+    }
+
+    #[tokio::test]
+    async fn function_capability_keeps_wire_tool_and_omits_surface_section() {
+        use crate::provider::tools::ProviderToolDefinition;
+
+        let provider = MockProvider::new(vec![vec![
+            text_delta("done"),
+            done_event(StopReason::EndTurn),
+        ]]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+
+        let result = run_step(
+            &provider,
+            &executor,
+            &store,
+            &[read_file_tool_def(), web_search_tool_def()],
+            None,
+            &default_config(),
+            None,
+        )
+        .await;
+        assert_completed(result);
+
+        let requests = provider.requests().expect("requests recorded");
+        let request = &requests[0];
+        assert!(
+            request
+                .tools
+                .iter()
+                .all(|tool| matches!(tool, ProviderToolDefinition::Function(_))),
+            "without the capability every tool is a callable function: {:?}",
+            request.tools,
+        );
+        assert!(
+            request.tools.iter().any(|tool| matches!(
+                tool,
+                ProviderToolDefinition::Function(function) if function.name == "web_search"
+            )),
+            "web_search stays on the wire as a function tool",
+        );
+        assert!(
+            !request.messages.iter().any(|m| {
+                m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("# Provider Tool Surface"))
+            }),
+            "function mode needs no surface correction",
         );
     }
 }

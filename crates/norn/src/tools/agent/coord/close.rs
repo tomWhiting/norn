@@ -7,7 +7,7 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::helpers::sender_label;
-use crate::agent::registry::AgentRegistry;
+use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::error::ToolError;
 use crate::r#loop::inbound::{ChannelMessage, DeliveryMode};
 use crate::tool::context::ToolContext;
@@ -15,19 +15,46 @@ use crate::tool::envelope::ToolEnvelope;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 use crate::tools::agent::handle::AgentHandles;
-use crate::tools::agent::infra::{infra_from, resolve_agent_id};
+use crate::tools::agent::infra::{ResolvedAgent, infra_from, resolve_agent};
 
 /// Recursively shut down a target agent and every descendant.
 ///
 /// DFS post-order — leaves transition first, then their parents, finally
-/// the target. For direct children whose
-/// [`crate::tools::agent::handle::AgentHandle`] the parent holds, the
+/// the target. (The registry's spawn-depth-one policy means a subtree is
+/// at most the target plus its direct children.) For agents whose
+/// [`crate::tools::agent::handle::AgentHandle`] the closer holds, the
 /// shutdown sends a best-effort Steer message via the child's
-/// [`crate::r#loop::inbound::InboundChannel`] then aborts the child's
-/// task. Indirect descendants (whose handles live on intermediate agents'
-/// contexts) are marked in the registry; the aborted parent will stop
-/// dispatching new work to them.
+/// [`crate::r#loop::inbound::InboundChannel`], triggers the handle's
+/// cooperative [`CancellationToken`](tokio_util::sync::CancellationToken)
+/// — which terminates the child's *run* at its next cancellation boundary
+/// — and joins the wrapper task before touching the registry, so the
+/// closer and the completion wrapper can never race over an entry's
+/// terminal sequence and the wrapper records the run's real outcome
+/// itself. Agents the closer holds no handle for cannot be force-stopped
+/// and are reported `"unreachable"` without touching their live registry
+/// entry; already-terminal entries are reclaimed without rewriting their
+/// recorded outcome.
+///
+/// Closing an agent that already completed and was reclaimed is a **soft
+/// success**: the desired post-condition (the agent is not running)
+/// already holds, so the tool reports `already_completed` with the
+/// recorded terminal status and timestamp instead of an error — an error
+/// would only push the model into pointless retries against an agent
+/// that no longer exists.
 pub struct CloseAgentTool;
+
+/// Stable `snake_case` label for a status embedded in human-readable
+/// messages (the JSON fields use serde's `snake_case` serialization
+/// directly).
+fn status_label(status: AgentStatus) -> &'static str {
+    match status {
+        AgentStatus::Spawning => "spawning",
+        AgentStatus::Active => "active",
+        AgentStatus::Completing => "completing",
+        AgentStatus::Completed => "completed",
+        AgentStatus::Failed => "failed",
+    }
+}
 
 impl CloseAgentTool {
     /// Constructs the tool.
@@ -66,17 +93,71 @@ fn collect_subtree(registry: &AgentRegistry, root: Uuid) -> Vec<Uuid> {
     order
 }
 
-/// Per-agent shutdown — best-effort steer, abort if a handle is held, and
-/// terminal registry transitions. Failures during these steps are surfaced
-/// in the returned status label rather than panicked on.
+/// Per-agent shutdown. Failures during these steps are surfaced in the
+/// returned status label rather than panicked on.
 ///
-/// An entry that is *already* terminal (the child finished — or failed —
-/// on its own before the close reached it) is treated as reclaim-only:
-/// its recorded outcome is never rewritten (terminal statuses are
-/// immutable; a Failed child must not be resurrected as Completed), the
-/// entry is simply removed. The status check and the transitions run
-/// under one write lock so a concurrently-finishing child cannot slip
-/// between them.
+/// **With a held handle** — best-effort Steer, then trigger the handle's
+/// cooperative cancellation token and **join the wrapper before touching
+/// the registry**. The token is the same one the launching tool threaded
+/// into the child's [`run_agent_step`](crate::r#loop::runner::run_agent_step)
+/// request, so cancelling it terminates the *run itself*: the loop
+/// observes the token at the top of every iteration and races it
+/// (cancel-priority, `biased` select) against the in-flight provider
+/// call, so even a hung provider request yields immediately. The run
+/// returns `AgentStepResult::Cancelled` and the wrapper — the sole owner
+/// of the terminal sequence — records the run's **real** outcome:
+/// registry `Failed`, typed `AgentStopReason::Cancelled` on the lifecycle
+/// event and result channel, status broadcast, reclamation if anchored.
+/// After the join the entry is therefore normally terminal and the
+/// closer's job is reclaim-only (`"reclaimed"`).
+///
+/// The wrapper is **never aborted**: aborting it would drop the wrapper
+/// future at `inner.await`, detaching the inner run task to keep
+/// executing (provider calls, tool executions, file mutations) with no
+/// observer — the exact defect cancellation exists to prevent. The join
+/// is deliberately unbounded-but-cancellation-backed; no timeout is
+/// applied because none is configured anywhere (inventing one is
+/// forbidden) and every await on the wrapper's post-cancellation path is
+/// one the runtime already depends on terminating: the provider race
+/// yields to the token instantly, a tool already executing finishes in
+/// full by the loop's documented cancellation contract, hooks are
+/// operator code the loop awaits inline on every run anyway, and the
+/// result-channel send is bounded-buffer backpressure into the closing
+/// parent's own channel — under the concurrent-children cap and the
+/// loop's per-iteration drains a full buffer is unreachable short of
+/// runaway spawning, and even then the close stalls observably rather
+/// than detaching anything (a `try_send` that dropped the result on a
+/// full buffer would be a silent failure, so blocking is correct).
+///
+/// **Without a handle** — the closer cannot stop the target's task, so
+/// it must not touch a live entry either: marking a still-running agent
+/// terminal would falsify the record, and removing the entry would
+/// steal the terminal transition its completion wrapper still owes.
+/// Live no-handle targets are reported `"unreachable"`.
+///
+/// An entry that is *already* terminal is treated as reclaim-only: its
+/// recorded outcome is never rewritten (terminal statuses are immutable;
+/// a Failed child must not be resurrected as Completed). The status
+/// check and the transitions run under one write lock so a concurrent
+/// reclaimer cannot slip between them. Reclamation leaves a tombstone,
+/// so an entry that vanished between resolution and shutdown reports
+/// `"already_completed"` from its completion record.
+///
+/// **Entry still live after the join** (`"force_failed"`) — the wrapper
+/// ended without performing its terminal mark: it panicked / was killed
+/// externally (join error), or it exited with the transition suppressed
+/// by a stop-hook Block. The closer now owns this lifecycle end, but it
+/// cannot know the outcome the wrapper never recorded — so it records
+/// the most truthful status available: **`Failed`**, never `Completed`
+/// (a forced shutdown with an unknown outcome must not masquerade as a
+/// success). A dedicated "forced shutdown, outcome unknown" variant on
+/// [`AgentStatus`] was considered and rejected for this fix: the enum is
+/// matched exhaustively by external observers (norn-tui's status panel
+/// icons/colours/hold-window logic) and serialized into tombstones and
+/// tool outputs, so widening it ripples far beyond the close path.
+/// `Failed` is the conservative truth — the run did not verifiably
+/// complete — and the close `reason` is carried on the tool output and
+/// the log line below.
 async fn shutdown_one(
     registry: &parking_lot::RwLock<AgentRegistry>,
     handles: Option<&AgentHandles>,
@@ -84,9 +165,9 @@ async fn shutdown_one(
     reason: Option<&str>,
     sender_path: &str,
 ) -> &'static str {
-    if let Some(h) = handles
-        && let Some(handle) = h.remove(id)
-    {
+    let held = handles.and_then(|h| h.remove(id));
+    let had_handle = held.is_some();
+    if let Some(handle) = held {
         let body = reason.unwrap_or("close_agent").to_string();
         let msg = ChannelMessage {
             author: sender_path.to_string(),
@@ -95,34 +176,73 @@ async fn shutdown_one(
             timestamp: Utc::now(),
         };
         // Send is best-effort: the child may already have terminated and
-        // dropped its receiver. We still abort the join handle below.
+        // dropped its receiver. The cancellation below terminates the run
+        // either way.
         let _ = handle.inbound_tx.send(msg).await;
-        handle.join_handle.abort();
+        // Terminate the run cooperatively, then join the wrapper so it
+        // completes its own terminal sequence with the run's real
+        // outcome. See the function docs for why this join is unbounded
+        // and why the wrapper is never aborted.
+        handle.cancel.cancel();
+        if let Err(join_error) = handle.join_handle.await {
+            // The wrapper never aborts itself and workspace code denies
+            // panics, so a join error means a dependency panicked inside
+            // the wrapper or something external killed the task — either
+            // way the entry below is still live and the closer must own
+            // the forced-failure mark.
+            tracing::error!(
+                agent_id = %id,
+                error = %join_error,
+                "close_agent: child wrapper task died without completing its \
+                 terminal sequence",
+            );
+        }
     }
 
     let mut reg = registry.write();
     let Some(entry) = reg.get(id) else {
-        // Agent already gone from the registry — nothing more to do.
+        // Gone from the registry: reclaimed by its own completion
+        // wrapper (or another closer) between resolution and here. The
+        // tombstone proves it finished; its absence would mean an entry
+        // vanished without a terminal record — an invariant violation.
+        if reg.tombstone(id).is_some() {
+            return "already_completed";
+        }
+        tracing::error!(
+            agent_id = %id,
+            "close_agent: invariant violation: target vanished from the registry \
+             without a completion record",
+        );
         return "missing";
     };
     if entry.status.is_terminal() {
-        // Already finished on its own: reclaim without rewriting the
-        // recorded outcome.
+        // Terminal — either it finished on its own earlier, or the
+        // cancellation above let the wrapper record the run's real
+        // outcome. Reclaim without rewriting it.
         reg.remove_terminal(id);
         return "reclaimed";
     }
-    if let Err(e) = reg.mark_completing(id) {
-        tracing::warn!(agent_id = %id, error = %e, "close_agent: mark_completing failed");
+    if !had_handle {
+        // Live, and the closer cannot stop its task: leave the entry to
+        // its lifecycle owner and say so.
+        return "unreachable";
+    }
+    // The wrapper was joined above and ended without its terminal mark
+    // (see the function docs). The closer owns this lifecycle end but
+    // does not know the run's outcome, so it records the honest
+    // conservative status — Failed — and reclaims immediately.
+    tracing::warn!(
+        agent_id = %id,
+        reason = reason.unwrap_or("close_agent"),
+        "close_agent: wrapper ended without a terminal mark; recording forced \
+         shutdown as Failed (outcome unknown)",
+    );
+    if let Err(e) = reg.mark_failed(id) {
+        tracing::warn!(agent_id = %id, error = %e, "close_agent: mark_failed failed");
         return "failed";
     }
-    if let Err(e) = reg.mark_completed(id) {
-        tracing::warn!(agent_id = %id, error = %e, "close_agent: mark_completed failed");
-        return "failed";
-    }
-    // The closer owns this agent's lifecycle end: reclaim the terminal
-    // entry immediately rather than leaving it for a display hold window.
     reg.remove_terminal(id);
-    "completed"
+    "force_failed"
 }
 
 #[async_trait]
@@ -177,7 +297,33 @@ impl Tool for CloseAgentTool {
                 }
             })?;
         let infra = infra_from(ctx)?;
-        let target_id = resolve_agent_id(&infra.registry, &args.agent_id)?;
+        let target_id = match resolve_agent(&infra.registry, &args.agent_id)? {
+            ResolvedAgent::Live(entry) => entry.id,
+            // Soft success: the desired post-condition — the agent is not
+            // running — already holds, and the registry retains the real
+            // outcome. Reporting this as an error would only push the
+            // model into pointless retries against an agent that no
+            // longer exists; reporting it as a plain success would hide
+            // that nothing was actually shut down. So: success, with the
+            // recorded completion spelled out.
+            ResolvedAgent::Reclaimed(tombstone) => {
+                let completed_at = tombstone.completed_at.to_rfc3339();
+                return Ok(ToolOutput::success(serde_json::json!({
+                    "agent_id": tombstone.id.to_string(),
+                    "path": tombstone.path,
+                    "already_completed": true,
+                    "status": tombstone.status,
+                    "completed_at": completed_at,
+                    "reason": args.reason,
+                    "message": format!(
+                        "agent '{}' already {} at {} and was reclaimed; nothing to close",
+                        args.agent_id,
+                        status_label(tombstone.status),
+                        completed_at,
+                    ),
+                })));
+            }
+        };
         let handles = ctx.get_extension::<AgentHandles>();
         let handles_ref = handles.as_deref();
 
@@ -248,10 +394,13 @@ mod tests {
         let child_a = register_agent(&registry, "/root/child-a", Some(root));
         let child_b = register_agent(&registry, "/root/child-b", Some(root));
 
-        // Parent holds AgentHandles for its direct children.
+        // The closer holds AgentHandles for every agent in the subtree —
+        // close only force-stops agents whose handles it holds.
         let handles = Arc::new(AgentHandles::new());
+        let (handle_root, _tx_root, _rx_root) = synthetic_handle(root);
         let (handle_a, _tx_a, _rx_a) = synthetic_handle(child_a);
         let (handle_b, _tx_b, _rx_b) = synthetic_handle(child_b);
+        handles.insert(handle_root);
         handles.insert(handle_a);
         handles.insert(handle_b);
 
@@ -288,15 +437,24 @@ mod tests {
         assert!(reg.get_by_path("/root").is_none(), "root path freed");
     }
 
-    /// R3 degenerate case: a leaf with no children still transitions
-    /// cleanly through Completing → Completed.
+    /// Forced-close record, wrapper-died-pre-mark window: the synthetic
+    /// wrapper exits on cancellation without ever marking the registry, so
+    /// after the join the entry is still live and the closer owns the
+    /// lifecycle end. It cannot know the outcome the wrapper never
+    /// recorded, so it must record `Failed` — never `Completed` — report
+    /// the agent as `"force_failed"`, and leave a `Failed` tombstone.
     #[tokio::test]
     async fn close_agent_on_leaf_no_children_works() {
         let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
         let leaf = register_agent(&registry, "/leaf", None);
 
+        let handles = Arc::new(AgentHandles::new());
+        let (handle, _tx, _rx) = synthetic_handle(leaf);
+        handles.insert(handle);
+
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
+        ctx.insert_extension(handles);
 
         let tool = CloseAgentTool::new();
         let envelope = envelope_for(
@@ -308,10 +466,117 @@ mod tests {
         let shut_down = out.content["shut_down"].as_array().expect("array");
         assert_eq!(shut_down.len(), 1);
         assert_eq!(shut_down[0]["agent_id"], leaf.to_string());
-        assert_eq!(shut_down[0]["status"], "completed");
+        assert_eq!(
+            shut_down[0]["status"], "force_failed",
+            "a wrapper that died before its terminal mark has an unknown \
+             outcome — close must not report it completed",
+        );
 
-        // Terminal cleanup removes the closed leaf from the registry.
-        assert!(registry.read().get(leaf).is_none(), "closed leaf removed");
+        // Terminal cleanup removes the closed leaf from the registry and
+        // retains an honest completion record: Failed, never Completed.
+        let reg = registry.read();
+        assert!(reg.get(leaf).is_none(), "closed leaf removed");
+        let tombstone = reg.tombstone(leaf).expect("closed leaf tombstoned");
+        assert_eq!(tombstone.path, "/leaf");
+        assert_eq!(
+            tombstone.status,
+            AgentStatus::Failed,
+            "forced shutdown with unknown outcome is recorded Failed",
+        );
+    }
+
+    /// A live agent whose handle the closer does not hold cannot be
+    /// force-stopped: close must report it `"unreachable"` and leave its
+    /// registry entry untouched — never mark a still-running agent
+    /// completed or steal its wrapper's terminal transition.
+    #[tokio::test]
+    async fn close_agent_without_handle_reports_unreachable() {
+        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let peer = register_agent(&registry, "/peer", None);
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+
+        let tool = CloseAgentTool::new();
+        let envelope = envelope_for("close_agent", json!({"agent_id": "/peer"}));
+        let out = tool.execute(&envelope, &ctx).await.expect("close");
+        assert!(!out.is_error());
+        let shut_down = out.content["shut_down"].as_array().expect("array");
+        assert_eq!(shut_down.len(), 1);
+        assert_eq!(
+            shut_down[0]["status"], "unreachable",
+            "close must say it cannot force-stop an agent it holds no handle for",
+        );
+        assert_eq!(
+            registry.read().get(peer).expect("entry untouched").status,
+            AgentStatus::Active,
+            "the live entry must survive a no-handle close attempt",
+        );
+    }
+
+    /// Bug 2 regression: closing an agent that already completed and was
+    /// reclaimed is a soft success carrying the recorded outcome — not
+    /// "could not resolve agent" / "not registered". Covers resolution by
+    /// path and by UUID.
+    #[tokio::test]
+    async fn close_agent_on_reclaimed_agent_reports_soft_success() {
+        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let child = register_agent(&registry, "/smoke/child", None);
+        registry.write().mark_completed(child).expect("complete");
+        assert!(registry.write().remove_terminal(child), "reclaim");
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+
+        let tool = CloseAgentTool::new();
+        for identifier in ["/smoke/child".to_string(), child.to_string()] {
+            let envelope = envelope_for("close_agent", json!({"agent_id": identifier}));
+            let out = tool.execute(&envelope, &ctx).await.expect("close");
+            assert!(
+                !out.is_error(),
+                "soft success, not an error: {:?}",
+                out.content
+            );
+            assert_eq!(out.content["already_completed"], true);
+            assert_eq!(out.content["agent_id"], child.to_string());
+            assert_eq!(out.content["path"], "/smoke/child");
+            assert_eq!(out.content["status"], "completed");
+            assert!(
+                out.content["completed_at"].as_str().is_some(),
+                "the completion timestamp must surface: {:?}",
+                out.content,
+            );
+            let message = out.content["message"].as_str().expect("message");
+            assert!(
+                message.contains("already completed") && message.contains("nothing to close"),
+                "the message must state the truth: {message}",
+            );
+        }
+    }
+
+    /// "Not registered" is reserved for agents that never existed: an
+    /// unknown UUID (no entry, no tombstone) still errors.
+    #[tokio::test]
+    async fn close_agent_rejects_never_existed_id() {
+        let (infra, _registry, _mailbox) = build_infra(Uuid::new_v4());
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+
+        let tool = CloseAgentTool::new();
+        let envelope = envelope_for(
+            "close_agent",
+            json!({"agent_id": Uuid::new_v4().to_string()}),
+        );
+        let err = tool.execute(&envelope, &ctx).await.expect_err("unknown id");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(
+                    reason.contains("not registered") && reason.contains("no completion"),
+                    "never-existed ids must be reported as such: {reason}",
+                );
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
     }
 
     /// Terminal-resurrection regression: closing a child that already
@@ -355,8 +620,8 @@ mod tests {
     }
 
     /// R3 + R4: `close_agent` sends a `Steer` shutdown message via the child's
-    /// `InboundChannel` before aborting its task, so a cooperating loop
-    /// has a final boundary to observe the request.
+    /// `InboundChannel` before cancelling its run and joining the wrapper,
+    /// so a cooperating loop has a final boundary to observe the request.
     #[tokio::test]
     async fn close_agent_sends_shutdown_steer_to_child() {
         let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());

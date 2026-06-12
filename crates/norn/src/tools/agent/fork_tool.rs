@@ -30,16 +30,13 @@ use serde::Deserialize;
 use uuid::Uuid;
 
 use super::fork_pipeline::{
-    FORK_INBOUND_BUFFER, ForkLaunch, build_fork_context, build_fork_tool_definitions, launch_fork,
-    resolve_fork_store,
+    FORK_INBOUND_BUFFER, ForkLaunch, build_fork_context, launch_fork, resolve_fork_store,
 };
 use super::fork_seed::seed_fork_events;
 use super::handle::AgentHandles;
 use super::infra::{SubAgentExecutor, infra_from};
 use super::lifecycle::LifecycleEmitter;
-use super::reclaim::{
-    ReclaimOnResultDelivery, entry_terminal_or_reclaimed, reclaim_delivered_child,
-};
+use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
 use crate::agent::fork::{
     ForkRequirement, ParentSystemInstruction, build_fork_output_schema, combine_system_instruction,
 };
@@ -193,6 +190,10 @@ impl Tool for ForkTool {
             .unwrap_or_default();
         let path = format!("{parent_prefix}/fork/{}", Uuid::new_v4());
 
+        // Two-phase reservation: the guard stays unconfirmed across every
+        // fallible setup step below, so an error rolls the reservation
+        // back via RAII instead of leaking a confirmed entry that no
+        // launch wrapper will ever transition to a terminal status.
         let guard = AgentRegistry::reserve(
             &infra.registry,
             path.clone(),
@@ -204,9 +205,6 @@ impl Tool for ForkTool {
             reason: format!("fork reservation failed: {e}"),
         })?;
         let fork_id = guard.id();
-        guard.confirm().map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("fork confirm failed: {e}"),
-        })?;
 
         let ((child_store, child_tree, forked_session_id), tree_seeded) =
             resolve_fork_store(ctx, &args.model).map_err(|e| ToolError::ExecutionFailed {
@@ -228,6 +226,13 @@ impl Tool for ForkTool {
         )
         .map_err(|e| ToolError::ExecutionFailed {
             reason: format!("fork: seeding child store failed: {e}"),
+        })?;
+
+        // All fallible setup is done — confirm the reservation. From here
+        // the launch is unconditional and the completion wrapper owns the
+        // entry's terminal transition.
+        guard.confirm().map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("fork confirm failed: {e}"),
         })?;
 
         // R3: per-child ToolContext with fresh identity, forwarded shared
@@ -266,7 +271,8 @@ impl Tool for ForkTool {
 
         let output_schema = build_fork_output_schema(&args.requirements);
 
-        let tool_defs = build_fork_tool_definitions(parent_registry, None);
+        let tool_defs =
+            crate::provider::surface::collect_function_definitions(parent_registry, None);
         let executor =
             SubAgentExecutor::new(Arc::clone(parent_registry), None, Arc::clone(&child_ctx));
 
@@ -281,9 +287,24 @@ impl Tool for ForkTool {
 
         // Delivery-anchored reclamation is enabled only when the runtime
         // declared it (no external status observer) AND a result channel
-        // exists to anchor "delivered" to. See `super::reclaim`.
+        // exists to anchor "delivered" to. The wrapper is the sole
+        // reclaimer; the oneshot ack (resolved after `handles.insert`
+        // below) tells it when the handle is guaranteed to be stored.
+        // See `super::reclaim`.
         let reclaim_on_delivery =
             result_sender.is_some() && ctx.get_extension::<ReclaimOnResultDelivery>().is_some();
+        let (handle_installed_tx, reclaim_handshake) = if reclaim_on_delivery {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            (
+                Some(tx),
+                Some(ReclaimHandshake {
+                    handles: Arc::clone(&handles),
+                    handle_installed: rx,
+                }),
+            )
+        } else {
+            (None, None)
+        };
         let child_event_sender = ctx
             .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
             .map(|ch| {
@@ -348,7 +369,7 @@ impl Tool for ForkTool {
                 parent_id: infra.agent_id,
                 forked_session_id,
                 event_sender: child_event_sender,
-                reclaim_handles: reclaim_on_delivery.then(|| Arc::clone(&handles)),
+                reclaim: reclaim_handshake,
                 lifecycle,
                 hooks,
             },
@@ -356,12 +377,24 @@ impl Tool for ForkTool {
         );
         handles.insert(handle);
 
-        // Close the insert/finish race in reclaim-on-delivery mode: a
-        // fast fork may have finished — and the wrapper's reclamation
-        // may have run — before the insert above stored the handle.
-        // Both sides reclaim idempotently.
-        if reclaim_on_delivery && entry_terminal_or_reclaimed(&infra.registry, fork_id) {
-            reclaim_delivered_child(&infra.registry, &handles, fork_id);
+        // Handshake: the handle is stored — tell the wrapper its
+        // reclamation pass may run. This closes the insert/finish race
+        // without a second reclaimer: a fork that finished before the
+        // insert above is parked at this ack inside its wrapper, which
+        // then reclaims both the handle and the registry entry itself. A
+        // send error means the wrapper exited without entering its
+        // reclaim pass (stop hook suppressed the terminal transition, or
+        // something external killed the wrapper task); whoever ended it
+        // owns any remaining cleanup, so there is nothing further for
+        // this path to do.
+        if let Some(tx) = handle_installed_tx
+            && tx.send(()).is_err()
+        {
+            tracing::debug!(
+                fork_id = %fork_id,
+                "fork: wrapper exited before the handle-installed ack; \
+                 reclamation ownership lies with whoever ended the wrapper",
+            );
         }
 
         Ok(ToolOutput::success(serde_json::json!({
@@ -1802,5 +1835,373 @@ mod tests {
         assert_eq!(result.agent_id, fork_id);
         assert_eq!(result.usage.input_tokens, 5);
         assert_eq!(result.usage.output_tokens, 2);
+    }
+
+    /// Terminal-transition race repro (production WARNs
+    /// `fork: mark_completing failed ... agent not found` /
+    /// `fork: mark_completed failed ... agent not found`):
+    ///
+    /// The fork's completion wrapper owns the terminal sequence
+    /// mark → ForkComplete → lifecycle → delivery → reclaim. This test
+    /// parks the wrapper deterministically *after* the fork's run has
+    /// finished and *before* `mark_fork_terminal`, by gating
+    /// `SubagentHook::on_subagent_stop` (the only await between the two).
+    /// While the wrapper is parked, a `close_agent` issued by an agent
+    /// that holds NO handle for the fork targets it.
+    ///
+    /// Before the fix, `close_agent` marked the still-Active entry
+    /// Completing → Completed and removed it — stealing the wrapper's
+    /// terminal transition — so the wrapper's own mark hit `NotFound`
+    /// (the production WARN pair) and the closer falsified the fork's
+    /// recorded outcome. After the fix, a closer that cannot stop the
+    /// fork's task (no handle) must not touch its live registry entry:
+    /// the entry survives the close, and the wrapper's terminal mark
+    /// lands exactly once.
+    #[tokio::test]
+    async fn close_without_handle_cannot_steal_fork_terminal_transition() {
+        use crate::integration::hooks::{Hook, HookOutcome, HookRegistry, SubagentHook};
+        use crate::tools::agent::coord::CloseAgentTool;
+
+        struct GateStopHook {
+            entered: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+        }
+
+        #[async_trait]
+        impl SubagentHook for GateStopHook {
+            async fn on_subagent_start(&self, _agent_id: &str, _agent_type: &str) {}
+            async fn on_subagent_stop(&self, _agent_id: &str, _agent_type: &str) -> HookOutcome {
+                self.entered.notify_one();
+                self.release.notified().await;
+                HookOutcome::Proceed
+            }
+        }
+
+        let provider =
+            structured_response_provider(json!({"response": "done", "requirements": {}}));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let mut hook_registry = HookRegistry::new();
+        hook_registry.register(Hook::Subagent(Box::new(GateStopHook {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        })));
+        ctx.insert_extension(Arc::new(hook_registry));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"request": "race", "model": "gpt-5.5", "requirements": []})),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+
+        // The wrapper is now parked inside on_subagent_stop: the fork's
+        // run is finished, the terminal mark has NOT happened yet.
+        // (`notify_one` stores a permit, so this is race-free even if the
+        // wrapper reached the gate before we subscribed.)
+        entered.notified().await;
+
+        // A different agent — same registry, no handle for the fork —
+        // closes it while the wrapper still owes the terminal mark.
+        let closer_provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let closer_infra = Arc::new(AgentToolInfra {
+            registry: Arc::clone(&agent_registry),
+            mailbox: Arc::new(Mailbox::new()),
+            provider: closer_provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id: Uuid::new_v4(),
+            parent_id: None,
+            tool_registry: None,
+        });
+        let closer_ctx = ToolContext::empty();
+        closer_ctx.insert_extension(closer_infra);
+        let close_out = CloseAgentTool::new()
+            .execute(
+                &ToolEnvelope {
+                    tool_call_id: "close-1".to_string(),
+                    tool_name: "close_agent".to_string(),
+                    model_args: json!({"agent_id": fork_id.to_string()}),
+                    runtime_inputs: RuntimeInputs::default(),
+                    metadata: serde_json::Value::Null,
+                },
+                &closer_ctx,
+            )
+            .await
+            .expect("close executes");
+
+        // INVARIANT: the wrapper still owes this entry a terminal
+        // transition, so the close must not have removed it. Before the
+        // fix the entry is gone here — the wrapper's subsequent
+        // mark_completing/mark_completed hit NotFound (the WARN pair).
+        assert!(
+            agent_registry.read().get(fork_id).is_some(),
+            "a closer without the fork's handle must never remove the live \
+             registry entry out from under the completion wrapper; close output: {:?}",
+            close_out.content,
+        );
+        assert_eq!(
+            close_out.content["shut_down"][0]["status"], "unreachable",
+            "close must report honestly that it cannot force-stop an agent \
+             whose handle it does not hold: {:?}",
+            close_out.content,
+        );
+
+        // Release the wrapper and let it finish its terminal sequence.
+        release.notify_one();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+
+        // The wrapper's mark landed exactly once: Completed, observable.
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(fork_id)
+                .expect("the wrapper's terminal transition must find its entry")
+                .status,
+            AgentStatus::Completed,
+        );
+    }
+
+    /// Close-with-handle determinism: the closer triggers the fork's
+    /// cooperative cancellation token and JOINS the wrapper before
+    /// touching the registry, so exactly one owner performs the terminal
+    /// transition — the wrapper itself, with the run's REAL outcome. With
+    /// the wrapper parked pre-mark (gated stop hook) after its run
+    /// already completed, the close waits for the wrapper (gate released
+    /// concurrently), the wrapper's own mark lands exactly once
+    /// (`Completed` — the run genuinely finished), and the closer's job
+    /// reduces to reclaim: the entry is gone, a `Completed` tombstone
+    /// preserves the real outcome, the handle is owned by the closer,
+    /// and no "agent not found" race is possible. The closer never
+    /// aborts the wrapper and never rewrites the recorded outcome.
+    #[tokio::test]
+    async fn close_with_handle_joins_wrapper_then_owns_terminal_transition() {
+        use crate::integration::hooks::{Hook, HookOutcome, HookRegistry, SubagentHook};
+        use crate::tools::agent::coord::CloseAgentTool;
+
+        struct GateStopHook {
+            entered: Arc<tokio::sync::Notify>,
+            release: Arc<tokio::sync::Notify>,
+        }
+
+        #[async_trait]
+        impl SubagentHook for GateStopHook {
+            async fn on_subagent_start(&self, _agent_id: &str, _agent_type: &str) {}
+            async fn on_subagent_stop(&self, _agent_id: &str, _agent_type: &str) -> HookOutcome {
+                self.entered.notify_one();
+                self.release.notified().await;
+                HookOutcome::Proceed
+            }
+        }
+
+        let provider =
+            structured_response_provider(json!({"response": "done", "requirements": {}}));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let release = Arc::new(tokio::sync::Notify::new());
+        let mut hook_registry = HookRegistry::new();
+        hook_registry.register(Hook::Subagent(Box::new(GateStopHook {
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+        })));
+        ctx.insert_extension(Arc::new(hook_registry));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"request": "race", "model": "gpt-5.5", "requirements": []})),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        entered.notified().await;
+
+        // The parent itself closes the fork: it holds the handle, so the
+        // close cancels the run (already finished here), then JOINS the
+        // parked wrapper. The join waits for the wrapper's own terminal
+        // sequence, so the gate must be released concurrently —
+        // `notify_one` stores a permit, making the join/release ordering
+        // race-free.
+        let close_tool = CloseAgentTool::new();
+        let close_envelope = ToolEnvelope {
+            tool_call_id: "close-1".to_string(),
+            tool_name: "close_agent".to_string(),
+            model_args: json!({"agent_id": fork_id.to_string(), "reason": "wrap up"}),
+            runtime_inputs: RuntimeInputs::default(),
+            metadata: serde_json::Value::Null,
+        };
+        let close_fut = close_tool.execute(&close_envelope, &ctx);
+        let release_fut = async {
+            release.notify_one();
+        };
+        let (close_result, ()) = tokio::join!(close_fut, release_fut);
+        let close_out = close_result.expect("close executes");
+        assert_eq!(
+            close_out.content["shut_down"][0]["status"], "reclaimed",
+            "the joined wrapper records the run's real outcome itself; the \
+             closer's job is reclaim-only: {:?}",
+            close_out.content,
+        );
+
+        let reg = agent_registry.read();
+        assert!(reg.get(fork_id).is_none(), "the closer reclaims the entry");
+        let tombstone = reg
+            .tombstone(fork_id)
+            .expect("the recorded outcome stays reportable via its tombstone");
+        assert_eq!(
+            tombstone.status,
+            AgentStatus::Completed,
+            "the run genuinely completed before the close — the wrapper's \
+             real outcome is preserved, never rewritten by the closer",
+        );
+        drop(reg);
+        assert!(
+            !ctx.get_extension::<AgentHandles>()
+                .unwrap()
+                .contains(fork_id),
+            "the closer takes ownership of the handle",
+        );
+    }
+
+    /// Mid-run close terminates the fork's inner run (HIGH-fix
+    /// regression, fork path — mirrors the spawn-side test): a fork
+    /// parked inside an in-flight provider call is closed. The handle's
+    /// cancellation token terminates the run itself, the wrapper records
+    /// the real outcome (registry `Failed`, `AgentStopReason::Cancelled`
+    /// on the result channel), and the run never reaches another
+    /// provider iteration.
+    #[tokio::test]
+    async fn close_mid_run_cancels_fork_inner_run_and_records_cancelled_outcome() {
+        use crate::agent::output::AgentStopReason;
+        use crate::agent::result_channel::ChildResultSender;
+        use crate::tools::agent::coord::CloseAgentTool;
+
+        /// Provider whose stream never yields: the fork parks inside the
+        /// in-flight provider call until cancelled. Counts `stream()`
+        /// calls and notifies `entered` on each.
+        struct ParkedProvider {
+            entered: Arc<tokio::sync::Notify>,
+            calls: Arc<std::sync::atomic::AtomicUsize>,
+        }
+
+        impl Provider for ParkedProvider {
+            fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+                self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                self.entered.notify_one();
+                Ok(Box::pin(stream::pending::<
+                    Result<ProviderEvent, ProviderError>,
+                >()))
+            }
+        }
+
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider: Arc<dyn Provider> = Arc::new(ParkedProvider {
+            entered: Arc::clone(&entered),
+            calls: Arc::clone(&calls),
+        });
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "long haul", "model": "gpt-5.5", "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+
+        // Deterministic hook: the fork is inside its first in-flight
+        // provider call (`notify_one` stores a permit — race-free).
+        entered.notified().await;
+
+        let close_out = CloseAgentTool::new()
+            .execute(
+                &ToolEnvelope {
+                    tool_call_id: "close-1".to_string(),
+                    tool_name: "close_agent".to_string(),
+                    model_args: json!({
+                        "agent_id": fork_id.to_string(),
+                        "reason": "stand down",
+                    }),
+                    runtime_inputs: RuntimeInputs::default(),
+                    metadata: serde_json::Value::Null,
+                },
+                &ctx,
+            )
+            .await
+            .expect("close executes");
+
+        assert_eq!(
+            close_out.content["shut_down"][0]["status"], "reclaimed",
+            "cancellation lets the fork wrapper finish its own terminal sequence: {:?}",
+            close_out.content,
+        );
+        let reg = agent_registry.read();
+        assert!(reg.get(fork_id).is_none(), "entry reclaimed by the close");
+        let tombstone = reg.tombstone(fork_id).expect("tombstone retained");
+        assert_eq!(
+            tombstone.status,
+            AgentStatus::Failed,
+            "a cancelled fork records Failed — never Completed",
+        );
+        drop(reg);
+
+        let result = rx
+            .try_recv()
+            .expect("the wrapper delivered the cancelled outcome before the close returned");
+        assert_eq!(result.agent_id, fork_id);
+        assert!(!result.succeeded, "a cancelled fork is not a success");
+        assert_eq!(result.stop, Some(AgentStopReason::Cancelled));
+
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the fork's inner run must stop at the cancelled provider call, \
+             not continue to further iterations",
+        );
+        assert!(
+            !ctx.get_extension::<AgentHandles>()
+                .unwrap()
+                .contains(fork_id),
+            "the closer takes ownership of the handle",
+        );
     }
 }

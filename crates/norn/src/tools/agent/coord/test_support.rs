@@ -83,22 +83,34 @@ pub(crate) fn register_agent(
 /// Build a synthetic `AgentHandle` for `id` with an initial status of
 /// [`AgentStatus::Active`]. Returns the handle plus its status sender and
 /// inbound receiver so a test can drive transitions and observe messages.
+///
+/// The synthetic wrapper task parks until the handle's cancellation
+/// token fires (with a one-minute test-hang backstop), then exits
+/// **without** performing any registry transition — modelling a wrapper
+/// that dies before its terminal mark, which is exactly the window where
+/// `close_agent` must own the forced-failure record.
 pub(crate) fn synthetic_handle(
     id: Uuid,
 ) -> (AgentHandle, watch::Sender<AgentStatus>, InboundChannel) {
     let (status_tx, status_rx) = watch::channel(AgentStatus::Active);
     let (inbound_tx, inbound_rx) = inbound_channel(8);
-    // The join handle must be real because `abort()` is invoked during
-    // DFS shutdown. A long-sleeping task is fine — it lives only as long
-    // as the test.
-    let join_handle = tokio::spawn(async {
-        tokio::time::sleep(Duration::from_mins(1)).await;
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let task_cancel = cancel.clone();
+    // The join handle must be real because `close_agent` joins it during
+    // DFS shutdown. The task observes the cancellation token like a real
+    // child run would; the sleep arm only bounds a defective test.
+    let join_handle = tokio::spawn(async move {
+        tokio::select! {
+            () = task_cancel.cancelled() => {}
+            () = tokio::time::sleep(Duration::from_mins(1)) => {}
+        }
     });
     (
         AgentHandle {
             agent_id: id,
             status_rx,
             inbound_tx,
+            cancel,
             join_handle,
             event_store: Arc::new(crate::session::store::EventStore::new()),
             branch_metadata: crate::tools::agent::handle::ChildBranchMetadata {

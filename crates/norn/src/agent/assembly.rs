@@ -33,6 +33,8 @@ use crate::r#loop::retry::RetryPolicy;
 use crate::r#loop::tokens::SimpleTokenEstimator;
 use crate::profile::{Profile, default_scan_dirs, resolve_profile};
 use crate::provider::request::ToolDefinition;
+use crate::provider::surface::{collect_function_definitions, reframe_prompt_entries};
+use crate::provider::tools::ProviderCapabilities;
 use crate::provider::traits::Provider;
 use crate::rules::engine::RuleEngine;
 use crate::runtime_init::LoadedRuntimeBase;
@@ -48,7 +50,6 @@ use crate::tool::context::{SessionId, SharedWorkingDir, ToolContext};
 use crate::tool::lifecycle::RuntimePostValidateCheck;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::traits::Tool;
-use crate::tool::wrap_schema_with_envelope;
 use crate::tools::agent::AgentToolInfra;
 use crate::tools::bash::BashTool;
 use crate::tools::diagnostics::{
@@ -195,32 +196,55 @@ pub(crate) fn install_runtime_base_extensions(
     crate::runtime_init::install_permission_policy(shared, &base.settings);
 }
 
+/// Inputs for [`install_system_prompt`] beyond the loop context itself.
+pub(crate) struct SystemPromptInstall<'a> {
+    /// The gated tool registry whose tools the prompt lists.
+    pub(crate) registry: &'a ToolRegistry,
+    /// Interactive or headless execution.
+    pub(crate) mode: ExecutionMode,
+    /// Whether an output schema is configured for the final response.
+    pub(crate) has_output_schema: bool,
+    /// Caller-supplied replacement for the profile instructions.
+    pub(crate) system_prompt_override: Option<String>,
+    /// Caller-supplied fragment appended after the instructions.
+    pub(crate) append_system_prompt: Option<String>,
+    /// Whether auto-compaction is enabled on the effective config.
+    pub(crate) has_auto_compact: bool,
+    /// Capabilities of the provider this agent is being bound to. The
+    /// prompt's tools section is reframed through the resolved tool
+    /// surface so a hosted-replaced tool (e.g. `web_search` on a
+    /// hosted-search provider) is described as provider-native, never as
+    /// a phantom callable function. Recomputed on every build — including
+    /// session resumes, which re-enter this assembly with the (possibly
+    /// different) provider being bound.
+    pub(crate) capabilities: ProviderCapabilities,
+}
+
 /// Build the Norn base system prompt from the gated registry and layer it
 /// over the profile instructions (or the caller's `system_prompt` override)
 /// into `loop_context.system_sections[0]`.
 pub(crate) fn install_system_prompt(
     loop_context: &mut LoopContext,
-    registry: &ToolRegistry,
-    mode: ExecutionMode,
-    has_output_schema: bool,
-    system_prompt_override: Option<String>,
-    append_system_prompt: Option<String>,
-    has_auto_compact: bool,
+    install: SystemPromptInstall<'_>,
 ) {
     let inputs = SystemPromptInputs {
-        mode,
-        tools: collect_tool_prompt_entries(registry),
-        has_output_schema,
+        mode: install.mode,
+        tools: reframe_prompt_entries(
+            collect_tool_prompt_entries(install.registry),
+            install.capabilities,
+        ),
+        has_output_schema: install.has_output_schema,
         event_schema_descriptions: Vec::new(),
         has_rules_engine: loop_context.rules.is_some(),
-        has_auto_compact,
+        has_auto_compact: install.has_auto_compact,
     };
     let base_prompt = build_system_prompt(&inputs);
 
     let profile_prefix = std::mem::take(&mut loop_context.system_sections);
-    let mut instructions = system_prompt_override
+    let mut instructions = install
+        .system_prompt_override
         .unwrap_or_else(|| profile_prefix.into_iter().next().unwrap_or_default());
-    if let Some(append) = append_system_prompt
+    if let Some(append) = install.append_system_prompt
         && !append.is_empty()
     {
         append_prompt(&mut instructions, &append);
@@ -581,6 +605,14 @@ fn merge_agent_config(mut base: AgentLoopConfig, explicit: AgentLoopConfig) -> A
 /// [`Tool::catalog_entries`](crate::tool::traits::Tool::catalog_entries),
 /// so field hints and composite subcommand entries are derived from the
 /// tools' own schemas.
+///
+/// The published snapshot is deliberately provider-blind: the `tool_search`
+/// tool projects it through
+/// [`reframe_catalog_entries`](crate::provider::surface::reframe_catalog_entries)
+/// at query time against the capabilities of the provider published on the
+/// live tool context, so the catalog the model sees always tracks the
+/// currently-bound provider — including across rebinds and on launch paths
+/// that install the catalog before a provider exists.
 pub(crate) fn install_tool_catalog(registry: &ToolRegistry, ctx: &ToolContext) {
     let mut entries: Vec<ToolCatalogEntry> = registry
         .names()
@@ -596,19 +628,13 @@ pub(crate) fn install_tool_catalog(registry: &ToolRegistry, ctx: &ToolContext) {
 }
 
 /// Tool definitions (envelope-wrapped schemas) for the provider call.
+///
+/// Delegates to the shared registry → function-definition projection in
+/// [`crate::provider::surface`] — the same projection the spawn/fork child
+/// launch paths use — so the inputs to the resolved tool surface cannot
+/// drift between assembly and child launches.
 pub(crate) fn collect_tool_definitions(registry: &ToolRegistry) -> Vec<ToolDefinition> {
-    let names: Vec<String> = registry.names().map(str::to_owned).collect();
-    let mut defs = Vec::with_capacity(names.len());
-    for name in names {
-        if let Some(tool) = registry.get(&name) {
-            defs.push(ToolDefinition {
-                name: tool.name().to_owned(),
-                description: tool.description().to_owned(),
-                parameters: wrap_schema_with_envelope(tool.input_schema()),
-            });
-        }
-    }
-    defs
+    collect_function_definitions(registry, None)
 }
 
 /// Parts needed to install the fork/spawn runtime infrastructure.

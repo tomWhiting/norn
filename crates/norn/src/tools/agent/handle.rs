@@ -22,6 +22,7 @@ use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::agent::registry::AgentStatus;
@@ -81,6 +82,21 @@ pub struct AgentHandle {
     /// Sender the parent uses to push `Steer` / `FollowUp` messages into the
     /// child's inbound channel at the child's next tool boundary.
     pub inbound_tx: InboundSender,
+    /// Cooperative cancellation trigger for the child's *run*. A clone of
+    /// this token is passed as `cancel` into the child's
+    /// [`run_agent_step`](crate::r#loop::runner::run_agent_step) request,
+    /// so cancelling it terminates the inner agent loop at its next
+    /// cancellation boundary (top of iteration, or immediately for an
+    /// in-flight provider call via the loop's biased select). The
+    /// completion wrapper then finishes its normal terminal sequence with
+    /// the run's real outcome ([`AgentStepResult::Cancelled`] → registry
+    /// `Failed` with [`AgentStopReason::Cancelled`]). `close_agent` uses
+    /// this — never `JoinHandle::abort`, which would detach the inner run
+    /// and leave it executing unobserved.
+    ///
+    /// [`AgentStepResult::Cancelled`]: crate::r#loop::runner::AgentStepResult::Cancelled
+    /// [`AgentStopReason::Cancelled`]: crate::agent::output::AgentStopReason::Cancelled
+    pub cancel: CancellationToken,
     /// Join handle for the child's `tokio::spawn` task.
     pub join_handle: JoinHandle<()>,
     /// The child's append-only session event store (NA-008 R3). In
@@ -253,6 +269,7 @@ mod tests {
             agent_id,
             status_rx,
             inbound_tx,
+            cancel: CancellationToken::new(),
             join_handle,
             event_store: Arc::new(EventStore::new()),
             branch_metadata: ChildBranchMetadata {

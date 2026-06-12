@@ -9,6 +9,16 @@
 //! results so the model gets a stable catalogue dump.
 //!
 //! The catalog types themselves live in [`crate::tool::catalog`].
+//!
+//! The published catalog snapshot is provider-blind; before ranking, this
+//! tool projects it through the resolved tool surface
+//! ([`reframe_catalog_entries`]) against the capabilities of the provider
+//! currently published on the tool context, so hosted-replaced tools (e.g.
+//! `web_search` on a hosted-search provider) are described as
+//! provider-native capabilities rather than phantom callable functions.
+//! Query time is the guaranteed-fresh resolution point: the snapshot may be
+//! installed before any provider is bound, and a provider rebind republishes
+//! the provider extension, so no cached surface can go stale.
 
 use std::sync::Arc;
 
@@ -17,6 +27,9 @@ use bm25::{Document, Language, SearchEngineBuilder};
 use serde::Deserialize;
 
 use crate::error::ToolError;
+use crate::internal::extraction::SharedProvider;
+use crate::provider::surface::reframe_catalog_entries;
+use crate::provider::tools::ProviderCapabilities;
 use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
@@ -150,7 +163,16 @@ impl Tool for ToolSearchTool {
             })
             .max(1);
 
-        let entries = catalog.0.as_ref();
+        // Resolve the provider-blind snapshot against the live provider's
+        // capabilities. No provider published means no provider is bound,
+        // and with no provider there is no hosted surface — the default
+        // (all-false) capabilities describe exactly that.
+        let capabilities = ctx
+            .get_extension::<SharedProvider>()
+            .map_or_else(ProviderCapabilities::default, |provider| {
+                provider.0.capabilities()
+            });
+        let entries = reframe_catalog_entries(catalog.0.as_ref(), capabilities);
         if entries.is_empty() {
             return Ok(ToolOutput::success(
                 serde_json::json!({ "results": Vec::<serde_json::Value>::new() }),
@@ -159,7 +181,7 @@ impl Tool for ToolSearchTool {
 
         let query = args.query.trim();
         let results: Vec<serde_json::Value> = if query.is_empty() {
-            alphabetical_results(entries, limit)
+            alphabetical_results(&entries, limit)
         } else {
             let documents: Vec<Document<usize>> = entries
                 .iter()
@@ -438,6 +460,70 @@ mod tests {
         let mut sorted = names.clone();
         sorted.sort_unstable();
         assert_eq!(names, sorted);
+    }
+
+    fn install_provider(ctx: &ToolContext, hosted_web_search: bool) {
+        let capabilities = ProviderCapabilities {
+            hosted_web_search,
+            ..ProviderCapabilities::default()
+        };
+        ctx.insert_extension(Arc::new(SharedProvider(Arc::new(
+            crate::provider::mock::MockProvider::with_capabilities(Vec::new(), capabilities),
+        ))));
+    }
+
+    /// Find the catalog-dump result for `name` via an empty query.
+    async fn dump_entry(ctx: &ToolContext, name: &str) -> serde_json::Value {
+        let tool = ToolSearchTool::new();
+        let out = tool
+            .execute(&envelope_for(json!({"query": "", "max_results": 500})), ctx)
+            .await
+            .unwrap();
+        out.content["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|result| result["name"] == name)
+            .unwrap_or_else(|| panic!("{name} entry present in catalog dump"))
+            .clone()
+    }
+
+    #[tokio::test]
+    async fn hosted_capability_reframes_web_search_entry_at_query_time() {
+        let ctx = build_ctx();
+        install_provider(&ctx, true);
+        let entry = dump_entry(&ctx, "web_search").await;
+        let description = entry["description"].as_str().unwrap();
+        assert!(
+            description.contains("not a callable function"),
+            "hosted provider must reframe web_search as provider-native: {description}",
+        );
+        assert!(
+            entry.get("fields").is_none(),
+            "hosted entries carry no function-call field hints",
+        );
+    }
+
+    #[tokio::test]
+    async fn function_capability_keeps_web_search_function_entry() {
+        let ctx = build_ctx();
+        install_provider(&ctx, false);
+        let entry = dump_entry(&ctx, "web_search").await;
+        assert_eq!(
+            entry["description"],
+            "Search the public web for a query and return results",
+        );
+    }
+
+    #[tokio::test]
+    async fn absent_provider_extension_keeps_function_entries() {
+        // No provider bound means no hosted surface — function framing.
+        let ctx = build_ctx();
+        let entry = dump_entry(&ctx, "web_search").await;
+        assert_eq!(
+            entry["description"],
+            "Search the public web for a query and return results",
+        );
     }
 
     #[tokio::test]

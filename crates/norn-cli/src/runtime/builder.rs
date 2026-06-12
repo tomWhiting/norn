@@ -328,6 +328,14 @@ fn sanitise_slug(raw: &str) -> String {
 /// listing. This replaces the pre-NX-005 path that called
 /// `system_sections.insert(0, …)` and was silently wiped by
 /// [`LoopContext::clear_dynamic_sections`] on every iteration.
+///
+/// **Deliberately provider-blind** (do not "fix" ad hoc): the provider is
+/// constructed after `build_runtime`, so this static section cannot apply
+/// `norn::provider::reframe_prompt_entries`. Hosted-tool truth is supplied
+/// per-iteration by the runner's `# Provider Tool Surface` dynamic section
+/// (`norn::provider::surface::hosted_tools_prompt_section`), which
+/// explicitly supersedes function-style framing here. Full parity lands
+/// when this assembly path converges onto `AgentBuilder` (Phase 3 R1).
 pub fn apply_system_prompt(bundle: &mut RuntimeBundle, mode: ExecutionMode) {
     let tools: Vec<ToolPromptEntry> = bundle
         .registry

@@ -9,7 +9,6 @@
 //! marks the registry, sends a `trigger_turn` notification to the parent's
 //! mailbox, and updates the status watch channel that backs reactive waits.
 
-use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -23,9 +22,7 @@ use uuid::Uuid;
 use super::handle::{AgentHandle, AgentHandles, ChildBranchMetadata, SharedSessionTree};
 use super::infra::{SubAgentExecutor, infra_from};
 use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
-use super::reclaim::{
-    ReclaimOnResultDelivery, entry_terminal_or_reclaimed, reclaim_delivered_child,
-};
+use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery, reclaim_delivered_child};
 use super::spawn_context::build_child_context;
 use super::spawn_outcome::{
     extract_outcome_summary, mark_terminal_in_registry, panicked_outcome_summary,
@@ -129,28 +126,19 @@ fn build_child_loop_context(
 
 /// Build the [`ToolDefinition`] slice the child model sees.
 ///
-/// Iterates the parent registry's currently-available tools, filters them
-/// through `allow_list` (the same list that gates the child's
-/// [`SubAgentExecutor`]), and projects each surviving tool into a
-/// [`ToolDefinition`]. When `allow_list` is `None` every available parent
-/// tool is included.
+/// Delegates to the shared registry → function-definition projection in
+/// [`crate::provider::surface`] — the same projection `AgentBuilder`
+/// assembly uses — filtered through `allow_list` (the same list that gates
+/// the child's [`SubAgentExecutor`]). When `allow_list` is `None` every
+/// available parent tool is included. The child's agent loop then resolves
+/// these definitions against the live provider's capabilities per request,
+/// exactly like the parent's loop, so hosted-tool replacement applies
+/// identically to children.
 fn build_tool_definitions(
     registry: &ToolRegistry,
     allow_list: Option<&[String]>,
 ) -> Vec<ToolDefinition> {
-    let allow_set: Option<HashSet<&str>> =
-        allow_list.map(|names| names.iter().map(String::as_str).collect());
-    registry
-        .names()
-        .filter(|name| allow_set.as_ref().is_none_or(|set| set.contains(name)))
-        .filter_map(|name| {
-            registry.get(name).map(|tool| ToolDefinition {
-                name: tool.name().to_owned(),
-                description: tool.description().to_owned(),
-                parameters: crate::tool::wrap_schema_with_envelope(tool.input_schema()),
-            })
-        })
-        .collect()
+    crate::provider::surface::collect_function_definitions(registry, allow_list)
 }
 
 /// Resolve the child's [`EventStore`] and, when an orchestrator published a
@@ -252,11 +240,12 @@ struct ChildLaunch {
     /// tool calls in real time.
     event_sender: Option<AgentEventSender>,
     /// `Some` when the runtime declared [`ReclaimOnResultDelivery`] and
-    /// a result channel exists: after delivering the child's result the
-    /// wrapper reclaims the registry entry and drops the parent-held
-    /// handle (see [`super::reclaim`] for the ownership rule). `None`
-    /// leaves both for an external observer or the handle holder.
-    reclaim_handles: Option<Arc<AgentHandles>>,
+    /// a result channel exists: after delivering the child's result —
+    /// and after the tool's handle-installed ack — the wrapper reclaims
+    /// the registry entry and drops the parent-held handle (see
+    /// [`super::reclaim`] for the ownership rule). `None` leaves both
+    /// for an external observer or the handle holder.
+    reclaim: Option<ReclaimHandshake>,
     /// Typed lifecycle emitter — `Started` was already emitted by the
     /// tool before launch; the wrapper emits `Completed` once the run
     /// reaches a terminal outcome.
@@ -286,7 +275,7 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
         hooks,
         role_label,
         event_sender,
-        reclaim_handles,
+        reclaim,
         lifecycle,
     } = launch;
 
@@ -294,6 +283,15 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let (status_tx, status_rx) = watch::channel(AgentStatus::Active);
     let (inbound_tx, mut inbound_rx) = inbound_channel(SPAWN_INBOUND_BUFFER);
     let agent_role = format!("spawn/{model}");
+    // Cooperative cancellation: the trigger lives on the parent-held
+    // AgentHandle and a clone rides into the inner run's AgentStepRequest,
+    // so `close_agent` can terminate the run itself — not just the wrapper
+    // task. The loop observes the token at the top of every iteration and
+    // races it (cancel-priority) against the in-flight provider call,
+    // returning `AgentStepResult::Cancelled`, which the wrapper records as
+    // the run's real outcome through its normal terminal sequence below.
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let run_cancel = cancel.clone();
 
     let join_handle = tokio::spawn(async move {
         // Panic isolation: the agent step runs on its own inner task so a
@@ -317,7 +315,7 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
                 event_tx: event_sender.as_ref(),
                 inbound: Some(&mut inbound_rx),
                 loop_context: &mut loop_ctx,
-                cancel: None,
+                cancel: Some(run_cancel),
             })
             .await
         });
@@ -406,16 +404,32 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
 
         // Delivery-anchored reclamation (embedded/headless runtimes):
         // the parent's record of this child is now the delivered result,
-        // so the registry entry and the parent-held handle can go. Runs
-        // after the terminal status broadcast so the spawning tool's
-        // post-insert check (`entry_terminal_or_reclaimed`) observes a
-        // consistent order; skipped when a stop hook suppressed the
-        // terminal transition (the child is then deliberately left
-        // observable and non-terminal). A failed result send means the
-        // receiver is gone — reclaiming is still correct, nothing can
-        // observe the entry through the channel anymore.
-        if !stop_blocked && let Some(parent_handles) = reclaim_handles {
-            reclaim_delivered_child(&agent_registry, &parent_handles, child_id);
+        // so the registry entry and the parent-held handle can go.
+        // Skipped when a stop hook suppressed the terminal transition
+        // (the child is then deliberately left observable and
+        // non-terminal). A failed result send means the receiver is gone
+        // — reclaiming is still correct, nothing can observe the entry
+        // through the channel anymore.
+        //
+        // The wrapper is the sole reclaimer (see super::reclaim): it
+        // first awaits the tool's handle-installed ack so a child that
+        // finished before `AgentHandles::insert` ran is still reclaimed
+        // with the handle present — no second actor ever reclaims
+        // concurrently, and nothing infers state from registry-entry
+        // absence.
+        if !stop_blocked && let Some(handshake) = reclaim {
+            if handshake.handle_installed.await.is_err() {
+                // The tool's execute was torn down between launching the
+                // child and storing the handle (e.g. the parent task was
+                // cancelled mid-launch): there is no handle to drop, but
+                // the registry entry still must not leak.
+                tracing::warn!(
+                    child_id = %child_id,
+                    "spawn_agent: handle-installed ack dropped before launch completed; \
+                     reclaiming without a stored handle",
+                );
+            }
+            reclaim_delivered_child(&agent_registry, &handshake.handles, child_id);
         }
     });
 
@@ -423,6 +437,7 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
         agent_id: child_id,
         status_rx,
         inbound_tx,
+        cancel,
         join_handle,
         event_store: handle_store,
         branch_metadata,
@@ -555,6 +570,11 @@ impl Tool for SpawnAgentTool {
             profile: args.profile.clone(),
         };
 
+        // Two-phase reservation: the guard stays unconfirmed across the
+        // fallible store resolution below, so an error rolls the
+        // reservation back via RAII instead of leaking a confirmed entry
+        // that no launch wrapper will ever transition to a terminal
+        // status.
         let guard = AgentRegistry::reserve(
             &infra.registry,
             path.clone(),
@@ -566,15 +586,19 @@ impl Tool for SpawnAgentTool {
             reason: format!("spawn reservation failed: {e}"),
         })?;
         let child_id = guard.id();
-        guard.confirm().map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("spawn confirm failed: {e}"),
-        })?;
 
         // Resolve the child's event store: a named branch under the parent's
         // session when an orchestrator published a SessionTree, otherwise a
         // standalone store (NA-008 R3). In tree mode `child_tree` carries the
         // child's own SessionId for grandchild branching.
         let (child_store, child_tree) = resolve_child_store(ctx, &args.model, &role_label)?;
+
+        // All fallible setup is done — confirm the reservation. From here
+        // the launch is unconditional and the completion wrapper owns the
+        // entry's terminal transition.
+        guard.confirm().map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("spawn confirm failed: {e}"),
+        })?;
 
         // Provenance recorded on the child's AgentHandle so the parent can
         // attribute the child's audit trail (NA-008 R3).
@@ -601,9 +625,24 @@ impl Tool for SpawnAgentTool {
 
         // Delivery-anchored reclamation is enabled only when the runtime
         // declared it (no external status observer) AND a result channel
-        // exists to anchor "delivered" to. See `super::reclaim`.
+        // exists to anchor "delivered" to. The wrapper is the sole
+        // reclaimer; the oneshot ack (resolved after `handles.insert`
+        // below) tells it when the handle is guaranteed to be stored.
+        // See `super::reclaim`.
         let reclaim_on_delivery =
             result_sender.is_some() && ctx.get_extension::<ReclaimOnResultDelivery>().is_some();
+        let (handle_installed_tx, reclaim_handshake) = if reclaim_on_delivery {
+            let (tx, rx) = tokio::sync::oneshot::channel();
+            (
+                Some(tx),
+                Some(ReclaimHandshake {
+                    handles: Arc::clone(&handles),
+                    handle_installed: rx,
+                }),
+            )
+        } else {
+            (None, None)
+        };
 
         // NH-006 R5 / C56: fire SubagentHook::on_subagent_start before
         // launching the child. The hook is observational — Block has no
@@ -668,21 +707,29 @@ impl Tool for SpawnAgentTool {
             hooks,
             role_label,
             event_sender: child_event_sender,
-            reclaim_handles: reclaim_on_delivery.then(|| Arc::clone(&handles)),
+            reclaim: reclaim_handshake,
             lifecycle,
         });
         handles.insert(handle);
 
-        // Close the insert/finish race in reclaim-on-delivery mode: a
-        // fast child may have finished — and the wrapper's reclamation
-        // may have run — before the insert above stored the handle. The
-        // wrapper marks the registry terminal before it reclaims, so
-        // "terminal or already reclaimed" here means the wrapper's
-        // reclamation pass cannot still be ahead of us with the handle
-        // unstored; both sides reclaim idempotently. A hook-suppressed
-        // (still Active) child never satisfies the check.
-        if reclaim_on_delivery && entry_terminal_or_reclaimed(&infra.registry, child_id) {
-            reclaim_delivered_child(&infra.registry, &handles, child_id);
+        // Handshake: the handle is stored — tell the wrapper its
+        // reclamation pass may run. This closes the insert/finish race
+        // without a second reclaimer: a child that finished before the
+        // insert above is parked at this ack inside its wrapper, which
+        // then reclaims both the handle and the registry entry itself. A
+        // send error means the wrapper exited without entering its
+        // reclaim pass (stop hook suppressed the terminal transition, or
+        // something external killed the wrapper task); whoever ended it
+        // owns any remaining cleanup, so there is nothing further for
+        // this path to do.
+        if let Some(tx) = handle_installed_tx
+            && tx.send(()).is_err()
+        {
+            tracing::debug!(
+                child_id = %child_id,
+                "spawn_agent: wrapper exited before the handle-installed ack; \
+                 reclamation ownership lies with whoever ended the wrapper",
+            );
         }
 
         Ok(ToolOutput::success(serde_json::json!({
@@ -2835,6 +2882,136 @@ mod tests {
             count.load(AtomicOrdering::SeqCst),
             1,
             "a parent-registered PreToolUse hook must fire for the child's tool call",
+        );
+    }
+
+    /// Provider whose stream never yields: the child's run parks inside
+    /// the in-flight provider call until cancelled. Counts `stream()`
+    /// calls and notifies `entered` on each, so a test can close the
+    /// child deterministically mid-call and prove the run never reached
+    /// another iteration.
+    struct ParkedProvider {
+        entered: Arc<tokio::sync::Notify>,
+        calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Provider for ParkedProvider {
+        fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            self.calls.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            self.entered.notify_one();
+            Ok(Box::pin(stream::pending::<
+                Result<ProviderEvent, ProviderError>,
+            >()))
+        }
+    }
+
+    /// Mid-run close terminates the inner run (HIGH-fix regression): a
+    /// child parked inside an in-flight provider call is closed. The
+    /// handle's cancellation token must terminate the run itself — not
+    /// just the wrapper task — so the run never continues toward natural
+    /// completion: the loop's biased select resolves the cancel arm, the
+    /// wrapper records the run's REAL outcome (registry `Failed`, typed
+    /// `AgentStopReason::Cancelled` on the result channel), and the
+    /// closer's job reduces to reclaiming the terminal entry.
+    #[tokio::test]
+    async fn close_mid_run_cancels_inner_run_and_records_cancelled_outcome() {
+        use crate::agent::output::AgentStopReason;
+        use crate::tools::agent::coord::CloseAgentTool;
+
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let calls = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let provider: Arc<dyn Provider> = Arc::new(ParkedProvider {
+            entered: Arc::clone(&entered),
+            calls: Arc::clone(&calls),
+        });
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(Mailbox::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"task": "long haul", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect("spawn");
+        let child_id =
+            Uuid::parse_str(out.content["agent_id"].as_str().expect("agent_id")).expect("uuid");
+
+        // Deterministic hook: the child is now inside its first in-flight
+        // provider call (`notify_one` stores a permit, so this is
+        // race-free regardless of scheduling).
+        entered.notified().await;
+
+        let close_out = CloseAgentTool::new()
+            .execute(
+                &ToolEnvelope {
+                    tool_call_id: "close-1".to_string(),
+                    tool_name: "close_agent".to_string(),
+                    model_args: json!({
+                        "agent_id": child_id.to_string(),
+                        "reason": "stand down",
+                    }),
+                    runtime_inputs: RuntimeInputs::default(),
+                    metadata: serde_json::Value::Null,
+                },
+                &ctx,
+            )
+            .await
+            .expect("close executes");
+
+        // The wrapper recorded the run's real outcome and the closer
+        // reclaimed the (already terminal) entry — it never had to force
+        // a mark of its own.
+        assert_eq!(
+            close_out.content["shut_down"][0]["status"], "reclaimed",
+            "cancellation lets the wrapper finish its own terminal sequence: {:?}",
+            close_out.content,
+        );
+        let reg = agent_registry.read();
+        assert!(reg.get(child_id).is_none(), "entry reclaimed by the close");
+        let tombstone = reg.tombstone(child_id).expect("tombstone retained");
+        assert_eq!(
+            tombstone.status,
+            AgentStatus::Failed,
+            "a cancelled run records Failed — never Completed",
+        );
+        drop(reg);
+
+        // The run terminated with the cancellation outcome, delivered by
+        // the wrapper before the close's join returned.
+        let result = rx
+            .try_recv()
+            .expect("the wrapper delivered the cancelled outcome before the close returned");
+        assert_eq!(result.agent_id, child_id);
+        assert!(!result.succeeded, "a cancelled run is not a success");
+        assert_eq!(result.stop, Some(AgentStopReason::Cancelled));
+        assert!(
+            result.error.unwrap_or_default().contains("cancelled"),
+            "the failure must name the cancellation",
+        );
+
+        // And the inner run did NOT keep executing after the close:
+        // exactly one provider call ever started, and the handle is gone.
+        assert_eq!(
+            calls.load(std::sync::atomic::Ordering::SeqCst),
+            1,
+            "the inner run must stop at the cancelled provider call, not \
+             continue to further iterations",
+        );
+        assert!(
+            !ctx.get_extension::<AgentHandles>()
+                .expect("AgentHandles installed")
+                .contains(child_id),
+            "the closer takes ownership of the handle",
         );
     }
 }

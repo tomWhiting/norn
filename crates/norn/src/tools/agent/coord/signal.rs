@@ -5,6 +5,7 @@ use chrono::Utc;
 use serde::Deserialize;
 
 use super::helpers::sender_label;
+use crate::agent::registry::AgentStatus;
 use crate::error::ToolError;
 use crate::r#loop::inbound::{ChannelMessage, DeliveryMode};
 use crate::tool::context::ToolContext;
@@ -12,7 +13,7 @@ use crate::tool::envelope::ToolEnvelope;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 use crate::tools::agent::handle::AgentHandles;
-use crate::tools::agent::infra::{infra_from, resolve_agent_id};
+use crate::tools::agent::infra::{ResolvedAgent, infra_from, resolve_agent};
 
 /// Sends a steering signal to a child agent.
 ///
@@ -103,7 +104,46 @@ impl Tool for SignalAgentTool {
             })?;
         let infra = infra_from(ctx)?;
 
-        let to_id = resolve_agent_id(&infra.registry, &args.to)?;
+        // Resolve including finished agents so the failure mode is honest:
+        // a recipient that completed (terminal entry or reclaimed
+        // tombstone) gets "already completed at <ts>", never the dishonest
+        // "not registered" — that wording is reserved for identifiers that
+        // never existed.
+        let (to_id, finished) = match resolve_agent(&infra.registry, &args.to)? {
+            ResolvedAgent::Live(entry) if !entry.status.is_terminal() => (entry.id, None),
+            ResolvedAgent::Live(entry) => (entry.id, Some((entry.status, entry.completed_at))),
+            ResolvedAgent::Reclaimed(tombstone) => (
+                tombstone.id,
+                Some((tombstone.status, Some(tombstone.completed_at))),
+            ),
+        };
+        if let Some((status, completed_at)) = finished {
+            let when =
+                completed_at.map_or_else(|| "an unrecorded time".to_owned(), |ts| ts.to_rfc3339());
+            let outcome = if status == AgentStatus::Failed {
+                "failed"
+            } else {
+                "completed"
+            };
+            return Ok(ToolOutput::failure_with_content(
+                serde_json::json!({
+                    "delivered": false,
+                    "to": to_id.to_string(),
+                    "recipient_status": status,
+                    "completed_at": completed_at.map(|ts| ts.to_rfc3339()),
+                }),
+                crate::tool::failure::ToolErrorPayload::new(
+                    crate::tool::failure::ToolErrorKind::NotFound,
+                    format!(
+                        "recipient already finished: agent '{}' {outcome} at {when} and can \
+                         no longer receive signals. Its run is over — read its delivered \
+                         result instead of signalling it.",
+                        args.to,
+                    ),
+                )
+                .with_detail(serde_json::json!({ "to": args.to })),
+            ));
+        }
         let trigger_turn = args.trigger_turn.unwrap_or(false);
 
         // When the parent holds an AgentHandle for the recipient, route
@@ -349,5 +389,61 @@ mod tests {
         let envelope = envelope_for("signal_agent", json!({"to": "/missing", "content": null}));
         let err = tool.execute(&envelope, &ctx).await.expect_err("missing");
         assert!(matches!(err, ToolError::ExecutionFailed { .. }));
+    }
+
+    /// Bug 2 regression: signalling an agent that already finished —
+    /// whether its terminal entry is still listed or it was reclaimed
+    /// down to a tombstone — fails honestly with the recorded completion,
+    /// never the dishonest "not registered".
+    #[tokio::test]
+    async fn signal_agent_reports_finished_recipient_honestly() {
+        let sender = Uuid::new_v4();
+        let (infra, registry, _mailbox) = build_infra(sender);
+        let recipient = register_agent(&registry, "/parent/done-child", Some(sender));
+        registry
+            .write()
+            .mark_completed(recipient)
+            .expect("complete");
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+
+        let tool = SignalAgentTool::new();
+        // Terminal-but-unreclaimed: resolvable by path despite the freed
+        // path index, and reported as finished.
+        let envelope = envelope_for(
+            "signal_agent",
+            json!({"to": "/parent/done-child", "content": "hi"}),
+        );
+        let out = tool.execute(&envelope, &ctx).await.expect("executes");
+        assert!(out.is_error(), "delivery to a finished agent must fail");
+        assert_eq!(out.content["delivered"], false);
+        assert_eq!(out.content["recipient_status"], "completed");
+        let message = out.content["error"]["message"].as_str().expect("message");
+        assert!(
+            message.contains("already finished") && message.contains("completed at"),
+            "the failure must state the recorded completion: {message}",
+        );
+
+        // Reclaimed: the tombstone keeps the truth available, by path and
+        // by UUID.
+        assert!(registry.write().remove_terminal(recipient), "reclaim");
+        for identifier in ["/parent/done-child".to_string(), recipient.to_string()] {
+            let envelope = envelope_for("signal_agent", json!({"to": identifier, "content": "hi"}));
+            let out = tool.execute(&envelope, &ctx).await.expect("executes");
+            assert!(out.is_error());
+            assert_eq!(out.content["delivered"], false);
+            assert_eq!(out.content["recipient_status"], "completed");
+            assert!(
+                out.content["completed_at"].as_str().is_some(),
+                "the completion timestamp must surface: {:?}",
+                out.content,
+            );
+            let message = out.content["error"]["message"].as_str().expect("message");
+            assert!(
+                !message.contains("not registered"),
+                "'not registered' is reserved for agents that never existed: {message}",
+            );
+        }
     }
 }

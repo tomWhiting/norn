@@ -624,6 +624,149 @@ mod tests {
         assert_eq!(out.error().unwrap().kind, ToolErrorKind::InvalidArguments);
     }
 
+    /// Regression for the exact production case: a model called
+    /// `complete` with a `metadata` field; `Complete { task_id }` takes
+    /// only `task_id`, so serde silently dropped the metadata and the
+    /// task completed as if nothing was lost. Dispatch must now reject
+    /// the call naming `metadata`, leave the task untouched, and tell
+    /// the model what `complete` actually accepts.
+    #[tokio::test]
+    async fn complete_with_metadata_is_rejected_and_task_untouched() {
+        let tool = TaskTool::new();
+        let (ctx, store) = ctx_with_store();
+        execute(
+            &tool,
+            json!({"action": "create", "task_id": "t-1", "description": "work"}),
+            &ctx,
+        )
+        .await;
+
+        let out = execute(
+            &tool,
+            json!({
+                "action": "complete",
+                "task_id": "t-1",
+                "metadata": {"result": "shipped"}
+            }),
+            &ctx,
+        )
+        .await;
+        assert!(out.is_error());
+        let payload = out.error().expect("typed payload");
+        assert_eq!(payload.kind, ToolErrorKind::InvalidArguments);
+        assert!(
+            payload.message.contains("'metadata'"),
+            "message names the dropped field: {}",
+            payload.message
+        );
+        assert!(
+            payload.message.contains("'complete'"),
+            "message names the resolved command: {}",
+            payload.message
+        );
+        assert_eq!(payload.detail["command"], "complete");
+        assert_eq!(payload.detail["unknown_fields"], json!(["metadata"]));
+        let accepted = payload.detail["accepted_fields"]
+            .as_array()
+            .expect("accepted_fields array");
+        assert_eq!(accepted.len(), 1, "complete takes only task_id");
+        assert_eq!(accepted[0]["name"], "task_id");
+        assert_eq!(accepted[0]["required"], true);
+
+        // Nothing executed: the task is still pending and its metadata
+        // was not silently discarded into a completed state.
+        let entry = store.get("t-1").expect("task still present");
+        assert_eq!(entry.status, TaskStatus::Pending);
+        assert_eq!(entry.metadata, Value::Null);
+    }
+
+    /// A cross-command field on a read command is rejected the same way
+    /// (the loosened OpenAI flat projection invites these).
+    #[tokio::test]
+    async fn cross_command_field_on_get_is_rejected() {
+        let tool = TaskTool::new();
+        let (ctx, _store) = ctx_with_store();
+        execute(
+            &tool,
+            json!({"action": "create", "task_id": "t-1", "description": "work"}),
+            &ctx,
+        )
+        .await;
+        let out = execute(
+            &tool,
+            json!({"action": "get", "task_id": "t-1", "description": "stray"}),
+            &ctx,
+        )
+        .await;
+        assert!(out.is_error());
+        let payload = out.error().expect("typed payload");
+        assert_eq!(payload.kind, ToolErrorKind::InvalidArguments);
+        assert_eq!(payload.detail["unknown_fields"], json!(["description"]));
+    }
+
+    /// Explicit nulls for optional fields deserialize as absent and must
+    /// keep passing — models routinely send them.
+    #[tokio::test]
+    async fn explicit_null_optional_fields_still_pass() {
+        let tool = TaskTool::new();
+        let (ctx, _store) = ctx_with_store();
+        let out = execute(
+            &tool,
+            json!({
+                "action": "create",
+                "description": "work",
+                "task_id": null,
+                "status": null,
+                "depends_on": null,
+                "metadata": null
+            }),
+            &ctx,
+        )
+        .await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        let out = execute(&tool, json!({"action": "list", "status": null}), &ctx).await;
+        assert!(!out.is_error(), "{:?}", out.content);
+    }
+
+    /// No-regression sweep: an exact-field call for every `TaskCommand`
+    /// variant passes canonical-schema enforcement and executes.
+    #[tokio::test]
+    async fn every_command_with_exact_fields_passes_validation() {
+        let tool = TaskTool::new();
+        let (ctx, _store) = ctx_with_store();
+        let calls = [
+            json!({
+                "action": "create", "task_id": "t-1", "description": "work",
+                "status": "pending", "depends_on": [], "metadata": {"k": "v"}
+            }),
+            json!({"action": "get", "task_id": "t-1"}),
+            json!({"action": "list", "status": "pending"}),
+            json!({
+                "action": "update", "task_id": "t-1", "status": "in_progress",
+                "description": "more work", "depends_on": [], "metadata": {"k": "v2"}
+            }),
+            json!({
+                "action": "create_subtask", "parent_task_id": "t-1",
+                "task_id": "t-2", "description": "child",
+                "status": "pending", "depends_on": [], "metadata": {}
+            }),
+            json!({"action": "children", "parent_task_id": "t-1"}),
+            json!({"action": "ancestors", "task_id": "t-2"}),
+            json!({"action": "claim", "task_id": "t-2", "agent_path": "root/worker"}),
+            json!({"action": "complete", "task_id": "t-2"}),
+            json!({"action": "create_group", "group_slug": "g-1"}),
+            json!({"action": "list_groups"}),
+        ];
+        for call in calls {
+            let out = execute(&tool, call.clone(), &ctx).await;
+            assert!(
+                !out.is_error(),
+                "call must pass: {call} → {:?}",
+                out.content
+            );
+        }
+    }
+
     // -- Behaviour ------------------------------------------------------
 
     #[tokio::test]

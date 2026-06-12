@@ -94,6 +94,34 @@ pub struct AgentEntry {
     pub spawned_at: DateTime<Utc>,
     /// Parent agent id, if any.
     pub parent_id: Option<Uuid>,
+    /// When the entry reached a terminal status ([`AgentStatus::Completed`]
+    /// or [`AgentStatus::Failed`]); `None` while the agent is live. Stamped
+    /// by the registry on the terminal `mark_*` transition and carried onto
+    /// the entry's [`AgentTombstone`] at reclamation.
+    pub completed_at: Option<DateTime<Utc>>,
+}
+
+/// Completion record retained after a terminal entry is reclaimed.
+///
+/// [`AgentRegistry::remove_terminal`] leaves one of these behind so the
+/// coordination tools can tell the truth about agents that finished and
+/// were reclaimed: "already completed at \<ts\>" instead of the dishonest
+/// "not registered". Tombstones are tiny (id, path, status, timestamp) and
+/// are retained for the registry's lifetime — i.e. the session — so the
+/// record never expires while anything could still ask about the agent.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentTombstone {
+    /// The reclaimed agent's id.
+    pub id: Uuid,
+    /// The hierarchical path the agent was registered at. Paths are freed
+    /// at the terminal transition, so a later agent may reuse this path;
+    /// path-based tombstone lookup returns the most recently reclaimed
+    /// holder.
+    pub path: String,
+    /// The terminal status the agent finished with.
+    pub status: AgentStatus,
+    /// When the agent reached its terminal status.
+    pub completed_at: DateTime<Utc>,
 }
 
 /// In-memory registry of active agents.
@@ -110,6 +138,13 @@ pub struct AgentEntry {
 pub struct AgentRegistry {
     entries: HashMap<Uuid, AgentEntry>,
     path_index: HashMap<String, Uuid>,
+    /// Completion records for reclaimed entries, keyed by agent id.
+    /// Session-lifetime retention; see [`AgentTombstone`].
+    tombstones: HashMap<Uuid, AgentTombstone>,
+    /// Latest reclaimed holder of each path (paths are reusable, so a
+    /// later reclamation under the same path overwrites the older record;
+    /// the older record stays reachable by id).
+    tombstone_path_index: HashMap<String, Uuid>,
 }
 
 impl AgentRegistry {
@@ -119,6 +154,8 @@ impl AgentRegistry {
         Self {
             entries: HashMap::new(),
             path_index: HashMap::new(),
+            tombstones: HashMap::new(),
+            tombstone_path_index: HashMap::new(),
         }
     }
 
@@ -135,11 +172,50 @@ impl AgentRegistry {
     }
 
     /// Return the entry registered at `path`, if any.
+    ///
+    /// Terminal entries free their path immediately (see [`Self::set_status`]),
+    /// so this resolves only *live* (non-terminal) holders. Use
+    /// [`Self::get_terminal_by_path`] to find an entry that finished under
+    /// `path` but has not been reclaimed yet.
     #[must_use]
     pub fn get_by_path(&self, path: &str) -> Option<AgentEntry> {
         self.path_index
             .get(path)
             .and_then(|id| self.entries.get(id))
+            .cloned()
+    }
+
+    /// Return the most recently finished *terminal* entry that was
+    /// registered at `path`, if any.
+    ///
+    /// Terminal transitions remove the path from the live index (so the
+    /// path is reusable) while the entry stays listed until reclaimed; this
+    /// scan keeps such entries resolvable by path so coordination tools can
+    /// report their real outcome instead of "not registered". When several
+    /// terminal entries share the path (reuse), the latest `completed_at`
+    /// wins.
+    #[must_use]
+    pub fn get_terminal_by_path(&self, path: &str) -> Option<AgentEntry> {
+        self.entries
+            .values()
+            .filter(|e| e.status.is_terminal() && e.path == path)
+            .max_by_key(|e| e.completed_at)
+            .cloned()
+    }
+
+    /// Return the completion record for a reclaimed agent, if any.
+    #[must_use]
+    pub fn tombstone(&self, id: Uuid) -> Option<AgentTombstone> {
+        self.tombstones.get(&id).cloned()
+    }
+
+    /// Return the completion record of the most recently reclaimed agent
+    /// that was registered at `path`, if any.
+    #[must_use]
+    pub fn tombstone_by_path(&self, path: &str) -> Option<AgentTombstone> {
+        self.tombstone_path_index
+            .get(path)
+            .and_then(|id| self.tombstones.get(id))
             .cloned()
     }
 
@@ -223,7 +299,9 @@ impl AgentRegistry {
         self.set_status(id, AgentStatus::Failed)
     }
 
-    /// Reclaim a terminal entry, removing it from the registry.
+    /// Reclaim a terminal entry, removing it from the registry and leaving
+    /// an [`AgentTombstone`] behind so the agent's completion stays
+    /// reportable for the rest of the session.
     ///
     /// Returns `true` when an entry was removed; `false` when `id` is
     /// absent (already reclaimed) or still non-terminal. Idempotent, so
@@ -243,6 +321,19 @@ impl AgentRegistry {
     pub fn remove_terminal(&mut self, id: Uuid) -> bool {
         match self.entries.get(&id) {
             Some(entry) if entry.status.is_terminal() => {
+                let tombstone = AgentTombstone {
+                    id: entry.id,
+                    path: entry.path.clone(),
+                    status: entry.status,
+                    // Terminal entries are always stamped by `set_status`;
+                    // the fallback keeps the record honest-ish (reclaim
+                    // time) should an entry ever reach terminal without a
+                    // stamp.
+                    completed_at: entry.completed_at.unwrap_or_else(Utc::now),
+                };
+                self.tombstone_path_index
+                    .insert(tombstone.path.clone(), tombstone.id);
+                self.tombstones.insert(id, tombstone);
                 self.entries.remove(&id);
                 true
             }
@@ -278,6 +369,9 @@ impl AgentRegistry {
                 }
                 entry.status = status;
                 if status.is_terminal() {
+                    if entry.completed_at.is_none() {
+                        entry.completed_at = Some(Utc::now());
+                    }
                     self.path_index.remove(&entry.path);
                 }
                 Ok(())
@@ -353,6 +447,7 @@ impl AgentRegistry {
                 model,
                 spawned_at: Utc::now(),
                 parent_id,
+                completed_at: None,
             };
             guard.entries.insert(id, entry);
             guard.path_index.insert(path, id);
@@ -429,10 +524,38 @@ impl SpawnGuard {
 
 impl Drop for SpawnGuard {
     fn drop(&mut self) {
-        if !self.confirmed {
-            let mut guard = self.registry.write();
-            if let Some(entry) = guard.entries.remove(&self.id) {
-                guard.path_index.remove(&entry.path);
+        if self.confirmed {
+            return;
+        }
+        let mut guard = self.registry.write();
+        // RAII rollback may only ever undo the reservation it created:
+        // an entry that is no longer `Spawning` has been confirmed or
+        // driven through its lifecycle by another owner (the launch
+        // wrapper owes confirmed entries a terminal transition), so
+        // deleting it here would vanish an entry out from under that
+        // owner. That state is unreachable through the spawn/fork tools
+        // (they confirm exactly once, before launch) — if it ever shows
+        // up, something external mutated a reservation it does not own.
+        match guard.entries.get(&self.id) {
+            Some(entry) if entry.status == AgentStatus::Spawning => {
+                if let Some(entry) = guard.entries.remove(&self.id) {
+                    guard.path_index.remove(&entry.path);
+                }
+            }
+            Some(entry) => {
+                tracing::error!(
+                    agent_id = %self.id,
+                    status = ?entry.status,
+                    "invariant violation: unconfirmed SpawnGuard dropped over an entry \
+                     that is no longer Spawning; leaving the entry to its lifecycle owner",
+                );
+            }
+            None => {
+                tracing::error!(
+                    agent_id = %self.id,
+                    "invariant violation: unconfirmed SpawnGuard dropped but its \
+                     reservation is already gone from the registry",
+                );
             }
         }
     }
@@ -882,11 +1005,181 @@ mod tests {
             model: "claude".to_string(),
             spawned_at: Utc::now(),
             parent_id: None,
+            completed_at: None,
         };
         let json = serde_json::to_string(&entry).expect("serialize");
         let back: AgentEntry = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.path, entry.path);
         assert_eq!(back.status, entry.status);
+    }
+
+    /// `remove_terminal` leaves a tombstone carrying the entry's id, path,
+    /// terminal status, and the timestamp stamped at the terminal mark —
+    /// so coordination tools can report "already completed at <ts>"
+    /// instead of "not registered" for the rest of the session.
+    #[test]
+    fn remove_terminal_leaves_truthful_tombstone() {
+        let registry = fresh();
+        let guard = AgentRegistry::reserve(
+            &registry,
+            "/root/done".to_string(),
+            "dev".to_string(),
+            "claude".to_string(),
+            None,
+        )
+        .expect("reserve");
+        let id = guard.id();
+        guard.confirm().expect("confirm");
+
+        let before = Utc::now();
+        registry.write().mark_failed(id).expect("fail");
+        let stamped = registry
+            .read()
+            .get(id)
+            .expect("terminal entry observable")
+            .completed_at
+            .expect("terminal mark must stamp completed_at");
+        assert!(stamped >= before, "completed_at is the terminal-mark time");
+
+        assert!(registry.write().remove_terminal(id), "reclaim succeeds");
+        let r = registry.read();
+        let tombstone = r.tombstone(id).expect("tombstone retained after reclaim");
+        assert_eq!(tombstone.id, id);
+        assert_eq!(tombstone.path, "/root/done");
+        assert_eq!(tombstone.status, AgentStatus::Failed);
+        assert_eq!(tombstone.completed_at, stamped);
+        let by_path = r
+            .tombstone_by_path("/root/done")
+            .expect("tombstone resolvable by path");
+        assert_eq!(by_path.id, id);
+
+        // Live agents never have tombstones until reclaimed.
+        assert!(r.tombstone(Uuid::new_v4()).is_none());
+        assert!(r.tombstone_by_path("/never-existed").is_none());
+    }
+
+    /// Path reuse keeps tombstones honest: the path index points at the
+    /// most recently reclaimed holder while the older record stays
+    /// reachable by id.
+    #[test]
+    fn tombstone_path_lookup_returns_latest_holder() {
+        let registry = fresh();
+        let mut ids = Vec::new();
+        for _ in 0..2 {
+            let guard = AgentRegistry::reserve(
+                &registry,
+                "/root/worker".to_string(),
+                "dev".to_string(),
+                "claude".to_string(),
+                None,
+            )
+            .expect("reserve");
+            let id = guard.id();
+            guard.confirm().expect("confirm");
+            registry.write().mark_completed(id).expect("complete");
+            assert!(registry.write().remove_terminal(id), "reclaim");
+            ids.push(id);
+        }
+        let r = registry.read();
+        assert_eq!(
+            r.tombstone_by_path("/root/worker").expect("latest").id,
+            ids[1],
+            "path lookup returns the most recently reclaimed holder",
+        );
+        assert!(
+            r.tombstone(ids[0]).is_some(),
+            "the older holder's record stays reachable by id",
+        );
+    }
+
+    /// A reservation rolled back by guard drop was never an agent — no
+    /// tombstone may be left behind.
+    #[test]
+    fn rolled_back_reservation_leaves_no_tombstone() {
+        let registry = fresh();
+        let id;
+        {
+            let guard = AgentRegistry::reserve(
+                &registry,
+                "/root/rollback".to_string(),
+                "dev".to_string(),
+                "claude".to_string(),
+                None,
+            )
+            .expect("reserve");
+            id = guard.id();
+        }
+        let r = registry.read();
+        assert!(r.get(id).is_none(), "reservation rolled back");
+        assert!(r.tombstone(id).is_none(), "no tombstone for a rollback");
+        assert!(r.tombstone_by_path("/root/rollback").is_none());
+    }
+
+    /// A terminal entry frees its path from the live index but must stay
+    /// resolvable via `get_terminal_by_path` until reclaimed — so tools
+    /// addressing it by path can report its real outcome.
+    #[test]
+    fn terminal_entry_resolvable_by_path_until_reclaimed() {
+        let registry = fresh();
+        let guard = AgentRegistry::reserve(
+            &registry,
+            "/root/finished".to_string(),
+            "dev".to_string(),
+            "claude".to_string(),
+            None,
+        )
+        .expect("reserve");
+        let id = guard.id();
+        guard.confirm().expect("confirm");
+        registry.write().mark_completed(id).expect("complete");
+
+        let r = registry.read();
+        assert!(r.get_by_path("/root/finished").is_none(), "path freed");
+        let entry = r
+            .get_terminal_by_path("/root/finished")
+            .expect("terminal entry resolvable by path");
+        assert_eq!(entry.id, id);
+        assert_eq!(entry.status, AgentStatus::Completed);
+        drop(r);
+
+        assert!(registry.write().remove_terminal(id));
+        assert!(
+            registry
+                .read()
+                .get_terminal_by_path("/root/finished")
+                .is_none(),
+            "reclaimed entries resolve via tombstones instead",
+        );
+    }
+
+    /// Guard-drop hardening: rollback may only undo the `Spawning`
+    /// reservation it created. An entry that was confirmed (or otherwise
+    /// driven onward) is owed its lifecycle by another owner and must
+    /// survive an unconfirmed guard drop.
+    #[test]
+    fn unconfirmed_guard_drop_never_removes_activated_entry() {
+        let registry = fresh();
+        let guard = AgentRegistry::reserve(
+            &registry,
+            "/root/external".to_string(),
+            "dev".to_string(),
+            "claude".to_string(),
+            None,
+        )
+        .expect("reserve");
+        let id = guard.id();
+        // Externally activate the entry while the guard is still
+        // unconfirmed (a state the spawn/fork tools never produce).
+        registry.write().mark_active(id).expect("activate");
+        drop(guard);
+
+        let r = registry.read();
+        let entry = r.get(id).expect("activated entry must survive guard drop");
+        assert_eq!(entry.status, AgentStatus::Active);
+        assert!(
+            r.get_by_path("/root/external").is_some(),
+            "the live path index must survive too",
+        );
     }
 
     /// Status strings are part of the embedder contract: snake_case,
