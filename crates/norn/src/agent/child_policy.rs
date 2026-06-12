@@ -103,7 +103,7 @@ pub enum PolicyNarrowingError {
     ZeroInboundCapacity,
 }
 
-/// Who a child agent may message through `send_message` (DECISION M1).
+/// Who a child agent may message through `signal_agent` (DECISION M1).
 ///
 /// Granted by the parent at spawn/fork time and enforced against registry
 /// ground truth at send time. The scope is
@@ -122,7 +122,7 @@ pub enum MessagingScope {
     SiblingsAndParent,
     /// May message only the parent.
     ParentOnly,
-    /// `send_message` is not available (tool absent from the child's
+    /// `signal_agent` is not available (tool absent from the child's
     /// surface, and refused at execute as defense-in-depth).
     None,
 }

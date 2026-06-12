@@ -419,7 +419,7 @@ impl AgentBuilder {
     }
 
     /// Wire the shared agent registry so `fork` / `spawn_agent` /
-    /// `send_message` / `close_agent` resolve their runtime instead of
+    /// `signal_agent` / `close_agent` resolve their runtime instead of
     /// erroring with a typed `MissingExtension` error naming
     /// `AgentToolInfra`.
     ///
@@ -469,7 +469,7 @@ impl AgentBuilder {
     /// of 0 disables delegation entirely), and every child it creates is
     /// granted this policy with the depth decremented one level — or a
     /// per-spawn narrowing of it — sizing the child's inbound channel and
-    /// fixing its `send_message` scope (W3.2/W3.4).
+    /// fixing its `signal_agent` scope (W3.2/W3.4).
     #[must_use]
     pub fn child_policy(mut self, policy: ChildPolicy) -> Self {
         self.child_policy = Some(policy);

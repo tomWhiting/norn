@@ -42,13 +42,13 @@ impl AgentHandle {
 pub struct NornRhaiContext {
     /// Agent registry (write-locked when spawning).
     pub registry: Arc<RwLock<AgentRegistry>>,
-    /// Message router used for `send_message` — deliveries land on the
+    /// Message router used for `signal_agent` — deliveries land on the
     /// recipient's inbound channel or fail typed; nothing is queued
     /// where no loop drains.
     pub router: Arc<MessageRouter>,
     /// Provider used when launching a sub-agent step.
     pub provider: Arc<dyn Provider>,
-    /// Id of the agent invoking the script (sender for `send_message`).
+    /// Id of the agent invoking the script (sender for `signal_agent`).
     pub agent_id: Uuid,
     /// Tokio runtime handle to bridge sync Rhai into async work.
     pub runtime: tokio::runtime::Handle,
@@ -108,7 +108,7 @@ pub(super) fn json_to_dynamic(value: serde_json::Value) -> Result<Dynamic, Box<E
 ///
 /// **Handle-returning**
 /// - `spawn_agent(config: Map) -> AgentHandle`
-/// - `send_message(to: AgentHandle | String, content: Dynamic) -> ()`
+/// - `signal_agent(to: AgentHandle | String, content: Dynamic) -> ()`
 /// - `fork_agent(config: Map) -> Dynamic`
 pub fn register_norn_builtins(engine: &mut Engine, context: &NornRhaiContext) {
     super::blocking::register_blocking(engine, context.working_dir.clone());

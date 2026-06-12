@@ -18,7 +18,7 @@ use super::compact::{
     WebSearchRenderer, WriteRenderer,
 };
 use super::minimal::{
-    CloseAgentRenderer, ForkRenderer, SendMessageRenderer, SpawnAgentRenderer, WaitAgentRenderer,
+    CloseAgentRenderer, ForkRenderer, SignalAgentRenderer, SpawnAgentRenderer, WaitAgentRenderer,
 };
 use super::rich::{ApplyPatchRenderer, BashRenderer, EditRenderer, ReadRenderer, SearchRenderer};
 use crate::render::content::ContentBlock;
@@ -100,7 +100,7 @@ pub fn renderer_for(tool_name: &str) -> Option<Box<dyn ToolRenderer>> {
         // Tier 3 — minimal
         "spawn_agent" => Some(Box::new(SpawnAgentRenderer)),
         "fork" => Some(Box::new(ForkRenderer)),
-        "send_message" => Some(Box::new(SendMessageRenderer)),
+        "signal_agent" => Some(Box::new(SignalAgentRenderer)),
         "wait_agent" => Some(Box::new(WaitAgentRenderer)),
         "close_agent" => Some(Box::new(CloseAgentRenderer)),
         _ => None,
@@ -129,7 +129,7 @@ mod tests {
             "tool_search",
             "spawn_agent",
             "fork",
-            "send_message",
+            "signal_agent",
             "wait_agent",
             "close_agent",
         ];

@@ -954,7 +954,7 @@ mod tests {
             "web_search",
             "spawn_agent",
             "fork",
-            "send_message",
+            "signal_agent",
             "close_agent",
             "agents",
         ];

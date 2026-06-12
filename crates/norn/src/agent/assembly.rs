@@ -708,7 +708,7 @@ pub(crate) struct AgentInfraParts {
 ///
 /// Returns the receiver half of the child-result channel; the caller wires
 /// it into the loop context. Everything `spawn_agent` / `fork` /
-/// `send_message` / `close_agent` resolve at call time is published here —
+/// `signal_agent` / `close_agent` resolve at call time is published here —
 /// no partial wiring.
 pub(crate) fn install_agent_infra(
     tool_registry: &Arc<ToolRegistry>,

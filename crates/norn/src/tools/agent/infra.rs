@@ -2,7 +2,7 @@
 //!
 //! Orchestrators publish an [`AgentToolInfra`] on the [`ToolContext`]
 //! extension map. The four agent-coordination tools (`SpawnAgentTool`,
-//! `ForkTool`, `SendMessageTool`, `CloseAgentTool`)
+//! `ForkTool`, `SignalAgentTool`, `CloseAgentTool`)
 //! fetch it via [`ToolContext::get_extension`]. A missing infra is a hard
 //! configuration error — never a panic.
 
@@ -49,14 +49,14 @@ pub struct AgentToolInfra {
     ///
     /// Invariant on harness-built contexts: `parent_id` and [`Self::grant`]
     /// are `Some` together (spawn/fork children) or `None` together (root
-    /// agents). `send_message` rejects a context that has a parent but no
+    /// agents). `signal_agent` rejects a context that has a parent but no
     /// grant with a typed configuration error rather than inventing a
     /// scope; the grant's two halves cannot diverge because they travel in
     /// one [`ParentGrant`].
     pub parent_id: Option<Uuid>,
     /// The coordination grant stamped onto *this* agent by its spawning
     /// parent at launch. `None` for root agents, which have no granting
-    /// parent — a root's `send_message` is governed structurally instead
+    /// parent — a root's `signal_agent` is governed structurally instead
     /// (it may message its own children, unrestricted by a granted scope).
     pub grant: Option<ParentGrant>,
     /// Shared tool registry handed to spawned and forked sub-agents. When
@@ -71,7 +71,7 @@ pub struct AgentToolInfra {
 /// [`AgentToolInfra`]: the child's granted [`ChildPolicy`] (from the
 /// parent's
 /// [`CoordinationEnvelope`](crate::agent::child_policy::CoordinationEnvelope))
-/// plus the parent's session event store, where `send_message` appends
+/// plus the parent's session event store, where `signal_agent` appends
 /// the `agent_message.sent` audit record *in addition to* the sender's
 /// own store — the dual-store rule (Wave 3 §Audit trail) that lets a
 /// parent observe every message its children exchange without sitting on
@@ -156,13 +156,13 @@ pub(crate) fn resolve_agent(
 /// [`MessagingScope`](crate::agent::child_policy::MessagingScope).
 ///
 /// [`MessagingScope::None`](crate::agent::child_policy::MessagingScope::None)
-/// removes `send_message` from the child's surface at spawn/fork time (the
+/// removes `signal_agent` from the child's surface at spawn/fork time (the
 /// tool also refuses at execute as defense-in-depth). An explicit
 /// allow-list is filtered in place; an absent allow-list ("every parent
-/// tool") is materialized from the registry minus `send_message`, so the
+/// tool") is materialized from the registry minus `signal_agent`, so the
 /// child's tool definitions and its [`SubAgentExecutor`] gate agree. The
 /// result is always an explicit allow-list.
-pub(super) fn strip_send_message_from_allow_list(
+pub(super) fn strip_signal_agent_from_allow_list(
     allow_list: Option<Vec<String>>,
     registry: &ToolRegistry,
 ) -> Vec<String> {
@@ -172,7 +172,7 @@ pub(super) fn strip_send_message_from_allow_list(
     };
     names
         .into_iter()
-        .filter(|name| name != crate::tools::agent::coord::SEND_MESSAGE_TOOL_NAME)
+        .filter(|name| name != crate::tools::agent::coord::SIGNAL_AGENT_TOOL_NAME)
         .collect()
 }
 

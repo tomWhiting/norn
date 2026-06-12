@@ -18,7 +18,7 @@ use crate::agent::registry::AgentRegistry;
 ///
 /// The sending *model* never controls these values; they feed the
 /// `<agent_message>` frame attributes and the `agent_message.sent` audit
-/// event. Shared with the Rhai `send_message` bridge so script-host sends
+/// event. Shared with the Rhai `signal_agent` bridge so script-host sends
 /// attribute by exactly the same rule.
 pub(crate) fn sender_attribution(
     registry: &AgentRegistry,

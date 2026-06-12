@@ -1,8 +1,8 @@
 //! Inter-agent coordination tools (NA-007 update of N-014, messaging
-//! replaced in Wave 3 W3.2) — [`SendMessageTool`], [`CloseAgentTool`].
+//! replaced in Wave 3 W3.2) — [`SignalAgentTool`], [`CloseAgentTool`].
 //!
 //! Close performs a depth-first post-order shutdown of the target's whole
-//! subtree. `send_message` routes through the recipient's
+//! subtree. `signal_agent` routes through the recipient's
 //! [`crate::r#loop::inbound::InboundChannel`] via the workspace-shared
 //! [`MessageRouter`](crate::agent::message_router::MessageRouter), with
 //! who-may-message-whom enforced from the sender's granted
@@ -14,11 +14,11 @@
 
 mod close;
 mod helpers;
-mod send_message;
+mod signal_agent;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
 pub use close::CloseAgentTool;
 pub(crate) use helpers::sender_attribution;
-pub use send_message::{SEND_MESSAGE_TOOL_NAME, SendMessageTool};
+pub use signal_agent::{SIGNAL_AGENT_TOOL_NAME, SignalAgentTool};

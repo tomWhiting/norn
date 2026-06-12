@@ -32,7 +32,7 @@
 //! The router routes by **capability of the harness**: any harness code
 //! holding the router and a recipient id can deliver. *Permissioning* —
 //! who may message whom ([`MessagingScope`] on `ChildPolicy`) — is
-//! enforced by the `send_message` tool against registry ground truth,
+//! enforced by the `signal_agent` tool against registry ground truth,
 //! not here. The router is mechanism; policy lives one layer up.
 //!
 //! ## Ordering guarantee

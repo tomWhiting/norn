@@ -138,7 +138,7 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let (inbound_tx, mut inbound_rx) = inbound_channel(inbound_capacity);
     // Route registration ownership (Wave 3 §Routing): the launch path
     // registers the child's inbound sender the moment the channel exists,
-    // so `send_message` can reach the child for its entire run; the
+    // so `signal_agent` can reach the child for its entire run; the
     // completion wrapper below deregisters — the same single ownership as
     // the registry entry, never two actors.
     router.register(child_id, inbound_tx.clone());

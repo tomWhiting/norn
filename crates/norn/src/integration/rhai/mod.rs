@@ -6,7 +6,7 @@
 //!    `parse_json`, `to_json`, `write_json`, `write_file`. Mirror the
 //!    workspace `cmd_builtins` set and operate synchronously inside Rhai.
 //!
-//! 2. **Handle-returning agent operations** — `spawn_agent`, `send_message`,
+//! 2. **Handle-returning agent operations** — `spawn_agent`, `signal_agent`,
 //!    `fork_agent`. Return an opaque [`AgentHandle`]
 //!    wrapping a [`uuid::Uuid`]; the underlying work runs on the Tokio
 //!    runtime via a stored runtime handle.

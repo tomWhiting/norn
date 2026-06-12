@@ -89,7 +89,7 @@ use crate::tools::task::SharedTaskStore;
 /// computed by the fork tool from the parent's own grant (narrowed or
 /// inherit-with-decrement, W3.4): it is stamped on the fork's
 /// [`AgentToolInfra`] together with the parent's event store, so
-/// `send_message` enforces the granted messaging scope, the dual-store
+/// `signal_agent` enforces the granted messaging scope, the dual-store
 /// `Sent` audit writes from ground truth, and the fork's own spawn/fork
 /// sites read *their* budget from the grant. The parent's
 /// [`CoordinationEnvelope`] extension is forwarded for the envelope-wide
@@ -530,7 +530,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
     let handle_store = Arc::clone(&child_store);
     let (status_tx, status_rx) = watch::channel(AgentStatus::Active);
     // Route registration ownership (Wave 3 §Routing): registered before
-    // the task starts so `send_message` can reach the fork for its entire
+    // the task starts so `signal_agent` can reach the fork for its entire
     // run; deregistered by the completion wrapper below — single
     // ownership, never two actors.
     router.register(fork_id, inbound_tx.clone());

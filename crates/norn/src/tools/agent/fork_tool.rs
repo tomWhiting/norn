@@ -5,7 +5,7 @@
 //! model**, **spawn = fresh identity, configured through profile**. The
 //! machinery is shared (per-child [`ToolContext`](crate::tool::context::ToolContext), status watch channel,
 //! inbound steering channel, child result channel) so coordination
-//! tools — `send_message`, `close_agent` — work uniformly across
+//! tools — `signal_agent`, `close_agent` — work uniformly across
 //! both surfaces.
 //!
 //! The tool's `execute()` reserves a registry slot, builds the child's seed
@@ -34,7 +34,7 @@ use super::delegation::{
 use super::fork_pipeline::{ForkLaunch, build_fork_context, launch_fork, resolve_fork_store};
 use super::fork_seed::seed_fork_events;
 use super::handle::AgentHandles;
-use super::infra::{SubAgentExecutor, infra_from, strip_send_message_from_allow_list};
+use super::infra::{SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list};
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope, MessagingScope};
@@ -298,7 +298,7 @@ impl Tool for ForkTool {
         })?;
 
         // R3: per-child ToolContext with fresh identity, forwarded shared
-        // infrastructure, the granted policy stamped for send_message's
+        // infrastructure, the granted policy stamped for signal_agent's
         // scope enforcement and the fork's own spawn-time budget reads.
         let child_ctx = build_fork_context(
             &infra,
@@ -361,12 +361,12 @@ impl Tool for ForkTool {
 
         let output_schema = build_fork_output_schema(&args.requirements);
 
-        // Forks see every parent tool — except `send_message` when the
+        // Forks see every parent tool — except `signal_agent` when the
         // granted scope is `MessagingScope::None`, which removes the tool
         // from the fork's surface entirely (defense-in-depth: the tool
         // also refuses at execute).
         let allow_list: Option<Vec<String>> = if fork_policy.messaging == MessagingScope::None {
-            Some(strip_send_message_from_allow_list(None, parent_registry))
+            Some(strip_signal_agent_from_allow_list(None, parent_registry))
         } else {
             None
         };

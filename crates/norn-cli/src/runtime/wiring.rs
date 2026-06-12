@@ -115,7 +115,7 @@ pub fn cli_coordination_envelope() -> CoordinationEnvelope {
 ///
 /// Install [`AgentToolInfra`] on the registry's shared
 /// [`norn::tool::context::ToolContext`] so the four agent-coordination
-/// tools (`spawn_agent`, `fork`, `send_message`,
+/// tools (`spawn_agent`, `fork`, `signal_agent`,
 /// `close_agent`) resolve their runtime infrastructure instead of
 /// erroring with a typed `MissingExtension` error naming
 /// `AgentToolInfra`, and publish the CLI's deliberate

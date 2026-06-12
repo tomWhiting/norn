@@ -2,7 +2,7 @@
 //!
 //! Minimal renderers serve agent-coordination tools that produce little
 //! or no visible output: [`SpawnAgentRenderer`],
-//! [`ForkRenderer`], [`SendMessageRenderer`], and [`CloseAgentRenderer`].
+//! [`ForkRenderer`], [`SignalAgentRenderer`], and [`CloseAgentRenderer`].
 
 use serde_json::Value;
 
@@ -64,10 +64,10 @@ impl ToolRenderer for ForkRenderer {
     }
 }
 
-/// Renders `send_message` tool calls: `→ {to} [{kind}]: {content_preview}`.
-pub struct SendMessageRenderer;
+/// Renders `signal_agent` tool calls: `→ {to} [{kind}]: {content_preview}`.
+pub struct SignalAgentRenderer;
 
-impl ToolRenderer for SendMessageRenderer {
+impl ToolRenderer for SignalAgentRenderer {
     fn header_line(
         &self,
         args: &Value,
@@ -187,8 +187,8 @@ mod tests {
     }
 
     #[test]
-    fn send_message_header_includes_recipient_kind_and_content() {
-        let header = SendMessageRenderer.header_line(
+    fn signal_agent_header_includes_recipient_kind_and_content() {
+        let header = SignalAgentRenderer.header_line(
             &json!({ "to": "/workers/analyzer", "kind": "steer", "content": "check status" }),
             &json!({ "to": "/workers/analyzer" }),
             0,
@@ -242,7 +242,7 @@ mod tests {
         let empty = json!({});
         assert!(SpawnAgentRenderer.body(&empty, &empty, &caps()).is_none());
         assert!(ForkRenderer.body(&empty, &empty, &caps()).is_none());
-        assert!(SendMessageRenderer.body(&empty, &empty, &caps()).is_none());
+        assert!(SignalAgentRenderer.body(&empty, &empty, &caps()).is_none());
         assert!(WaitAgentRenderer.body(&empty, &empty, &caps()).is_none());
         assert!(CloseAgentRenderer.body(&empty, &empty, &caps()).is_none());
     }

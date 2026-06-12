@@ -69,7 +69,7 @@ use crate::tools::task::SharedTaskStore;
 /// computed by the spawn tool from the parent's own grant (narrowed or
 /// inherit-with-decrement, W3.4): it is stamped on the child's
 /// [`AgentToolInfra`] together with the parent's event store, so
-/// `send_message` enforces the granted
+/// `signal_agent` enforces the granted
 /// [`MessagingScope`](crate::agent::child_policy::MessagingScope), the
 /// dual-store `Sent` audit writes from ground truth, and the child's own
 /// spawn/fork sites read *their* budget from the grant. The parent's

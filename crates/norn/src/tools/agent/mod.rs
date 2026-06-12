@@ -1,4 +1,4 @@
-//! `SpawnAgent`, `SendMessage`, `CloseAgent`, Fork tools.
+//! `SpawnAgent`, `SignalAgent`, `CloseAgent`, Fork tools.
 //!
 //! All four tools wrap the agent infrastructure delivered in N-014.
 //! Implementations live in named submodules; this file only declares them
@@ -18,7 +18,7 @@ mod spawn_context;
 mod spawn_launch;
 mod spawn_outcome;
 
-pub use self::coord::{CloseAgentTool, SEND_MESSAGE_TOOL_NAME, SendMessageTool};
+pub use self::coord::{CloseAgentTool, SIGNAL_AGENT_TOOL_NAME, SignalAgentTool};
 pub(crate) use self::fork_pipeline::ForkOutcome;
 pub use self::fork_tool::{FORK_TOOL_NAME, ForkTool};
 pub use self::handle::{AgentHandle, AgentHandles};

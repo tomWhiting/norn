@@ -20,7 +20,7 @@ use super::delegation::{
     auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
 };
 use super::handle::{AgentHandles, ChildBranchMetadata, SharedSessionTree};
-use super::infra::{SubAgentExecutor, infra_from, strip_send_message_from_allow_list};
+use super::infra::{SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list};
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
 use super::spawn_context::build_child_context;
@@ -357,11 +357,11 @@ impl Tool for SpawnAgentTool {
         // profile's resolved tool list. The chosen list gates both the
         // child's tool execution (via `SubAgentExecutor`) and the tool
         // definitions the child model is shown. A `MessagingScope::None`
-        // grant removes `send_message` from that surface entirely
+        // grant removes `signal_agent` from that surface entirely
         // (defense-in-depth: the tool also refuses at execute).
         let mut allow_list: Option<Vec<String>> = args.tools.clone().or(profile_tools);
         if child_policy.messaging == MessagingScope::None {
-            allow_list = Some(strip_send_message_from_allow_list(
+            allow_list = Some(strip_signal_agent_from_allow_list(
                 allow_list,
                 parent_registry,
             ));
@@ -431,7 +431,7 @@ impl Tool for SpawnAgentTool {
 
         // Per-child ToolContext: fresh identity, fresh AgentHandles, shared
         // infrastructure forwarded from the parent, the granted policy
-        // stamped for send_message's scope enforcement and the child's own
+        // stamped for signal_agent's scope enforcement and the child's own
         // spawn-time budget reads.
         let child_ctx = build_child_context(
             &infra,
@@ -3013,7 +3013,7 @@ mod tests {
 
     /// Route ownership (W3.2): the launch path registers the child's
     /// inbound route at launch and the completion wrapper deregisters at
-    /// the run's end — `send_message` reaches a live child without any
+    /// the run's end — `signal_agent` reaches a live child without any
     /// tool-side registration, and a finished child is NotRouted.
     #[tokio::test]
     async fn spawn_registers_route_at_launch_and_deregisters_at_terminal() {
@@ -3109,15 +3109,15 @@ mod tests {
         );
     }
 
-    /// `MessagingScope::None` removes `send_message` from the child's
+    /// `MessagingScope::None` removes `signal_agent` from the child's
     /// surface: the tool definitions shown to the child model exclude it
     /// (with or without an explicit allow-list) while every other tool
     /// survives.
     #[tokio::test]
-    async fn spawn_strips_send_message_from_child_surface_under_scope_none() {
-        use crate::tools::agent::coord::SendMessageTool;
+    async fn spawn_strips_signal_agent_from_child_surface_under_scope_none() {
+        use crate::tools::agent::coord::SignalAgentTool;
 
-        for explicit_tools in [None, Some(vec!["send_message", "read"])] {
+        for explicit_tools in [None, Some(vec!["signal_agent", "read"])] {
             let captured = Arc::new(StdMutex::new(Vec::new()));
             let provider: Arc<dyn Provider> = Arc::new(CapturingProvider {
                 captured: Arc::clone(&captured),
@@ -3131,7 +3131,7 @@ mod tests {
 
             let mut registry = ToolRegistry::new();
             registry.register(Box::new(EchoStubTool { tool_name: "read" }));
-            registry.register(Box::new(SendMessageTool::new()));
+            registry.register(Box::new(SignalAgentTool::new()));
             let registry = Arc::new(registry);
 
             let agent_registry = AgentRegistry::shared();
@@ -3164,8 +3164,8 @@ mod tests {
                 })
                 .collect();
             assert!(
-                !names.iter().any(|n| n == "send_message"),
-                "scope none must remove send_message (explicit_tools: \
+                !names.iter().any(|n| n == "signal_agent"),
+                "scope none must remove signal_agent (explicit_tools: \
                  {explicit_tools:?}): {names:?}",
             );
             assert!(
@@ -3178,7 +3178,7 @@ mod tests {
 
     /// The spawned child's `AgentToolInfra` carries the granted policy and
     /// the scope-granting parent's event store — the ground truth
-    /// `send_message` enforces scope from and writes the dual-store audit
+    /// `signal_agent` enforces scope from and writes the dual-store audit
     /// to.
     #[tokio::test]
     async fn spawned_child_infra_carries_granted_policy_and_parent_store() {
