@@ -4,6 +4,8 @@ pub use crate::error::SessionError;
 
 pub mod action_log;
 pub(super) mod action_log_mutations;
+pub mod action_log_scope;
+pub mod action_log_tree;
 pub mod context_edit;
 pub mod conversion;
 pub mod events;
@@ -14,6 +16,8 @@ pub mod store;
 pub mod tree;
 
 pub use action_log::{ActionLog, ActionLogContext, ActionLogDetail, ActionLogEntry, Outcome};
+pub use action_log_scope::{ActionLogFilter, LabeledEntry, ScopedLog};
+pub use action_log_tree::ActionLogTree;
 pub use manager::{CreateSessionOptions, OpenSession, ReplaySummary, SessionManager};
 pub use mutation_ledger::{
     DiffStats, MutationLedger, MutationLedgerEntry, MutationOp, RecordedMutation, RevertStatus,

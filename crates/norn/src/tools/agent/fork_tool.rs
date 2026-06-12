@@ -47,6 +47,7 @@ use crate::integration::hooks::HookRegistry;
 use crate::r#loop::inbound::inbound_channel;
 use crate::r#loop::loop_context::LoopContext;
 use crate::provider::agent_event::{SubagentDescriptor, SubagentKind};
+use crate::session::action_log::ActionLog;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::scheduling::ToolEffect;
@@ -264,6 +265,13 @@ impl Tool for ForkTool {
         // do around a spawn (NH-006 R5 parity).
         let hooks = ctx.get_extension::<HookRegistry>();
         loop_ctx.hooks = hooks.as_ref().map(Arc::clone);
+        // Per-agent action log: the fork's loop records its own tool
+        // dispatches into the fork's log (installed on the fork context by
+        // `build_fork_context`), so the fork's `action_log` queries work
+        // and the parent's scoped queries see the fork's entries. The log
+        // starts empty at the fork point — the seeded conversation is the
+        // fork's memory; the action log records what the fork itself did.
+        loop_ctx.action_log = child_ctx.get_extension::<ActionLog>();
         loop_ctx.environment = Some(crate::system_prompt::environment::EnvironmentConfig {
             session_id: None,
             model: args.model.clone(),
@@ -2202,6 +2210,144 @@ mod tests {
                 .unwrap()
                 .contains(fork_id),
             "the closer takes ownership of the handle",
+        );
+    }
+
+    /// Production regression (action-log tree): a fork inherits the
+    /// `action_log` TOOL through the shared registry but previously
+    /// received no `ActionLog` extension — every call inside the fork
+    /// failed with `MissingExtension`. The fork now carries its own
+    /// per-agent log, which starts EMPTY at the fork point (its seeded
+    /// conversation is its memory; its action log records what it did) —
+    /// even when the parent's own log already has entries. The parent
+    /// federates over the fork's entries with `scope: "all"`.
+    #[tokio::test]
+    async fn fork_action_log_query_works_and_log_starts_at_fork_point() {
+        use crate::session::action_log::{ActionLog, CompletionRecord, Outcome};
+        use crate::tools::action_log::ActionLogTool;
+
+        let turn1 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "tc-log".to_string(),
+                name: Some("action_log".to_string()),
+                arguments_delta: json!({ "query": "list" }).to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let turn2 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "structured-out".to_string(),
+                name: Some("structured_output".to_string()),
+                arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![turn1, turn2]));
+
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(ActionLogTool::new()));
+        let tool_registry = Arc::new(tool_registry);
+
+        let parent = Uuid::new_v4();
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            parent,
+            &agent_registry,
+            tool_registry,
+            Arc::new(Mailbox::new()),
+        );
+        // The parent's own log already holds an entry: the fork's log
+        // must NOT inherit it.
+        let parent_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        parent_log.record_completion(CompletionRecord {
+            tool_name: "read",
+            tool_call_id: "parent-call",
+            tool_use_description: "",
+            outcome: Outcome::Success,
+            output: &json!({ "path": "x", "lines": 1 }),
+            args: json!({}),
+            duration_ms: 1,
+            follow_ups: Vec::new(),
+            post_validate_outcome: None,
+            level_1_only: false,
+        });
+        ctx.insert_extension(Arc::clone(&parent_log));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "inspect your log", "model": "gpt-5.5", "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        let child_store = Arc::clone(&handle.event_store);
+        handle.join_handle.await.expect("join");
+
+        // The fork's action_log call succeeded — the MissingExtension
+        // regression is pinned here — and saw an EMPTY log: the fork's
+        // log starts at the fork point, not at the parent's history.
+        let result = child_store
+            .events()
+            .into_iter()
+            .find_map(|e| match e {
+                SessionEvent::ToolResult {
+                    tool_name,
+                    tool_call_id,
+                    output,
+                    ..
+                } if tool_name == "action_log" && tool_call_id == "tc-log" => Some(output),
+                _ => None,
+            })
+            .expect("the fork's action_log call produced a result");
+        assert!(
+            result.get("error").is_none(),
+            "the fork's action_log query must succeed: {result}",
+        );
+        assert_eq!(
+            result["count"], 0,
+            "the fork's log starts empty at the fork point: {result}",
+        );
+
+        // Federation: the parent's scope=all sees the fork's recorded
+        // call, labeled with the fork's registry path.
+        let federated = ActionLogTool::new()
+            .execute(
+                &ToolEnvelope {
+                    tool_call_id: "parent-query".to_string(),
+                    tool_name: "action_log".to_string(),
+                    model_args: json!({ "query": "list", "scope": "all" }),
+                    runtime_inputs: RuntimeInputs::default(),
+                    metadata: serde_json::Value::Null,
+                },
+                &ctx,
+            )
+            .await
+            .expect("parent federated query");
+        assert!(!federated.is_error(), "{:?}", federated.content);
+        let entries = federated.content["entries"].as_array().unwrap();
+        let fork_entry = entries
+            .iter()
+            .find(|e| e["tool"] == "action_log")
+            .expect("the fork's call surfaces in the parent's scope=all");
+        assert!(
+            fork_entry["agent"].as_str().unwrap().contains("/fork/"),
+            "the fork's entry is labeled with its registry path: {fork_entry}",
+        );
+        assert!(
+            entries.iter().any(|e| e["id"] == "parent-call"),
+            "the parent's own entry interleaves into scope=all",
         );
     }
 }

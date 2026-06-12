@@ -17,6 +17,7 @@ use std::sync::Arc;
 use crate::tool::registry::ToolRegistry;
 use crate::tools::action_log::ActionLogTool;
 use crate::tools::agent::{CloseAgentTool, ForkTool, SignalAgentTool, SpawnAgentTool};
+use crate::tools::agents::AgentsTool;
 use crate::tools::bash::BashTool;
 use crate::tools::edit::EditTool;
 use crate::tools::lsp::{LspBackend, LspTool};
@@ -31,9 +32,9 @@ use crate::tools::write::WriteTool;
 /// Register the full standard Norn tool set into `registry`.
 ///
 /// The set: `read`, `write`, `edit`, `bash`, `apply_patch`, `search`, `lsp`,
-/// `task`, `tool_search`, `action_log`, `web_fetch`, `web_search`, and the
+/// `task`, `tool_search`, `action_log`, `web_fetch`, `web_search`, the
 /// four agent-coordination tools (`spawn_agent`, `fork`, `signal_agent`,
-/// `close_agent`).
+/// `close_agent`), and the read-only `agents` status view.
 ///
 /// `action_log` reads an [`ActionLog`](crate::session::action_log::ActionLog)
 /// published as a [`ToolContext`](crate::tool::context::ToolContext)
@@ -90,6 +91,7 @@ pub fn register_standard_tools(
     registry.register(Box::new(ForkTool::new()));
     registry.register(Box::new(SignalAgentTool::new()));
     registry.register(Box::new(CloseAgentTool::new()));
+    registry.register(Box::new(AgentsTool::new()));
 }
 
 #[cfg(test)]
@@ -117,6 +119,7 @@ mod tests {
             "fork",
             "signal_agent",
             "close_agent",
+            "agents",
         ] {
             assert!(
                 registry.get(name).is_some(),

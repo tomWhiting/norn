@@ -1,6 +1,6 @@
 Use when work can be delegated to an independent agent that does not need the parent's conversation history. The sub-agent starts with a clean EventStore — it sees only the task string, not prior turns. Provide a clear, self-contained task description since the sub-agent has no other context.
 
-Spawn is asynchronous: it returns immediately with the agent_id and registry path while the child runs in the background. Continue with your own work after spawning — do not block. When the child completes, its result is delivered back to you automatically.
+Spawn is asynchronous: it returns immediately with the agent_id and registry path while the child runs in the background. Continue with your own work after spawning — do not block. When the child completes, its result is delivered back to you automatically. To check whether a child is still running, use the agents tool.
 
 Pass a bare profile name (e.g. "developer", "code-reviewer") in the profile parameter to resolve a markdown profile from $WORKSPACE/.norn/profiles, $WORKSPACE/.meridian/profiles, or ~/.norn/profiles. The profile supplies the child's system instructions, tool allow-list, and reasoning config. Omit profile for a minimal default whose system instruction is built from the task itself.
 

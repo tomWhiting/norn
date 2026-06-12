@@ -854,6 +854,7 @@ mod tests {
             "fork",
             "signal_agent",
             "close_agent",
+            "agents",
         ];
         let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")

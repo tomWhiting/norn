@@ -24,6 +24,7 @@ use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
 use super::reclaim::{
     ReclaimHandshake, log_terminal_transition_violation, reclaim_delivered_child,
 };
+use super::spawn_context::wire_child_action_log;
 use crate::agent::fork::{ContextFilter, ParentSystemInstruction};
 use crate::agent::output::AgentStopReason;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
@@ -94,6 +95,7 @@ pub(super) fn build_fork_context(
     parent_ctx: &ToolContext,
     child_tree: Option<SharedSessionTree>,
 ) -> Arc<ToolContext> {
+    let child_log_store = Arc::clone(&child_store);
     let child_infra = AgentToolInfra {
         registry: Arc::clone(&parent_infra.registry),
         mailbox: Arc::clone(&parent_infra.mailbox),
@@ -143,6 +145,17 @@ pub(super) fn build_fork_context(
     if let Some(tree) = child_tree {
         child_ctx.insert_extension(Arc::new(tree));
     }
+    // Per-agent action log + session log-tree registration: the fork's
+    // log starts empty at the fork point (its seeded conversation is its
+    // memory; its action log records what *it* did). See
+    // [`wire_child_action_log`].
+    wire_child_action_log(
+        parent_infra,
+        parent_ctx,
+        child_id,
+        child_log_store,
+        &child_ctx,
+    );
     Arc::new(child_ctx)
 }
 

@@ -15,6 +15,8 @@ use crate::config::permissions::PermissionPolicy;
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::internal::extraction::SharedProvider;
+use crate::session::action_log::ActionLog;
+use crate::session::action_log_tree::ActionLogTree;
 use crate::session::store::EventStore;
 use crate::tool::catalog::SharedToolCatalog;
 use crate::tool::context::{SharedWorkingDir, ToolContext};
@@ -67,6 +69,7 @@ pub(super) fn build_child_context(
     parent_ctx: &ToolContext,
     child_tree: Option<SharedSessionTree>,
 ) -> Arc<ToolContext> {
+    let child_log_store = Arc::clone(&child_store);
     let child_infra = AgentToolInfra {
         registry: Arc::clone(&parent_infra.registry),
         mailbox: Arc::clone(&parent_infra.mailbox),
@@ -113,5 +116,209 @@ pub(super) fn build_child_context(
     if let Some(tree) = child_tree {
         child_ctx.insert_extension(Arc::new(tree));
     }
+    wire_child_action_log(
+        parent_infra,
+        parent_ctx,
+        child_id,
+        child_log_store,
+        &child_ctx,
+    );
     Arc::new(child_ctx)
+}
+
+/// Give a spawn/fork child its own per-agent [`ActionLog`] and register it
+/// in the session-wide [`ActionLogTree`].
+///
+/// The child's log is built over the **child's** event store and the
+/// **child's** [`SharedWorkingDir`] handle (so its mutation ledger
+/// resolves relative paths against the child's live working dir), then
+/// inserted on the child context — fixing the inherited-tool /
+/// missing-extension failure where a child's `action_log` calls errored
+/// with `MissingExtension`. A fork's log starts empty at the fork point:
+/// its seeded conversation is its memory; its action log records what
+/// *it* did.
+///
+/// The [`ActionLogTree`] is fetched from the parent context and forwarded
+/// to the child, so the child's own spawn/fork sites register
+/// grandchildren into the same tree (and the child can federate over its
+/// own subtree — never upward). When the parent context carries no tree —
+/// a runtime assembled outside `AgentBuilder`, e.g. `norn-cli`'s
+/// `build_runtime` — the tree is installed on the parent now, rooted at
+/// the parent agent, with the parent's own log registered when one is
+/// published. Spawn and fork are `Process`-effect tools and therefore run
+/// serialized within the parent's dispatch loop, so this get-or-install
+/// step never races with itself.
+pub(super) fn wire_child_action_log(
+    parent_infra: &AgentToolInfra,
+    parent_ctx: &ToolContext,
+    child_id: Uuid,
+    child_store: Arc<EventStore>,
+    child_ctx: &ToolContext,
+) {
+    let child_log = Arc::new(ActionLog::with_working_dir(
+        child_store,
+        child_ctx.shared_working_dir(),
+    ));
+    child_ctx.insert_extension(Arc::clone(&child_log));
+
+    let log_tree = parent_ctx
+        .get_extension::<ActionLogTree>()
+        .unwrap_or_else(|| {
+            let tree = Arc::new(ActionLogTree::new(parent_infra.agent_id));
+            if let Some(parent_log) = parent_ctx.get_extension::<ActionLog>() {
+                tree.register(parent_infra.agent_id, None, parent_log);
+            }
+            parent_ctx.insert_extension(Arc::clone(&tree));
+            tree
+        });
+    log_tree.register(child_id, Some(parent_infra.agent_id), child_log);
+    child_ctx.insert_extension(log_tree);
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::agent::mailbox::Mailbox;
+    use crate::agent::registry::AgentRegistry;
+    use crate::provider::mock::MockProvider;
+    use crate::provider::traits::Provider;
+    use crate::tool::registry::ToolRegistry;
+
+    fn parent_infra(agent_id: Uuid) -> AgentToolInfra {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        AgentToolInfra {
+            registry: AgentRegistry::shared(),
+            mailbox: Arc::new(Mailbox::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id,
+            parent_id: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+        }
+    }
+
+    /// The child context carries its own [`ActionLog`] (the production
+    /// regression: children previously had none and every `action_log`
+    /// call failed `MissingExtension`), registered in the shared
+    /// [`ActionLogTree`] under the parent, with the tree forwarded to the
+    /// child.
+    #[test]
+    fn build_child_context_installs_child_log_and_registers_in_tree() {
+        let parent_id = Uuid::new_v4();
+        let infra = parent_infra(parent_id);
+        let parent_ctx = ToolContext::empty();
+        let parent_log = Arc::new(crate::session::action_log::ActionLog::new(Arc::new(
+            EventStore::new(),
+        )));
+        parent_ctx.insert_extension(Arc::clone(&parent_log));
+
+        let child_id = Uuid::new_v4();
+        let child_ctx = build_child_context(
+            &infra,
+            child_id,
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+        );
+
+        let child_log = child_ctx
+            .get_extension::<crate::session::action_log::ActionLog>()
+            .expect("the child must carry its own ActionLog extension");
+        assert!(
+            !Arc::ptr_eq(&child_log, &parent_log),
+            "the child's log is per-agent, never the parent's instance",
+        );
+
+        // The tree was lazily installed on the parent, rooted at the
+        // parent, with both logs registered and the parent→child edge.
+        let tree = parent_ctx
+            .get_extension::<ActionLogTree>()
+            .expect("tree installed on the parent context");
+        assert_eq!(tree.root(), parent_id);
+        assert!(Arc::ptr_eq(
+            &tree.log_of(parent_id).expect("root log"),
+            &parent_log
+        ));
+        assert!(Arc::ptr_eq(
+            &tree.log_of(child_id).expect("child log"),
+            &child_log
+        ));
+        assert_eq!(tree.children_of(parent_id), vec![child_id]);
+
+        // Forwarded: the child shares the same tree instance, so
+        // grandchildren register into the same session-wide tree.
+        let child_tree = child_ctx
+            .get_extension::<ActionLogTree>()
+            .expect("tree forwarded to the child context");
+        assert!(Arc::ptr_eq(&child_tree, &tree));
+    }
+
+    /// A second child reuses the already-installed tree — both children
+    /// hang off the same root.
+    #[test]
+    fn second_child_registers_into_the_same_tree() {
+        let parent_id = Uuid::new_v4();
+        let infra = parent_infra(parent_id);
+        let parent_ctx = ToolContext::empty();
+        parent_ctx.insert_extension(Arc::new(crate::session::action_log::ActionLog::new(
+            Arc::new(EventStore::new()),
+        )));
+
+        let first = Uuid::new_v4();
+        let second = Uuid::new_v4();
+        let _c1 = build_child_context(
+            &infra,
+            first,
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+        );
+        let tree_after_first = parent_ctx.get_extension::<ActionLogTree>().expect("tree");
+        let _c2 = build_child_context(
+            &infra,
+            second,
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+        );
+        let tree_after_second = parent_ctx.get_extension::<ActionLogTree>().expect("tree");
+
+        assert!(
+            Arc::ptr_eq(&tree_after_first, &tree_after_second),
+            "the second child must reuse the installed tree, not replace it",
+        );
+        assert_eq!(
+            tree_after_second.children_of(parent_id),
+            vec![first, second]
+        );
+    }
+
+    /// A parent context with no [`ActionLog`] of its own (assembled
+    /// outside `AgentBuilder`) still anchors the tree at the parent: the
+    /// child registers and is reachable; the root simply has no log.
+    #[test]
+    fn child_registers_even_when_parent_has_no_log() {
+        let parent_id = Uuid::new_v4();
+        let infra = parent_infra(parent_id);
+        let parent_ctx = ToolContext::empty();
+
+        let child_id = Uuid::new_v4();
+        let _child_ctx = build_child_context(
+            &infra,
+            child_id,
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+        );
+
+        let tree = parent_ctx.get_extension::<ActionLogTree>().expect("tree");
+        assert_eq!(tree.root(), parent_id);
+        assert!(
+            tree.log_of(parent_id).is_none(),
+            "no parent log to register"
+        );
+        assert!(tree.log_of(child_id).is_some(), "child log registered");
+        assert_eq!(tree.children_of(parent_id), vec![child_id]);
+    }
 }

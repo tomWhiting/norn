@@ -120,6 +120,11 @@ pub struct AgentTombstone {
     pub path: String,
     /// The terminal status the agent finished with.
     pub status: AgentStatus,
+    /// The reclaimed agent's parent id, carried from its entry so
+    /// ancestry-scoped queries (e.g. the `agents` status tool, which shows
+    /// a caller only its own descendants) stay answerable after
+    /// reclamation.
+    pub parent_id: Option<Uuid>,
     /// When the agent reached its terminal status.
     pub completed_at: DateTime<Utc>,
 }
@@ -217,6 +222,15 @@ impl AgentRegistry {
             .get(path)
             .and_then(|id| self.tombstones.get(id))
             .cloned()
+    }
+
+    /// Snapshot of every retained completion record, mirroring
+    /// [`Self::list`] for reclaimed agents. Read-only; lets observers
+    /// (e.g. the `agents` status tool) enumerate reclaimed agents instead
+    /// of probing tombstones one id at a time.
+    #[must_use]
+    pub fn tombstones(&self) -> Vec<AgentTombstone> {
+        self.tombstones.values().cloned().collect()
     }
 
     /// Snapshot of all registered entries.
@@ -325,6 +339,7 @@ impl AgentRegistry {
                     id: entry.id,
                     path: entry.path.clone(),
                     status: entry.status,
+                    parent_id: entry.parent_id,
                     // Terminal entries are always stamped by `set_status`;
                     // the fallback keeps the record honest-ish (reclaim
                     // time) should an entry ever reach terminal without a
@@ -1014,18 +1029,20 @@ mod tests {
     }
 
     /// `remove_terminal` leaves a tombstone carrying the entry's id, path,
-    /// terminal status, and the timestamp stamped at the terminal mark —
-    /// so coordination tools can report "already completed at <ts>"
-    /// instead of "not registered" for the rest of the session.
+    /// terminal status, parent id, and the timestamp stamped at the
+    /// terminal mark — so coordination tools can report "already completed
+    /// at <ts>" instead of "not registered" for the rest of the session,
+    /// and ancestry-scoped views stay answerable after reclamation.
     #[test]
     fn remove_terminal_leaves_truthful_tombstone() {
         let registry = fresh();
+        let parent = Uuid::new_v4();
         let guard = AgentRegistry::reserve(
             &registry,
             "/root/done".to_string(),
             "dev".to_string(),
             "claude".to_string(),
-            None,
+            Some(parent),
         )
         .expect("reserve");
         let id = guard.id();
@@ -1047,6 +1064,11 @@ mod tests {
         assert_eq!(tombstone.id, id);
         assert_eq!(tombstone.path, "/root/done");
         assert_eq!(tombstone.status, AgentStatus::Failed);
+        assert_eq!(
+            tombstone.parent_id,
+            Some(parent),
+            "the parent link must survive reclamation"
+        );
         assert_eq!(tombstone.completed_at, stamped);
         let by_path = r
             .tombstone_by_path("/root/done")
@@ -1056,6 +1078,48 @@ mod tests {
         // Live agents never have tombstones until reclaimed.
         assert!(r.tombstone(Uuid::new_v4()).is_none());
         assert!(r.tombstone_by_path("/never-existed").is_none());
+    }
+
+    /// `tombstones()` mirrors `list()` for completion records: every
+    /// reclaimed agent appears exactly once, live entries never do.
+    #[test]
+    fn tombstones_snapshot_lists_every_reclaimed_record() {
+        let registry = fresh();
+        assert!(registry.read().tombstones().is_empty());
+
+        let live = register(&registry, "/root/live", None);
+        let done_a = register(&registry, "/root/a", None);
+        let done_b = register(&registry, "/root/b", None);
+        registry.write().mark_completed(done_a).expect("complete a");
+        registry.write().mark_failed(done_b).expect("fail b");
+        assert!(registry.write().remove_terminal(done_a));
+        assert!(registry.write().remove_terminal(done_b));
+
+        let r = registry.read();
+        let snapshot = r.tombstones();
+        assert_eq!(snapshot.len(), 2);
+        let ids: std::collections::HashSet<Uuid> = snapshot.iter().map(|t| t.id).collect();
+        assert!(ids.contains(&done_a));
+        assert!(ids.contains(&done_b));
+        assert!(
+            !ids.contains(&live),
+            "live entries must never appear in the tombstone snapshot"
+        );
+    }
+
+    /// Test-local helper: reserve + confirm an agent, returning its id.
+    fn register(registry: &Arc<RwLock<AgentRegistry>>, path: &str, parent: Option<Uuid>) -> Uuid {
+        let guard = AgentRegistry::reserve(
+            registry,
+            path.to_string(),
+            "dev".to_string(),
+            "claude".to_string(),
+            parent,
+        )
+        .expect("reserve");
+        let id = guard.id();
+        guard.confirm().expect("confirm");
+        id
     }
 
     /// Path reuse keeps tombstones honest: the path index points at the

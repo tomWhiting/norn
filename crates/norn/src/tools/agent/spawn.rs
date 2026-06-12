@@ -39,6 +39,7 @@ use crate::profile::{default_scan_dirs, from_profile, resolve_profile};
 use crate::provider::agent_event::{AgentEventSender, SubagentDescriptor, SubagentKind};
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
+use crate::session::action_log::ActionLog;
 use crate::session::store::EventStore;
 use crate::session::tree::{BranchConfig, SessionMetadata, SessionStatus};
 use crate::tool::context::ToolContext;
@@ -669,6 +670,11 @@ impl Tool for SpawnAgentTool {
         // loop-level command execution and its tool path resolution
         // together — mirroring the fork pipeline and `build_runtime`.
         child_loop_ctx.working_dir = child_ctx.shared_working_dir();
+        // Per-agent action log: the child's loop records its own tool
+        // dispatches into the child's log (installed on the child context
+        // by `build_child_context`), so the child's `action_log` queries
+        // work and the parent's scoped queries see the child's entries.
+        child_loop_ctx.action_log = child_ctx.get_extension::<ActionLog>();
 
         let child_event_sender = ctx
             .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
@@ -3013,5 +3019,119 @@ mod tests {
                 .contains(child_id),
             "the closer takes ownership of the handle",
         );
+    }
+
+    /// Production regression (action-log tree): a spawned child inherits
+    /// the `action_log` TOOL through the shared registry but previously
+    /// received no `ActionLog` extension — every call inside the child
+    /// failed with `MissingExtension`. The child now carries its own
+    /// per-agent log, so the call succeeds end-to-end, and the parent can
+    /// federate over the child's entries with `scope: "all"`.
+    #[tokio::test]
+    async fn spawned_child_action_log_query_works_and_parent_federates() {
+        use crate::session::action_log::ActionLog;
+        use crate::tools::action_log::ActionLogTool;
+
+        let turn1 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "tc-log".to_string(),
+                name: Some("action_log".to_string()),
+                arguments_delta: json!({ "query": "list" }).to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let turn2 = vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_string(),
+            },
+            done_event(),
+        ];
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![turn1, turn2]));
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(ActionLogTool::new()));
+        let registry = Arc::new(registry);
+
+        let parent = Uuid::new_v4();
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            parent,
+            &agent_registry,
+            registry,
+            Arc::new(Mailbox::new()),
+        );
+        // The parent has its own action log (as every builder-assembled
+        // agent does) so the lazily-installed tree can register its root.
+        let parent_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        ctx.insert_extension(Arc::clone(&parent_log));
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "inspect your log",
+                    "model": "haiku",
+                    "role": "worker",
+                    "path": "/smoke/child",
+                })),
+                &ctx,
+            )
+            .await
+            .expect("spawn");
+        let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(child_id)
+            .expect("handle");
+        let child_store = Arc::clone(&handle.event_store);
+        handle.join_handle.await.expect("join");
+
+        // The child's action_log call succeeded — the MissingExtension
+        // regression is pinned here.
+        let result = child_store
+            .events()
+            .into_iter()
+            .find_map(|e| match e {
+                SessionEvent::ToolResult {
+                    tool_name, output, ..
+                } if tool_name == "action_log" => Some(output),
+                _ => None,
+            })
+            .expect("the child's action_log call produced a result");
+        assert!(
+            result.get("error").is_none(),
+            "the child's action_log query must succeed: {result}",
+        );
+        assert_eq!(result["query"], "list");
+        assert_eq!(
+            result["count"], 0,
+            "the child's log is its own and starts empty: {result}",
+        );
+
+        // Federation: the parent's scope=all sees the child's recorded
+        // call, labeled with the child's registry path.
+        let federated = ActionLogTool::new()
+            .execute(
+                &crate::tool::envelope::ToolEnvelope {
+                    tool_call_id: "parent-query".to_string(),
+                    tool_name: "action_log".to_string(),
+                    model_args: json!({ "query": "list", "scope": "all" }),
+                    runtime_inputs: RuntimeInputs::default(),
+                    metadata: serde_json::Value::Null,
+                },
+                &ctx,
+            )
+            .await
+            .expect("parent federated query");
+        assert!(!federated.is_error(), "{:?}", federated.content);
+        let entries = federated.content["entries"].as_array().unwrap();
+        let child_entry = entries
+            .iter()
+            .find(|e| e["tool"] == "action_log")
+            .expect("the child's call surfaces in the parent's scope=all");
+        assert_eq!(child_entry["agent"], "/smoke/child");
     }
 }

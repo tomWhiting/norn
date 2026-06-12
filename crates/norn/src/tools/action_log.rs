@@ -23,6 +23,24 @@
 //!   expiry checked at query time, via [`ActionLog::unexpired_follow_ups`].
 //!   `filter.tool` scopes to the registering tool and `filter.outcome` to the
 //!   original call's outcome.
+//!
+//! # Scope (federated queries over the agent subtree)
+//!
+//! Every agent — root, fork, spawn — has its own [`ActionLog`], registered
+//! in the session-wide
+//! [`ActionLogTree`](crate::session::action_log_tree::ActionLogTree). The
+//! optional `scope` argument widens `list` / `detail` / `context` /
+//! `mutations` from the caller's own log (the default — exactly the
+//! pre-scope behaviour) to `children` (self + direct children), `all` (the
+//! whole subtree), or one specific descendant by registry path or UUID.
+//! Federated `list` results interleave by timestamp and label every entry
+//! with its agent; labels are registry ground truth — the agent's path,
+//! `"root"` for the root agent, or the bare UUID when no registry record
+//! exists. The boundary is strict: scope never reaches upward, so a child
+//! can query its own subtree but never its parent or a sibling. Finished
+//! and reclaimed children stay queryable for the session — the tree holds
+//! their logs independently of registry reclamation, consistent with
+//! registry tombstones.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -31,13 +49,19 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::error::ToolError;
-use crate::session::action_log::{ActionLog, ActionLogEntry};
-use crate::session::mutation_ledger::MutationLedgerEntry;
+use crate::session::action_log::ActionLog;
+use crate::session::action_log_scope::{
+    ActionLogFilter, ScopedLog, collect_labeled_entries, collect_mutations, find_context,
+    find_detail,
+};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
+use crate::tools::action_log_scope_resolve::{
+    Scope, agents_legend, parse_scope, resolve_scoped_logs,
+};
 
 /// Queryable view over the session action log.
 pub struct ActionLogTool;
@@ -67,63 +91,10 @@ struct ActionLogArgs {
     /// Tool-call id required by `detail` and `context`; ignored by `list`.
     #[serde(default)]
     call_id: Option<String>,
-}
-
-/// Optional list-query scoping filter. All fields are optional and combine
-/// with AND semantics; an absent filter returns every entry.
-#[derive(Debug, Default, Deserialize)]
-struct ActionLogFilter {
-    /// Keep only entries whose `tool_name` equals this value.
+    /// Which agent's logs to query: absent / `self`, `children`, `all`,
+    /// or a specific agent path / UUID within the caller's subtree.
     #[serde(default)]
-    tool: Option<String>,
-    /// Keep only entries whose coarse outcome tag equals this value
-    /// (`success`, `error`, or `blocked`).
-    #[serde(default)]
-    outcome: Option<String>,
-    /// For `list`, keep only entries whose `summary_line` contains this
-    /// substring. For `mutations`, keep only the ledger entry whose
-    /// `file_path` equals this path exactly.
-    #[serde(default)]
-    file: Option<String>,
-    /// Keep only entries recorded strictly after the entry with this
-    /// `tool_call_id`. When the id is not present in the log, no entries
-    /// match (there is nothing known to be after an absent marker).
-    #[serde(default)]
-    since: Option<String>,
-    /// After all other filters, keep only the most recent `last` entries.
-    #[serde(default)]
-    last: Option<u32>,
-}
-
-impl ActionLogFilter {
-    /// Apply the filter to `entries` (chronological order in, chronological
-    /// order out).
-    fn apply(&self, entries: Vec<ActionLogEntry>) -> Vec<ActionLogEntry> {
-        let mut filtered: Vec<ActionLogEntry> = match &self.since {
-            Some(since) => match entries.iter().position(|e| e.tool_call_id == *since) {
-                Some(idx) => entries.into_iter().skip(idx + 1).collect(),
-                None => Vec::new(),
-            },
-            None => entries,
-        };
-
-        if let Some(tool) = &self.tool {
-            filtered.retain(|e| e.tool_name == *tool);
-        }
-        if let Some(outcome) = &self.outcome {
-            filtered.retain(|e| e.outcome.tag() == outcome.as_str());
-        }
-        if let Some(file) = &self.file {
-            filtered.retain(|e| e.summary_line.contains(file.as_str()));
-        }
-        if let Some(last) = self.last {
-            let last = usize::try_from(last).unwrap_or(usize::MAX);
-            if filtered.len() > last {
-                filtered.drain(0..filtered.len() - last);
-            }
-        }
-        filtered
-    }
+    scope: Option<String>,
 }
 
 /// Build the structured error [`ToolOutput`] for a missing `call_id`.
@@ -193,6 +164,163 @@ fn query_follow_ups(
     }))
 }
 
+/// Run a query over the resolved scope.
+///
+/// `scope_echo` is `None` for the default / `"self"` scope, producing
+/// exactly the pre-scope output shapes (no `scope` echo, no `agents`
+/// legend, no per-entry labels — zero breaking change). With an explicit
+/// non-self scope it is the supplied scope string, and the same shapes
+/// gain `scope`, a per-agent `agents` legend on `list`/`mutations`, and an
+/// `agent` label on every entry / resolved call.
+///
+/// `scoped` is never empty: the caller's own log is always first; for a
+/// specific-agent scope it is that agent's log alone.
+fn run_query(
+    args: &ActionLogArgs,
+    scope_echo: Option<&str>,
+    scoped: &[ScopedLog],
+    ctx: &ToolContext,
+) -> Result<ToolOutput, ToolError> {
+    let finish = |mut output: serde_json::Value| {
+        if let Some(echo) = scope_echo {
+            output["scope"] = serde_json::json!(echo);
+        }
+        Ok(ToolOutput::success(output))
+    };
+    match args.query.as_str() {
+        "list" => {
+            // A single scoped log (self, or one specific agent) keeps
+            // its insertion order — the legacy output exactly; only a
+            // multi-log scope merges by timestamp (see
+            // `collect_labeled_entries` for why the distinction matters
+            // on a non-monotonic clock).
+            let merged = collect_labeled_entries(scoped);
+            let filtered = match &args.filter {
+                Some(filter) => filter.apply_labeled(merged),
+                None => merged,
+            };
+            let entries: Vec<serde_json::Value> = filtered
+                .iter()
+                .map(|le| {
+                    let mut value = le.entry.compact_json();
+                    if scope_echo.is_some() {
+                        value["agent"] = serde_json::json!(scoped[le.agent_idx].label);
+                    }
+                    value
+                })
+                .collect();
+            let mut output = serde_json::json!({
+                "query": "list",
+                "count": entries.len(),
+                "entries": entries,
+            });
+            if scope_echo.is_some() {
+                output["agents"] = serde_json::Value::Array(agents_legend(scoped));
+            }
+            finish(output)
+        }
+        "detail" => {
+            let Some(call_id) = args.call_id.as_deref() else {
+                return Ok(missing_call_id("detail"));
+            };
+            match find_detail(scoped, call_id) {
+                Some((idx, detail)) => {
+                    let mut output = serde_json::json!({
+                        "query": "detail",
+                        "entry": detail.entry,
+                        "output": detail.output,
+                        "args": detail.args,
+                        "duration_ms": detail.duration_ms,
+                        "follow_ups": detail.follow_ups,
+                    });
+                    if scope_echo.is_some() {
+                        output["agent"] = serde_json::json!(scoped[idx].label);
+                    }
+                    finish(output)
+                }
+                None => Ok(unknown_call_id(call_id)),
+            }
+        }
+        "context" => {
+            let Some(call_id) = args.call_id.as_deref() else {
+                return Ok(missing_call_id("context"));
+            };
+            match find_context(scoped, call_id) {
+                Some((idx, context)) => {
+                    let mut output = serde_json::json!({
+                        "query": "context",
+                        "entry": context.detail.entry,
+                        "output": context.detail.output,
+                        "args": context.detail.args,
+                        "duration_ms": context.detail.duration_ms,
+                        "follow_ups": context.detail.follow_ups,
+                        "before_content": context.before_content,
+                        "post_validate_outcome": context.post_validate_outcome,
+                    });
+                    if scope_echo.is_some() {
+                        output["agent"] = serde_json::json!(scoped[idx].label);
+                    }
+                    finish(output)
+                }
+                None => Ok(unknown_call_id(call_id)),
+            }
+        }
+        "mutations" => {
+            let file_filter = args.filter.as_ref().and_then(|f| f.file.as_ref());
+            let mut entries = Vec::new();
+            for (idx, entry) in collect_mutations(scoped) {
+                if let Some(file) = file_filter {
+                    // Ledger entries store paths resolved against the
+                    // agent working directory, so resolve a relative
+                    // filter the same way (raw match kept for absolute /
+                    // already-resolved input). With a cross-agent scope
+                    // that resolution uses the CALLER's directory only —
+                    // the schema directs cross-agent filters to absolute
+                    // paths for exactly this reason.
+                    let raw = PathBuf::from(file);
+                    let resolved = ctx.resolve_path(&raw);
+                    if entry.file_path != raw && entry.file_path != resolved {
+                        continue;
+                    }
+                }
+                let mut value =
+                    serde_json::to_value(&entry).map_err(|e| ToolError::ExecutionFailed {
+                        reason: format!("serialising mutation entry: {e}"),
+                    })?;
+                if scope_echo.is_some() {
+                    value["agent"] = serde_json::json!(scoped[idx].label);
+                }
+                entries.push(value);
+            }
+            let mut output = serde_json::json!({
+                "query": "mutations",
+                "count": entries.len(),
+                "entries": entries,
+            });
+            if scope_echo.is_some() {
+                output["agents"] = serde_json::Value::Array(agents_legend(scoped));
+            }
+            finish(output)
+        }
+        "follow_ups" => match scope_echo {
+            Some(echo) => Ok(ToolOutput::failure(
+                ToolErrorPayload::new(
+                    ToolErrorKind::InvalidArguments,
+                    "scope is not supported for the follow_ups query; follow-up actions are \
+                     executable only by the agent that registered them",
+                )
+                .with_detail(serde_json::json!({ "scope": echo })),
+            )),
+            None => Ok(query_follow_ups(&scoped[0].log, args.filter.as_ref(), ctx)),
+        },
+        other => Err(ToolError::ExecutionFailed {
+            reason: format!(
+                "unknown query '{other}': expected list, detail, context, mutations, or follow_ups"
+            ),
+        }),
+    }
+}
+
 #[async_trait]
 impl Tool for ActionLogTool {
     fn name(&self) -> &'static str {
@@ -210,7 +338,12 @@ impl Tool for ActionLogTool {
          disk, optionally scoped to one path via filter.file; `follow_ups` \
          returns the still-valid deferred actions (e.g. undo) registered by \
          earlier calls, with expiry checked at query time and optional \
-         `filter.tool`/`filter.outcome` scoping."
+         `filter.tool`/`filter.outcome` scoping. The optional `scope` widens \
+         list/detail/context/mutations beyond your own log: `children` (you \
+         plus your direct sub-agents), `all` (your whole sub-agent subtree), \
+         or one specific sub-agent by path or UUID. Federated results are \
+         labeled per agent and interleaved by time; you can never query a \
+         parent's or sibling's log."
     }
 
     fn category(&self) -> ToolCategory {
@@ -242,11 +375,11 @@ impl Tool for ActionLogTool {
                         },
                         "file": {
                             "type": "string",
-                            "description": "list: entries whose summary mentions this file path. mutations: the ledger entry whose file_path equals this path exactly."
+                            "description": "list: entries whose summary mentions this file path. mutations: the ledger entry whose file_path equals this path exactly. Each agent's ledger records paths resolved against that agent's own working directory, so when querying mutations with a cross-agent scope use an absolute path — a relative path resolves against YOUR working directory and silently misses entries from agents working elsewhere."
                         },
                         "since": {
                             "type": "string",
-                            "description": "Return only entries recorded after this tool_call_id."
+                            "description": "Return only entries recorded after this tool_call_id (after it in the merged timeline when a scope spans several agents)."
                         },
                         "last": {
                             "type": "integer",
@@ -258,7 +391,11 @@ impl Tool for ActionLogTool {
                 },
                 "call_id": {
                     "type": "string",
-                    "description": "Tool-call id, required for detail and context queries."
+                    "description": "Tool-call id, required for detail and context queries. With a non-self scope it is resolved across every log in the scope."
+                },
+                "scope": {
+                    "type": "string",
+                    "description": "Which agent's logs to query. Omit or \"self\" (default): your own log only — identical output shape to omitting scope. \"children\": you plus your direct sub-agents. \"all\": your entire sub-agent subtree. Or a specific sub-agent's registry path (e.g. \"/smoke/child\") or UUID, returning that agent's own log. Applies to list, detail, context, and mutations; not supported for follow_ups. Federated list entries interleave by timestamp and carry an \"agent\" label (registry path, \"root\" for the root agent, or bare UUID), with a per-agent \"agents\" legend (role included only when set). Scope never reaches upward: a parent's or sibling's log is not queryable. Finished/reclaimed sub-agents remain queryable for the whole session. For cross-agent mutations queries, pass filter.file as an absolute path (each agent's ledger records paths against its own working directory)."
                 }
             },
             "additionalProperties": false
@@ -283,89 +420,22 @@ impl Tool for ActionLogTool {
 
         let action_log: Arc<ActionLog> = ctx.require_extension::<ActionLog>()?;
 
-        match args.query.as_str() {
-            "list" => {
-                let entries = action_log.entries();
-                let filtered = match &args.filter {
-                    Some(filter) => filter.apply(entries),
-                    None => entries,
-                };
-                let summaries: Vec<serde_json::Value> =
-                    filtered.iter().map(ActionLogEntry::compact_json).collect();
-                Ok(ToolOutput::success(serde_json::json!({
-                    "query": "list",
-                    "count": summaries.len(),
-                    "entries": summaries,
-                })))
-            }
-            "detail" => {
-                let Some(call_id) = args.call_id.as_deref() else {
-                    return Ok(missing_call_id("detail"));
-                };
-                match action_log.get_detail(call_id) {
-                    Some(detail) => Ok(ToolOutput::success(serde_json::json!({
-                        "query": "detail",
-                        "entry": detail.entry,
-                        "output": detail.output,
-                        "args": detail.args,
-                        "duration_ms": detail.duration_ms,
-                        "follow_ups": detail.follow_ups,
-                    }))),
-                    None => Ok(unknown_call_id(call_id)),
-                }
-            }
-            "context" => {
-                let Some(call_id) = args.call_id.as_deref() else {
-                    return Ok(missing_call_id("context"));
-                };
-                match action_log.get_context(call_id) {
-                    Some(context) => Ok(ToolOutput::success(serde_json::json!({
-                        "query": "context",
-                        "entry": context.detail.entry,
-                        "output": context.detail.output,
-                        "args": context.detail.args,
-                        "duration_ms": context.detail.duration_ms,
-                        "follow_ups": context.detail.follow_ups,
-                        "before_content": context.before_content,
-                        "post_validate_outcome": context.post_validate_outcome,
-                    }))),
-                    None => Ok(unknown_call_id(call_id)),
-                }
-            }
-            "mutations" => {
-                let entries = action_log.mutation_entries();
-                let filtered: Vec<MutationLedgerEntry> =
-                    match args.filter.as_ref().and_then(|f| f.file.as_ref()) {
-                        Some(file) => {
-                            // Ledger entries store paths resolved against the
-                            // agent working directory, so resolve a relative
-                            // filter the same way (raw match kept for
-                            // absolute / already-resolved input).
-                            let raw = PathBuf::from(file);
-                            let resolved = ctx.resolve_path(&raw);
-                            entries
-                                .into_iter()
-                                .filter(|e| e.file_path == raw || e.file_path == resolved)
-                                .collect()
-                        }
-                        None => entries,
-                    };
-                Ok(ToolOutput::success(serde_json::json!({
-                    "query": "mutations",
-                    "count": filtered.len(),
-                    "entries": filtered,
-                })))
-            }
-            "follow_ups" => Ok(query_follow_ups(&action_log, args.filter.as_ref(), ctx)),
-            other => Err(ToolError::ExecutionFailed {
-                reason: format!(
-                    "unknown query '{other}': expected list, detail, context, mutations, or follow_ups"
-                ),
-            }),
-        }
+        let scope = parse_scope(args.scope.as_deref());
+        // The default / "self" scope keeps the pre-scope output shapes:
+        // no echo, no legend, no labels.
+        let scope_echo = match scope {
+            Scope::SelfOnly => None,
+            // `parse_scope` only yields a non-self scope for `Some` raw
+            // input, so the echo is always the supplied string.
+            _ => args.scope.as_deref(),
+        };
+        let scoped = match resolve_scoped_logs(&scope, action_log, ctx) {
+            Ok(scoped) => scoped,
+            Err(failure) => return Ok(*failure),
+        };
+        run_query(&args, scope_echo, &scoped, ctx)
     }
 }
-
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -1091,5 +1161,482 @@ mod tests {
         assert_eq!(out.content["count"], 1);
         assert_eq!(out.content["actions"][0]["tool_call_id"], "tc-err");
         assert_eq!(out.content["actions"][0]["action"], "retry");
+    }
+
+    // ----- scope (federated subtree queries) --------------------------------
+
+    use crate::agent::mailbox::Mailbox;
+    use crate::agent::registry::AgentRegistry;
+    use crate::provider::mock::MockProvider;
+    use crate::provider::traits::Provider;
+    use crate::session::action_log_tree::ActionLogTree;
+    use crate::tools::agent::AgentToolInfra;
+    use uuid::Uuid;
+
+    fn infra_for(
+        agent_id: Uuid,
+        parent_id: Option<Uuid>,
+        registry: &Arc<parking_lot::RwLock<AgentRegistry>>,
+    ) -> Arc<AgentToolInfra> {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        Arc::new(AgentToolInfra {
+            registry: Arc::clone(registry),
+            mailbox: Arc::new(Mailbox::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id,
+            parent_id,
+            tool_registry: None,
+        })
+    }
+
+    /// Root + one registered child ("/smoke/child", role "researcher"),
+    /// each with its own log in a shared [`ActionLogTree`], plus contexts
+    /// for both. Entries: root `p-1` (read), child `c-1` (edit), root
+    /// `p-2` (read), with strictly increasing timestamps.
+    struct Family {
+        registry: Arc<parking_lot::RwLock<AgentRegistry>>,
+        tree: Arc<ActionLogTree>,
+        root_id: Uuid,
+        child_id: Uuid,
+        child_log: Arc<ActionLog>,
+        root_ctx: ToolContext,
+        child_ctx: ToolContext,
+    }
+
+    fn family() -> Family {
+        let registry = AgentRegistry::shared();
+        let root_id = Uuid::new_v4();
+        let guard = AgentRegistry::reserve(
+            &registry,
+            "/smoke/child".to_owned(),
+            "researcher".to_owned(),
+            "haiku".to_owned(),
+            Some(root_id),
+        )
+        .expect("reserve child");
+        let child_id = guard.id();
+        guard.confirm().expect("confirm child");
+
+        let root_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        let child_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        let tree = Arc::new(ActionLogTree::new(root_id));
+        tree.register(root_id, None, Arc::clone(&root_log));
+        tree.register(child_id, Some(root_id), Arc::clone(&child_log));
+
+        // Strictly increasing timestamps so merged ordering is
+        // deterministic even on coarse clocks.
+        seed(&root_log, "read", "p-1", Outcome::Success, json!({}));
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        seed(&child_log, "edit", "c-1", Outcome::Success, json!({}));
+        std::thread::sleep(std::time::Duration::from_millis(2));
+        seed(&root_log, "read", "p-2", Outcome::Success, json!({}));
+
+        let root_ctx = ToolContext::empty();
+        root_ctx.insert_extension(Arc::clone(&root_log));
+        root_ctx.insert_extension(infra_for(root_id, None, &registry));
+        root_ctx.insert_extension(Arc::clone(&tree));
+
+        let child_ctx = ToolContext::empty();
+        child_ctx.insert_extension(Arc::clone(&child_log));
+        child_ctx.insert_extension(infra_for(child_id, Some(root_id), &registry));
+        child_ctx.insert_extension(Arc::clone(&tree));
+
+        Family {
+            registry,
+            tree,
+            root_id,
+            child_id,
+            child_log,
+            root_ctx,
+            child_ctx,
+        }
+    }
+
+    async fn run(ctx: &ToolContext, args: Value) -> ToolOutput {
+        ActionLogTool::new()
+            .execute(&envelope(args), ctx)
+            .await
+            .expect("action_log executes")
+    }
+
+    /// Explicit `scope: "self"` is byte-for-byte the default shape — no
+    /// `scope` echo, no `agents` legend, no per-entry labels.
+    #[tokio::test]
+    async fn scope_self_explicit_matches_default_shape() {
+        let fam = family();
+        let default_out = run(&fam.root_ctx, json!({ "query": "list" })).await;
+        let self_out = run(&fam.root_ctx, json!({ "query": "list", "scope": "self" })).await;
+        assert_eq!(default_out.content, self_out.content);
+        assert!(default_out.content.get("scope").is_none());
+        assert!(default_out.content.get("agents").is_none());
+        assert_eq!(
+            default_out.content["count"], 2,
+            "self sees only its own log"
+        );
+    }
+
+    /// Parent `scope: "all"` interleaves its own and its children's
+    /// entries by timestamp, each labeled with registry ground truth.
+    #[tokio::test]
+    async fn scope_all_interleaves_children_with_labels() {
+        let fam = family();
+        let out = run(&fam.root_ctx, json!({ "query": "list", "scope": "all" })).await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["scope"], "all");
+        assert_eq!(out.content["count"], 3);
+        let entries = out.content["entries"].as_array().unwrap();
+        assert_eq!(entries[0]["id"], "p-1");
+        assert_eq!(entries[0]["agent"], "root");
+        assert_eq!(entries[1]["id"], "c-1");
+        assert_eq!(entries[1]["agent"], "/smoke/child");
+        assert_eq!(entries[2]["id"], "p-2");
+        assert_eq!(entries[2]["agent"], "root");
+
+        let agents = out.content["agents"].as_array().unwrap();
+        assert_eq!(agents.len(), 2);
+        assert_eq!(agents[0]["agent"], "root");
+        assert!(
+            agents[0].get("role").is_none(),
+            "root has no registry role; role appears only when set",
+        );
+        assert_eq!(agents[1]["agent"], "/smoke/child");
+        assert_eq!(agents[1]["id"], fam.child_id.to_string());
+        assert_eq!(agents[1]["role"], "researcher");
+    }
+
+    /// `children` covers direct children only; `all` reaches grandchildren.
+    #[tokio::test]
+    async fn scope_children_excludes_grandchildren_but_all_includes_them() {
+        let fam = family();
+        let grandchild_id = Uuid::new_v4();
+        let grandchild_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        seed(&grandchild_log, "bash", "g-1", Outcome::Success, json!({}));
+        fam.tree
+            .register(grandchild_id, Some(fam.child_id), grandchild_log);
+
+        let children = run(
+            &fam.root_ctx,
+            json!({ "query": "list", "scope": "children" }),
+        )
+        .await;
+        assert_eq!(children.content["count"], 3, "{:?}", children.content);
+        assert!(
+            !children.content["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|e| e["id"] == "g-1"),
+            "children scope must not include grandchildren",
+        );
+
+        let all = run(&fam.root_ctx, json!({ "query": "list", "scope": "all" })).await;
+        assert_eq!(all.content["count"], 4, "{:?}", all.content);
+        let g = all.content["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == "g-1")
+            .expect("grandchild entry in scope=all");
+        assert_eq!(
+            g["agent"],
+            grandchild_id.to_string(),
+            "an unregistered agent labels as its bare UUID",
+        );
+    }
+
+    /// Boundary: a child can never query its parent or a sibling — by
+    /// UUID or by path — and its own `all` scope is its subtree only.
+    #[tokio::test]
+    async fn scope_blocks_parent_and_sibling_queries() {
+        let fam = family();
+
+        // Upward by UUID.
+        let out = run(
+            &fam.child_ctx,
+            json!({ "query": "list", "scope": fam.root_id.to_string() }),
+        )
+        .await;
+        assert!(out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["error"]["kind"], "permission_denied");
+
+        // Sibling by path.
+        let guard = AgentRegistry::reserve(
+            &fam.registry,
+            "/smoke/sibling".to_owned(),
+            "worker".to_owned(),
+            "haiku".to_owned(),
+            Some(fam.root_id),
+        )
+        .expect("reserve sibling");
+        let sibling_id = guard.id();
+        guard.confirm().expect("confirm sibling");
+        let sibling_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        fam.tree
+            .register(sibling_id, Some(fam.root_id), sibling_log);
+        let out = run(
+            &fam.child_ctx,
+            json!({ "query": "list", "scope": "/smoke/sibling" }),
+        )
+        .await;
+        assert!(out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["error"]["kind"], "permission_denied");
+
+        // The child's own `all` scope holds only its subtree.
+        let out = run(&fam.child_ctx, json!({ "query": "list", "scope": "all" })).await;
+        assert_eq!(out.content["count"], 1, "{:?}", out.content);
+        assert_eq!(out.content["entries"][0]["id"], "c-1");
+        assert_eq!(out.content["entries"][0]["agent"], "/smoke/child");
+    }
+
+    /// A specific descendant scope (registry path or UUID) returns that
+    /// agent's own log, labeled.
+    #[tokio::test]
+    async fn scope_specific_agent_resolves_by_path_and_uuid() {
+        let fam = family();
+        for scope in [json!("/smoke/child"), json!(fam.child_id.to_string())] {
+            let out = run(&fam.root_ctx, json!({ "query": "list", "scope": scope })).await;
+            assert!(!out.is_error(), "{:?}", out.content);
+            assert_eq!(out.content["count"], 1);
+            assert_eq!(out.content["entries"][0]["id"], "c-1");
+            assert_eq!(out.content["entries"][0]["agent"], "/smoke/child");
+        }
+    }
+
+    /// An identifier with no record anywhere resolves to not_found.
+    #[tokio::test]
+    async fn scope_unknown_agent_is_not_found() {
+        let fam = family();
+        let out = run(
+            &fam.root_ctx,
+            json!({ "query": "list", "scope": "/nope/missing" }),
+        )
+        .await;
+        assert!(out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["error"]["kind"], "not_found");
+    }
+
+    /// detail / context for a call id resolve across the queried scope and
+    /// name the owning agent.
+    #[tokio::test]
+    async fn scope_detail_and_context_resolve_into_child_log() {
+        let fam = family();
+        let out = run(
+            &fam.root_ctx,
+            json!({ "query": "detail", "call_id": "c-1", "scope": "all" }),
+        )
+        .await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["agent"], "/smoke/child");
+        assert_eq!(out.content["entry"]["tool_name"], "edit");
+        assert_eq!(out.content["scope"], "all");
+
+        let out = run(
+            &fam.root_ctx,
+            json!({ "query": "context", "call_id": "c-1", "scope": "all" }),
+        )
+        .await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["agent"], "/smoke/child");
+
+        // Default scope still cannot see the child's call — the parent's
+        // own log does not contain it.
+        let out = run(
+            &fam.root_ctx,
+            json!({ "query": "detail", "call_id": "c-1" }),
+        )
+        .await;
+        assert!(out.is_error());
+        assert_eq!(out.content["error"]["kind"], "not_found");
+    }
+
+    /// mutations federate per-agent ledgers, each entry labeled.
+    #[tokio::test]
+    async fn scope_mutations_federate_with_labels() {
+        let fam = family();
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("child.rs");
+        std::fs::write(&path, "fn c() {}\n").unwrap();
+        fam.child_log.record_completion(CompletionRecord {
+            tool_name: "edit",
+            tool_call_id: "c-mut",
+            tool_use_description: "",
+            outcome: Outcome::Success,
+            output: &json!({
+                "path": path.to_string_lossy(),
+                "blast_radius": { "lines_added": 1, "lines_removed": 0 },
+            }),
+            args: json!({}),
+            duration_ms: 1,
+            follow_ups: Vec::new(),
+            post_validate_outcome: None,
+            level_1_only: false,
+        });
+
+        let out = run(
+            &fam.root_ctx,
+            json!({ "query": "mutations", "scope": "all" }),
+        )
+        .await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["count"], 1);
+        let entry = &out.content["entries"][0];
+        assert_eq!(entry["agent"], "/smoke/child");
+        assert_eq!(entry["file_path"].as_str(), path.to_str());
+
+        // The file filter narrows federated results the same way.
+        let out = run(
+            &fam.root_ctx,
+            json!({
+                "query": "mutations",
+                "scope": "all",
+                "filter": { "file": "/definitely/not/this.rs" },
+            }),
+        )
+        .await;
+        assert_eq!(out.content["count"], 0);
+    }
+
+    /// follow_ups stay self-scoped: a non-self scope is a structured
+    /// invalid_arguments failure, never a silent fallback.
+    #[tokio::test]
+    async fn scope_follow_ups_rejected_with_structured_error() {
+        let fam = family();
+        let out = run(
+            &fam.root_ctx,
+            json!({ "query": "follow_ups", "scope": "all" }),
+        )
+        .await;
+        assert!(out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["error"]["kind"], "invalid_arguments");
+    }
+
+    /// Reclaimed children stay queryable for the session: the tree holds
+    /// the log Arc independently of registry reclamation, and the label
+    /// falls back to the tombstone's path (role not retained).
+    #[tokio::test]
+    async fn scope_reclaimed_child_log_stays_queryable() {
+        let fam = family();
+        {
+            let mut reg = fam.registry.write();
+            reg.mark_completing(fam.child_id).expect("completing");
+            reg.mark_completed(fam.child_id).expect("completed");
+            assert!(reg.remove_terminal(fam.child_id), "reclaim child entry");
+        }
+        let out = run(&fam.root_ctx, json!({ "query": "list", "scope": "all" })).await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["count"], 3);
+        let child_entry = out.content["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|e| e["id"] == "c-1")
+            .expect("reclaimed child's entries stay queryable");
+        assert_eq!(
+            child_entry["agent"], "/smoke/child",
+            "label resolves through the registry tombstone",
+        );
+        let agents = out.content["agents"].as_array().unwrap();
+        let child_legend = agents
+            .iter()
+            .find(|a| a["agent"] == "/smoke/child")
+            .expect("legend entry");
+        assert!(
+            child_legend.get("role").is_none(),
+            "tombstones do not retain roles",
+        );
+    }
+
+    /// A context with no tree and no agent infrastructure has no
+    /// descendants: `children` / `all` truthfully resolve to the caller
+    /// alone, labeled "root", in the federated shape.
+    #[tokio::test]
+    async fn scope_without_tree_degrades_to_self_with_root_label() {
+        let log = populated_log();
+        let ctx = ctx_with(Arc::clone(&log));
+        let out = run(&ctx, json!({ "query": "list", "scope": "all" })).await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["scope"], "all");
+        assert_eq!(out.content["count"], 3);
+        assert!(
+            out.content["entries"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|e| e["agent"] == "root"),
+            "{:?}",
+            out.content,
+        );
+        let agents = out.content["agents"].as_array().unwrap();
+        assert_eq!(agents.len(), 1);
+        assert_eq!(agents[0]["agent"], "root");
+        assert!(
+            agents[0].get("id").is_none(),
+            "identity unknown without infra"
+        );
+
+        // A UUID-shaped scope without infrastructure names an agent
+        // this context has no record of anywhere: not_found, never a
+        // permission_denied that would imply the agent exists.
+        let out = run(
+            &ctx,
+            json!({ "query": "list", "scope": Uuid::new_v4().to_string() }),
+        )
+        .await;
+        assert!(out.is_error());
+        assert_eq!(out.content["error"]["kind"], "not_found");
+    }
+
+    /// A parseable UUID that no agent ever held resolves to not_found
+    /// even with a full tree + registry installed — permission_denied is
+    /// reserved for agents that exist outside the caller's subtree, and
+    /// its message ("route through the parent") would be a lie here.
+    #[tokio::test]
+    async fn scope_never_existed_uuid_is_not_found_with_tree() {
+        let fam = family();
+        let out = run(
+            &fam.root_ctx,
+            json!({ "query": "list", "scope": Uuid::new_v4().to_string() }),
+        )
+        .await;
+        assert!(out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["error"]["kind"], "not_found");
+    }
+
+    /// An agent registered in the tree but never in the registry (e.g. a
+    /// grandchild wired tree-only) still resolves by UUID — the tree
+    /// existence probe, not just the registry, vouches for it.
+    #[tokio::test]
+    async fn scope_tree_only_agent_resolves_by_uuid() {
+        let fam = family();
+        let grandchild_id = Uuid::new_v4();
+        let grandchild_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        seed(&grandchild_log, "bash", "g-1", Outcome::Success, json!({}));
+        fam.tree
+            .register(grandchild_id, Some(fam.child_id), grandchild_log);
+
+        let out = run(
+            &fam.root_ctx,
+            json!({ "query": "list", "scope": grandchild_id.to_string() }),
+        )
+        .await;
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["count"], 1);
+        assert_eq!(out.content["entries"][0]["id"], "g-1");
+    }
+
+    /// The scope property is documented in the input schema.
+    #[test]
+    fn input_schema_documents_scope() {
+        let schema = ActionLogTool::new().input_schema();
+        let scope = &schema["properties"]["scope"];
+        assert_eq!(scope["type"], "string");
+        let desc = scope["description"].as_str().unwrap();
+        for needle in ["self", "children", "all", "subtree", "follow_ups"] {
+            assert!(
+                desc.contains(needle),
+                "scope description must mention {needle}"
+            );
+        }
     }
 }

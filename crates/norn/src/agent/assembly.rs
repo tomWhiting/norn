@@ -39,6 +39,7 @@ use crate::provider::traits::Provider;
 use crate::rules::engine::RuleEngine;
 use crate::runtime_init::LoadedRuntimeBase;
 use crate::session::action_log::ActionLog;
+use crate::session::action_log_tree::ActionLogTree;
 use crate::session::context_edit::ContextEdits;
 use crate::session::store::EventStore;
 use crate::system_prompt::builder::{
@@ -670,6 +671,16 @@ pub(crate) struct AgentInfraParts {
 /// runtime is assembled by `norn-cli`'s `build_runtime`, never through
 /// this path.
 ///
+/// Also publishes the session-wide [`ActionLogTree`] rooted at this agent:
+/// every spawn/fork child registers its own per-agent [`ActionLog`] into
+/// this tree (and forwards it to grandchildren), so the `action_log`
+/// tool's `scope` argument can federate queries over the agent's subtree.
+/// The root's own log — already inserted on `shared` by
+/// [`assemble_tool_context`] — is registered as the tree root. On session
+/// resume the root's log is rebuilt by [`restore_session_state`]; child
+/// branches are not persisted, so a resumed tree starts with the root
+/// alone (see [`crate::session::action_log_tree`]).
+///
 /// Returns the receiver half of the child-result channel; the caller wires
 /// it into the loop context. Everything `spawn_agent` / `fork` /
 /// `signal_agent` / `close_agent` resolve at call time is published here —
@@ -692,7 +703,65 @@ pub(crate) fn install_agent_infra(
     crate::runtime_init::install_agent_handles(shared);
     crate::runtime_init::install_terminal_reclamation(shared);
 
+    let log_tree = Arc::new(ActionLogTree::new(parts.id));
+    if let Some(root_log) = shared.get_extension::<ActionLog>() {
+        log_tree.register(parts.id, None, root_log);
+    } else {
+        // Unreachable on the builder path (assemble_tool_context always
+        // inserts the action log before this runs), but a context wired
+        // differently must not lose the tree anchor silently.
+        tracing::warn!(
+            agent_id = %parts.id,
+            "install_agent_infra: no ActionLog extension on the shared context; \
+             the action-log tree is anchored at the root with no root log",
+        );
+    }
+    shared.insert_extension(log_tree);
+
     let (child_tx, child_rx) = mpsc::channel::<ChildAgentResult>(CHILD_RESULT_CHANNEL_CAPACITY);
     shared.insert_extension(Arc::new(ChildResultSender(Arc::new(child_tx))));
     child_rx
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::provider::mock::MockProvider;
+
+    /// `install_agent_infra` anchors the session-wide [`ActionLogTree`]
+    /// at the agent and registers the shared context's root [`ActionLog`]
+    /// under it, so spawn/fork children can link in and federated
+    /// `action_log` scope queries resolve.
+    #[test]
+    fn install_agent_infra_publishes_action_log_tree_with_root_log() {
+        let tool_registry = Arc::new(ToolRegistry::new());
+        let ctx = ToolContext::empty();
+        let action_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        ctx.insert_extension(Arc::clone(&action_log));
+
+        let agent_id = Uuid::new_v4();
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let _child_rx = install_agent_infra(
+            &tool_registry,
+            &ctx,
+            AgentInfraParts {
+                registry: AgentRegistry::shared(),
+                provider,
+                event_store: Arc::new(EventStore::new()),
+                id: agent_id,
+            },
+        );
+
+        let tree = ctx
+            .get_extension::<ActionLogTree>()
+            .expect("ActionLogTree published on the shared context");
+        assert_eq!(tree.root(), agent_id, "the tree is rooted at this agent");
+        let root_log = tree.log_of(agent_id).expect("root log registered");
+        assert!(
+            Arc::ptr_eq(&root_log, &action_log),
+            "the tree's root log is the same Arc the context publishes",
+        );
+        assert!(tree.children_of(agent_id).is_empty(), "no children yet");
+    }
 }

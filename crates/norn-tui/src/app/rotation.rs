@@ -13,6 +13,11 @@
 //! 2. The [`AgentToolInfra`] installed by `install_agent_tool_infra` —
 //!    its `event_store` seeds forked and spawned children, so a stale
 //!    handle forks the *previous* conversation.
+//! 3. The session-wide [`ActionLogTree`] (installed lazily at the first
+//!    spawn/fork) registered the startup [`ActionLog`] as the root
+//!    agent's log — left alone, federated `action_log` queries
+//!    (`scope=...`) would keep answering from the old conversation's
+//!    ledger.
 //!
 //! [`rotate_store_dependents`] performs the whole swap as one infallible
 //! commit: callers finish every fallible step (session creation, sink
@@ -27,6 +32,7 @@ use std::sync::Arc;
 
 use norn::agent_loop::loop_context::LoopContext;
 use norn::session::action_log::ActionLog;
+use norn::session::action_log_tree::ActionLogTree;
 use norn::session::store::EventStore;
 use norn::tool::context::ToolContext;
 use norn::tools::agent::AgentToolInfra;
@@ -49,7 +55,10 @@ use norn::tools::agent::AgentToolInfra;
 ///    the new store's events is a no-op for a fresh `/new` session but
 ///    keeps this helper correct for any store handed to it.
 /// 3. **Repoint the shared [`ToolContext`] extensions**: the action-log
-///    slot gets the new ledger, and [`AgentToolInfra`] is rebuilt with
+///    slot gets the new ledger; any installed [`ActionLogTree`] gets its
+///    root slot repointed at the same ledger (see
+///    [`ActionLogTree::replace_root_log`] — rotation is that method's
+///    single legitimate caller); and [`AgentToolInfra`] is rebuilt with
 ///    `event_store` pointing at the new store while **reusing** every
 ///    cross-rotation-stable handle from the existing infra — the live
 ///    agent registry (the status panel's hold-window state lives
@@ -89,6 +98,14 @@ pub(super) fn rotate_store_dependents(
     // 3. Repoint the shared tool-context extensions.
     if let Some(ctx) = shared_ctx {
         ctx.insert_extension(Arc::clone(&action_log));
+        if let Some(tree) = ctx.get_extension::<ActionLogTree>() {
+            // A lazily-installed ActionLogTree registered the
+            // pre-rotation root log; without this repoint, federated
+            // action_log queries would serve the old conversation's
+            // ledger forever. Descendant logs stay put — they belong to
+            // the rotated-out conversation and remain queryable.
+            tree.replace_root_log(Arc::clone(&action_log));
+        }
         if let Some(old_infra) = ctx.get_extension::<AgentToolInfra>() {
             ctx.insert_extension(Arc::new(AgentToolInfra {
                 registry: Arc::clone(&old_infra.registry),
@@ -214,6 +231,52 @@ mod tests {
         assert!(
             Arc::ptr_eq(&ctx_log, &rotated),
             "the action_log tool and the loop must share one ledger",
+        );
+    }
+
+    #[test]
+    fn rotation_repoints_tree_root_log_leaving_descendants_untouched() {
+        // Regression (review flag): a lazily-installed ActionLogTree
+        // registered the pre-rotation root ActionLog and kept serving it
+        // after `/new` — federated `action_log` queries (scope=...)
+        // would read the old conversation's ledger.
+        let ctx = Arc::new(ToolContext::empty());
+        let old_store = Arc::new(EventStore::new());
+        let old_log = Arc::new(ActionLog::new(Arc::clone(&old_store)));
+        ctx.insert_extension(Arc::clone(&old_log));
+
+        let root_id = Uuid::now_v7();
+        let child_id = Uuid::now_v7();
+        let tree = Arc::new(ActionLogTree::new(root_id));
+        tree.register(root_id, None, Arc::clone(&old_log));
+        let child_log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+        tree.register(child_id, Some(root_id), Arc::clone(&child_log));
+        ctx.insert_extension(Arc::clone(&tree));
+
+        let mut loop_context = LoopContext::default();
+        let mut store_slot = Arc::clone(&old_store);
+        rotate_store_dependents(
+            Some(Arc::clone(&ctx)),
+            &mut store_slot,
+            &mut loop_context,
+            Arc::new(EventStore::new()),
+        );
+
+        let rotated = ctx
+            .get_extension::<ActionLog>()
+            .expect("shared context carries the rotated action log");
+        let tree_root_log = tree.log_of(root_id).expect("root log stays registered");
+        assert!(
+            Arc::ptr_eq(&tree_root_log, &rotated),
+            "the tree's root slot must serve the rotated-in ledger",
+        );
+        assert!(
+            !Arc::ptr_eq(&tree_root_log, &old_log),
+            "the tree must not keep the pre-rotation root log",
+        );
+        assert!(
+            Arc::ptr_eq(&tree.log_of(child_id).unwrap(), &child_log),
+            "descendant logs are untouched by rotation",
         );
     }
 
