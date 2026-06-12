@@ -1,6 +1,6 @@
 # Agent Coordination — Wave 3: Inter-Agent Messaging & Recursive Delegation
 
-**Status:** DRAFT — for discussion. Nothing here is committed until the DECISIONs below are resolved by Tom.
+**Status:** APPROVED 2026-06-12 — all ten DECISIONs resolved by Tom **per their stated recommendations**: M1 `SiblingsAndParent` documented scope; M2 steer/update kinds with update-does-not-wake; M3 opt-in linger-await; M4 inbound capacity into `ChildPolicy` (32 as documented proposal); M5 delete `Mailbox`, fresh `MessageRouter`; R1 documented envelope `remaining_depth = 1`, `max_concurrent_children = 32` (deeper trees are explicit opt-in); R2 single `child_policy` object arg; R3 capacities into the builder envelope (256/32 as documented proposals); R4 **add `subtree_usage` to `SubagentLifecycle::Completed` — breaking schema change, coordinate via MERIDIAN-HANDOFF §8**; R5 **defer per-child `AgentLoopConfig` override — TRACKED DEFERRAL, see rollout order**. Implementation may begin; no decision below remains open.
 **Scope:** design only. Implementation follows after current in-flight work (Wave 1/2) lands.
 **Ground rules honored:** every knob is builder-configured (CLAUDE.md: NO ASSUMED DEFAULTS — all "default" values below are flagged proposals); `send_message` **replaces** `signal_agent` (NO BACKWARDS COMPATIBILITY); no invented rate caps.
 
@@ -392,6 +392,8 @@ Requirement: grandchild usage must not vanish. Mechanism, one hop at a time like
 8. **W3.7 — surfaces** (Wave 2 agents tree shows depth + message edges; action-log queries over the new event types).
 
 Each step passes the full gate (`cargo clippy --workspace --all-targets -- -D warnings`, `cargo fmt --check`, tests) and gets a Fable-model review before landing, per CLAUDE.md.
+
+**TRACKED DEFERRAL (R5, approved 2026-06-12): per-child `AgentLoopConfig` override.** Children run `AgentLoopConfig::default()` — they do NOT inherit the parent's `max_iterations`/`step_timeout`, and with recursion these become real cost controls. Deferred out of Wave 3 as severable; the fix is an optional `loop_config` field on `ChildPolicy` (W3.0 establishes the type, so the slot is cheap to add later). This deferral must be re-raised at Wave 3 review and closed in the wave that follows at the latest; until closed, spawn/fork guidance must state that children ignore the parent's loop limits.
 
 ---
 

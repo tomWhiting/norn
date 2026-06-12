@@ -261,3 +261,78 @@ external_service | execution_failed | <custom>`. Permission blocks carry
    `ToolArgs` derive as you go).
 4. The rest of the go-now list (block_on, nil-UUID, token-pool bounds, god
    files) — unchanged, still yours, still independent.
+
+---
+
+# 8. Smoke-test hardening batch (landed at `514a553`) + Wave 3 pre-announcement
+
+A production tool smoke test surfaced provider-schema and agent-lifecycle
+defects; the fix batch is on main at `514a553` (Fable-reviewed, 3,139
+tests green). Impact on meridian, smallest first:
+
+## 8.1 Landed at `514a553` — adapt when you bump past it
+
+- **`norn::provider::resolve_provider_tools` is DELETED** (no shim). The
+  replacement is `norn::provider::ResolvedToolSurface::resolve(&defs,
+  caps).provider_definitions()`, or `collect_function_definitions(registry,
+  allow_list)` for the registry→definitions projection. If you never called
+  it directly (the agent loop resolves per-request internally), nothing to
+  do.
+- **Composite tool arguments are now strictly validated** against the
+  canonical per-command schema after deserialization: unknown fields are a
+  typed `invalid_arguments` soft failure naming the field and the command's
+  accepted signature, instead of being silently dropped. If any meridian
+  code constructs composite-tool args programmatically (task tool included),
+  stray fields that used to be ignored now fail loudly — that is the point;
+  fix the call sites, don't pad the schemas.
+- **`close_agent` semantics changed.** It now cancels the child's actual
+  run (CancellationToken plumbed into the loop; in-flight provider call
+  interrupted immediately, executing tools finish first) and joins the
+  completion wrapper so the run's REAL outcome is recorded — a mid-run
+  close lands `Failed` + `AgentStopReason::Cancelled`, never a falsified
+  `Completed`. `shut_down` entries now carry one of: `reclaimed`,
+  `already_completed`, `force_failed`, `unreachable`, `failed`, `missing`.
+  If meridian parses close results, match on these.
+- **Registry tombstones.** Reclaimed agents leave an `AgentTombstone`
+  (re-exported from `norn::agent`: id, path, terminal status,
+  `completed_at`). `signal_agent` to a finished agent is a structured
+  delivery failure carrying `recipient_status`/`completed_at`; "not
+  registered" now only ever means the id never existed. `AgentEntry`
+  gained `completed_at: Option<DateTime<Utc>>` — if you construct entries
+  in tests, add the field.
+- **web_search is provider-aware end-to-end.** On providers reporting
+  `hosted_web_search` (OpenAI today, Anthropic when added) the function
+  tool is replaced by the platform's hosted tool and the catalog/system
+  prompt say so; elsewhere the function tool serves. Nothing to adapt
+  unless you hardcoded assumptions about `web_search` being a function.
+
+Serde-stable surfaces from §7 (`RunOutcome`, `ErrorClass`,
+`AgentStopReason`, `SubagentLifecycle`, `ToolErrorPayload`) are
+**unchanged** in this batch. Pin guidance: current main head (`514a553`
+or later; a Wave 2 commit adding an `agents` status tool and federated
+action-log scopes — both additive — lands next).
+
+## 8.2 Wave 3 pre-announcement — ONE breaking schema change is coming
+
+Approved 2026-06-12 (design: `docs/design/agent-coordination-wave3.md`):
+inter-agent messaging (`send_message` REPLACES `signal_agent` outright)
+and recursive delegation (children may spawn children under
+parent-configured budgets).
+
+- **BREAKING: `SubagentLifecycle::Completed` gains `subtree_usage`**
+  (aggregated descendant usage) — coordinate your match/deserialization
+  update with the pin bump when Wave 3 lands; we will flag the exact
+  commit in this document.
+- **BREAKING: `signal_agent` will be deleted** in the same wave, replaced
+  by `send_message` (target path/UUID/"parent", kind `steer`/`update`,
+  scope enforced from spawn-time policy). Plan the rename where meridian
+  references the tool by name.
+- New builder requirements when agent-coordination tools are enabled:
+  `child_policy` envelope (messaging scope, delegation budget, channel
+  capacities) becomes builder-required — build error if spawn tools are
+  registered without it. Documented proposals match today's behavior
+  (depth 1, 32 children, capacities 32/256).
+- Tracked deferral you should know about: children do NOT inherit the
+  parent's `AgentLoopConfig` (`max_iterations`/`step_timeout`) and won't
+  in Wave 3 either; per-child loop config is deferred to the following
+  wave and recorded in the design doc.
