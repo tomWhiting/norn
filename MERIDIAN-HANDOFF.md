@@ -308,9 +308,16 @@ tests green). Impact on meridian, smallest first:
 
 Serde-stable surfaces from §7 (`RunOutcome`, `ErrorClass`,
 `AgentStopReason`, `SubagentLifecycle`, `ToolErrorPayload`) are
-**unchanged** in this batch. Pin guidance: current main head (`514a553`
-or later; a Wave 2 commit adding an `agents` status tool and federated
-action-log scopes — both additive — lands next).
+**unchanged** in this batch. Wave 2 has since LANDED at `8e10b9d`
+(Fable-reviewed, 3,191 tests): every agent — root, fork, spawn — now
+has its own `ActionLog` in a session-wide `ActionLogTree`; the
+`action_log` tool gained an optional `scope` (absent = exact prior
+behavior, so existing callers are unaffected); a read-only `agents`
+status tool (list/get over registry + tombstones) joined the standard
+set, and `AgentTombstone` gained `parent_id`. All additive — the only
+adaptation: if meridian assembles registries by hand and enumerates the
+standard set, the set now includes `agents`. Pin guidance: current main
+head (`8e10b9d` or later).
 
 ## 8.2 Wave 3 pre-announcement — ONE breaking schema change is coming
 
