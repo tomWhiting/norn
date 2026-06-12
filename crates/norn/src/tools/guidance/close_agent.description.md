@@ -1,1 +1,1 @@
-Shut down a running agent you spawned or forked, plus its descendants. For children whose handle you hold, the close cancels the child's run and waits for its outcome to be recorded; the close reports per-agent results.
+Shut down a running agent you spawned or forked, plus its descendants. For an agent whose handle you hold, the close cancels the target's run token — which cascades to the target's whole spawned subtree — and waits for the target's outcome to be recorded; descendants finish through their own lifecycle owners. Per-agent results are reported.

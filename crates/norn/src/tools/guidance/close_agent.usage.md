@@ -1,13 +1,14 @@
 Use to shut down a child agent — for example, a long-lived worker that should stop now rather than at its natural end. Address the target by hierarchical registry path or UUID. The close walks the target's subtree depth-first (children before parents) and reports a per-agent status list in `shut_down`. When in doubt, check the target's status with the agents tool first — a child that already finished needs no close.
 
-For children whose handle you hold (agents you spawned or forked yourself), the close delivers your `reason` as a final Steer message, cancels the child's run, and waits for the child to record its own outcome. A run stopped mid-flight records `failed` with stop reason `cancelled` — an in-flight model call is interrupted immediately, while a tool that is already executing finishes first. A forced stop is never recorded as a completion, and an outcome the child already recorded is never rewritten.
+For children whose handle you hold (agents you spawned or forked yourself), the close cancels the target's run token first — and because every spawned or forked descendant's token is a child of its spawner's, that one cancel reaches the target's entire subtree, including grandchildren you hold no handle for. It then delivers your `reason` as a best-effort Steer message and waits for the target itself to record its own outcome before returning; cascade-cancelled descendants finish through their own lifecycle owners shortly after and are not waited on. A run stopped mid-flight records `failed` with stop reason `cancelled` — an in-flight model call is interrupted immediately, while a tool that is already executing finishes first. A forced stop is never recorded as a completion, and an outcome the child already recorded is never rewritten.
 
 Each `shut_down` entry carries one of these statuses:
 
 - `reclaimed` — the child's run recorded a terminal outcome (its natural one, or the cancelled outcome after this close stopped it mid-run); the close removed the registry entry, preserving the recorded outcome in the agent's completion record.
 - `already_completed` — the agent had already finished and been reclaimed before the close reached it; nothing was done.
 - `force_failed` — the child's task ended without recording any outcome, so the close recorded `failed` (outcome unknown — never `completed`) and removed the entry.
-- `unreachable` — a live agent whose handle you do not hold; it cannot be force-stopped from here and its registry entry is left untouched. Route the close through its parent instead.
+- `cancelling` — a live descendant of the closed target whose handle you do not hold: the target's token-first cancel already reached it through token parentage, its run is ending with the cancelled outcome, and its own lifecycle owner records and reclaims it — no action needed.
+- `unreachable` — a live agent whose handle you do not hold and whose run was not reached by this close's cancel (no cascade was triggered); it cannot be force-stopped from here and its registry entry is left untouched. Route the close through its parent instead.
 - `failed` — the close could not record the forced shutdown in the registry.
 - `missing` — the agent vanished without any completion record (an internal invariant violation, reported rather than retried).
 

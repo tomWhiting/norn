@@ -67,6 +67,37 @@ pub struct AgentToolInfra {
     pub tool_registry: Option<Arc<ToolRegistry>>,
 }
 
+/// The calling agent's own run-cancellation token, published on the
+/// agent's [`ToolContext`] extension map alongside [`AgentToolInfra`]
+/// (Wave 3 §Cancellation cascade, W3.5).
+///
+/// Spawn/fork launch paths read this at the spawn site and create each
+/// child's run token as
+/// [`child_token()`](tokio_util::sync::CancellationToken::child_token)
+/// of it, so cancelling any agent's token cancels its entire spawned
+/// subtree: every descendant's loop observes its own (cascaded) token at
+/// its next cancellation boundary, returns `Cancelled { usage }`, and its
+/// completion wrapper runs the normal terminal sequence — a cancelled
+/// tree is fully accounted, never a set of aborted tasks.
+///
+/// Recorded deviation from the design's letter: §"Cancellation cascade"
+/// places this token as a `cancel` field on [`AgentToolInfra`]. It
+/// travels as its own extension instead because `AgentToolInfra` is also
+/// constructed by embedder assembly paths that own no run token
+/// (norn-cli `install_agent_tool_infra`, norn-tui rotation) — a required
+/// field there would force those roots to invent a token they do not
+/// control. The root boundary is therefore explicit and honest:
+///
+/// - **Builder-assembled roots** always publish this extension (the
+///   builder's `cancel_token`, or its own fresh token), so the cascade
+///   covers the whole tree from the root down.
+/// - **Roots that publish no token** (the CLI/TUI assembly paths today)
+///   launch their *direct* children with free-standing tokens — exactly
+///   the pre-W3.5 behavior. Each child's own token is still published on
+///   the child's context at construction, so the cascade holds from
+///   depth 1 downward regardless of the root's wiring.
+pub struct AgentCancellation(pub tokio_util::sync::CancellationToken);
+
 /// The coordination grant a spawning parent stamps onto a child's
 /// [`AgentToolInfra`]: the child's granted [`ChildPolicy`] (from the
 /// parent's

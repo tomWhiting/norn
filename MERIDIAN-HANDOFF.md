@@ -481,3 +481,64 @@ Adaptations when you bump past the W3.4 commit:
   cannot linger, so a delegating child that returns before its own
   children finish loses their results (error-logged; stated in the
   spawn/fork guidance). Closes next wave with `ChildPolicy.loop_config`.
+
+## 8.6 W3.5 landed — cancellation cascades through the agent tree
+
+Adapt when you bump past the W3.5 commit. Two-round-equivalent Fable
+review (READY; one test gap closed pre-commit).
+
+- **New: `AgentCancellation(pub CancellationToken)`** (exported from
+  `norn::tools::agent`), a ToolContext extension published on the shared
+  context. **This deviates from the design doc's letter** (which put the
+  token on `AgentToolInfra`) — recorded as appendix item 9 in the Wave 3
+  design doc: embedder assemblies that own no run token must not be
+  forced to invent one.
+- **Library surface**: `AgentBuilder::build` resolves the run token once
+  (your explicit `.cancel_token(..)` or a fresh one) and uses that single
+  token for `Agent`/`AgentHandle` *and* the published extension —
+  **cancelling the root handle now ends the whole spawned subtree**.
+  Spawn/fork mint child tokens via `child_token()` of the published
+  extension at every depth; results bubble as honest `Cancelled`
+  outcomes with usage, and full-subtree reclamation is pinned by depth-2
+  tests.
+- **Embedder boundary (meridian, read carefully)**: if your assembly
+  constructs `AgentToolInfra` directly and you hold a root run token,
+  publish `Arc::new(AgentCancellation(your_root_token))` on the shared
+  tool context to opt your tree into the cascade. If you publish
+  nothing, direct children get free-standing tokens (exactly pre-W3.5
+  behavior, `close_agent` still works per-agent) — but any root-level
+  cancel you implement yourself will NOT reach them. Named follow-up in
+  the design doc.
+- **`close_agent` output (additive)**: live descendants under a
+  triggered cascade now report status `"cancelling"`; `"unreachable"`
+  survives only for genuinely broken lineage. The close fires the
+  target's token before its leaves-first walk and returns only after the
+  *target's* wrapper completes.
+- rhai script children remain `cancel: None` (no host token exists to
+  parent under); documented at the executor construction site.
+
+## 8.7 Structured-output envelope fix + reserved-key contract
+
+Lands with the W3.5 commit. Fixes a real headless failure:
+`[schema-violation] ... ('tool_use_description', 'tool_use_metadata'
+were unexpected)` whenever an output schema set
+`additionalProperties: false`.
+
+- The structured-output tool's model-facing definition is now
+  envelope-wrapped like every other tool, and the envelope fields are
+  split off the model's arguments **before** schema validation. Your
+  output schemas keep their `additionalProperties: false`; the validated
+  output never contains the envelope keys; the raw call (description
+  included) stays on the persisted `AssistantMessage` event.
+- **NEW CONTRACT (breaking only if you collide)**: an output schema may
+  not declare top-level properties named `tool_use_description` or
+  `tool_use_metadata` — those names are reserved by the tool-call
+  envelope across the whole tool surface. Colliding schemas are refused
+  with a typed `SchemaError::InvalidSchema` at the `spawn_agent`
+  argument boundary (synchronous) and at agent-loop entry (backstop for
+  embedder/fork/rhai schemas). Previously such schemas "worked" by
+  silently losing data; rename the property if you have one.
+- Map-shaped output schemas (top-level `additionalProperties`, no
+  `properties`) pass the check, but the two reserved names remain
+  claimed at the top level: a data entry under either name is stripped
+  before validation. Documented on `wrap_schema_with_envelope`.

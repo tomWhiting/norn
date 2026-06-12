@@ -337,6 +337,17 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             // must get their own child context (as the spawn/fork tools
             // build), or their spawns would be charged to the host's
             // identity and budget.
+            //
+            // Cancellation boundary (W3.5, deliberate): script children run
+            // with `cancel: None` — the rhai host owns no run token to
+            // parent a child token under (NornRhaiContext carries none), so
+            // there is nothing for the cancellation cascade to chain from,
+            // and the host holds no `AgentHandle` for the child either:
+            // `close_agent` cannot cancel a script child's run. This is the
+            // pre-cascade behavior, unchanged on purpose; if script hosts
+            // ever gain a run token, create this child's token via
+            // `child_token()` here (and thread it into the request) exactly
+            // as the spawn/fork launch paths do.
             let child_context = registry_for_executor
                 .shared_context()
                 .unwrap_or_else(|| Arc::new(ToolContext::empty()));

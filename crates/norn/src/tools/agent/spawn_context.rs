@@ -10,7 +10,7 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::handle::{AgentHandles, SharedSessionTree};
-use super::infra::{AgentToolInfra, ParentGrant};
+use super::infra::{AgentCancellation, AgentToolInfra, ParentGrant};
 use super::reclaim::ReclaimOnResultDelivery;
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
 use crate::config::permissions::PermissionPolicy;
@@ -81,6 +81,14 @@ use crate::tools::task::SharedTaskStore;
 /// runs with delivery-anchored reclamation, so grandchild registry
 /// entries are reclaimed at every level exactly as depth-1 children are
 /// (closing the recorded grandchild-leak gap).
+///
+/// `child_cancel` is the child's own run-cancellation token — created by
+/// the spawn tool as a [`child_token`](tokio_util::sync::CancellationToken::child_token)
+/// of the spawner's published [`AgentCancellation`] (or free-standing
+/// when the spawner publishes none; see [`AgentCancellation`] for the
+/// root boundary). It is published on the child's context here, at
+/// construction, so the child's own spawn/fork sites chain grandchild
+/// tokens under it — the W3.5 cancellation cascade.
 pub(super) fn build_child_context(
     parent_infra: &AgentToolInfra,
     child_id: Uuid,
@@ -88,6 +96,7 @@ pub(super) fn build_child_context(
     parent_ctx: &ToolContext,
     child_tree: Option<SharedSessionTree>,
     child_policy: ChildPolicy,
+    child_cancel: tokio_util::sync::CancellationToken,
 ) -> Arc<ToolContext> {
     let child_log_store = Arc::clone(&child_store);
     let child_infra = AgentToolInfra {
@@ -110,6 +119,7 @@ pub(super) fn build_child_context(
         child_ctx.confine_to_workspace(root.to_path_buf());
     }
     child_ctx.insert_extension(Arc::new(child_infra));
+    child_ctx.insert_extension(Arc::new(AgentCancellation(child_cancel)));
     child_ctx.insert_extension(Arc::new(AgentHandles::new()));
     if let Some(task_store) = parent_ctx.get_extension::<SharedTaskStore>() {
         child_ctx.insert_extension(task_store);
@@ -266,6 +276,7 @@ mod tests {
             &parent_ctx,
             None,
             test_policy(),
+            tokio_util::sync::CancellationToken::new(),
         );
 
         let child_log = child_ctx
@@ -320,6 +331,7 @@ mod tests {
             &parent_ctx,
             None,
             test_policy(),
+            tokio_util::sync::CancellationToken::new(),
         );
         let tree_after_first = parent_ctx.get_extension::<ActionLogTree>().expect("tree");
         let _c2 = build_child_context(
@@ -329,6 +341,7 @@ mod tests {
             &parent_ctx,
             None,
             test_policy(),
+            tokio_util::sync::CancellationToken::new(),
         );
         let tree_after_second = parent_ctx.get_extension::<ActionLogTree>().expect("tree");
 
@@ -359,6 +372,7 @@ mod tests {
             &parent_ctx,
             None,
             test_policy(),
+            tokio_util::sync::CancellationToken::new(),
         );
 
         let tree = parent_ctx.get_extension::<ActionLogTree>().expect("tree");
@@ -369,5 +383,41 @@ mod tests {
         );
         assert!(tree.log_of(child_id).is_some(), "child log registered");
         assert_eq!(tree.children_of(parent_id), vec![child_id]);
+    }
+
+    /// W3.5: the child's run-cancellation token is published on the
+    /// child context as an [`AgentCancellation`] extension *at
+    /// construction* — even when the parent context publishes none
+    /// (token-less embedder roots) — so the child's own spawn/fork
+    /// sites always have a token to chain grandchild tokens under.
+    #[test]
+    fn child_context_publishes_the_passed_cancellation_token() {
+        let infra = parent_infra(Uuid::new_v4());
+        let parent_ctx = ToolContext::empty();
+        assert!(
+            parent_ctx.get_extension::<AgentCancellation>().is_none(),
+            "this parent deliberately publishes no token (root boundary)",
+        );
+
+        let child_cancel = tokio_util::sync::CancellationToken::new();
+        let child_ctx = build_child_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+            test_policy(),
+            child_cancel.clone(),
+        );
+
+        let published = child_ctx
+            .get_extension::<AgentCancellation>()
+            .expect("the child context must publish its own AgentCancellation");
+        assert!(!published.0.is_cancelled());
+        child_cancel.cancel();
+        assert!(
+            published.0.is_cancelled(),
+            "the published extension must be the same token the launch path uses",
+        );
     }
 }

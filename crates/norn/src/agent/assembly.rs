@@ -659,6 +659,15 @@ pub(crate) struct AgentInfraParts {
     /// inbound channel — messaging the root then fails honestly as
     /// `NotRouted`.
     pub(crate) root_inbound: Option<crate::r#loop::inbound::InboundSender>,
+    /// The root agent's own run-cancellation token — the builder's
+    /// `cancel_token` when one was supplied, otherwise the fresh token
+    /// the builder resolved; the *same* token `Agent::run` threads into
+    /// the root's [`AgentStepRequest`](crate::r#loop::runner::AgentStepRequest)
+    /// and `AgentHandle::cancel` triggers. Published as the
+    /// [`AgentCancellation`](crate::tools::agent::AgentCancellation)
+    /// extension so spawn/fork create child run tokens as children of it
+    /// — cancelling the root cascades to the whole tree (W3.5).
+    pub(crate) cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Install the complete fork/spawn runtime on the agent's shared
@@ -698,6 +707,13 @@ pub(crate) struct AgentInfraParts {
 /// capacity is always the caller's explicit choice, never a library
 /// default.
 ///
+/// Also publishes the root's run-cancellation token as the
+/// [`AgentCancellation`](crate::tools::agent::AgentCancellation)
+/// extension (W3.5): spawn/fork create each child's run token as a child
+/// of it, so cancelling the root cascades cooperatively through the
+/// whole agent tree — every descendant ends with its real `Cancelled`
+/// outcome through its own completion wrapper.
+///
 /// Also registers the root's own inbound sender (when one exists) in the
 /// fresh [`MessageRouter`] under the root's id, so children can address
 /// `"parent"` at the top level. The root's route is process-lifetime — it
@@ -730,6 +746,12 @@ pub(crate) fn install_agent_infra(
         tool_registry: Some(Arc::clone(tool_registry)),
     };
     shared.insert_extension(Arc::new(infra));
+    // W3.5 cancellation cascade: publish the root's run token so
+    // spawn/fork create child run tokens as children of it — cancelling
+    // the root's handle cancels every descendant's run cooperatively.
+    shared.insert_extension(Arc::new(crate::tools::agent::AgentCancellation(
+        parts.cancel,
+    )));
     crate::runtime_init::install_agent_handles(shared);
     crate::runtime_init::install_terminal_reclamation(shared);
 
@@ -790,6 +812,7 @@ mod tests {
             },
             child_result_capacity: 256,
         };
+        let root_cancel = tokio_util::sync::CancellationToken::new();
         let _child_rx = install_agent_infra(
             &tool_registry,
             &ctx,
@@ -800,6 +823,7 @@ mod tests {
                 id: agent_id,
                 envelope: envelope.clone(),
                 root_inbound: None,
+                cancel: root_cancel.clone(),
             },
         );
 
@@ -809,6 +833,19 @@ mod tests {
         assert_eq!(
             *published, envelope,
             "the published envelope carries the caller's values verbatim",
+        );
+
+        // W3.5: the root's run token is published for the cancellation
+        // cascade — the extension must share the trigger with the token
+        // the caller passed (the same one Agent::run / AgentHandle use).
+        let published_cancel = ctx
+            .get_extension::<crate::tools::agent::AgentCancellation>()
+            .expect("AgentCancellation published on the shared context");
+        assert!(!published_cancel.0.is_cancelled());
+        root_cancel.cancel();
+        assert!(
+            published_cancel.0.is_cancelled(),
+            "the published token must be the root's own run token",
         );
 
         let tree = ctx

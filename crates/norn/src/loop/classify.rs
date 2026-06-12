@@ -15,6 +15,7 @@ use crate::provider::request::ProviderRequest;
 use crate::provider::traits::Provider;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
+use crate::tool::envelope::split_envelope_fields;
 
 /// Persist the `loop.truncated` Custom event marking a truncated no-schema
 /// response (REVIEW item 5).
@@ -150,6 +151,16 @@ pub(super) fn classify_response(
         }
     };
 
+    // The schema tool's model-facing definition is envelope-wrapped like
+    // every other tool (`build_schema_tool`), so the call legitimately
+    // carries `tool_use_description`/`tool_use_metadata`. Those are
+    // envelope fields, not output: split them off before validating, or
+    // any user schema with `additionalProperties: false` rejects the
+    // call and the structured output leaks envelope keys. The raw call
+    // (description included) is persisted on the `AssistantMessage`
+    // event, so observability surfaces lose nothing.
+    let output = split_envelope_fields(output).tool_args;
+
     let Some(schema) = output_schema else {
         return ResponseClass::SchemaValid { output };
     };
@@ -204,7 +215,82 @@ pub(super) async fn call_provider(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+    use crate::r#loop::assembly::AssembledToolCall;
     use crate::provider::openai::sse::{map_sse_event, parse_sse_bytes};
+    use crate::provider::request::ToolCallKind;
+    use crate::provider::usage::Usage;
+
+    fn schema_call_response(arguments: &str) -> AssembledResponse {
+        AssembledResponse {
+            text: String::new(),
+            thinking: String::new(),
+            tool_calls: vec![AssembledToolCall {
+                call_id: "call_1".to_owned(),
+                name: "structured_output".to_owned(),
+                arguments: arguments.to_owned(),
+                kind: ToolCallKind::Function,
+            }],
+            stop_reason: StopReason::ToolUse,
+            usage: Usage::default(),
+            response_id: None,
+        }
+    }
+
+    fn strict_schema() -> Value {
+        serde_json::json!({
+            "type": "object",
+            "properties": { "answer": { "type": "string" } },
+            "required": ["answer"],
+            "additionalProperties": false
+        })
+    }
+
+    #[test]
+    fn envelope_fields_are_stripped_before_schema_validation() {
+        // Regression: the model attaches `tool_use_description` (the
+        // envelope-wrapped definition marks it required) — an
+        // `additionalProperties: false` user schema must not reject it,
+        // and the accepted output must not contain the envelope keys.
+        let response = schema_call_response(
+            "{\"answer\":\"42\",\
+             \"tool_use_description\":\"submitting the final result\",\
+             \"tool_use_metadata\":{\"task\":\"T-1\"}}",
+        );
+        let schema = strict_schema();
+        match classify_response(&response, Some(&schema), "structured_output") {
+            ResponseClass::SchemaValid { output } => {
+                assert_eq!(output, serde_json::json!({"answer": "42"}));
+            }
+            other => panic!(
+                "expected SchemaValid, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
+
+    #[test]
+    fn genuine_violations_still_fail_with_clean_output_in_feedback() {
+        // Stripping the envelope must not mask real violations, and the
+        // feedback output the model sees is the clean args — never the
+        // envelope keys it was told to send.
+        let response =
+            schema_call_response("{\"answer\":7,\"tool_use_description\":\"submitting\"}");
+        let schema = strict_schema();
+        match classify_response(&response, Some(&schema), "structured_output") {
+            ResponseClass::SchemaInvalid { output, errors, .. } => {
+                assert_eq!(output, serde_json::json!({"answer": 7}));
+                assert!(!errors.is_empty());
+                assert!(
+                    !errors.join("; ").contains("tool_use_description"),
+                    "envelope fields must not appear as violations: {errors:?}",
+                );
+            }
+            other => panic!(
+                "expected SchemaInvalid, got {:?}",
+                std::mem::discriminant(&other)
+            ),
+        }
+    }
 
     /// Maps a raw `OpenAI` Responses SSE transcript through the real
     /// provider parser into the loop's event stream, asserting no event

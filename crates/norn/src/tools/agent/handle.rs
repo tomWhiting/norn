@@ -176,6 +176,18 @@ impl AgentHandles {
             .map(|h| h.status_rx.clone())
     }
 
+    /// Returns a clone of the run-cancellation token for `agent_id`
+    /// without removing the handle (W3.5).
+    ///
+    /// `CancellationToken` clones share the same trigger, so `close_agent`
+    /// can fire the target's token — which cascades to every spawned
+    /// descendant's child token — *before* its leaves-first walk takes
+    /// ownership of the handle and joins the wrapper.
+    #[must_use]
+    pub fn cancel_token(&self, agent_id: Uuid) -> Option<CancellationToken> {
+        self.inner.lock().get(&agent_id).map(|h| h.cancel.clone())
+    }
+
     /// Returns a clone of the inbound message sender for `agent_id`.
     ///
     /// `InboundSender` is cheaply cloneable; the clone feeds the same

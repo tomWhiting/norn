@@ -49,6 +49,12 @@ pub struct NornRhaiContext {
     /// Provider used when launching a sub-agent step.
     pub provider: Arc<dyn Provider>,
     /// Id of the agent invoking the script (sender for `signal_agent`).
+    ///
+    /// Must be the embedding host's own id — never the id of a
+    /// tool-spawned agent. Script children registered under this id carry
+    /// no cancellation token (`cancel: None`), so aliasing a tool-spawned
+    /// agent's id would plant cascade-unreachable children inside a
+    /// subtree `close_agent` truthfully reports as `cancelling` (W3.5).
     pub agent_id: Uuid,
     /// Tokio runtime handle to bridge sync Rhai into async work.
     pub runtime: tokio::runtime::Handle,

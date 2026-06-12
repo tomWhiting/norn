@@ -4,6 +4,7 @@ pub mod action_log;
 mod action_log_scope_resolve;
 pub mod agent;
 pub mod agents;
+mod agents_messages;
 mod ast;
 pub mod bash;
 
@@ -42,8 +43,8 @@ pub mod web;
 pub mod write;
 pub use self::action_log::ActionLogTool;
 pub use self::agent::{
-    AgentHandle, AgentHandles, AgentToolInfra, CloseAgentTool, ForkTool, SignalAgentTool,
-    SpawnAgentTool,
+    AgentCancellation, AgentHandle, AgentHandles, AgentToolInfra, CloseAgentTool, ForkTool,
+    SignalAgentTool, SpawnAgentTool,
 };
 pub use self::agents::AgentsTool;
 pub use self::bash::BashTool;

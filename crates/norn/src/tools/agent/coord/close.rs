@@ -19,21 +19,35 @@ use crate::tools::agent::infra::{ResolvedAgent, infra_from, resolve_agent};
 
 /// Recursively shut down a target agent and every descendant.
 ///
-/// DFS post-order — leaves transition first, then their parents, finally
-/// the target. (The registry's spawn-depth-one policy means a subtree is
-/// at most the target plus its direct children.) For agents whose
-/// [`crate::tools::agent::handle::AgentHandle`] the closer holds, the
-/// shutdown sends a best-effort Steer message via the child's
-/// [`crate::r#loop::inbound::InboundChannel`], triggers the handle's
-/// cooperative [`CancellationToken`](tokio_util::sync::CancellationToken)
-/// — which terminates the child's *run* at its next cancellation boundary
-/// — and joins the wrapper task before touching the registry, so the
-/// closer and the completion wrapper can never race over an entry's
-/// terminal sequence and the wrapper records the run's real outcome
-/// itself. Agents the closer holds no handle for cannot be force-stopped
-/// and are reported `"unreachable"` without touching their live registry
-/// entry; already-terminal entries are reclaimed without rewriting their
-/// recorded outcome.
+/// **Token-first (W3.5):** when the closer holds the target's
+/// [`crate::tools::agent::handle::AgentHandle`], the target's cooperative
+/// [`CancellationToken`](tokio_util::sync::CancellationToken) is fired
+/// *before* the subtree walk. Spawn/fork create every child's run token
+/// as a child of its spawner's token, so this one cancel cascades to the
+/// target's entire spawned subtree — descendants the closer holds no
+/// handle for included. Each descendant's run ends with the real
+/// `Cancelled` outcome at its next cancellation boundary and its **own**
+/// completion wrapper performs its terminal sequence (registry mark,
+/// lifecycle `Completed`, result delivery, reclamation) — close never
+/// touches a descendant's entry; single ownership holds at every depth.
+///
+/// The walk itself is DFS post-order — leaves first, the target last
+/// (depth-unbounded since W3.4 recursion). For the target — whose handle
+/// the closer holds — the shutdown sends a best-effort Steer message via
+/// the child's [`crate::r#loop::inbound::InboundChannel`] (best-effort
+/// twice over: with the token already fired the loop may end before its
+/// next inbound drain), cancels the token again (idempotent), and joins
+/// the wrapper task before touching the registry, so the closer and the
+/// completion wrapper can never race over an entry's terminal sequence
+/// and the wrapper records the run's real outcome itself. The close
+/// therefore returns only after the *target's* wrapper completes;
+/// cascade-cancelled descendants are reported `"cancelling"` and finish
+/// through their own wrappers (their results land on their own parents'
+/// channels — or are error-logged when that parent's loop already
+/// ended). When no cascade was triggered (the closer holds no handle for
+/// the target), live no-handle agents are reported `"unreachable"`
+/// untouched, exactly as before; already-terminal entries are reclaimed
+/// without rewriting their recorded outcome.
 ///
 /// Closing an agent that already completed and was reclaimed is a **soft
 /// success**: the desired post-condition (the agent is not running)
@@ -138,11 +152,26 @@ fn collect_subtree(registry: &AgentRegistry, root: Uuid) -> Vec<Uuid> {
 /// than detaching anything (a `try_send` that dropped the result on a
 /// full buffer would be a silent failure, so blocking is correct).
 ///
-/// **Without a handle** — the closer cannot stop the target's task, so
-/// it must not touch a live entry either: marking a still-running agent
-/// terminal would falsify the record, and removing the entry would
-/// steal the terminal transition its completion wrapper still owes.
-/// Live no-handle targets are reported `"unreachable"`.
+/// **Without a handle, cascade triggered** (`"cancelling"`) — the
+/// caller already fired the target's token before this walk, and W3.5
+/// guarantees every spawn/fork descendant's token is a child of its
+/// spawner's, so this agent's run is already ending with the real
+/// `Cancelled` outcome. Its own completion wrapper owns the terminal
+/// sequence (mark, lifecycle, delivery, reclamation) — the closer must
+/// not race it for the entry, so it reports the truth and moves on.
+/// (`cascade_cancelled` is only ever set for registry *descendants* of
+/// a handle-held target; every such descendant was launched by
+/// `spawn_agent`/`fork`, whose token lineage is unbroken by
+/// construction. The one launch path with no token at all — rhai
+/// script children, `cancel: None` — registers children only under
+/// script hosts, which hold no `AgentHandles` and therefore can never
+/// trigger a cascade in the first place.)
+///
+/// **Without a handle, no cascade** — the closer cannot stop the
+/// target's task, so it must not touch a live entry either: marking a
+/// still-running agent terminal would falsify the record, and removing
+/// the entry would steal the terminal transition its completion wrapper
+/// still owes. Live no-handle targets are reported `"unreachable"`.
 ///
 /// An entry that is *already* terminal is treated as reclaim-only: its
 /// recorded outcome is never rewritten (terminal statuses are immutable;
@@ -173,6 +202,7 @@ async fn shutdown_one(
     id: Uuid,
     reason: Option<&str>,
     closer: &CloserAttribution,
+    cascade_cancelled: bool,
 ) -> &'static str {
     let held = handles.and_then(|h| h.remove(id));
     let had_handle = held.is_some();
@@ -248,6 +278,15 @@ async fn shutdown_one(
         return "reclaimed";
     }
     if !had_handle {
+        if cascade_cancelled {
+            // Live, no handle — but the target's token-first cancel
+            // already reached this descendant through its token lineage
+            // (every spawn/fork child token is a child of its spawner's
+            // token, W3.5). Its run is ending with the real `Cancelled`
+            // outcome and its own wrapper owns the terminal sequence;
+            // the closer reports the truth and leaves the entry to it.
+            return "cancelling";
+        }
         // Live, and the closer cannot stop its task: leave the entry to
         // its lifecycle owner and say so.
         return "unreachable";
@@ -360,6 +399,20 @@ impl Tool for CloseAgentTool {
         };
         order.reverse();
 
+        // Token-first cascade (W3.5): fire the target's cancellation
+        // token *before* the leaves-first walk. With hierarchical child
+        // tokens the cancel reaches every spawned descendant immediately
+        // — including ones the closer holds no handle for — so each
+        // descendant's run is already ending (real `Cancelled` outcome,
+        // own wrapper's terminal sequence) by the time the walk reports
+        // on it. The token is peeked without removing the handle; the
+        // target's own shutdown below still takes ownership, cancels
+        // again (idempotent), and joins the wrapper.
+        let cascade_triggered = handles_ref
+            .and_then(|h| h.cancel_token(target_id))
+            .map(|token| token.cancel())
+            .is_some();
+
         let (label, role) =
             sender_attribution(&infra.registry.read(), infra.agent_id, infra.parent_id);
         let closer = CloserAttribution {
@@ -375,6 +428,10 @@ impl Tool for CloseAgentTool {
                 id,
                 args.reason.as_deref(),
                 &closer,
+                // Strict descendants only: the target itself is handled
+                // through the held-handle join path, never the
+                // cascade-report path.
+                cascade_triggered && id != target_id,
             )
             .await;
             shut_down.push(serde_json::json!({

@@ -102,6 +102,16 @@ pub(super) struct ChildLaunch {
     /// [`ChildPolicy::inbound_capacity`](crate::agent::child_policy::ChildPolicy::inbound_capacity)
     /// (DECISION M4 — never a hardcoded library value).
     pub(super) inbound_capacity: usize,
+    /// The child's run-cancellation token (W3.5 cancellation cascade):
+    /// created by the spawn tool as a child of the spawner's published
+    /// [`AgentCancellation`](super::infra::AgentCancellation) token —
+    /// or free-standing when the spawner publishes none (token-less
+    /// embedder roots; see [`AgentCancellation`](super::infra::AgentCancellation))
+    /// — and already published on the child's own [`ToolContext`](crate::tool::context::ToolContext)
+    /// so grandchild tokens chain under it. The trigger also lives on
+    /// the parent-held [`AgentHandle`]; a clone rides into the inner
+    /// run's [`AgentStepRequest`].
+    pub(super) cancel: tokio_util::sync::CancellationToken,
 }
 
 /// Launch the child on its own `tokio` task and return the [`AgentHandle`]
@@ -131,6 +141,7 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         lifecycle,
         router,
         inbound_capacity,
+        cancel,
     } = launch;
 
     let handle_store = Arc::clone(&store);
@@ -146,11 +157,13 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     // Cooperative cancellation: the trigger lives on the parent-held
     // AgentHandle and a clone rides into the inner run's AgentStepRequest,
     // so `close_agent` can terminate the run itself — not just the wrapper
-    // task. The loop observes the token at the top of every iteration and
-    // races it (cancel-priority) against the in-flight provider call,
-    // returning `AgentStepResult::Cancelled`, which the wrapper records as
-    // the run's real outcome through its normal terminal sequence below.
-    let cancel = tokio_util::sync::CancellationToken::new();
+    // task. The token arrives on the launch (W3.5): the spawn tool created
+    // it as a child of the spawner's own token, so cancelling any ancestor
+    // cascades here too. The loop observes the token at the top of every
+    // iteration and races it (cancel-priority) against the in-flight
+    // provider call, returning `AgentStepResult::Cancelled`, which the
+    // wrapper records as the run's real outcome through its normal
+    // terminal sequence below.
     let run_cancel = cancel.clone();
 
     let join_handle = tokio::spawn(async move {
@@ -263,9 +276,12 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
             // A send into a dropped receiver is the R5 orphaned-result
             // gap: the parent's run ended before this child finished
             // (children run default loop limits and a non-root parent
-            // cannot linger until R5 closes). Error-logged, never silent;
-            // reclamation below still runs — nothing can observe the
-            // entry through the channel anymore.
+            // cannot linger until R5 closes). A cascaded cancel (W3.5)
+            // hits this path by design — a cancelled mid-tree parent's
+            // loop ends and drops its receiver while this child's own
+            // cancelled run is still wrapping up. Error-logged, never
+            // silent; reclamation below still runs — nothing can observe
+            // the entry through the channel anymore.
             if let Err(e) = sender.0.send(result).await {
                 tracing::error!(
                     child_id = %child_id,

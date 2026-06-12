@@ -31,10 +31,13 @@ use serde::Deserialize;
 use super::delegation::{
     auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
 };
-use super::fork_pipeline::{ForkLaunch, build_fork_context, launch_fork, resolve_fork_store};
+use super::fork_launch::{ForkLaunch, launch_fork};
+use super::fork_pipeline::{build_fork_context, resolve_fork_store};
 use super::fork_seed::seed_fork_events;
 use super::handle::AgentHandles;
-use super::infra::{SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list};
+use super::infra::{
+    AgentCancellation, SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list,
+};
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope, MessagingScope};
@@ -297,6 +300,20 @@ impl Tool for ForkTool {
             reason: format!("fork confirm failed: {e}"),
         })?;
 
+        // Hierarchical cancellation (W3.5): the fork's run token is a
+        // child of the forker's published token, so cancelling the forker
+        // — or any ancestor above it — cascades to this fork and its
+        // whole subtree, each run ending with its real `Cancelled`
+        // outcome through its own wrapper. A parent context that
+        // publishes no token (embedder roots assembled outside
+        // `AgentBuilder`) yields a free-standing token — exactly the
+        // pre-cascade behavior; see `AgentCancellation` for the boundary.
+        let fork_cancel = ctx
+            .get_extension::<AgentCancellation>()
+            .map_or_else(tokio_util::sync::CancellationToken::new, |parent_cancel| {
+                parent_cancel.0.child_token()
+            });
+
         // R3: per-child ToolContext with fresh identity, forwarded shared
         // infrastructure, the granted policy stamped for signal_agent's
         // scope enforcement and the fork's own spawn-time budget reads.
@@ -307,6 +324,7 @@ impl Tool for ForkTool {
             ctx,
             child_tree,
             fork_policy.clone(),
+            fork_cancel.clone(),
         );
         // Per-agent result channel (W3.4): a fork whose grant lets it
         // delegate gets its own child-result channel — sender on its
@@ -479,6 +497,7 @@ impl Tool for ForkTool {
                 lifecycle,
                 hooks,
                 router: Arc::clone(&infra.router),
+                cancel: fork_cancel,
             },
             inbound_tx,
         );
@@ -2896,6 +2915,93 @@ mod tests {
                 .starts_with(&format!("{fork_path}/spawn/")),
             "grandchild path nests under the fork: {}",
             grandchild_tomb.path,
+        );
+    }
+
+    /// W3.5: a fork's run token is created as a child of the forker's
+    /// published [`AgentCancellation`] token, so cancelling the PARENT
+    /// token alone — never touching the fork's handle — terminates the
+    /// fork's in-flight run, whose wrapper records the real Cancelled
+    /// outcome through its normal terminal sequence (mirrors the spawn
+    /// cascade tests).
+    #[tokio::test]
+    async fn cancelling_parent_token_cascades_to_in_flight_fork() {
+        use crate::agent::output::AgentStopReason;
+        use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
+        use crate::tools::agent::AgentCancellation;
+
+        /// Never-yielding provider: the fork parks inside its first
+        /// in-flight call and notifies `entered`.
+        struct ParkedForkProvider {
+            entered: Arc<tokio::sync::Notify>,
+        }
+        impl Provider for ParkedForkProvider {
+            fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+                self.entered.notify_one();
+                Ok(Box::pin(stream::pending::<
+                    Result<ProviderEvent, ProviderError>,
+                >()))
+            }
+        }
+
+        let entered = Arc::new(tokio::sync::Notify::new());
+        let provider: Arc<dyn Provider> = Arc::new(ParkedForkProvider {
+            entered: Arc::clone(&entered),
+        });
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        let parent_cancel = tokio_util::sync::CancellationToken::new();
+        ctx.insert_extension(Arc::new(AgentCancellation(parent_cancel.clone())));
+        let (tx, mut rx) = tokio::sync::mpsc::channel::<ChildAgentResult>(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "summarise", "model": "gpt-5.5", "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().expect("id")).expect("uuid");
+        entered.notified().await;
+
+        // Cancel the PARENT's token only; the fork's child token observes
+        // it through tokio_util's cascade.
+        parent_cancel.cancel();
+
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .expect("handles")
+            .remove(fork_id)
+            .expect("handle stored");
+        handle
+            .join_handle
+            .await
+            .expect("wrapper joins after the cascaded cancel");
+
+        let result = rx
+            .try_recv()
+            .expect("the fork's wrapper delivered the real outcome before it ended");
+        assert_eq!(result.agent_id, fork_id);
+        assert!(!result.succeeded, "a cancelled fork is not a success");
+        assert_eq!(result.stop, Some(AgentStopReason::Cancelled));
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(fork_id)
+                .expect("entry observable (no reclaim marker installed)")
+                .status,
+            AgentStatus::Failed,
+            "a cancelled fork records Failed — never Completed",
         );
     }
 }

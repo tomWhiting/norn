@@ -888,6 +888,51 @@ mod tests {
         assert_eq!(provider.call_count(), 1);
     }
 
+    /// W3.5 cascade × linger: the run holds a `child_token()` of an
+    /// ancestor's token (exactly how spawn/fork parent every child's run
+    /// token), and the *ancestor's* token is the one cancelled while the
+    /// run lingers at its stop boundary. The cascaded cancel must end
+    /// the linger promptly — long before the deadline — with the
+    /// established `Cancelled` semantics (accumulated usage attached),
+    /// so a cancelled mid-tree agent never sits out its linger window.
+    #[tokio::test(start_paused = true)]
+    async fn cascaded_ancestor_cancel_during_linger_returns_cancelled_promptly() {
+        let provider = MockProvider::new(vec![text_turn("only")]);
+        let store = EventStore::new();
+        let mut ctx = crate::r#loop::loop_context::LoopContext::new("system");
+        let ancestor = CancellationToken::new();
+        let own = ancestor.child_token();
+        let canceller = tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            ancestor.cancel();
+        });
+
+        // Deadline far beyond the cancel: a prompt Cancelled return
+        // proves the cascaded token ended the linger, not the deadline
+        // (deadline expiry would return Completed here).
+        let config = linger_config(Duration::from_hours(1));
+        let result = run_step(Run {
+            provider: &provider,
+            store: &store,
+            config: &config,
+            loop_context: &mut ctx,
+            schema: None,
+            inbound: None,
+            cancel: Some(own),
+        })
+        .await;
+        canceller.await.expect("canceller task");
+
+        let AgentStepResult::Cancelled { usage } = result else {
+            panic!("expected Cancelled, got {result:?}");
+        };
+        assert_eq!(
+            usage.input_tokens, 10,
+            "accumulated usage rides on the cascaded Cancelled too"
+        );
+        assert_eq!(provider.call_count(), 1);
+    }
+
     #[tokio::test(start_paused = true)]
     async fn deadline_expiry_stops_exactly_like_unset_linger() {
         // Lingering run: deadline expires with nothing arriving.

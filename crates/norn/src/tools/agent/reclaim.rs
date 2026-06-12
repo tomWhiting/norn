@@ -8,9 +8,10 @@
 //!
 //! - **`close_agent`** — the closer reclaims immediately (it owns the
 //!   lifecycle end it forced). For children it holds the handle of, the
-//!   closer aborts the wrapper task and *joins* it before touching the
-//!   registry, so the wrapper and the closer can never race over the
-//!   terminal transition. Reclamation leaves an
+//!   closer cancels the run token (cascading to the whole spawned
+//!   subtree since W3.5 — never an abort) and *joins* the wrapper before
+//!   touching the registry, so the wrapper and the closer can never race
+//!   over the terminal transition. Reclamation leaves an
 //!   [`AgentTombstone`](crate::agent::registry::AgentTombstone) so the
 //!   completion stays reportable.
 //! - **TUI / external status observers** — when *no*

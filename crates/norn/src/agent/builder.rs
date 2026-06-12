@@ -517,6 +517,15 @@ impl AgentBuilder {
             None => (None, None),
         };
 
+        // The root's run-cancellation token is resolved once — the
+        // builder's explicit `cancel_token`, or a fresh token — and used
+        // for both the Agent (run + handle) and, when coordination is
+        // installed, the published `AgentCancellation` extension, so
+        // cancelling the handle cascades to every spawned descendant's
+        // child token (W3.5). Two tokens here would silently sever the
+        // cascade from the control surface.
+        let cancel = self.cancel.unwrap_or_default();
+
         if let Some((agent_registry, envelope)) = coordination {
             let child_rx = install_agent_infra(
                 &registry,
@@ -533,6 +542,7 @@ impl AgentBuilder {
                     // root's id. Without an inbound channel, messaging the
                     // root fails honestly as NotRouted.
                     root_inbound: self.inbound_tx.clone(),
+                    cancel: cancel.clone(),
                 },
             );
             // The runner drains child fork/spawn results at iteration
@@ -565,7 +575,7 @@ impl AgentBuilder {
             event_store,
             event_sender,
             events_tx,
-            cancel: self.cancel.unwrap_or_default(),
+            cancel,
             inbound: self.inbound,
             inbound_tx: self.inbound_tx,
             id: agent_id,
@@ -1219,6 +1229,40 @@ mod tests {
         assert!(
             agent.loop_context.child_result_rx.is_some(),
             "the child-result receiver is wired alongside the envelope",
+        );
+    }
+
+    /// W3.5 (review U1-M1): with NO explicit `cancel_token`, the builder
+    /// must still bind the published `AgentCancellation` and the agent's
+    /// own run token (the one `Agent::run` / `AgentHandle::cancel`
+    /// observe) to the SAME trigger. Two independently-minted defaults
+    /// compile fine and silently sever the cascade from the control
+    /// surface on every default-built agent — this pins the single
+    /// resolution in `build`.
+    #[test]
+    fn default_built_agent_publishes_its_own_run_token() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .build()
+            .expect("build succeeds");
+
+        let published = agent
+            .registry
+            .shared_context()
+            .expect("shared tool context")
+            .get_extension::<crate::tools::agent::AgentCancellation>()
+            .expect("AgentCancellation published on the shared context");
+        assert!(!published.0.is_cancelled());
+
+        agent.cancel.cancel();
+        assert!(
+            published.0.is_cancelled(),
+            "the published cascade token must share the trigger with the \
+             default-built agent's own run token",
         );
     }
 

@@ -4,8 +4,9 @@
 //! [`ToolContext`](crate::tool::context::ToolContext), branch the
 //! [`SessionTree`](crate::session::tree::SessionTree) when one is published
 //! (R4), filter the parent registry's tool definitions through the per-fork
-//! allow-list (R8), and drive the `tokio::spawn` launch / completion
-//! transitions (R1, R4). The child-store seeding step (R2) lives in
+//! allow-list (R8), and project the run's outcome (R1, R4). The
+//! `tokio::spawn` launch / completion wrapper lives in
+//! [`super::fork_launch`]; the child-store seeding step (R2) lives in
 //! [`super::fork_seed`]. Lives next to the public tool surface so
 //! [`crate::tools::agent::fork_tool::ForkTool::execute`] reads top-to-bottom
 //! while staying inside the per-file 500-line production-code limit (CO5).
@@ -15,33 +16,22 @@ use std::time::Instant;
 
 use chrono::Utc;
 use parking_lot::RwLock;
-use tokio::sync::watch;
 use uuid::Uuid;
 
-use super::handle::{AgentHandle, AgentHandles, ChildBranchMetadata, SharedSessionTree};
-use super::infra::{AgentToolInfra, ParentGrant, SubAgentExecutor};
-use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
-use super::reclaim::{
-    ReclaimHandshake, log_terminal_transition_violation, reclaim_delivered_child,
-};
+use super::handle::{AgentHandles, SharedSessionTree};
+use super::infra::{AgentCancellation, AgentToolInfra, ParentGrant};
+use super::reclaim::log_terminal_transition_violation;
 use super::spawn_context::wire_child_action_log;
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
 use crate::agent::fork::{ContextFilter, ParentSystemInstruction};
-use crate::agent::message_router::MessageRouter;
 use crate::agent::output::AgentStopReason;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
-use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::config::permissions::PermissionPolicy;
 use crate::error::{NornError, SessionError};
 use crate::integration::DiagnosticCollector;
-use crate::integration::hooks::{HookOutcome, HookRegistry};
+use crate::integration::hooks::HookRegistry;
 use crate::internal::extraction::SharedProvider;
-use crate::r#loop::inbound::{InboundChannel, InboundSender};
-use crate::r#loop::loop_context::LoopContext;
-use crate::r#loop::runner::{AgentLoopConfig, AgentStepRequest, AgentStepResult, run_agent_step};
-use crate::provider::agent_event::AgentEventSender;
-use crate::provider::request::ToolDefinition;
-use crate::provider::traits::Provider;
+use crate::r#loop::runner::AgentStepResult;
 use crate::provider::usage::Usage;
 use crate::session::events::{EventBase, EventUsage, SessionEvent};
 use crate::session::store::EventStore;
@@ -98,6 +88,13 @@ use crate::tools::task::SharedTaskStore;
 /// marker is forwarded so the fork's own children are reclaimed at every
 /// level exactly as depth-1 children are.
 ///
+/// `child_cancel` is the fork's own run-cancellation token — created by
+/// the fork tool as a child of the forker's published
+/// [`AgentCancellation`] (or free-standing when the forker publishes
+/// none; see [`AgentCancellation`] for the root boundary) — published on
+/// the fork's context here so the fork's own spawn/fork sites chain
+/// grandchild tokens under it (W3.5 cancellation cascade).
+///
 /// [`ForkTool::execute`]: crate::tools::agent::fork_tool::ForkTool
 pub(super) fn build_fork_context(
     parent_infra: &AgentToolInfra,
@@ -106,6 +103,7 @@ pub(super) fn build_fork_context(
     parent_ctx: &ToolContext,
     child_tree: Option<SharedSessionTree>,
     child_policy: ChildPolicy,
+    child_cancel: tokio_util::sync::CancellationToken,
 ) -> Arc<ToolContext> {
     let child_log_store = Arc::clone(&child_store);
     let child_infra = AgentToolInfra {
@@ -128,6 +126,7 @@ pub(super) fn build_fork_context(
         child_ctx.confine_to_workspace(root.to_path_buf());
     }
     child_ctx.insert_extension(Arc::new(child_infra));
+    child_ctx.insert_extension(Arc::new(AgentCancellation(child_cancel)));
     child_ctx.insert_extension(Arc::new(AgentHandles::new()));
     if let Some(task_store) = parent_ctx.get_extension::<SharedTaskStore>() {
         child_ctx.insert_extension(task_store);
@@ -314,7 +313,7 @@ pub(super) fn mark_fork_terminal(
 /// delivers the result, and transitions the registry, so observers never
 /// see a dangling `Started`. Usage is [`Usage::default`] (unknown — the
 /// panicked task took its accumulated usage with it).
-fn panicked_fork_outcome(
+pub(super) fn panicked_fork_outcome(
     join_error: &tokio::task::JoinError,
     duration: std::time::Duration,
 ) -> ForkOutcome {
@@ -454,277 +453,11 @@ pub(super) fn append_fork_complete(
     }
 }
 
-/// Resources moved into a fork's `tokio::spawn` task.
-pub(super) struct ForkLaunch {
-    pub(super) provider: Arc<dyn Provider>,
-    pub(super) executor: SubAgentExecutor,
-    pub(super) child_store: Arc<EventStore>,
-    pub(super) parent_store: Arc<EventStore>,
-    pub(super) loop_ctx: LoopContext,
-    pub(super) tool_defs: Vec<ToolDefinition>,
-    pub(super) output_schema: serde_json::Value,
-    pub(super) inbound_rx: InboundChannel,
-    pub(super) request: String,
-    pub(super) model: String,
-    pub(super) agent_registry: Arc<RwLock<AgentRegistry>>,
-    pub(super) result_sender: Option<ChildResultSender>,
-    pub(super) requirement_names: Vec<String>,
-    pub(super) fork_id: Uuid,
-    pub(super) parent_id: Uuid,
-    pub(super) forked_session_id: Option<SessionId>,
-    pub(super) event_sender: Option<AgentEventSender>,
-    /// `Some` when the runtime declared
-    /// [`ReclaimOnResultDelivery`](super::reclaim::ReclaimOnResultDelivery)
-    /// and a result channel exists: after delivering the fork's result —
-    /// and after the tool's handle-installed ack — the wrapper reclaims
-    /// the registry entry and drops the parent-held handle (see
-    /// [`super::reclaim`]).
-    pub(super) reclaim: Option<ReclaimHandshake>,
-    /// Typed lifecycle emitter — `Started` was already emitted by the
-    /// tool before launch; the wrapper emits `Completed` once the run
-    /// reaches a terminal outcome.
-    pub(super) lifecycle: LifecycleEmitter,
-    /// Shared hook registry retrieved from the parent's
-    /// [`ToolContext`](crate::tool::context::ToolContext). When present,
-    /// the wrapper fires
-    /// [`SubagentHook::on_subagent_stop`](crate::integration::hooks::SubagentHook::on_subagent_stop)
-    /// after the run finishes; a Block suppresses the registry's terminal
-    /// transition (and delivery-anchored reclamation) while the outcome
-    /// still surfaces — identical semantics to the spawn wrapper
-    /// (NH-006 R5).
-    pub(super) hooks: Option<Arc<HookRegistry>>,
-    /// Workspace-shared message router. [`launch_fork`] registers the
-    /// fork's inbound sender under its id before the task starts; the
-    /// completion wrapper deregisters at the run's end — single
-    /// ownership, mirroring the registry entry and the spawn wrapper.
-    pub(super) router: Arc<MessageRouter>,
-}
-
-/// Launch the fork on its own `tokio::spawn` task and build the parent-side
-/// [`AgentHandle`].
-pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> AgentHandle {
-    let ForkLaunch {
-        provider,
-        executor,
-        child_store,
-        parent_store,
-        mut loop_ctx,
-        tool_defs,
-        output_schema,
-        mut inbound_rx,
-        request,
-        model,
-        agent_registry,
-        result_sender,
-        requirement_names,
-        fork_id,
-        parent_id,
-        forked_session_id,
-        event_sender,
-        reclaim,
-        lifecycle,
-        hooks,
-        router,
-    } = launch;
-
-    let handle_store = Arc::clone(&child_store);
-    let (status_tx, status_rx) = watch::channel(AgentStatus::Active);
-    // Route registration ownership (Wave 3 §Routing): registered before
-    // the task starts so `signal_agent` can reach the fork for its entire
-    // run; deregistered by the completion wrapper below — single
-    // ownership, never two actors.
-    router.register(fork_id, inbound_tx.clone());
-    let agent_role = format!("fork/{model}");
-    // Cooperative cancellation: the trigger lives on the parent-held
-    // AgentHandle and a clone rides into the inner run's AgentStepRequest,
-    // so `close_agent` can terminate the run itself — not just the wrapper
-    // task. The loop observes the token at the top of every iteration and
-    // races it (cancel-priority) against the in-flight provider call,
-    // returning `AgentStepResult::Cancelled`, which the wrapper records as
-    // the run's real outcome through its normal terminal sequence below.
-    // Mirrors the spawn wrapper.
-    let cancel = tokio_util::sync::CancellationToken::new();
-    let run_cancel = cancel.clone();
-
-    let join_handle = tokio::spawn(async move {
-        let started = Instant::now();
-        // Panic isolation: the agent step runs on its own inner task so a
-        // panic inside a tool or provider (workspace code denies panics,
-        // but a dependency inside the fork's task can still unwind)
-        // surfaces here as a `JoinError` instead of killing the wrapper.
-        // The wrapper then completes every obligation of the normal
-        // failure path — stop hook, `ForkComplete`, lifecycle
-        // `Completed`, result delivery, status broadcast, registry
-        // transition, reclamation — so observers never see a dangling
-        // `Started`. Mirrors the spawn wrapper.
-        let inner = tokio::spawn(async move {
-            run_agent_step(AgentStepRequest {
-                provider: provider.as_ref(),
-                executor: &executor,
-                store: child_store.as_ref(),
-                user_prompt: &request,
-                tools: &tool_defs,
-                output_schema: Some(&output_schema),
-                model: &model,
-                config: &AgentLoopConfig::default(),
-                event_tx: event_sender.as_ref(),
-                inbound: Some(&mut inbound_rx),
-                loop_context: &mut loop_ctx,
-                cancel: Some(run_cancel),
-            })
-            .await
-        });
-        let outcome = match inner.await {
-            Ok(step_result) => {
-                if let Err(ref e) = step_result {
-                    tracing::error!(
-                        fork_id = %fork_id,
-                        role = %agent_role,
-                        error = %e,
-                        elapsed_ms =
-                            u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
-                        "fork: run_agent_step failed",
-                    );
-                }
-                project_fork_outcome(step_result, started)
-            }
-            Err(join_error) => {
-                tracing::error!(
-                    fork_id = %fork_id,
-                    role = %agent_role,
-                    error = %join_error,
-                    "fork: child task panicked or was aborted before completing",
-                );
-                panicked_fork_outcome(&join_error, started.elapsed())
-            }
-        };
-
-        // The fork's loop has ended: nothing will ever drain its inbound
-        // channel again, so the route is removed now — unconditionally,
-        // even when a stop hook below suppresses the registry's terminal
-        // transition (route ownership follows the loop's life; the
-        // registry entry tracks observability). Later sends fail fast as
-        // NotRouted instead of enqueueing into a buffer nothing reads.
-        router.deregister(fork_id);
-
-        // NH-006 R5 parity with spawn: fire SubagentHook::on_subagent_stop
-        // before the registry's terminal transition. A Block suppresses
-        // the transition (and reclamation below) while the outcome still
-        // surfaces — the parent always observes the fork's result.
-        let stop_blocked = if let Some(hooks_arc) = hooks.as_ref() {
-            matches!(
-                hooks_arc
-                    .run_subagent_stop(&fork_id.to_string(), "fork")
-                    .await,
-                HookOutcome::Block { .. },
-            )
-        } else {
-            false
-        };
-        if !stop_blocked {
-            mark_fork_terminal(&agent_registry, fork_id, outcome.status);
-        }
-
-        append_fork_complete(parent_store.as_ref(), forked_session_id, &outcome, fork_id);
-
-        // Typed lifecycle: emit `Completed` with the fork's accumulated
-        // usage, terminal outcome, and typed stop reason.
-        lifecycle.emit_completed(SubagentCompletion {
-            usage: outcome.usage.clone(),
-            succeeded: outcome.status == AgentStatus::Completed,
-            error: outcome.error_message.clone(),
-            stop: outcome.stop.clone(),
-        });
-
-        if let Some(sender) = result_sender {
-            let (succeeded, formatted_message, error) =
-                crate::agent::fork::format_fork_outcome(fork_id, &outcome, &requirement_names);
-            let result = ChildAgentResult {
-                agent_id: fork_id,
-                agent_role,
-                succeeded,
-                formatted_message,
-                error,
-                stop: outcome.stop.clone(),
-                usage: outcome.usage.clone(),
-            };
-            // A send into a dropped receiver is the R5 orphaned-result
-            // gap: the parent's run ended before this fork finished
-            // (children run default loop limits and a non-root parent
-            // cannot linger until R5 closes). Error-logged, never
-            // silent; reclamation below still runs.
-            if let Err(e) = sender.0.send(result).await {
-                tracing::error!(
-                    fork_id = %fork_id,
-                    error = %e,
-                    "fork: failed to send result through child result channel",
-                );
-            }
-        } else {
-            // Only reachable on embedder contexts assembled without
-            // install_agent_infra: a forker that passed the budget gate
-            // has a channel by construction. The result is undeliverable
-            // — say so, never drop it silently.
-            tracing::error!(
-                fork_id = %fork_id,
-                "fork: no child-result channel on the forking context; \
-                 the fork's result cannot be delivered",
-            );
-        }
-
-        let _ = status_tx.send_replace(outcome.status);
-
-        // Delivery-anchored reclamation (embedded/headless runtimes):
-        // the parent's record of this fork is now the delivered result
-        // plus the ForkComplete event on its timeline, so the registry
-        // entry and the parent-held handle can go. Skipped when a stop
-        // hook suppressed the terminal transition (the fork is then
-        // deliberately left observable and non-terminal — mirrors
-        // spawn). A failed result send means the receiver is gone —
-        // reclaiming is still correct.
-        //
-        // The wrapper is the sole reclaimer (see super::reclaim): it
-        // first awaits the tool's handle-installed ack so a fork that
-        // finished before `AgentHandles::insert` ran is still reclaimed
-        // with the handle present — no second actor ever reclaims
-        // concurrently, and nothing infers state from registry-entry
-        // absence.
-        if !stop_blocked && let Some(handshake) = reclaim {
-            if handshake.handle_installed.await.is_err() {
-                // The tool's execute was torn down between launching the
-                // wrapper and storing the handle (e.g. the parent task
-                // was cancelled mid-launch): there is no handle to drop,
-                // but the registry entry still must not leak.
-                tracing::warn!(
-                    fork_id = %fork_id,
-                    "fork: handle-installed ack dropped before launch completed; \
-                     reclaiming without a stored handle",
-                );
-            }
-            reclaim_delivered_child(&agent_registry, &handshake.handles, fork_id);
-        }
-    });
-
-    AgentHandle {
-        agent_id: fork_id,
-        status_rx,
-        inbound_tx,
-        cancel,
-        join_handle,
-        event_store: handle_store,
-        branch_metadata: ChildBranchMetadata {
-            child_agent_id: fork_id,
-            parent_agent_id: parent_id,
-            profile_name: None,
-            spawned_at: Utc::now(),
-        },
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::agent::fork::format_fork_outcome;
+    use crate::provider::traits::Provider;
     use crate::tool::registry::ToolRegistry;
 
     /// Documented-proposal policy used by tests — a deliberate test-caller
@@ -775,6 +508,7 @@ mod tests {
             &parent_ctx,
             None,
             test_policy(),
+            tokio_util::sync::CancellationToken::new(),
         );
 
         let forwarded_policy = child_ctx
@@ -829,6 +563,7 @@ mod tests {
             &parent_ctx,
             None,
             test_policy(),
+            tokio_util::sync::CancellationToken::new(),
         );
 
         if child_ctx.workspace_root() != Some(Path::new("/tmp/fork-workspace-root")) {
@@ -885,6 +620,7 @@ mod tests {
             &parent_ctx,
             None,
             test_policy(),
+            tokio_util::sync::CancellationToken::new(),
         );
 
         let forwarded = child_ctx

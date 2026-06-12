@@ -30,7 +30,9 @@ use crate::r#loop::inflight_compaction::{
 use crate::r#loop::iteration::{IterationMonitorState, evaluate_iteration};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::retry::retry_with_backoff;
-use crate::r#loop::schema::{build_schema_tool, format_nudge, format_validation_feedback};
+use crate::r#loop::schema::{
+    build_schema_tool, check_reserved_envelope_keys, format_nudge, format_validation_feedback,
+};
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::events::StopReason;
 use crate::provider::request::{
@@ -217,6 +219,12 @@ async fn run_agent_step_inner(
     let cancel = request.cancel;
     let mut all_tools: Vec<ToolDefinition> = tools.to_vec();
     if let Some(schema) = output_schema {
+        // Backstop for every schema source (embedder config, fork, rhai;
+        // spawn_agent also rejects at its argument boundary): a schema
+        // declaring a reserved envelope key would be unsatisfiable or
+        // silently lossy after the pre-validation envelope split — refuse
+        // it typed before the loop spends a single provider call.
+        check_reserved_envelope_keys(schema).map_err(NornError::Schema)?;
         all_tools.push(build_schema_tool(&config.schema_tool_name, schema));
     }
 

@@ -74,11 +74,14 @@ pub enum FileChangeType {
 }
 
 /// JSON property name for the model-supplied description of its intent
-/// when calling a tool. Prefixed to avoid collisions with tool parameters.
+/// when calling a tool. Prefixed to avoid collisions with tool
+/// parameters; the name is **reserved** across the whole tool surface —
+/// see [`wrap_schema_with_envelope`] for the contract.
 pub const ENVELOPE_DESCRIPTION_KEY: &str = "tool_use_description";
 
 /// JSON property name for the model-supplied metadata attached to a tool
-/// call. Prefixed to avoid collisions with tool parameters.
+/// call. Prefixed to avoid collisions with tool parameters; reserved
+/// like [`ENVELOPE_DESCRIPTION_KEY`].
 pub const ENVELOPE_METADATA_KEY: &str = "tool_use_metadata";
 
 /// Result of splitting envelope fields from raw model arguments.
@@ -127,6 +130,19 @@ pub fn split_envelope_fields(mut raw: serde_json::Value) -> EnvelopeSplit {
 /// The envelope fields are added as optional properties alongside the
 /// tool's own parameters. `additionalProperties` is left as the tool
 /// declared it.
+///
+/// The envelope key names are **reserved** at the top level of every
+/// schema this touches: a same-named property declared by the schema
+/// itself would be overwritten here and its value stripped by
+/// [`split_envelope_fields`] before the consumer sees it. Output schemas
+/// are refused at their acceptance boundaries when they declare either
+/// key (`check_reserved_envelope_keys` in `loop::schema`); registry tool
+/// parameters are in-repo or embedder-authored code, where a collision
+/// is a naming bug — do not name tool parameters after the envelope
+/// keys. Schemas without a top-level `properties` object (map-shaped
+/// outputs) cannot declare the keys, but the top-level names remain
+/// claimed: a data entry under a reserved name is stripped before
+/// validation.
 pub fn wrap_schema_with_envelope(mut schema: serde_json::Value) -> serde_json::Value {
     let Some(props) = schema
         .as_object_mut()
