@@ -1446,6 +1446,7 @@ command = "echo cwd"
             uuid::Uuid::new_v4(),
             Arc::clone(&bundle.registry),
             norn::agent::registry::AgentRegistry::shared(),
+            crate::runtime::cli_coordination_envelope(),
         );
 
         let executor: &dyn ToolExecutor = &*bundle.registry;

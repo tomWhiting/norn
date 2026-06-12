@@ -1,21 +1,24 @@
-//! Inter-agent coordination tools (NA-007 update of N-014) —
-//! [`SignalAgentTool`], [`CloseAgentTool`].
+//! Inter-agent coordination tools (NA-007 update of N-014, messaging
+//! replaced in Wave 3 W3.2) — [`SendMessageTool`], [`CloseAgentTool`].
 //!
-//! Close performs a depth-first post-order
-//! shutdown of the target's whole subtree. Signal routes through the
-//! child's [`crate::r#loop::inbound::InboundChannel`] when the parent
-//! holds an [`crate::tools::agent::handle::AgentHandle`] for the
-//! recipient; without a handle there is no delivery path, so signalling
-//! fails honestly rather than queueing where nothing drains. Finished
-//! recipients (terminal or reclaimed) produce a structured delivery
-//! failure carrying their status and completion time.
+//! Close performs a depth-first post-order shutdown of the target's whole
+//! subtree. `send_message` routes through the recipient's
+//! [`crate::r#loop::inbound::InboundChannel`] via the workspace-shared
+//! [`MessageRouter`](crate::agent::message_router::MessageRouter), with
+//! who-may-message-whom enforced from the sender's granted
+//! [`MessagingScope`](crate::agent::child_policy::MessagingScope) against
+//! registry ground truth. A recipient with no live route fails honestly
+//! rather than queueing where nothing drains; finished recipients
+//! (terminal or reclaimed) produce a structured delivery failure carrying
+//! their status and completion time.
 
 mod close;
 mod helpers;
-mod signal;
+mod send_message;
 
 #[cfg(test)]
 pub(crate) mod test_support;
 
 pub use close::CloseAgentTool;
-pub use signal::SignalAgentTool;
+pub(crate) use helpers::sender_attribution;
+pub use send_message::{SEND_MESSAGE_TOOL_NAME, SendMessageTool};

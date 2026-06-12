@@ -19,13 +19,15 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use super::handle::{AgentHandle, AgentHandles, ChildBranchMetadata, SharedSessionTree};
-use super::infra::{AgentToolInfra, SubAgentExecutor};
+use super::infra::{AgentToolInfra, ParentGrant, SubAgentExecutor};
 use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
 use super::reclaim::{
     ReclaimHandshake, log_terminal_transition_violation, reclaim_delivered_child,
 };
 use super::spawn_context::wire_child_action_log;
+use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
 use crate::agent::fork::{ContextFilter, ParentSystemInstruction};
+use crate::agent::message_router::MessageRouter;
 use crate::agent::output::AgentStopReason;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
@@ -48,10 +50,6 @@ use crate::tool::catalog::SharedToolCatalog;
 use crate::tool::context::{SharedWorkingDir, ToolContext};
 use crate::tool::scheduling::ToolEffectIndex;
 use crate::tools::task::SharedTaskStore;
-
-/// Bounded capacity of the fork's inbound steering channel — mirrors the
-/// value used by [`super::spawn`] so the two surfaces behave identically.
-pub(super) const FORK_INBOUND_BUFFER: usize = 32;
 
 /// Construct the per-fork [`ToolContext`](crate::tool::context::ToolContext) (R3).
 ///
@@ -87,6 +85,14 @@ pub(super) const FORK_INBOUND_BUFFER: usize = 32;
 /// registry on the fork's `LoopContext` so pre/post-tool hooks fire for
 /// the fork's own calls.
 ///
+/// `child_policy` is the [`ChildPolicy`] the parent grants this fork (read
+/// from the parent's [`CoordinationEnvelope`] by the fork tool): it is
+/// stamped on the fork's [`AgentToolInfra`] together with the parent's
+/// event store, so `send_message` enforces the granted messaging scope and
+/// writes the dual-store `Sent` audit from ground truth carried on the
+/// fork's own context. The parent's [`CoordinationEnvelope`] extension is
+/// forwarded so the fork's own spawn sites can read policy at any depth.
+///
 /// [`ForkTool::execute`]: crate::tools::agent::fork_tool::ForkTool
 pub(super) fn build_fork_context(
     parent_infra: &AgentToolInfra,
@@ -94,6 +100,7 @@ pub(super) fn build_fork_context(
     child_store: Arc<EventStore>,
     parent_ctx: &ToolContext,
     child_tree: Option<SharedSessionTree>,
+    child_policy: ChildPolicy,
 ) -> Arc<ToolContext> {
     let child_log_store = Arc::clone(&child_store);
     let child_infra = AgentToolInfra {
@@ -103,6 +110,10 @@ pub(super) fn build_fork_context(
         event_store: child_store,
         agent_id: child_id,
         parent_id: Some(parent_infra.agent_id),
+        grant: Some(ParentGrant {
+            policy: child_policy,
+            parent_store: Arc::clone(&parent_infra.event_store),
+        }),
         tool_registry: parent_infra.tool_registry.as_ref().map(Arc::clone),
     };
 
@@ -141,6 +152,9 @@ pub(super) fn build_fork_context(
         parent_ctx.get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
     {
         child_ctx.insert_extension(ch);
+    }
+    if let Some(envelope) = parent_ctx.get_extension::<CoordinationEnvelope>() {
+        child_ctx.insert_extension(envelope);
     }
     if let Some(tree) = child_tree {
         child_ctx.insert_extension(Arc::new(tree));
@@ -471,6 +485,11 @@ pub(super) struct ForkLaunch {
     /// still surfaces — identical semantics to the spawn wrapper
     /// (NH-006 R5).
     pub(super) hooks: Option<Arc<HookRegistry>>,
+    /// Workspace-shared message router. [`launch_fork`] registers the
+    /// fork's inbound sender under its id before the task starts; the
+    /// completion wrapper deregisters at the run's end — single
+    /// ownership, mirroring the registry entry and the spawn wrapper.
+    pub(super) router: Arc<MessageRouter>,
 }
 
 /// Launch the fork on its own `tokio::spawn` task and build the parent-side
@@ -497,10 +516,16 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         reclaim,
         lifecycle,
         hooks,
+        router,
     } = launch;
 
     let handle_store = Arc::clone(&child_store);
     let (status_tx, status_rx) = watch::channel(AgentStatus::Active);
+    // Route registration ownership (Wave 3 §Routing): registered before
+    // the task starts so `send_message` can reach the fork for its entire
+    // run; deregistered by the completion wrapper below — single
+    // ownership, never two actors.
+    router.register(fork_id, inbound_tx.clone());
     let agent_role = format!("fork/{model}");
     // Cooperative cancellation: the trigger lives on the parent-held
     // AgentHandle and a clone rides into the inner run's AgentStepRequest,
@@ -565,6 +590,14 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 panicked_fork_outcome(&join_error, started.elapsed())
             }
         };
+
+        // The fork's loop has ended: nothing will ever drain its inbound
+        // channel again, so the route is removed now — unconditionally,
+        // even when a stop hook below suppresses the registry's terminal
+        // transition (route ownership follows the loop's life; the
+        // registry entry tracks observability). Later sends fail fast as
+        // NotRouted instead of enqueueing into a buffer nothing reads.
+        router.deregister(fork_id);
 
         // NH-006 R5 parity with spawn: fire SubagentHook::on_subagent_stop
         // before the registry's terminal transition. A Block suppresses
@@ -671,6 +704,20 @@ mod tests {
     use crate::agent::fork::format_fork_outcome;
     use crate::tool::registry::ToolRegistry;
 
+    /// Documented-proposal policy used by tests — a deliberate test-caller
+    /// choice, never a library default.
+    fn test_policy() -> ChildPolicy {
+        use crate::agent::child_policy::{DelegationBudget, MessagingScope};
+        ChildPolicy {
+            messaging: MessagingScope::SiblingsAndParent,
+            delegation: DelegationBudget {
+                remaining_depth: 1,
+                max_concurrent_children: 32,
+            },
+            inbound_capacity: 32,
+        }
+    }
+
     /// Permission-escape regression (blocker): the consent-boundary
     /// [`PermissionPolicy`] and the scheduling [`ToolEffectIndex`] must
     /// be forwarded from the parent's context into the fork's context —
@@ -689,6 +736,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
             parent_id: None,
+            grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
         };
         let parent_ctx = ToolContext::empty();
@@ -703,6 +751,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_policy(),
         );
 
         let forwarded_policy = child_ctx
@@ -742,6 +791,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
             parent_id: None,
+            grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
         };
         let mut parent_ctx = ToolContext::with_working_dir(SharedWorkingDir::new(PathBuf::from(
@@ -755,6 +805,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_policy(),
         );
 
         if child_ctx.workspace_root() != Some(Path::new("/tmp/fork-workspace-root")) {
@@ -797,6 +848,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
             parent_id: None,
+            grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
         };
         let parent_ctx = ToolContext::empty();
@@ -809,6 +861,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_policy(),
         );
 
         let forwarded = child_ctx

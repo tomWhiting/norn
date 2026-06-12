@@ -118,7 +118,8 @@ Fork is lighter: since forks are fire-and-forget, you can continue your \
 own work freely while forks are running.\n\
 \n\
 In both cases:\n\
-- Use signal_agent to redirect a running child when the situation changes.\n\
+- Use send_message to redirect a running child (kind \"steer\") or share \
+context with it (kind \"update\") when the situation changes.\n\
 - Use close_agent when a child's work is no longer needed.\n\
 - Do not serialise work that can run in parallel.\n\
 \n\

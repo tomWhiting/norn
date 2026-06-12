@@ -1186,6 +1186,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id,
             parent_id,
+            grant: None,
             tool_registry: None,
         })
     }

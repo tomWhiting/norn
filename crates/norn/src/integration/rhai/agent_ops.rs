@@ -10,8 +10,10 @@ use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString, Map};
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
+use chrono::DateTime;
+
 use super::context::{AgentHandle, NornRhaiContext, dynamic_to_json, rhai_error};
-use crate::agent::registry::AgentRegistry;
+use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::error::NornError;
 use crate::r#loop::LoopContext;
 use crate::r#loop::inbound::{ChannelMessage, MessageKind};
@@ -22,6 +24,7 @@ use crate::provider::agent_event::AgentMessageLifecycle;
 use crate::session::store::EventStore;
 use crate::tool::context::ToolContext;
 use crate::tools::agent::append_message_audit;
+use crate::tools::agent::coord::sender_attribution;
 use crate::tools::agent::infra::SubAgentExecutor;
 
 pub(super) fn register_handle_returning(engine: &mut Engine, context: &NornRhaiContext) {
@@ -37,37 +40,136 @@ pub(super) fn register_handle_returning(engine: &mut Engine, context: &NornRhaiC
         );
     }
 
-    // send_message (AgentHandle recipient)
+    // send_message (AgentHandle recipient, default kind: update)
     {
         let ctx = context.clone();
         engine.register_fn(
             "send_message",
             move |to: AgentHandle, content: Dynamic| -> Result<u64, Box<EvalAltResult>> {
-                send_message(&ctx, to.0, &content)
+                send_message(&ctx, to.0, &content, MessageKind::Update)
             },
         );
     }
 
-    // send_message (String recipient — resolves path or UUID)
+    // send_message (AgentHandle recipient, explicit kind)
+    {
+        let ctx = context.clone();
+        engine.register_fn(
+            "send_message",
+            move |to: AgentHandle,
+                  content: Dynamic,
+                  kind: ImmutableString|
+                  -> Result<u64, Box<EvalAltResult>> {
+                send_message(&ctx, to.0, &content, parse_kind(kind.as_str())?)
+            },
+        );
+    }
+
+    // send_message (String recipient — resolves path or UUID; default
+    // kind: update)
     {
         let ctx = context.clone();
         engine.register_fn(
             "send_message",
             move |to: ImmutableString, content: Dynamic| -> Result<u64, Box<EvalAltResult>> {
-                let id = if let Ok(parsed) = Uuid::parse_str(to.as_str()) {
-                    parsed
-                } else {
-                    let reg = ctx.registry.read();
-                    reg.get_by_path(to.as_str()).map(|e| e.id).ok_or_else(|| {
-                        Box::new(rhai_error(format!(
-                            "send_message: unknown recipient '{to}'"
-                        )))
-                    })?
-                };
-                send_message(&ctx, id, &content)
+                let id = resolve_recipient(&ctx, to.as_str())?;
+                send_message(&ctx, id, &content, MessageKind::Update)
             },
         );
     }
+
+    // send_message (String recipient, explicit kind)
+    {
+        let ctx = context.clone();
+        engine.register_fn(
+            "send_message",
+            move |to: ImmutableString,
+                  content: Dynamic,
+                  kind: ImmutableString|
+                  -> Result<u64, Box<EvalAltResult>> {
+                let id = resolve_recipient(&ctx, to.as_str())?;
+                send_message(&ctx, id, &content, parse_kind(kind.as_str())?)
+            },
+        );
+    }
+}
+
+/// Parse a script-supplied message kind. Only the wire labels are
+/// accepted; anything else is a typed script error, never a silent
+/// coercion.
+fn parse_kind(raw: &str) -> Result<MessageKind, Box<EvalAltResult>> {
+    match raw {
+        "steer" => Ok(MessageKind::Steer),
+        "update" => Ok(MessageKind::Update),
+        other => Err(Box::new(rhai_error(format!(
+            "send_message: unknown kind '{other}' — expected \"steer\" or \"update\""
+        )))),
+    }
+}
+
+/// The honest already-finished script error: a terminal or reclaimed
+/// recipient is reported with its recorded completion, mirroring the
+/// `send_message` tool's failure wording.
+fn finished_error(
+    identifier: &str,
+    status: AgentStatus,
+    completed_at: Option<DateTime<Utc>>,
+) -> EvalAltResult {
+    let when = completed_at.map_or_else(|| "an unrecorded time".to_owned(), |ts| ts.to_rfc3339());
+    let outcome = if status == AgentStatus::Failed {
+        "failed"
+    } else {
+        "completed"
+    };
+    rhai_error(format!(
+        "send_message: recipient already finished: agent '{identifier}' {outcome} at \
+         {when} and can no longer receive messages"
+    ))
+}
+
+/// Resolve a script-supplied recipient identifier (registry path or raw
+/// UUID) to an agent id.
+///
+/// Paths resolve against registry ground truth, including agents that
+/// already finished — a terminal or tombstoned holder produces the honest
+/// already-finished error, and only identifiers with no record at all are
+/// "unknown". Raw UUIDs pass through unresolved: script hosts may route
+/// messages to embedder-managed recipients (e.g. root agents) that are
+/// never registry entries, so registry absence is not an error for a UUID
+/// — [`send_message`] still applies the terminal-state check for UUIDs
+/// the registry does know.
+fn resolve_recipient(ctx: &NornRhaiContext, to: &str) -> Result<Uuid, Box<EvalAltResult>> {
+    if let Ok(parsed) = Uuid::parse_str(to) {
+        return Ok(parsed);
+    }
+    let reg = ctx.registry.read();
+    if let Some(entry) = reg.get_by_path(to) {
+        if entry.status.is_terminal() {
+            return Err(Box::new(finished_error(
+                to,
+                entry.status,
+                entry.completed_at,
+            )));
+        }
+        return Ok(entry.id);
+    }
+    if let Some(entry) = reg.get_terminal_by_path(to) {
+        return Err(Box::new(finished_error(
+            to,
+            entry.status,
+            entry.completed_at,
+        )));
+    }
+    if let Some(tombstone) = reg.tombstone_by_path(to) {
+        return Err(Box::new(finished_error(
+            to,
+            tombstone.status,
+            Some(tombstone.completed_at),
+        )));
+    }
+    Err(Box::new(rhai_error(format!(
+        "send_message: unknown recipient '{to}'"
+    ))))
 }
 
 /// Deliver `content` to `to_id` through the shared
@@ -78,24 +180,28 @@ pub(super) fn register_handle_returning(engine: &mut Engine, context: &NornRhaiC
 /// non-blocking path: a recipient with no live inbound route, a closed
 /// channel, or a full buffer is a typed script error — never a silent
 /// queue into storage nothing drains (the failure mode the deleted
-/// `Mailbox` had). Attribution comes from registry ground truth; a
-/// scripting context whose `agent_id` is not registered attributes as
-/// `root` (script hosts are root-level orchestrators). Every accepted
-/// send appends an `agent_message.sent` audit event to the host's event
-/// store.
+/// `Mailbox` had). A recipient the registry knows to be finished
+/// (terminal entry or tombstone) is rejected with the honest
+/// already-finished error before any delivery attempt — the same rule as
+/// the `send_message` tool.
 ///
-/// Script sends always carry [`MessageKind::Update`] (FYI batching;
-/// they never interrupt the recipient mid-stream and never wake a
-/// lingering recipient), preserving the pre-router script semantics.
-/// A script-side kind parameter, the tombstone attribution fallback,
-/// and registry terminal-state checks arrive with the `send_message`
-/// tool in W3.2 — until then a send to a terminal-but-not-yet-dropped
-/// recipient is detectable in the audit trail as `Sent` without a
-/// paired `Delivered`.
+/// Attribution comes from the shared [`sender_attribution`] rule —
+/// registry path, else tombstone path, else `root` for an unregistered
+/// parent-less host (script hosts are root-level orchestrators) — so
+/// script sends frame identically to tool sends. Every accepted send
+/// appends an `agent_message.sent` audit event to the host's event store
+/// (script hosts are roots: there is no scope-granting parent store).
+///
+/// `kind` defaults to [`MessageKind::Update`] when the script omits it
+/// (FYI batching: never interrupts the recipient mid-stream and never
+/// wakes a lingering recipient — the pre-router script semantics);
+/// passing `"steer"` requests boundary injection and linger wake exactly
+/// like the tool surface.
 fn send_message(
     ctx: &NornRhaiContext,
     to_id: Uuid,
     content: &Dynamic,
+    kind: MessageKind,
 ) -> Result<u64, Box<EvalAltResult>> {
     let json = dynamic_to_json(content)?;
     let body = match json {
@@ -108,10 +214,27 @@ fn send_message(
     };
     let (from_label, from_role, to_label) = {
         let reg = ctx.registry.read();
-        let (label, role) = reg.get(ctx.agent_id).map_or_else(
-            || ("root".to_owned(), None),
-            |entry| (entry.path, Some(entry.role)),
-        );
+        // Honest already-finished check for UUID-addressed recipients the
+        // registry knows about (path-addressed recipients were checked at
+        // resolution). An id with no record at all passes through: it may
+        // be an embedder-managed recipient (e.g. a root agent) the router
+        // alone knows.
+        if let Some(entry) = reg.get(to_id) {
+            if entry.status.is_terminal() {
+                return Err(Box::new(finished_error(
+                    &to_id.to_string(),
+                    entry.status,
+                    entry.completed_at,
+                )));
+            }
+        } else if let Some(tombstone) = reg.tombstone(to_id) {
+            return Err(Box::new(finished_error(
+                &to_id.to_string(),
+                tombstone.status,
+                Some(tombstone.completed_at),
+            )));
+        }
+        let (label, role) = sender_attribution(&reg, ctx.agent_id, None);
         let to_label = reg
             .get(to_id)
             .map_or_else(|| to_id.to_string(), |entry| entry.path);
@@ -126,7 +249,7 @@ fn send_message(
         role: from_role,
         to_id,
         content: body.clone(),
-        kind: MessageKind::Update,
+        kind,
         seq: None,
         timestamp: sent_at,
     };
@@ -142,7 +265,7 @@ fn send_message(
             from: from_label,
             to_id,
             to: to_label,
-            kind: MessageKind::Update,
+            kind,
             seq,
             content: body,
             sent_at,
@@ -395,5 +518,174 @@ mod tests {
             ctx.event_store.events().is_empty(),
             "a rejected send leaves no Sent audit event",
         );
+    }
+
+    /// W3.2 parity: the script surface accepts an explicit kind. A
+    /// `"steer"` send carries `MessageKind::Steer` on the channel and in
+    /// the Sent audit record; an unknown kind is a typed script error.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn send_message_kind_parameter_controls_delivery_kind() {
+        use crate::r#loop::inbound::MessageKind;
+
+        let ctx = build_context();
+        let target_id = Uuid::new_v4();
+        let (tx, mut rx) = inbound_channel(8);
+        ctx.router.register(target_id, tx);
+
+        let engine = build_norn_engine(&ctx);
+        let seq = engine
+            .eval::<u64>(&format!(
+                r#"send_message("{target_id}", "act now", "steer")"#
+            ))
+            .unwrap();
+        assert_eq!(seq, 1);
+
+        let msgs = rx.drain();
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(msgs[0].kind, MessageKind::Steer);
+        match &ctx.event_store.events()[0] {
+            SessionEvent::Custom { data, .. } => assert_eq!(data["kind"], "steer"),
+            other => panic!("expected Sent audit event, got {other:?}"),
+        }
+
+        // Default stays update when the kind is omitted.
+        let seq = engine
+            .eval::<u64>(&format!(r#"send_message("{target_id}", "fyi")"#))
+            .unwrap();
+        assert_eq!(seq, 2);
+        let msgs = rx.drain();
+        assert_eq!(msgs[0].kind, MessageKind::Update);
+
+        // An unknown kind is rejected, never coerced.
+        let err = engine
+            .eval::<u64>(&format!(r#"send_message("{target_id}", "x", "shout")"#))
+            .expect_err("unknown kind");
+        assert!(
+            err.to_string().contains("unknown kind"),
+            "the failure names the bad kind: {err}",
+        );
+    }
+
+    /// W3.2 parity: a recipient the registry knows to be finished —
+    /// terminal entry or reclaimed tombstone, addressed by path or UUID —
+    /// is the honest already-finished script error, with no Sent record.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn send_message_to_finished_recipient_is_honest_script_error() {
+        let ctx = build_context();
+        let guard = AgentRegistry::reserve(
+            &ctx.registry,
+            "/done-child".to_owned(),
+            "worker".to_owned(),
+            "claude".to_owned(),
+            Some(ctx.agent_id),
+        )
+        .unwrap();
+        let child = guard.id();
+        guard.confirm().unwrap();
+        ctx.registry.write().mark_completed(child).unwrap();
+
+        let engine = build_norn_engine(&ctx);
+        // Terminal-but-unreclaimed, by path and by UUID.
+        for identifier in ["/done-child".to_owned(), child.to_string()] {
+            let err = engine
+                .eval::<u64>(&format!(r#"send_message("{identifier}", "hi")"#))
+                .expect_err("finished recipient");
+            let message = err.to_string();
+            assert!(
+                message.contains("already finished") && message.contains("completed at"),
+                "the failure states the recorded completion: {message}",
+            );
+        }
+        // Reclaimed down to a tombstone: same honest error.
+        assert!(ctx.registry.write().remove_terminal(child));
+        let err = engine
+            .eval::<u64>(&format!(r#"send_message("{child}", "hi")"#))
+            .expect_err("tombstoned recipient");
+        assert!(
+            err.to_string().contains("already finished"),
+            "tombstones keep the truth available: {err}",
+        );
+        assert!(
+            ctx.event_store.events().is_empty(),
+            "no Sent record for rejected sends",
+        );
+    }
+
+    /// The sync script path cannot await backpressure: a full bounded
+    /// channel is a typed script error (the message is not enqueued and
+    /// no sequence number is consumed), never a silent drop.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn send_message_full_channel_is_a_script_error() {
+        let ctx = build_context();
+        let target_id = Uuid::new_v4();
+        let (tx, mut rx) = inbound_channel(1);
+        ctx.router.register(target_id, tx);
+
+        let engine = build_norn_engine(&ctx);
+        engine
+            .eval::<u64>(&format!(r#"send_message("{target_id}", "fits")"#))
+            .unwrap();
+        let err = engine
+            .eval::<u64>(&format!(r#"send_message("{target_id}", "overflow")"#))
+            .expect_err("capacity exhausted");
+        assert!(
+            err.to_string().contains("channel full"),
+            "the failure names the full buffer: {err}",
+        );
+        assert_eq!(
+            ctx.event_store.events().len(),
+            1,
+            "only the accepted send leaves a Sent record",
+        );
+
+        // Drain and retry: the failed send burned no sequence number.
+        assert_eq!(rx.drain().len(), 1);
+        let seq = engine
+            .eval::<u64>(&format!(r#"send_message("{target_id}", "retry")"#))
+            .unwrap();
+        assert_eq!(seq, 2);
+    }
+
+    /// Attribution parity: a registered script host attributes by its
+    /// registry path and role through the shared `sender_attribution`
+    /// rule, and a reclaimed host falls back to its tombstone path.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn send_message_attributes_registered_and_reclaimed_hosts() {
+        let mut ctx = build_context();
+        let guard = AgentRegistry::reserve(
+            &ctx.registry,
+            "/host".to_owned(),
+            "orchestrator".to_owned(),
+            "claude".to_owned(),
+            None,
+        )
+        .unwrap();
+        let host = guard.id();
+        guard.confirm().unwrap();
+        ctx.agent_id = host;
+
+        let target_id = Uuid::new_v4();
+        let (tx, mut rx) = inbound_channel(8);
+        ctx.router.register(target_id, tx);
+
+        let engine = build_norn_engine(&ctx);
+        engine
+            .eval::<u64>(&format!(r#"send_message("{target_id}", "hello")"#))
+            .unwrap();
+        let msgs = rx.drain();
+        assert_eq!(msgs[0].from, "/host");
+        assert_eq!(msgs[0].role.as_deref(), Some("orchestrator"));
+
+        // Reclaim the host: attribution falls back to the tombstone path
+        // (no role — tombstones carry none).
+        ctx.registry.write().mark_completed(host).unwrap();
+        assert!(ctx.registry.write().remove_terminal(host));
+        let engine = build_norn_engine(&ctx);
+        engine
+            .eval::<u64>(&format!(r#"send_message("{target_id}", "late note")"#))
+            .unwrap();
+        let msgs = rx.drain();
+        assert_eq!(msgs[0].from, "/host", "tombstone path attribution");
+        assert!(msgs[0].role.is_none(), "tombstones carry no role");
     }
 }

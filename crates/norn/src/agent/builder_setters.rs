@@ -419,7 +419,7 @@ impl AgentBuilder {
     }
 
     /// Wire the shared agent registry so `fork` / `spawn_agent` /
-    /// `signal_agent` / `close_agent` resolve their runtime instead of
+    /// `send_message` / `close_agent` resolve their runtime instead of
     /// erroring with a typed `MissingExtension` error naming
     /// `AgentToolInfra`.
     ///
@@ -460,11 +460,13 @@ impl AgentBuilder {
     /// # let _ = policy;
     /// ```
     ///
-    /// `inbound_capacity` must be non-zero; zero fails the build. In
-    /// W3.0 the policy is carried (published on the shared tool context
-    /// as part of the
-    /// [`CoordinationEnvelope`](crate::agent::child_policy::CoordinationEnvelope))
-    /// and validated; spawn/fork enforcement lands in W3.2/W3.4.
+    /// `inbound_capacity` must be non-zero; zero fails the build. The
+    /// policy is published on the shared tool context as part of the
+    /// [`CoordinationEnvelope`](crate::agent::child_policy::CoordinationEnvelope);
+    /// the spawn/fork tools stamp it on every child they launch, sizing
+    /// the child's inbound channel and fixing its `send_message` scope
+    /// (W3.2). Delegation-budget enforcement arrives with recursion
+    /// (W3.4).
     #[must_use]
     pub fn child_policy(mut self, policy: ChildPolicy) -> Self {
         self.child_policy = Some(policy);

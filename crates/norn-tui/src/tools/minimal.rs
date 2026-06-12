@@ -2,7 +2,7 @@
 //!
 //! Minimal renderers serve agent-coordination tools that produce little
 //! or no visible output: [`SpawnAgentRenderer`],
-//! [`ForkRenderer`], [`SignalAgentRenderer`], and [`CloseAgentRenderer`].
+//! [`ForkRenderer`], [`SendMessageRenderer`], and [`CloseAgentRenderer`].
 
 use serde_json::Value;
 
@@ -64,10 +64,10 @@ impl ToolRenderer for ForkRenderer {
     }
 }
 
-/// Renders `signal_agent` tool calls: `→ {agent_path}: {message_preview}`.
-pub struct SignalAgentRenderer;
+/// Renders `send_message` tool calls: `→ {to} [{kind}]: {content_preview}`.
+pub struct SendMessageRenderer;
 
-impl ToolRenderer for SignalAgentRenderer {
+impl ToolRenderer for SendMessageRenderer {
     fn header_line(
         &self,
         args: &Value,
@@ -75,10 +75,15 @@ impl ToolRenderer for SignalAgentRenderer {
         _duration_ms: u64,
         _caps: &TerminalCaps,
     ) -> String {
-        let path = string_field(args, result, "agent_path");
-        let message = args.get("message").and_then(Value::as_str).unwrap_or("");
-        let preview = truncate_preview(message);
-        format!("→ {path}: {preview}")
+        let to = string_field(args, result, "to");
+        let kind = args.get("kind").and_then(Value::as_str).unwrap_or("");
+        let content = args.get("content").and_then(Value::as_str).unwrap_or("");
+        let preview = truncate_preview(content);
+        if kind.is_empty() {
+            format!("→ {to}: {preview}")
+        } else {
+            format!("→ {to} [{kind}]: {preview}")
+        }
     }
 
     fn body(&self, _args: &Value, _result: &Value, _caps: &TerminalCaps) -> Option<String> {
@@ -182,14 +187,15 @@ mod tests {
     }
 
     #[test]
-    fn signal_agent_header_includes_path_and_message() {
-        let header = SignalAgentRenderer.header_line(
-            &json!({ "agent_path": "root/worker", "message": "check status" }),
-            &json!({ "agent_path": "root/worker" }),
+    fn send_message_header_includes_recipient_kind_and_content() {
+        let header = SendMessageRenderer.header_line(
+            &json!({ "to": "/workers/analyzer", "kind": "steer", "content": "check status" }),
+            &json!({ "to": "/workers/analyzer" }),
             0,
             &caps(),
         );
-        assert!(header.contains("→ root/worker"));
+        assert!(header.contains("→ /workers/analyzer"));
+        assert!(header.contains("[steer]"));
         assert!(header.contains("check status"));
     }
 
@@ -236,7 +242,7 @@ mod tests {
         let empty = json!({});
         assert!(SpawnAgentRenderer.body(&empty, &empty, &caps()).is_none());
         assert!(ForkRenderer.body(&empty, &empty, &caps()).is_none());
-        assert!(SignalAgentRenderer.body(&empty, &empty, &caps()).is_none());
+        assert!(SendMessageRenderer.body(&empty, &empty, &caps()).is_none());
         assert!(WaitAgentRenderer.body(&empty, &empty, &caps()).is_none());
         assert!(CloseAgentRenderer.body(&empty, &empty, &caps()).is_none());
     }

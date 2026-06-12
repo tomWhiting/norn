@@ -16,7 +16,7 @@ use std::sync::Arc;
 
 use crate::tool::registry::ToolRegistry;
 use crate::tools::action_log::ActionLogTool;
-use crate::tools::agent::{CloseAgentTool, ForkTool, SignalAgentTool, SpawnAgentTool};
+use crate::tools::agent::{CloseAgentTool, ForkTool, SendMessageTool, SpawnAgentTool};
 use crate::tools::agents::AgentsTool;
 use crate::tools::bash::BashTool;
 use crate::tools::edit::EditTool;
@@ -33,7 +33,7 @@ use crate::tools::write::WriteTool;
 ///
 /// The set: `read`, `write`, `edit`, `bash`, `apply_patch`, `search`, `lsp`,
 /// `task`, `tool_search`, `action_log`, `web_fetch`, `web_search`, the
-/// four agent-coordination tools (`spawn_agent`, `fork`, `signal_agent`,
+/// four agent-coordination tools (`spawn_agent`, `fork`, `send_message`,
 /// `close_agent`), and the read-only `agents` status view.
 ///
 /// `action_log` reads an [`ActionLog`](crate::session::action_log::ActionLog)
@@ -89,7 +89,7 @@ pub fn register_standard_tools(
 
     registry.register(Box::new(SpawnAgentTool::new()));
     registry.register(Box::new(ForkTool::new()));
-    registry.register(Box::new(SignalAgentTool::new()));
+    registry.register(Box::new(SendMessageTool::new()));
     registry.register(Box::new(CloseAgentTool::new()));
     registry.register(Box::new(AgentsTool::new()));
 }
@@ -117,7 +117,7 @@ mod tests {
             "action_log",
             "spawn_agent",
             "fork",
-            "signal_agent",
+            "send_message",
             "close_agent",
             "agents",
         ] {
@@ -126,6 +126,18 @@ mod tests {
                 "standard tool '{name}' must be registered",
             );
         }
+    }
+
+    /// W3.2 replacement gate: `signal_agent` is deleted outright — no
+    /// registry entry survives under the old name, no alias, no shim.
+    #[test]
+    fn signal_agent_is_gone_from_the_standard_set() {
+        let mut registry = ToolRegistry::new();
+        register_standard_tools(&mut registry, None);
+        assert!(
+            registry.get("signal_agent").is_none(),
+            "signal_agent was replaced by send_message and must not be registered",
+        );
     }
 
     /// Every provider requires a function tool's parameter schema to be an

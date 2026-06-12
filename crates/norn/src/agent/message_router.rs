@@ -14,23 +14,26 @@
 //! ## Registration ownership
 //!
 //! A route is registered when the recipient's inbound channel is
-//! created and removed at its terminal transition — the same single
-//! ownership as the registry entry (the spawn/fork wrapper, or
-//! `close_agent`; never two actors). During the W3.1→W3.2 transition
-//! the `signal_agent` tool registers routes idempotently from the
-//! handles it already holds; the spawn/fork wrappers take over
-//! registration when `send_message` lands (W3.2).
+//! created and removed when its loop ends — the same single ownership
+//! as the registry entry, never two actors. The spawn/fork launch paths
+//! register the child's route at launch; the completion wrappers
+//! deregister the moment the run finishes (delivery is then impossible,
+//! regardless of any stop hook suppressing the registry's terminal
+//! transition). Root agents with an inbound channel are registered
+//! under the root id by the runtime assembly and are never explicitly
+//! deregistered — their route is process-lifetime, with the closed
+//! channel detected lazily on the next delivery attempt.
 //! [`MessageRouter::register`] is idempotent per agent id and preserves
 //! the sequence counter, so re-registration never resets per-recipient
 //! ordering.
 //!
-//! ## Scope boundary (W3.2)
+//! ## Scope boundary
 //!
 //! The router routes by **capability of the harness**: any harness code
 //! holding the router and a recipient id can deliver. *Permissioning* —
 //! who may message whom ([`MessagingScope`] on `ChildPolicy`) — is
-//! enforced by the `send_message` tool against registry ground truth in
-//! W3.2, not here. The router is mechanism; policy lives one layer up.
+//! enforced by the `send_message` tool against registry ground truth,
+//! not here. The router is mechanism; policy lives one layer up.
 //!
 //! ## Ordering guarantee
 //!
@@ -422,8 +425,7 @@ mod tests {
         assert_eq!(seq, 1);
         assert_eq!(rx1.drain().len(), 1);
 
-        // Re-register the same agent id (e.g. signal_agent's idempotent
-        // registration): the counter must not reset.
+        // Re-register the same agent id: the counter must not reset.
         let (tx2, mut rx2) = inbound_channel(4);
         router.register(recipient, tx2);
         let seq = router
@@ -618,6 +620,70 @@ mod tests {
                 msg.seq,
                 Some((i as u64) + 1),
                 "channel order must equal sequence order under concurrency",
+            );
+        }
+    }
+
+    /// Full-channel contention variant of the stress test (W3.2 review
+    /// carry-forward): the recipient's bounded channel is far smaller
+    /// than the send volume, so `reserve()` genuinely awaits capacity
+    /// under concurrent senders while a drainer empties the channel in
+    /// parallel. The drained order — accumulated across many partial
+    /// drains — must still be exactly 1..n with no gaps or inversions.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn concurrent_senders_preserve_seq_total_order_under_full_channel_contention() {
+        const SENDERS: u64 = 8;
+        const PER_SENDER: u64 = 32;
+        const TOTAL: u64 = SENDERS * PER_SENDER;
+
+        let router = Arc::new(MessageRouter::new());
+        let recipient = Uuid::new_v4();
+        // Capacity 2 against 256 sends: senders spend most of the test
+        // parked inside `reserve().await`.
+        let (tx, mut rx) = inbound_channel(2);
+        router.register(recipient, tx);
+
+        let mut tasks = Vec::new();
+        for t in 0..SENDERS {
+            let router = Arc::clone(&router);
+            tasks.push(tokio::spawn(async move {
+                let sender = Uuid::new_v4();
+                for i in 0..PER_SENDER {
+                    let msg = message(sender, &format!("t{t}-m{i}"), MessageKind::Steer);
+                    router
+                        .deliver(recipient, msg)
+                        .await
+                        .expect("deliver under contention");
+                }
+            }));
+        }
+
+        // Concurrent drainer: pull whatever is buffered, yield, repeat —
+        // mimicking a loop draining at step boundaries while senders
+        // contend for the two free slots.
+        let drainer = tokio::spawn(async move {
+            let mut collected = Vec::new();
+            while (collected.len() as u64) < TOTAL {
+                let batch = rx.drain();
+                if batch.is_empty() {
+                    tokio::task::yield_now().await;
+                } else {
+                    collected.extend(batch);
+                }
+            }
+            collected
+        });
+
+        for task in tasks {
+            task.await.expect("sender task");
+        }
+        let collected = drainer.await.expect("drainer task");
+        assert_eq!(collected.len() as u64, TOTAL);
+        for (i, msg) in collected.iter().enumerate() {
+            assert_eq!(
+                msg.seq,
+                Some((i as u64) + 1),
+                "drain order must equal sequence order under real backpressure",
             );
         }
     }

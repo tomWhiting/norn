@@ -8,12 +8,13 @@
 //! runtime is wired
 //! ([`AgentBuilder::agent_registry`](crate::agent::builder::AgentBuilder::agent_registry)):
 //! building without it is a typed configuration error — Norn never assumes
-//! a default policy. Spawn/fork tool calls will later narrow (never widen)
-//! this envelope per child (W3.2/W3.4).
+//! a default policy. Since W3.2 the spawn/fork tools stamp the envelope's
+//! [`ChildPolicy`] on every child they launch; per-spawn narrowing (never
+//! widening) arrives with recursion (W3.4).
 //!
 //! Every type here is serde-stable (`snake_case`) because the spawn/fork
-//! tools' future `child_policy` argument mirrors [`ChildPolicy`] 1:1 at
-//! the JSON layer (DECISION R2).
+//! tools' future per-spawn `child_policy` narrowing argument (W3.4)
+//! mirrors [`ChildPolicy`] 1:1 at the JSON layer (DECISION R2).
 
 use serde::{Deserialize, Serialize};
 
@@ -61,9 +62,10 @@ pub struct DelegationBudget {
 /// The per-child policy a parent stamps on a child at spawn/fork time.
 ///
 /// One coherent shape covering messaging scope, delegation budget, and the
-/// child's inbound-channel capacity (DECISION M4 — replaces the hardcoded
-/// `SPAWN_INBOUND_BUFFER` / `FORK_INBOUND_BUFFER` once W3.2/W3.4 wire it
-/// through). The root envelope is set via
+/// child's inbound-channel capacity (DECISION M4 — since W3.2, child
+/// inbound channels are sized from `inbound_capacity`; the hardcoded
+/// spawn/fork buffer constants it replaced are deleted). The root envelope
+/// is set via
 /// [`AgentBuilder::child_policy`](crate::agent::builder::AgentBuilder::child_policy)
 /// and is required whenever the agent-coordination runtime is wired.
 ///

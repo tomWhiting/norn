@@ -114,6 +114,7 @@ pub(super) fn rotate_store_dependents(
                 event_store: Arc::clone(&new_store),
                 agent_id: old_infra.agent_id,
                 parent_id: old_infra.parent_id,
+                grant: old_infra.grant.clone(),
                 tool_registry: old_infra.tool_registry.clone(),
             }));
         } else {
@@ -303,6 +304,7 @@ mod tests {
             event_store: Arc::clone(&old_store),
             agent_id,
             parent_id,
+            grant: None,
             tool_registry: Some(Arc::clone(&tool_registry)),
         }));
         let mut loop_context = LoopContext::default();

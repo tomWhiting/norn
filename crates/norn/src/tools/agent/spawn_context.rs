@@ -10,7 +10,8 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use super::handle::{AgentHandles, SharedSessionTree};
-use super::infra::AgentToolInfra;
+use super::infra::{AgentToolInfra, ParentGrant};
+use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
 use crate::config::permissions::PermissionPolicy;
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
@@ -62,12 +63,25 @@ use crate::tools::task::SharedTaskStore;
 /// [`SharedSessionTree`] on the parent context — it is installed on the
 /// child context keyed to the *child's* `SessionId`, so a grandchild spawn
 /// branches under the child's session in turn (NA-008 R3).
+///
+/// `child_policy` is the [`ChildPolicy`] the parent grants this child
+/// (read from the parent's [`CoordinationEnvelope`] by the spawn tool):
+/// it is stamped on the child's [`AgentToolInfra`] together with the
+/// parent's event store, so `send_message` enforces the granted
+/// [`MessagingScope`](crate::agent::child_policy::MessagingScope) and
+/// writes the dual-store `Sent` audit from ground truth carried on the
+/// child's own context. The parent's [`CoordinationEnvelope`] extension is
+/// forwarded so the child's own spawn sites can read policy at any depth
+/// (the registry depth gate still rejects grandchildren until W3.4, which
+/// also replaces the inherited-envelope read with the child's narrowed
+/// policy).
 pub(super) fn build_child_context(
     parent_infra: &AgentToolInfra,
     child_id: Uuid,
     child_store: Arc<EventStore>,
     parent_ctx: &ToolContext,
     child_tree: Option<SharedSessionTree>,
+    child_policy: ChildPolicy,
 ) -> Arc<ToolContext> {
     let child_log_store = Arc::clone(&child_store);
     let child_infra = AgentToolInfra {
@@ -77,6 +91,10 @@ pub(super) fn build_child_context(
         event_store: child_store,
         agent_id: child_id,
         parent_id: Some(parent_infra.agent_id),
+        grant: Some(ParentGrant {
+            policy: child_policy,
+            parent_store: Arc::clone(&parent_infra.event_store),
+        }),
         tool_registry: parent_infra.tool_registry.as_ref().map(Arc::clone),
     };
 
@@ -112,6 +130,9 @@ pub(super) fn build_child_context(
         parent_ctx.get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
     {
         child_ctx.insert_extension(ch);
+    }
+    if let Some(envelope) = parent_ctx.get_extension::<CoordinationEnvelope>() {
+        child_ctx.insert_extension(envelope);
     }
     if let Some(tree) = child_tree {
         child_ctx.insert_extension(Arc::new(tree));
@@ -194,7 +215,22 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id,
             parent_id: None,
+            grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
+        }
+    }
+
+    /// Documented-proposal policy used by tests — a deliberate test-caller
+    /// choice, never a library default.
+    fn test_policy() -> ChildPolicy {
+        use crate::agent::child_policy::{DelegationBudget, MessagingScope};
+        ChildPolicy {
+            messaging: MessagingScope::SiblingsAndParent,
+            delegation: DelegationBudget {
+                remaining_depth: 1,
+                max_concurrent_children: 32,
+            },
+            inbound_capacity: 32,
         }
     }
 
@@ -220,6 +256,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_policy(),
         );
 
         let child_log = child_ctx
@@ -273,6 +310,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_policy(),
         );
         let tree_after_first = parent_ctx.get_extension::<ActionLogTree>().expect("tree");
         let _c2 = build_child_context(
@@ -281,6 +319,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_policy(),
         );
         let tree_after_second = parent_ctx.get_extension::<ActionLogTree>().expect("tree");
 
@@ -310,6 +349,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_policy(),
         );
 
         let tree = parent_ctx.get_extension::<ActionLogTree>().expect("tree");

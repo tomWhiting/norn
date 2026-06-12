@@ -42,7 +42,7 @@ pub mod web;
 pub mod write;
 pub use self::action_log::ActionLogTool;
 pub use self::agent::{
-    AgentHandle, AgentHandles, AgentToolInfra, CloseAgentTool, ForkTool, SignalAgentTool,
+    AgentHandle, AgentHandles, AgentToolInfra, CloseAgentTool, ForkTool, SendMessageTool,
     SpawnAgentTool,
 };
 pub use self::agents::AgentsTool;

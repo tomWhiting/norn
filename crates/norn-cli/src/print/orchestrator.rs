@@ -69,12 +69,6 @@ use super::session::open_session;
 /// `Lagged`.
 const BROADCAST_BUFFER_CAPACITY: usize = 256;
 
-/// The print runtime's chosen child-result channel capacity. The library
-/// requires every channel capacity to be an explicit caller choice (no
-/// assumed defaults); this is the CLI's deliberate envelope value,
-/// matching the Wave 3 documented proposal of 256.
-const CHILD_RESULT_CHANNEL_CAPACITY: usize = 256;
-
 /// Entry point used by `main.rs::run_print`. Spins up a multi-threaded
 /// tokio runtime and dispatches to [`run_async`].
 ///
@@ -310,9 +304,13 @@ async fn orchestrate(
             _ => PrintError::Agent(err.to_string()),
         })?;
 
+    // The CLI's deliberate coordination envelope: child policy for every
+    // spawn/fork plus the result-channel capacity, published alongside the
+    // infra so spawn-time policy reads resolve (W3.2).
+    let envelope = crate::runtime::cli_coordination_envelope();
     let (child_tx, child_rx) = tokio::sync::mpsc::channel::<
         norn::agent::result_channel::ChildAgentResult,
-    >(CHILD_RESULT_CHANNEL_CAPACITY);
+    >(envelope.child_result_capacity);
     let child_sender = norn::agent::result_channel::ChildResultSender(Arc::new(child_tx));
     bundle.loop_context.child_result_rx = Some(child_rx);
 
@@ -330,6 +328,7 @@ async fn orchestrate(
         root_id,
         Arc::clone(&bundle.registry),
         agent_registry,
+        envelope,
     );
     crate::runtime::install_child_result_sender(&bundle.registry, child_sender);
     // Headless reclamation: print mode has no agent status panel, so once

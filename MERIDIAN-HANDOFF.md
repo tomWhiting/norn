@@ -333,7 +333,8 @@ parent-configured budgets).
 - **BREAKING: `signal_agent` will be deleted** in the same wave, replaced
   by `send_message` (target path/UUID/"parent", kind `steer`/`update`,
   scope enforced from spawn-time policy). Plan the rename where meridian
-  references the tool by name.
+  references the tool by name. **LANDED — see §8.4: the W3.2 commit
+  delivers exactly this; `signal_agent` no longer exists.**
 - New builder requirements when agent-coordination tools are enabled:
   `child_policy` envelope (messaging scope, delegation budget, channel
   capacities) becomes builder-required — build error if spawn tools are
@@ -387,3 +388,41 @@ arrives with W3.6 as pre-announced above):
   unchanged); unset preserves return-immediately behavior byte-identically.
   A lingering parent waits at stop boundaries for late child results and
   steer messages (steer wakes it; update does not).
+
+## 8.4 W3.2 landed — `send_message` replaces `signal_agent` (the §8.2 deletion, delivered)
+
+Adaptations when you bump past the W3.2 commit (flagged in §8.2's bullet):
+
+- **BREAKING (tool surface): `signal_agent` is deleted.** The replacement is
+  `send_message` with args `{to: <path | UUID | "parent">, kind:
+  "steer"|"update", content: string}` (additionalProperties: false).
+  Success payload: `{delivered, to, kind, seq, message_id}`. Failures are
+  typed and honest: unknown identifier, already-finished recipient (with
+  recorded status + completion time), out-of-scope (PermissionDenied naming
+  the granted scope), no delivery route, closed channel. Rename anywhere
+  meridian references the tool by name; the renderer/translator layers that
+  read `agent_path`/`message` args must read `to`/`kind`/`content`.
+- **Messaging scope is enforced**: a child may message per its granted
+  `ChildPolicy.messaging` (`siblings_and_parent` | `parent_only` | `none`;
+  `none` also strips the tool from the child's surface). A root agent may
+  message only its own children. Escalation is one audited hop at a time.
+- **BREAKING (API, if you construct `AgentToolInfra` by hand):** the
+  `policy`/`parent_store` fields are one bundled `grant:
+  Option<ParentGrant { policy, parent_store }>` — `Some` for spawn/fork
+  children (stamped by the launch paths), `None` for roots.
+- **Dual-store audit**: every accepted send appends `agent_message.sent`
+  to the sender's store AND the scope-granting parent's store; delivery
+  appends `agent_message.delivered` in the recipient's store. A `Sent`
+  without a paired `Delivered` means the recipient's loop ended before
+  draining it.
+- **Child inbound capacity** now comes from `ChildPolicy.inbound_capacity`
+  (the hardcoded 32-buffer consts are deleted); root child-result channels
+  are sized from the builder envelope everywhere (the CLI's local 256
+  consts are gone too).
+- **Known state on CLI-style surfaces**: a root built without
+  `inbound_capacity` cannot receive `send_message(to: "parent")` — children
+  get the precise typed failure ("the root agent has no inbound channel
+  configured"). If meridian grants children `siblings_and_parent` or
+  `parent_only` and wants child→parent messaging to work, set
+  `AgentBuilder::inbound_capacity` on the root and drain the channel.
+  Tracked follow-up for norn's own CLI drivers.

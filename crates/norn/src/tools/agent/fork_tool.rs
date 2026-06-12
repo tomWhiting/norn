@@ -5,7 +5,7 @@
 //! model**, **spawn = fresh identity, configured through profile**. The
 //! machinery is shared (per-child [`ToolContext`](crate::tool::context::ToolContext), status watch channel,
 //! inbound steering channel, child result channel) so coordination
-//! tools — `signal_agent`, `close_agent` — work uniformly across
+//! tools — `send_message`, `close_agent` — work uniformly across
 //! both surfaces.
 //!
 //! The tool's `execute()` reserves a registry slot, builds the child's seed
@@ -29,14 +29,13 @@ use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::fork_pipeline::{
-    FORK_INBOUND_BUFFER, ForkLaunch, build_fork_context, launch_fork, resolve_fork_store,
-};
+use super::fork_pipeline::{ForkLaunch, build_fork_context, launch_fork, resolve_fork_store};
 use super::fork_seed::seed_fork_events;
 use super::handle::AgentHandles;
-use super::infra::{SubAgentExecutor, infra_from};
+use super::infra::{SubAgentExecutor, infra_from, strip_send_message_from_allow_list};
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
+use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope, MessagingScope};
 use crate::agent::fork::{
     ForkRequirement, ParentSystemInstruction, build_fork_output_schema, combine_system_instruction,
 };
@@ -182,6 +181,18 @@ impl Tool for ForkTool {
         // `MissingExtension` error.
         let handles = ctx.require_extension::<AgentHandles>()?;
 
+        // The coordination envelope is the runtime's deliberate child
+        // policy (W3.0 made it builder-required; the CLI assembly
+        // publishes its own). A context that can fork but carries no
+        // envelope is a wiring error, surfaced as a typed
+        // `MissingExtension` failure — fork never invents a policy for
+        // the child. W3.2 stamps the envelope's `child_policy` unchanged;
+        // the per-fork narrowing argument arrives with recursion (W3.4).
+        let envelope_policy: ChildPolicy = ctx
+            .require_extension::<CoordinationEnvelope>()?
+            .child_policy
+            .clone();
+
         // R3: hierarchical fork path nests under the parent's registry path.
         let parent_prefix = infra
             .registry
@@ -237,9 +248,16 @@ impl Tool for ForkTool {
         })?;
 
         // R3: per-child ToolContext with fresh identity, forwarded shared
-        // infrastructure.
-        let child_ctx =
-            build_fork_context(&infra, fork_id, Arc::clone(&child_store), ctx, child_tree);
+        // infrastructure, the granted policy stamped for send_message's
+        // scope enforcement.
+        let child_ctx = build_fork_context(
+            &infra,
+            fork_id,
+            Arc::clone(&child_store),
+            ctx,
+            child_tree,
+            envelope_policy.clone(),
+        );
 
         // R5: combined system instruction = fork preamble + parent base.
         let parent_base = ctx
@@ -279,14 +297,30 @@ impl Tool for ForkTool {
 
         let output_schema = build_fork_output_schema(&args.requirements);
 
-        let tool_defs =
-            crate::provider::surface::collect_function_definitions(parent_registry, None);
-        let executor =
-            SubAgentExecutor::new(Arc::clone(parent_registry), None, Arc::clone(&child_ctx));
+        // Forks see every parent tool — except `send_message` when the
+        // granted scope is `MessagingScope::None`, which removes the tool
+        // from the fork's surface entirely (defense-in-depth: the tool
+        // also refuses at execute).
+        let allow_list: Option<Vec<String>> = if envelope_policy.messaging == MessagingScope::None {
+            Some(strip_send_message_from_allow_list(None, parent_registry))
+        } else {
+            None
+        };
+        let tool_defs = crate::provider::surface::collect_function_definitions(
+            parent_registry,
+            allow_list.as_deref(),
+        );
+        let executor = SubAgentExecutor::new(
+            Arc::clone(parent_registry),
+            allow_list,
+            Arc::clone(&child_ctx),
+        );
 
-        // R6: inbound steering channel — the parent keeps the sender via the
-        // AgentHandle for `Steer` / `FollowUp` injection at tool boundaries.
-        let (inbound_tx, inbound_rx) = inbound_channel(FORK_INBOUND_BUFFER);
+        // R6: inbound steering channel — the parent keeps the sender via
+        // the AgentHandle for `close_agent`'s shutdown steer; capacity
+        // comes from the granted policy (DECISION M4 — never a hardcoded
+        // library value).
+        let (inbound_tx, inbound_rx) = inbound_channel(envelope_policy.inbound_capacity);
 
         // `launch_fork` calls `tokio::spawn` to wrap `run_agent_step` so the
         // child runs concurrently and this function returns immediately —
@@ -380,6 +414,7 @@ impl Tool for ForkTool {
                 reclaim: reclaim_handshake,
                 lifecycle,
                 hooks,
+                router: Arc::clone(&infra.router),
             },
             inbound_tx,
         );
@@ -509,6 +544,23 @@ mod tests {
         ]))
     }
 
+    /// Documented-proposal coordination envelope used by tests — a
+    /// deliberate test-caller choice, never a library default.
+    fn test_envelope() -> CoordinationEnvelope {
+        use crate::agent::child_policy::DelegationBudget;
+        CoordinationEnvelope {
+            child_policy: ChildPolicy {
+                messaging: MessagingScope::SiblingsAndParent,
+                delegation: DelegationBudget {
+                    remaining_depth: 1,
+                    max_concurrent_children: 32,
+                },
+                inbound_capacity: 32,
+            },
+            child_result_capacity: 256,
+        }
+    }
+
     fn parent_ctx(
         provider: Arc<dyn Provider>,
         parent_id: Uuid,
@@ -524,11 +576,13 @@ mod tests {
             event_store: Arc::clone(&event_store),
             agent_id: parent_id,
             parent_id: None,
+            grant: None,
             tool_registry: Some(tool_registry),
         });
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
         ctx.insert_extension(Arc::new(AgentHandles::new()));
+        ctx.insert_extension(Arc::new(test_envelope()));
         (ctx, event_store)
     }
 
@@ -1936,6 +1990,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
             parent_id: None,
+            grant: None,
             tool_registry: None,
         });
         let closer_ctx = ToolContext::empty();
@@ -2353,6 +2408,106 @@ mod tests {
         assert!(
             entries.iter().any(|e| e["id"] == "parent-call"),
             "the parent's own entry interleaves into scope=all",
+        );
+    }
+
+    /// Route ownership (W3.2): the fork launch registers the inbound
+    /// route before the task starts and the completion wrapper
+    /// deregisters at the run's end.
+    #[tokio::test]
+    async fn fork_registers_route_at_launch_and_deregisters_at_terminal() {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let provider: Arc<dyn Provider> = Arc::new(GatedProvider {
+            gate: Arc::clone(&gate),
+            responses: StdMutex::new(vec![vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "structured-out".to_string(),
+                    name: Some("structured_output".to_string()),
+                    arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ]]),
+        });
+        let agent_registry = AgentRegistry::shared();
+        let router = Arc::new(MessageRouter::new());
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::clone(&router),
+        );
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"request": "wait", "model": "gpt-5.5", "requirements": []})),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        assert!(
+            router.is_routed(fork_id),
+            "the launch path must register the fork's inbound route",
+        );
+
+        gate.notify_one();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+        assert!(
+            !router.is_routed(fork_id),
+            "the completion wrapper must deregister the route at the run's end",
+        );
+    }
+
+    /// Missing-envelope boundary: a context that can fork but carries no
+    /// [`CoordinationEnvelope`] is a wiring error — fork refuses with a
+    /// typed `MissingExtension` naming the envelope, leaking no
+    /// reservation.
+    #[tokio::test]
+    async fn fork_requires_coordination_envelope() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let infra = Arc::new(AgentToolInfra {
+            registry: Arc::clone(&agent_registry),
+            router: Arc::new(MessageRouter::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id: Uuid::new_v4(),
+            parent_id: None,
+            grant: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+        });
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+        ctx.insert_extension(Arc::new(AgentHandles::new()));
+
+        let tool = ForkTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({"request": "x", "model": "gpt-5.5", "requirements": []})),
+                &ctx,
+            )
+            .await
+            .expect_err("fork without an envelope must fail typed");
+        match err {
+            ToolError::MissingExtension { extension } => {
+                assert!(
+                    extension.contains("CoordinationEnvelope"),
+                    "error must name the missing envelope: {extension}",
+                );
+            }
+            other => panic!("expected MissingExtension, got {other:?}"),
+        }
+        assert!(
+            agent_registry.read().list().is_empty(),
+            "no reservation may leak from the refused fork",
         );
     }
 }

@@ -527,6 +527,12 @@ impl AgentBuilder {
                     event_store: Arc::clone(&event_store),
                     id: agent_id,
                     envelope,
+                    // Children address "parent" through the router even at
+                    // the top level: the root's inbound sender (when the
+                    // builder configured one) is registered under the
+                    // root's id. Without an inbound channel, messaging the
+                    // root fails honestly as NotRouted.
+                    root_inbound: self.inbound_tx.clone(),
                 },
             );
             // The runner drains child fork/spawn results at iteration
@@ -948,7 +954,7 @@ mod tests {
             "web_search",
             "spawn_agent",
             "fork",
-            "signal_agent",
+            "send_message",
             "close_agent",
             "agents",
         ];
@@ -1188,8 +1194,8 @@ mod tests {
     }
 
     /// W3.0 carriage: the validated envelope is published on the shared
-    /// tool context verbatim, so the spawn/fork paths (W3.2/W3.4) read
-    /// the root's policy and capacities from one place.
+    /// tool context verbatim, so the spawn/fork paths read the root's
+    /// policy and capacities from one place.
     #[test]
     fn coordination_envelope_is_published_on_tool_context() {
         let policy = test_child_policy();
@@ -1213,6 +1219,56 @@ mod tests {
         assert!(
             agent.loop_context.child_result_rx.is_some(),
             "the child-result receiver is wired alongside the envelope",
+        );
+    }
+
+    /// W3.2 routing: a root built with an inbound channel registers its
+    /// sender in the message router under its own id, so children can
+    /// address `"parent"` at the top level; without an inbound channel
+    /// the root is honestly unrouted.
+    #[test]
+    fn root_inbound_sender_registers_in_message_router() {
+        let id = Uuid::new_v4();
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_id(id)
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .inbound_capacity(8)
+            .build()
+            .expect("build succeeds");
+        let infra = agent
+            .registry
+            .shared_context()
+            .expect("shared tool context")
+            .get_extension::<crate::tools::agent::AgentToolInfra>()
+            .expect("AgentToolInfra installed");
+        assert!(
+            infra.router.is_routed(id),
+            "the root's inbound sender must be registered under the root id",
+        );
+
+        let unrouted_id = Uuid::new_v4();
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_id(unrouted_id)
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .build()
+            .expect("build succeeds");
+        let infra = agent
+            .registry
+            .shared_context()
+            .expect("shared tool context")
+            .get_extension::<crate::tools::agent::AgentToolInfra>()
+            .expect("AgentToolInfra installed");
+        assert!(
+            !infra.router.is_routed(unrouted_id),
+            "a root without an inbound channel must not be routed",
         );
     }
 

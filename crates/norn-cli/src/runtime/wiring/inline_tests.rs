@@ -35,6 +35,7 @@ mod tests {
             agent_id,
             Arc::clone(&tool_registry),
             AgentRegistry::shared(),
+            crate::runtime::cli_coordination_envelope(),
         );
 
         let shared = registry
@@ -45,9 +46,22 @@ mod tests {
             .expect("AgentToolInfra installed and reachable via get_extension");
         assert_eq!(infra.agent_id, agent_id);
         assert!(infra.parent_id.is_none());
+        assert!(infra.grant.is_none(), "the CLI root has no granting parent");
         assert!(
             infra.tool_registry.is_some(),
             "tool_registry must be wired so spawned sub-agents can dispatch tools",
+        );
+
+        // Carry-forward 4 (W3.2): the CLI's deliberate envelope is
+        // published on the shared context so spawn-time policy reads
+        // resolve instead of failing MissingExtension.
+        let envelope = shared
+            .get_extension::<norn::agent::child_policy::CoordinationEnvelope>()
+            .expect("CoordinationEnvelope published by install_agent_tool_infra");
+        assert_eq!(
+            *envelope,
+            crate::runtime::cli_coordination_envelope(),
+            "the published envelope carries the CLI's deliberate values verbatim",
         );
     }
 

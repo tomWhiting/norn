@@ -20,14 +20,16 @@ use tokio::sync::watch;
 use uuid::Uuid;
 
 use super::handle::{AgentHandle, AgentHandles, ChildBranchMetadata, SharedSessionTree};
-use super::infra::{SubAgentExecutor, infra_from};
+use super::infra::{SubAgentExecutor, infra_from, strip_send_message_from_allow_list};
 use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery, reclaim_delivered_child};
 use super::spawn_context::build_child_context;
 use super::spawn_outcome::{
     extract_outcome_summary, mark_terminal_in_registry, panicked_outcome_summary,
 };
+use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope, MessagingScope};
 use crate::agent::fork::ContextFilter;
+use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::ChildResultSender;
 use crate::error::ToolError;
@@ -47,14 +49,6 @@ use crate::tool::envelope::ToolEnvelope;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
-
-/// Bounded capacity of a child's inbound steering channel.
-///
-/// This is a `tokio::sync::mpsc` backpressure buffer, *not* a cap on how
-/// many messages a child may ever receive: when the buffer is full a
-/// sender simply `await`s for space (CO1 — no hardcoded limits). 32 is the
-/// standard tokio buffer size for a low-traffic control channel.
-const SPAWN_INBOUND_BUFFER: usize = 32;
 
 /// Spawns a sub-agent that runs asynchronously on its own `tokio` task.
 pub struct SpawnAgentTool;
@@ -251,6 +245,15 @@ struct ChildLaunch {
     /// tool before launch; the wrapper emits `Completed` once the run
     /// reaches a terminal outcome.
     lifecycle: LifecycleEmitter,
+    /// Workspace-shared message router. The launch path registers the
+    /// child's inbound sender under its id before the task starts; the
+    /// completion wrapper deregisters at the run's end — single
+    /// ownership, mirroring the registry entry.
+    router: Arc<MessageRouter>,
+    /// Bounded capacity of the child's inbound channel, from the granted
+    /// [`ChildPolicy::inbound_capacity`] (DECISION M4 — never a hardcoded
+    /// library value).
+    inbound_capacity: usize,
 }
 
 /// Launch the child on its own `tokio` task and return the [`AgentHandle`]
@@ -278,11 +281,19 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
         event_sender,
         reclaim,
         lifecycle,
+        router,
+        inbound_capacity,
     } = launch;
 
     let handle_store = Arc::clone(&store);
     let (status_tx, status_rx) = watch::channel(AgentStatus::Active);
-    let (inbound_tx, mut inbound_rx) = inbound_channel(SPAWN_INBOUND_BUFFER);
+    let (inbound_tx, mut inbound_rx) = inbound_channel(inbound_capacity);
+    // Route registration ownership (Wave 3 §Routing): the launch path
+    // registers the child's inbound sender the moment the channel exists,
+    // so `send_message` can reach the child for its entire run; the
+    // completion wrapper below deregisters — the same single ownership as
+    // the registry entry, never two actors.
+    router.register(child_id, inbound_tx.clone());
     let agent_role = format!("spawn/{model}");
     // Cooperative cancellation: the trigger lives on the parent-held
     // AgentHandle and a clone rides into the inner run's AgentStepRequest,
@@ -321,6 +332,15 @@ fn launch_child(launch: ChildLaunch) -> AgentHandle {
             .await
         });
         let outcome = inner.await;
+
+        // The child's loop has ended: nothing will ever drain its inbound
+        // channel again, so the route is removed now — unconditionally,
+        // even when a stop hook below suppresses the registry's terminal
+        // transition (route ownership follows the loop's life, i.e.
+        // delivery possibility; the registry entry tracks observability).
+        // Later sends fail fast as NotRouted instead of enqueueing into a
+        // buffer nothing reads.
+        router.deregister(child_id);
 
         // NH-006 R5 / C57: fire SubagentHook::on_subagent_stop before
         // marking the registry's terminal status. A Block suppresses
@@ -537,6 +557,19 @@ impl Tool for SpawnAgentTool {
         // missing extension surfaces as a typed `MissingExtension` error.
         let handles = ctx.require_extension::<AgentHandles>()?;
 
+        // The coordination envelope is the runtime's deliberate child
+        // policy (W3.0 made it builder-required; the CLI assembly
+        // publishes its own). A context that can spawn but carries no
+        // envelope is a wiring error, surfaced as the same typed
+        // `MissingExtension` failure as a missing `AgentHandles` — spawn
+        // never invents a policy for the child. W3.2 stamps the envelope's
+        // `child_policy` unchanged; the per-spawn narrowing argument
+        // arrives with recursion (W3.4).
+        let envelope_policy: ChildPolicy = ctx
+            .require_extension::<CoordinationEnvelope>()?
+            .child_policy
+            .clone();
+
         // Build the child's loop context and resolve the profile's tool
         // list. The profile scanner walks the same directories the CLI uses
         // for top-level agents, rooted at the parent agent's working
@@ -549,8 +582,16 @@ impl Tool for SpawnAgentTool {
         // The explicit `tools` argument wins; otherwise fall back to the
         // profile's resolved tool list. The chosen list gates both the
         // child's tool execution (via `SubAgentExecutor`) and the tool
-        // definitions the child model is shown.
-        let allow_list: Option<Vec<String>> = args.tools.clone().or(profile_tools);
+        // definitions the child model is shown. A `MessagingScope::None`
+        // grant removes `send_message` from that surface entirely
+        // (defense-in-depth: the tool also refuses at execute).
+        let mut allow_list: Option<Vec<String>> = args.tools.clone().or(profile_tools);
+        if envelope_policy.messaging == MessagingScope::None {
+            allow_list = Some(strip_send_message_from_allow_list(
+                allow_list,
+                parent_registry,
+            ));
+        }
         let tool_defs = build_tool_definitions(parent_registry, allow_list.as_deref());
 
         let path = args
@@ -611,9 +652,16 @@ impl Tool for SpawnAgentTool {
         };
 
         // Per-child ToolContext: fresh identity, fresh AgentHandles, shared
-        // infrastructure forwarded from the parent.
-        let child_ctx =
-            build_child_context(&infra, child_id, Arc::clone(&child_store), ctx, child_tree);
+        // infrastructure forwarded from the parent, the granted policy
+        // stamped for send_message's scope enforcement.
+        let child_ctx = build_child_context(
+            &infra,
+            child_id,
+            Arc::clone(&child_store),
+            ctx,
+            child_tree,
+            envelope_policy.clone(),
+        );
         let child_executor = SubAgentExecutor::new(
             Arc::clone(parent_registry),
             allow_list,
@@ -715,6 +763,8 @@ impl Tool for SpawnAgentTool {
             event_sender: child_event_sender,
             reclaim: reclaim_handshake,
             lifecycle,
+            router: Arc::clone(&infra.router),
+            inbound_capacity: envelope_policy.inbound_capacity,
         });
         handles.insert(handle);
 
@@ -827,8 +877,26 @@ mod tests {
         }
     }
 
-    /// Builds a parent [`ToolContext`] with [`AgentToolInfra`] + an empty
-    /// [`AgentHandles`] — the minimum a spawning agent needs.
+    /// Documented-proposal coordination envelope used by tests — a
+    /// deliberate test-caller choice, never a library default.
+    fn test_envelope() -> CoordinationEnvelope {
+        use crate::agent::child_policy::DelegationBudget;
+        CoordinationEnvelope {
+            child_policy: ChildPolicy {
+                messaging: MessagingScope::SiblingsAndParent,
+                delegation: DelegationBudget {
+                    remaining_depth: 1,
+                    max_concurrent_children: 32,
+                },
+                inbound_capacity: 32,
+            },
+            child_result_capacity: 256,
+        }
+    }
+
+    /// Builds a parent [`ToolContext`] with [`AgentToolInfra`], an empty
+    /// [`AgentHandles`], and the [`CoordinationEnvelope`] — the minimum a
+    /// spawning agent needs.
     fn parent_ctx(
         provider: Arc<dyn Provider>,
         parent_id: Uuid,
@@ -843,11 +911,13 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: parent_id,
             parent_id: None,
+            grant: None,
             tool_registry: Some(tool_registry),
         });
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
         ctx.insert_extension(Arc::new(AgentHandles::new()));
+        ctx.insert_extension(Arc::new(test_envelope()));
         ctx
     }
 
@@ -1065,6 +1135,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
             parent_id: None,
+            grant: None,
             tool_registry: None,
         });
         let ctx = ToolContext::empty();
@@ -1103,6 +1174,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
             parent_id: None,
+            grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
         });
         let ctx = ToolContext::empty();
@@ -1866,6 +1938,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
             parent_id: None,
+            grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
         };
         let parent_ctx = ToolContext::empty();
@@ -1884,6 +1957,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_envelope().child_policy,
         );
 
         let forwarded_policy = child_ctx
@@ -2571,6 +2645,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
             parent_id: None,
+            grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
         };
         let mut parent_ctx =
@@ -2583,6 +2658,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_envelope().child_policy,
         );
 
         assert_eq!(
@@ -2619,6 +2695,7 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
             parent_id: None,
+            grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
         };
         let parent_ctx = ToolContext::empty();
@@ -2631,6 +2708,7 @@ mod tests {
             Arc::new(EventStore::new()),
             &parent_ctx,
             None,
+            test_envelope().child_policy,
         );
 
         let forwarded = child_ctx
@@ -3133,5 +3211,297 @@ mod tests {
             .find(|e| e["tool"] == "action_log")
             .expect("the child's call surfaces in the parent's scope=all");
         assert_eq!(child_entry["agent"], "/smoke/child");
+    }
+
+    /// Route ownership (W3.2): the launch path registers the child's
+    /// inbound route at launch and the completion wrapper deregisters at
+    /// the run's end — `send_message` reaches a live child without any
+    /// tool-side registration, and a finished child is NotRouted.
+    #[tokio::test]
+    async fn spawn_registers_route_at_launch_and_deregisters_at_terminal() {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let provider: Arc<dyn Provider> = Arc::new(GatedProvider {
+            gate: Arc::clone(&gate),
+            responses: StdMutex::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: "child done".to_string(),
+                },
+                done_event(),
+            ]]),
+        });
+        let agent_registry = AgentRegistry::shared();
+        let router = Arc::new(MessageRouter::new());
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::clone(&router),
+        );
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"task": "wait", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect("spawn");
+        let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
+        assert!(
+            router.is_routed(child_id),
+            "the launch path must register the child's inbound route",
+        );
+
+        gate.notify_one();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(child_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+        assert!(
+            !router.is_routed(child_id),
+            "the completion wrapper must deregister the route at the run's end",
+        );
+    }
+
+    /// Missing-envelope boundary: a context that can spawn but carries no
+    /// [`CoordinationEnvelope`] is a wiring error — spawn refuses with a
+    /// typed `MissingExtension` naming the envelope, never inventing a
+    /// child policy.
+    #[tokio::test]
+    async fn spawn_requires_coordination_envelope() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let infra = Arc::new(AgentToolInfra {
+            registry: Arc::clone(&agent_registry),
+            router: Arc::new(MessageRouter::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id: Uuid::new_v4(),
+            parent_id: None,
+            grant: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+        });
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+        ctx.insert_extension(Arc::new(AgentHandles::new()));
+
+        let tool = SpawnAgentTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({"task": "x", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect_err("spawn without an envelope must fail typed");
+        match err {
+            ToolError::MissingExtension { extension } => {
+                assert!(
+                    extension.contains("CoordinationEnvelope"),
+                    "error must name the missing envelope: {extension}",
+                );
+            }
+            other => panic!("expected MissingExtension, got {other:?}"),
+        }
+        assert!(
+            agent_registry.read().list().is_empty(),
+            "no reservation may leak from the refused spawn",
+        );
+    }
+
+    /// `MessagingScope::None` removes `send_message` from the child's
+    /// surface: the tool definitions shown to the child model exclude it
+    /// (with or without an explicit allow-list) while every other tool
+    /// survives.
+    #[tokio::test]
+    async fn spawn_strips_send_message_from_child_surface_under_scope_none() {
+        use crate::tools::agent::coord::SendMessageTool;
+
+        for explicit_tools in [None, Some(vec!["send_message", "read"])] {
+            let captured = Arc::new(StdMutex::new(Vec::new()));
+            let provider: Arc<dyn Provider> = Arc::new(CapturingProvider {
+                captured: Arc::clone(&captured),
+                responses: StdMutex::new(vec![vec![
+                    ProviderEvent::TextDelta {
+                        text: "done".to_string(),
+                    },
+                    done_event(),
+                ]]),
+            });
+
+            let mut registry = ToolRegistry::new();
+            registry.register(Box::new(EchoStubTool { tool_name: "read" }));
+            registry.register(Box::new(SendMessageTool::new()));
+            let registry = Arc::new(registry);
+
+            let agent_registry = AgentRegistry::shared();
+            let ctx = parent_ctx(
+                provider,
+                Uuid::new_v4(),
+                &agent_registry,
+                registry,
+                Arc::new(MessageRouter::new()),
+            );
+            // Replace the standard test envelope with a muted one.
+            let mut envelope = test_envelope();
+            envelope.child_policy.messaging = MessagingScope::None;
+            ctx.insert_extension(Arc::new(envelope));
+
+            let mut args = json!({"task": "quiet work", "model": "haiku", "role": "worker"});
+            if let Some(tools) = &explicit_tools {
+                args["tools"] = json!(tools);
+            }
+            let tool = SpawnAgentTool::new();
+            spawn_and_join(&tool, &ctx, args).await;
+
+            let names: Vec<String> = captured
+                .lock()
+                .unwrap()
+                .iter()
+                .map(|def| match def {
+                    ProviderToolDefinition::Function(function) => function.name.clone(),
+                    other => panic!("unexpected tool definition: {other:?}"),
+                })
+                .collect();
+            assert!(
+                !names.iter().any(|n| n == "send_message"),
+                "scope none must remove send_message (explicit_tools: \
+                 {explicit_tools:?}): {names:?}",
+            );
+            assert!(
+                names.iter().any(|n| n == "read"),
+                "other tools must survive the strip (explicit_tools: \
+                 {explicit_tools:?}): {names:?}",
+            );
+        }
+    }
+
+    /// The spawned child's `AgentToolInfra` carries the granted policy and
+    /// the scope-granting parent's event store — the ground truth
+    /// `send_message` enforces scope from and writes the dual-store audit
+    /// to.
+    #[tokio::test]
+    async fn spawned_child_infra_carries_granted_policy_and_parent_store() {
+        struct PolicyProbe {
+            seen_scope: Arc<StdMutex<Option<MessagingScope>>>,
+            seen_capacity: Arc<StdMutex<Option<usize>>>,
+            parent_store_matches: Arc<StdMutex<Option<bool>>>,
+            parent_store: Arc<EventStore>,
+        }
+
+        #[async_trait]
+        impl TestTool for PolicyProbe {
+            fn name(&self) -> &'static str {
+                "policy_probe"
+            }
+            fn description(&self) -> &'static str {
+                "records the granted policy it sees"
+            }
+            fn input_schema(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
+            fn effect(&self) -> ToolEffect {
+                ToolEffect::ReadOnly
+            }
+            async fn execute(
+                &self,
+                _envelope: &ToolEnvelope,
+                ctx: &ToolContext,
+            ) -> Result<TestToolOutput, ToolError> {
+                if let Some(infra) = ctx.get_extension::<AgentToolInfra>() {
+                    *self.seen_scope.lock().unwrap() =
+                        infra.grant.as_ref().map(|g| g.policy.messaging);
+                    *self.seen_capacity.lock().unwrap() =
+                        infra.grant.as_ref().map(|g| g.policy.inbound_capacity);
+                    *self.parent_store_matches.lock().unwrap() = Some(
+                        infra
+                            .grant
+                            .as_ref()
+                            .is_some_and(|g| Arc::ptr_eq(&g.parent_store, &self.parent_store)),
+                    );
+                }
+                Ok(TestToolOutput::success(serde_json::json!({"ok": true})))
+            }
+        }
+
+        let turn1 = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "tc1".to_string(),
+                name: Some("policy_probe".to_string()),
+                arguments_delta: "{}".to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let turn2 = vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_string(),
+            },
+            done_event(),
+        ];
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![turn1, turn2]));
+
+        let agent_registry = AgentRegistry::shared();
+        let parent = Uuid::new_v4();
+        let seen_scope = Arc::new(StdMutex::new(None));
+        let seen_capacity = Arc::new(StdMutex::new(None));
+        let parent_store_matches = Arc::new(StdMutex::new(None));
+
+        // Build the parent ctx first so its infra's event store is the
+        // store the probe compares against.
+        let ctx = {
+            let parent_event_store = Arc::new(EventStore::new());
+            let mut registry = ToolRegistry::new();
+            registry.register(Box::new(PolicyProbe {
+                seen_scope: Arc::clone(&seen_scope),
+                seen_capacity: Arc::clone(&seen_capacity),
+                parent_store_matches: Arc::clone(&parent_store_matches),
+                parent_store: Arc::clone(&parent_event_store),
+            }));
+            let infra = Arc::new(AgentToolInfra {
+                registry: Arc::clone(&agent_registry),
+                router: Arc::new(MessageRouter::new()),
+                provider,
+                event_store: parent_event_store,
+                agent_id: parent,
+                parent_id: None,
+                grant: None,
+                tool_registry: Some(Arc::new(registry)),
+            });
+            let ctx = ToolContext::empty();
+            ctx.insert_extension(infra);
+            ctx.insert_extension(Arc::new(AgentHandles::new()));
+            let mut envelope = test_envelope();
+            envelope.child_policy.messaging = MessagingScope::ParentOnly;
+            envelope.child_policy.inbound_capacity = 7;
+            ctx.insert_extension(Arc::new(envelope));
+            ctx
+        };
+
+        let tool = SpawnAgentTool::new();
+        spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "introspect", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+
+        assert_eq!(
+            *seen_scope.lock().unwrap(),
+            Some(MessagingScope::ParentOnly),
+            "the child must carry the envelope's granted messaging scope",
+        );
+        assert_eq!(
+            *seen_capacity.lock().unwrap(),
+            Some(7),
+            "the child must carry the envelope's inbound capacity",
+        );
+        assert_eq!(
+            *parent_store_matches.lock().unwrap(),
+            Some(true),
+            "the child's parent_store must be the spawning parent's event store",
+        );
     }
 }

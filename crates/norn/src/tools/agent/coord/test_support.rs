@@ -56,6 +56,7 @@ pub(crate) fn build_infra(
         event_store: Arc::new(EventStore::new()),
         agent_id: sender,
         parent_id: None,
+        grant: None,
         tool_registry: None,
     });
     (infra, registry, router)

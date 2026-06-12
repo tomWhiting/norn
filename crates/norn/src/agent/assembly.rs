@@ -652,6 +652,13 @@ pub(crate) struct AgentInfraParts {
     /// [`AgentBuilder::build`](crate::agent::builder::AgentBuilder::build)
     /// before this runs (both values present, capacities non-zero).
     pub(crate) envelope: CoordinationEnvelope,
+    /// The root agent's own inbound sender, when the builder configured
+    /// an inbound channel (`AgentBuilder::inbound_capacity`). Registered
+    /// in the [`MessageRouter`] under the root's id so children can
+    /// address `"parent"` at the top level. `None` when the root has no
+    /// inbound channel — messaging the root then fails honestly as
+    /// `NotRouted`.
+    pub(crate) root_inbound: Option<crate::r#loop::inbound::InboundSender>,
 }
 
 /// Install the complete fork/spawn runtime on the agent's shared
@@ -691,22 +698,35 @@ pub(crate) struct AgentInfraParts {
 /// capacity is always the caller's explicit choice, never a library
 /// default.
 ///
+/// Also registers the root's own inbound sender (when one exists) in the
+/// fresh [`MessageRouter`] under the root's id, so children can address
+/// `"parent"` at the top level. The root's route is process-lifetime — it
+/// has no completion wrapper — so it is never explicitly deregistered;
+/// when the root's loop ends, the closed channel is detected on the next
+/// delivery attempt and the stale route removed (`RouteError::ChannelClosed`
+/// lazy cleanup).
+///
 /// Returns the receiver half of the child-result channel; the caller wires
 /// it into the loop context. Everything `spawn_agent` / `fork` /
-/// `signal_agent` / `close_agent` resolve at call time is published here —
+/// `send_message` / `close_agent` resolve at call time is published here —
 /// no partial wiring.
 pub(crate) fn install_agent_infra(
     tool_registry: &Arc<ToolRegistry>,
     shared: &ToolContext,
     parts: AgentInfraParts,
 ) -> mpsc::Receiver<ChildAgentResult> {
+    let router = Arc::new(MessageRouter::new());
+    if let Some(root_inbound) = parts.root_inbound {
+        router.register(parts.id, root_inbound);
+    }
     let infra = AgentToolInfra {
         registry: parts.registry,
-        router: Arc::new(MessageRouter::new()),
+        router,
         provider: parts.provider,
         event_store: parts.event_store,
         agent_id: parts.id,
         parent_id: None,
+        grant: None,
         tool_registry: Some(Arc::clone(tool_registry)),
     };
     shared.insert_extension(Arc::new(infra));
@@ -729,9 +749,9 @@ pub(crate) fn install_agent_infra(
     shared.insert_extension(log_tree);
 
     // The coordination envelope is carried on the shared context so the
-    // spawn/fork launch paths (W3.2/W3.4) read the root's child policy and
-    // per-agent channel capacities from one place. In W3.0 it is carried
-    // and validated, not yet enforced.
+    // spawn/fork launch paths read the root's child policy and per-agent
+    // channel capacities from one place; without it every spawn/fork
+    // fails with a typed MissingExtension (W3.2).
     let child_result_capacity = parts.envelope.child_result_capacity;
     shared.insert_extension(Arc::new(parts.envelope));
 
@@ -779,6 +799,7 @@ mod tests {
                 event_store: Arc::new(EventStore::new()),
                 id: agent_id,
                 envelope: envelope.clone(),
+                root_inbound: None,
             },
         );
 

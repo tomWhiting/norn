@@ -30,6 +30,9 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
+use norn::agent::child_policy::{
+    ChildPolicy, CoordinationEnvelope, DelegationBudget, MessagingScope,
+};
 use norn::agent::message_router::MessageRouter;
 use norn::agent::registry::AgentRegistry;
 use norn::agent::result_channel::ChildResultSender;
@@ -75,14 +78,50 @@ mod inline_tests;
 #[cfg(test)]
 mod wiring_tests;
 
+/// The CLI's deliberate [`CoordinationEnvelope`]: the child policy and
+/// channel capacities every agent spawned from a CLI-assembled runtime
+/// runs under.
+///
+/// The values are the Wave 3 design's documented proposals — a conscious
+/// per-deployment choice by the CLI, never a library default (the library
+/// requires every embedder to supply its own envelope):
+///
+/// - `messaging: SiblingsAndParent` — the audit trail and the steer/update
+///   split are the safety mechanism, not isolation (DECISION M1).
+/// - `remaining_depth: 1`, `max_concurrent_children: 32` — today's
+///   production-proven delegation shape; deeper trees are an explicit
+///   opt-in per deployment (DECISION R1).
+/// - `inbound_capacity: 32` — the per-child inbound backpressure buffer
+///   (DECISION M4).
+/// - `child_result_capacity: 256` — the child-result channel buffer
+///   (DECISION R3); the CLI's root result channel is sized from this same
+///   value so the two cannot drift.
+#[must_use]
+pub fn cli_coordination_envelope() -> CoordinationEnvelope {
+    CoordinationEnvelope {
+        child_policy: ChildPolicy {
+            messaging: MessagingScope::SiblingsAndParent,
+            delegation: DelegationBudget {
+                remaining_depth: 1,
+                max_concurrent_children: 32,
+            },
+            inbound_capacity: 32,
+        },
+        child_result_capacity: 256,
+    }
+}
+
 /// Register the standard tool set into a [`ToolRegistry`].
 ///
 /// Install [`AgentToolInfra`] on the registry's shared
 /// [`norn::tool::context::ToolContext`] so the four agent-coordination
-/// tools (`spawn_agent`, `fork`, `signal_agent`,
+/// tools (`spawn_agent`, `fork`, `send_message`,
 /// `close_agent`) resolve their runtime infrastructure instead of
 /// erroring with a typed `MissingExtension` error naming
-/// `AgentToolInfra`.
+/// `AgentToolInfra`, and publish the CLI's deliberate
+/// [`CoordinationEnvelope`] (`envelope`) so the spawn/fork launch paths
+/// can read the child policy — without it every spawn/fork fails with a
+/// typed `MissingExtension` naming the envelope.
 ///
 /// `build_runtime` is synchronous and runs before the provider is
 /// constructed, so this step is split out: callers invoke it after
@@ -93,6 +132,12 @@ mod wiring_tests;
 /// dispatches through. Spawned sub-agents look up `Tool` implementations
 /// from this registry and dispatch them against their own per-child
 /// `ToolContext` (the Path 3 identity fix).
+///
+/// The CLI's root agent runs without an inbound channel, so no root route
+/// is registered in the [`MessageRouter`]: a child messaging `"parent"`
+/// receives the honest `NotRouted` failure rather than queueing into a
+/// channel nothing drains. Wiring a root inbound channel for the CLI
+/// drivers is a separate, deliberate feature.
 pub fn install_agent_tool_infra(
     registry: &ToolRegistry,
     provider: Arc<dyn Provider>,
@@ -100,11 +145,13 @@ pub fn install_agent_tool_infra(
     agent_id: Uuid,
     tool_registry: Arc<ToolRegistry>,
     agent_registry: Arc<RwLock<AgentRegistry>>,
+    envelope: CoordinationEnvelope,
 ) {
     let Some(shared) = registry.shared_context() else {
         return;
     };
     shared.insert_extension(Arc::new(SharedProvider(Arc::clone(&provider))));
+    shared.insert_extension(Arc::new(envelope));
     let infra = AgentToolInfra {
         registry: agent_registry,
         router: Arc::new(MessageRouter::new()),
@@ -112,6 +159,7 @@ pub fn install_agent_tool_infra(
         event_store,
         agent_id,
         parent_id: None,
+        grant: None,
         tool_registry: Some(tool_registry),
     };
     shared.insert_extension(Arc::new(infra));
