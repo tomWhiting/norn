@@ -668,21 +668,26 @@ fn is_ctrl_c(event: &Event) -> bool {
 /// (for the API) from a batch of child agent results.
 ///
 /// The display text is a short summary the user sees. The model prompt
-/// includes the full `[System: ...]` envelope so the model can
-/// distinguish auto-delivered results from user input.
+/// renders each result through
+/// [`frame_child_result`](norn::agent::result_channel::frame_child_result)
+/// — the harness-built, content-escaped `<agent_result>` frame — so the
+/// model can distinguish auto-delivered results from user input and a
+/// child's output cannot forge an attribution frame.
 fn format_child_result_batch(
     batch: &[norn::agent::result_channel::ChildAgentResult],
 ) -> (String, String) {
+    use norn::agent::result_channel::frame_child_result;
+
     if batch.len() == 1 {
         let r = &batch[0];
         let display = format!("[{} completed]", r.agent_role);
-        (display, r.formatted_message.clone())
+        (display, frame_child_result(r))
     } else {
         let display = format!("[{} agents completed]", batch.len());
         let mut prompt = format!("Results from {} completed agents:\n\n", batch.len());
         for r in batch {
-            prompt.push_str(&r.formatted_message);
-            prompt.push('\n');
+            prompt.push_str(&frame_child_result(r));
+            prompt.push_str("\n\n");
         }
         (display, prompt)
     }

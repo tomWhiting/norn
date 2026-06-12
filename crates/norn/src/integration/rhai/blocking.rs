@@ -141,7 +141,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::super::context::{NornRhaiContext, build_norn_engine};
-    use crate::agent::mailbox::Mailbox;
+    use crate::agent::message_router::MessageRouter;
     use crate::agent::registry::AgentRegistry;
     use crate::provider::mock::MockProvider;
     use crate::provider::traits::Provider;
@@ -150,12 +150,12 @@ mod tests {
 
     fn build_context() -> NornRhaiContext {
         let registry = AgentRegistry::shared();
-        let mailbox = Arc::new(Mailbox::new());
+        let router = Arc::new(MessageRouter::new());
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let agent_id = Uuid::new_v4();
         NornRhaiContext {
             registry,
-            mailbox,
+            router,
             provider,
             agent_id,
             runtime: tokio::runtime::Handle::current(),

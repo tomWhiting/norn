@@ -181,6 +181,25 @@ pub struct AgentLoopConfig {
     /// post-build via
     /// [`ResolvedAgentInfo::output_schema`](crate::agent::ResolvedAgentInfo).
     pub output_schema: Option<Value>,
+
+    /// Opt-in linger-await at the loop's would-stop boundaries (Wave 3,
+    /// DECISION M3).
+    ///
+    /// `None` (the default) preserves the historical behavior exactly:
+    /// the step returns the moment the model would stop, and a child
+    /// result arriving afterwards is sent into a dropped channel. `Some`
+    /// makes each would-stop boundary await late inbound messages and
+    /// child-agent results — and the cancellation token — for up to
+    /// [`LingerPolicy::deadline`](crate::r#loop::linger::LingerPolicy::deadline)
+    /// before stopping; whatever arrives is
+    /// injected through the same flush/drain path as a mid-run delivery
+    /// and the loop continues.
+    ///
+    /// There is no default duration. The linger await runs inside the
+    /// step, so it counts toward a configured [`Self::step_timeout`].
+    /// Serde-compatible by absence: configs persisted before this field
+    /// existed deserialize with `linger: None`.
+    pub linger: Option<crate::r#loop::linger::LingerPolicy>,
 }
 
 /// Full result of dispatching one tool through its lifecycle.
@@ -208,6 +227,7 @@ impl Default for AgentLoopConfig {
             conversation_state: ConversationStateMode::Auto,
             server_compaction_threshold_tokens: None,
             output_schema: None,
+            linger: None,
         }
     }
 }
@@ -345,5 +365,72 @@ impl ToolExecutor for MockToolExecutor {
                 name: name.to_string(),
             }),
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use super::*;
+    use crate::r#loop::linger::LingerPolicy;
+
+    /// Serde-compatibility pin: configs persisted before the `linger`
+    /// field existed (Phase 2 serialized configs) deserialize with
+    /// `linger: None` — absent = None = current behavior.
+    #[test]
+    fn config_without_linger_field_deserializes_to_none() {
+        let empty: AgentLoopConfig = serde_json::from_str("{}").unwrap();
+        assert!(empty.linger.is_none());
+
+        let legacy = serde_json::json!({
+            "schema_attempt_budget": 3,
+            "max_iterations": null,
+            "step_timeout": null,
+            "context_window_limit": null,
+            "auto_compact_threshold_pct": null,
+            "auto_compact_keep_recent_turns": 10,
+            "schema_tool_name": "structured_output",
+            "cache_key": null,
+            "conversation_state": "auto",
+            "server_compaction_threshold_tokens": null,
+            "output_schema": null
+        });
+        let cfg: AgentLoopConfig = serde_json::from_value(legacy).unwrap();
+        assert!(cfg.linger.is_none());
+        assert_eq!(cfg.schema_attempt_budget, 3);
+    }
+
+    /// Shape pin for the serialized policy: durations serialize as
+    /// `{secs, nanos}`, matching every other duration on this config.
+    #[test]
+    fn linger_policy_serde_shape_is_pinned() {
+        let policy = LingerPolicy {
+            deadline: Duration::from_millis(1500),
+        };
+        let value = serde_json::to_value(policy).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({ "deadline": { "secs": 1, "nanos": 500_000_000 } }),
+        );
+        let back: LingerPolicy = serde_json::from_value(value).unwrap();
+        assert_eq!(back, policy);
+    }
+
+    #[test]
+    fn config_with_linger_round_trips() {
+        let cfg = AgentLoopConfig {
+            linger: Some(LingerPolicy {
+                deadline: Duration::from_secs(30),
+            }),
+            ..AgentLoopConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: AgentLoopConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.linger,
+            Some(LingerPolicy {
+                deadline: Duration::from_secs(30),
+            }),
+        );
     }
 }

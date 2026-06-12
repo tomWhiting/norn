@@ -6,8 +6,8 @@
 //! tool definitions through the allow-list so the child model can see its
 //! tools, then launches the child via [`tokio::spawn`] and returns
 //! immediately. When the child reaches a terminal status the spawn wrapper
-//! marks the registry, sends a `trigger_turn` notification to the parent's
-//! mailbox, and updates the status watch channel that backs reactive waits.
+//! marks the registry, delivers the result on the child-result channel,
+//! and updates the status watch channel that backs reactive waits.
 
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -780,7 +780,7 @@ mod tests {
 
     use super::super::infra::AgentToolInfra;
     use super::*;
-    use crate::agent::mailbox::Mailbox;
+    use crate::agent::message_router::MessageRouter;
     use crate::error::ProviderError;
     use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::mock::MockProvider;
@@ -834,11 +834,11 @@ mod tests {
         parent_id: Uuid,
         agent_registry: &Arc<RwLock<AgentRegistry>>,
         tool_registry: Arc<ToolRegistry>,
-        mailbox: Arc<Mailbox>,
+        router: Arc<MessageRouter>,
     ) -> ToolContext {
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(agent_registry),
-            mailbox,
+            router,
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: parent_id,
@@ -993,7 +993,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = SpawnAgentTool::new();
@@ -1060,7 +1060,7 @@ mod tests {
         let registry = AgentRegistry::shared();
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(&registry),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -1098,7 +1098,7 @@ mod tests {
         let registry = AgentRegistry::shared();
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(&registry),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -1162,7 +1162,7 @@ mod tests {
             parent,
             &agent_registry,
             registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = SpawnAgentTool::new();
@@ -1211,7 +1211,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = SpawnAgentTool::new();
@@ -1246,14 +1246,14 @@ mod tests {
         ]]));
         let parent = Uuid::new_v4();
         let agent_registry = AgentRegistry::shared();
-        let mailbox = Arc::new(Mailbox::new());
+        let router = Arc::new(MessageRouter::new());
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         let ctx = parent_ctx(
             provider,
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::clone(&mailbox),
+            Arc::clone(&router),
         );
         let sender = ChildResultSender(Arc::new(tx));
         ctx.insert_extension(Arc::new(sender));
@@ -1286,14 +1286,14 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let parent = Uuid::new_v4();
         let agent_registry = AgentRegistry::shared();
-        let mailbox = Arc::new(Mailbox::new());
+        let router = Arc::new(MessageRouter::new());
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         let ctx = parent_ctx(
             provider,
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::clone(&mailbox),
+            Arc::clone(&router),
         );
         let sender = ChildResultSender(Arc::new(tx));
         ctx.insert_extension(Arc::new(sender));
@@ -1349,7 +1349,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (btx, mut brx) = tokio::sync::broadcast::channel::<AgentEvent>(64);
         ctx.insert_extension(Arc::new(SharedAgentEventChannel(btx)));
@@ -1478,7 +1478,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (btx, mut brx) = tokio::sync::broadcast::channel::<AgentEvent>(64);
         ctx.insert_extension(Arc::new(SharedAgentEventChannel(btx)));
@@ -1569,7 +1569,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(registry),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (btx, mut brx) = tokio::sync::broadcast::channel::<AgentEvent>(64);
         ctx.insert_extension(Arc::new(SharedAgentEventChannel(btx)));
@@ -1658,7 +1658,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
@@ -1726,7 +1726,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = SpawnAgentTool::new();
@@ -1861,7 +1861,7 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -1939,7 +1939,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         ctx.insert_extension(Arc::new(
             crate::config::permissions::PermissionPolicy::from_patterns(&["victim"], &[], &[]),
@@ -2000,7 +2000,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = SpawnAgentTool::new();
@@ -2056,7 +2056,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = SpawnAgentTool::new();
@@ -2119,7 +2119,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tree = Arc::new(SessionTree::new(SessionMetadata {
@@ -2215,7 +2215,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let start_count = Arc::new(AtomicUsize::new(0));
@@ -2281,7 +2281,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
@@ -2329,7 +2329,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         ctx.insert_extension(Arc::new(super::ReclaimOnResultDelivery));
 
@@ -2381,7 +2381,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
@@ -2452,7 +2452,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
@@ -2530,7 +2530,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let mut registry = HookRegistry::new();
@@ -2566,7 +2566,7 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -2614,7 +2614,7 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -2701,7 +2701,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         ctx.confine_to_workspace(root.path().to_path_buf());
 
@@ -2771,7 +2771,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         ctx.set_working_dir(wd.path().to_path_buf());
 
@@ -2866,7 +2866,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let count = Arc::new(AtomicUsize::new(0));
         let mut hook_registry = HookRegistry::new();
@@ -2936,7 +2936,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
@@ -3060,7 +3060,7 @@ mod tests {
             parent,
             &agent_registry,
             registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         // The parent has its own action log (as every builder-assembled
         // agent does) so the lazily-installed tree can register its root.

@@ -40,7 +40,7 @@ use crate::integration::hooks::{Hook, HookOutcome, HookRegistry, PreToolHook};
 use crate::r#loop::config::{
     AgentLoopConfig, AgentStepResult, ConversationStateMode, MockToolExecutor, ToolHandler,
 };
-use crate::r#loop::inbound::{DeliveryMode, inbound_channel};
+use crate::r#loop::inbound::{MessageKind, inbound_channel};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
 use crate::provider::events::{ProviderEvent, StopReason};
@@ -1017,9 +1017,14 @@ async fn test_inbound_steer_message() {
     // Create inbound channel and pre-load a Steer message.
     let (tx, mut rx) = inbound_channel(8);
     tx.send(crate::r#loop::inbound::ChannelMessage {
-        author: "test-orchestrator".to_owned(),
+        id: uuid::Uuid::new_v4(),
+        sender_id: uuid::Uuid::new_v4(),
+        from: "test-orchestrator".to_owned(),
+        role: None,
+        to_id: uuid::Uuid::new_v4(),
         content: "steer content from orchestrator".to_owned(),
-        delivery: DeliveryMode::Steer,
+        kind: MessageKind::Steer,
+        seq: None,
         timestamp: chrono::Utc::now(),
     })
     .await

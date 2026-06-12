@@ -3,7 +3,7 @@
 //! parent.
 //!
 //! The fork lifecycle (registry reservation, [`tokio::spawn`], status watch
-//! channel, mailbox notification, [`SessionEvent::ForkComplete`] append) lives
+//! channel, status notification, [`SessionEvent::ForkComplete`] append) lives
 //! on [`crate::tools::agent::fork_tool::ForkTool`]. This module owns the
 //! reusable data types — [`ContextFilter`], [`ForkConfig`], [`ForkAudit`],
 //! [`ForkRequirement`] — together with the pure helpers the tool composes:

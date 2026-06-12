@@ -13,6 +13,7 @@ pub use crate::r#loop::compaction::{
 pub use crate::r#loop::iteration::{
     IterationMonitorConfig, IterationMonitorState, IterationSignal, QualitySignal,
 };
+pub use crate::r#loop::linger::LingerPolicy;
 pub use crate::r#loop::loop_context::LoopContext;
 
 pub use crate::r#loop::retry::{RetryPolicy, RetryableError, retry_with_backoff};
@@ -27,6 +28,7 @@ pub mod compaction;
 pub mod config;
 pub mod context;
 mod conversation_state;
+mod delivery;
 mod dev_context;
 pub mod event_schemas;
 pub mod events;
@@ -38,6 +40,7 @@ mod inflight_compaction;
 pub use helpers::ensure_tool_results_complete;
 pub mod inbound;
 pub mod iteration;
+pub mod linger;
 pub mod loop_context;
 pub mod notifications;
 mod numeric;

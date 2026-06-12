@@ -343,3 +343,47 @@ parent-configured budgets).
   parent's `AgentLoopConfig` (`max_iterations`/`step_timeout`) and won't
   in Wave 3 either; per-child loop config is deferred to the following
   wave and recorded in the design doc.
+
+## 8.3 Wave 3 batch 1 landed (W3.0 + W3.1 + W3.3) — adapt when you bump past it
+
+Two-round Fable review, gates 3245/0. Adaptations if you pin past this
+commit (the `subtree_usage` schema break is **not** in this batch — it
+arrives with W3.6 as pre-announced above):
+
+- **BREAKING (build-time): the coordination envelope is now required.**
+  `AgentBuilder` builds that wire `.agent_registry(..)` must also call
+  `.child_policy(ChildPolicy { messaging, delegation, inbound_capacity })`
+  and `.child_result_capacity(n)` or `build()` returns a typed
+  `ConfigError::InvalidConfig` naming the missing setters. Recommended
+  starting envelope (documented proposals, matching previous behavior):
+  `MessagingScope::SiblingsAndParent`, `DelegationBudget { remaining_depth:
+  1, max_concurrent_children: 32 }`, `inbound_capacity: 32`,
+  `child_result_capacity: 256`. Setting the envelope WITHOUT a registry is
+  also a build error. The library const `CHILD_RESULT_CHANNEL_CAPACITY` is
+  deleted — the channel is sized from your envelope.
+- **BREAKING (API): `agent::Mailbox` is deleted**, replaced by
+  `agent::MessageRouter` (typed `RouteError::{NotRouted, ChannelClosed,
+  ChannelFull}`; per-recipient seq minted at enqueue). If you constructed
+  `AgentToolInfra` directly, its `mailbox` field is now `router:
+  Arc<MessageRouter>`. `AgentError::MailboxClosed` is deleted.
+- **BREAKING (API): `ChannelMessage` reshaped** — `author`/`DeliveryMode`
+  are gone; fields are `{id, sender_id, from, role, to_id, content, kind:
+  MessageKind::{Steer,Update}, seq, timestamp}`. Inbound injection renders
+  as an escaped `<agent_message from= from_id= [role=] kind= [seq=] ts=>`
+  frame (the old `[Inbound from {author}]` format was sender-forgeable);
+  child results render as `<agent_result from= from_id= succeeded=>`
+  frames via the new `agent::frame_child_result` (the old `[Agent result
+  from …]` raw injection could forge frames). If meridian parses either
+  injected format out of stored `UserMessage` events, parse the frames.
+- **`AgentEventKind` gained a third variant `Message(AgentMessageLifecycle)`**
+  — exhaustive matches need an arm. New store audit events (`Custom`):
+  `agent_message.sent` / `agent_message.delivered` (serde shape-pinned;
+  resume-safe — replay ignores Custom events).
+- **`signal_agent` result payload changed** (this batch only; the tool is
+  deleted in W3.2): success now `{delivered, to, kind, seq, message_id,
+  routed_via, trigger_turn}`; new typed failures for closed/full routes.
+- **Opt-in linger**: `AgentLoopConfig.linger: Option<LingerPolicy {
+  deadline }>` — absent field deserializes to `None` (legacy configs
+  unchanged); unset preserves return-immediately behavior byte-identically.
+  A lingering parent waits at stop boundaries for late child results and
+  steer messages (steer wakes it; update does not).

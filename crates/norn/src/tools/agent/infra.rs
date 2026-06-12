@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use parking_lot::RwLock;
 use uuid::Uuid;
 
-use crate::agent::mailbox::Mailbox;
+use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentEntry, AgentRegistry, AgentTombstone};
 use crate::error::ToolError;
 use crate::r#loop::runner::ToolExecutor;
@@ -35,8 +35,9 @@ use crate::tool::registry::{
 pub struct AgentToolInfra {
     /// Active-agent registry shared across the workspace.
     pub registry: Arc<RwLock<AgentRegistry>>,
-    /// Mailbox routing inter-agent messages.
-    pub mailbox: Arc<Mailbox>,
+    /// Router delivering inter-agent messages onto recipients' inbound
+    /// channels (shared workspace-wide, like the registry).
+    pub router: Arc<MessageRouter>,
     /// Provider used for sub-agent and fork model calls.
     pub provider: Arc<dyn Provider>,
     /// Parent agent's session event store.
@@ -322,7 +323,7 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         Arc::new(AgentToolInfra {
             registry: AgentRegistry::shared(),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id,

@@ -56,6 +56,7 @@ use crate::agent::assembly::{
     populate_loop_context, resolve_base_profile, resolve_runtime_overlay, resolve_working_dir,
     restore_session_state, validate_workspace_root,
 };
+use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
 use crate::agent::handle::ResolvedAgentInfo;
 use crate::agent::instance::Agent;
 use crate::agent::output::RunOutcome;
@@ -121,6 +122,8 @@ pub struct AgentBuilder {
     pub(super) diagnostic_infra: Option<Arc<DiagnosticInfra>>,
     pub(super) additional_post_checks: Vec<Box<dyn RuntimePostValidateCheck>>,
     pub(super) agent_registry: Option<Arc<RwLock<AgentRegistry>>>,
+    pub(super) child_policy: Option<ChildPolicy>,
+    pub(super) child_result_capacity: Option<usize>,
     pub(super) extensions: Vec<ExtensionInstaller>,
     pub(super) load_runtime_base: bool,
     pub(super) task_group_slug: Option<String>,
@@ -164,6 +167,8 @@ impl AgentBuilder {
             diagnostic_infra: None,
             additional_post_checks: Vec::new(),
             agent_registry: None,
+            child_policy: None,
+            child_result_capacity: None,
             extensions: Vec::new(),
             load_runtime_base: false,
             task_group_slug: None,
@@ -181,8 +186,15 @@ impl AgentBuilder {
     ///   exclusions, [`Self::bash_drain_grace`] is set while `bash` is
     ///   excluded from the final tool set,
     ///   [`Self::event_channel_capacity`] or [`Self::inbound_capacity`]
-    ///   is zero, or [`Self::open_session`] conflicts with
-    ///   [`Self::session`] / an explicit `cache_key`.
+    ///   is zero, [`Self::open_session`] conflicts with
+    ///   [`Self::session`] / an explicit `cache_key`, the coordination
+    ///   envelope is incomplete while [`Self::agent_registry`] is wired
+    ///   ([`Self::child_policy`] and [`Self::child_result_capacity`] are
+    ///   both required — Norn never assumes a default child policy or
+    ///   channel capacity), the envelope is set without
+    ///   [`Self::agent_registry`] (it would be silently ignored), or
+    ///   [`Self::child_result_capacity`] /
+    ///   [`ChildPolicy::inbound_capacity`] is zero.
     /// - [`NornError::Session`] when [`Self::open_session`] fails to
     ///   create, resume, or fork the persisted session.
     pub fn build(mut self) -> Result<Agent, NornError> {
@@ -208,6 +220,74 @@ impl AgentBuilder {
                     .to_string(),
             ));
         }
+        if self.child_result_capacity == Some(0) {
+            return Err(invalid(
+                "child_result_capacity is 0 — the child-result channel needs a \
+                 non-zero capacity"
+                    .to_string(),
+            ));
+        }
+        if let Some(policy) = self.child_policy.as_ref()
+            && policy.inbound_capacity == 0
+        {
+            return Err(invalid(
+                "child_policy.inbound_capacity is 0 — a child's inbound steering \
+                 channel needs a non-zero capacity"
+                    .to_string(),
+            ));
+        }
+        // Coordination envelope: required exactly when the agent-coordination
+        // runtime is wired (`.agent_registry(..)` makes `spawn_agent` / `fork`
+        // functional and creates the child-result channel), and rejected when
+        // it could only be silently ignored. Norn never assumes a default
+        // child policy or channel capacity.
+        let coordination = match (
+            self.agent_registry.take(),
+            self.child_policy.take(),
+            self.child_result_capacity,
+        ) {
+            (Some(agent_registry), Some(child_policy), Some(child_result_capacity)) => Some((
+                agent_registry,
+                CoordinationEnvelope {
+                    child_policy,
+                    child_result_capacity,
+                },
+            )),
+            (Some(_), child_policy, child_result_capacity) => {
+                let mut missing = Vec::new();
+                if child_policy.is_none() {
+                    missing.push(".child_policy(ChildPolicy { .. })");
+                }
+                if child_result_capacity.is_none() {
+                    missing.push(".child_result_capacity(<n>)");
+                }
+                return Err(invalid(format!(
+                    "agent coordination is wired (.agent_registry(..)) but the \
+                     coordination envelope is incomplete — set {} on the builder; \
+                     Norn never assumes a default child policy or channel capacity \
+                     (recommended starting envelope: MessagingScope::SiblingsAndParent, \
+                     remaining_depth 1, max_concurrent_children 32, \
+                     inbound_capacity 32, child_result_capacity 256)",
+                    missing.join(" and "),
+                )));
+            }
+            (None, None, None) => None,
+            (None, child_policy, child_result_capacity) => {
+                let mut orphaned = Vec::new();
+                if child_policy.is_some() {
+                    orphaned.push("child_policy");
+                }
+                if child_result_capacity.is_some() {
+                    orphaned.push("child_result_capacity");
+                }
+                return Err(invalid(format!(
+                    "{} set but agent coordination is not wired — the value would \
+                     be silently ignored; add .agent_registry(..) or remove the \
+                     coordination envelope",
+                    orphaned.join(" and "),
+                )));
+            }
+        };
 
         let working_dir = resolve_working_dir(self.working_dir.take())?;
         let workspace_root = validate_workspace_root(self.workspace_root.take())?;
@@ -437,7 +517,7 @@ impl AgentBuilder {
             None => (None, None),
         };
 
-        if let Some(agent_registry) = self.agent_registry {
+        if let Some((agent_registry, envelope)) = coordination {
             let child_rx = install_agent_infra(
                 &registry,
                 shared.as_ref(),
@@ -446,6 +526,7 @@ impl AgentBuilder {
                     provider: Arc::clone(&self.provider),
                     event_store: Arc::clone(&event_store),
                     id: agent_id,
+                    envelope,
                 },
             );
             // The runner drains child fork/spawn results at iteration
@@ -519,6 +600,21 @@ mod tests {
 
     fn provider_with(events: Vec<Vec<ProviderEvent>>) -> Arc<dyn Provider> {
         Arc::new(MockProvider::new(events))
+    }
+
+    /// The documented-proposal coordination envelope used by tests that
+    /// wire `.agent_registry(..)` — a deliberate test-caller choice, not
+    /// a library default.
+    fn test_child_policy() -> ChildPolicy {
+        use crate::agent::child_policy::{DelegationBudget, MessagingScope};
+        ChildPolicy {
+            messaging: MessagingScope::SiblingsAndParent,
+            delegation: DelegationBudget {
+                remaining_depth: 1,
+                max_concurrent_children: 32,
+            },
+            inbound_capacity: 32,
+        }
     }
 
     struct BlockingStopHook;
@@ -985,6 +1081,141 @@ mod tests {
         ));
     }
 
+    fn invalid_config_reason(result: Result<Agent, NornError>) -> String {
+        match result {
+            Err(NornError::Config(ConfigError::InvalidConfig { reason })) => reason,
+            Err(other) => panic!("expected a typed config error, got: {other}"),
+            Ok(_) => panic!("build must fail"),
+        }
+    }
+
+    /// W3.0: wiring `.agent_registry(..)` without the coordination
+    /// envelope is a build-time error naming every missing setter — Norn
+    /// never assumes a default child policy or channel capacity.
+    #[test]
+    fn agent_registry_without_envelope_fails_build() {
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .agent_registry(AgentRegistry::shared())
+                .build(),
+        );
+        assert!(reason.contains(".child_policy"), "{reason}");
+        assert!(reason.contains(".child_result_capacity"), "{reason}");
+    }
+
+    /// Each missing half of the envelope is named individually.
+    #[test]
+    fn partial_coordination_envelope_names_the_missing_setter() {
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .agent_registry(AgentRegistry::shared())
+                .child_policy(test_child_policy())
+                .build(),
+        );
+        assert!(reason.contains(".child_result_capacity"), "{reason}");
+        assert!(!reason.contains(".child_policy(ChildPolicy"), "{reason}");
+
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .agent_registry(AgentRegistry::shared())
+                .child_result_capacity(256)
+                .build(),
+        );
+        assert!(reason.contains(".child_policy"), "{reason}");
+    }
+
+    /// An envelope without `.agent_registry(..)` would be silently
+    /// ignored — that is rejected, never tolerated.
+    #[test]
+    fn orphaned_coordination_envelope_fails_build() {
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .child_policy(test_child_policy())
+                .build(),
+        );
+        assert!(reason.contains("child_policy"), "{reason}");
+        assert!(reason.contains("agent_registry"), "{reason}");
+
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .child_result_capacity(256)
+                .build(),
+        );
+        assert!(reason.contains("child_result_capacity"), "{reason}");
+        assert!(reason.contains("agent_registry"), "{reason}");
+    }
+
+    /// Zero capacities anywhere in the envelope fail the build — a
+    /// zero-capacity channel cannot exist.
+    #[test]
+    fn zero_coordination_capacities_fail_build() {
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .agent_registry(AgentRegistry::shared())
+                .child_policy(test_child_policy())
+                .child_result_capacity(0)
+                .build(),
+        );
+        assert!(reason.contains("child_result_capacity is 0"), "{reason}");
+
+        let mut policy = test_child_policy();
+        policy.inbound_capacity = 0;
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .agent_registry(AgentRegistry::shared())
+                .child_policy(policy)
+                .child_result_capacity(256)
+                .build(),
+        );
+        assert!(
+            reason.contains("child_policy.inbound_capacity is 0"),
+            "{reason}",
+        );
+    }
+
+    /// W3.0 carriage: the validated envelope is published on the shared
+    /// tool context verbatim, so the spawn/fork paths (W3.2/W3.4) read
+    /// the root's policy and capacities from one place.
+    #[test]
+    fn coordination_envelope_is_published_on_tool_context() {
+        let policy = test_child_policy();
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(policy.clone())
+            .child_result_capacity(17)
+            .build()
+            .expect("build succeeds");
+
+        let envelope = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context")
+            .get_extension::<CoordinationEnvelope>()
+            .expect("CoordinationEnvelope published on the shared context");
+        assert_eq!(envelope.child_policy, policy);
+        assert_eq!(envelope.child_result_capacity, 17);
+        assert!(
+            agent.loop_context.child_result_rx.is_some(),
+            "the child-result receiver is wired alongside the envelope",
+        );
+    }
+
     /// The builder owns the event channel end to end: the raw broadcast
     /// channel must be published on the tool context as
     /// `SharedAgentEventChannel` so fork/spawn children stream their
@@ -1244,6 +1475,8 @@ mod tests {
             .model("test-model")
             .working_dir(std::env::temp_dir())
             .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(256)
             .build()
             .expect("build succeeds");
         let executor: &dyn ToolExecutor = agent.registry.as_ref();
@@ -1407,6 +1640,8 @@ mod tests {
             .model("test-model")
             .working_dir(std::env::temp_dir())
             .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(256)
             .build()
             .expect("build succeeds");
 
@@ -1453,6 +1688,8 @@ mod tests {
             .model("test-model")
             .working_dir(std::env::temp_dir())
             .agent_registry(Arc::clone(&agent_registry))
+            .child_policy(test_child_policy())
+            .child_result_capacity(256)
             .build()
             .expect("build succeeds");
 

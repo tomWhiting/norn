@@ -10,6 +10,8 @@ To parallelise work, spawn several children for independent subtasks. Results ar
 
 Delegation is one layer deep: children — whether spawned or forked — cannot create their own children, so give each child a task it can finish alone and plan any further delegation yourself, one layer at a time.
 
+Children run with default loop limits: a child does not inherit your max_iterations, step_timeout, or linger configuration. Budget the task accordingly — a long-running child is bounded by the defaults, not by your own limits.
+
 If you genuinely need a blocking sub-agent that shares the current conversation context, prefer fork over spawn_agent.
 
 The path parameter is a hierarchical registry path (e.g. "/research/phase-1"), not a file path — it controls where the sub-agent appears in the agent tree. Omit path to auto-generate one under /spawn/.

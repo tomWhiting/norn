@@ -1,29 +1,45 @@
-//! `SignalAgentTool` — steer a child via its inbound channel.
+//! `SignalAgentTool` — steer a child agent through the
+//! [`MessageRouter`](crate::agent::message_router::MessageRouter).
+//!
+//! W3.1 transition note: this tool coexists with the router for exactly
+//! one step of the Wave 3 rollout and is deleted when `send_message`
+//! replaces it (W3.2) — never released alongside it. Delivery already
+//! goes through the router (sequence minting, framed injection,
+//! `agent_message.*` audit events); only route *registration* still
+//! piggybacks on the [`AgentHandles`] the caller holds, because the
+//! spawn/fork wrappers take over registration in W3.2.
 
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
+use uuid::Uuid;
 
-use super::helpers::sender_label;
+use super::helpers::sender_attribution;
+use crate::agent::message_router::RouteError;
 use crate::agent::registry::AgentStatus;
 use crate::error::ToolError;
-use crate::r#loop::inbound::{ChannelMessage, DeliveryMode};
+use crate::r#loop::inbound::{ChannelMessage, MessageKind};
+use crate::provider::agent_event::{
+    AgentEventSender, AgentMessageLifecycle, SharedAgentEventChannel,
+};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
+use crate::tools::agent::append_message_audit;
 use crate::tools::agent::handle::AgentHandles;
 use crate::tools::agent::infra::{ResolvedAgent, infra_from, resolve_agent};
 
 /// Sends a steering signal to a child agent.
 ///
-/// Delivery requires the caller to hold an
-/// [`crate::tools::agent::handle::AgentHandle`] for the recipient: the
-/// signal travels through the child's
-/// [`crate::r#loop::inbound::InboundChannel`] (`Steer` / `FollowUp`) and
-/// drains at the child's next tool boundary. When no handle is held there is
-/// no channel any loop drains, so the tool returns a structured delivery
-/// failure instead of pretending the message was sent.
+/// Delivery travels the recipient's
+/// [`InboundChannel`](crate::r#loop::inbound::InboundChannel) via the
+/// shared [`MessageRouter`](crate::agent::message_router::MessageRouter)
+/// and drains at the recipient's next step boundary, injected as a
+/// harness-framed `<agent_message>` turn. When the recipient has no live
+/// route — it is not a child this agent launched, and nothing else
+/// registered it — the tool returns a structured delivery failure instead
+/// of pretending the message was sent.
 pub struct SignalAgentTool;
 
 impl SignalAgentTool {
@@ -81,7 +97,7 @@ impl Tool for SignalAgentTool {
                 },
                 "trigger_turn": {
                     "type": "boolean",
-                    "description": "When true, the recipient processes this message at its next tool boundary rather than waiting for its current step to finish. Defaults to false."
+                    "description": "When true, the recipient processes this message at its next tool boundary (steer) rather than waiting for its current step to finish (update). Defaults to false."
                 }
             }
         })
@@ -109,11 +125,18 @@ impl Tool for SignalAgentTool {
         // tombstone) gets "already completed at <ts>", never the dishonest
         // "not registered" — that wording is reserved for identifiers that
         // never existed.
-        let (to_id, finished) = match resolve_agent(&infra.registry, &args.to)? {
-            ResolvedAgent::Live(entry) if !entry.status.is_terminal() => (entry.id, None),
-            ResolvedAgent::Live(entry) => (entry.id, Some((entry.status, entry.completed_at))),
+        let (to_id, to_label, finished) = match resolve_agent(&infra.registry, &args.to)? {
+            ResolvedAgent::Live(entry) if !entry.status.is_terminal() => {
+                (entry.id, entry.path, None)
+            }
+            ResolvedAgent::Live(entry) => (
+                entry.id,
+                entry.path,
+                Some((entry.status, entry.completed_at)),
+            ),
             ResolvedAgent::Reclaimed(tombstone) => (
                 tombstone.id,
+                tombstone.path,
                 Some((tombstone.status, Some(tombstone.completed_at))),
             ),
         };
@@ -145,75 +168,115 @@ impl Tool for SignalAgentTool {
             ));
         }
         let trigger_turn = args.trigger_turn.unwrap_or(false);
+        let kind = if trigger_turn {
+            MessageKind::Steer
+        } else {
+            MessageKind::Update
+        };
 
-        // When the parent holds an AgentHandle for the recipient, route
-        // through the child's InboundChannel. This is the primary path for
-        // parent → child steering.
+        // W3.1 transition: route registration still rides on the handle
+        // this agent holds for children it launched. Registration is
+        // idempotent and preserves the recipient's sequence counter; the
+        // spawn/fork wrappers own it from W3.2 on.
         if let Some(handles) = ctx.get_extension::<AgentHandles>()
             && let Some(inbound_tx) = handles.inbound_tx(to_id)
         {
-            let delivery = if trigger_turn {
-                DeliveryMode::Steer
-            } else {
-                DeliveryMode::FollowUp
-            };
-            let body = match &args.content {
-                serde_json::Value::String(s) => s.clone(),
-                other => serde_json::to_string(other).map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("signal_agent: could not serialize content: {e}"),
-                })?,
-            };
-            let author = sender_label(&infra.registry.read(), infra.agent_id);
-            let msg = ChannelMessage {
-                author,
-                content: body,
-                delivery,
-                timestamp: Utc::now(),
-            };
-            inbound_tx
-                .send(msg)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("inbound send failed: {e}"),
-                })?;
-
-            let delivery_label = match delivery {
-                DeliveryMode::Steer => "steer",
-                DeliveryMode::FollowUp => "follow_up",
-            };
-            let payload = serde_json::json!({
-                "to": to_id.to_string(),
-                "delivery": delivery_label,
-                "routed_via": "inbound_channel",
-                "trigger_turn": trigger_turn,
-            });
-            return Ok(ToolOutput::success(payload));
+            infra.router.register(to_id, inbound_tx);
         }
 
-        // H15: no AgentHandle means there is no inbound channel to deliver
-        // through. The shared mailbox is NOT a delivery path — no agent loop
-        // drains it — so queueing there would report success for a message
-        // nobody will ever read. Fail honestly with the reason so the model
-        // can pick a reachable recipient or restructure its coordination.
-        let payload = serde_json::json!({
-            "delivered": false,
-            "to": to_id.to_string(),
-        });
-        Ok(ToolOutput::failure_with_content(
-            payload,
-            crate::tool::failure::ToolErrorPayload::new(
-                crate::tool::failure::ToolErrorKind::NotFound,
-                format!(
-                    "no delivery channel to recipient: signal_agent can only deliver to \
-                     agents whose handle this agent holds — children it spawned or forked \
-                     itself. '{}' is registered but is not a direct child of this agent, \
-                     so there is no inbound channel to deliver through. Signal your own \
-                     children directly, or route the message via the recipient's parent.",
-                    args.to,
-                ),
-            )
-            .with_detail(serde_json::json!({ "to": args.to })),
-        ))
+        let body = match &args.content {
+            serde_json::Value::String(s) => s.clone(),
+            other => serde_json::to_string(other).map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("signal_agent: could not serialize content: {e}"),
+            })?,
+        };
+        let (from_label, from_role) =
+            sender_attribution(&infra.registry.read(), infra.agent_id, infra.parent_id);
+        let message_id = Uuid::new_v4();
+        let sent_at = Utc::now();
+        let msg = ChannelMessage {
+            id: message_id,
+            sender_id: infra.agent_id,
+            from: from_label.clone(),
+            role: from_role,
+            to_id,
+            content: body.clone(),
+            kind,
+            seq: None,
+            timestamp: sent_at,
+        };
+
+        match infra.router.deliver(to_id, msg).await {
+            Ok(seq) => {
+                // Audit: the router accepted the send. Store carrier on
+                // the sender's own store, live carrier on the shared
+                // broadcast channel when one is installed — mirroring the
+                // SubagentLifecycle dual-carrier contract.
+                let sent = AgentMessageLifecycle::Sent {
+                    message_id,
+                    from_id: infra.agent_id,
+                    from: from_label.clone(),
+                    to_id,
+                    to: to_label,
+                    kind,
+                    seq,
+                    content: body,
+                    sent_at,
+                };
+                append_message_audit(&infra.event_store, &sent);
+                if let Some(channel) = ctx.get_extension::<SharedAgentEventChannel>() {
+                    AgentEventSender::new(channel.0.clone(), infra.agent_id, from_label)
+                        .send_message(sent);
+                }
+                Ok(ToolOutput::success(serde_json::json!({
+                    "delivered": true,
+                    "to": to_id.to_string(),
+                    "kind": kind.as_str(),
+                    "seq": seq,
+                    "message_id": message_id.to_string(),
+                    "routed_via": "message_router",
+                    "trigger_turn": trigger_turn,
+                })))
+            }
+            // H15: a send the router did not accept is reported as exactly
+            // that — no Sent audit event is emitted (nothing was accepted)
+            // and nothing is queued where no loop drains.
+            Err(RouteError::NotRouted { .. }) => Ok(ToolOutput::failure_with_content(
+                serde_json::json!({
+                    "delivered": false,
+                    "to": to_id.to_string(),
+                }),
+                crate::tool::failure::ToolErrorPayload::new(
+                    crate::tool::failure::ToolErrorKind::NotFound,
+                    format!(
+                        "no delivery route to recipient: '{}' is registered but has no live \
+                         inbound route in the message router. signal_agent can only deliver \
+                         to agents whose handle this agent holds — children it spawned or \
+                         forked itself. Signal your own children directly, or route the \
+                         message via the recipient's parent.",
+                        args.to,
+                    ),
+                )
+                .with_detail(serde_json::json!({ "to": args.to })),
+            )),
+            Err(e @ (RouteError::ChannelClosed { .. } | RouteError::ChannelFull { .. })) => {
+                Ok(ToolOutput::failure_with_content(
+                    serde_json::json!({
+                        "delivered": false,
+                        "to": to_id.to_string(),
+                    }),
+                    crate::tool::failure::ToolErrorPayload::new(
+                        crate::tool::failure::ToolErrorKind::ExecutionFailed,
+                        format!(
+                            "delivery to '{}' failed: {e}. The recipient's loop ended between \
+                             resolution and delivery — read its result instead of signalling it.",
+                            args.to,
+                        ),
+                    )
+                    .with_detail(serde_json::json!({ "to": args.to })),
+                ))
+            }
+        }
     }
 }
 
@@ -233,17 +296,20 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
+    use crate::provider::agent_event::{AGENT_MESSAGE_SENT_EVENT_TYPE, AgentEvent, AgentEventKind};
+    use crate::session::events::SessionEvent;
     use crate::tools::agent::coord::test_support::{
         build_infra, envelope_for, register_agent, synthetic_handle,
     };
 
     /// R4: when the parent holds an `AgentHandle` for the recipient, the
-    /// signal is delivered as a Steer `ChannelMessage` via the child's
-    /// `InboundChannel` rather than the mailbox.
+    /// signal is delivered as a Steer `ChannelMessage` via the router onto
+    /// the child's `InboundChannel`, with harness-resolved attribution and
+    /// a router-minted sequence number.
     #[tokio::test]
-    async fn signal_agent_routes_steer_via_inbound_channel() {
+    async fn signal_agent_routes_steer_via_router() {
         let sender = Uuid::new_v4();
-        let (infra, registry, mailbox) = build_infra(sender);
+        let (infra, registry, router) = build_infra(sender);
         let recipient = register_agent(&registry, "/parent/child", Some(sender));
 
         let handles = Arc::new(AgentHandles::new());
@@ -265,26 +331,34 @@ mod tests {
         );
         let out = tool.execute(&envelope, &ctx).await.expect("send");
         assert!(!out.is_error(), "{:?}", out.content);
-        assert_eq!(out.content["routed_via"], "inbound_channel");
-        assert_eq!(out.content["delivery"], "steer");
+        assert_eq!(out.content["routed_via"], "message_router");
+        assert_eq!(out.content["kind"], "steer");
+        assert_eq!(out.content["seq"], 1);
+        assert!(router.is_routed(recipient), "route registered from handle");
 
         let drained = inbound_rx.drain();
         assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0].delivery, DeliveryMode::Steer);
+        assert_eq!(drained[0].kind, MessageKind::Steer);
+        assert_eq!(drained[0].seq, Some(1), "router-minted sequence");
+        assert_eq!(drained[0].sender_id, sender, "ground-truth sender id");
+        assert_eq!(drained[0].to_id, recipient);
+        assert_eq!(
+            drained[0].from, "root",
+            "unregistered parent-less sender attributes as root",
+        );
         assert!(
             drained[0].content.contains("redirect"),
             "serialized json content: {}",
             drained[0].content
         );
-        assert!(mailbox.recv(recipient).is_empty(), "no mailbox traffic");
     }
 
-    /// R4: `trigger_turn: false` maps to a `FollowUp` message — buffered
+    /// R4: `trigger_turn: false` maps to an Update message — buffered
     /// until the child would otherwise stop.
     #[tokio::test]
-    async fn signal_agent_routes_follow_up_via_inbound_channel() {
+    async fn signal_agent_routes_update_via_router() {
         let sender = Uuid::new_v4();
-        let (infra, registry, _mailbox) = build_infra(sender);
+        let (infra, registry, _router) = build_infra(sender);
         let recipient = register_agent(&registry, "/parent/child", Some(sender));
 
         let handles = Arc::new(AgentHandles::new());
@@ -302,22 +376,105 @@ mod tests {
         );
         let out = tool.execute(&envelope, &ctx).await.expect("send");
         assert!(!out.is_error());
-        assert_eq!(out.content["delivery"], "follow_up");
+        assert_eq!(out.content["kind"], "update");
 
         let drained = inbound_rx.drain();
         assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0].delivery, DeliveryMode::FollowUp);
+        assert_eq!(drained[0].kind, MessageKind::Update);
         assert_eq!(drained[0].content, "fyi");
     }
 
-    /// H15: a recipient the sender holds no `AgentHandle` for is
-    /// unreachable. The tool must report a structured delivery failure —
-    /// never a fake success into a queue nothing drains.
+    /// Audit: every accepted send appends exactly one
+    /// `agent_message.sent` Custom event to the sender's store with the
+    /// verbatim content, and broadcasts a sender-tagged live event when a
+    /// channel is installed. A registered sender attributes by path and
+    /// role.
+    #[tokio::test]
+    async fn signal_agent_emits_sent_audit_on_both_carriers() {
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
+        // Re-key the infra to a *registered* sender so attribution uses
+        // registry ground truth.
+        let sender = register_agent(&registry, "/orchestrator", None);
+        let recipient = register_agent(&registry, "/orchestrator/worker", Some(sender));
+        let sender_store = Arc::clone(&infra.event_store);
+        let infra = Arc::new(crate::tools::agent::infra::AgentToolInfra {
+            registry: Arc::clone(&infra.registry),
+            router: Arc::clone(&infra.router),
+            provider: Arc::clone(&infra.provider),
+            event_store: Arc::clone(&sender_store),
+            agent_id: sender,
+            parent_id: None,
+            tool_registry: None,
+        });
+
+        let handles = Arc::new(AgentHandles::new());
+        let (handle, _status_tx, mut inbound_rx) = synthetic_handle(recipient);
+        handles.insert(handle);
+
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(16);
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+        ctx.insert_extension(handles);
+        ctx.insert_extension(Arc::new(SharedAgentEventChannel(tx)));
+
+        let tool = SignalAgentTool::new();
+        let envelope = envelope_for(
+            "signal_agent",
+            json!({"to": "/orchestrator/worker", "content": "report <now> & \"fully\""}),
+        );
+        let out = tool.execute(&envelope, &ctx).await.expect("send");
+        assert!(!out.is_error(), "{:?}", out.content);
+
+        // Store carrier: one Sent event, verbatim (unescaped) content.
+        let events = sender_store.events();
+        let sent_events: Vec<_> = events
+            .iter()
+            .filter_map(|e| match e {
+                SessionEvent::Custom {
+                    event_type, data, ..
+                } if event_type == AGENT_MESSAGE_SENT_EVENT_TYPE => Some(data),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(sent_events.len(), 1, "exactly one Sent per accepted send");
+        let data = sent_events[0];
+        assert_eq!(data["phase"], "sent");
+        assert_eq!(data["from"], "/orchestrator");
+        assert_eq!(data["from_id"], sender.to_string());
+        assert_eq!(data["to"], "/orchestrator/worker");
+        assert_eq!(data["to_id"], recipient.to_string());
+        assert_eq!(data["kind"], "update");
+        assert_eq!(data["seq"], 1);
+        assert_eq!(
+            data["content"], "report <now> & \"fully\"",
+            "audit stores the unescaped content verbatim",
+        );
+
+        // Live carrier: sender-tagged Message event.
+        let live = rx.try_recv().expect("live Sent event broadcast");
+        assert_eq!(live.agent_id, sender);
+        assert!(matches!(
+            live.event,
+            AgentEventKind::Message(AgentMessageLifecycle::Sent { .. })
+        ));
+
+        // The delivered message attributes the registered sender's path
+        // and role.
+        let drained = inbound_rx.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].from, "/orchestrator");
+        assert_eq!(drained[0].role.as_deref(), Some("worker"));
+    }
+
+    /// H15: a recipient with no live route is unreachable. The tool must
+    /// report a structured delivery failure — never a fake success into a
+    /// queue nothing drains — and emit no Sent audit event.
     #[tokio::test]
     async fn signal_agent_reports_delivery_failure_for_non_child() {
         let sender = Uuid::new_v4();
-        let (infra, registry, mailbox) = build_infra(sender);
+        let (infra, registry, router) = build_infra(sender);
         let recipient = register_agent(&registry, "/peer", None);
+        let sender_store = Arc::clone(&infra.event_store);
 
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
@@ -341,22 +498,23 @@ mod tests {
         assert!(
             out.content["error"]["message"]
                 .as_str()
-                .is_some_and(|r| r.contains("inbound channel")),
+                .is_some_and(|r| r.contains("inbound route")),
             "the failure explains why delivery is impossible: {:?}",
             out.content,
         );
+        assert!(!router.is_routed(recipient), "no route was fabricated");
         assert!(
-            mailbox.recv(recipient).is_empty(),
-            "nothing may be queued into the undrained mailbox",
+            sender_store.events().is_empty(),
+            "a rejected send must not leave a Sent audit event",
         );
     }
 
     /// H15: `AgentHandles` present but the recipient is not tracked —
-    /// same structured delivery failure, no mailbox side effects.
+    /// same structured delivery failure.
     #[tokio::test]
     async fn signal_agent_reports_delivery_failure_when_handle_absent() {
         let sender = Uuid::new_v4();
-        let (infra, registry, mailbox) = build_infra(sender);
+        let (infra, registry, router) = build_infra(sender);
         let recipient = register_agent(&registry, "/peer", None);
 
         let handles = Arc::new(AgentHandles::new());
@@ -372,15 +530,49 @@ mod tests {
         let out = tool.execute(&envelope, &ctx).await.expect("executes");
         assert!(out.is_error());
         assert_eq!(out.content["delivered"], false);
+        assert!(!router.is_routed(recipient));
+    }
+
+    /// A recipient whose loop ended between resolution and delivery (its
+    /// inbound receiver is gone) fails honestly as a closed channel, with
+    /// no Sent audit event.
+    #[tokio::test]
+    async fn signal_agent_reports_closed_channel_honestly() {
+        let sender = Uuid::new_v4();
+        let (infra, registry, router) = build_infra(sender);
+        let recipient = register_agent(&registry, "/parent/child", Some(sender));
+        let sender_store = Arc::clone(&infra.event_store);
+
+        // Route registered, but the receiver half is already dropped.
+        let (tx, rx) = crate::r#loop::inbound::inbound_channel(4);
+        router.register(recipient, tx);
+        drop(rx);
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+
+        let tool = SignalAgentTool::new();
+        let envelope = envelope_for(
+            "signal_agent",
+            json!({"to": "/parent/child", "content": "hi"}),
+        );
+        let out = tool.execute(&envelope, &ctx).await.expect("executes");
+        assert!(out.is_error());
+        assert_eq!(out.content["delivered"], false);
+        let message = out.content["error"]["message"].as_str().expect("message");
         assert!(
-            mailbox.recv(recipient).is_empty(),
-            "nothing may be queued into the undrained mailbox",
+            message.contains("loop ended"),
+            "closed-channel failure names the cause: {message}",
+        );
+        assert!(
+            sender_store.events().is_empty(),
+            "no Sent event for a send the channel rejected",
         );
     }
 
     #[tokio::test]
     async fn signal_agent_rejects_unknown_path() {
-        let (infra, _registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, _registry, _router) = build_infra(Uuid::new_v4());
 
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
@@ -398,7 +590,7 @@ mod tests {
     #[tokio::test]
     async fn signal_agent_reports_finished_recipient_honestly() {
         let sender = Uuid::new_v4();
-        let (infra, registry, _mailbox) = build_infra(sender);
+        let (infra, registry, _router) = build_infra(sender);
         let recipient = register_agent(&registry, "/parent/done-child", Some(sender));
         registry
             .write()

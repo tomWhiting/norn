@@ -62,6 +62,18 @@ pub fn handle_agent_event(
             handle_child_event(state, agent_event.agent_id, &agent_event.agent_role, event);
         }
         AgentEventKind::Subagent(lifecycle) => handle_subagent_lifecycle(state, &lifecycle),
+        // Inter-agent message events (W3.1) carry no TUI surface yet —
+        // the Wave 3 surfaces step (W3.7) renders message edges in the
+        // agents tree. The audit trail lives in the session stores; the
+        // live event is traced so it is observable, not dropped.
+        AgentEventKind::Message(lifecycle) => {
+            tracing::debug!(
+                agent_id = %agent_event.agent_id,
+                message_id = %lifecycle.message_id(),
+                event_type = lifecycle.session_event_type(),
+                "agent message event (TUI surface lands in W3.7)",
+            );
+        }
     }
     Ok(())
 }

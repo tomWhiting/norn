@@ -1,12 +1,12 @@
-//! Internal helpers for the agent loop: initial message building, inbound
-//! message injection, schema-flow helpers, iteration-signal handling, and
-//! event-store append+notify.
+//! Internal helpers for the agent loop: initial message building,
+//! schema-flow helpers, iteration-signal handling, and event-store
+//! append+notify.
 //!
 //! Tool execution pipeline functions live in the sibling
 //! [`super::tool_dispatch`] module and are re-exported here so that
-//! `runner.rs` keeps its existing single-import block.
+//! `runner.rs` keeps its existing single-import block. Inbound-message
+//! and child-result injection live in [`super::delivery`].
 
-use std::fmt::Write as _;
 use std::sync::Arc;
 
 use serde_json::Value;
@@ -18,7 +18,6 @@ use crate::r#loop::commands::{PreprocessResult, preprocess_input};
 use crate::r#loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::r#loop::context::construct_prompt;
 use crate::r#loop::conversation_state::{ResponseThreadAnchor, latest_response_anchor};
-use crate::r#loop::inbound::{ChannelMessage, DeliveryMode, InboundChannel};
 use crate::r#loop::iteration::{IterationSignal, format_handoff_message};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::notifications::ToolBatchNotificationHook;
@@ -172,67 +171,6 @@ pub(super) async fn append_and_notify(
         reg.run_on_event(&event).await;
     }
     Ok(id)
-}
-
-/// Drain the inbound channel (if present) and partition messages by
-/// delivery mode. Returns `(steer, follow_up)`.
-pub(super) fn drain_and_partition(
-    inbound: Option<&mut InboundChannel>,
-) -> (Vec<ChannelMessage>, Vec<ChannelMessage>) {
-    let Some(ch) = inbound else {
-        return (Vec::new(), Vec::new());
-    };
-    let drained = ch.drain();
-    let mut steer = Vec::new();
-    let mut follow_up = Vec::new();
-    for msg in drained {
-        match msg.delivery {
-            DeliveryMode::Steer => steer.push(msg),
-            DeliveryMode::FollowUp => follow_up.push(msg),
-        }
-    }
-    (steer, follow_up)
-}
-
-/// Inject inbound messages as user-role messages into both the event store
-/// and the local conversation. Messages are sorted by timestamp ascending
-/// before injection so multiple messages drained together appear in order.
-///
-/// `label` is the attribution prefix (e.g. `"Inbound"` for steer messages,
-/// `"Follow-up"` for buffered follow-ups).
-pub(super) async fn inject_inbound_messages(
-    store: &EventStore,
-    messages: &mut Vec<Message>,
-    mut msgs: Vec<ChannelMessage>,
-    label: &str,
-    hooks: Option<&HookRegistry>,
-) -> Result<(), SessionError> {
-    if msgs.is_empty() {
-        return Ok(());
-    }
-    msgs.sort_by_key(|m| m.timestamp);
-    for msg in msgs {
-        let formatted = format!("[{label} from {}]: {}", msg.author, msg.content);
-        append_and_notify(
-            store,
-            SessionEvent::UserMessage {
-                base: EventBase::new(store.last_event_id()),
-                content: formatted.clone(),
-            },
-            hooks,
-        )
-        .await?;
-        messages.push(Message {
-            role: MessageRole::User,
-            content: Some(formatted),
-            thinking: String::new(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-            tool_name: None,
-            tool_call_kind: None,
-        });
-    }
-    Ok(())
 }
 
 /// Append an "accepted" tool result for the schema tool call so the
@@ -473,84 +411,6 @@ pub(super) async fn execute_tool_batch(
     let (before, after) = partition_injections_by_timing(batch_injections);
     apply_rule_injections(request.loop_context, after, request.messages, request.store).await?;
     Ok(before)
-}
-
-/// Drain the inbound channel, then inject steer messages and any buffered
-/// follow-ups into the conversation. Returns `true` if any messages were
-/// injected (indicating the loop should continue rather than return).
-pub(super) async fn flush_inbound_messages(
-    store: &EventStore,
-    messages: &mut Vec<Message>,
-    inbound: Option<&mut InboundChannel>,
-    follow_up_buffer: &mut Vec<ChannelMessage>,
-    hooks: Option<&HookRegistry>,
-) -> Result<bool, SessionError> {
-    let (steer, follow_up) = drain_and_partition(inbound);
-    follow_up_buffer.extend(follow_up);
-
-    if steer.is_empty() && follow_up_buffer.is_empty() {
-        return Ok(false);
-    }
-
-    inject_inbound_messages(store, messages, steer, "Inbound", hooks).await?;
-    let buffered = std::mem::take(follow_up_buffer);
-    inject_inbound_messages(store, messages, buffered, "Follow-up", hooks).await?;
-    Ok(true)
-}
-
-/// Drain pending child-agent results and inject them into the running
-/// conversation. Returns `true` if any results were injected.
-///
-/// Each drained batch is formatted into a single attributed block,
-/// persisted as one `UserMessage` event, and pushed as one user-role
-/// message — keeping the persisted event stream and the live conversation
-/// in 1:1 correspondence (a requirement of in-flight compaction mapping).
-pub(super) async fn drain_child_results(
-    store: &EventStore,
-    messages: &mut Vec<Message>,
-    rx: &mut tokio::sync::mpsc::Receiver<crate::agent::result_channel::ChildAgentResult>,
-    hooks: Option<&HookRegistry>,
-) -> Result<bool, SessionError> {
-    let mut batch = Vec::new();
-    while let Ok(r) = rx.try_recv() {
-        batch.push(r);
-    }
-    if batch.is_empty() {
-        return Ok(false);
-    }
-
-    let formatted = if batch.len() == 1 {
-        format!(
-            "[Agent result from {}]: {}",
-            batch[0].agent_role, batch[0].formatted_message,
-        )
-    } else {
-        let mut out = format!("Results from {} completed agents:\n\n", batch.len());
-        for r in &batch {
-            let _ = write!(out, "--- {} ---\n{}\n\n", r.agent_role, r.formatted_message);
-        }
-        out
-    };
-
-    append_and_notify(
-        store,
-        SessionEvent::UserMessage {
-            base: EventBase::new(store.last_event_id()),
-            content: formatted.clone(),
-        },
-        hooks,
-    )
-    .await?;
-    messages.push(Message {
-        role: MessageRole::User,
-        content: Some(formatted),
-        thinking: String::new(),
-        tool_calls: Vec::new(),
-        tool_call_id: None,
-        tool_name: None,
-        tool_call_kind: None,
-    });
-    Ok(true)
 }
 
 /// Ensure every tool call in the last `AssistantMessage` has a matching

@@ -518,13 +518,6 @@ pub enum AgentError {
         path: String,
     },
 
-    /// The agent's mailbox channel was closed.
-    #[error("mailbox closed for agent: {path}")]
-    MailboxClosed {
-        /// Agent path whose mailbox is closed.
-        path: String,
-    },
-
     /// An invalid agent path was provided.
     #[error("invalid agent path: {path}")]
     PathInvalid {

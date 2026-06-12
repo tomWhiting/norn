@@ -17,6 +17,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::agent::builder::AgentBuilder;
+use crate::agent::child_policy::ChildPolicy;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::session_spec::{SessionRequest, SessionSpec};
 use crate::agent_loop::config::{AgentLoopConfig, ConversationStateMode};
@@ -421,9 +422,69 @@ impl AgentBuilder {
     /// `signal_agent` / `close_agent` resolve their runtime instead of
     /// erroring with a typed `MissingExtension` error naming
     /// `AgentToolInfra`.
+    ///
+    /// Wiring this makes the coordination envelope mandatory:
+    /// [`Self::child_policy`] and [`Self::child_result_capacity`] must
+    /// both be set, otherwise [`Self::build`] fails with a typed
+    /// configuration error — Norn never assumes a default child policy
+    /// or channel capacity.
     #[must_use]
     pub fn agent_registry(mut self, registry: Arc<RwLock<AgentRegistry>>) -> Self {
         self.agent_registry = Some(registry);
+        self
+    }
+
+    /// Set the root coordination envelope's [`ChildPolicy`] — the policy
+    /// this agent stamps on the children it spawns or forks (messaging
+    /// scope, delegation budget, child inbound-channel capacity).
+    ///
+    /// **Required** whenever [`Self::agent_registry`] is wired; building
+    /// without it is a typed configuration error. Conversely, setting it
+    /// without [`Self::agent_registry`] also fails the build — it would
+    /// otherwise be silently ignored. There is no library default.
+    ///
+    /// Recommended starting envelope (a documented proposal matching
+    /// today's production-proven behaviour, never assumed):
+    ///
+    /// ```
+    /// use norn::agent::child_policy::{ChildPolicy, DelegationBudget, MessagingScope};
+    ///
+    /// let policy = ChildPolicy {
+    ///     messaging: MessagingScope::SiblingsAndParent,
+    ///     delegation: DelegationBudget {
+    ///         remaining_depth: 1,
+    ///         max_concurrent_children: 32,
+    ///     },
+    ///     inbound_capacity: 32,
+    /// };
+    /// # let _ = policy;
+    /// ```
+    ///
+    /// `inbound_capacity` must be non-zero; zero fails the build. In
+    /// W3.0 the policy is carried (published on the shared tool context
+    /// as part of the
+    /// [`CoordinationEnvelope`](crate::agent::child_policy::CoordinationEnvelope))
+    /// and validated; spawn/fork enforcement lands in W3.2/W3.4.
+    #[must_use]
+    pub fn child_policy(mut self, policy: ChildPolicy) -> Self {
+        self.child_policy = Some(policy);
+        self
+    }
+
+    /// Set the bounded capacity of this agent's child-result channel —
+    /// the channel through which spawned and forked children deliver
+    /// their results to this agent's loop.
+    ///
+    /// **Required** whenever [`Self::agent_registry`] is wired; building
+    /// without it is a typed configuration error, as is setting it
+    /// without [`Self::agent_registry`] (it would be silently ignored).
+    /// Zero fails the build. There is no library default; the documented
+    /// proposal is 256 — generous enough that child completion never
+    /// blocks under normal operation, while a full channel still signals
+    /// runaway spawning.
+    #[must_use]
+    pub fn child_result_capacity(mut self, capacity: usize) -> Self {
+        self.child_result_capacity = Some(capacity);
         self
     }
 

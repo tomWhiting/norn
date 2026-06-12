@@ -98,7 +98,7 @@ pub(super) fn build_fork_context(
     let child_log_store = Arc::clone(&child_store);
     let child_infra = AgentToolInfra {
         registry: Arc::clone(&parent_infra.registry),
-        mailbox: Arc::clone(&parent_infra.mailbox),
+        router: Arc::clone(&parent_infra.router),
         provider: Arc::clone(&parent_infra.provider),
         event_store: child_store,
         agent_id: child_id,
@@ -678,13 +678,13 @@ mod tests {
     /// context, so a missing forward disables enforcement entirely.
     #[tokio::test]
     async fn fork_context_forwards_permission_policy_and_effect_index() -> Result<(), String> {
-        use crate::agent::mailbox::Mailbox;
+        use crate::agent::message_router::MessageRouter;
         use crate::provider::mock::MockProvider;
 
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -730,14 +730,14 @@ mod tests {
     fn fork_context_forwards_workspace_root_and_snapshots_working_dir() -> Result<(), String> {
         use std::path::{Path, PathBuf};
 
-        use crate::agent::mailbox::Mailbox;
+        use crate::agent::message_router::MessageRouter;
         use crate::provider::mock::MockProvider;
         use crate::tool::context::SharedWorkingDir;
 
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -785,14 +785,14 @@ mod tests {
     /// own spawn/fork sites (grandchildren) can reach it.
     #[test]
     fn fork_context_forwards_hook_registry_extension() -> Result<(), String> {
-        use crate::agent::mailbox::Mailbox;
+        use crate::agent::message_router::MessageRouter;
         use crate::integration::hooks::HookRegistry;
         use crate::provider::mock::MockProvider;
 
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),

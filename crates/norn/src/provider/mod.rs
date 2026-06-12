@@ -1,7 +1,8 @@
 //! LLM provider abstraction and implementations.
 
 pub use self::agent_event::{
-    AgentEvent, AgentEventKind, AgentEventSender, SUBAGENT_COMPLETED_EVENT_TYPE,
+    AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AGENT_MESSAGE_SENT_EVENT_TYPE, AgentEvent, AgentEventKind,
+    AgentEventSender, AgentMessageLifecycle, SUBAGENT_COMPLETED_EVENT_TYPE,
     SUBAGENT_STARTED_EVENT_TYPE, SharedAgentEventChannel, SubagentDescriptor, SubagentKind,
     SubagentLifecycle,
 };

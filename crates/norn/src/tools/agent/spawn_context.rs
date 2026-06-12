@@ -31,8 +31,8 @@ use crate::tools::task::SharedTaskStore;
 /// infrastructure — [`SharedTaskStore`], [`SharedToolCatalog`],
 /// [`DiagnosticCollector`] — is forwarded from the parent context so tasks
 /// and tool discovery stay global across the agent tree. The
-/// [`crate::agent::mailbox::Mailbox`] is shared by design, so a child's
-/// send to its `parent_id` routes back to the same mailbox.
+/// [`crate::agent::message_router::MessageRouter`] is shared by design, so
+/// a child's send to its `parent_id` routes through the same router.
 ///
 /// The consent-boundary [`PermissionPolicy`] and the scheduling
 /// [`ToolEffectIndex`] are likewise forwarded: the child's agent loop
@@ -72,7 +72,7 @@ pub(super) fn build_child_context(
     let child_log_store = Arc::clone(&child_store);
     let child_infra = AgentToolInfra {
         registry: Arc::clone(&parent_infra.registry),
-        mailbox: Arc::clone(&parent_infra.mailbox),
+        router: Arc::clone(&parent_infra.router),
         provider: Arc::clone(&parent_infra.provider),
         event_store: child_store,
         agent_id: child_id,
@@ -179,7 +179,7 @@ pub(super) fn wire_child_action_log(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::agent::mailbox::Mailbox;
+    use crate::agent::message_router::MessageRouter;
     use crate::agent::registry::AgentRegistry;
     use crate::provider::mock::MockProvider;
     use crate::provider::traits::Provider;
@@ -189,7 +189,7 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         AgentToolInfra {
             registry: AgentRegistry::shared(),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id,

@@ -348,7 +348,7 @@ mod tests {
     use uuid::Uuid;
 
     use super::*;
-    use crate::agent::mailbox::Mailbox;
+    use crate::agent::message_router::MessageRouter;
     use crate::provider::mock::MockProvider;
     use crate::provider::traits::Provider;
     use crate::session::store::EventStore;
@@ -369,7 +369,7 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![]));
         Arc::new(AgentToolInfra {
             registry: Arc::clone(registry),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id,
@@ -460,7 +460,7 @@ mod tests {
 
     #[tokio::test]
     async fn list_shows_self_and_live_children_with_honest_fields() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let caller = infra.agent_id;
         let child = register_agent(&registry, "/lead/worker", Some(caller));
 
@@ -505,7 +505,7 @@ mod tests {
     /// registry does not retain after reclamation.
     #[tokio::test]
     async fn list_includes_reclaimed_children_marked_distinctly() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let caller = infra.agent_id;
         let live = register_agent(&registry, "/c/live", Some(caller));
         let done = register_agent(&registry, "/c/done", Some(caller));
@@ -541,7 +541,7 @@ mod tests {
     /// stamped, `reclaimed: false`.
     #[tokio::test]
     async fn list_shows_terminal_unreclaimed_child_with_full_record() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let caller = infra.agent_id;
         let failed = register_agent(&registry, "/c/failed", Some(caller));
         registry.write().mark_failed(failed).expect("fail");
@@ -595,7 +595,7 @@ mod tests {
     /// the caller having an entry of its own.
     #[tokio::test]
     async fn list_works_when_caller_has_no_registry_entry() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let caller = infra.agent_id;
         let child = register_agent(&registry, "/spawn/kid", Some(caller));
 
@@ -610,7 +610,7 @@ mod tests {
 
     #[tokio::test]
     async fn get_resolves_live_child_by_path_and_uuid() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let caller = infra.agent_id;
         let child = register_agent(&registry, "/me/kid", Some(caller));
 
@@ -637,7 +637,7 @@ mod tests {
     /// because terminal entries free their live path index slot).
     #[tokio::test]
     async fn get_reports_terminal_unreclaimed_child() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let caller = infra.agent_id;
         let child = register_agent(&registry, "/me/done", Some(caller));
         registry.write().mark_failed(child).expect("fail");
@@ -666,7 +666,7 @@ mod tests {
     /// terminal status and timestamp, never "not found".
     #[tokio::test]
     async fn get_reports_reclaimed_child_completion_record() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let caller = infra.agent_id;
         let child = register_agent(&registry, "/me/gone", Some(caller));
         registry.write().mark_completed(child).expect("complete");
@@ -694,7 +694,7 @@ mod tests {
     /// UUID and unknown path both produce the typed soft failure.
     #[tokio::test]
     async fn get_never_existed_is_typed_not_found() {
-        let (infra, _registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, _registry, _router) = build_infra(Uuid::new_v4());
         let ctx = ctx_for(infra);
         let tool = AgentsTool::new();
         for identifier in [Uuid::new_v4().to_string(), "/never/existed".to_string()] {
@@ -787,7 +787,7 @@ mod tests {
 
     #[tokio::test]
     async fn unknown_action_is_typed_invalid_arguments() {
-        let (infra, _registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, _registry, _router) = build_infra(Uuid::new_v4());
         let ctx = ctx_for(infra);
         let out = execute(&AgentsTool::new(), json!({"action": "explode"}), &ctx).await;
         assert!(out.is_error());

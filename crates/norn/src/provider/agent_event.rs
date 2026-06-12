@@ -50,11 +50,24 @@ use uuid::Uuid;
 use super::events::ProviderEvent;
 use super::usage::Usage;
 use crate::agent::output::AgentStopReason;
+use crate::r#loop::inbound::MessageKind;
 
 /// `event_type` of the [`SessionEvent::Custom`](crate::session::events::SessionEvent::Custom)
 /// appended to the parent's store when a child launches. The event's
 /// `data` is a serialized [`SubagentLifecycle::Started`].
 pub const SUBAGENT_STARTED_EVENT_TYPE: &str = "subagent.started";
+
+/// `event_type` of the [`SessionEvent::Custom`](crate::session::events::SessionEvent::Custom)
+/// appended when the [`MessageRouter`](crate::agent::message_router::MessageRouter)
+/// accepts an inter-agent message. The event's `data` is a serialized
+/// [`AgentMessageLifecycle::Sent`].
+pub const AGENT_MESSAGE_SENT_EVENT_TYPE: &str = "agent_message.sent";
+
+/// `event_type` of the [`SessionEvent::Custom`](crate::session::events::SessionEvent::Custom)
+/// appended to the recipient's store immediately before the framed
+/// `UserMessage` when its loop injects a routed message. The event's
+/// `data` is a serialized [`AgentMessageLifecycle::Delivered`].
+pub const AGENT_MESSAGE_DELIVERED_EVENT_TYPE: &str = "agent_message.delivered";
 
 /// `event_type` of the [`SessionEvent::Custom`](crate::session::events::SessionEvent::Custom)
 /// appended to the parent's store when a child reaches a terminal
@@ -172,8 +185,83 @@ impl SubagentLifecycle {
     }
 }
 
-/// The payload of an [`AgentEvent`]: either a raw provider stream event
-/// or a typed subagent lifecycle event.
+/// Typed lifecycle event for an inter-agent message, following the
+/// [`SubagentLifecycle`] dual-carrier pattern: a live child-tagged
+/// [`AgentEvent`] on the broadcast channel plus a
+/// `SessionEvent::Custom` audit record (constants
+/// [`AGENT_MESSAGE_SENT_EVENT_TYPE`] /
+/// [`AGENT_MESSAGE_DELIVERED_EVENT_TYPE`]).
+///
+/// `Sent` precedes `Delivered` for the same `message_id` in any merged
+/// view — `Delivered` is only emitted by the loop that drained the
+/// channel the router enqueued into. A `Sent` without a matching
+/// `Delivered` means the message was in flight (enqueued, not yet
+/// drained) when the recipient's process ended: detectable loss, never
+/// silent. Serialization is stable: internally tagged on `phase` with
+/// `snake_case` variant names and RFC 3339 timestamps.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(tag = "phase", rename_all = "snake_case")]
+pub enum AgentMessageLifecycle {
+    /// The router accepted the message (the send call returned success).
+    Sent {
+        /// Unique message identifier, shared with the `Delivered` phase.
+        message_id: Uuid,
+        /// Sender agent id.
+        from_id: Uuid,
+        /// Sender's registry label at send time (path / `root` / bare
+        /// UUID).
+        from: String,
+        /// Recipient agent id.
+        to_id: Uuid,
+        /// Recipient's registry label at send time.
+        to: String,
+        /// How the recipient treats the message.
+        kind: MessageKind,
+        /// Router-minted per-recipient sequence number.
+        seq: u64,
+        /// Unescaped sender content, verbatim, for audit.
+        content: String,
+        /// Wall-clock send time.
+        sent_at: DateTime<Utc>,
+    },
+    /// The recipient's loop injected the message into its conversation.
+    Delivered {
+        /// Unique message identifier, shared with the `Sent` phase.
+        message_id: Uuid,
+        /// Sender agent id.
+        from_id: Uuid,
+        /// Recipient agent id.
+        to_id: Uuid,
+        /// Router-minted per-recipient sequence number.
+        seq: u64,
+        /// Wall-clock injection time.
+        delivered_at: DateTime<Utc>,
+    },
+}
+
+impl AgentMessageLifecycle {
+    /// Unique id of the message this event concerns.
+    #[must_use]
+    pub const fn message_id(&self) -> Uuid {
+        match self {
+            Self::Sent { message_id, .. } | Self::Delivered { message_id, .. } => *message_id,
+        }
+    }
+
+    /// The session-store `event_type` for this phase
+    /// ([`AGENT_MESSAGE_SENT_EVENT_TYPE`] /
+    /// [`AGENT_MESSAGE_DELIVERED_EVENT_TYPE`]).
+    #[must_use]
+    pub const fn session_event_type(&self) -> &'static str {
+        match self {
+            Self::Sent { .. } => AGENT_MESSAGE_SENT_EVENT_TYPE,
+            Self::Delivered { .. } => AGENT_MESSAGE_DELIVERED_EVENT_TYPE,
+        }
+    }
+}
+
+/// The payload of an [`AgentEvent`]: a raw provider stream event, a
+/// typed subagent lifecycle event, or a typed inter-agent message event.
 #[derive(Clone, Debug)]
 pub enum AgentEventKind {
     /// A raw provider stream event from the tagged agent's own loop.
@@ -181,6 +269,11 @@ pub enum AgentEventKind {
     /// A typed subagent lifecycle event. The wrapping [`AgentEvent`] is
     /// tagged with the *child's* identity (`agent_id == child_id`).
     Subagent(SubagentLifecycle),
+    /// A typed inter-agent message event. The wrapping [`AgentEvent`] is
+    /// tagged with the *sender's* identity for
+    /// [`AgentMessageLifecycle::Sent`] and the *recipient's* for
+    /// [`AgentMessageLifecycle::Delivered`].
+    Message(AgentMessageLifecycle),
 }
 
 /// An [`AgentEventKind`] tagged with the identity of the agent it
@@ -248,6 +341,19 @@ impl AgentEventSender {
             agent_id: self.agent_id,
             agent_role: Arc::clone(&self.agent_role),
             event: AgentEventKind::Subagent(event),
+        });
+    }
+
+    /// Tag and broadcast a typed [`AgentMessageLifecycle`] event.
+    ///
+    /// Called on a sender carrying the *sender's* identity for
+    /// [`AgentMessageLifecycle::Sent`] and the *recipient's* for
+    /// [`AgentMessageLifecycle::Delivered`].
+    pub fn send_message(&self, event: AgentMessageLifecycle) {
+        let _ = self.tx.send(AgentEvent {
+            agent_id: self.agent_id,
+            agent_role: Arc::clone(&self.agent_role),
+            event: AgentEventKind::Message(event),
         });
     }
 
@@ -370,8 +476,8 @@ mod tests {
                 assert_eq!(lifecycle.parent_id(), parent_id);
                 assert_eq!(lifecycle.descriptor().kind, SubagentKind::Spawn);
             }
-            AgentEventKind::Provider(other) => {
-                panic!("expected subagent lifecycle event, got {other:?}")
+            AgentEventKind::Provider(_) | AgentEventKind::Message(_) => {
+                panic!("expected subagent lifecycle event")
             }
         }
     }
@@ -462,6 +568,99 @@ mod tests {
                 assert_eq!(usage.input_tokens, 10);
             }
             SubagentLifecycle::Started { .. } => panic!("expected completed phase"),
+        }
+    }
+
+    /// The serialized message-Sent shape is the stable contract audit
+    /// consumers match on — `snake_case` `phase` tag, full identity and
+    /// attribution, verbatim content, RFC 3339 timestamp.
+    #[test]
+    fn message_sent_serde_shape_is_stable() {
+        let sent_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:00Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let event = AgentMessageLifecycle::Sent {
+            message_id: Uuid::from_u128(9),
+            from_id: Uuid::from_u128(1),
+            from: "/smoke/child".to_owned(),
+            to_id: Uuid::from_u128(2),
+            to: "root".to_owned(),
+            kind: MessageKind::Update,
+            seq: 42,
+            content: "status: <done> & \"verified\"".to_owned(),
+            sent_at,
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "phase": "sent",
+                "message_id": "00000000-0000-0000-0000-000000000009",
+                "from_id": "00000000-0000-0000-0000-000000000001",
+                "from": "/smoke/child",
+                "to_id": "00000000-0000-0000-0000-000000000002",
+                "to": "root",
+                "kind": "update",
+                "seq": 42,
+                "content": "status: <done> & \"verified\"",
+                "sent_at": "2026-06-12T10:00:00Z",
+            }),
+        );
+        let parsed: AgentMessageLifecycle = serde_json::from_value(value).unwrap();
+        assert_eq!(parsed.message_id(), Uuid::from_u128(9));
+        assert_eq!(parsed.session_event_type(), AGENT_MESSAGE_SENT_EVENT_TYPE);
+    }
+
+    #[test]
+    fn message_delivered_serde_shape_is_stable() {
+        let delivered_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:01Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let event = AgentMessageLifecycle::Delivered {
+            message_id: Uuid::from_u128(9),
+            from_id: Uuid::from_u128(1),
+            to_id: Uuid::from_u128(2),
+            seq: 42,
+            delivered_at,
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "phase": "delivered",
+                "message_id": "00000000-0000-0000-0000-000000000009",
+                "from_id": "00000000-0000-0000-0000-000000000001",
+                "to_id": "00000000-0000-0000-0000-000000000002",
+                "seq": 42,
+                "delivered_at": "2026-06-12T10:00:01Z",
+            }),
+        );
+        let parsed: AgentMessageLifecycle = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            parsed.session_event_type(),
+            AGENT_MESSAGE_DELIVERED_EVENT_TYPE,
+        );
+    }
+
+    #[test]
+    fn send_message_tags_with_sender_identity() {
+        let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
+        let sender_id = Uuid::from_u128(7);
+        let sender = AgentEventSender::new(tx, sender_id, "/parent/worker".to_owned());
+        sender.send_message(AgentMessageLifecycle::Delivered {
+            message_id: Uuid::from_u128(9),
+            from_id: Uuid::from_u128(1),
+            to_id: sender_id,
+            seq: 1,
+            delivered_at: Utc::now(),
+        });
+        let received = rx.try_recv().unwrap();
+        assert_eq!(received.agent_id, sender_id);
+        match received.event {
+            AgentEventKind::Message(lifecycle) => {
+                assert_eq!(lifecycle.message_id(), Uuid::from_u128(9));
+            }
+            other => panic!("expected message event, got {other:?}"),
         }
     }
 }

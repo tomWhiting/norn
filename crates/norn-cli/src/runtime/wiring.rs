@@ -30,7 +30,7 @@ use std::sync::Arc;
 
 use parking_lot::RwLock;
 
-use norn::agent::mailbox::Mailbox;
+use norn::agent::message_router::MessageRouter;
 use norn::agent::registry::AgentRegistry;
 use norn::agent::result_channel::ChildResultSender;
 use norn::config::NornSettings;
@@ -107,7 +107,7 @@ pub fn install_agent_tool_infra(
     shared.insert_extension(Arc::new(SharedProvider(Arc::clone(&provider))));
     let infra = AgentToolInfra {
         registry: agent_registry,
-        mailbox: Arc::new(Mailbox::new()),
+        router: Arc::new(MessageRouter::new()),
         provider,
         event_store,
         agent_id,

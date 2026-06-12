@@ -17,11 +17,10 @@ use parking_lot::RwLock;
 use tokio::sync::mpsc;
 use uuid::Uuid;
 
-use crate::agent::mailbox::Mailbox;
+use crate::agent::child_policy::CoordinationEnvelope;
+use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::AgentRegistry;
-use crate::agent::result_channel::{
-    CHILD_RESULT_CHANNEL_CAPACITY, ChildAgentResult, ChildResultSender,
-};
+use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::error::{ConfigError, NornError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::{Hook, HookRegistry};
@@ -648,6 +647,11 @@ pub(crate) struct AgentInfraParts {
     pub(crate) event_store: Arc<EventStore>,
     /// The parent agent's id.
     pub(crate) id: Uuid,
+    /// The builder-required coordination envelope: the root's child
+    /// policy plus the child-result channel capacity. Validated by
+    /// [`AgentBuilder::build`](crate::agent::builder::AgentBuilder::build)
+    /// before this runs (both values present, capacities non-zero).
+    pub(crate) envelope: CoordinationEnvelope,
 }
 
 /// Install the complete fork/spawn runtime on the agent's shared
@@ -681,6 +685,12 @@ pub(crate) struct AgentInfraParts {
 /// branches are not persisted, so a resumed tree starts with the root
 /// alone (see [`crate::session::action_log_tree`]).
 ///
+/// Also publishes the builder-required [`CoordinationEnvelope`] (the
+/// root's child policy plus the child-result channel capacity) on the
+/// shared context, and sizes the child-result channel from it — the
+/// capacity is always the caller's explicit choice, never a library
+/// default.
+///
 /// Returns the receiver half of the child-result channel; the caller wires
 /// it into the loop context. Everything `spawn_agent` / `fork` /
 /// `signal_agent` / `close_agent` resolve at call time is published here —
@@ -692,7 +702,7 @@ pub(crate) fn install_agent_infra(
 ) -> mpsc::Receiver<ChildAgentResult> {
     let infra = AgentToolInfra {
         registry: parts.registry,
-        mailbox: Arc::new(Mailbox::new()),
+        router: Arc::new(MessageRouter::new()),
         provider: parts.provider,
         event_store: parts.event_store,
         agent_id: parts.id,
@@ -718,7 +728,14 @@ pub(crate) fn install_agent_infra(
     }
     shared.insert_extension(log_tree);
 
-    let (child_tx, child_rx) = mpsc::channel::<ChildAgentResult>(CHILD_RESULT_CHANNEL_CAPACITY);
+    // The coordination envelope is carried on the shared context so the
+    // spawn/fork launch paths (W3.2/W3.4) read the root's child policy and
+    // per-agent channel capacities from one place. In W3.0 it is carried
+    // and validated, not yet enforced.
+    let child_result_capacity = parts.envelope.child_result_capacity;
+    shared.insert_extension(Arc::new(parts.envelope));
+
+    let (child_tx, child_rx) = mpsc::channel::<ChildAgentResult>(child_result_capacity);
     shared.insert_extension(Arc::new(ChildResultSender(Arc::new(child_tx))));
     child_rx
 }
@@ -742,6 +759,17 @@ mod tests {
 
         let agent_id = Uuid::new_v4();
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let envelope = CoordinationEnvelope {
+            child_policy: crate::agent::child_policy::ChildPolicy {
+                messaging: crate::agent::child_policy::MessagingScope::SiblingsAndParent,
+                delegation: crate::agent::child_policy::DelegationBudget {
+                    remaining_depth: 1,
+                    max_concurrent_children: 32,
+                },
+                inbound_capacity: 32,
+            },
+            child_result_capacity: 256,
+        };
         let _child_rx = install_agent_infra(
             &tool_registry,
             &ctx,
@@ -750,7 +778,16 @@ mod tests {
                 provider,
                 event_store: Arc::new(EventStore::new()),
                 id: agent_id,
+                envelope: envelope.clone(),
             },
+        );
+
+        let published = ctx
+            .get_extension::<CoordinationEnvelope>()
+            .expect("CoordinationEnvelope published on the shared context");
+        assert_eq!(
+            *published, envelope,
+            "the published envelope carries the caller's values verbatim",
         );
 
         let tree = ctx

@@ -43,13 +43,14 @@ use crate::rules::types::RuleInjection;
 use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
 use crate::session::store::EventStore;
 
+use super::delivery::{drain_and_partition, drain_child_results, inject_inbound_messages};
 use super::helpers::{
     ToolBatchRequest, ToolResultRecord, accept_schema_tool_call, append_and_notify,
-    append_tool_result, apply_rule_injections, build_initial_messages, drain_and_partition,
-    drain_child_results, ensure_tool_results_complete, execute_tool_batch, flush_inbound_messages,
-    handle_iteration_signals, inject_inbound_messages, inject_post_tool_batch_notifications,
-    reject_post_schema_tools,
+    append_tool_result, apply_rule_injections, build_initial_messages,
+    ensure_tool_results_complete, execute_tool_batch, handle_iteration_signals,
+    inject_post_tool_batch_notifications, reject_post_schema_tools,
 };
+use super::linger::{BoundaryOutcome, StopBoundary, resolve_stop_boundary};
 
 use crate::integration::hooks::HookRegistry;
 
@@ -266,9 +267,14 @@ async fn run_agent_step_inner(
     )
     .await?;
 
-    if let Some(rx) = loop_context.child_result_rx.as_mut() {
-        drain_child_results(store, &mut messages, rx, loop_context.hooks.as_deref()).await?;
-    }
+    drain_child_results(
+        store,
+        &mut messages,
+        loop_context.child_result_rx.as_mut(),
+        loop_context.hooks.as_deref(),
+        None,
+    )
+    .await?;
 
     let mut total_usage = Usage::default();
     let mut iteration_state = IterationMonitorState::default();
@@ -578,35 +584,23 @@ async fn run_agent_step_inner(
                 )
                 .await?;
 
-                let (steer, follow_up) = drain_and_partition(inbound.as_deref_mut());
-                follow_up_buffer.extend(follow_up);
-
-                if !steer.is_empty() || !follow_up_buffer.is_empty() {
-                    inject_inbound_messages(
-                        store,
-                        &mut messages,
-                        steer,
-                        "Inbound",
-                        loop_context.hooks.as_deref(),
-                    )
-                    .await?;
-                    let buffered = std::mem::take(&mut follow_up_buffer);
-                    inject_inbound_messages(
-                        store,
-                        &mut messages,
-                        buffered,
-                        "Follow-up",
-                        loop_context.hooks.as_deref(),
-                    )
-                    .await?;
-                    continue;
-                }
-
-                if let Some(rx) = loop_context.child_result_rx.as_mut()
-                    && drain_child_results(store, &mut messages, rx, loop_context.hooks.as_deref())
-                        .await?
+                match resolve_stop_boundary(StopBoundary {
+                    store,
+                    messages: &mut messages,
+                    inbound: inbound.as_deref_mut(),
+                    follow_up_buffer: &mut follow_up_buffer,
+                    loop_context: &mut *loop_context,
+                    linger: config.linger,
+                    cancel: cancel.as_ref(),
+                    event_tx,
+                })
+                .await?
                 {
-                    continue;
+                    BoundaryOutcome::Continue => continue,
+                    BoundaryOutcome::Cancelled => {
+                        return Ok(AgentStepResult::Cancelled { usage: total_usage });
+                    }
+                    BoundaryOutcome::Stop => {}
                 }
 
                 if let Some(hooks) = loop_context.hooks.as_deref() {
@@ -734,36 +728,31 @@ async fn run_agent_step_inner(
                     store,
                     &mut messages,
                     steer,
-                    "Inbound",
                     loop_context.hooks.as_deref(),
+                    event_tx,
                 )
                 .await?;
             }
 
             ResponseClass::TextStopNoSchema => {
                 if output_schema.is_none() {
-                    if flush_inbound_messages(
+                    match resolve_stop_boundary(StopBoundary {
                         store,
-                        &mut messages,
-                        inbound.as_deref_mut(),
-                        &mut follow_up_buffer,
-                        loop_context.hooks.as_deref(),
-                    )
+                        messages: &mut messages,
+                        inbound: inbound.as_deref_mut(),
+                        follow_up_buffer: &mut follow_up_buffer,
+                        loop_context: &mut *loop_context,
+                        linger: config.linger,
+                        cancel: cancel.as_ref(),
+                        event_tx,
+                    })
                     .await?
                     {
-                        continue;
-                    }
-
-                    if let Some(rx) = loop_context.child_result_rx.as_mut()
-                        && drain_child_results(
-                            store,
-                            &mut messages,
-                            rx,
-                            loop_context.hooks.as_deref(),
-                        )
-                        .await?
-                    {
-                        continue;
+                        BoundaryOutcome::Continue => continue,
+                        BoundaryOutcome::Cancelled => {
+                            return Ok(AgentStepResult::Cancelled { usage: total_usage });
+                        }
+                        BoundaryOutcome::Stop => {}
                     }
 
                     if let Some(hooks) = loop_context.hooks.as_deref() {
@@ -888,23 +877,23 @@ async fn run_agent_step_inner(
                 )
                 .await?;
 
-                if flush_inbound_messages(
+                match resolve_stop_boundary(StopBoundary {
                     store,
-                    &mut messages,
-                    inbound.as_deref_mut(),
-                    &mut follow_up_buffer,
-                    loop_context.hooks.as_deref(),
-                )
+                    messages: &mut messages,
+                    inbound: inbound.as_deref_mut(),
+                    follow_up_buffer: &mut follow_up_buffer,
+                    loop_context: &mut *loop_context,
+                    linger: config.linger,
+                    cancel: cancel.as_ref(),
+                    event_tx,
+                })
                 .await?
                 {
-                    continue;
-                }
-
-                if let Some(rx) = loop_context.child_result_rx.as_mut()
-                    && drain_child_results(store, &mut messages, rx, loop_context.hooks.as_deref())
-                        .await?
-                {
-                    continue;
+                    BoundaryOutcome::Continue => continue,
+                    BoundaryOutcome::Cancelled => {
+                        return Ok(AgentStepResult::Cancelled { usage: total_usage });
+                    }
+                    BoundaryOutcome::Stop => {}
                 }
 
                 if let Some(hooks) = loop_context.hooks.as_deref() {
@@ -1684,8 +1673,8 @@ mod tests {
         while let Ok(agent_event) = rx.try_recv() {
             match agent_event.event {
                 AgentEventKind::Provider(event) => received.push(event),
-                AgentEventKind::Subagent(other) => {
-                    panic!("the loop emits only provider events, got {other:?}")
+                AgentEventKind::Subagent(_) | AgentEventKind::Message(_) => {
+                    panic!("the loop emits only provider events here")
                 }
             }
         }
@@ -1798,15 +1787,20 @@ mod tests {
     fn make_channel_message(
         author: &str,
         content: &str,
-        delivery: crate::r#loop::inbound::DeliveryMode,
+        kind: crate::r#loop::inbound::MessageKind,
         offset_secs: i64,
     ) -> crate::r#loop::inbound::ChannelMessage {
         let base = chrono::Utc::now();
         let timestamp = base + chrono::Duration::milliseconds(offset_secs);
         crate::r#loop::inbound::ChannelMessage {
-            author: author.to_string(),
+            id: uuid::Uuid::new_v4(),
+            sender_id: uuid::Uuid::new_v4(),
+            from: author.to_string(),
+            role: None,
+            to_id: uuid::Uuid::new_v4(),
             content: content.to_string(),
-            delivery,
+            kind,
+            seq: None,
             timestamp,
         }
     }
@@ -1842,7 +1836,7 @@ mod tests {
         tx.send(make_channel_message(
             "alice",
             "please use foo.rs",
-            crate::r#loop::inbound::DeliveryMode::Steer,
+            crate::r#loop::inbound::MessageKind::Steer,
             0,
         ))
         .await
@@ -1869,7 +1863,9 @@ mod tests {
         let events = store.events();
         let has_steer = events.iter().any(|e| {
             if let SessionEvent::UserMessage { content, .. } = e {
-                content == "[Inbound from alice]: please use foo.rs"
+                content.starts_with("<agent_message from=\"alice\" ")
+                    && content.contains("kind=\"steer\"")
+                    && content.contains("\nplease use foo.rs\n")
             } else {
                 false
             }
@@ -1904,7 +1900,7 @@ mod tests {
         tx.send(make_channel_message(
             "bob",
             "second by time",
-            crate::r#loop::inbound::DeliveryMode::Steer,
+            crate::r#loop::inbound::MessageKind::Steer,
             200,
         ))
         .await
@@ -1912,7 +1908,7 @@ mod tests {
         tx.send(make_channel_message(
             "alice",
             "first by time",
-            crate::r#loop::inbound::DeliveryMode::Steer,
+            crate::r#loop::inbound::MessageKind::Steer,
             100,
         ))
         .await
@@ -1939,7 +1935,7 @@ mod tests {
             .enumerate()
             .filter_map(|(i, e)| {
                 if let SessionEvent::UserMessage { content, .. } = e {
-                    if content.starts_with("[Inbound from ") {
+                    if content.starts_with("<agent_message from=") {
                         Some(i)
                     } else {
                         None
@@ -2000,7 +1996,7 @@ mod tests {
         tx.send(make_channel_message(
             "operator",
             "any more thoughts?",
-            crate::r#loop::inbound::DeliveryMode::FollowUp,
+            crate::r#loop::inbound::MessageKind::Update,
             0,
         ))
         .await
@@ -2030,7 +2026,9 @@ mod tests {
         let events = store.events();
         let has_follow_up = events.iter().any(|e| {
             if let SessionEvent::UserMessage { content, .. } = e {
-                content == "[Follow-up from operator]: any more thoughts?"
+                content.starts_with("<agent_message from=\"operator\" ")
+                    && content.contains("kind=\"update\"")
+                    && content.contains("\nany more thoughts?\n")
             } else {
                 false
             }
@@ -2053,7 +2051,7 @@ mod tests {
         tx.send(make_channel_message(
             "operator",
             "say more",
-            crate::r#loop::inbound::DeliveryMode::FollowUp,
+            crate::r#loop::inbound::MessageKind::Update,
             0,
         ))
         .await
@@ -2080,7 +2078,9 @@ mod tests {
         let events = store.events();
         let has_follow_up = events.iter().any(|e| {
             if let SessionEvent::UserMessage { content, .. } = e {
-                content == "[Follow-up from operator]: say more"
+                content.starts_with("<agent_message from=\"operator\" ")
+                    && content.contains("kind=\"update\"")
+                    && content.contains("\nsay more\n")
             } else {
                 false
             }
@@ -2162,7 +2162,7 @@ mod tests {
         tx.send(make_channel_message(
             "operator",
             "more please",
-            crate::r#loop::inbound::DeliveryMode::FollowUp,
+            crate::r#loop::inbound::MessageKind::Update,
             0,
         ))
         .await

@@ -16,7 +16,7 @@ use parking_lot::RwLock;
 use tokio::sync::watch;
 use uuid::Uuid;
 
-use crate::agent::mailbox::Mailbox;
+use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::r#loop::inbound::{InboundChannel, inbound_channel};
 use crate::provider::mock::MockProvider;
@@ -37,28 +37,28 @@ pub(crate) fn envelope_for(tool: &str, args: serde_json::Value) -> ToolEnvelope 
     }
 }
 
-/// Build an [`AgentToolInfra`] with a fresh registry / mailbox / event
+/// Build an [`AgentToolInfra`] with a fresh registry / router / event
 /// store keyed to `sender` as the calling agent.
 pub(crate) fn build_infra(
     sender: Uuid,
 ) -> (
     Arc<AgentToolInfra>,
     Arc<RwLock<AgentRegistry>>,
-    Arc<Mailbox>,
+    Arc<MessageRouter>,
 ) {
     let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![]));
     let registry = AgentRegistry::shared();
-    let mailbox = Arc::new(Mailbox::new());
+    let router = Arc::new(MessageRouter::new());
     let infra = Arc::new(AgentToolInfra {
         registry: Arc::clone(&registry),
-        mailbox: Arc::clone(&mailbox),
+        router: Arc::clone(&router),
         provider,
         event_store: Arc::new(EventStore::new()),
         agent_id: sender,
         parent_id: None,
         tool_registry: None,
     });
-    (infra, registry, mailbox)
+    (infra, registry, router)
 }
 
 /// Register an agent at `path` with optional parent, returning its id.

@@ -451,10 +451,10 @@ mod tests {
     use super::super::infra::AgentToolInfra;
     use super::*;
     use crate::agent::fork::{FORK_SYSTEM_PREAMBLE, ForkRequirement};
-    use crate::agent::mailbox::Mailbox;
+    use crate::agent::message_router::MessageRouter;
     use crate::agent::registry::AgentStatus;
     use crate::error::ProviderError;
-    use crate::r#loop::inbound::{ChannelMessage, DeliveryMode};
+    use crate::r#loop::inbound::{ChannelMessage, MessageKind};
     use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::mock::MockProvider;
     use crate::provider::request::ProviderRequest;
@@ -514,12 +514,12 @@ mod tests {
         parent_id: Uuid,
         agent_registry: &Arc<RwLock<AgentRegistry>>,
         tool_registry: Arc<ToolRegistry>,
-        mailbox: Arc<Mailbox>,
+        router: Arc<MessageRouter>,
     ) -> (ToolContext, Arc<EventStore>) {
         let event_store = Arc::new(EventStore::new());
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(agent_registry),
-            mailbox,
+            router,
             provider,
             event_store: Arc::clone(&event_store),
             agent_id: parent_id,
@@ -615,7 +615,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = ForkTool::new();
@@ -700,7 +700,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let start_count = Arc::new(AtomicUsize::new(0));
@@ -764,7 +764,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         parent_store
@@ -934,7 +934,7 @@ mod tests {
             real_parent,
             &agent_registry,
             tool_registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = ForkTool::new();
@@ -987,7 +987,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = ForkTool::new();
@@ -1049,7 +1049,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let tree = Arc::new(SessionTree::new(SessionMetadata {
             created_at: Utc::now(),
@@ -1176,7 +1176,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = ForkTool::new();
@@ -1195,9 +1195,14 @@ mod tests {
         // bounded channel is live and the send is guaranteed to succeed.
         inbound
             .send(ChannelMessage {
-                author: "test".to_string(),
+                id: Uuid::new_v4(),
+                sender_id: Uuid::new_v4(),
+                from: "test".to_string(),
+                role: None,
+                to_id: fork_id,
                 content: "hello fork".to_string(),
-                delivery: DeliveryMode::Steer,
+                kind: MessageKind::Steer,
+                seq: None,
                 timestamp: Utc::now(),
             })
             .await
@@ -1246,7 +1251,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let tool = ForkTool::new();
@@ -1313,7 +1318,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
@@ -1413,7 +1418,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             tool_registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         ctx.insert_extension(Arc::new(
             crate::config::permissions::PermissionPolicy::from_patterns(&["victim"], &[], &[]),
@@ -1458,7 +1463,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let sender = ChildResultSender(Arc::new(tx));
         ctx.insert_extension(Arc::new(sender));
@@ -1546,7 +1551,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             tool_registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         ctx.confine_to_workspace(root.path().to_path_buf());
 
@@ -1662,7 +1667,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             tool_registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let count = Arc::new(AtomicUsize::new(0));
         let mut hook_registry = HookRegistry::new();
@@ -1720,7 +1725,7 @@ mod tests {
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (btx, mut brx) = tokio::sync::broadcast::channel::<AgentEvent>(64);
         ctx.insert_extension(Arc::new(SharedAgentEventChannel(btx)));
@@ -1893,7 +1898,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let entered = Arc::new(tokio::sync::Notify::new());
@@ -1926,7 +1931,7 @@ mod tests {
         let closer_provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let closer_infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(&agent_registry),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider: closer_provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -2026,7 +2031,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
 
         let entered = Arc::new(tokio::sync::Notify::new());
@@ -2139,7 +2144,7 @@ mod tests {
             Uuid::new_v4(),
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
@@ -2257,7 +2262,7 @@ mod tests {
             parent,
             &agent_registry,
             tool_registry,
-            Arc::new(Mailbox::new()),
+            Arc::new(MessageRouter::new()),
         );
         // The parent's own log already holds an entry: the fork's log
         // must NOT inherit it.

@@ -69,6 +69,12 @@ use super::session::open_session;
 /// `Lagged`.
 const BROADCAST_BUFFER_CAPACITY: usize = 256;
 
+/// The print runtime's chosen child-result channel capacity. The library
+/// requires every channel capacity to be an explicit caller choice (no
+/// assumed defaults); this is the CLI's deliberate envelope value,
+/// matching the Wave 3 documented proposal of 256.
+const CHILD_RESULT_CHANNEL_CAPACITY: usize = 256;
+
 /// Entry point used by `main.rs::run_print`. Spins up a multi-threaded
 /// tokio runtime and dispatches to [`run_async`].
 ///
@@ -306,7 +312,7 @@ async fn orchestrate(
 
     let (child_tx, child_rx) = tokio::sync::mpsc::channel::<
         norn::agent::result_channel::ChildAgentResult,
-    >(norn::agent::result_channel::CHILD_RESULT_CHANNEL_CAPACITY);
+    >(CHILD_RESULT_CHANNEL_CAPACITY);
     let child_sender = norn::agent::result_channel::ChildResultSender(Arc::new(child_tx));
     bundle.loop_context.child_result_rx = Some(child_rx);
 

@@ -395,6 +395,15 @@ Each step passes the full gate (`cargo clippy --workspace --all-targets -- -D wa
 
 **TRACKED DEFERRAL (R5, approved 2026-06-12): per-child `AgentLoopConfig` override.** Children run `AgentLoopConfig::default()` — they do NOT inherit the parent's `max_iterations`/`step_timeout`, and with recursion these become real cost controls. Deferred out of Wave 3 as severable; the fix is an optional `loop_config` field on `ChildPolicy` (W3.0 establishes the type, so the slot is cheap to add later). This deferral must be re-raised at Wave 3 review and closed in the wave that follows at the latest; until closed, spawn/fork guidance must state that children ignore the parent's loop limits.
 
+**R5 re-raised at the W3.0/W3.1/W3.3 review (2026-06-12) — the gap has widened.** `LingerPolicy` rides on `AgentLoopConfig`, so until R5 closes only the root can linger: §"Messaging × recursion" item 5 (a mid-tree agent lingering for its children's results) is unachievable, and late grandchild results will still orphan at the child level when W3.4 makes recursion functional. When R5 closes, the `loop_config` field on `ChildPolicy` must include `linger`. The interim guidance statements landed with the batch (spawn_agent.usage.md, fork.usage.md).
+
+**Review carry-forwards into W3.2 (from the W3.0/W3.1/W3.3 Fable review, 2026-06-12) — each is part of W3.2's definition of done:**
+1. **Dual-store `Sent` audit:** the §"Audit trail" requirement that `Sent` lands in the sender's store *and* the scope-granting parent's store is satisfied only for (a) today (the only senders are handle-holding parents and root rhai hosts). `send_message` must write both stores.
+2. **Router deregistration ownership:** `MessageRouter::deregister` has no production caller yet; routes are cleaned only lazily on `ChannelClosed`. The spawn/fork completion wrappers take ownership of register-at-launch / deregister-at-terminal in W3.2 as planned.
+3. **Rhai `send_message` parity:** add a script-side message-kind parameter (currently hard-coded `Update`), reuse `sender_attribution` (tombstone fallback), and add the registry terminal-state check so scripts get the same honest already-finished failure `signal_agent` gives.
+4. **CLI envelope boundary:** the CLI assembly path (`install_agent_tool_infra`) publishes no `CoordinationEnvelope` extension; nothing reads it yet, but W3.2's spawn-time policy reads will. Publish the CLI's deliberate envelope there before any reader lands, and wire `ChildPolicy.inbound_capacity` to replace the transitional `SPAWN_INBOUND_BUFFER`/`FORK_INBOUND_BUFFER` consts (32) in W3.2/W3.4.
+5. **Router contention test:** the seq-order stress test never makes `reserve()` actually await (capacity 1024 vs 256 sends); the replaced-route/closed-route mid-await races are now covered by dedicated tests, but a full-channel contention variant of the stress test should land with W3.2's higher-traffic surface.
+
 ---
 
 # Appendix — points where the code contradicts or refines the agreed design (flagged, not silently adapted)

@@ -29,10 +29,46 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::agent::output::AgentStopReason;
-use crate::provider::agent_event::{AgentEventSender, SubagentDescriptor, SubagentLifecycle};
+use crate::provider::agent_event::{
+    AgentEventSender, AgentMessageLifecycle, SubagentDescriptor, SubagentLifecycle,
+};
 use crate::provider::usage::Usage;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
+
+/// Append an [`AgentMessageLifecycle`] audit record to `store` as a
+/// [`SessionEvent::Custom`] (`agent_message.sent` /
+/// `agent_message.delivered`), best-effort: failures are logged, never
+/// propagated — the audit record must never abort message delivery,
+/// matching [`LifecycleEmitter::emit`]'s store-append contract.
+pub(crate) fn append_message_audit(store: &EventStore, event: &AgentMessageLifecycle) {
+    let event_type = event.session_event_type();
+    match serde_json::to_value(event) {
+        Ok(data) => {
+            let session_event = SessionEvent::Custom {
+                base: EventBase::new(store.last_event_id()),
+                event_type: event_type.to_owned(),
+                data,
+            };
+            if let Err(e) = store.append(session_event) {
+                tracing::warn!(
+                    message_id = %event.message_id(),
+                    event_type,
+                    error = %e,
+                    "agent message audit: failed to append event to store",
+                );
+            }
+        }
+        Err(e) => {
+            tracing::warn!(
+                message_id = %event.message_id(),
+                event_type,
+                error = %e,
+                "agent message audit: failed to serialize lifecycle event",
+            );
+        }
+    }
+}
 
 /// Terminal outcome projection handed to
 /// [`LifecycleEmitter::emit_completed`].

@@ -6,10 +6,10 @@ use chrono::Utc;
 use serde::Deserialize;
 use uuid::Uuid;
 
-use super::helpers::sender_label;
+use super::helpers::sender_attribution;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::error::ToolError;
-use crate::r#loop::inbound::{ChannelMessage, DeliveryMode};
+use crate::r#loop::inbound::{ChannelMessage, MessageKind};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::scheduling::ToolEffect;
@@ -75,6 +75,15 @@ struct CloseAgentArgs {
     agent_id: String,
     #[serde(default)]
     reason: Option<String>,
+}
+
+/// Harness-resolved identity of the closing agent, stamped onto the
+/// shutdown steer's attribution fields (registry ground truth, resolved
+/// once per close call).
+struct CloserAttribution {
+    id: Uuid,
+    label: String,
+    role: Option<String>,
 }
 
 /// Collect the subtree rooted at `root` in DFS pre-order (root first).
@@ -163,22 +172,38 @@ async fn shutdown_one(
     handles: Option<&AgentHandles>,
     id: Uuid,
     reason: Option<&str>,
-    sender_path: &str,
+    closer: &CloserAttribution,
 ) -> &'static str {
     let held = handles.and_then(|h| h.remove(id));
     let had_handle = held.is_some();
     if let Some(handle) = held {
         let body = reason.unwrap_or("close_agent").to_string();
+        // Direct handle send: the shutdown steer deliberately bypasses
+        // the MessageRouter (the handle is the closer's own capability
+        // and the recipient is being torn down), so it carries no
+        // router sequence. It still renders through the one framed
+        // injection path if the recipient drains it.
         let msg = ChannelMessage {
-            author: sender_path.to_string(),
+            id: Uuid::new_v4(),
+            sender_id: closer.id,
+            from: closer.label.clone(),
+            role: closer.role.clone(),
+            to_id: id,
             content: body,
-            delivery: DeliveryMode::Steer,
+            kind: MessageKind::Steer,
+            seq: None,
             timestamp: Utc::now(),
         };
         // Send is best-effort: the child may already have terminated and
         // dropped its receiver. The cancellation below terminates the run
-        // either way.
-        let _ = handle.inbound_tx.send(msg).await;
+        // either way, so the failure is logged, not surfaced.
+        if let Err(e) = handle.inbound_tx.send(msg).await {
+            tracing::debug!(
+                agent_id = %id,
+                error = %e,
+                "shutdown steer not delivered; child already dropped its receiver",
+            );
+        }
         // Terminate the run cooperatively, then join the wrapper so it
         // completes its own terminal sequence with the run's real
         // outcome. See the function docs for why this join is unbounded
@@ -335,7 +360,13 @@ impl Tool for CloseAgentTool {
         };
         order.reverse();
 
-        let sender_path = sender_label(&infra.registry.read(), infra.agent_id);
+        let (label, role) =
+            sender_attribution(&infra.registry.read(), infra.agent_id, infra.parent_id);
+        let closer = CloserAttribution {
+            id: infra.agent_id,
+            label,
+            role,
+        };
         let mut shut_down = Vec::with_capacity(order.len());
         for id in order {
             let status = shutdown_one(
@@ -343,7 +374,7 @@ impl Tool for CloseAgentTool {
                 handles_ref,
                 id,
                 args.reason.as_deref(),
-                &sender_path,
+                &closer,
             )
             .await;
             shut_down.push(serde_json::json!({
@@ -389,7 +420,7 @@ mod tests {
     /// registry enforces a spawn depth limit that prevents grandchildren.
     #[tokio::test]
     async fn close_agent_dfs_shuts_down_subtree() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let root = register_agent(&registry, "/root", None);
         let child_a = register_agent(&registry, "/root/child-a", Some(root));
         let child_b = register_agent(&registry, "/root/child-b", Some(root));
@@ -445,7 +476,7 @@ mod tests {
     /// the agent as `"force_failed"`, and leave a `Failed` tombstone.
     #[tokio::test]
     async fn close_agent_on_leaf_no_children_works() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let leaf = register_agent(&registry, "/leaf", None);
 
         let handles = Arc::new(AgentHandles::new());
@@ -491,7 +522,7 @@ mod tests {
     /// completed or steal its wrapper's terminal transition.
     #[tokio::test]
     async fn close_agent_without_handle_reports_unreachable() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let peer = register_agent(&registry, "/peer", None);
 
         let ctx = ToolContext::empty();
@@ -520,7 +551,7 @@ mod tests {
     /// path and by UUID.
     #[tokio::test]
     async fn close_agent_on_reclaimed_agent_reports_soft_success() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let child = register_agent(&registry, "/smoke/child", None);
         registry.write().mark_completed(child).expect("complete");
         assert!(registry.write().remove_terminal(child), "reclaim");
@@ -558,7 +589,7 @@ mod tests {
     /// unknown UUID (no entry, no tombstone) still errors.
     #[tokio::test]
     async fn close_agent_rejects_never_existed_id() {
-        let (infra, _registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, _registry, _router) = build_infra(Uuid::new_v4());
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
 
@@ -586,7 +617,7 @@ mod tests {
     async fn close_agent_reclaims_already_failed_child_without_rewriting() {
         use crate::agent::registry::AgentStatus;
 
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let child = register_agent(&registry, "/parent/failed-child", None);
         registry
             .write()
@@ -624,7 +655,7 @@ mod tests {
     /// so a cooperating loop has a final boundary to observe the request.
     #[tokio::test]
     async fn close_agent_sends_shutdown_steer_to_child() {
-        let (infra, registry, _mailbox) = build_infra(Uuid::new_v4());
+        let (infra, registry, _router) = build_infra(Uuid::new_v4());
         let parent_id = infra.agent_id;
         let child = register_agent(&registry, "/parent/child", Some(parent_id));
 
@@ -646,7 +677,12 @@ mod tests {
 
         let drained = inbound_rx.drain();
         assert_eq!(drained.len(), 1);
-        assert_eq!(drained[0].delivery, DeliveryMode::Steer);
+        assert_eq!(drained[0].kind, MessageKind::Steer);
         assert_eq!(drained[0].content, "wrap up");
+        assert_eq!(drained[0].sender_id, parent_id, "closer id is ground truth");
+        assert_eq!(
+            drained[0].from, "root",
+            "unregistered parent-less closer attributes as root",
+        );
     }
 }

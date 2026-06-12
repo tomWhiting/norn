@@ -33,6 +33,12 @@ use crate::session::{CreateSessionOptions, OpenSession, SessionManager};
 /// Capacity of the agent-event broadcast channel shared by all agents.
 const AGENT_EVENT_CHANNEL_CAPACITY: usize = 4096;
 
+/// The TUI runtime's chosen child-result channel capacity. The library
+/// requires every channel capacity to be an explicit caller choice (no
+/// assumed defaults); this is the CLI's deliberate envelope value,
+/// matching the Wave 3 documented proposal of 256.
+const CHILD_RESULT_CHANNEL_CAPACITY: usize = 256;
+
 /// Synchronous entry point — matches the CLI dispatch pattern.
 #[must_use]
 pub fn run(cli: &Cli) -> ExitCode {
@@ -130,7 +136,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let (child_tx, child_rx) = tokio::sync::mpsc::channel::<
         norn::agent::result_channel::ChildAgentResult,
-    >(norn::agent::result_channel::CHILD_RESULT_CHANNEL_CAPACITY);
+    >(CHILD_RESULT_CHANNEL_CAPACITY);
     let child_sender = norn::agent::result_channel::ChildResultSender(Arc::new(child_tx));
     crate::runtime::install_child_result_sender(&bundle.registry, child_sender);
     bundle.loop_context.child_result_rx = Some(child_rx);

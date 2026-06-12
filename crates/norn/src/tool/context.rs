@@ -177,7 +177,7 @@ pub struct ToolContext {
     read_files: Mutex<HashSet<PathBuf>>,
     /// Typed extension map keyed by `TypeId`.
     ///
-    /// Orchestrators publish shared infrastructure here (registries, mailboxes,
+    /// Orchestrators publish shared infrastructure here (registries, routers,
     /// stores, catalogues, search paths) so tools that need cross-cutting
     /// state can retrieve it without depending on a globally-named field.
     /// Behind a `Mutex` so insertion is possible through `&self`.
@@ -389,7 +389,7 @@ impl ToolContext {
     ///
     /// A subsequent call for the same type replaces the previous entry.
     /// Used by orchestrators to publish shared infrastructure (registries,
-    /// mailboxes, stores) that individual tools then read via
+    /// routers, stores) that individual tools then read via
     /// [`Self::get_extension`].
     pub fn insert_extension<T>(&self, value: Arc<T>)
     where

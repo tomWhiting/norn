@@ -62,7 +62,7 @@ use norn::tools::agent::AgentToolInfra;
 ///    `event_store` pointing at the new store while **reusing** every
 ///    cross-rotation-stable handle from the existing infra — the live
 ///    agent registry (the status panel's hold-window state lives
-///    there), the mailbox, the provider, the agent identity, and the
+///    there), the message router, the provider, the agent identity, and the
 ///    tool registry. When no infra was installed (the startup wiring is
 ///    conditional on a shared context existing), none is fabricated —
 ///    agent tools keep reporting the missing [`AgentToolInfra`]
@@ -109,7 +109,7 @@ pub(super) fn rotate_store_dependents(
         if let Some(old_infra) = ctx.get_extension::<AgentToolInfra>() {
             ctx.insert_extension(Arc::new(AgentToolInfra {
                 registry: Arc::clone(&old_infra.registry),
-                mailbox: Arc::clone(&old_infra.mailbox),
+                router: Arc::clone(&old_infra.router),
                 provider: Arc::clone(&old_infra.provider),
                 event_store: Arc::clone(&new_store),
                 agent_id: old_infra.agent_id,
@@ -141,7 +141,7 @@ pub(super) fn rotate_store_dependents(
 mod tests {
     use super::*;
 
-    use norn::agent::mailbox::Mailbox;
+    use norn::agent::message_router::MessageRouter;
     use norn::agent::registry::AgentRegistry;
     use norn::error::ProviderError;
     use norn::provider::request::ProviderRequest;
@@ -286,19 +286,19 @@ mod tests {
         // startup store after `/new`, so fork/spawn seeded children
         // from the previous conversation. Everything that must stay
         // stable across rotation — the live agent registry (status-line
-        // hold windows), mailbox, provider, identity, tool registry —
+        // hold windows), message router, provider, identity, tool registry —
         // is reused, never re-created.
         let ctx = Arc::new(ToolContext::empty());
         let old_store = Arc::new(EventStore::new());
         let agent_registry = AgentRegistry::shared();
-        let mailbox = Arc::new(Mailbox::new());
+        let router = Arc::new(MessageRouter::new());
         let provider: Arc<dyn Provider> = Arc::new(StubProvider);
         let tool_registry = Arc::new(ToolRegistry::new());
         let agent_id = Uuid::now_v7();
         let parent_id = Some(Uuid::now_v7());
         ctx.insert_extension(Arc::new(AgentToolInfra {
             registry: Arc::clone(&agent_registry),
-            mailbox: Arc::clone(&mailbox),
+            router: Arc::clone(&router),
             provider: Arc::clone(&provider),
             event_store: Arc::clone(&old_store),
             agent_id,
@@ -328,8 +328,8 @@ mod tests {
             "the live agent registry must be reused, not re-created",
         );
         assert!(
-            Arc::ptr_eq(&infra.mailbox, &mailbox),
-            "the mailbox must be reused so in-flight signals keep routing",
+            Arc::ptr_eq(&infra.router, &router),
+            "the message router must be reused so in-flight routes keep working",
         );
         assert!(
             Arc::ptr_eq(&infra.provider, &provider),

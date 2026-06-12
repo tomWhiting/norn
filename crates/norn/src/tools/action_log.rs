@@ -1165,7 +1165,7 @@ mod tests {
 
     // ----- scope (federated subtree queries) --------------------------------
 
-    use crate::agent::mailbox::Mailbox;
+    use crate::agent::message_router::MessageRouter;
     use crate::agent::registry::AgentRegistry;
     use crate::provider::mock::MockProvider;
     use crate::provider::traits::Provider;
@@ -1181,7 +1181,7 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         Arc::new(AgentToolInfra {
             registry: Arc::clone(registry),
-            mailbox: Arc::new(Mailbox::new()),
+            router: Arc::new(MessageRouter::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id,

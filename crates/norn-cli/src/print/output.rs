@@ -314,6 +314,7 @@ fn write_stream_event(agent_event: &norn::provider::AgentEvent, partial: bool) -
             provider_event_to_ndjson(event)
         }
         norn::provider::AgentEventKind::Subagent(lifecycle) => subagent_event_to_ndjson(lifecycle),
+        norn::provider::AgentEventKind::Message(lifecycle) => message_event_to_ndjson(lifecycle),
     };
     let Some(line) = line else {
         return true;
@@ -348,6 +349,34 @@ fn subagent_event_to_ndjson(lifecycle: &norn::provider::SubagentLifecycle) -> Op
         Ok(s) => Some(s),
         Err(err) => {
             tracing::warn!("failed to serialize subagent lifecycle event to NDJSON: {err}");
+            None
+        }
+    }
+}
+
+/// Translate a typed [`norn::provider::AgentMessageLifecycle`] event
+/// into an NDJSON line: the event's stable serde form under
+/// `"type": "agent_message_sent"` / `"agent_message_delivered"`.
+fn message_event_to_ndjson(lifecycle: &norn::provider::AgentMessageLifecycle) -> Option<String> {
+    let type_label = match lifecycle {
+        norn::provider::AgentMessageLifecycle::Sent { .. } => "agent_message_sent",
+        norn::provider::AgentMessageLifecycle::Delivered { .. } => "agent_message_delivered",
+    };
+    let mut value = match serde_json::to_value(lifecycle) {
+        Ok(value) => value,
+        Err(err) => {
+            tracing::warn!("failed to serialize agent message event to NDJSON: {err}");
+            return None;
+        }
+    };
+    if let Some(obj) = value.as_object_mut() {
+        obj.remove("phase");
+        obj.insert("type".to_owned(), json!(type_label));
+    }
+    match serde_json::to_string(&value) {
+        Ok(s) => Some(s),
+        Err(err) => {
+            tracing::warn!("failed to serialize agent message event to NDJSON: {err}");
             None
         }
     }

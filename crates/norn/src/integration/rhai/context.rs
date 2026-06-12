@@ -7,7 +7,7 @@ use parking_lot::RwLock;
 use rhai::{Dynamic, Engine, EvalAltResult, Scope};
 use uuid::Uuid;
 
-use crate::agent::mailbox::Mailbox;
+use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::AgentRegistry;
 use crate::provider::traits::Provider;
 use crate::session::store::EventStore;
@@ -33,16 +33,18 @@ impl AgentHandle {
 
 /// Shared context passed to every Rhai host function.
 ///
-/// Holds the agent registry, mailbox, provider, calling-agent id, a Tokio
-/// runtime handle so synchronous Rhai code can bridge into async work,
-/// the parent event store (used by `fork_agent`), and the shared tool
-/// registry handed to spawned and forked sub-agents.
+/// Holds the agent registry, message router, provider, calling-agent id,
+/// a Tokio runtime handle so synchronous Rhai code can bridge into async
+/// work, the parent event store (used by `fork_agent`), and the shared
+/// tool registry handed to spawned and forked sub-agents.
 #[derive(Clone)]
 pub struct NornRhaiContext {
     /// Agent registry (write-locked when spawning).
     pub registry: Arc<RwLock<AgentRegistry>>,
-    /// Mailbox used for `send_message`.
-    pub mailbox: Arc<Mailbox>,
+    /// Message router used for `send_message` — deliveries land on the
+    /// recipient's inbound channel or fail typed; nothing is queued
+    /// where no loop drains.
+    pub router: Arc<MessageRouter>,
     /// Provider used when launching a sub-agent step.
     pub provider: Arc<dyn Provider>,
     /// Id of the agent invoking the script (sender for `send_message`).
