@@ -27,8 +27,10 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use chrono::Utc;
 use serde::Deserialize;
-use uuid::Uuid;
 
+use super::delegation::{
+    auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
+};
 use super::fork_pipeline::{ForkLaunch, build_fork_context, launch_fork, resolve_fork_store};
 use super::fork_seed::seed_fork_events;
 use super::handle::AgentHandles;
@@ -80,11 +82,23 @@ const FORK_ALLOWED_MODELS: &[&str] = &[
     "gpt-5.3-codex-spark",
 ];
 
+// deny_unknown_fields: a typo'd key (e.g. `child_polciy`) must fail
+// loudly, not silently hand the fork a default grant where the caller
+// intended a narrowing.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct ForkArgs {
     request: String,
     model: String,
     requirements: Vec<ForkRequirement>,
+    /// Optional per-fork [`ChildPolicy`] narrowing (DECISION R2),
+    /// mirroring the Rust type 1:1 at the JSON layer. Omitted → the fork
+    /// inherits the caller's own granted policy with the delegation depth
+    /// decremented one level. Supplied → must be a strict narrowing of
+    /// the caller's own grant; widening is a typed failure naming the
+    /// caller's budget.
+    #[serde(default)]
+    child_policy: Option<ChildPolicy>,
 }
 
 /// Public tool name for the Norn fork delegation tool.
@@ -133,6 +147,41 @@ impl Tool for ForkTool {
                         "properties": {
                             "name": { "type": "string", "description": "Identifier for this requirement." },
                             "description": { "type": "string", "description": "What must be done to satisfy this requirement." }
+                        }
+                    }
+                },
+                "child_policy": {
+                    "type": "object",
+                    "required": ["messaging", "delegation", "inbound_capacity"],
+                    "additionalProperties": false,
+                    "description": "Optional narrowed policy for this fork. Omit to grant your own policy with delegation depth reduced by one level. Every field must be within your own granted budget — widening fails.",
+                    "properties": {
+                        "messaging": {
+                            "type": "string",
+                            "enum": ["siblings_and_parent", "parent_only", "none"],
+                            "description": "Who the fork may message; must not widen your own scope."
+                        },
+                        "delegation": {
+                            "type": "object",
+                            "required": ["remaining_depth", "max_concurrent_children"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "remaining_depth": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Levels of descendants the fork may create below itself (0 = leaf). Must be at most your own remaining_depth - 1."
+                                },
+                                "max_concurrent_children": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Max non-terminal direct children the fork may have at once. Must be at most your own cap."
+                                }
+                            }
+                        },
+                        "inbound_capacity": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Bounded capacity of the fork's inbound message channel. Must be at most your own granted capacity."
                         }
                     }
                 }
@@ -186,21 +235,20 @@ impl Tool for ForkTool {
         // publishes its own). A context that can fork but carries no
         // envelope is a wiring error, surfaced as a typed
         // `MissingExtension` failure — fork never invents a policy for
-        // the child. W3.2 stamps the envelope's `child_policy` unchanged;
-        // the per-fork narrowing argument arrives with recursion (W3.4).
-        let envelope_policy: ChildPolicy = ctx
-            .require_extension::<CoordinationEnvelope>()?
-            .child_policy
-            .clone();
+        // the child.
+        let coordination = ctx.require_extension::<CoordinationEnvelope>()?;
 
-        // R3: hierarchical fork path nests under the parent's registry path.
-        let parent_prefix = infra
-            .registry
-            .read()
-            .get(infra.agent_id)
-            .map(|entry| entry.path)
-            .unwrap_or_default();
-        let path = format!("{parent_prefix}/fork/{}", Uuid::new_v4());
+        // The fork's grant (W3.4): the caller's own granted policy
+        // narrowed by the optional `child_policy` argument, or derived by
+        // inherit-with-decrement when omitted. Depth exhaustion and
+        // widening both fail typed here, naming the caller's own budget;
+        // the registry re-validates from ground truth at reservation.
+        let spawner_policy = resolve_spawner_policy(&infra, &coordination);
+        let fork_policy = grant_child_policy(&spawner_policy, args.child_policy.clone(), "fork")?;
+
+        // R3 / W3.4: hierarchical fork path nests under the spawning
+        // agent's registry path at every depth.
+        let path = auto_child_path(&infra.registry, infra.agent_id, "fork");
 
         // Two-phase reservation: the guard stays unconfirmed across every
         // fallible setup step below, so an error rolls the reservation
@@ -212,6 +260,8 @@ impl Tool for ForkTool {
             "fork".to_owned(),
             args.model.clone(),
             Some(infra.agent_id),
+            fork_policy.clone(),
+            Some(&spawner_policy),
         )
         .map_err(|e| ToolError::ExecutionFailed {
             reason: format!("fork reservation failed: {e}"),
@@ -249,14 +299,24 @@ impl Tool for ForkTool {
 
         // R3: per-child ToolContext with fresh identity, forwarded shared
         // infrastructure, the granted policy stamped for send_message's
-        // scope enforcement.
+        // scope enforcement and the fork's own spawn-time budget reads.
         let child_ctx = build_fork_context(
             &infra,
             fork_id,
             Arc::clone(&child_store),
             ctx,
             child_tree,
-            envelope_policy.clone(),
+            fork_policy.clone(),
+        );
+        // Per-agent result channel (W3.4): a fork whose grant lets it
+        // delegate gets its own child-result channel — sender on its
+        // context for its spawn/fork sites, receiver wired onto its loop
+        // below — so its children's results deliver to *this fork*, one
+        // hop at a time.
+        let fork_result_rx = install_child_result_channel(
+            &child_ctx,
+            &fork_policy,
+            coordination.child_result_capacity,
         );
 
         // R5: combined system instruction = fork preamble + parent base.
@@ -290,6 +350,10 @@ impl Tool for ForkTool {
         // starts empty at the fork point — the seeded conversation is the
         // fork's memory; the action log records what the fork itself did.
         loop_ctx.action_log = child_ctx.get_extension::<ActionLog>();
+        // Result delivery from the fork's own children: the loop drains
+        // this receiver at the same step boundaries the root uses —
+        // results bubble one hop per level (W3.4).
+        loop_ctx.child_result_rx = fork_result_rx;
         loop_ctx.environment = Some(crate::system_prompt::environment::EnvironmentConfig {
             session_id: None,
             model: args.model.clone(),
@@ -301,7 +365,7 @@ impl Tool for ForkTool {
         // granted scope is `MessagingScope::None`, which removes the tool
         // from the fork's surface entirely (defense-in-depth: the tool
         // also refuses at execute).
-        let allow_list: Option<Vec<String>> = if envelope_policy.messaging == MessagingScope::None {
+        let allow_list: Option<Vec<String>> = if fork_policy.messaging == MessagingScope::None {
             Some(strip_send_message_from_allow_list(None, parent_registry))
         } else {
             None
@@ -320,7 +384,7 @@ impl Tool for ForkTool {
         // the AgentHandle for `close_agent`'s shutdown steer; capacity
         // comes from the granted policy (DECISION M4 — never a hardcoded
         // library value).
-        let (inbound_tx, inbound_rx) = inbound_channel(envelope_policy.inbound_capacity);
+        let (inbound_tx, inbound_rx) = inbound_channel(fork_policy.inbound_capacity);
 
         // `launch_fork` calls `tokio::spawn` to wrap `run_agent_step` so the
         // child runs concurrently and this function returns immediately —
@@ -481,6 +545,7 @@ mod tests {
     use futures_util::{StreamExt, stream};
     use parking_lot::RwLock;
     use serde_json::json;
+    use uuid::Uuid;
 
     use super::super::handle::SharedSessionTree;
     use super::super::infra::AgentToolInfra;
@@ -977,6 +1042,8 @@ mod tests {
             "/parent".to_string(),
             "parent".to_string(),
             "opus".to_string(),
+            None,
+            test_envelope().child_policy,
             None,
         )
         .expect("reserve parent");
@@ -2508,6 +2575,327 @@ mod tests {
         assert!(
             agent_registry.read().list().is_empty(),
             "no reservation may leak from the refused fork",
+        );
+    }
+
+    // -- W3.4: budgeted recursive delegation (fork side) ---------------------
+
+    /// A `child_policy` argument that widens the caller's grant is refused
+    /// typed (nothing reserved); omitting it stamps the caller's policy
+    /// with the delegation depth decremented one level, and the fork path
+    /// nests under the spawner.
+    /// A typo'd top-level key must fail loudly — silently dropping a
+    /// misspelled `child_policy` would hand the fork a default grant
+    /// where the caller intended a narrowing. Mirrors the spawn-side
+    /// pin so `ForkArgs`' deny_unknown_fields cannot regress silently.
+    #[tokio::test]
+    async fn fork_rejects_unknown_arg_keys() {
+        let provider =
+            structured_response_provider(json!({"response": "done", "requirements": {}}));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        ctx.insert_extension(Arc::new(test_envelope()));
+        let tool = ForkTool::new();
+
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "request": "r", "model": "gpt-5.5", "requirements": [],
+                    "child_polciy": { "inbound_capacity": 32 },
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("a typo'd key must not be silently dropped");
+        let rendered = format!("{err:?}");
+        assert!(
+            rendered.contains("child_polciy") || rendered.contains("unknown field"),
+            "the failure names the unknown key: {rendered}",
+        );
+    }
+
+    #[tokio::test]
+    async fn fork_stamps_decremented_grant_and_refuses_widening() {
+        let provider =
+            structured_response_provider(json!({"response": "done", "requirements": {}}));
+        let parent = Uuid::new_v4();
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            parent,
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        let mut envelope = test_envelope();
+        envelope.child_policy.delegation.remaining_depth = 2;
+        ctx.insert_extension(Arc::new(envelope.clone()));
+        let tool = ForkTool::new();
+
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "request": "r", "model": "gpt-5.5", "requirements": [],
+                    "child_policy": {
+                        "messaging": "siblings_and_parent",
+                        "delegation": {"remaining_depth": 2, "max_concurrent_children": 32},
+                        "inbound_capacity": 32,
+                    },
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("widening must be refused");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(
+                    reason.contains("remaining_depth = 2 exceeds"),
+                    "names the caller's budget: {reason}",
+                );
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+        assert!(
+            agent_registry.read().is_empty(),
+            "a refused fork reserves nothing",
+        );
+
+        let out = tool
+            .execute(
+                &envelope_for(json!({"request": "r", "model": "gpt-5.5", "requirements": []})),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        assert!(!out.is_error(), "{:?}", out.content);
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let path = out.content["path"].as_str().unwrap();
+        assert!(path.starts_with("/fork/"), "{path}");
+        let entry = agent_registry.read().get(fork_id).expect("entry");
+        assert_eq!(
+            entry.policy.delegation.remaining_depth, 1,
+            "default derivation decrements the caller's depth 2 to 1",
+        );
+        assert_eq!(entry.policy.messaging, envelope.child_policy.messaging);
+        assert_eq!(
+            entry.policy.inbound_capacity,
+            envelope.child_policy.inbound_capacity,
+        );
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+    }
+
+    /// Routes provider scripts so a mid-tree fork and the grandchild it
+    /// spawns share the one workspace provider deterministically; the
+    /// fork's would-stop turn is held until the registry shows the
+    /// grandchild reclaimed (which guarantees its result is already in
+    /// the fork's own channel).
+    struct ForkTreeProvider {
+        registry: Arc<RwLock<AgentRegistry>>,
+        fork_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Provider for ForkTreeProvider {
+        fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            use std::sync::atomic::Ordering as AtomicOrdering;
+            let last = request
+                .messages
+                .last()
+                .and_then(|m| m.content.clone())
+                .unwrap_or_default();
+            let end_turn = ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage {
+                    input_tokens: 5,
+                    output_tokens: 2,
+                    ..Usage::default()
+                },
+                response_id: None,
+            };
+            if last == "fork-grandchild-task" {
+                return Ok(Box::pin(stream::iter(vec![
+                    Ok(ProviderEvent::TextDelta {
+                        text: "fork grandchild says hi".to_string(),
+                    }),
+                    Ok(end_turn),
+                ])));
+            }
+            let call = self.fork_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            match call {
+                0 => Ok(Box::pin(stream::iter(vec![
+                    Ok(ProviderEvent::ToolCallDelta {
+                        item_id: "tc-grandchild".to_string(),
+                        name: Some("spawn_agent".to_string()),
+                        arguments_delta: json!({
+                            "task": "fork-grandchild-task",
+                            "model": "haiku",
+                            "role": "leaf",
+                        })
+                        .to_string(),
+                        kind: crate::provider::request::ToolCallKind::Function,
+                    }),
+                    Ok(done_event_tool_use()),
+                ]))),
+                1 => {
+                    let registry = Arc::clone(&self.registry);
+                    let s = stream::once(async move {
+                        for _ in 0..2400 {
+                            let reclaimed = registry
+                                .read()
+                                .tombstones()
+                                .iter()
+                                .any(|t| t.path.contains("/spawn/"));
+                            if reclaimed {
+                                return;
+                            }
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                        panic!("fork grandchild was never reclaimed — test cannot proceed");
+                    })
+                    .flat_map(move |()| {
+                        stream::iter(vec![
+                            Ok(ProviderEvent::TextDelta {
+                                text: "waited for grandchild".to_string(),
+                            }),
+                            Ok(end_turn.clone()),
+                        ])
+                    });
+                    Ok(Box::pin(s))
+                }
+                _ => Ok(Box::pin(stream::iter(vec![
+                    Ok(ProviderEvent::ToolCallDelta {
+                        item_id: "structured-out".to_string(),
+                        name: Some("structured_output".to_string()),
+                        arguments_delta: json!({
+                            "response": "fork done after grandchild",
+                            "requirements": {},
+                        })
+                        .to_string(),
+                        kind: crate::provider::request::ToolCallKind::Function,
+                    }),
+                    Ok(done_event_tool_use()),
+                ]))),
+            }
+        }
+    }
+
+    /// W3.4 end-to-end on the fork surface: a fork granted depth ≥ 1
+    /// spawns a grandchild; the grandchild's result is delivered into the
+    /// **fork's** conversation (one hop — never to the root), the fork's
+    /// structured result reaches the root's channel, and every registry
+    /// entry is reclaimed at every level.
+    #[tokio::test]
+    async fn fork_drains_its_childrens_results_one_hop_and_reclaims() {
+        let agent_registry = AgentRegistry::shared();
+        let provider: Arc<dyn Provider> = Arc::new(ForkTreeProvider {
+            registry: Arc::clone(&agent_registry),
+            fork_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        });
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(crate::tools::agent::SpawnAgentTool::new()));
+        let root_id = Uuid::new_v4();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            root_id,
+            &agent_registry,
+            Arc::new(tool_registry),
+            Arc::new(MessageRouter::new()),
+        );
+        let mut envelope = test_envelope();
+        envelope.child_policy.delegation.remaining_depth = 2;
+        ctx.insert_extension(Arc::new(envelope));
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+        ctx.insert_extension(Arc::new(
+            crate::tools::agent::reclaim::ReclaimOnResultDelivery,
+        ));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "fork-task", "model": "gpt-5.5", "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        assert!(!out.is_error(), "{:?}", out.content);
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let fork_path = out.content["path"].as_str().unwrap().to_string();
+
+        // Take the handle now, before the wrapper's reclamation pass, so
+        // the fork's store stays inspectable. Registry reclamation is
+        // unaffected — the wrapper's handle removal is idempotent.
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle stored");
+        let fork_store = Arc::clone(&handle.event_store);
+
+        let result = tokio::time::timeout(Duration::from_secs(120), rx.recv())
+            .await
+            .expect("fork result must arrive")
+            .expect("channel open");
+        assert_eq!(result.agent_id, fork_id);
+        assert!(result.succeeded, "{:?}", result.error);
+        assert!(
+            rx.try_recv().is_err(),
+            "the grandchild's result must never reach the root directly",
+        );
+
+        let injected = fork_store.events().iter().any(|event| {
+            matches!(
+                event,
+                SessionEvent::UserMessage { content, .. }
+                    if content.contains("<agent_result")
+                        && content.contains("fork grandchild says hi")
+            )
+        });
+        assert!(
+            injected,
+            "the grandchild's framed result must be injected into the fork's conversation",
+        );
+
+        // Reclamation at every level, with the grandchild nested under
+        // the fork's path.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            if agent_registry.read().is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "registry entries leaked: {:?}",
+                agent_registry.read().list(),
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let reg = agent_registry.read();
+        let tombstones = reg.tombstones();
+        assert_eq!(tombstones.len(), 2, "fork + grandchild reclaimed");
+        let grandchild_tomb = tombstones
+            .iter()
+            .find(|t| t.id != fork_id)
+            .expect("grandchild tombstone");
+        assert_eq!(grandchild_tomb.parent_id, Some(fork_id));
+        assert!(
+            grandchild_tomb
+                .path
+                .starts_with(&format!("{fork_path}/spawn/")),
+            "grandchild path nests under the fork: {}",
+            grandchild_tomb.path,
         );
     }
 }

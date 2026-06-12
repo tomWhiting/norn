@@ -434,9 +434,10 @@ impl AgentBuilder {
         self
     }
 
-    /// Set the root coordination envelope's [`ChildPolicy`] — the policy
-    /// this agent stamps on the children it spawns or forks (messaging
-    /// scope, delegation budget, child inbound-channel capacity).
+    /// Set the root coordination envelope's [`ChildPolicy`] — this
+    /// agent's own granted policy (messaging scope, delegation budget,
+    /// child inbound-channel capacity), from which every child's grant
+    /// is derived at spawn/fork time.
     ///
     /// **Required** whenever [`Self::agent_registry`] is wired; building
     /// without it is a typed configuration error. Conversely, setting it
@@ -462,11 +463,13 @@ impl AgentBuilder {
     ///
     /// `inbound_capacity` must be non-zero; zero fails the build. The
     /// policy is published on the shared tool context as part of the
-    /// [`CoordinationEnvelope`](crate::agent::child_policy::CoordinationEnvelope);
-    /// the spawn/fork tools stamp it on every child they launch, sizing
-    /// the child's inbound channel and fixing its `send_message` scope
-    /// (W3.2). Delegation-budget enforcement arrives with recursion
-    /// (W3.4).
+    /// [`CoordinationEnvelope`](crate::agent::child_policy::CoordinationEnvelope).
+    /// It is this agent's **own** granted policy: its spawn/fork
+    /// reservations are checked against `delegation` (a `remaining_depth`
+    /// of 0 disables delegation entirely), and every child it creates is
+    /// granted this policy with the depth decremented one level — or a
+    /// per-spawn narrowing of it — sizing the child's inbound channel and
+    /// fixing its `send_message` scope (W3.2/W3.4).
     #[must_use]
     pub fn child_policy(mut self, policy: ChildPolicy) -> Self {
         self.child_policy = Some(policy);

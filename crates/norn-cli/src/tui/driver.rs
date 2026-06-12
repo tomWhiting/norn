@@ -312,11 +312,16 @@ fn register_root_agent(
     registry: &Arc<parking_lot::RwLock<AgentRegistry>>,
     model: &str,
 ) -> Result<Uuid, Box<dyn std::error::Error>> {
+    // The root entry carries the CLI envelope's child policy — the root's
+    // own granted budget, the ground truth its spawn/fork reservations are
+    // checked against (W3.4).
     let guard = AgentRegistry::reserve(
         registry,
         "/root".to_string(),
         "lead".to_string(),
         model.to_string(),
+        None,
+        crate::runtime::cli_coordination_envelope().child_policy,
         None,
     )?;
     let id = guard.id();

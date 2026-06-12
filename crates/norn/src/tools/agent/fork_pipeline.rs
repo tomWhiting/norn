@@ -85,13 +85,18 @@ use crate::tools::task::SharedTaskStore;
 /// registry on the fork's `LoopContext` so pre/post-tool hooks fire for
 /// the fork's own calls.
 ///
-/// `child_policy` is the [`ChildPolicy`] the parent grants this fork (read
-/// from the parent's [`CoordinationEnvelope`] by the fork tool): it is
-/// stamped on the fork's [`AgentToolInfra`] together with the parent's
-/// event store, so `send_message` enforces the granted messaging scope and
-/// writes the dual-store `Sent` audit from ground truth carried on the
-/// fork's own context. The parent's [`CoordinationEnvelope`] extension is
-/// forwarded so the fork's own spawn sites can read policy at any depth.
+/// `child_policy` is the [`ChildPolicy`] the parent grants this fork —
+/// computed by the fork tool from the parent's own grant (narrowed or
+/// inherit-with-decrement, W3.4): it is stamped on the fork's
+/// [`AgentToolInfra`] together with the parent's event store, so
+/// `send_message` enforces the granted messaging scope, the dual-store
+/// `Sent` audit writes from ground truth, and the fork's own spawn/fork
+/// sites read *their* budget from the grant. The parent's
+/// [`CoordinationEnvelope`] extension is forwarded for the envelope-wide
+/// `child_result_capacity`; the
+/// [`ReclaimOnResultDelivery`](super::reclaim::ReclaimOnResultDelivery)
+/// marker is forwarded so the fork's own children are reclaimed at every
+/// level exactly as depth-1 children are.
 ///
 /// [`ForkTool::execute`]: crate::tools::agent::fork_tool::ForkTool
 pub(super) fn build_fork_context(
@@ -155,6 +160,9 @@ pub(super) fn build_fork_context(
     }
     if let Some(envelope) = parent_ctx.get_extension::<CoordinationEnvelope>() {
         child_ctx.insert_extension(envelope);
+    }
+    if let Some(marker) = parent_ctx.get_extension::<super::reclaim::ReclaimOnResultDelivery>() {
+        child_ctx.insert_extension(marker);
     }
     if let Some(tree) = child_tree {
         child_ctx.insert_extension(Arc::new(tree));
@@ -640,6 +648,11 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                 stop: outcome.stop.clone(),
                 usage: outcome.usage.clone(),
             };
+            // A send into a dropped receiver is the R5 orphaned-result
+            // gap: the parent's run ended before this fork finished
+            // (children run default loop limits and a non-root parent
+            // cannot linger until R5 closes). Error-logged, never
+            // silent; reclamation below still runs.
             if let Err(e) = sender.0.send(result).await {
                 tracing::error!(
                     fork_id = %fork_id,
@@ -647,6 +660,16 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                     "fork: failed to send result through child result channel",
                 );
             }
+        } else {
+            // Only reachable on embedder contexts assembled without
+            // install_agent_infra: a forker that passed the budget gate
+            // has a channel by construction. The result is undeliverable
+            // — say so, never drop it silently.
+            tracing::error!(
+                fork_id = %fork_id,
+                "fork: no child-result channel on the forking context; \
+                 the fork's result cannot be delivered",
+            );
         }
 
         let _ = status_tx.send_replace(outcome.status);
@@ -881,6 +904,8 @@ mod tests {
             "/fork/test".to_owned(),
             "fork".to_owned(),
             "haiku".to_owned(),
+            None,
+            test_policy(),
             None,
         )
         .map_err(|e| format!("reserve: {e}"))?;

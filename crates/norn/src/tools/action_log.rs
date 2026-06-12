@@ -1208,12 +1208,15 @@ mod tests {
     fn family() -> Family {
         let registry = AgentRegistry::shared();
         let root_id = Uuid::new_v4();
+        let root_policy = crate::tools::agent::coord::test_support::test_root_policy();
         let guard = AgentRegistry::reserve(
             &registry,
             "/smoke/child".to_owned(),
             "researcher".to_owned(),
             "haiku".to_owned(),
             Some(root_id),
+            root_policy.grant_for_child(None).expect("grant"),
+            Some(&root_policy),
         )
         .expect("reserve child");
         let child_id = guard.id();
@@ -1362,12 +1365,15 @@ mod tests {
         assert_eq!(out.content["error"]["kind"], "permission_denied");
 
         // Sibling by path.
+        let root_policy = crate::tools::agent::coord::test_support::test_root_policy();
         let guard = AgentRegistry::reserve(
             &fam.registry,
             "/smoke/sibling".to_owned(),
             "worker".to_owned(),
             "haiku".to_owned(),
             Some(fam.root_id),
+            root_policy.grant_for_child(None).expect("grant"),
+            Some(&root_policy),
         )
         .expect("reserve sibling");
         let sibling_id = guard.id();

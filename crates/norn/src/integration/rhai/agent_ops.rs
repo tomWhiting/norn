@@ -280,8 +280,12 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
     let model = map_get_string(config, "model")
         .ok_or_else(|| Box::new(rhai_error("spawn_agent: missing 'model'")))?;
     let role = map_get_string(config, "role").unwrap_or_else(|| "subagent".to_owned());
-    let path =
-        map_get_string(config, "path").unwrap_or_else(|| format!("/spawn/{}", Uuid::new_v4()));
+    // Auto paths nest under the host's registered path when it has one
+    // (W3.4 path namespacing) — the same single implementation the
+    // spawn/fork tools use, so the path shape cannot drift.
+    let path = map_get_string(config, "path").unwrap_or_else(|| {
+        crate::tools::agent::delegation::auto_child_path(&ctx.registry, ctx.agent_id, "spawn")
+    });
     let tools = map_get_string_vec(config, "tools");
 
     let registry = ctx.tool_registry.as_ref().ok_or_else(|| {
@@ -291,9 +295,23 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         ))
     })?;
 
-    let guard =
-        AgentRegistry::reserve(&ctx.registry, path, role, model.clone(), Some(ctx.agent_id))
-            .map_err(|e| Box::new(rhai_error(format!("spawn_agent: reserve: {e}"))))?;
+    // The child's grant is derived from the host's own policy by the same
+    // inherit-with-decrement rule the spawn/fork tools use; a depth-0 host
+    // is refused typed (W3.4 — script hosts have real budgets too).
+    let child_grant = ctx
+        .child_policy
+        .grant_for_child(None)
+        .map_err(|e| Box::new(rhai_error(format!("spawn_agent: {e}"))))?;
+    let guard = AgentRegistry::reserve(
+        &ctx.registry,
+        path,
+        role,
+        model.clone(),
+        Some(ctx.agent_id),
+        child_grant,
+        Some(&ctx.child_policy),
+    )
+    .map_err(|e| Box::new(rhai_error(format!("spawn_agent: reserve: {e}"))))?;
     let real_id = guard.id();
     guard
         .confirm()
@@ -311,6 +329,14 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             // registry's own shared context — matching the behaviour of the
             // prior `registry.execute()` delegation before the
             // `SubAgentExecutor::new` signature gained `child_context`.
+            //
+            // Known boundary: this is the HOST's shared context, and the
+            // model is shown no tools (`tools: &[]` below) — the child's
+            // decremented grant on its registry entry is observability-only
+            // here. If script children ever gain a real tool surface, they
+            // must get their own child context (as the spawn/fork tools
+            // build), or their spawns would be charged to the host's
+            // identity and budget.
             let child_context = registry_for_executor
                 .shared_context()
                 .unwrap_or_else(|| Arc::new(ToolContext::empty()));
@@ -459,6 +485,14 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             tool_registry: Some(Arc::new(ToolRegistry::new())),
             working_dir: crate::tool::context::SharedWorkingDir::default(),
+            child_policy: crate::agent::child_policy::ChildPolicy {
+                messaging: crate::agent::child_policy::MessagingScope::SiblingsAndParent,
+                delegation: crate::agent::child_policy::DelegationBudget {
+                    remaining_depth: 2,
+                    max_concurrent_children: 8,
+                },
+                inbound_capacity: 8,
+            },
         }
     }
 
@@ -578,6 +612,8 @@ mod tests {
             "worker".to_owned(),
             "claude".to_owned(),
             Some(ctx.agent_id),
+            ctx.child_policy.grant_for_child(None).unwrap(),
+            Some(&ctx.child_policy),
         )
         .unwrap();
         let child = guard.id();
@@ -658,6 +694,8 @@ mod tests {
             "orchestrator".to_owned(),
             "claude".to_owned(),
             None,
+            ctx.child_policy.clone(),
+            None,
         )
         .unwrap();
         let host = guard.id();
@@ -687,5 +725,56 @@ mod tests {
         let msgs = rx.drain();
         assert_eq!(msgs[0].from, "/host", "tombstone path attribution");
         assert!(msgs[0].role.is_none(), "tombstones carry no role");
+    }
+
+    // -- W3.4: script hosts have real delegation budgets ----------------------
+
+    /// A host whose own policy has `remaining_depth = 0` may not spawn:
+    /// the script gets the typed, honest refusal naming the budget and
+    /// nothing is registered.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn spawn_agent_refused_when_host_depth_exhausted() {
+        let mut ctx = build_context();
+        ctx.child_policy.delegation.remaining_depth = 0;
+        let engine = build_norn_engine(&ctx);
+
+        let err = engine
+            .eval::<crate::integration::rhai::AgentHandle>(
+                r#"spawn_agent(#{ task: "t", model: "claude" })"#,
+            )
+            .expect_err("a zero-depth host must be refused");
+        assert!(
+            err.to_string().contains("delegation depth exhausted"),
+            "the refusal names the budget: {err}",
+        );
+        assert!(ctx.registry.read().is_empty(), "nothing was registered");
+    }
+
+    /// A script-spawned child's registry entry carries the host's policy
+    /// with the delegation depth decremented one level (the same
+    /// derivation the spawn/fork tools use).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn spawn_agent_stamps_decremented_grant() {
+        let ctx = build_context();
+        assert_eq!(ctx.child_policy.delegation.remaining_depth, 2);
+        let engine = build_norn_engine(&ctx);
+        let registry = Arc::clone(&ctx.registry);
+
+        let handle = engine
+            .eval::<crate::integration::rhai::AgentHandle>(
+                r#"spawn_agent(#{ task: "t", model: "claude" })"#,
+            )
+            .expect("spawn succeeds");
+
+        let entry = registry.read().get(handle.id()).expect("entry registered");
+        assert_eq!(
+            entry.policy.delegation.remaining_depth, 1,
+            "the host's depth-2 policy decrements to 1 on the child",
+        );
+        assert!(
+            entry.path.starts_with("/spawn/"),
+            "an unregistered host has no path prefix: {}",
+            entry.path,
+        );
     }
 }

@@ -426,3 +426,49 @@ Adaptations when you bump past the W3.2 commit (flagged in §8.2's bullet):
   `parent_only` and wants child→parent messaging to work, set
   `AgentBuilder::inbound_capacity` on the root and drain the channel.
   Tracked follow-up for norn's own CLI drivers.
+
+## 8.5 W3.4 landed — delegation budgets + recursion functional
+
+Children can now spawn children, governed by harness-stamped budgets.
+Adaptations when you bump past the W3.4 commit:
+
+- **BREAKING (API): `AgentRegistry::reserve`** gains two parameters —
+  the child's stamped `policy: ChildPolicy` and
+  `unregistered_spawner_policy: Option<&ChildPolicy>` (envelope fallback
+  for unregistered roots). Every embedder call site breaks. Budgets are
+  enforced under the registry write lock against the SPAWNING agent's
+  own granted policy; refusals are typed and name the budget. A
+  terminal spawner can no longer reserve children.
+- **BREAKING (API): `AgentEntry`** gains a required `policy` field
+  (struct construction + strict deserialization). The type is not
+  persisted by norn (in-memory registry only) — no resume break — but
+  if meridian constructs entries or round-trips the struct, adapt.
+- **BREAKING (API): `NornRhaiContext`** gains a required
+  `child_policy: ChildPolicy` (the script host's own granted policy,
+  embedder-supplied — never defaulted).
+- **SEMANTIC — read this one carefully: `CoordinationEnvelope.child_policy`
+  is the root's OWN policy**, the budget its spawns are charged
+  against. Children receive a derived grant with `remaining_depth`
+  decremented one level (optionally narrowed further by the new
+  per-spawn `child_policy` arg on spawn_agent/fork). At the documented
+  proposal (`remaining_depth = 1`) behavior is identical to W3.2
+  (children are leaves); at deeper values children get N−1, not N.
+- **Path shapes**: auto-generated child paths now nest under the
+  spawner — on the CLI surface children move from `/spawn/{uuid}` to
+  `/root/spawn/{uuid}`, grandchildren to `/root/spawn/{a}/spawn/{b}`.
+  Anything parsing registry paths sees the new shape; `parent_id` links
+  remain the authoritative genealogy. Explicit `path` args are
+  untouched.
+- **`agents` tool output**: live entries gain a read-only `policy`
+  object (additive); tombstones do not retain it.
+- **§6 gap CLOSED**: grandchild registry entries no longer leak —
+  per-agent result channels exist at every delegating level and
+  delivery-anchored reclamation runs at every level (pinned by depth-2
+  tests on both spawn and fork surfaces).
+- **Spawn/fork args are now strict**: unknown top-level keys are typed
+  failures (a typo'd `child_policy` can no longer silently drop a
+  narrowing).
+- R5 still stands (and is more visible at depth): mid-tree agents
+  cannot linger, so a delegating child that returns before its own
+  children finish loses their results (error-logged; stated in the
+  spawn/fork guidance). Closes next wave with `ChildPolicy.loop_config`.

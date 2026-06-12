@@ -120,9 +120,9 @@ fn resolve(reg: &AgentRegistry, identifier: &str) -> Option<Resolved> {
 ///
 /// Parent links live on the children, so this runs a fixed-point pass:
 /// each iteration adopts every record whose parent is already visible,
-/// stopping when a pass adds nothing. The registry enforces one-layer
-/// spawning today (one pass suffices), but the walk is depth-agnostic so
-/// the boundary cannot silently break if that policy changes.
+/// stopping when a pass adds nothing. The walk is depth-agnostic, so
+/// budgeted recursive delegation (W3.4) renders correctly at any depth —
+/// grandchildren and deeper descendants are adopted level by level.
 fn visible_ids(reg: &AgentRegistry, caller: Uuid) -> HashSet<Uuid> {
     let entries = reg.list();
     let tombstones = reg.tombstones();
@@ -166,6 +166,10 @@ fn entry_json(entry: &AgentEntry, caller: Uuid) -> Value {
         "completed_at": entry.completed_at.map(|at| at.to_rfc3339()),
         "reclaimed": false,
         "self": entry.id == caller,
+        // The granted ChildPolicy is registry ground truth (W3.4): the
+        // caller reads its descendants' real budgets — and its own —
+        // instead of guessing what a child may delegate.
+        "policy": entry.policy,
     })
 }
 
@@ -561,9 +565,7 @@ mod tests {
     }
 
     /// Scope boundary: the caller sees itself and its descendants only —
-    /// its parent and its siblings are invisible, live or reclaimed. (The
-    /// registry's depth-1 policy means a caller that itself has a parent
-    /// can have no registered children, so its whole view is just itself.)
+    /// its parent and its siblings are invisible, live or reclaimed.
     #[tokio::test]
     async fn list_excludes_parent_and_siblings() {
         let registry = AgentRegistry::shared();
@@ -589,6 +591,55 @@ mod tests {
             "reclaimed sibling must be invisible too",
         );
         assert_eq!(out.content["count"], 1);
+    }
+
+    /// Depth ≥ 2 (W3.4): the fixed-point walk adopts the whole descendant
+    /// subtree — child, live grandchild, and a reclaimed grandchild —
+    /// with nested paths, real parent links, and the granted budget
+    /// surfaced from ground truth; a grandchild caller still sees only
+    /// itself, and a mid-tree caller sees its subtree but never the root.
+    #[tokio::test]
+    async fn list_renders_deeper_tree_and_scopes_each_level() {
+        let registry = AgentRegistry::shared();
+        let root = register_agent(&registry, "/root", None);
+        let child = register_agent(&registry, "/root/spawn/c", Some(root));
+        let grandchild = register_agent(&registry, "/root/spawn/c/spawn/g1", Some(child));
+        let reclaimed_grandchild = register_agent(&registry, "/root/spawn/c/spawn/g2", Some(child));
+        registry
+            .write()
+            .mark_completed(reclaimed_grandchild)
+            .expect("complete");
+        assert!(registry.write().remove_terminal(reclaimed_grandchild));
+
+        // Root view: the whole tree, including the reclaimed grandchild.
+        let ctx = ctx_for(infra_keyed(&registry, root, None));
+        let out = execute(&AgentsTool::new(), json!({"action": "list"}), &ctx).await;
+        assert_eq!(out.content["count"], 4);
+        let agents = out.content["agents"].as_array().expect("agents array");
+        assert!(find(agents, child).is_some(), "child visible");
+        let g = find(agents, grandchild).expect("grandchild visible from root");
+        assert_eq!(g["parent_id"], child.to_string());
+        assert_eq!(g["path"], "/root/spawn/c/spawn/g1");
+        // Granted budgets decrement per level (root test policy is depth 5).
+        assert_eq!(g["policy"]["delegation"]["remaining_depth"], 3);
+        let reclaimed = find(agents, reclaimed_grandchild).expect("reclaimed grandchild visible");
+        assert_eq!(reclaimed["reclaimed"], true);
+        assert_eq!(reclaimed["parent_id"], child.to_string());
+
+        // Grandchild view: only itself.
+        let gctx = ctx_for(infra_keyed(&registry, grandchild, Some(child)));
+        let out = execute(&AgentsTool::new(), json!({"action": "list"}), &gctx).await;
+        assert_eq!(out.content["count"], 1);
+
+        // Mid-tree view: itself + its own children; root stays invisible.
+        let cctx = ctx_for(infra_keyed(&registry, child, Some(root)));
+        let out = execute(&AgentsTool::new(), json!({"action": "list"}), &cctx).await;
+        assert_eq!(out.content["count"], 3);
+        let agents = out.content["agents"].as_array().expect("agents array");
+        assert!(
+            find(agents, root).is_none(),
+            "root must be invisible from a mid-tree caller"
+        );
     }
 
     /// An unregistered caller (e.g. a root agent with no registry entry)

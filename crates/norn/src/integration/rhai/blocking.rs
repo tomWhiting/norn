@@ -162,6 +162,14 @@ mod tests {
             event_store: Arc::new(EventStore::new()),
             tool_registry: Some(Arc::new(ToolRegistry::new())),
             working_dir: crate::tool::context::SharedWorkingDir::default(),
+            child_policy: crate::agent::child_policy::ChildPolicy {
+                messaging: crate::agent::child_policy::MessagingScope::SiblingsAndParent,
+                delegation: crate::agent::child_policy::DelegationBudget {
+                    remaining_depth: 2,
+                    max_concurrent_children: 8,
+                },
+                inbound_capacity: 8,
+            },
         }
     }
 

@@ -1340,4 +1340,144 @@ mod tests {
             "the only root attribution is the harness frame's own sender label",
         );
     }
+
+    // -- W3.4: scope composition across deeper trees -------------------------
+
+    /// Depth ≥ 2: a grandchild with `siblings_and_parent` reaches its
+    /// sibling and its mid-tree parent — never the root, which sits two
+    /// hops up (escalation crosses one audited hop at a time).
+    #[tokio::test]
+    async fn grandchild_scope_reaches_sibling_and_parent_never_root() {
+        let registry = AgentRegistry::shared();
+        let router = Arc::new(MessageRouter::new());
+        let root = register_agent(&registry, "/root", None);
+        let child = register_agent(&registry, "/root/c", Some(root));
+        let g1 = register_agent(&registry, "/root/c/g1", Some(child));
+        let g2 = register_agent(&registry, "/root/c/g2", Some(child));
+
+        let parent_store = Arc::new(EventStore::new());
+        let ctx = ctx_with(child_infra(
+            g1,
+            child,
+            MessagingScope::SiblingsAndParent,
+            &registry,
+            &router,
+            &parent_store,
+        ));
+        let tool = SendMessageTool::new();
+
+        // Sibling at depth 2: delivered, attributed from registry ground
+        // truth.
+        let (sib_tx, mut sib_rx) = inbound_channel(8);
+        router.register(g2, sib_tx);
+        let out = tool
+            .execute(
+                &envelope_for(
+                    "send_message",
+                    send_args("/root/c/g2", "steer", "hello sibling"),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("send");
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["delivered"], true);
+        let drained = sib_rx.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].from, "/root/c/g1");
+
+        // The mid-tree parent (one hop up) via the literal "parent".
+        let (parent_tx, mut parent_rx) = inbound_channel(8);
+        router.register(child, parent_tx);
+        let out = tool
+            .execute(
+                &envelope_for("send_message", send_args("parent", "update", "status")),
+                &ctx,
+            )
+            .await
+            .expect("send");
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(parent_rx.drain().len(), 1);
+
+        // The root (two hops up): refused with the typed scope denial —
+        // even though the root is live and routed.
+        let (root_tx, mut root_rx) = inbound_channel(8);
+        router.register(root, root_tx);
+        let out = tool
+            .execute(
+                &envelope_for("send_message", send_args("/root", "steer", "escalate!")),
+                &ctx,
+            )
+            .await
+            .expect("execute returns structured failure");
+        assert!(out.is_error(), "{:?}", out.content);
+        let payload = out.error().expect("typed payload");
+        assert_eq!(payload.kind, ToolErrorKind::PermissionDenied);
+        assert!(
+            payload.message.contains("siblings_and_parent"),
+            "the denial names the granted scope: {}",
+            payload.message,
+        );
+        assert!(
+            root_rx.drain().is_empty(),
+            "nothing may be enqueued for an out-of-scope recipient",
+        );
+    }
+
+    /// Depth ≥ 2: a mid-tree child granted `parent_only` reaches the root
+    /// (its parent) and nothing else — not its own sibling, not its own
+    /// grandchild-level children.
+    #[tokio::test]
+    async fn mid_tree_parent_only_reaches_root_and_nothing_else() {
+        let registry = AgentRegistry::shared();
+        let router = Arc::new(MessageRouter::new());
+        let root = register_agent(&registry, "/root", None);
+        let child = register_agent(&registry, "/root/c", Some(root));
+        let sibling = register_agent(&registry, "/root/c2", Some(root));
+        let grandchild = register_agent(&registry, "/root/c/g", Some(child));
+
+        let parent_store = Arc::new(EventStore::new());
+        let ctx = ctx_with(child_infra(
+            child,
+            root,
+            MessagingScope::ParentOnly,
+            &registry,
+            &router,
+            &parent_store,
+        ));
+        let tool = SendMessageTool::new();
+
+        // Parent (the root) is reachable.
+        let (root_tx, mut root_rx) = inbound_channel(8);
+        router.register(root, root_tx);
+        let out = tool
+            .execute(
+                &envelope_for("send_message", send_args("parent", "steer", "to root")),
+                &ctx,
+            )
+            .await
+            .expect("send");
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(root_rx.drain().len(), 1);
+
+        // Sibling and own child are both out of scope under parent_only.
+        for target in ["/root/c2", "/root/c/g"] {
+            let out = tool
+                .execute(
+                    &envelope_for("send_message", send_args(target, "update", "nope")),
+                    &ctx,
+                )
+                .await
+                .expect("structured failure");
+            assert!(out.is_error(), "{target} must be refused");
+            let payload = out.error().expect("typed payload");
+            assert_eq!(payload.kind, ToolErrorKind::PermissionDenied);
+            assert!(
+                payload.message.contains("parent_only"),
+                "the denial names the granted scope: {}",
+                payload.message,
+            );
+        }
+        let _ = (sibling, grandchild);
+    }
 }

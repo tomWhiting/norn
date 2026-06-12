@@ -11,6 +11,7 @@ use uuid::Uuid;
 
 use super::handle::{AgentHandles, SharedSessionTree};
 use super::infra::{AgentToolInfra, ParentGrant};
+use super::reclaim::ReclaimOnResultDelivery;
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
 use crate::config::permissions::PermissionPolicy;
 use crate::integration::DiagnosticCollector;
@@ -64,17 +65,22 @@ use crate::tools::task::SharedTaskStore;
 /// child context keyed to the *child's* `SessionId`, so a grandchild spawn
 /// branches under the child's session in turn (NA-008 R3).
 ///
-/// `child_policy` is the [`ChildPolicy`] the parent grants this child
-/// (read from the parent's [`CoordinationEnvelope`] by the spawn tool):
-/// it is stamped on the child's [`AgentToolInfra`] together with the
-/// parent's event store, so `send_message` enforces the granted
-/// [`MessagingScope`](crate::agent::child_policy::MessagingScope) and
-/// writes the dual-store `Sent` audit from ground truth carried on the
-/// child's own context. The parent's [`CoordinationEnvelope`] extension is
-/// forwarded so the child's own spawn sites can read policy at any depth
-/// (the registry depth gate still rejects grandchildren until W3.4, which
-/// also replaces the inherited-envelope read with the child's narrowed
-/// policy).
+/// `child_policy` is the [`ChildPolicy`] the parent grants this child —
+/// computed by the spawn tool from the parent's own grant (narrowed or
+/// inherit-with-decrement, W3.4): it is stamped on the child's
+/// [`AgentToolInfra`] together with the parent's event store, so
+/// `send_message` enforces the granted
+/// [`MessagingScope`](crate::agent::child_policy::MessagingScope), the
+/// dual-store `Sent` audit writes from ground truth, and the child's own
+/// spawn/fork sites read *their* budget from the grant. The parent's
+/// [`CoordinationEnvelope`] extension is forwarded for the envelope-wide
+/// `child_result_capacity` (and the root policy it carries — only a root
+/// without a grant ever reads that half).
+///
+/// The [`ReclaimOnResultDelivery`] marker is forwarded when the parent
+/// runs with delivery-anchored reclamation, so grandchild registry
+/// entries are reclaimed at every level exactly as depth-1 children are
+/// (closing the recorded grandchild-leak gap).
 pub(super) fn build_child_context(
     parent_infra: &AgentToolInfra,
     child_id: Uuid,
@@ -133,6 +139,9 @@ pub(super) fn build_child_context(
     }
     if let Some(envelope) = parent_ctx.get_extension::<CoordinationEnvelope>() {
         child_ctx.insert_extension(envelope);
+    }
+    if let Some(marker) = parent_ctx.get_extension::<ReclaimOnResultDelivery>() {
+        child_ctx.insert_extension(marker);
     }
     if let Some(tree) = child_tree {
         child_ctx.insert_extension(Arc::new(tree));

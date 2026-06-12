@@ -523,11 +523,16 @@ fn register_root_agent(
     registry: &Arc<parking_lot::RwLock<norn::agent::registry::AgentRegistry>>,
     model: &str,
 ) -> Result<Uuid, PrintError> {
+    // The root entry carries the CLI envelope's child policy — the root's
+    // own granted budget, the ground truth its spawn/fork reservations are
+    // checked against (W3.4).
     let guard = norn::agent::registry::AgentRegistry::reserve(
         registry,
         "/root".to_string(),
         "lead".to_string(),
         model.to_string(),
+        None,
+        crate::runtime::cli_coordination_envelope().child_policy,
         None,
     )
     .map_err(|err| PrintError::Agent(err.to_string()))?;

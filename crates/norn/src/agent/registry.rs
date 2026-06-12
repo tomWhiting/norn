@@ -10,9 +10,8 @@ use parking_lot::RwLock;
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
+use crate::agent::child_policy::ChildPolicy;
 use crate::error::AgentError;
-
-const MAX_CONCURRENT_CHILDREN: usize = 32;
 
 /// Lifecycle status of a registered agent.
 ///
@@ -99,6 +98,15 @@ pub struct AgentEntry {
     /// by the registry on the terminal `mark_*` transition and carried onto
     /// the entry's [`AgentTombstone`] at reclamation.
     pub completed_at: Option<DateTime<Utc>>,
+    /// The [`ChildPolicy`] granted to this agent at spawn/fork time
+    /// (harness-stamped — the model never controls its own budget). The
+    /// registry is the ground truth every enforcement point reads:
+    /// [`AgentRegistry::reserve`] checks a spawner's
+    /// `policy.delegation` budget from its entry, and status surfaces
+    /// render the granted budget from here. For a root agent registered
+    /// directly (e.g. the CLI's `/root` entry), this is the builder
+    /// envelope's `child_policy` — the root's own budget.
+    pub policy: ChildPolicy,
 }
 
 /// Completion record retained after a terminal entry is reclaimed.
@@ -131,11 +139,17 @@ pub struct AgentTombstone {
 
 /// In-memory registry of active agents.
 ///
-/// [`AgentRegistry::reserve`] enforces two structural limits approved in
-/// the fork-result-delivery design:
-/// - **One layer deep**: a child cannot spawn grandchildren.
-/// - **Concurrent cap**: a parent may have at most
-///   [`MAX_CONCURRENT_CHILDREN`] non-terminal children at once.
+/// [`AgentRegistry::reserve`] enforces the spawning agent's granted
+/// [`DelegationBudget`](crate::agent::child_policy::DelegationBudget)
+/// (Wave 3 W3.4 — replacing the former flat depth-1 gate and hardcoded
+/// concurrency cap):
+/// - **Depth**: a spawner whose granted `remaining_depth` is 0 may not
+///   reserve children; grants decrement strictly per level.
+/// - **Concurrency**: a spawner may have at most its granted
+///   `max_concurrent_children` non-terminal direct children at once.
+///
+/// There are no library limits — budgets come only from the builder
+/// envelope and the per-spawn grant chain.
 ///
 /// Callers wrap the registry in `Arc<parking_lot::RwLock<AgentRegistry>>`
 /// to share it across tasks. See [`AgentRegistry::shared`] for an
@@ -397,28 +411,48 @@ impl AgentRegistry {
 
     /// Reserve a new agent slot, returning a [`SpawnGuard`].
     ///
-    /// The reservation inserts an entry in [`AgentStatus::Spawning`]. The
-    /// caller must invoke [`SpawnGuard::confirm`] to transition the entry
-    /// to [`AgentStatus::Active`]; otherwise dropping the guard rolls the
-    /// reservation back automatically.
+    /// The reservation inserts an entry in [`AgentStatus::Spawning`]
+    /// carrying `policy` — the [`ChildPolicy`] granted to the agent being
+    /// reserved, which becomes the ground truth for *its* own future
+    /// spawning. The caller must invoke [`SpawnGuard::confirm`] to
+    /// transition the entry to [`AgentStatus::Active`]; otherwise dropping
+    /// the guard rolls the reservation back automatically.
     ///
-    /// Enforces two structural limits:
-    /// - **One layer deep**: a child agent (one with `parent_id`) cannot
-    ///   spawn grandchildren.
-    /// - **Concurrent cap**: a single parent may have at most 32
-    ///   non-terminal children at once.
+    /// When `parent_id` is `Some`, the reservation is a delegation and is
+    /// checked against the **spawning agent's** granted budget (W3.4):
+    ///
+    /// - The spawner's policy is read from its own registry entry (ground
+    ///   truth). A spawner with no entry is a root running outside the
+    ///   registry; its budget is `unregistered_spawner_policy` — the
+    ///   builder envelope's `child_policy`, supplied by the launch path.
+    ///   Neither available → typed refusal (a budget is never invented).
+    /// - `remaining_depth == 0` → typed depth-exhausted refusal naming
+    ///   the budget; `policy` must be a strict narrowing of the spawner's
+    ///   grant (depth decremented, everything else at most the spawner's
+    ///   own — re-validated here as defense-in-depth via
+    ///   [`ChildPolicy::grant_for_child`], so a widened grant cannot be
+    ///   minted through any caller).
+    /// - The spawner's live (non-terminal) direct children must number
+    ///   fewer than its granted `max_concurrent_children`.
+    ///
+    /// When `parent_id` is `None` the reservation registers a root agent
+    /// itself (e.g. the CLI's `/root` entry) — not a delegation, so no
+    /// budget applies; `policy` is the root's own granted budget.
     ///
     /// # Errors
     ///
     /// Returns [`AgentError::SpawnFailed`] if `path` is already in use,
-    /// the caller is itself a child, or the concurrent child cap is
-    /// reached.
+    /// the spawner's budget cannot be established, its delegation depth
+    /// is exhausted, `policy` widens its grant, or its concurrent-child
+    /// budget is full.
     pub fn reserve(
         registry: &Arc<RwLock<Self>>,
         path: String,
         role: String,
         model: String,
         parent_id: Option<Uuid>,
+        policy: ChildPolicy,
+        unregistered_spawner_policy: Option<&ChildPolicy>,
     ) -> Result<SpawnGuard, AgentError> {
         let id = Uuid::new_v4();
         {
@@ -430,26 +464,63 @@ impl AgentRegistry {
             }
 
             if let Some(pid) = parent_id {
-                if let Some(parent_entry) = guard.entries.get(&pid)
-                    && parent_entry.parent_id.is_some()
-                {
+                let spawner_policy = match guard.entries.get(&pid) {
+                    // A finished spawner cannot reserve children: its
+                    // run is over, so nothing would ever drain the
+                    // child's result. Direct-API misuse only (the
+                    // wrappers mark terminal after the loop ends), but
+                    // refused honestly rather than authorized by a
+                    // stale policy.
+                    Some(parent_entry) if parent_entry.status.is_terminal() => {
+                        return Err(AgentError::SpawnFailed {
+                            reason: format!(
+                                "spawning agent {pid} has already finished \
+                                 ({:?}) and cannot reserve children",
+                                parent_entry.status
+                            ),
+                        });
+                    }
+                    Some(parent_entry) => parent_entry.policy.clone(),
+                    None => match unregistered_spawner_policy {
+                        Some(envelope_policy) => envelope_policy.clone(),
+                        None => {
+                            return Err(AgentError::SpawnFailed {
+                                reason: format!(
+                                    "spawning agent {pid} has no registry entry and no \
+                                     envelope policy was supplied — its delegation budget \
+                                     cannot be established, so the reservation is refused"
+                                ),
+                            });
+                        }
+                    },
+                };
+
+                // Budget gates against the spawner's granted policy.
+                // Depth exhaustion and grant widening both surface through
+                // the single narrowing implementation, so the registry and
+                // the spawn/fork tools can never disagree on what a valid
+                // grant is.
+                if let Err(violation) = spawner_policy.grant_for_child(Some(policy.clone())) {
                     return Err(AgentError::SpawnFailed {
-                        reason: "spawn depth exceeded: children cannot spawn \
-                                 grandchildren"
-                            .to_owned(),
+                        reason: violation.to_string(),
                     });
                 }
 
                 // Terminal entries linger until `remove_terminal` reclaims
                 // them, so the cap must count only non-terminal children.
+                let cap = spawner_policy.delegation.max_concurrent_children;
                 let active_children = guard
                     .entries
                     .values()
                     .filter(|e| e.parent_id == Some(pid) && !e.status.is_terminal())
                     .count();
-                if active_children >= MAX_CONCURRENT_CHILDREN {
+                if active_children >= cap {
                     return Err(AgentError::SpawnFailed {
-                        reason: "concurrent child limit reached".to_owned(),
+                        reason: format!(
+                            "concurrent child limit reached: this agent's granted budget \
+                             allows {cap} non-terminal children and {active_children} are \
+                             already live"
+                        ),
                     });
                 }
             }
@@ -463,6 +534,7 @@ impl AgentRegistry {
                 spawned_at: Utc::now(),
                 parent_id,
                 completed_at: None,
+                policy,
             };
             guard.entries.insert(id, entry);
             guard.path_index.insert(path, id);
@@ -603,22 +675,63 @@ impl Drop for SpawnGuard {
 )]
 mod tests {
     use super::*;
+    use crate::agent::child_policy::{DelegationBudget, MessagingScope, PolicyNarrowingError};
 
     fn fresh() -> Arc<RwLock<AgentRegistry>> {
         AgentRegistry::shared()
     }
 
+    /// Test policy with `depth` levels of delegation below the holder —
+    /// a deliberate test-caller choice, never a library default.
+    fn test_policy(depth: u32) -> ChildPolicy {
+        ChildPolicy {
+            messaging: MessagingScope::SiblingsAndParent,
+            delegation: DelegationBudget {
+                remaining_depth: depth,
+                max_concurrent_children: 32,
+            },
+            inbound_capacity: 32,
+        }
+    }
+
+    /// Test-shape reserve: derives the new entry's grant from its
+    /// registered parent's policy when one exists (decrement-per-level),
+    /// else grants a generous root policy, with the same root policy as
+    /// the unregistered-spawner fallback.
+    fn reserve(
+        registry: &Arc<RwLock<AgentRegistry>>,
+        path: &str,
+        role: &str,
+        model: &str,
+        parent: Option<Uuid>,
+    ) -> Result<SpawnGuard, AgentError> {
+        let root_policy = test_policy(5);
+        let policy = match parent {
+            None => root_policy.clone(),
+            Some(p) => {
+                let base = registry
+                    .read()
+                    .get(p)
+                    .map_or_else(|| root_policy.clone(), |entry| entry.policy);
+                base.grant_for_child(None)
+                    .expect("test parent policy can grant")
+            }
+        };
+        AgentRegistry::reserve(
+            registry,
+            path.to_string(),
+            role.to_string(),
+            model.to_string(),
+            parent,
+            policy,
+            Some(&root_policy),
+        )
+    }
+
     #[test]
     fn reserve_and_confirm_persists_entry() {
         let registry = fresh();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root/a".to_string(),
-            "dev".to_string(),
-            "claude-sonnet".to_string(),
-            None,
-        )
-        .expect("reserve");
+        let guard = reserve(&registry, "/root/a", "dev", "claude-sonnet", None).expect("reserve");
 
         let id = guard.id();
         {
@@ -644,14 +757,8 @@ mod tests {
         let registry = fresh();
         let id;
         {
-            let guard = AgentRegistry::reserve(
-                &registry,
-                "/root/transient".to_string(),
-                "fork".to_string(),
-                "haiku".to_string(),
-                None,
-            )
-            .expect("reserve");
+            let guard =
+                reserve(&registry, "/root/transient", "fork", "haiku", None).expect("reserve");
             id = guard.id();
             assert!(registry.read().get(id).is_some());
             // Drop without confirming.
@@ -664,23 +771,10 @@ mod tests {
     #[test]
     fn duplicate_path_rejected() {
         let registry = fresh();
-        let _first = AgentRegistry::reserve(
-            &registry,
-            "/root/dup".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            None,
-        )
-        .expect("first");
+        let _first = reserve(&registry, "/root/dup", "dev", "claude", None).expect("first");
 
-        let err = AgentRegistry::reserve(
-            &registry,
-            "/root/dup".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            None,
-        )
-        .expect_err("duplicate must error");
+        let err = reserve(&registry, "/root/dup", "dev", "claude", None)
+            .expect_err("duplicate must error");
 
         assert!(matches!(err, AgentError::SpawnFailed { .. }));
     }
@@ -691,11 +785,11 @@ mod tests {
         let mut ids = Vec::with_capacity(100);
         let mut guards = Vec::with_capacity(100);
         for i in 0..100 {
-            let guard = AgentRegistry::reserve(
+            let guard = reserve(
                 &registry,
-                format!("/root/agent-{i}"),
-                "dev".to_string(),
-                "claude".to_string(),
+                &format!("/root/agent-{i}"),
+                "dev",
+                "claude",
                 None,
             )
             .expect("reserve");
@@ -721,36 +815,18 @@ mod tests {
     #[test]
     fn children_returns_direct_children() {
         let registry = fresh();
-        let parent = AgentRegistry::reserve(
-            &registry,
-            "/root/parent".to_string(),
-            "lead".to_string(),
-            "opus".to_string(),
-            None,
-        )
-        .expect("reserve parent");
+        let parent =
+            reserve(&registry, "/root/parent", "lead", "opus", None).expect("reserve parent");
         let parent_id = parent.id();
         parent.confirm().expect("confirm parent");
 
-        let child_a = AgentRegistry::reserve(
-            &registry,
-            "/root/parent/a".to_string(),
-            "dev".to_string(),
-            "haiku".to_string(),
-            Some(parent_id),
-        )
-        .expect("reserve child a");
+        let child_a = reserve(&registry, "/root/parent/a", "dev", "haiku", Some(parent_id))
+            .expect("reserve child a");
         let first_child_id = child_a.id();
         child_a.confirm().expect("confirm a");
 
-        let child_b = AgentRegistry::reserve(
-            &registry,
-            "/root/parent/b".to_string(),
-            "dev".to_string(),
-            "haiku".to_string(),
-            Some(parent_id),
-        )
-        .expect("reserve child b");
+        let child_b = reserve(&registry, "/root/parent/b", "dev", "haiku", Some(parent_id))
+            .expect("reserve child b");
         let second_child_id = child_b.id();
         child_b.confirm().expect("confirm b");
 
@@ -765,14 +841,7 @@ mod tests {
     #[test]
     fn status_transitions() {
         let registry = fresh();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root/states".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            None,
-        )
-        .expect("reserve");
+        let guard = reserve(&registry, "/root/states", "dev", "claude", None).expect("reserve");
         let id = guard.id();
         guard.confirm().expect("confirm");
 
@@ -819,14 +888,7 @@ mod tests {
     #[test]
     fn terminal_status_is_immutable() {
         let registry = fresh();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root/immutable".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            None,
-        )
-        .expect("reserve");
+        let guard = reserve(&registry, "/root/immutable", "dev", "claude", None).expect("reserve");
         let id = guard.id();
         guard.confirm().expect("confirm");
         registry.write().mark_failed(id).expect("fail");
@@ -871,14 +933,7 @@ mod tests {
     #[test]
     fn completed_status_cannot_be_rewritten() {
         let registry = fresh();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root/done".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            None,
-        )
-        .expect("reserve");
+        let guard = reserve(&registry, "/root/done", "dev", "claude", None).expect("reserve");
         let id = guard.id();
         guard.confirm().expect("confirm");
         registry.write().mark_completed(id).expect("complete");
@@ -900,14 +955,7 @@ mod tests {
     #[test]
     fn mark_failed_frees_path_and_retains_entry_until_reclaimed() {
         let registry = fresh();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root/x".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            None,
-        )
-        .expect("reserve");
+        let guard = reserve(&registry, "/root/x", "dev", "claude", None).expect("reserve");
         let id = guard.id();
         guard.confirm().expect("confirm");
         registry.write().mark_failed(id).expect("mark_failed");
@@ -931,14 +979,7 @@ mod tests {
     #[test]
     fn remove_terminal_never_removes_live_entries() {
         let registry = fresh();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root/live".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            None,
-        )
-        .expect("reserve");
+        let guard = reserve(&registry, "/root/live", "dev", "claude", None).expect("reserve");
         let id = guard.id();
         guard.confirm().expect("confirm");
         assert!(
@@ -954,37 +995,18 @@ mod tests {
     #[test]
     fn terminal_cleanup_allows_path_reuse() {
         let registry = fresh();
-        let parent = AgentRegistry::reserve(
-            &registry,
-            "/root".to_string(),
-            "lead".to_string(),
-            "opus".to_string(),
-            None,
-        )
-        .expect("reserve parent");
+        let parent = reserve(&registry, "/root", "lead", "opus", None).expect("reserve parent");
         let parent_id = parent.id();
         parent.confirm().expect("confirm parent");
 
-        let first = AgentRegistry::reserve(
-            &registry,
-            "/root/worker".to_string(),
-            "dev".to_string(),
-            "haiku".to_string(),
-            Some(parent_id),
-        )
-        .expect("first reservation");
+        let first = reserve(&registry, "/root/worker", "dev", "haiku", Some(parent_id))
+            .expect("first reservation");
         let first_id = first.id();
         first.confirm().expect("confirm first");
         registry.write().mark_completed(first_id).expect("complete");
 
-        let second = AgentRegistry::reserve(
-            &registry,
-            "/root/worker".to_string(),
-            "dev".to_string(),
-            "haiku".to_string(),
-            Some(parent_id),
-        )
-        .expect("a completed agent's path must be reusable");
+        let second = reserve(&registry, "/root/worker", "dev", "haiku", Some(parent_id))
+            .expect("a completed agent's path must be reusable");
         let second_id = second.id();
         second.confirm().expect("confirm second");
         assert_ne!(first_id, second_id);
@@ -999,14 +1021,8 @@ mod tests {
 
         // The failed-path variant frees the slot just the same.
         registry.write().mark_failed(second_id).expect("fail");
-        let third = AgentRegistry::reserve(
-            &registry,
-            "/root/worker".to_string(),
-            "dev".to_string(),
-            "haiku".to_string(),
-            Some(parent_id),
-        )
-        .expect("a failed agent's path must be reusable");
+        let third = reserve(&registry, "/root/worker", "dev", "haiku", Some(parent_id))
+            .expect("a failed agent's path must be reusable");
         drop(third);
     }
 
@@ -1021,11 +1037,13 @@ mod tests {
             spawned_at: Utc::now(),
             parent_id: None,
             completed_at: None,
+            policy: test_policy(1),
         };
         let json = serde_json::to_string(&entry).expect("serialize");
         let back: AgentEntry = serde_json::from_str(&json).expect("deserialize");
         assert_eq!(back.path, entry.path);
         assert_eq!(back.status, entry.status);
+        assert_eq!(back.policy, entry.policy, "the granted policy round-trips");
     }
 
     /// `remove_terminal` leaves a tombstone carrying the entry's id, path,
@@ -1037,14 +1055,8 @@ mod tests {
     fn remove_terminal_leaves_truthful_tombstone() {
         let registry = fresh();
         let parent = Uuid::new_v4();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root/done".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            Some(parent),
-        )
-        .expect("reserve");
+        let guard =
+            reserve(&registry, "/root/done", "dev", "claude", Some(parent)).expect("reserve");
         let id = guard.id();
         guard.confirm().expect("confirm");
 
@@ -1109,14 +1121,7 @@ mod tests {
 
     /// Test-local helper: reserve + confirm an agent, returning its id.
     fn register(registry: &Arc<RwLock<AgentRegistry>>, path: &str, parent: Option<Uuid>) -> Uuid {
-        let guard = AgentRegistry::reserve(
-            registry,
-            path.to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            parent,
-        )
-        .expect("reserve");
+        let guard = reserve(registry, path, "dev", "claude", parent).expect("reserve");
         let id = guard.id();
         guard.confirm().expect("confirm");
         id
@@ -1130,14 +1135,7 @@ mod tests {
         let registry = fresh();
         let mut ids = Vec::new();
         for _ in 0..2 {
-            let guard = AgentRegistry::reserve(
-                &registry,
-                "/root/worker".to_string(),
-                "dev".to_string(),
-                "claude".to_string(),
-                None,
-            )
-            .expect("reserve");
+            let guard = reserve(&registry, "/root/worker", "dev", "claude", None).expect("reserve");
             let id = guard.id();
             guard.confirm().expect("confirm");
             registry.write().mark_completed(id).expect("complete");
@@ -1163,14 +1161,8 @@ mod tests {
         let registry = fresh();
         let id;
         {
-            let guard = AgentRegistry::reserve(
-                &registry,
-                "/root/rollback".to_string(),
-                "dev".to_string(),
-                "claude".to_string(),
-                None,
-            )
-            .expect("reserve");
+            let guard =
+                reserve(&registry, "/root/rollback", "dev", "claude", None).expect("reserve");
             id = guard.id();
         }
         let r = registry.read();
@@ -1185,14 +1177,7 @@ mod tests {
     #[test]
     fn terminal_entry_resolvable_by_path_until_reclaimed() {
         let registry = fresh();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root/finished".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            None,
-        )
-        .expect("reserve");
+        let guard = reserve(&registry, "/root/finished", "dev", "claude", None).expect("reserve");
         let id = guard.id();
         guard.confirm().expect("confirm");
         registry.write().mark_completed(id).expect("complete");
@@ -1223,14 +1208,7 @@ mod tests {
     #[test]
     fn unconfirmed_guard_drop_never_removes_activated_entry() {
         let registry = fresh();
-        let guard = AgentRegistry::reserve(
-            &registry,
-            "/root/external".to_string(),
-            "dev".to_string(),
-            "claude".to_string(),
-            None,
-        )
-        .expect("reserve");
+        let guard = reserve(&registry, "/root/external", "dev", "claude", None).expect("reserve");
         let id = guard.id();
         // Externally activate the entry while the guard is still
         // unconfirmed (a state the spawn/fork tools never produce).
@@ -1261,5 +1239,332 @@ mod tests {
             let json = serde_json::to_string(&status).expect("serialize");
             assert_eq!(json, expected);
         }
+    }
+
+    // -- W3.4 delegation budgets ------------------------------------------
+
+    /// Reserve directly with an explicit grant for the new entry, deriving
+    /// nothing — the raw surface the budget tests exercise.
+    fn reserve_with(
+        registry: &Arc<RwLock<AgentRegistry>>,
+        path: &str,
+        parent: Option<Uuid>,
+        policy: ChildPolicy,
+        fallback: Option<&ChildPolicy>,
+    ) -> Result<SpawnGuard, AgentError> {
+        AgentRegistry::reserve(
+            registry,
+            path.to_string(),
+            "dev".to_string(),
+            "claude".to_string(),
+            parent,
+            policy,
+            fallback,
+        )
+    }
+
+    fn spawn_failed_reason(err: &AgentError) -> String {
+        match err {
+            AgentError::SpawnFailed { reason } => reason.clone(),
+            other => panic!("expected SpawnFailed, got {other:?}"),
+        }
+    }
+
+    /// A registered spawner whose granted `remaining_depth` is 0 is a
+    /// leaf: its reservation is refused with the typed, honest message
+    /// naming the budget.
+    #[test]
+    fn depth_exhausted_registered_spawner_is_refused() {
+        let registry = fresh();
+        let leaf = reserve_with(&registry, "/root/leaf", None, test_policy(0), None)
+            .expect("register leaf");
+        let leaf_id = leaf.id();
+        leaf.confirm().expect("confirm");
+
+        let err = reserve_with(
+            &registry,
+            "/root/leaf/kid",
+            Some(leaf_id),
+            test_policy(0),
+            None,
+        )
+        .expect_err("a leaf must not reserve children");
+        let reason = spawn_failed_reason(&err);
+        assert_eq!(
+            reason,
+            PolicyNarrowingError::DepthExhausted.to_string(),
+            "the refusal names the budget: {reason}",
+        );
+        assert!(
+            registry.read().get_by_path("/root/leaf/kid").is_none(),
+            "no entry may be left behind by a refused reservation",
+        );
+    }
+
+    /// A finished spawner cannot reserve children: its run is over, so
+    /// nothing would ever drain the child's result. The stale policy on
+    /// its (not-yet-reclaimed) entry must not authorize the reservation.
+    #[test]
+    fn terminal_spawner_cannot_reserve_children() {
+        let registry = fresh();
+        let spawner = reserve_with(&registry, "/root/worker", None, test_policy(2), None)
+            .expect("register spawner");
+        let spawner_id = spawner.id();
+        spawner.confirm().expect("confirm");
+        {
+            let mut reg = registry.write();
+            reg.mark_completing(spawner_id).expect("completing");
+            reg.mark_completed(spawner_id).expect("completed");
+        }
+
+        let err = reserve_with(
+            &registry,
+            "/root/worker/kid",
+            Some(spawner_id),
+            test_policy(0),
+            None,
+        )
+        .expect_err("a finished spawner must not reserve children");
+        let reason = spawn_failed_reason(&err);
+        assert!(
+            reason.contains("already finished"),
+            "the refusal names the terminal state: {reason}",
+        );
+        assert!(
+            registry.read().get_by_path("/root/worker/kid").is_none(),
+            "no entry may be left behind by a refused reservation",
+        );
+    }
+
+    /// An unregistered spawner with a depth-0 envelope fallback is refused
+    /// the same way (root budgets are real budgets).
+    #[test]
+    fn depth_exhausted_unregistered_root_is_refused() {
+        let registry = fresh();
+        let root_policy = test_policy(0);
+        let err = reserve_with(
+            &registry,
+            "/spawn/kid",
+            Some(Uuid::new_v4()),
+            test_policy(0),
+            Some(&root_policy),
+        )
+        .expect_err("a zero-depth envelope must refuse all delegation");
+        assert_eq!(
+            spawn_failed_reason(&err),
+            PolicyNarrowingError::DepthExhausted.to_string(),
+        );
+    }
+
+    /// An unregistered spawner with no envelope fallback cannot have a
+    /// budget established — refused typed, never invented.
+    #[test]
+    fn unregistered_spawner_without_fallback_is_refused() {
+        let registry = fresh();
+        let ghost = Uuid::new_v4();
+        let err = reserve_with(&registry, "/spawn/kid", Some(ghost), test_policy(0), None)
+            .expect_err("no budget source must refuse");
+        let reason = spawn_failed_reason(&err);
+        assert!(
+            reason.contains("no registry entry") && reason.contains("no envelope policy"),
+            "the refusal states why the budget cannot be established: {reason}",
+        );
+    }
+
+    /// A depth-n budget reserves exactly n levels: each level's grant
+    /// decrements, and the (n+1)th level fails with the typed message.
+    #[test]
+    fn depth_budget_reserves_exactly_n_levels() {
+        let registry = fresh();
+        let root_policy = test_policy(2);
+        let root_id = Uuid::new_v4();
+
+        let mut spawner = root_id;
+        let mut spawner_policy = root_policy.clone();
+        for level in 0..2 {
+            let granted = spawner_policy
+                .grant_for_child(None)
+                .expect("levels within budget grant");
+            let guard = reserve_with(
+                &registry,
+                &format!("/chain/level-{level}"),
+                Some(spawner),
+                granted.clone(),
+                Some(&root_policy),
+            )
+            .unwrap_or_else(|e| panic!("level {level} must reserve: {e}"));
+            spawner = guard.id();
+            guard.confirm().expect("confirm");
+            spawner_policy = granted;
+        }
+        assert_eq!(
+            spawner_policy.delegation.remaining_depth, 0,
+            "the deepest grant is a leaf",
+        );
+
+        let err = reserve_with(
+            &registry,
+            "/chain/level-2",
+            Some(spawner),
+            test_policy(0),
+            Some(&root_policy),
+        )
+        .expect_err("the (n+1)th level must be refused");
+        assert_eq!(
+            spawn_failed_reason(&err),
+            PolicyNarrowingError::DepthExhausted.to_string(),
+        );
+    }
+
+    /// A grant that widens the spawner's own budget is refused at the
+    /// registry even when the caller skipped tool-level validation —
+    /// defense in depth via the single narrowing implementation.
+    #[test]
+    fn widened_grant_is_refused_at_reserve() {
+        let registry = fresh();
+        let parent = reserve_with(&registry, "/root/p", None, test_policy(2), None)
+            .expect("register parent");
+        let parent_id = parent.id();
+        parent.confirm().expect("confirm");
+
+        // Depth not strictly decremented.
+        let err = reserve_with(
+            &registry,
+            "/root/p/wide",
+            Some(parent_id),
+            test_policy(2),
+            None,
+        )
+        .expect_err("equal depth is a widening");
+        assert!(
+            spawn_failed_reason(&err).contains("remaining_depth = 2 exceeds"),
+            "names the violation: {err}",
+        );
+
+        // Scope widened beyond the parent's own.
+        let mut narrow_parent_policy = test_policy(2);
+        narrow_parent_policy.messaging = MessagingScope::ParentOnly;
+        let narrow = reserve_with(&registry, "/root/q", None, narrow_parent_policy, None)
+            .expect("register scope-narrowed parent");
+        let narrow_id = narrow.id();
+        narrow.confirm().expect("confirm");
+        let err = reserve_with(
+            &registry,
+            "/root/q/wide",
+            Some(narrow_id),
+            test_policy(1),
+            None,
+        )
+        .expect_err("scope widening is refused");
+        assert!(
+            spawn_failed_reason(&err).contains("widens this agent's own granted scope"),
+            "names the violation: {err}",
+        );
+    }
+
+    /// The concurrency cap comes from the spawning agent's granted budget
+    /// and counts only non-terminal children — a terminal child frees its
+    /// slot before reclamation.
+    #[test]
+    fn concurrency_budget_enforced_per_parent() {
+        let registry = fresh();
+        let mut parent_policy = test_policy(3);
+        parent_policy.delegation.max_concurrent_children = 2;
+        let parent = reserve_with(&registry, "/root/busy", None, parent_policy.clone(), None)
+            .expect("register parent");
+        let parent_id = parent.id();
+        parent.confirm().expect("confirm");
+
+        let child_grant = parent_policy
+            .grant_for_child(None)
+            .expect("parent can grant");
+        let mut child_ids = Vec::new();
+        for i in 0..2 {
+            let guard = reserve_with(
+                &registry,
+                &format!("/root/busy/c{i}"),
+                Some(parent_id),
+                child_grant.clone(),
+                None,
+            )
+            .expect("within cap");
+            child_ids.push(guard.id());
+            guard.confirm().expect("confirm");
+        }
+
+        let err = reserve_with(
+            &registry,
+            "/root/busy/c2",
+            Some(parent_id),
+            child_grant.clone(),
+            None,
+        )
+        .expect_err("third concurrent child exceeds the granted cap");
+        let reason = spawn_failed_reason(&err);
+        assert!(
+            reason.contains("granted budget allows 2 non-terminal children")
+                && reason.contains("2 are already live"),
+            "the refusal names the budget and the live count: {reason}",
+        );
+
+        // A terminal child frees its slot immediately (before reclaim).
+        registry
+            .write()
+            .mark_completed(child_ids[0])
+            .expect("complete");
+        let freed = reserve_with(
+            &registry,
+            "/root/busy/c2",
+            Some(parent_id),
+            child_grant,
+            None,
+        )
+        .expect("a terminal child frees its concurrency slot");
+        drop(freed);
+
+        // An unrelated parent's cap is independent.
+        let other = reserve_with(&registry, "/root/other", None, parent_policy, None)
+            .expect("register other parent");
+        let other_id = other.id();
+        other.confirm().expect("confirm");
+        let other_grant = registry
+            .read()
+            .get(other_id)
+            .expect("other parent registered")
+            .policy
+            .grant_for_child(None)
+            .expect("other parent can grant");
+        let ok = reserve_with(
+            &registry,
+            "/root/other/c0",
+            Some(other_id),
+            other_grant,
+            None,
+        )
+        .expect("caps are per-parent, never global");
+        drop(ok);
+    }
+
+    /// Multi-level paths register and resolve — the tree nests at any
+    /// depth, with each level's entry linked to its real parent.
+    #[test]
+    fn deep_paths_nest_and_resolve() {
+        let registry = fresh();
+        let root = register(&registry, "/root", None);
+        let child = register(&registry, "/root/spawn/a", Some(root));
+        let grandchild = register(&registry, "/root/spawn/a/spawn/b", Some(child));
+
+        let r = registry.read();
+        let entry = r
+            .get_by_path("/root/spawn/a/spawn/b")
+            .expect("deep path resolves");
+        assert_eq!(entry.id, grandchild);
+        assert_eq!(entry.parent_id, Some(child));
+        assert_eq!(
+            entry.policy.delegation.remaining_depth, 3,
+            "each level's grant decrements from the root's depth-5 test policy",
+        );
+        assert_eq!(r.children(child).len(), 1);
+        assert_eq!(r.children(root).len(), 1);
     }
 }

@@ -447,6 +447,15 @@ mod tests {
             "lead".to_string(),
             "claude".to_string(),
             None,
+            norn::agent::child_policy::ChildPolicy {
+                messaging: norn::agent::child_policy::MessagingScope::SiblingsAndParent,
+                delegation: norn::agent::child_policy::DelegationBudget {
+                    remaining_depth: 5,
+                    max_concurrent_children: 32,
+                },
+                inbound_capacity: 32,
+            },
+            None,
         )
         .unwrap();
         let root_id = root_guard.id();
@@ -458,6 +467,15 @@ mod tests {
             "dev".to_string(),
             "haiku".to_string(),
             Some(root_id),
+            norn::agent::child_policy::ChildPolicy {
+                messaging: norn::agent::child_policy::MessagingScope::SiblingsAndParent,
+                delegation: norn::agent::child_policy::DelegationBudget {
+                    remaining_depth: 4,
+                    max_concurrent_children: 32,
+                },
+                inbound_capacity: 32,
+            },
+            None,
         )
         .unwrap();
         child_guard.confirm().unwrap();

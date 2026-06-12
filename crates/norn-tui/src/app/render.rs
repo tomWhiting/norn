@@ -392,6 +392,15 @@ mod tests {
             "lead".to_string(),
             "claude".to_string(),
             None,
+            norn::agent::child_policy::ChildPolicy {
+                messaging: norn::agent::child_policy::MessagingScope::SiblingsAndParent,
+                delegation: norn::agent::child_policy::DelegationBudget {
+                    remaining_depth: 5,
+                    max_concurrent_children: 32,
+                },
+                inbound_capacity: 32,
+            },
+            None,
         )?;
         let root_id = guard.id();
         guard.confirm()?;

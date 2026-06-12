@@ -14,33 +14,27 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use chrono::Utc;
-use parking_lot::RwLock;
 use serde::Deserialize;
-use tokio::sync::watch;
-use uuid::Uuid;
 
-use super::handle::{AgentHandle, AgentHandles, ChildBranchMetadata, SharedSessionTree};
-use super::infra::{SubAgentExecutor, infra_from, strip_send_message_from_allow_list};
-use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
-use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery, reclaim_delivered_child};
-use super::spawn_context::build_child_context;
-use super::spawn_outcome::{
-    extract_outcome_summary, mark_terminal_in_registry, panicked_outcome_summary,
+use super::delegation::{
+    auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
 };
+use super::handle::{AgentHandles, ChildBranchMetadata, SharedSessionTree};
+use super::infra::{SubAgentExecutor, infra_from, strip_send_message_from_allow_list};
+use super::lifecycle::LifecycleEmitter;
+use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
+use super::spawn_context::build_child_context;
+use super::spawn_launch::{ChildLaunch, launch_child};
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope, MessagingScope};
 use crate::agent::fork::ContextFilter;
-use crate::agent::message_router::MessageRouter;
-use crate::agent::registry::{AgentRegistry, AgentStatus};
+use crate::agent::registry::AgentRegistry;
 use crate::agent::result_channel::ChildResultSender;
 use crate::error::ToolError;
-use crate::integration::hooks::{HookOutcome, HookRegistry};
-use crate::r#loop::inbound::inbound_channel;
+use crate::integration::hooks::HookRegistry;
 use crate::r#loop::loop_context::LoopContext;
-use crate::r#loop::runner::{AgentLoopConfig, AgentStepRequest, run_agent_step};
 use crate::profile::{default_scan_dirs, from_profile, resolve_profile};
 use crate::provider::agent_event::{AgentEventSender, SubagentDescriptor, SubagentKind};
 use crate::provider::request::ToolDefinition;
-use crate::provider::traits::Provider;
 use crate::session::action_log::ActionLog;
 use crate::session::store::EventStore;
 use crate::session::tree::{BranchConfig, SessionMetadata, SessionStatus};
@@ -67,7 +61,11 @@ impl Default for SpawnAgentTool {
     }
 }
 
+// deny_unknown_fields: a typo'd key (e.g. `child_polciy`) must fail
+// loudly, not silently hand the child a default grant where the caller
+// intended a narrowing.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 struct SpawnAgentArgs {
     task: String,
     model: String,
@@ -84,6 +82,14 @@ struct SpawnAgentArgs {
     /// field means the child produces free-form output.
     #[serde(default)]
     output_schema: Option<serde_json::Value>,
+    /// Optional per-spawn [`ChildPolicy`] narrowing (DECISION R2),
+    /// mirroring the Rust type 1:1 at the JSON layer. Omitted → the
+    /// child inherits the caller's own granted policy with the
+    /// delegation depth decremented one level. Supplied → must be a
+    /// strict narrowing of the caller's own grant; widening is a typed
+    /// failure naming the caller's budget.
+    #[serde(default)]
+    child_policy: Option<ChildPolicy>,
 }
 
 /// Build the child's [`LoopContext`] and the profile-derived tool list.
@@ -192,279 +198,6 @@ fn resolve_child_store(
     Ok((store, Some(child_tree)))
 }
 
-/// Resources moved into a spawned child's `tokio` task.
-struct ChildLaunch {
-    /// Provider shared with the parent — children use the same provider.
-    provider: Arc<dyn Provider>,
-    /// The child's tool executor, owning its per-child [`ToolContext`].
-    executor: SubAgentExecutor,
-    /// The child's own session event store.
-    store: Arc<EventStore>,
-    /// The child's loop context (profile-derived or task-aware default).
-    loop_ctx: LoopContext,
-    /// Tool definitions the child model is shown.
-    tool_defs: Vec<ToolDefinition>,
-    /// The self-contained task string the child runs.
-    task: String,
-    /// Optional JSON Schema the child's final output must validate
-    /// against (the spawn caller's explicit `output_schema` argument).
-    output_schema: Option<serde_json::Value>,
-    /// Model identifier for the child's provider calls.
-    model: String,
-    /// Shared agent registry — the spawn wrapper marks terminal status here.
-    agent_registry: Arc<RwLock<AgentRegistry>>,
-    /// Channel sender for delivering results to the orchestrator.
-    result_sender: Option<ChildResultSender>,
-    /// The child's registry id.
-    child_id: Uuid,
-    /// Provenance metadata stored on the child's [`AgentHandle`] (NA-008 R3).
-    branch_metadata: ChildBranchMetadata,
-    /// Shared hook registry retrieved from the parent's
-    /// [`ToolContext`]. When present, the child task fires
-    /// [`SubagentHook::on_subagent_stop`](crate::integration::hooks::SubagentHook::on_subagent_stop)
-    /// after [`run_agent_step`] returns; a Block suppresses the
-    /// registry's Completed/Failed transition (NH-006 R5).
-    hooks: Option<Arc<HookRegistry>>,
-    /// Role label used as the matcher input for sub-agent hooks
-    /// (profile name when supplied, otherwise the role argument). Kept
-    /// on the launch so the child task does not have to recompute it.
-    role_label: String,
-    /// Tagged event sender for real-time observability. When `Some`,
-    /// the child's [`run_agent_step`] broadcasts every `ProviderEvent`
-    /// on the shared channel so the TUI activity panel shows child
-    /// tool calls in real time.
-    event_sender: Option<AgentEventSender>,
-    /// `Some` when the runtime declared [`ReclaimOnResultDelivery`] and
-    /// a result channel exists: after delivering the child's result —
-    /// and after the tool's handle-installed ack — the wrapper reclaims
-    /// the registry entry and drops the parent-held handle (see
-    /// [`super::reclaim`] for the ownership rule). `None` leaves both
-    /// for an external observer or the handle holder.
-    reclaim: Option<ReclaimHandshake>,
-    /// Typed lifecycle emitter — `Started` was already emitted by the
-    /// tool before launch; the wrapper emits `Completed` once the run
-    /// reaches a terminal outcome.
-    lifecycle: LifecycleEmitter,
-    /// Workspace-shared message router. The launch path registers the
-    /// child's inbound sender under its id before the task starts; the
-    /// completion wrapper deregisters at the run's end — single
-    /// ownership, mirroring the registry entry.
-    router: Arc<MessageRouter>,
-    /// Bounded capacity of the child's inbound channel, from the granted
-    /// [`ChildPolicy::inbound_capacity`] (DECISION M4 — never a hardcoded
-    /// library value).
-    inbound_capacity: usize,
-}
-
-/// Launch the child on its own `tokio` task and return the [`AgentHandle`]
-/// the parent keeps.
-///
-/// The spawned task runs [`run_agent_step`] to completion, marks the
-/// child's terminal registry status, sends the formatted result through
-/// the child result channel, and updates the status watch channel.
-fn launch_child(launch: ChildLaunch) -> AgentHandle {
-    let ChildLaunch {
-        provider,
-        executor,
-        store,
-        mut loop_ctx,
-        tool_defs,
-        task,
-        output_schema,
-        model,
-        agent_registry,
-        result_sender,
-        child_id,
-        branch_metadata,
-        hooks,
-        role_label,
-        event_sender,
-        reclaim,
-        lifecycle,
-        router,
-        inbound_capacity,
-    } = launch;
-
-    let handle_store = Arc::clone(&store);
-    let (status_tx, status_rx) = watch::channel(AgentStatus::Active);
-    let (inbound_tx, mut inbound_rx) = inbound_channel(inbound_capacity);
-    // Route registration ownership (Wave 3 §Routing): the launch path
-    // registers the child's inbound sender the moment the channel exists,
-    // so `send_message` can reach the child for its entire run; the
-    // completion wrapper below deregisters — the same single ownership as
-    // the registry entry, never two actors.
-    router.register(child_id, inbound_tx.clone());
-    let agent_role = format!("spawn/{model}");
-    // Cooperative cancellation: the trigger lives on the parent-held
-    // AgentHandle and a clone rides into the inner run's AgentStepRequest,
-    // so `close_agent` can terminate the run itself — not just the wrapper
-    // task. The loop observes the token at the top of every iteration and
-    // races it (cancel-priority) against the in-flight provider call,
-    // returning `AgentStepResult::Cancelled`, which the wrapper records as
-    // the run's real outcome through its normal terminal sequence below.
-    let cancel = tokio_util::sync::CancellationToken::new();
-    let run_cancel = cancel.clone();
-
-    let join_handle = tokio::spawn(async move {
-        // Panic isolation: the agent step runs on its own inner task so a
-        // panic inside a tool or provider (workspace code denies panics,
-        // but a dependency inside the child's task can still unwind)
-        // surfaces here as a `JoinError` instead of killing the wrapper.
-        // The wrapper then completes every obligation of the normal
-        // failure path — stop hook, lifecycle `Completed`, result-channel
-        // delivery, status broadcast, registry transition, reclamation —
-        // so observers never see a dangling `Started`.
-        let inner = tokio::spawn(async move {
-            run_agent_step(AgentStepRequest {
-                provider: provider.as_ref(),
-                executor: &executor,
-                store: store.as_ref(),
-                user_prompt: &task,
-                tools: &tool_defs,
-                output_schema: output_schema.as_ref(),
-                model: &model,
-                config: &AgentLoopConfig::default(),
-                event_tx: event_sender.as_ref(),
-                inbound: Some(&mut inbound_rx),
-                loop_context: &mut loop_ctx,
-                cancel: Some(run_cancel),
-            })
-            .await
-        });
-        let outcome = inner.await;
-
-        // The child's loop has ended: nothing will ever drain its inbound
-        // channel again, so the route is removed now — unconditionally,
-        // even when a stop hook below suppresses the registry's terminal
-        // transition (route ownership follows the loop's life, i.e.
-        // delivery possibility; the registry entry tracks observability).
-        // Later sends fail fast as NotRouted instead of enqueueing into a
-        // buffer nothing reads.
-        router.deregister(child_id);
-
-        // NH-006 R5 / C57: fire SubagentHook::on_subagent_stop before
-        // marking the registry's terminal status. A Block suppresses
-        // the Completed/Failed transition (the agent stays in its
-        // pre-terminal registry state) while the result-channel
-        // summary still surfaces so the parent observes the child's
-        // outcome. Hooks is None → marking happens unconditionally,
-        // matching pre-NH-006 behaviour. Fires on the panic path too —
-        // the child stopped either way.
-        let stop_blocked = if let Some(hooks_arc) = hooks.as_ref() {
-            matches!(
-                hooks_arc
-                    .run_subagent_stop(&child_id.to_string(), &role_label)
-                    .await,
-                HookOutcome::Block { .. },
-            )
-        } else {
-            false
-        };
-
-        let summary = match outcome {
-            Ok(step_outcome) => extract_outcome_summary(step_outcome),
-            Err(join_error) => {
-                tracing::error!(
-                    child_id = %child_id,
-                    error = %join_error,
-                    "spawn_agent: child task panicked or was aborted before completing",
-                );
-                panicked_outcome_summary(&join_error)
-            }
-        };
-        let terminal_status = summary.status;
-        let succeeded = terminal_status == AgentStatus::Completed;
-
-        if !stop_blocked {
-            mark_terminal_in_registry(&agent_registry, child_id, terminal_status);
-        }
-
-        // Typed lifecycle: the run itself finished, so `Completed` is
-        // emitted unconditionally — a stop hook's Block only suppresses
-        // the registry transition above, not the observable outcome.
-        lifecycle.emit_completed(SubagentCompletion {
-            usage: summary.usage.clone(),
-            succeeded,
-            error: summary.error.clone(),
-            stop: summary.stop.clone(),
-        });
-
-        if let Some(sender) = result_sender {
-            let formatted_message = if succeeded {
-                crate::agent::fork::format_spawn_result(
-                    child_id,
-                    &agent_role,
-                    summary.output_text.as_deref().unwrap_or("(no output)"),
-                )
-            } else {
-                crate::agent::fork::format_spawn_failure(
-                    child_id,
-                    &agent_role,
-                    summary.error.as_deref().unwrap_or("unknown error"),
-                )
-            };
-            let result = crate::agent::result_channel::ChildAgentResult {
-                agent_id: child_id,
-                agent_role,
-                succeeded,
-                formatted_message,
-                error: summary.error,
-                stop: summary.stop,
-                usage: summary.usage,
-            };
-            if let Err(e) = sender.0.send(result).await {
-                tracing::error!(
-                    child_id = %child_id,
-                    error = %e,
-                    "spawn_agent: failed to send result through child result channel",
-                );
-            }
-        }
-
-        let _ = status_tx.send_replace(terminal_status);
-
-        // Delivery-anchored reclamation (embedded/headless runtimes):
-        // the parent's record of this child is now the delivered result,
-        // so the registry entry and the parent-held handle can go.
-        // Skipped when a stop hook suppressed the terminal transition
-        // (the child is then deliberately left observable and
-        // non-terminal). A failed result send means the receiver is gone
-        // — reclaiming is still correct, nothing can observe the entry
-        // through the channel anymore.
-        //
-        // The wrapper is the sole reclaimer (see super::reclaim): it
-        // first awaits the tool's handle-installed ack so a child that
-        // finished before `AgentHandles::insert` ran is still reclaimed
-        // with the handle present — no second actor ever reclaims
-        // concurrently, and nothing infers state from registry-entry
-        // absence.
-        if !stop_blocked && let Some(handshake) = reclaim {
-            if handshake.handle_installed.await.is_err() {
-                // The tool's execute was torn down between launching the
-                // child and storing the handle (e.g. the parent task was
-                // cancelled mid-launch): there is no handle to drop, but
-                // the registry entry still must not leak.
-                tracing::warn!(
-                    child_id = %child_id,
-                    "spawn_agent: handle-installed ack dropped before launch completed; \
-                     reclaiming without a stored handle",
-                );
-            }
-            reclaim_delivered_child(&agent_registry, &handshake.handles, child_id);
-        }
-    });
-
-    AgentHandle {
-        agent_id: child_id,
-        status_rx,
-        inbound_tx,
-        cancel,
-        join_handle,
-        event_store: handle_store,
-        branch_metadata,
-    }
-}
-
 /// Public tool name for the Norn spawn delegation tool.
 pub const SPAWN_TOOL_NAME: &str = "spawn_agent";
 
@@ -515,11 +248,46 @@ impl Tool for SpawnAgentTool {
                 },
                 "path": {
                     "type": "string",
-                    "description": "Hierarchical registry path for the sub-agent (e.g. \"/workers/phase-1\"). Not a file path. Omit to auto-generate under /spawn/."
+                    "description": "Hierarchical registry path for the sub-agent (e.g. \"/workers/phase-1\"). Not a file path. Omit to auto-generate under your own registry path (\"{your_path}/spawn/{uuid}\")."
                 },
                 "output_schema": {
                     "type": "object",
                     "description": "Optional JSON Schema the sub-agent's final output must validate against. The sub-agent never inherits the caller's output schema implicitly — supply one here when the result must be structured. Omit for free-form output."
+                },
+                "child_policy": {
+                    "type": "object",
+                    "required": ["messaging", "delegation", "inbound_capacity"],
+                    "additionalProperties": false,
+                    "description": "Optional narrowed policy for this child. Omit to grant your own policy with delegation depth reduced by one level. Every field must be within your own granted budget — widening fails.",
+                    "properties": {
+                        "messaging": {
+                            "type": "string",
+                            "enum": ["siblings_and_parent", "parent_only", "none"],
+                            "description": "Who the child may message; must not widen your own scope."
+                        },
+                        "delegation": {
+                            "type": "object",
+                            "required": ["remaining_depth", "max_concurrent_children"],
+                            "additionalProperties": false,
+                            "properties": {
+                                "remaining_depth": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Levels of descendants the child may create below itself (0 = leaf). Must be at most your own remaining_depth - 1."
+                                },
+                                "max_concurrent_children": {
+                                    "type": "integer",
+                                    "minimum": 0,
+                                    "description": "Max non-terminal direct children the child may have at once. Must be at most your own cap."
+                                }
+                            }
+                        },
+                        "inbound_capacity": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "description": "Bounded capacity of the child's inbound message channel. Must be at most your own granted capacity."
+                        }
+                    }
                 }
             }
         })
@@ -562,13 +330,19 @@ impl Tool for SpawnAgentTool {
         // publishes its own). A context that can spawn but carries no
         // envelope is a wiring error, surfaced as the same typed
         // `MissingExtension` failure as a missing `AgentHandles` — spawn
-        // never invents a policy for the child. W3.2 stamps the envelope's
-        // `child_policy` unchanged; the per-spawn narrowing argument
-        // arrives with recursion (W3.4).
-        let envelope_policy: ChildPolicy = ctx
-            .require_extension::<CoordinationEnvelope>()?
-            .child_policy
-            .clone();
+        // never invents a policy for the child.
+        let coordination = ctx.require_extension::<CoordinationEnvelope>()?;
+
+        // The child's grant (W3.4): the caller's own granted policy — the
+        // harness-stamped grant for spawned/forked callers, the envelope's
+        // `child_policy` for the root — narrowed by the optional
+        // `child_policy` argument, or derived by inherit-with-decrement
+        // when omitted. Depth exhaustion and widening both fail typed
+        // here, naming the caller's own budget; the registry re-validates
+        // the same invariants from ground truth at reservation.
+        let spawner_policy = resolve_spawner_policy(&infra, &coordination);
+        let child_policy =
+            grant_child_policy(&spawner_policy, args.child_policy.clone(), "spawn_agent")?;
 
         // Build the child's loop context and resolve the profile's tool
         // list. The profile scanner walks the same directories the CLI uses
@@ -586,7 +360,7 @@ impl Tool for SpawnAgentTool {
         // grant removes `send_message` from that surface entirely
         // (defense-in-depth: the tool also refuses at execute).
         let mut allow_list: Option<Vec<String>> = args.tools.clone().or(profile_tools);
-        if envelope_policy.messaging == MessagingScope::None {
+        if child_policy.messaging == MessagingScope::None {
             allow_list = Some(strip_send_message_from_allow_list(
                 allow_list,
                 parent_registry,
@@ -594,9 +368,11 @@ impl Tool for SpawnAgentTool {
         }
         let tool_defs = build_tool_definitions(parent_registry, allow_list.as_deref());
 
+        // Auto paths nest under the spawning agent's own registry path so
+        // the agents tree reads as a real tree at every depth (W3.4).
         let path = args
             .path
-            .unwrap_or_else(|| format!("/spawn/{}", Uuid::new_v4()));
+            .unwrap_or_else(|| auto_child_path(&infra.registry, infra.agent_id, "spawn"));
 
         // The session-tree role label and the audit-trail provenance both
         // prefer the profile name, falling back to the role argument when no
@@ -623,6 +399,8 @@ impl Tool for SpawnAgentTool {
             args.role,
             args.model.clone(),
             Some(infra.agent_id),
+            child_policy.clone(),
+            Some(&spawner_policy),
         )
         .map_err(|e| ToolError::ExecutionFailed {
             reason: format!("spawn reservation failed: {e}"),
@@ -653,14 +431,25 @@ impl Tool for SpawnAgentTool {
 
         // Per-child ToolContext: fresh identity, fresh AgentHandles, shared
         // infrastructure forwarded from the parent, the granted policy
-        // stamped for send_message's scope enforcement.
+        // stamped for send_message's scope enforcement and the child's own
+        // spawn-time budget reads.
         let child_ctx = build_child_context(
             &infra,
             child_id,
             Arc::clone(&child_store),
             ctx,
             child_tree,
-            envelope_policy.clone(),
+            child_policy.clone(),
+        );
+        // Per-agent result channel (W3.4): a child whose grant lets it
+        // delegate gets its own child-result channel — sender on its
+        // context for its spawn/fork sites, receiver wired onto its loop
+        // below — so grandchild results deliver to *this child*, one hop
+        // at a time.
+        let child_result_rx = install_child_result_channel(
+            &child_ctx,
+            &child_policy,
+            coordination.child_result_capacity,
         );
         let child_executor = SubAgentExecutor::new(
             Arc::clone(parent_registry),
@@ -723,6 +512,10 @@ impl Tool for SpawnAgentTool {
         // by `build_child_context`), so the child's `action_log` queries
         // work and the parent's scoped queries see the child's entries.
         child_loop_ctx.action_log = child_ctx.get_extension::<ActionLog>();
+        // Result delivery from the child's own children: the loop drains
+        // this receiver at the same step boundaries the root uses — zero
+        // loop changes, results bubble one hop per level.
+        child_loop_ctx.child_result_rx = child_result_rx;
 
         let child_event_sender = ctx
             .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
@@ -764,7 +557,7 @@ impl Tool for SpawnAgentTool {
             reclaim: reclaim_handshake,
             lifecycle,
             router: Arc::clone(&infra.router),
-            inbound_capacity: envelope_policy.inbound_capacity,
+            inbound_capacity: child_policy.inbound_capacity,
         });
         handles.insert(handle);
 
@@ -826,16 +619,21 @@ mod tests {
     use std::time::Duration;
 
     use futures_util::{StreamExt, stream};
+    use parking_lot::RwLock;
     use serde_json::json;
+    use uuid::Uuid;
 
     use super::super::infra::AgentToolInfra;
     use super::*;
     use crate::agent::message_router::MessageRouter;
+    use crate::agent::registry::AgentStatus;
     use crate::error::ProviderError;
+    use crate::integration::hooks::HookOutcome;
     use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::mock::MockProvider;
     use crate::provider::request::ProviderRequest;
     use crate::provider::tools::ProviderToolDefinition;
+    use crate::provider::traits::Provider;
     use crate::provider::traits::ProviderStream;
     use crate::provider::usage::Usage;
     use crate::session::events::SessionEvent;
@@ -3502,6 +3300,556 @@ mod tests {
             *parent_store_matches.lock().unwrap(),
             Some(true),
             "the child's parent_store must be the spawning parent's event store",
+        );
+    }
+
+    // -- W3.4: budgeted recursive delegation --------------------------------
+
+    /// A caller whose own granted budget has `remaining_depth = 0` may not
+    /// spawn at all: typed, honest refusal naming the budget, and nothing
+    /// is reserved.
+    #[tokio::test]
+    async fn spawn_refused_when_caller_depth_exhausted() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        let mut envelope = test_envelope();
+        envelope.child_policy.delegation.remaining_depth = 0;
+        ctx.insert_extension(Arc::new(envelope));
+
+        let tool = SpawnAgentTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({"task": "x", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect_err("a zero-depth caller must be refused");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(
+                    reason.contains("delegation depth exhausted"),
+                    "the refusal names the budget: {reason}",
+                );
+                assert!(
+                    reason.contains("remaining_depth = 0"),
+                    "the refusal states the budget value: {reason}",
+                );
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+        let reg = agent_registry.read();
+        assert!(reg.is_empty(), "a refused spawn reserves nothing");
+        assert!(reg.tombstones().is_empty(), "and leaves no tombstone");
+    }
+
+    /// A `child_policy` argument that widens the caller's own grant is
+    /// refused typed (per field), naming the caller's budget; a valid
+    /// narrowing is stamped on the registry entry verbatim.
+    /// A typo'd top-level key must fail loudly — silently dropping a
+    /// misspelled `child_policy` would hand the child a default grant
+    /// where the caller intended a narrowing.
+    #[tokio::test]
+    async fn spawn_rejects_unknown_arg_keys() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![]));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        ctx.insert_extension(Arc::new(test_envelope()));
+        let tool = SpawnAgentTool::new();
+
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "x", "model": "haiku", "role": "worker",
+                    "child_polciy": { "inbound_capacity": 32 },
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("a typo'd key must not be silently dropped");
+        let rendered = format!("{err:?}");
+        assert!(
+            rendered.contains("child_polciy") || rendered.contains("unknown field"),
+            "the failure names the unknown key: {rendered}",
+        );
+    }
+
+    #[tokio::test]
+    async fn spawn_child_policy_narrowing_enforced() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_string(),
+            },
+            done_event(),
+        ]]));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        let mut envelope = test_envelope();
+        envelope.child_policy.delegation.remaining_depth = 2;
+        ctx.insert_extension(Arc::new(envelope));
+        let tool = SpawnAgentTool::new();
+
+        // Depth widened (equal to the caller's own — not strictly less).
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "x", "model": "haiku", "role": "worker",
+                    "child_policy": {
+                        "messaging": "siblings_and_parent",
+                        "delegation": {"remaining_depth": 2, "max_concurrent_children": 32},
+                        "inbound_capacity": 32,
+                    },
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("equal depth is a widening");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(
+                    reason.contains("remaining_depth = 2 exceeds") && reason.contains("at most 1"),
+                    "names the strict decrement: {reason}",
+                );
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+
+        // Inbound capacity widened.
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "x", "model": "haiku", "role": "worker",
+                    "child_policy": {
+                        "messaging": "parent_only",
+                        "delegation": {"remaining_depth": 0, "max_concurrent_children": 1},
+                        "inbound_capacity": 33,
+                    },
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("inbound capacity widening is refused");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(
+                    reason.contains("inbound_capacity = 33 exceeds"),
+                    "names the violation: {reason}",
+                );
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+        assert!(
+            agent_registry.read().is_empty(),
+            "refused narrowings reserve nothing",
+        );
+
+        // A valid narrowing is accepted and stamped verbatim.
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({
+                "task": "x", "model": "haiku", "role": "worker",
+                "child_policy": {
+                    "messaging": "parent_only",
+                    "delegation": {"remaining_depth": 1, "max_concurrent_children": 2},
+                    "inbound_capacity": 8,
+                },
+            }),
+        )
+        .await;
+        let entry = agent_registry
+            .read()
+            .get(child_id)
+            .expect("terminal entry retained without reclaim marker");
+        assert_eq!(entry.policy.messaging, MessagingScope::ParentOnly);
+        assert_eq!(entry.policy.delegation.remaining_depth, 1);
+        assert_eq!(entry.policy.delegation.max_concurrent_children, 2);
+        assert_eq!(entry.policy.inbound_capacity, 8);
+    }
+
+    /// Omitting `child_policy` grants the caller's own policy with the
+    /// delegation depth decremented one level, and the auto path nests
+    /// under the spawning agent's registered path.
+    #[tokio::test]
+    async fn spawn_stamps_decremented_grant_and_nested_path() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_string(),
+            },
+            done_event(),
+        ]]));
+        let agent_registry = AgentRegistry::shared();
+        let mut envelope = test_envelope();
+        envelope.child_policy.delegation.remaining_depth = 2;
+
+        // Register the spawner itself first (the CLI does this for its
+        // root) so the auto path has a prefix to nest under, then key the
+        // spawning context to the registered id.
+        let guard = AgentRegistry::reserve(
+            &agent_registry,
+            "/lead".to_string(),
+            "lead".to_string(),
+            "opus".to_string(),
+            None,
+            envelope.child_policy.clone(),
+            None,
+        )
+        .expect("register spawner");
+        let registered_parent = guard.id();
+        guard.confirm().expect("confirm");
+
+        let ctx = parent_ctx(
+            provider,
+            registered_parent,
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        ctx.insert_extension(Arc::new(envelope.clone()));
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "x", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+
+        let entry = agent_registry
+            .read()
+            .get(child_id)
+            .expect("terminal entry retained without reclaim marker");
+        assert!(
+            entry.path.starts_with("/lead/spawn/"),
+            "auto path nests under the spawner: {}",
+            entry.path,
+        );
+        assert_eq!(entry.parent_id, Some(registered_parent));
+        assert_eq!(
+            entry.policy.delegation.remaining_depth, 1,
+            "the default derivation decrements the caller's depth 2 to 1",
+        );
+        assert_eq!(entry.policy.messaging, envelope.child_policy.messaging);
+        assert_eq!(
+            entry.policy.delegation.max_concurrent_children,
+            envelope.child_policy.delegation.max_concurrent_children,
+        );
+        assert_eq!(
+            entry.policy.inbound_capacity,
+            envelope.child_policy.inbound_capacity,
+        );
+    }
+
+    /// A leaf child (granted depth 0) that tries to spawn is refused by
+    /// the registry budget with the typed message, the grandchild is never
+    /// registered, and the child still completes normally.
+    #[tokio::test]
+    async fn leaf_child_spawn_attempt_refused_and_run_completes() {
+        // Child script: call spawn_agent (refused — the tool error is
+        // injected as the tool result), then finish.
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc1".to_string(),
+                    name: Some("spawn_agent".to_string()),
+                    arguments_delta: json!({
+                        "task": "grandchild", "model": "haiku", "role": "leaf",
+                    })
+                    .to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "stopping at my budget".to_string(),
+                },
+                done_event(),
+            ],
+        ]));
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(SpawnAgentTool::new()));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(tool_registry),
+            Arc::new(MessageRouter::new()),
+        );
+        // Envelope depth 1: the child is a leaf (granted depth 0).
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "try to delegate", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+
+        let reg = agent_registry.read();
+        let entry = reg.get(child_id).expect("child entry retained");
+        assert_eq!(entry.status, AgentStatus::Completed, "the child completed");
+        assert_eq!(entry.policy.delegation.remaining_depth, 0, "leaf grant");
+        assert_eq!(
+            reg.len(),
+            1,
+            "the grandchild must never be registered: {:?}",
+            reg.list(),
+        );
+        assert!(reg.tombstones().is_empty(), "nothing was reclaimed");
+    }
+
+    /// Routes provider scripts by conversation identity (the first user
+    /// message) so a mid-tree child and its grandchild can share the one
+    /// workspace provider deterministically; the child's would-stop turn
+    /// is held until the registry shows the grandchild reclaimed, which
+    /// guarantees its result is already in the child's channel.
+    struct TreeProvider {
+        registry: Arc<RwLock<AgentRegistry>>,
+        child_calls: Arc<std::sync::atomic::AtomicUsize>,
+    }
+
+    impl Provider for TreeProvider {
+        fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            use std::sync::atomic::Ordering as AtomicOrdering;
+            // The grandchild's run always ends its request with its own
+            // task prompt ("grandchild-task"); every child turn ends with
+            // something else (the child's prompt, a tool result, or an
+            // injected <agent_result> frame). Note the *first* user
+            // message would be wrong here: in session-tree mode a spawned
+            // child's branch store is seeded with its parent's context,
+            // so every conversation in the tree starts with the root
+            // prompt.
+            let last = request
+                .messages
+                .last()
+                .and_then(|m| m.content.clone())
+                .unwrap_or_default();
+            if last == "grandchild-task" {
+                return Ok(Box::pin(stream::iter(vec![
+                    Ok(ProviderEvent::TextDelta {
+                        text: "grandchild says hi".to_string(),
+                    }),
+                    Ok(done_event()),
+                ])));
+            }
+            let call = self.child_calls.fetch_add(1, AtomicOrdering::SeqCst);
+            match call {
+                0 => Ok(Box::pin(stream::iter(vec![
+                    Ok(ProviderEvent::ToolCallDelta {
+                        item_id: "tc-grandchild".to_string(),
+                        name: Some("spawn_agent".to_string()),
+                        arguments_delta: json!({
+                            "task": "grandchild-task",
+                            "model": "haiku",
+                            "role": "leaf",
+                        })
+                        .to_string(),
+                        kind: crate::provider::request::ToolCallKind::Function,
+                    }),
+                    Ok(done_event_tool_use()),
+                ]))),
+                1 => {
+                    let registry = Arc::clone(&self.registry);
+                    let s = stream::once(async move {
+                        for _ in 0..2400 {
+                            let reclaimed = registry
+                                .read()
+                                .tombstones()
+                                .iter()
+                                .any(|t| t.path.matches("/spawn/").count() == 2);
+                            if reclaimed {
+                                return;
+                            }
+                            tokio::time::sleep(Duration::from_millis(25)).await;
+                        }
+                        panic!("grandchild was never reclaimed — the test cannot proceed");
+                    })
+                    .flat_map(|()| {
+                        stream::iter(vec![
+                            Ok(ProviderEvent::TextDelta {
+                                text: "waited for grandchild".to_string(),
+                            }),
+                            Ok(done_event()),
+                        ])
+                    });
+                    Ok(Box::pin(s))
+                }
+                _ => Ok(Box::pin(stream::iter(vec![
+                    Ok(ProviderEvent::TextDelta {
+                        text: "child done after grandchild".to_string(),
+                    }),
+                    Ok(done_event()),
+                ]))),
+            }
+        }
+    }
+
+    /// W3.4 end-to-end: with an envelope granting depth 2, a spawned child
+    /// spawns a grandchild; the grandchild's result is delivered into the
+    /// **child's** conversation (one hop — never to the root), the child's
+    /// own result reaches the root's channel, the agents tree nests, and
+    /// every registry entry at every level is reclaimed.
+    #[tokio::test]
+    async fn grandchild_results_bubble_one_hop_and_reclaim_at_every_level() {
+        let agent_registry = AgentRegistry::shared();
+        let provider: Arc<dyn Provider> = Arc::new(TreeProvider {
+            registry: Arc::clone(&agent_registry),
+            child_calls: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
+        });
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(SpawnAgentTool::new()));
+        let root_id = Uuid::new_v4();
+        let ctx = parent_ctx(
+            provider,
+            root_id,
+            &agent_registry,
+            Arc::new(tool_registry),
+            Arc::new(MessageRouter::new()),
+        );
+        let mut envelope = test_envelope();
+        envelope.child_policy.delegation.remaining_depth = 2;
+        ctx.insert_extension(Arc::new(envelope));
+
+        // Root result channel + delivery-anchored reclamation, so the
+        // wrappers reclaim at every level (the recorded grandchild-leak
+        // gap this step closes).
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+        ctx.insert_extension(Arc::new(ReclaimOnResultDelivery));
+
+        // Session tree so the child's conversation store stays reachable
+        // after reclamation.
+        let tree = Arc::new(SessionTree::new(SessionMetadata {
+            created_at: Utc::now(),
+            model: "opus".to_string(),
+            role: Some("root".to_string()),
+            status: SessionStatus::Active,
+        }));
+        let root_session = tree.root();
+        ctx.insert_extension(Arc::new(SharedSessionTree {
+            tree: Arc::clone(&tree),
+            session_id: root_session,
+        }));
+
+        let tool = SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"task": "child-task", "model": "haiku", "role": "lead"})),
+                &ctx,
+            )
+            .await
+            .expect("spawn child");
+        assert!(!out.is_error(), "{:?}", out.content);
+        let child_id =
+            Uuid::parse_str(out.content["agent_id"].as_str().expect("id")).expect("uuid");
+        let child_path = out.content["path"].as_str().expect("path").to_string();
+        assert!(child_path.starts_with("/spawn/"), "{child_path}");
+
+        // The root receives exactly one result: the child's — the
+        // grandchild's bubbled one hop, never skipping a level.
+        let child_result = tokio::time::timeout(Duration::from_secs(120), rx.recv())
+            .await
+            .expect("child result must arrive")
+            .expect("channel open");
+        assert_eq!(child_result.agent_id, child_id);
+        assert!(child_result.succeeded, "{:?}", child_result.error);
+        assert!(
+            child_result
+                .formatted_message
+                .contains("child done after grandchild"),
+            "the child's final answer is the delivered result: {}",
+            child_result.formatted_message,
+        );
+        assert!(
+            rx.try_recv().is_err(),
+            "the grandchild's result must never reach the root directly",
+        );
+
+        // Reclamation at every level: both entries leave, both tombstones
+        // stay, parent links and nested paths intact.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            if agent_registry.read().is_empty() {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "registry entries leaked: {:?}",
+                agent_registry.read().list(),
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        let reg = agent_registry.read();
+        let tombstones = reg.tombstones();
+        assert_eq!(tombstones.len(), 2, "child + grandchild reclaimed");
+        let child_tomb = tombstones
+            .iter()
+            .find(|t| t.id == child_id)
+            .expect("child tombstone");
+        assert_eq!(child_tomb.parent_id, Some(root_id));
+        assert_eq!(child_tomb.status, AgentStatus::Completed);
+        let grandchild_tomb = tombstones
+            .iter()
+            .find(|t| t.id != child_id)
+            .expect("grandchild tombstone");
+        assert_eq!(
+            grandchild_tomb.parent_id,
+            Some(child_id),
+            "the grandchild's parent is the mid-tree child, not the root",
+        );
+        assert_eq!(grandchild_tomb.status, AgentStatus::Completed);
+        assert!(
+            grandchild_tomb
+                .path
+                .starts_with(&format!("{child_path}/spawn/")),
+            "grandchild path nests under the child: {}",
+            grandchild_tomb.path,
+        );
+        drop(reg);
+
+        // One-hop delivery into the child's conversation: the child's
+        // session branch holds the framed grandchild result.
+        let child_sessions = tree.list_children(root_session);
+        assert_eq!(child_sessions.len(), 1, "child branched under the root");
+        let child_store = tree
+            .get_store(child_sessions[0])
+            .expect("child store survives reclamation in tree mode");
+        let injected = child_store.events().iter().any(|event| {
+            matches!(
+                event,
+                SessionEvent::UserMessage { content, .. }
+                    if content.contains("<agent_result")
+                        && content.contains("grandchild says hi")
+            )
+        });
+        assert!(
+            injected,
+            "the grandchild's framed result must be injected into the child's conversation",
+        );
+        // And the grandchild's session branched under the child's session.
+        assert_eq!(
+            tree.list_children(child_sessions[0]).len(),
+            1,
+            "grandchild session branches under the child's session",
         );
     }
 }

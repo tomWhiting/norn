@@ -5,6 +5,7 @@
 //! and re-exports the public surface.
 
 pub mod coord;
+pub(crate) mod delegation;
 pub(super) mod fork_pipeline;
 mod fork_seed;
 pub mod fork_tool;
@@ -14,6 +15,7 @@ mod lifecycle;
 pub mod reclaim;
 pub mod spawn;
 mod spawn_context;
+mod spawn_launch;
 mod spawn_outcome;
 
 pub use self::coord::{CloseAgentTool, SEND_MESSAGE_TOOL_NAME, SendMessageTool};

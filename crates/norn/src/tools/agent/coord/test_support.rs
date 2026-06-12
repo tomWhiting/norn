@@ -62,18 +62,49 @@ pub(crate) fn build_infra(
     (infra, registry, router)
 }
 
+/// Generous test [`ChildPolicy`] (depth 5) — a deliberate test-caller
+/// choice, never a library default.
+pub(crate) fn test_root_policy() -> crate::agent::child_policy::ChildPolicy {
+    use crate::agent::child_policy::{ChildPolicy, DelegationBudget, MessagingScope};
+    ChildPolicy {
+        messaging: MessagingScope::SiblingsAndParent,
+        delegation: DelegationBudget {
+            remaining_depth: 5,
+            max_concurrent_children: 32,
+        },
+        inbound_capacity: 32,
+    }
+}
+
 /// Register an agent at `path` with optional parent, returning its id.
+///
+/// The entry's granted policy derives from its registered parent's policy
+/// (inherit-with-decrement) when one exists, else the generous
+/// [`test_root_policy`], so chains register to any depth the tests need.
 pub(crate) fn register_agent(
     registry: &Arc<RwLock<AgentRegistry>>,
     path: &str,
     parent: Option<Uuid>,
 ) -> Uuid {
+    let root_policy = test_root_policy();
+    let policy = match parent {
+        None => root_policy.clone(),
+        Some(p) => {
+            let base = registry
+                .read()
+                .get(p)
+                .map_or_else(|| root_policy.clone(), |entry| entry.policy);
+            base.grant_for_child(None).unwrap()
+        }
+    };
     let guard = AgentRegistry::reserve(
         registry,
         path.to_string(),
         "worker".to_string(),
         "claude".to_string(),
         parent,
+        policy,
+        Some(&root_policy),
     )
     .unwrap();
     let id = guard.id();

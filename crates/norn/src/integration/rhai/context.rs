@@ -7,6 +7,7 @@ use parking_lot::RwLock;
 use rhai::{Dynamic, Engine, EvalAltResult, Scope};
 use uuid::Uuid;
 
+use crate::agent::child_policy::ChildPolicy;
 use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::AgentRegistry;
 use crate::provider::traits::Provider;
@@ -63,6 +64,14 @@ pub struct NornRhaiContext {
     /// same underlying value as [`crate::tool::context::ToolContext`] and
     /// [`crate::r#loop::loop_context::LoopContext`].
     pub working_dir: crate::tool::context::SharedWorkingDir,
+    /// The host agent's **own** granted [`ChildPolicy`] — the budget its
+    /// script-driven `spawn_agent` reservations are checked against, and
+    /// the base each script-spawned child's grant is derived from
+    /// (inherit-with-decrement, exactly like the spawn/fork tools). The
+    /// embedder supplies it deliberately — typically the same
+    /// `child_policy` as its builder envelope; Norn never assumes one
+    /// (W3.4).
+    pub child_policy: ChildPolicy,
 }
 
 // `NornRhaiContext` has all-public fields and is constructed via struct
