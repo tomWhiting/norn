@@ -344,6 +344,7 @@ mod tests {
     impl CounterCommand {
         fn json_schema() -> Value {
             json!({
+                "type": "object",
                 "oneOf": [
                     {
                         "type": "object",

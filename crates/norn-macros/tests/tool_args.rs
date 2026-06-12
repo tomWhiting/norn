@@ -518,6 +518,9 @@ enum TaskAction {
 #[test]
 fn internally_tagged_enum_uses_one_of_with_const_discriminator() {
     let schema = TaskAction::json_schema();
+    // Providers (OpenAI) reject function-parameter schemas whose root is
+    // not `type: "object"`; tagged enums must declare it.
+    assert_eq!(schema["type"], "object");
     let variants = schema["oneOf"].as_array().expect("oneOf is array");
     assert_eq!(variants.len(), 2);
     assert_eq!(variants[0]["type"], "object");
@@ -580,6 +583,8 @@ enum UntaggedKind {
 #[test]
 fn untagged_enum_omits_discriminator() {
     let schema = UntaggedKind::json_schema();
+    // Untagged variants may be non-objects, so the root stays untyped.
+    assert!(schema.get("type").is_none());
     let variants = schema["oneOf"].as_array().expect("oneOf is array");
     assert_eq!(variants.len(), 2);
     // No const discriminator anywhere.
@@ -602,6 +607,7 @@ enum AdjacentKind {
 #[test]
 fn adjacent_enum_uses_tag_and_content_fields() {
     let schema = AdjacentKind::json_schema();
+    assert_eq!(schema["type"], "object");
     let variants = schema["oneOf"].as_array().expect("oneOf is array");
     assert_eq!(variants.len(), 1);
     let entry = &variants[0];

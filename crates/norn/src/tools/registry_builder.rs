@@ -125,6 +125,30 @@ mod tests {
         }
     }
 
+    /// Every provider requires a function tool's parameter schema to be an
+    /// object schema at the root — `OpenAI` hard-rejects the whole request
+    /// with HTTP 400 `invalid_function_parameters` otherwise (regression:
+    /// the `task` tool's derived `oneOf` schema shipped without a root
+    /// `type`). Guard the entire standard set, not just the tool that broke.
+    #[test]
+    fn every_standard_tool_schema_root_is_an_object() {
+        let mut registry = ToolRegistry::new();
+        register_standard_tools(&mut registry, None);
+
+        let names: Vec<String> = registry.names().map(str::to_owned).collect();
+        for name in names {
+            let tool = registry
+                .get(&name)
+                .expect("name came from the registry's own iterator");
+            let schema = tool.input_schema();
+            assert_eq!(
+                schema.get("type").and_then(serde_json::Value::as_str),
+                Some("object"),
+                "tool '{name}' parameter schema root must be type \"object\", got: {schema}",
+            );
+        }
+    }
+
     #[test]
     fn write_tool_is_in_the_default_set() {
         let mut registry = ToolRegistry::new();

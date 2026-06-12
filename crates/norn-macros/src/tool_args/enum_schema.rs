@@ -4,14 +4,21 @@
 //!
 //! * **String enum** — every variant is `Unit` and there is no `tag` /
 //!   `untagged` attribute. Emits `{"type": "string", "enum": [...]}`.
-//! * **Internally tagged** — `#[serde(tag = "t")]`. Emits `oneOf` of objects
-//!   each carrying `t` as a const discriminator alongside the variant's named
-//!   fields.
-//! * **Adjacently tagged** — `#[serde(tag = "t", content = "c")]`. Emits
-//!   `oneOf` of objects each with the tag as a const and (for data-bearing
-//!   variants) the variant's data nested under `c`.
+//! * **Internally tagged** — `#[serde(tag = "t")]`. Emits a root
+//!   `type: "object"` with `oneOf` of objects each carrying `t` as a const
+//!   discriminator alongside the variant's named fields.
+//! * **Adjacently tagged** — `#[serde(tag = "t", content = "c")]`. Emits a
+//!   root `type: "object"` with `oneOf` of objects each with the tag as a
+//!   const and (for data-bearing variants) the variant's data nested under
+//!   `c`.
 //! * **Untagged** — `#[serde(untagged)]`. Emits `oneOf` of the per-variant
-//!   data schemas with no discriminator.
+//!   data schemas with no discriminator and no root `type` (variants may be
+//!   non-objects).
+//!
+//! Tagged representations declare `type: "object"` at the root because
+//! providers (`OpenAI` in particular) reject function-parameter schemas
+//! whose root is not an object schema; every tagged variant is an object,
+//! so the declaration is always sound.
 //!
 //! Tuple variants (`Foo(String)`) are rejected at parse time. External tagging
 //! (data variants without any of the three serde attrs) produces a spanned
@@ -130,7 +137,7 @@ fn build_internally_tagged(parsed: &ParsedEnum, tag: &str) -> syn::Result<TokenS
             })
         });
     }
-    Ok(wrap_one_of(parsed, &variant_schemas))
+    Ok(wrap_one_of(parsed, &variant_schemas, RootType::Object))
 }
 
 /// Builds the body for an adjacently-tagged enum. Unit variants get just the
@@ -171,7 +178,7 @@ fn build_adjacent(parsed: &ParsedEnum, tag: &str, content: &str) -> syn::Result<
         };
         variant_schemas.push(schema);
     }
-    Ok(wrap_one_of(parsed, &variant_schemas))
+    Ok(wrap_one_of(parsed, &variant_schemas, RootType::Object))
 }
 
 /// Builds the body for an untagged enum. Each variant emits its data schema
@@ -190,7 +197,7 @@ fn build_untagged(parsed: &ParsedEnum) -> syn::Result<TokenStream> {
         };
         variant_schemas.push(schema);
     }
-    Ok(wrap_one_of(parsed, &variant_schemas))
+    Ok(wrap_one_of(parsed, &variant_schemas, RootType::Untyped))
 }
 
 /// Builds an object schema for a named-field variant payload: `type: object`
@@ -225,19 +232,42 @@ fn variant_description_tokens(description: &str) -> TokenStream {
     }
 }
 
+/// Root schema shape for a `oneOf`-wrapped enum.
+#[derive(Clone, Copy)]
+enum RootType {
+    /// Declare `type: "object"` at the root — sound for tagged
+    /// representations where every variant is an object schema, and required
+    /// by providers (`OpenAI` rejects function-parameter schemas whose root
+    /// lacks `type: "object"`).
+    Object,
+    /// No root `type` — untagged variants may be non-objects.
+    Untyped,
+}
+
 /// Wraps a list of variant schemas in `oneOf`, attaching the enum's container
-/// doc-comment description when one is present.
-fn wrap_one_of(parsed: &ParsedEnum, variant_schemas: &[TokenStream]) -> TokenStream {
+/// doc-comment description when one is present and a root `type: "object"`
+/// declaration when the representation guarantees object variants.
+fn wrap_one_of(
+    parsed: &ParsedEnum,
+    variant_schemas: &[TokenStream],
+    root_type: RootType,
+) -> TokenStream {
+    let type_tokens = match root_type {
+        RootType::Object => quote! { "type": "object", },
+        RootType::Untyped => quote! {},
+    };
     let description = &parsed.description;
     if description.is_empty() {
         quote! {
             ::serde_json::json!({
+                #type_tokens
                 "oneOf": [ #( #variant_schemas ),* ]
             })
         }
     } else {
         quote! {
             ::serde_json::json!({
+                #type_tokens
                 "oneOf": [ #( #variant_schemas ),* ],
                 "description": #description
             })

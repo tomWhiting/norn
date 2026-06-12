@@ -430,6 +430,10 @@ mod tests {
     fn schema_is_derived_one_of_with_per_command_required_fields() {
         let tool = TaskTool::new();
         let schema = as_tool(&tool).input_schema();
+        // OpenAI rejects function schemas whose root is not `type: "object"`
+        // (regression: HTTP 400 invalid_function_parameters on every request
+        // carrying this tool).
+        assert_eq!(schema["type"], "object");
         let variants = schema["oneOf"].as_array().expect("oneOf array");
         assert_eq!(variants.len(), 11);
 
