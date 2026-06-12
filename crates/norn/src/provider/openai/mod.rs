@@ -5,6 +5,7 @@ mod provider;
 pub mod rate_limiter;
 pub mod request;
 pub mod retry_after;
+pub(crate) mod schema_downlevel;
 pub mod sse;
 mod sse_types;
 pub mod tools;

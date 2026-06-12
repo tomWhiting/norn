@@ -149,6 +149,44 @@ mod tests {
         }
     }
 
+    /// The full provider-facing pipeline — envelope wrapping followed by
+    /// the `OpenAI` down-level — must produce a compliant function schema
+    /// for every standard tool: root `type: "object"` and none of the
+    /// keywords `OpenAI` forbids at the top level (regression: the `task`
+    /// tool's root `oneOf` 400-failed every request to the provider).
+    #[test]
+    fn every_standard_tool_downlevels_to_an_openai_compliant_schema() {
+        let mut registry = ToolRegistry::new();
+        register_standard_tools(&mut registry, None);
+
+        let names: Vec<String> = registry.names().map(str::to_owned).collect();
+        for name in names {
+            let tool = registry
+                .get(&name)
+                .expect("name came from the registry's own iterator");
+            let wrapped = crate::tool::wrap_schema_with_envelope(tool.input_schema());
+            let downleveled =
+                crate::provider::openai::schema_downlevel::downlevel_function_parameters(
+                    &name, &wrapped,
+                );
+            let root = downleveled
+                .as_object()
+                .expect("downleveled schema is an object");
+            assert_eq!(
+                root.get("type").and_then(serde_json::Value::as_str),
+                Some("object"),
+                "tool '{name}' downleveled schema root must be type \"object\": {downleveled}",
+            );
+            for keyword in ["oneOf", "anyOf", "allOf", "enum", "const", "not"] {
+                assert!(
+                    !root.contains_key(keyword),
+                    "tool '{name}' downleveled schema has forbidden root keyword \
+                     '{keyword}': {downleveled}",
+                );
+            }
+        }
+    }
+
     #[test]
     fn write_tool_is_in_the_default_set() {
         let mut registry = ToolRegistry::new();

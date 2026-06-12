@@ -22,7 +22,10 @@ fn serialize_function(tool: &ToolDefinition) -> serde_json::Value {
         "type": "function",
         "name": tool.name,
         "description": tool.description,
-        "parameters": tool.parameters,
+        "parameters": super::schema_downlevel::downlevel_function_parameters(
+            &tool.name,
+            &tool.parameters,
+        ),
         "strict": false,
     })
 }
@@ -157,6 +160,54 @@ mod tests {
         assert_eq!(json["name"], "get_weather");
         assert_eq!(json["strict"], false);
         assert!(json.get("response_format").is_none());
+    }
+
+    /// Composite-tool schemas (root `oneOf`) must be down-leveled before
+    /// they reach the wire — OpenAI rejects the whole request otherwise
+    /// (regression: HTTP 400 invalid_function_parameters on the `task`
+    /// tool).
+    #[test]
+    fn function_tool_with_one_of_schema_is_downleveled() {
+        let tool = ProviderToolDefinition::Function(ToolDefinition {
+            name: "task".to_string(),
+            description: "Task management".to_string(),
+            parameters: serde_json::json!({
+                "type": "object",
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "description": "Create a thing.",
+                        "properties": {
+                            "action": { "const": "create" },
+                            "name": { "type": "string" }
+                        },
+                        "required": ["action", "name"],
+                        "additionalProperties": false
+                    },
+                    {
+                        "type": "object",
+                        "description": "List all things.",
+                        "properties": {
+                            "action": { "const": "list" }
+                        },
+                        "required": ["action"],
+                        "additionalProperties": false
+                    }
+                ]
+            }),
+        });
+
+        let json = serialize_tool(&tool);
+        let parameters = &json["parameters"];
+        assert_eq!(parameters["type"], "object");
+        assert!(parameters.get("oneOf").is_none());
+        assert_eq!(
+            parameters["properties"]["action"]["enum"],
+            serde_json::json!(["create", "list"])
+        );
+        // Only the discriminator is required by every command; `name` is
+        // per-command and moves into the discriminator description.
+        assert_eq!(parameters["required"], serde_json::json!(["action"]));
     }
 
     #[test]
