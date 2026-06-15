@@ -42,8 +42,8 @@ fn working_dir_string() -> Result<String, PrintError> {
 }
 
 /// Resolve the print-mode session through [`SessionManager`], honoring
-/// `--no-session`, `--resume`, `--fork`, `--session-id`, and
-/// `--session-name`.
+/// `--no-session`, `--resume`, `--fork`, `--session-id`,
+/// `--resume-if-exists`, and `--session-name`.
 ///
 /// - `--no-session`: a fresh in-memory [`EventStore`] with no sink and no
 ///   on-disk record.
@@ -53,8 +53,10 @@ fn working_dir_string() -> Result<String, PrintError> {
 ///   a new one.
 /// - `--session-id <id>`: create a fresh persisted session under the
 ///   caller's exact ID — a typed failure when the ID already exists
+///   unless `--resume-if-exists` is also supplied
 ///   (create-exactly-this; clap rejects combining it with
-///   `--resume`/`--fork`/`--no-session`). Honors `--session-name`.
+///   `--resume`/`--fork`/`--no-session`). Honors `--session-name` only
+///   on the create arm.
 /// - otherwise: create a fresh persisted session, honoring
 ///   `--session-name`.
 ///
@@ -92,15 +94,16 @@ pub(crate) fn open_session(cli: &Cli, bundle: &RuntimeBundle) -> Result<SessionH
             DurabilityPolicy::Flush,
         )?
     } else if let Some(id) = cli.session_id.as_deref() {
-        manager.create_with_id(
-            id,
-            CreateSessionOptions {
-                model: bundle.model.clone(),
-                working_dir: working_dir_string()?,
-                name: cli.session_name.clone(),
-            },
-            DurabilityPolicy::Flush,
-        )?
+        let options = CreateSessionOptions {
+            model: bundle.model.clone(),
+            working_dir: working_dir_string()?,
+            name: cli.session_name.clone(),
+        };
+        if cli.resume_if_exists {
+            manager.open_or_resume(id, options, DurabilityPolicy::Flush)?
+        } else {
+            manager.create_with_id(id, options, DurabilityPolicy::Flush)?
+        }
     } else {
         manager.create(
             CreateSessionOptions {
@@ -269,6 +272,36 @@ mod tests {
         );
     }
 
+    /// `--session-id --resume-if-exists` is the idempotent counterpart
+    /// to create-exactly-this: the first open creates, and later opens
+    /// resume the same exact ID with prior events replayed.
+    #[test]
+    #[serial_test::serial]
+    fn session_id_resume_if_exists_creates_then_resumes() {
+        let _guard = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = Cli::try_parse_from(["norn", "--session-id", "wf-run-43", "--resume-if-exists"])
+            .unwrap();
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        let session = open_session(&cli, &bundle).unwrap();
+        assert_eq!(session.id(), Some("wf-run-43"));
+        session
+            .store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(None),
+                content: "first attempt".to_owned(),
+            })
+            .unwrap();
+        drop(session);
+
+        let resumed = open_session(&cli, &bundle).unwrap();
+        assert_eq!(resumed.id(), Some("wf-run-43"));
+        assert_eq!(resumed.store.len(), 1, "prior history must be replayed");
+
+        let index = read_index(&session_data_dir()).unwrap();
+        assert_eq!(index.len(), 1, "retry must not create a duplicate entry");
+        assert_eq!(index[0].id, "wf-run-43");
+    }
+
     /// clap rejects every contradictory pairing of the session-control
     /// flags — `--session-id` against all three, and the older trio
     /// against each other (previously silently prioritized by branch
@@ -279,6 +312,7 @@ mod tests {
             ["norn", "--session-id", "x", "--resume"].as_slice(),
             ["norn", "--session-id", "x", "--fork"].as_slice(),
             ["norn", "--session-id", "x", "--no-session"].as_slice(),
+            ["norn", "--resume-if-exists"].as_slice(),
             ["norn", "--resume", "a", "--fork", "b"].as_slice(),
             ["norn", "--resume", "a", "--no-session"].as_slice(),
             ["norn", "--fork", "a", "--no-session"].as_slice(),

@@ -243,9 +243,10 @@ struct TuiSessionHandle {
 ///   `Fork` marker).
 /// - `--session-id <id>`: create a fresh persisted session under the
 ///   caller's exact ID — a typed failure when the ID already exists
+///   unless `--resume-if-exists` is also supplied
 ///   (create-exactly-this, same semantics as print mode; clap rejects
 ///   combining it with `--resume`/`--fork`/`--no-session`). Honors
-///   `--session-name`.
+///   `--session-name` only on the create arm.
 /// - otherwise: create a fresh persisted session, honoring
 ///   `--session-name`.
 ///
@@ -288,15 +289,16 @@ fn open_session(
             DurabilityPolicy::Flush,
         )?
     } else if let Some(id) = cli.session_id.as_deref() {
-        manager.create_with_id(
-            id,
-            CreateSessionOptions {
-                model: bundle.model.clone(),
-                working_dir,
-                name: cli.session_name.clone(),
-            },
-            DurabilityPolicy::Flush,
-        )?
+        let options = CreateSessionOptions {
+            model: bundle.model.clone(),
+            working_dir,
+            name: cli.session_name.clone(),
+        };
+        if cli.resume_if_exists {
+            manager.open_or_resume(id, options, DurabilityPolicy::Flush)?
+        } else {
+            manager.create_with_id(id, options, DurabilityPolicy::Flush)?
+        }
     } else {
         manager.create(
             CreateSessionOptions {

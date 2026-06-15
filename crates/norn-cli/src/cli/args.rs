@@ -155,15 +155,20 @@ pub struct Cli {
     pub session_name: Option<String>,
 
     /// Create the session under this exact ID (fails if it already
-    /// exists; resume an existing session with --resume). The ID names
-    /// the on-disk session file, so it must start with a letter or
-    /// digit and contain only `[A-Za-z0-9._-]`.
+    /// exists unless --resume-if-exists is also supplied; resume an
+    /// existing session with --resume). The ID names the on-disk
+    /// session file, so it must start with a letter or digit and
+    /// contain only `[A-Za-z0-9._-]`.
     #[arg(
         long,
         value_name = "ID",
         conflicts_with_all = ["resume", "fork", "no_session"]
     )]
     pub session_id: Option<String>,
+
+    /// With --session-id, resume that exact ID when it already exists.
+    #[arg(long, requires = "session_id")]
+    pub resume_if_exists: bool,
 
     /// Provider backend selection.
     #[arg(long, value_name = "PROVIDER", value_enum)]
@@ -456,6 +461,15 @@ mod tests {
     fn resume_with_argument_captures_id() {
         let cli = Cli::try_parse_from(["norn", "--resume", "abcd1234"]).unwrap();
         assert_eq!(cli.resume.as_deref(), Some("abcd1234"));
+    }
+
+    #[test]
+    fn resume_if_exists_requires_session_id() {
+        assert!(Cli::try_parse_from(["norn", "--resume-if-exists"]).is_err());
+        let cli = Cli::try_parse_from(["norn", "--session-id", "wf-run-42", "--resume-if-exists"])
+            .unwrap();
+        assert_eq!(cli.session_id.as_deref(), Some("wf-run-42"));
+        assert!(cli.resume_if_exists);
     }
 
     #[test]
