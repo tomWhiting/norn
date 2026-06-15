@@ -69,7 +69,7 @@ use crate::error::{ConfigError, NornError, SessionError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::profile::{Capability, Profile, from_profile};
-use crate::provider::request::ReasoningEffort;
+use crate::provider::request::{ReasoningEffort, ServiceTier};
 use crate::provider::traits::Provider;
 use crate::provider::{AgentEvent, AgentEventSender, SharedAgentEventChannel};
 use crate::rules::engine::RuleEngine;
@@ -96,6 +96,7 @@ pub struct AgentBuilder {
     pub(super) system_prompt: Option<String>,
     pub(super) append_system_prompt: Option<String>,
     pub(super) reasoning_effort: Option<ReasoningEffort>,
+    pub(super) service_tier: Option<ServiceTier>,
     pub(super) capabilities: Vec<Capability>,
     pub(super) working_dir: Option<PathBuf>,
     pub(super) workspace_root: Option<PathBuf>,
@@ -141,6 +142,7 @@ impl AgentBuilder {
             system_prompt: None,
             append_system_prompt: None,
             reasoning_effort: None,
+            service_tier: None,
             capabilities: Vec::new(),
             working_dir: None,
             workspace_root: None,
@@ -324,6 +326,9 @@ impl AgentBuilder {
         };
         if let Some(reasoning_effort) = self.reasoning_effort {
             profile.reasoning_effort = Some(reasoning_effort);
+        }
+        if let Some(service_tier) = self.service_tier {
+            profile.service_tier = Some(service_tier);
         }
         if let Some(allowed_tools) = self.allowed_tools {
             profile.tools = Some(allowed_tools);
@@ -725,6 +730,7 @@ mod tests {
             })
             .working_dir(temp.path())
             .reasoning_effort(ReasoningEffort::High)
+            .service_tier(ServiceTier::Fast)
             .allowed_tools(&["read"])
             .without_tools(&["write"])
             .capabilities(vec![capability])
@@ -736,6 +742,7 @@ mod tests {
             agent.loop_context.reasoning_effort,
             Some(ReasoningEffort::High)
         );
+        assert_eq!(agent.loop_context.service_tier, Some(ServiceTier::Fast));
         assert!(agent.registry.get("read").is_some());
         assert!(
             agent.registry.get("bash").is_some(),

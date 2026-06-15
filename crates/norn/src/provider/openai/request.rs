@@ -28,6 +28,9 @@ pub(crate) struct ResponsesApiPayload {
     pub stream: bool,
     /// Whether the API should persist this response for chaining.
     pub store: bool,
+    /// Optional provider service tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
     /// Server-side reasoning content to include in the response.
     pub include: Vec<String>,
     /// Optional reasoning effort control.
@@ -131,6 +134,7 @@ pub(crate) fn build_payload(
     } else {
         Vec::new()
     };
+    let service_tier = service_tier_provider_value(request)?;
 
     Ok(ResponsesApiPayload {
         model: request.model.clone(),
@@ -141,6 +145,7 @@ pub(crate) fn build_payload(
         parallel_tool_calls: false,
         stream: true,
         store: request.store,
+        service_tier,
         include,
         reasoning,
         prompt_cache_key: request.cache_key.clone(),
@@ -148,6 +153,29 @@ pub(crate) fn build_payload(
         prompt_cache_retention: None,
         context_management,
     })
+}
+
+fn service_tier_provider_value(request: &ProviderRequest) -> Result<Option<String>, ProviderError> {
+    let Some(tier) = request.service_tier else {
+        return Ok(None);
+    };
+    let Some(provider_value) = crate::model_catalog::service_tier_provider_value(
+        crate::model_catalog::DEFAULT_PROVIDER,
+        crate::model_catalog::DEFAULT_BACKEND,
+        &request.model,
+        tier.as_str(),
+    ) else {
+        return Err(ProviderError::InvalidRequest {
+            message: format!(
+                "service tier '{}' is not supported for model '{}' on {}.{}",
+                tier.as_str(),
+                request.model,
+                crate::model_catalog::DEFAULT_PROVIDER,
+                crate::model_catalog::DEFAULT_BACKEND,
+            ),
+        });
+    };
+    Ok(Some(provider_value.to_owned()))
 }
 
 fn serialize_developer_message(msg: &Message) -> serde_json::Value {
@@ -280,7 +308,7 @@ fn serialize_tool_result(msg: &Message) -> Result<serde_json::Value, ProviderErr
 )]
 mod tests {
     use super::*;
-    use crate::provider::request::{ProviderContextManagement, ToolDefinition};
+    use crate::provider::request::{ProviderContextManagement, ServiceTier, ToolDefinition};
     use crate::provider::tools::{
         HostedToolDefinition, HostedWebSearchTool, ProviderToolDefinition,
     };
@@ -333,6 +361,7 @@ mod tests {
             model: "gpt-4.1-mini".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,
@@ -435,6 +464,25 @@ mod tests {
     }
 
     #[test]
+    fn service_tier_fast_serializes_as_openai_priority() {
+        let mut req = make_request();
+        req.model = "gpt-5.5".to_owned();
+        req.service_tier = Some(ServiceTier::Fast);
+        let payload = build_payload(&req).expect("build_payload");
+        let json = serde_json::to_value(&payload).expect("serialize");
+        assert_eq!(json["service_tier"], "priority");
+    }
+
+    #[test]
+    fn unsupported_service_tier_returns_invalid_request() {
+        let mut req = make_request();
+        req.model = "gpt-5.4-mini".to_owned();
+        req.service_tier = Some(ServiceTier::Fast);
+        let err = build_payload(&req).expect_err("unsupported tier must fail");
+        assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+    }
+
+    #[test]
     fn reasoning_effort_medium() {
         let mut req = make_request();
         req.reasoning_effort = Some(ReasoningEffort::Medium);
@@ -529,6 +577,7 @@ mod tests {
             model: "gpt-4.1-mini".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,
@@ -571,6 +620,7 @@ mod tests {
             model: "gpt-4.1-mini".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,
@@ -607,6 +657,7 @@ mod tests {
             model: "gpt-5".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,
@@ -647,6 +698,7 @@ mod tests {
             model: "gpt-5".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,
@@ -677,6 +729,7 @@ mod tests {
             model: "gpt-5".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,
@@ -708,6 +761,7 @@ mod tests {
             model: "gpt-5".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,
@@ -734,6 +788,7 @@ mod tests {
             model: "gpt-4.1-mini".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,

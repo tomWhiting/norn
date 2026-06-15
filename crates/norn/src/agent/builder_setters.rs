@@ -26,7 +26,7 @@ use crate::agent_loop::retry::RetryPolicy;
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::profile::{Capability, Profile};
-use crate::provider::request::ReasoningEffort;
+use crate::provider::request::{ReasoningEffort, ServiceTier};
 use crate::rules::engine::RuleEngine;
 use crate::session::SessionManager;
 use crate::session::store::{DurabilityPolicy, EventStore};
@@ -97,6 +97,13 @@ impl AgentBuilder {
     #[must_use]
     pub fn reasoning_effort(mut self, effort: ReasoningEffort) -> Self {
         self.reasoning_effort = Some(effort);
+        self
+    }
+
+    /// Override the profile's service-tier hint.
+    #[must_use]
+    pub fn service_tier(mut self, tier: ServiceTier) -> Self {
+        self.service_tier = Some(tier);
         self
     }
 

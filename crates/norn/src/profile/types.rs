@@ -17,7 +17,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::error::ConfigError;
-use crate::provider::request::{ReasoningEffort, ReasoningSummary};
+use crate::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
 
 /// A shell command whose stdout is appended as a dynamic system section at
 /// each iteration of the agent loop.
@@ -117,6 +117,9 @@ pub struct Profile {
     /// provider request.
     #[serde(default)]
     pub reasoning_summary: Option<ReasoningSummary>,
+    /// Optional service-tier hint threaded through to the provider request.
+    #[serde(default)]
+    pub service_tier: Option<ServiceTier>,
     /// Optional explicit tool allow-list. When `Some`, only the named tools
     /// (plus any contributed by capabilities) are available; when `None` and
     /// no capabilities contribute tools, [`Self::resolved_tools`] returns
@@ -204,6 +207,7 @@ mod tests {
             model: "gpt-5".to_owned(),
             reasoning_effort: Some(ReasoningEffort::Medium),
             reasoning_summary: None,
+            service_tier: None,
             tools: Some(vec!["read".to_owned(), "edit".to_owned()]),
             system_instructions: vec!["You are an expert author.".to_owned()],
             capabilities: vec![

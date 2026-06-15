@@ -1,7 +1,7 @@
 //! CLI slash-command registry construction (NC-006 R1, R2–R12).
 //!
 //! [`build_slash_registry`] merges a (currently empty by design)
-//! profile-supplied [`SlashCommandRegistry`] with the eleven CLI
+//! profile-supplied [`SlashCommandRegistry`] with the CLI
 //! built-in commands listed in [`CLI_BUILTIN_NAMES`]. Profile commands
 //! are registered first; CLI builtins overwrite same-named entries
 //! second so the CLI surface always wins on collision. After both
@@ -23,6 +23,7 @@ use std::sync::atomic::Ordering;
 use norn::agent_loop::commands::{
     CustomSlashHandler, SlashCommand, SlashCommandHandler, SlashCommandRegistry,
 };
+use norn::provider::request::ReasoningEffort;
 
 use crate::config::parse_inline_or_file;
 use crate::session::SessionManager;
@@ -36,6 +37,10 @@ pub const CLI_BUILTIN_NAMES: &[&str] = &[
     "help",
     "tools",
     "model",
+    "effort",
+    "reasoning-effort",
+    "service-tier",
+    "fast",
     "schema",
     "compact",
     "clear",
@@ -56,6 +61,13 @@ pub const BUILTIN_DESCRIPTIONS: &[(&str, &str)] = &[
     ("help", "Show available commands"),
     ("tools", "List available tools"),
     ("model", "Show or switch the active model"),
+    ("effort", "Show, set, or clear the active reasoning effort"),
+    ("reasoning-effort", "Alias for /effort"),
+    (
+        "service-tier",
+        "Show, set, or clear the active service tier",
+    ),
+    ("fast", "Use the fast service tier"),
     ("schema", "Show or set the output schema"),
     ("compact", "Compact older conversation context"),
     ("clear", "Reset the conversation history"),
@@ -142,6 +154,11 @@ fn register_cli_builtins(registry: &mut SlashCommandRegistry, state: &SlashState
     register_custom(registry, "help", help_handler(state));
     register_custom(registry, "tools", tools_handler(state));
     register_custom(registry, "model", model_handler(state));
+    let effort_arc = effort_handler(state);
+    register_custom(registry, "effort", Arc::clone(&effort_arc));
+    register_custom(registry, "reasoning-effort", effort_arc);
+    register_custom(registry, "service-tier", service_tier_handler(state));
+    register_custom(registry, "fast", fast_handler(state));
     register_custom(registry, "schema", schema_handler(state));
     register_custom(registry, "compact", compact_handler(state));
     register_custom(registry, "clear", clear_handler(state));
@@ -204,6 +221,106 @@ fn model_handler(state: &SlashState) -> CustomSlashHandler {
             trimmed.clone_into(&mut model.lock());
             eprintln!("Switched to model: {trimmed}");
         }
+        Ok(Vec::new())
+    })
+}
+
+// -- /effort / /reasoning-effort -------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EffortCommand {
+    Set(ReasoningEffort),
+    Clear,
+}
+
+fn parse_effort_command(value: &str) -> Option<EffortCommand> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => Some(EffortCommand::Set(ReasoningEffort::None)),
+        "low" => Some(EffortCommand::Set(ReasoningEffort::Low)),
+        "medium" => Some(EffortCommand::Set(ReasoningEffort::Medium)),
+        "high" => Some(EffortCommand::Set(ReasoningEffort::High)),
+        "x-high" | "xhigh" => Some(EffortCommand::Set(ReasoningEffort::XHigh)),
+        "default" | "off" | "clear" => Some(EffortCommand::Clear),
+        _ => None,
+    }
+}
+
+fn effort_label(effort: ReasoningEffort) -> &'static str {
+    match effort {
+        ReasoningEffort::None => "none",
+        ReasoningEffort::Low => "low",
+        ReasoningEffort::Medium => "medium",
+        ReasoningEffort::High => "high",
+        ReasoningEffort::XHigh => "x-high",
+    }
+}
+
+fn effort_handler(state: &SlashState) -> CustomSlashHandler {
+    let reasoning_effort = Arc::clone(&state.reasoning_effort);
+    Arc::new(move |arg| {
+        let trimmed = arg.trim();
+        if trimmed.is_empty() {
+            let current = (*reasoning_effort.lock())
+                .map(effort_label)
+                .unwrap_or("default");
+            eprintln!("{current}");
+            return Ok(Vec::new());
+        }
+        match parse_effort_command(trimmed) {
+            Some(EffortCommand::Set(effort)) => {
+                *reasoning_effort.lock() = Some(effort);
+                eprintln!("Reasoning effort: {}", effort_label(effort));
+            }
+            Some(EffortCommand::Clear) => {
+                *reasoning_effort.lock() = None;
+                eprintln!("Reasoning effort cleared.");
+            }
+            None => {
+                eprintln!(
+                    "norn: invalid reasoning effort '{trimmed}'; expected none, low, medium, high, x-high, or default"
+                );
+            }
+        }
+        Ok(Vec::new())
+    })
+}
+
+// -- /service-tier / /fast --------------------------------------------------
+
+fn service_tier_handler(state: &SlashState) -> CustomSlashHandler {
+    let service_tier = Arc::clone(&state.service_tier);
+    Arc::new(move |arg| {
+        let trimmed = arg.trim().to_ascii_lowercase();
+        if trimmed.is_empty() {
+            let current = match *service_tier.lock() {
+                Some(tier) => tier.as_str().to_owned(),
+                None => "none".to_owned(),
+            };
+            eprintln!("{current}");
+            return Ok(Vec::new());
+        }
+        match trimmed.as_str() {
+            "fast" => {
+                *service_tier.lock() = Some(norn::provider::request::ServiceTier::Fast);
+                eprintln!("Service tier: fast");
+            }
+            "none" | "off" | "default" => {
+                *service_tier.lock() = None;
+                eprintln!("Service tier cleared.");
+            }
+            other => {
+                eprintln!("norn: invalid service tier '{other}'; expected fast or none");
+            }
+        }
+        Ok(Vec::new())
+    })
+}
+
+fn fast_handler(state: &SlashState) -> CustomSlashHandler {
+    let service_tier = Arc::clone(&state.service_tier);
+    Arc::new(move |_arg| {
+        *service_tier.lock() = Some(norn::provider::request::ServiceTier::Fast);
+        eprintln!("Service tier: fast");
         Ok(Vec::new())
     })
 }
@@ -358,7 +475,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use norn::error::NornError;
-    use norn::provider::request::Message;
+    use norn::provider::request::{Message, ServiceTier};
     use norn::session::store::EventStore;
 
     use super::super::state::{SlashState, SlashStateSeed};
@@ -367,6 +484,8 @@ mod tests {
     fn empty_seed() -> SlashStateSeed {
         SlashStateSeed {
             model: "gpt-x".to_owned(),
+            service_tier: None,
+            reasoning_effort: None,
             output_schema: None,
             session_name: None,
             session_id: None,
@@ -395,7 +514,7 @@ mod tests {
     }
 
     #[test]
-    fn registry_contains_all_eleven_builtins() {
+    fn registry_contains_all_builtins() {
         let state = SlashState::new(empty_seed());
         let registry = build_slash_registry(&state, None);
         for name in CLI_BUILTIN_NAMES {
@@ -496,6 +615,42 @@ mod tests {
         let registry = build_slash_registry(&state, None);
         fire(&registry, "model", "gpt-5.5");
         assert_eq!(state.model_snapshot(), "gpt-5.5");
+    }
+
+    #[test]
+    fn service_tier_commands_update_runtime_state() {
+        let state = SlashState::new(empty_seed());
+        let registry = build_slash_registry(&state, None);
+
+        fire(&registry, "service-tier", "fast");
+        assert_eq!(state.service_tier_snapshot(), Some(ServiceTier::Fast));
+
+        fire(&registry, "service-tier", "none");
+        assert_eq!(state.service_tier_snapshot(), None);
+
+        fire(&registry, "fast", "");
+        assert_eq!(state.service_tier_snapshot(), Some(ServiceTier::Fast));
+    }
+
+    #[test]
+    fn effort_commands_update_runtime_state() {
+        let state = SlashState::new(empty_seed());
+        let registry = build_slash_registry(&state, None);
+
+        fire(&registry, "effort", "high");
+        assert_eq!(
+            state.reasoning_effort_snapshot(),
+            Some(ReasoningEffort::High),
+        );
+
+        fire(&registry, "reasoning-effort", "x-high");
+        assert_eq!(
+            state.reasoning_effort_snapshot(),
+            Some(ReasoningEffort::XHigh),
+        );
+
+        fire(&registry, "effort", "default");
+        assert_eq!(state.reasoning_effort_snapshot(), None);
     }
 
     #[test]

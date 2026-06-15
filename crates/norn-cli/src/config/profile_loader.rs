@@ -24,7 +24,7 @@ use crate::cli::BuildError;
 
 /// Default model identifier used when no `--profile` is supplied and no
 /// `--model` override has been applied yet.
-pub const DEFAULT_MODEL: &str = "gpt-5.5";
+pub const DEFAULT_MODEL: &str = norn::model_catalog::DEFAULT_MODEL;
 
 /// Default system instruction used when no `--system-prompt` is supplied
 /// and the profile has no `system_instructions`. The `OpenAI` Responses API

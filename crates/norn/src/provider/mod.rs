@@ -13,7 +13,7 @@ pub use self::auth::{
 pub use self::events::{ProviderEvent, StopReason};
 pub use self::request::{
     AssistantToolCall, Message, MessageRole, ProviderConfig, ProviderOptions, ProviderRequest,
-    ReasoningEffort, ReasoningSummary, SecretString, ToolDefinition,
+    ReasoningEffort, ReasoningSummary, SecretString, ServiceTier, ToolDefinition,
 };
 pub use self::surface::{
     ResolvedTool, ResolvedToolSurface, ToolPresentation, collect_function_definitions,

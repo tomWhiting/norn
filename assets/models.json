@@ -1,0 +1,110 @@
+{
+  "schema_version": 1,
+  "default": {
+    "provider": "openai",
+    "backend": "codex_subscription",
+    "model": "gpt-5.5"
+  },
+  "providers": {
+    "openai": {
+      "display_name": "OpenAI",
+      "backends": {
+        "codex_subscription": {
+          "display_name": "Codex subscription",
+          "auth": "chatgpt_oauth",
+          "api_surface": "codex_responses",
+          "models": {
+            "gpt-5.5": {
+              "display_name": "GPT-5.5",
+              "description": "Frontier model for complex coding, research, and real-world work.",
+              "context_window": 272000,
+              "max_context_window": 272000,
+              "default_reasoning_effort": "medium",
+              "supported_reasoning_efforts": ["low", "medium", "high", "xhigh"],
+              "default_reasoning_summary": "none",
+              "supports_reasoning_summaries": true,
+              "service_tiers": [
+                {
+                  "id": "fast",
+                  "provider_value": "priority",
+                  "display_name": "Fast",
+                  "description": "1.5x speed, increased usage"
+                }
+              ],
+              "web_search_tool_type": "text_and_image",
+              "input_modalities": ["text", "image"],
+              "supports_image_detail_original": true,
+              "supports_search_tool": true,
+              "supports_parallel_tool_calls": true,
+              "apply_patch_tool_type": "freeform"
+            },
+            "gpt-5.4": {
+              "display_name": "GPT-5.4",
+              "description": "Strong model for everyday coding.",
+              "context_window": 272000,
+              "max_context_window": 1000000,
+              "default_reasoning_effort": "medium",
+              "supported_reasoning_efforts": ["low", "medium", "high", "xhigh"],
+              "default_reasoning_summary": "none",
+              "supports_reasoning_summaries": true,
+              "service_tiers": [
+                {
+                  "id": "fast",
+                  "provider_value": "priority",
+                  "display_name": "Fast",
+                  "description": "1.5x speed, increased usage"
+                }
+              ],
+              "web_search_tool_type": "text_and_image",
+              "input_modalities": ["text", "image"],
+              "supports_image_detail_original": true,
+              "supports_search_tool": true,
+              "supports_parallel_tool_calls": true,
+              "apply_patch_tool_type": "freeform"
+            },
+            "gpt-5.4-mini": {
+              "display_name": "GPT-5.4-Mini",
+              "description": "Small, fast, and cost-efficient model for simpler coding tasks.",
+              "context_window": 272000,
+              "max_context_window": 272000,
+              "default_reasoning_effort": "medium",
+              "supported_reasoning_efforts": ["low", "medium", "high", "xhigh"],
+              "default_reasoning_summary": "none",
+              "supports_reasoning_summaries": true,
+              "service_tiers": [],
+              "web_search_tool_type": "text_and_image",
+              "input_modalities": ["text", "image"],
+              "supports_image_detail_original": true,
+              "supports_search_tool": true,
+              "supports_parallel_tool_calls": true,
+              "apply_patch_tool_type": "freeform"
+            },
+            "gpt-5.3-codex-spark": {
+              "display_name": "GPT-5.3-Codex-Spark",
+              "description": "Ultra-fast coding model.",
+              "context_window": 128000,
+              "max_context_window": 128000,
+              "default_reasoning_effort": "high",
+              "supported_reasoning_efforts": ["low", "medium", "high", "xhigh"],
+              "default_reasoning_summary": "none",
+              "supports_reasoning_summaries": true,
+              "service_tiers": [],
+              "web_search_tool_type": "text",
+              "input_modalities": ["text"],
+              "supports_image_detail_original": false,
+              "supports_search_tool": true,
+              "supports_parallel_tool_calls": true,
+              "apply_patch_tool_type": "freeform"
+            }
+          }
+        },
+        "responses_api": {
+          "display_name": "OpenAI Responses API",
+          "auth": "api_key",
+          "api_surface": "responses",
+          "models": {}
+        }
+      }
+    }
+  }
+}

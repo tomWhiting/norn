@@ -97,6 +97,8 @@ mod tests {
     fn empty_seed() -> SlashStateSeed {
         SlashStateSeed {
             model: "gpt-x".to_owned(),
+            service_tier: None,
+            reasoning_effort: None,
             output_schema: None,
             session_name: None,
             session_id: None,

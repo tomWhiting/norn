@@ -31,7 +31,7 @@ use crate::r#loop::retry::RetryPolicy;
 
 use crate::r#loop::tokens::TokenEstimator;
 use crate::profile::PromptCommand;
-use crate::provider::request::{ReasoningEffort, ReasoningSummary};
+use crate::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
 use crate::rules::engine::RuleEngine;
 
 use crate::session::action_log::ActionLog;
@@ -101,6 +101,9 @@ pub struct LoopContext {
     /// Optional reasoning-summary verbosity threaded into every
     /// [`ProviderRequest`](crate::provider::request::ProviderRequest).
     pub reasoning_summary: Option<ReasoningSummary>,
+    /// Optional service tier threaded into every
+    /// [`ProviderRequest`](crate::provider::request::ProviderRequest).
+    pub service_tier: Option<ServiceTier>,
     /// Optional registry of slash commands. When present, user input is
     /// pre-processed through [`crate::r#loop::commands::preprocess_input`]
     /// before reaching the model.
@@ -266,6 +269,7 @@ impl LoopContext {
             iteration_monitor: None,
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             slash_commands: None,
             prompt_commands: Vec::new(),
             prompt_command_cache: HashMap::new(),

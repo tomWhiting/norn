@@ -257,6 +257,12 @@ pub struct AgentSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_summary: Option<String>,
 
+    /// Service tier hint, stored as a raw string here (e.g. `"fast"`).
+    /// Translated to [`crate::provider::request::ServiceTier`] in
+    /// runtime assembly.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+
     /// Timeout for `prompt_commands` shell invocations as a `humantime`
     /// duration string. Overrides the hardcoded `5s` in
     /// `loop/loop_context.rs`.
@@ -671,6 +677,7 @@ mod tests {
         assert!(agent.compact_keep_turns.is_none());
         assert!(agent.reasoning_effort.is_none());
         assert!(agent.reasoning_summary.is_none());
+        assert!(agent.service_tier.is_none());
         assert!(agent.prompt_command_timeout.is_none());
 
         let retry = RetrySettings::default();
@@ -764,6 +771,7 @@ mod tests {
         assert!(agent.compact_keep_turns.is_none());
         assert!(agent.reasoning_effort.is_none());
         assert!(agent.reasoning_summary.is_none());
+        assert!(agent.service_tier.is_none());
         assert!(agent.prompt_command_timeout.is_none());
         assert!(s.provider.is_none());
         assert!(s.retry.is_none());
@@ -829,6 +837,7 @@ mod tests {
                 server_compaction_threshold_tokens: Some(200_000),
                 reasoning_effort: Some("high".to_owned()),
                 reasoning_summary: Some("detailed".to_owned()),
+                service_tier: Some("fast".to_owned()),
                 prompt_command_timeout: Some("10s".to_owned()),
             }),
             retry: Some(RetrySettings {

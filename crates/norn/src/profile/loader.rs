@@ -19,7 +19,7 @@ use serde::Deserialize;
 
 use super::types::{Capability, Profile};
 use crate::error::ConfigError;
-use crate::provider::request::{ReasoningEffort, ReasoningSummary};
+use crate::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
 
 /// File extensions checked by [`Scanner::resolve`], in priority order.
 ///
@@ -275,6 +275,7 @@ struct RawNornProfileFrontmatter {
     disallowed_tools: Option<ToolsValue>,
     reasoning_effort: Option<ReasoningEffort>,
     reasoning_summary: Option<ReasoningSummary>,
+    service_tier: Option<ServiceTier>,
     capabilities: Option<ToolsValue>,
 }
 
@@ -365,6 +366,7 @@ pub fn parse_profile(content: &str, path: &Path) -> Result<Profile, ConfigError>
         model,
         reasoning_effort: raw.reasoning_effort,
         reasoning_summary: raw.reasoning_summary,
+        service_tier: raw.service_tier,
         tools,
         system_instructions,
         capabilities,

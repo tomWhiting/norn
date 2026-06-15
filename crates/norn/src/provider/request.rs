@@ -10,7 +10,7 @@ use super::auth::AuthSource;
 use super::tools::ProviderToolDefinition;
 
 /// Model reasoning effort level.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ReasoningEffort {
     /// No reasoning.
@@ -37,6 +37,24 @@ pub enum ReasoningSummary {
     Concise,
     /// Verbose, thorough summary.
     Detailed,
+}
+
+/// Provider service tier requested for a model call.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServiceTier {
+    /// Faster provider execution, when the selected backend/model supports it.
+    Fast,
+}
+
+impl ServiceTier {
+    /// Norn-facing identifier used in config, profiles, and slash commands.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Fast => "fast",
+        }
+    }
 }
 
 /// A locally-executed function tool definition.
@@ -170,6 +188,8 @@ pub struct ProviderRequest {
     /// Reasoning summary verbosity. Defaults to `Auto` when reasoning is
     /// enabled and this field is `None`.
     pub reasoning_summary: Option<ReasoningSummary>,
+    /// Optional service-tier control.
+    pub service_tier: Option<ServiceTier>,
     /// Provider-specific options (service tier, etc.).
     pub config: Option<ProviderOptions>,
     /// Cache key for prompt caching. When set, the provider uses this to
@@ -329,6 +349,7 @@ mod tests {
             model: "gpt-5".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,

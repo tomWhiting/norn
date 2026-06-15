@@ -623,6 +623,8 @@ fn build_slash_state_inner(
 
     let seed = SlashStateSeed {
         model: bundle.model.clone(),
+        service_tier: bundle.loop_context.service_tier,
+        reasoning_effort: bundle.loop_context.reasoning_effort,
         output_schema,
         session_name: cli.session_name.clone(),
         session_id,

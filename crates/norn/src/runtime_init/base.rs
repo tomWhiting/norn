@@ -15,7 +15,7 @@ use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
 use crate::r#loop::iteration::IterationMonitorConfig;
 use crate::r#loop::retry::RetryPolicy;
 use crate::profile::Profile;
-use crate::provider::request::{ReasoningEffort, ReasoningSummary};
+use crate::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
 use crate::rules::engine::RuleEngine;
 use crate::skill::SkillCatalog;
 use crate::tool::context::SharedWorkingDir;
@@ -131,6 +131,11 @@ pub fn apply_settings_reasoning_to_profile(
         && let Some(raw) = agent.reasoning_summary.as_deref()
     {
         profile.reasoning_summary = Some(parse_reasoning_summary(raw)?);
+    }
+    if profile.service_tier.is_none()
+        && let Some(raw) = agent.service_tier.as_deref()
+    {
+        profile.service_tier = Some(parse_service_tier(raw)?);
     }
     Ok(())
 }
@@ -297,6 +302,15 @@ fn parse_reasoning_summary(raw: &str) -> Result<ReasoningSummary, NornError> {
     serde_json::from_value(value).map_err(|err| invalid_config(format!(
         "invalid value for agent.reasoning_summary: '{raw}' ({err}); expected one of auto, concise, detailed"
     )))
+}
+
+fn parse_service_tier(raw: &str) -> Result<ServiceTier, NornError> {
+    let value = serde_json::Value::String(raw.to_lowercase());
+    serde_json::from_value(value).map_err(|err| {
+        invalid_config(format!(
+            "invalid value for agent.service_tier: '{raw}' ({err}); expected one of fast",
+        ))
+    })
 }
 
 fn build_skill_search_paths(settings: &NornSettings, cwd: &Path) -> Vec<PathBuf> {

@@ -119,6 +119,7 @@ pub fn from_profile(
     loop_context
         .reasoning_summary
         .clone_from(&profile.reasoning_summary);
+    loop_context.service_tier = profile.service_tier;
     loop_context.rules = rules;
     loop_context.hooks = hooks;
     loop_context
@@ -158,6 +159,7 @@ mod tests {
             model: "m".to_owned(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             tools: Some(vec!["read".to_owned(), "edit".to_owned()]),
             system_instructions: vec!["base instruction".to_owned()],
             capabilities: vec![
@@ -277,6 +279,7 @@ mod tests {
             model: "m".to_owned(),
             reasoning_effort: Some(ReasoningEffort::Medium),
             reasoning_summary: None,
+            service_tier: None,
             tools: Some(vec!["read".to_owned(), "write".to_owned()]),
             system_instructions: vec!["be careful".to_owned()],
             capabilities: vec![Capability {

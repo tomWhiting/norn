@@ -296,6 +296,8 @@ async fn orchestrate(
 
     let active_schema = slash_state.output_schema_snapshot();
     let active_model = slash_state.model_snapshot();
+    bundle.loop_context.service_tier = slash_state.service_tier_snapshot();
+    bundle.loop_context.reasoning_effort = slash_state.reasoning_effort_snapshot();
 
     let built_provider = build_provider(cli.provider, &bundle.provider_overrides, &active_model)
         .await

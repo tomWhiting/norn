@@ -1,8 +1,7 @@
 //! Slash-command surface for the Norn CLI (NC-006).
 //!
-//! Eleven CLI-built-in slash commands (`help`, `tools`, `model`, `schema`,
-//! `compact`, `clear`, `session`, `name`, `variables`, `exit`, `quit`) are
-//! registered as [`SlashCommandHandler::Custom`](norn::agent_loop::commands::SlashCommandHandler)
+//! CLI-built-in slash commands are registered as
+//! [`SlashCommandHandler::Custom`](norn::agent_loop::commands::SlashCommandHandler)
 //! entries that capture shared mutable runtime state via [`SlashState`].
 //! Profile-registered slash commands flow into the same
 //! [`SlashCommandRegistry`](norn::agent_loop::commands::SlashCommandRegistry)
@@ -10,8 +9,8 @@
 //! user-defined `/help` never displaces the CLI surface.
 //!
 //! Layout:
-//! - [`state`] — [`SlashState`] shared cells (model, output schema, name,
-//!   cumulative usage, event store, command snapshot, action flags).
+//! - [`state`] — [`SlashState`] shared cells (model, service tier, output
+//!   schema, name, cumulative usage, event store, command snapshot, action flags).
 //! - [`registry`] — [`build_slash_registry`] merging profile commands with
 //!   CLI builtins and the per-handler closures.
 //! - [`dispatch`] — [`dispatch_input`] and the [`DispatchOutcome`] enum

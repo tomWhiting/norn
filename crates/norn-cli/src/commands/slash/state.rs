@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+use norn::provider::request::{ReasoningEffort, ServiceTier};
 use norn::provider::usage::Usage;
 use norn::session::store::EventStore;
 use parking_lot::Mutex;
@@ -39,6 +40,15 @@ pub struct SlashState {
     /// Active model identifier. Read by the orchestrator before each
     /// `run_agent_step` call so `/model gpt-x` takes effect immediately.
     pub model: Arc<Mutex<String>>,
+
+    /// Active service tier. Read by the orchestrator before each
+    /// `run_agent_step` call so `/service-tier fast` takes effect
+    /// immediately.
+    pub service_tier: Arc<Mutex<Option<ServiceTier>>>,
+
+    /// Active reasoning effort. Read by the orchestrator before each
+    /// `run_agent_step` call so `/effort high` takes effect immediately.
+    pub reasoning_effort: Arc<Mutex<Option<ReasoningEffort>>>,
 
     /// Active JSON output schema, if set. Read by the orchestrator
     /// before each `run_agent_step` call so `/schema {...}` takes
@@ -116,6 +126,8 @@ impl SlashState {
     pub fn new(seed: SlashStateSeed) -> Self {
         Self {
             model: Arc::new(Mutex::new(seed.model)),
+            service_tier: Arc::new(Mutex::new(seed.service_tier)),
+            reasoning_effort: Arc::new(Mutex::new(seed.reasoning_effort)),
             output_schema: Arc::new(Mutex::new(seed.output_schema)),
             session_name: Arc::new(Mutex::new(seed.session_name)),
             cumulative_usage: Arc::new(Mutex::new(Usage::default())),
@@ -153,6 +165,18 @@ impl SlashState {
         self.model.lock().clone()
     }
 
+    /// Snapshot the active service tier.
+    #[must_use]
+    pub fn service_tier_snapshot(&self) -> Option<ServiceTier> {
+        *self.service_tier.lock()
+    }
+
+    /// Snapshot the active reasoning effort.
+    #[must_use]
+    pub fn reasoning_effort_snapshot(&self) -> Option<ReasoningEffort> {
+        *self.reasoning_effort.lock()
+    }
+
     /// Snapshot the active output schema.
     #[must_use]
     pub fn output_schema_snapshot(&self) -> Option<Value> {
@@ -186,6 +210,10 @@ impl SlashState {
 pub struct SlashStateSeed {
     /// Initial active model identifier (from the bundle).
     pub model: String,
+    /// Initial service tier (from the bundle loop context).
+    pub service_tier: Option<ServiceTier>,
+    /// Initial reasoning effort (from the bundle loop context).
+    pub reasoning_effort: Option<ReasoningEffort>,
     /// Initial output schema parsed from `-s/--output-schema`, if any.
     pub output_schema: Option<Value>,
     /// Initial session name from the index entry or `--session-name`.
@@ -214,6 +242,8 @@ mod tests {
     fn seed_with_store(store: Arc<EventStore>) -> SlashStateSeed {
         SlashStateSeed {
             model: "gpt-x".to_owned(),
+            service_tier: None,
+            reasoning_effort: None,
             output_schema: None,
             session_name: None,
             session_id: None,

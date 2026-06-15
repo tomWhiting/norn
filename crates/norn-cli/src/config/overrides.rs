@@ -20,10 +20,10 @@ use norn::agent_loop::config::{AgentLoopConfig, ConversationStateMode};
 use norn::agent_loop::retry::RetryPolicy;
 use norn::config::NornSettings;
 use norn::profile::Profile;
-use norn::provider::request::{ReasoningEffort, ReasoningSummary};
+use norn::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
 
 use crate::cli::BuildError;
-use crate::cli::{Cli, ReasoningEffort as CliReasoningEffort};
+use crate::cli::{Cli, ReasoningEffort as CliReasoningEffort, ServiceTier as CliServiceTier};
 use crate::config::{ConfigOverrides, ProviderConfigOverrides, parse_duration};
 
 /// Side-channel outputs produced when applying CLI overrides that do not
@@ -118,6 +118,12 @@ pub fn apply_cli_profile_overrides(
 
     if let Some(effort) = cli.reasoning_effort {
         profile.reasoning_effort = Some(convert_reasoning_effort(effort));
+    }
+    if let Some(tier) = cli.service_tier {
+        profile.service_tier = Some(convert_service_tier(tier));
+    }
+    if cli.fast {
+        profile.service_tier = Some(ServiceTier::Fast);
     }
 
     Ok(AppliedOverrides {
@@ -392,6 +398,11 @@ pub fn apply_settings_reasoning_to_profile(
     {
         profile.reasoning_summary = Some(parse_reasoning_summary(raw)?);
     }
+    if profile.service_tier.is_none()
+        && let Some(raw) = agent.service_tier.as_deref()
+    {
+        profile.service_tier = Some(parse_service_tier(raw)?);
+    }
     Ok(())
 }
 
@@ -432,6 +443,15 @@ fn parse_reasoning_summary(raw: &str) -> Result<ReasoningSummary, BuildError> {
     })
 }
 
+fn parse_service_tier(raw: &str) -> Result<ServiceTier, BuildError> {
+    let value = serde_json::Value::String(raw.to_lowercase());
+    serde_json::from_value::<ServiceTier>(value).map_err(|err| {
+        BuildError::Argument(format!(
+            "invalid value for agent.service_tier: '{raw}' ({err}); expected one of fast",
+        ))
+    })
+}
+
 /// Switch the process working directory when `--working-dir` is set.
 ///
 /// Called once at startup before agent execution, per DESIGN.md NC3.
@@ -464,6 +484,12 @@ fn convert_reasoning_effort(value: CliReasoningEffort) -> ReasoningEffort {
         CliReasoningEffort::Medium => ReasoningEffort::Medium,
         CliReasoningEffort::High => ReasoningEffort::High,
         CliReasoningEffort::XHigh => ReasoningEffort::XHigh,
+    }
+}
+
+fn convert_service_tier(value: CliServiceTier) -> ServiceTier {
+    match value {
+        CliServiceTier::Fast => ServiceTier::Fast,
     }
 }
 
@@ -691,6 +717,19 @@ mod tests {
         assert_eq!(profile.reasoning_effort, Some(ReasoningEffort::Low));
         apply_cli_profile_overrides(&cli_medium, &mut profile).unwrap();
         assert_eq!(profile.reasoning_effort, Some(ReasoningEffort::Medium));
+    }
+
+    #[test]
+    fn service_tier_flags_map_to_runtime_fast() {
+        let cli = cli_from(&["norn", "--service-tier", "fast"]);
+        let mut profile = Profile::default();
+        apply_cli_profile_overrides(&cli, &mut profile).unwrap();
+        assert_eq!(profile.service_tier, Some(ServiceTier::Fast));
+
+        let cli = cli_from(&["norn", "--fast"]);
+        let mut profile = Profile::default();
+        apply_cli_profile_overrides(&cli, &mut profile).unwrap();
+        assert_eq!(profile.service_tier, Some(ServiceTier::Fast));
     }
 
     #[test]
@@ -1088,6 +1127,21 @@ mod tests {
         apply_settings_reasoning_to_profile(&settings, &mut profile).unwrap();
         assert_eq!(profile.reasoning_effort, Some(ReasoningEffort::Low));
         assert_eq!(profile.reasoning_summary, Some(ReasoningSummary::Detailed));
+    }
+
+    #[test]
+    fn settings_service_tier_fills_profile_when_unset() {
+        use norn::config::{AgentSettings, NornSettings};
+        let mut profile = Profile::default();
+        let settings = NornSettings {
+            agent: Some(AgentSettings {
+                service_tier: Some("fast".to_owned()),
+                ..AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        apply_settings_reasoning_to_profile(&settings, &mut profile).unwrap();
+        assert_eq!(profile.service_tier, Some(ServiceTier::Fast));
     }
 
     #[test]

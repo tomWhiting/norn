@@ -377,6 +377,7 @@ mod streaming_tests {
             model: "gpt-test".to_string(),
             reasoning_effort: None,
             reasoning_summary: None,
+            service_tier: None,
             config: None,
             cache_key: None,
             previous_response_id: None,

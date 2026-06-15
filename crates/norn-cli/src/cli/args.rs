@@ -59,6 +59,14 @@ pub struct Cli {
     #[arg(long, value_name = "LEVEL", value_enum)]
     pub reasoning_effort: Option<ReasoningEffort>,
 
+    /// Provider service tier.
+    #[arg(long, value_name = "TIER", value_enum)]
+    pub service_tier: Option<ServiceTier>,
+
+    /// Enable the provider's fast service tier.
+    #[arg(long, conflicts_with = "service_tier")]
+    pub fast: bool,
+
     /// Maximum provider round-trips per agent step.
     #[arg(long, value_name = "N")]
     pub max_turns: Option<u32>,
@@ -195,6 +203,14 @@ pub enum ReasoningEffort {
     High,
     /// Extended reasoning budget.
     XHigh,
+}
+
+/// Service tiers accepted by `--service-tier`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ServiceTier {
+    /// Faster provider execution when supported by the selected model/backend.
+    Fast,
 }
 
 /// CLI rendering formats accepted by `--output-format` (NC4/NC18).
@@ -594,6 +610,17 @@ mod tests {
     fn reasoning_effort_accepts_kebab_case_values() {
         let cli = Cli::try_parse_from(["norn", "--reasoning-effort", "high"]).unwrap();
         assert_eq!(cli.reasoning_effort, Some(ReasoningEffort::High));
+    }
+
+    #[test]
+    fn service_tier_and_fast_flags_parse() {
+        let tier = Cli::try_parse_from(["norn", "--service-tier", "fast"]).unwrap();
+        assert_eq!(tier.service_tier, Some(ServiceTier::Fast));
+        assert!(!tier.fast);
+
+        let fast = Cli::try_parse_from(["norn", "--fast"]).unwrap();
+        assert_eq!(fast.service_tier, None);
+        assert!(fast.fast);
     }
 
     #[test]

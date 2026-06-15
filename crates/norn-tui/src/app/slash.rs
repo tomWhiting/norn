@@ -1,8 +1,8 @@
 //! TUI-local slash command dispatch.
 //!
 //! Handles the most-used builtins (`/new`, `/clear`, `/compact`, `/exit`,
-//! `/quit`, `/help`, `/model`, `/tools`) directly in the TUI without
-//! depending on `norn-cli`'s slash machinery. The dependency direction
+//! `/quit`, `/help`, `/model`, `/effort`, `/service-tier`, `/fast`, `/tools`)
+//! directly in the TUI without depending on `norn-cli`'s slash machinery. The dependency direction
 //! `norn-cli → norn-tui` rules out calling
 //! `norn_cli::commands::slash::dispatch_input` from here; Phase 2 will
 //! lift that machinery into a shared layer (most likely `libnorn`) and
@@ -19,6 +19,7 @@ use std::fmt::Write as _;
 use std::io::Write as IoWrite;
 use std::sync::Arc;
 
+use norn::provider::request::ReasoningEffort;
 use norn::session::context_edit::ContextEdits;
 use norn::session::events::SessionEvent;
 use norn::session::{
@@ -54,6 +55,19 @@ const HELP_ENTRIES: &[(&str, &str)] = &[
     ("/quit", "Exit the TUI"),
     ("/help", "Show this help"),
     ("/model <name>", "Switch the active model for the next turn"),
+    (
+        "/effort <none|low|medium|high|x-high|default>",
+        "Show, set, or clear reasoning effort",
+    ),
+    (
+        "/reasoning-effort <none|low|medium|high|x-high|default>",
+        "Alias for /effort",
+    ),
+    (
+        "/service-tier <fast|none>",
+        "Show, set, or clear the service tier",
+    ),
+    ("/fast", "Use the fast service tier for the next turn"),
     ("/tools", "List tools available to the model"),
 ];
 
@@ -103,7 +117,18 @@ pub(super) fn classify_slash(text: &str) -> SlashClass<'_> {
 /// [`try_dispatch_slash`].
 #[cfg(test)]
 const TUI_BUILTINS: &[&str] = &[
-    "new", "clear", "compact", "exit", "quit", "help", "model", "tools",
+    "new",
+    "clear",
+    "compact",
+    "exit",
+    "quit",
+    "help",
+    "model",
+    "effort",
+    "reasoning-effort",
+    "service-tier",
+    "fast",
+    "tools",
 ];
 
 /// Whether `cmd` (without leading slash) is a TUI builtin.
@@ -157,6 +182,19 @@ pub(super) fn try_dispatch_slash(
         }
         "model" => {
             handle_model(state, runtime, guard, arg)?;
+            Ok(Some(SlashOutcome::Continue))
+        }
+        "effort" | "reasoning-effort" => {
+            handle_reasoning_effort(runtime, guard, arg)?;
+            Ok(Some(SlashOutcome::Continue))
+        }
+        "service-tier" => {
+            handle_service_tier(runtime, guard, arg)?;
+            Ok(Some(SlashOutcome::Continue))
+        }
+        "fast" => {
+            runtime.loop_context.service_tier = Some(norn::provider::request::ServiceTier::Fast);
+            write_dim_line("Service tier: fast", guard)?;
             Ok(Some(SlashOutcome::Continue))
         }
         "tools" => {
@@ -471,6 +509,103 @@ fn handle_model(
     write_dim_line(&line, guard)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EffortCommand {
+    Set(ReasoningEffort),
+    Clear,
+}
+
+fn parse_effort_command(value: &str) -> Option<EffortCommand> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => Some(EffortCommand::Set(ReasoningEffort::None)),
+        "low" => Some(EffortCommand::Set(ReasoningEffort::Low)),
+        "medium" => Some(EffortCommand::Set(ReasoningEffort::Medium)),
+        "high" => Some(EffortCommand::Set(ReasoningEffort::High)),
+        "x-high" | "xhigh" => Some(EffortCommand::Set(ReasoningEffort::XHigh)),
+        "default" | "off" | "clear" => Some(EffortCommand::Clear),
+        _ => None,
+    }
+}
+
+fn effort_label(effort: ReasoningEffort) -> &'static str {
+    match effort {
+        ReasoningEffort::None => "none",
+        ReasoningEffort::Low => "low",
+        ReasoningEffort::Medium => "medium",
+        ReasoningEffort::High => "high",
+        ReasoningEffort::XHigh => "x-high",
+    }
+}
+
+/// `/effort <none|low|medium|high|x-high|default>` — mutate the reasoning
+/// effort read by the next `run_turn` provider request.
+fn handle_reasoning_effort(
+    runtime: &mut RuntimeRefs,
+    guard: &mut TerminalGuard,
+    arg: &str,
+) -> Result<(), TuiError> {
+    let value = arg.trim();
+    if value.is_empty() {
+        let current = runtime
+            .loop_context
+            .reasoning_effort
+            .map(effort_label)
+            .unwrap_or("default");
+        return write_dim_line(current, guard);
+    }
+
+    match parse_effort_command(value) {
+        Some(EffortCommand::Set(effort)) => {
+            runtime.loop_context.reasoning_effort = Some(effort);
+            write_dim_line(
+                &format!("Reasoning effort: {}", effort_label(effort)),
+                guard,
+            )
+        }
+        Some(EffortCommand::Clear) => {
+            runtime.loop_context.reasoning_effort = None;
+            write_dim_line("Reasoning effort cleared.", guard)
+        }
+        None => write_dim_line(
+            &format!(
+                "norn: invalid reasoning effort '{value}'; expected none, low, medium, high, x-high, or default"
+            ),
+            guard,
+        ),
+    }
+}
+
+/// `/service-tier <fast|none>` — mutate the service tier read by the
+/// next `run_turn` provider request.
+fn handle_service_tier(
+    runtime: &mut RuntimeRefs,
+    guard: &mut TerminalGuard,
+    arg: &str,
+) -> Result<(), TuiError> {
+    let value = arg.trim().to_ascii_lowercase();
+    if value.is_empty() {
+        let current = match runtime.loop_context.service_tier {
+            Some(tier) => tier.as_str(),
+            None => "none",
+        };
+        return write_dim_line(current, guard);
+    }
+    match value.as_str() {
+        "fast" => {
+            runtime.loop_context.service_tier = Some(norn::provider::request::ServiceTier::Fast);
+            write_dim_line("Service tier: fast", guard)
+        }
+        "none" | "off" | "default" => {
+            runtime.loop_context.service_tier = None;
+            write_dim_line("Service tier cleared.", guard)
+        }
+        other => write_dim_line(
+            &format!("norn: invalid service tier '{other}'; expected fast or none"),
+            guard,
+        ),
+    }
+}
+
 /// `/tools` — list every [`ToolDefinition`] currently advertised to
 /// the provider, with its description, as a dim block in the scroll
 /// region.
@@ -635,6 +770,10 @@ mod tests {
             "/quit",
             "/help",
             "/model <name>",
+            "/effort <none|low|medium|high|x-high|default>",
+            "/reasoning-effort <none|low|medium|high|x-high|default>",
+            "/service-tier <fast|none>",
+            "/fast",
             "/tools",
         ] {
             assert!(
@@ -657,6 +796,38 @@ mod tests {
         // to the agent (REPL parity — slash-then-prose is meaningful).
         assert_eq!(classify_slash("/"), SlashClass::Empty);
         assert_eq!(classify_slash("/   "), SlashClass::Empty);
+    }
+
+    #[test]
+    fn parse_effort_command_accepts_supported_values_and_clear_aliases() {
+        assert_eq!(
+            parse_effort_command("none"),
+            Some(EffortCommand::Set(ReasoningEffort::None)),
+        );
+        assert_eq!(
+            parse_effort_command("low"),
+            Some(EffortCommand::Set(ReasoningEffort::Low)),
+        );
+        assert_eq!(
+            parse_effort_command("medium"),
+            Some(EffortCommand::Set(ReasoningEffort::Medium)),
+        );
+        assert_eq!(
+            parse_effort_command("high"),
+            Some(EffortCommand::Set(ReasoningEffort::High)),
+        );
+        assert_eq!(
+            parse_effort_command("x-high"),
+            Some(EffortCommand::Set(ReasoningEffort::XHigh)),
+        );
+        assert_eq!(
+            parse_effort_command("xhigh"),
+            Some(EffortCommand::Set(ReasoningEffort::XHigh)),
+        );
+        assert_eq!(parse_effort_command("default"), Some(EffortCommand::Clear));
+        assert_eq!(parse_effort_command("off"), Some(EffortCommand::Clear));
+        assert_eq!(parse_effort_command("clear"), Some(EffortCommand::Clear));
+        assert_eq!(parse_effort_command("maximum"), None);
     }
 
     #[test]

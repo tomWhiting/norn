@@ -442,6 +442,7 @@ async fn run_agent_step_inner(
             model: model.to_string(),
             reasoning_effort: loop_context.reasoning_effort.clone(),
             reasoning_summary: loop_context.reasoning_summary.clone(),
+            service_tier: loop_context.service_tier,
             config: None,
             cache_key: config.cache_key.clone(),
             previous_response_id: conversation_state.previous_response_id(),
@@ -3033,6 +3034,66 @@ mod tests {
             Some(ReasoningEffort::Low),
             "ProviderRequest must carry the LoopContext's reasoning_effort",
         );
+    }
+
+    struct CaptureServiceTier {
+        observed: std::sync::Arc<parking_lot::Mutex<Option<crate::provider::request::ServiceTier>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl crate::integration::hooks::PreLlmHook for CaptureServiceTier {
+        async fn before_llm(
+            &self,
+            request: &crate::provider::request::ProviderRequest,
+        ) -> crate::integration::hooks::HookOutcome {
+            *self.observed.lock() = request.service_tier;
+            crate::integration::hooks::HookOutcome::Proceed
+        }
+    }
+
+    #[tokio::test]
+    async fn service_tier_threads_to_provider_request() {
+        use crate::integration::hooks::{Hook, HookRegistry};
+        use crate::provider::request::ServiceTier;
+
+        let turn = vec![
+            tool_call_delta("tc_schema", Some("structured_output"), r#"{"answer":"ok"}"#),
+            done_event(StopReason::ToolUse),
+        ];
+        let provider = MockProvider::new(vec![turn]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+        let schema = simple_schema();
+
+        let observed: std::sync::Arc<parking_lot::Mutex<Option<ServiceTier>>> =
+            std::sync::Arc::new(parking_lot::Mutex::new(None));
+        let mut hooks = HookRegistry::new();
+        hooks.register(Hook::PreLlm(Box::new(CaptureServiceTier {
+            observed: std::sync::Arc::clone(&observed),
+        })));
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.service_tier = Some(ServiceTier::Fast);
+        loop_ctx.hooks = Some(std::sync::Arc::new(hooks));
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+
+        let (output, _) = assert_completed(result);
+        assert_eq!(output["answer"], "ok");
+        assert_eq!(*observed.lock(), Some(ServiceTier::Fast));
     }
 
     // -- N-020 R5: slash command expansion lands in provider messages --

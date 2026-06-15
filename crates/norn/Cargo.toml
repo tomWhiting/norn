@@ -58,6 +58,9 @@ rand = "0.9"
 tiny_http = "0.12"
 webbrowser = "1.2"
 
+[build-dependencies]
+serde_json = { workspace = true }
+
 [dev-dependencies]
 serial_test.workspace = true
 tempfile = { workspace = true }

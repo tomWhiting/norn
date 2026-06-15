@@ -18,8 +18,8 @@
 //!
 //! Slash snapshot composition follows the brief: project skills shadow
 //! user skills with the same name, and the built-in commands the TUI
-//! always accepts (`/compact`, `/clear`, `/exit`, `/help`, `/model`) are
-//! merged at the top of the list.
+//! always accepts (`/compact`, `/clear`, `/exit`, `/help`, `/model`, `/effort`)
+//! are merged at the top of the list.
 
 use std::collections::HashSet;
 use std::io::Write as _;
@@ -46,9 +46,13 @@ use super::state::AppState;
 const BUILTIN_SLASH_COMMANDS: &[(&str, &str)] = &[
     ("clear", "Clear the input buffer"),
     ("compact", "Compact conversation history"),
+    ("effort", "Set reasoning effort"),
     ("exit", "Exit the TUI"),
+    ("fast", "Use fast service tier"),
     ("help", "Show help"),
     ("model", "Switch model"),
+    ("reasoning-effort", "Set reasoning effort"),
+    ("service-tier", "Set service tier"),
 ];
 
 /// Outcome of routing a key press through the popup pre-intercept.
@@ -419,7 +423,17 @@ mod tests {
     fn builtin_slash_commands_appear_in_snapshot() {
         let snapshot = build_slash_snapshot();
         let names: Vec<&str> = snapshot.iter().map(|c| c.name.as_str()).collect();
-        for name in ["compact", "clear", "exit", "help", "model"] {
+        for name in [
+            "compact",
+            "clear",
+            "effort",
+            "exit",
+            "fast",
+            "help",
+            "model",
+            "reasoning-effort",
+            "service-tier",
+        ] {
             assert!(
                 names.contains(&name),
                 "built-in `{name}` missing from snapshot: {names:?}",

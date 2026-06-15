@@ -1128,6 +1128,21 @@ command = "echo cwd"
     }
 
     #[test]
+    #[serial_test::serial]
+    fn cli_service_tier_flows_into_loop_context() {
+        // Isolate NORN_HOME (serialised with every other NORN_HOME
+        // consumer) so build_runtime reads hermetic settings, not the
+        // developer's ~/.norn or a concurrent test's half-written file.
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = cli_from(&["norn", "--fast"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        assert_eq!(
+            bundle.loop_context.service_tier,
+            Some(norn::provider::request::ServiceTier::Fast),
+        );
+    }
+
+    #[test]
     fn resolve_debug_api_dir_empty_defaults_to_norn_debug() {
         let resolved = resolve_debug_api_dir("");
         assert!(

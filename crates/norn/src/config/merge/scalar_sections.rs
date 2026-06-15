@@ -167,6 +167,12 @@ pub(super) fn merge_agent(
             &mut lcl.reasoning_summary,
             &mut ovr.reasoning_summary,
         ),
+        service_tier: pick_scalar(
+            &mut usr.service_tier,
+            &mut prj.service_tier,
+            &mut lcl.service_tier,
+            &mut ovr.service_tier,
+        ),
         prompt_command_timeout: pick_scalar(
             &mut usr.prompt_command_timeout,
             &mut prj.prompt_command_timeout,
