@@ -5,10 +5,12 @@
 //! [`norn::provider::traits::Provider`] implementation that
 //! `run_agent_step` consumes.
 //!
-//! Two backends are supported:
+//! Three backends are supported:
 //!
 //! - [`norn::provider::openai::OpenAiProvider`] — default, OAuth via
 //!   `OpenAI` `ChatGPT` auth. Async constructor.
+//! - [`norn::provider::openai_compatible::OpenAiCompatibleProvider`] —
+//!   API-key authenticated Chat Completions-compatible HTTP endpoint.
 //! - [`norn::integration::ClaudeRunnerAdapter`] — selected via
 //!   `--provider claude-runner`. Synchronous constructor.
 //!
@@ -25,7 +27,8 @@ use norn::error::ProviderError;
 use norn::integration::{ClaudeRunnerAdapter, ClaudeRunnerConfig};
 use norn::provider::auth::AuthSource;
 use norn::provider::openai::OpenAiProvider;
-use norn::provider::request::ProviderConfig;
+use norn::provider::openai_compatible::OpenAiCompatibleProvider;
+use norn::provider::request::{ProviderConfig, SecretString};
 use norn::provider::traits::Provider;
 
 use crate::cli::ExitCode;
@@ -53,6 +56,7 @@ const DEFAULT_MAX_RETRIES: u32 = 2;
 /// `PATH`. Kept explicit so the settings override and the fallback are
 /// visible in one place.
 const DEFAULT_RUNNER_PATH: &str = "claude";
+const DEFAULT_OPENAI_COMPAT_API_KEY_ENV: &str = "NORN_OPENAI_COMPAT_API_KEY";
 
 /// Concrete provider returned by [`build_provider`]. Holds the backend
 /// behind an [`Arc`] so the caller can both hand a `&dyn Provider` to
@@ -61,6 +65,8 @@ const DEFAULT_RUNNER_PATH: &str = "claude";
 pub enum BuiltProvider {
     /// OAuth-authenticated `OpenAI` provider.
     OpenAi(Arc<OpenAiProvider>),
+    /// API-key authenticated OpenAI-compatible Chat Completions provider.
+    OpenAiCompatible(Arc<OpenAiCompatibleProvider>),
     /// Claude Code CLI adapter.
     ClaudeRunner(Arc<ClaudeRunnerAdapter>),
 }
@@ -71,6 +77,7 @@ impl BuiltProvider {
     pub fn as_dyn(&self) -> &dyn Provider {
         match self {
             Self::OpenAi(provider) => provider.as_ref(),
+            Self::OpenAiCompatible(provider) => provider.as_ref(),
             Self::ClaudeRunner(provider) => provider.as_ref(),
         }
     }
@@ -83,6 +90,7 @@ impl BuiltProvider {
     pub fn as_arc(&self) -> Arc<dyn Provider> {
         match self {
             Self::OpenAi(provider) => Arc::clone(provider) as Arc<dyn Provider>,
+            Self::OpenAiCompatible(provider) => Arc::clone(provider) as Arc<dyn Provider>,
             Self::ClaudeRunner(provider) => Arc::clone(provider) as Arc<dyn Provider>,
         }
     }
@@ -157,6 +165,44 @@ pub async fn build_provider(
             let provider = OpenAiProvider::new(config).await?;
             Ok(BuiltProvider::OpenAi(Arc::new(provider)))
         }
+        ProviderKind::OpenaiCompatible => {
+            let base_url = overrides.base_url.clone().ok_or_else(|| {
+                ProviderBuildError::Provider(
+                    "--provider openai-compatible requires provider.base_url or -c base_url"
+                        .to_string(),
+                )
+            })?;
+            let api_key_env = overrides
+                .api_key_env
+                .as_deref()
+                .unwrap_or(DEFAULT_OPENAI_COMPAT_API_KEY_ENV);
+            let api_key = std::env::var(api_key_env).map_err(|err| {
+                ProviderBuildError::Auth(format!(
+                    "--provider openai-compatible requires API key env var {api_key_env}: {err}"
+                ))
+            })?;
+            if api_key.trim().is_empty() {
+                return Err(ProviderBuildError::Auth(format!(
+                    "--provider openai-compatible requires non-empty API key env var {api_key_env}"
+                )));
+            }
+            let config = ProviderConfig {
+                auth_source: AuthSource::ApiKey {
+                    key: SecretString::new(api_key),
+                },
+                base_url: Some(base_url),
+                timeout: overrides.request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
+                max_retries: overrides.max_retries.unwrap_or(DEFAULT_MAX_RETRIES),
+                provider_options: overrides.provider_options.clone(),
+                debug_dump_file: overrides.debug_dump_file.clone(),
+                rate_limit: overrides.rate_limit,
+                rate_limit_interval: overrides.rate_limit_interval,
+                retry_backoff: overrides.retry_backoff,
+                retry_after_ceiling: overrides.retry_after_ceiling,
+            };
+            let provider = OpenAiCompatibleProvider::new(config).await?;
+            Ok(BuiltProvider::OpenAiCompatible(Arc::new(provider)))
+        }
         ProviderKind::ClaudeRunner => {
             // `settings.provider.runner_path` overrides the documented
             // default lookup of `"claude"` on PATH; the default applies
@@ -181,7 +227,6 @@ pub async fn build_provider(
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-
     #[test]
     fn auth_error_maps_to_exit_code_three() {
         let err = ProviderBuildError::Auth("expired".to_owned());
@@ -221,6 +266,7 @@ mod tests {
             request_timeout: Some(Duration::from_secs(30)),
             max_retries: Some(5),
             provider_options: Some(serde_json::json!({"key": "val"})),
+            api_key_env: Some("LOCAL_AI_KEY".to_owned()),
             debug_dump_dir: None,
             debug_dump_file: None,
             rate_limit: None,
@@ -260,6 +306,86 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openai_compatible_requires_base_url() {
+        let overrides = ProviderConfigOverrides {
+            api_key_env: Some("NORN_TEST_COMPAT_KEY_BASE_URL".to_owned()),
+            ..ProviderConfigOverrides::default()
+        };
+        let result = temp_env::async_with_vars(
+            [("NORN_TEST_COMPAT_KEY_BASE_URL", Some("test-key"))],
+            build_provider(
+                Some(ProviderKind::OpenaiCompatible),
+                &overrides,
+                "local-model",
+            ),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("expected provider error");
+        };
+        match err {
+            ProviderBuildError::Provider(reason) => assert!(reason.contains("base_url")),
+            other @ ProviderBuildError::Auth(_) => {
+                panic!("expected provider error, got {other:?}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_requires_api_key_env() {
+        let overrides = ProviderConfigOverrides {
+            base_url: Some("http://localhost:11434/v1".to_owned()),
+            api_key_env: Some("NORN_TEST_COMPAT_KEY_MISSING".to_owned()),
+            ..ProviderConfigOverrides::default()
+        };
+        let result = temp_env::async_with_vars(
+            [("NORN_TEST_COMPAT_KEY_MISSING", None::<&str>)],
+            build_provider(
+                Some(ProviderKind::OpenaiCompatible),
+                &overrides,
+                "local-model",
+            ),
+        )
+        .await;
+        let Err(err) = result else {
+            panic!("expected auth error");
+        };
+        match err {
+            ProviderBuildError::Auth(reason) => {
+                assert!(reason.contains("NORN_TEST_COMPAT_KEY_MISSING"));
+            }
+            other @ ProviderBuildError::Provider(_) => {
+                panic!("expected auth error, got {other:?}")
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn openai_compatible_builds_with_api_key_env() {
+        let overrides = ProviderConfigOverrides {
+            base_url: Some("http://localhost:11434/v1".to_owned()),
+            api_key_env: Some("NORN_TEST_COMPAT_KEY_PRESENT".to_owned()),
+            ..ProviderConfigOverrides::default()
+        };
+        let built = temp_env::async_with_vars(
+            [("NORN_TEST_COMPAT_KEY_PRESENT", Some("test-key"))],
+            build_provider(
+                Some(ProviderKind::OpenaiCompatible),
+                &overrides,
+                "local-model",
+            ),
+        )
+        .await
+        .expect("compatible provider builds without network I/O");
+        match built {
+            BuiltProvider::OpenAiCompatible(_) => {}
+            BuiltProvider::OpenAi(_) | BuiltProvider::ClaudeRunner(_) => {
+                panic!("expected OpenAiCompatible variant")
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn claude_runner_honors_settings_runner_path_override() {
         // Regression for the ignored `settings.provider.runner_path`:
         // the documented override must reach the constructed adapter.
@@ -275,7 +401,9 @@ mod tests {
                 adapter.runner_path(),
                 std::path::Path::new("/opt/tools/claude-custom"),
             ),
-            BuiltProvider::OpenAi(_) => panic!("expected ClaudeRunner variant"),
+            BuiltProvider::OpenAi(_) | BuiltProvider::OpenAiCompatible(_) => {
+                panic!("expected ClaudeRunner variant")
+            }
         }
     }
 
@@ -290,7 +418,9 @@ mod tests {
                 adapter.runner_path(),
                 std::path::Path::new(DEFAULT_RUNNER_PATH),
             ),
-            BuiltProvider::OpenAi(_) => panic!("expected ClaudeRunner variant"),
+            BuiltProvider::OpenAi(_) | BuiltProvider::OpenAiCompatible(_) => {
+                panic!("expected ClaudeRunner variant")
+            }
         }
     }
 
@@ -304,7 +434,9 @@ mod tests {
             .expect("claude-runner construction is infallible");
         match built {
             BuiltProvider::ClaudeRunner(_) => {}
-            BuiltProvider::OpenAi(_) => panic!("expected ClaudeRunner variant"),
+            BuiltProvider::OpenAi(_) | BuiltProvider::OpenAiCompatible(_) => {
+                panic!("expected ClaudeRunner variant")
+            }
         }
         // Borrowing as &dyn Provider must compile.
         let _: &dyn Provider = built.as_dyn();

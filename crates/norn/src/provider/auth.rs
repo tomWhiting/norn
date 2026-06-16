@@ -7,8 +7,8 @@
 //!   Tokens persist at `$CODEX_HOME/auth.json` (default
 //!   `~/.codex/auth.json`), shared with the Codex CLI.
 //! - [`ApiKeyAuthProvider`] — testing only. Used by env-gated
-//!   integration tests reading `OPENAI_TEST_KEY`. Not a recommended
-//!   production path.
+//!   integration tests reading `OPENAI_TEST_KEY` and by API-key based
+//!   providers such as OpenAI-compatible Chat Completions endpoints.
 //!
 //! Providers route construction through [`build_from_auth_source`].
 
@@ -25,8 +25,8 @@ use crate::error::{ConfigError, NornError, ProviderError};
 
 /// Where a provider's authentication credentials come from.
 ///
-/// OAuth is the default. The `ApiKey` variant exists for env-gated
-/// integration tests; it is not a recommended production path.
+/// OAuth is the default for the Codex subscription backend. The `ApiKey`
+/// variant is used by direct API backends and OpenAI-compatible endpoints.
 #[derive(Clone, Debug)]
 pub enum AuthSource {
     /// OAuth via `OpenAI` `ChatGPT` auth. Reads and refreshes tokens
@@ -37,7 +37,7 @@ pub enum AuthSource {
         codex_home: Option<PathBuf>,
     },
 
-    /// Direct API key. **Testing only.**
+    /// Direct API key.
     ApiKey {
         /// The API key.
         key: SecretString,
@@ -187,9 +187,8 @@ impl AuthProvider for OAuthAuthProvider {
 
 /// API-key-backed [`AuthProvider`].
 ///
-/// **Testing only.** Used by env-gated integration tests reading
-/// `OPENAI_TEST_KEY`. Production code should use
-/// [`OAuthAuthProvider`].
+/// Used by env-gated integration tests reading `OPENAI_TEST_KEY` and by
+/// API-key based providers.
 pub struct ApiKeyAuthProvider {
     key: SecretString,
 }

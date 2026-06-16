@@ -98,6 +98,9 @@ pub struct ConfigOverrides {
     pub request_timeout: Option<Duration>,
     /// `-c provider_options=<json>` → [`ProviderConfig::provider_options`].
     pub provider_options: Option<Value>,
+    /// `-c api_key_env=<name>` → environment variable holding an API key
+    /// for API-key based providers.
+    pub api_key_env: Option<String>,
     /// `-c rate_limit_interval=<duration>` → `ProviderConfig::rate_limit_interval`
     /// (replenishment window for the provider rate limiter; `None` defers
     /// to the library's owner-approved 60s default).
@@ -141,6 +144,8 @@ pub struct ProviderConfigOverrides {
     pub request_timeout: Option<Duration>,
     /// `-c provider_options=<json>`.
     pub provider_options: Option<Value>,
+    /// Environment variable holding an API key for API-key based providers.
+    pub api_key_env: Option<String>,
     /// Base directory from `--debug-api` or `-c debug_api=<path>`.
     pub debug_dump_dir: Option<PathBuf>,
     /// Resolved JSONL file path (`{dir}/{session_id}.jsonl`), set by
@@ -202,6 +207,7 @@ impl ConfigOverrides {
             max_retries: self.max_retries,
             request_timeout: self.request_timeout,
             provider_options: self.provider_options.clone(),
+            api_key_env: self.api_key_env.clone(),
             debug_dump_dir: self.debug_dump_dir.clone(),
             debug_dump_file: None,
             rate_limit: None,
@@ -272,6 +278,16 @@ impl ConfigOverrides {
                     ))
                 })?;
                 self.provider_options = Some(parsed);
+            }
+            "api_key_env" => {
+                let trimmed = value.trim();
+                if trimmed.is_empty() {
+                    return Err(BuildError::Argument(
+                        "invalid value for api_key_env: expected non-empty environment variable name"
+                            .to_string(),
+                    ));
+                }
+                self.api_key_env = Some(trimmed.to_owned());
             }
             "write.max_code_lines" => {
                 self.write_max_code_lines = Some(parse_typed::<usize>(key, "usize", value)?);
@@ -392,6 +408,7 @@ mod tests {
         assert!(overrides.max_retries.is_none());
         assert!(overrides.request_timeout.is_none());
         assert!(overrides.provider_options.is_none());
+        assert!(overrides.api_key_env.is_none());
         assert!(overrides.retry_max.is_none());
         assert!(overrides.retry_base_delay.is_none());
         assert!(overrides.write_max_code_lines.is_none());
@@ -563,6 +580,22 @@ mod tests {
     }
 
     #[test]
+    fn parse_api_key_env_sets_value() {
+        let overrides = ConfigOverrides::parse(&["api_key_env=LOCAL_AI_KEY".to_owned()]).unwrap();
+        assert_eq!(overrides.api_key_env.as_deref(), Some("LOCAL_AI_KEY"));
+        assert_eq!(
+            overrides.provider_overrides().api_key_env.as_deref(),
+            Some("LOCAL_AI_KEY"),
+        );
+    }
+
+    #[test]
+    fn parse_api_key_env_rejects_empty_value() {
+        let err = ConfigOverrides::parse(&["api_key_env=   ".to_owned()]).unwrap_err();
+        assert!(matches!(err, BuildError::Argument(_)));
+    }
+
+    #[test]
     fn parse_unknown_key_is_ignored() {
         // Should not error — just warn and skip.
         let overrides = ConfigOverrides::parse(&["unknown_key=value".to_owned()]).unwrap();
@@ -588,6 +621,7 @@ mod tests {
             "base_url=http://x".to_owned(),
             "max_retries=2".to_owned(),
             "request_timeout=5s".to_owned(),
+            "api_key_env=LOCAL_AI_KEY".to_owned(),
             "max_turns=10".to_owned(),
         ])
         .unwrap();
@@ -595,6 +629,7 @@ mod tests {
         assert_eq!(provider.base_url.as_deref(), Some("http://x"));
         assert_eq!(provider.max_retries, Some(2));
         assert_eq!(provider.request_timeout, Some(Duration::from_secs(5)));
+        assert_eq!(provider.api_key_env.as_deref(), Some("LOCAL_AI_KEY"));
         // max_turns is NOT a provider field; it stays on the parent.
         assert_eq!(overrides.max_turns, Some(10));
     }

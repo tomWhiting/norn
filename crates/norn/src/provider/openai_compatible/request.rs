@@ -1,0 +1,373 @@
+//! Request serialization for OpenAI-compatible Chat Completions.
+
+use serde::Serialize;
+
+use crate::error::ProviderError;
+use crate::provider::request::{
+    Message, MessageRole, ProviderRequest, ReasoningEffort, ToolCallKind,
+};
+use crate::provider::tools::ProviderToolDefinition;
+
+const CATALOG_PROVIDER: &str = "openai";
+const CATALOG_BACKEND: &str = "openai_compatible_chat";
+
+/// Serialized payload for `POST /chat/completions`.
+#[derive(Debug, Serialize)]
+pub(super) struct ChatCompletionsPayload {
+    /// Model identifier.
+    pub model: String,
+    /// Chat message history.
+    pub messages: Vec<serde_json::Value>,
+    /// Function tools.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<serde_json::Value>,
+    /// Tool selection policy.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tool_choice: Option<String>,
+    /// Always true: SSE streaming.
+    pub stream: bool,
+    /// Streaming options.
+    pub stream_options: StreamOptions,
+    /// Optional provider service tier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub service_tier: Option<String>,
+    /// Optional reasoning effort control.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<ReasoningEffort>,
+}
+
+/// Chat Completions `stream_options` object.
+#[derive(Debug, Serialize)]
+pub(super) struct StreamOptions {
+    /// Request a final usage-bearing chunk when the backend supports it.
+    pub include_usage: bool,
+}
+
+/// Builds the Chat Completions API payload from a provider-neutral request.
+///
+/// # Errors
+///
+/// Returns [`ProviderError`] when the request contains a tool surface or
+/// replay item that Chat Completions cannot represent safely.
+pub(super) fn build_payload(
+    request: &ProviderRequest,
+) -> Result<ChatCompletionsPayload, ProviderError> {
+    let messages = request
+        .messages
+        .iter()
+        .map(serialize_message)
+        .collect::<Result<Vec<_>, _>>()?;
+    let tools = request
+        .tools
+        .iter()
+        .map(serialize_tool)
+        .collect::<Result<Vec<_>, _>>()?;
+    let tool_choice = if tools.is_empty() {
+        None
+    } else {
+        Some("auto".to_string())
+    };
+    Ok(ChatCompletionsPayload {
+        model: request.model.clone(),
+        messages,
+        tools,
+        tool_choice,
+        stream: true,
+        stream_options: StreamOptions {
+            include_usage: true,
+        },
+        service_tier: service_tier_provider_value(request)?,
+        reasoning_effort: request.reasoning_effort,
+    })
+}
+
+fn serialize_message(message: &Message) -> Result<serde_json::Value, ProviderError> {
+    match message.role {
+        MessageRole::System | MessageRole::Developer => {
+            Ok(chat_message("system", message.content.as_deref()))
+        }
+        MessageRole::User => Ok(chat_message("user", message.content.as_deref())),
+        MessageRole::Assistant => serialize_assistant_message(message),
+        MessageRole::ToolResult => serialize_tool_result(message),
+    }
+}
+
+fn chat_message(role: &str, content: Option<&str>) -> serde_json::Value {
+    serde_json::json!({
+        "role": role,
+        "content": content.unwrap_or(""),
+    })
+}
+
+fn serialize_assistant_message(message: &Message) -> Result<serde_json::Value, ProviderError> {
+    let mut map = serde_json::Map::new();
+    map.insert("role".to_string(), serde_json::json!("assistant"));
+    map.insert(
+        "content".to_string(),
+        message
+            .content
+            .as_deref()
+            .map_or(serde_json::Value::Null, serde_json::Value::from),
+    );
+    if !message.tool_calls.is_empty() {
+        let calls = message
+            .tool_calls
+            .iter()
+            .map(|call| {
+                if call.kind != ToolCallKind::Function {
+                    return Err(ProviderError::UnsupportedFeature {
+                        feature: "custom tool call replay on chat_completions".to_string(),
+                    });
+                }
+                Ok(serde_json::json!({
+                    "id": call.call_id,
+                    "type": "function",
+                    "function": {
+                        "name": call.name,
+                        "arguments": call.arguments,
+                    },
+                }))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        map.insert("tool_calls".to_string(), serde_json::Value::Array(calls));
+    }
+    Ok(serde_json::Value::Object(map))
+}
+
+fn serialize_tool_result(message: &Message) -> Result<serde_json::Value, ProviderError> {
+    if message.tool_call_kind.unwrap_or_default() != ToolCallKind::Function {
+        return Err(ProviderError::UnsupportedFeature {
+            feature: "custom tool result replay on chat_completions".to_string(),
+        });
+    }
+    let call_id = message
+        .tool_call_id
+        .as_deref()
+        .filter(|id| !id.is_empty())
+        .ok_or_else(|| ProviderError::ResponseParseError {
+            reason: format!(
+                "tool result for {tool_name} missing tool_call_id; refusing to dispatch unmoored chat tool result",
+                tool_name = message.tool_name.as_deref().unwrap_or("<unknown tool>"),
+            ),
+        })?;
+    Ok(serde_json::json!({
+        "role": "tool",
+        "tool_call_id": call_id,
+        "content": message.content.as_deref().unwrap_or(""),
+    }))
+}
+
+fn serialize_tool(tool: &ProviderToolDefinition) -> Result<serde_json::Value, ProviderError> {
+    let ProviderToolDefinition::Function(function) = tool else {
+        return Err(ProviderError::UnsupportedFeature {
+            feature: "hosted tools on chat_completions".to_string(),
+        });
+    };
+    Ok(serde_json::json!({
+        "type": "function",
+        "function": {
+            "name": function.name,
+            "description": function.description,
+            "parameters": crate::provider::openai::schema_downlevel::downlevel_function_parameters(
+                &function.name,
+                &function.parameters,
+            ),
+            "strict": false,
+        },
+    }))
+}
+
+fn service_tier_provider_value(request: &ProviderRequest) -> Result<Option<String>, ProviderError> {
+    let Some(tier) = request.service_tier else {
+        return Ok(None);
+    };
+    let Some(provider_value) = crate::model_catalog::service_tier_provider_value(
+        CATALOG_PROVIDER,
+        CATALOG_BACKEND,
+        &request.model,
+        tier.as_str(),
+    ) else {
+        return Err(ProviderError::InvalidRequest {
+            message: format!(
+                "service tier '{}' is not supported for model '{}' on {CATALOG_PROVIDER}.{CATALOG_BACKEND}",
+                tier.as_str(),
+                request.model,
+            ),
+        });
+    };
+    Ok(Some(provider_value.to_owned()))
+}
+
+#[cfg(test)]
+#[allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::clone_on_ref_ptr,
+    clippy::unnecessary_literal_bound
+)]
+mod tests {
+    use super::*;
+    use crate::provider::request::{
+        AssistantToolCall, ProviderContextManagement, ServiceTier, ToolDefinition,
+    };
+    use crate::provider::tools::{
+        HostedToolDefinition, HostedWebSearchTool, ProviderToolDefinition,
+    };
+
+    fn base_request() -> ProviderRequest {
+        ProviderRequest {
+            messages: vec![
+                Message {
+                    role: MessageRole::System,
+                    content: Some("system".to_owned()),
+                    thinking: String::new(),
+                    tool_calls: Vec::new(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_call_kind: None,
+                },
+                Message {
+                    role: MessageRole::Developer,
+                    content: Some("developer".to_owned()),
+                    thinking: String::new(),
+                    tool_calls: Vec::new(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_call_kind: None,
+                },
+                Message {
+                    role: MessageRole::User,
+                    content: Some("hello".to_owned()),
+                    thinking: String::new(),
+                    tool_calls: Vec::new(),
+                    tool_call_id: None,
+                    tool_name: None,
+                    tool_call_kind: None,
+                },
+            ],
+            tools: vec![ProviderToolDefinition::Function(ToolDefinition {
+                name: "read_file".to_owned(),
+                description: "Read a file".to_owned(),
+                parameters: serde_json::json!({
+                    "type": "object",
+                    "properties": {
+                        "path": {"type": "string"}
+                    }
+                }),
+            })],
+            model: "local-model".to_owned(),
+            reasoning_effort: Some(ReasoningEffort::Low),
+            reasoning_summary: None,
+            service_tier: None,
+            config: None,
+            cache_key: Some("session-cache".to_owned()),
+            previous_response_id: Some("resp_previous".to_owned()),
+            store: true,
+            context_management: Some(ProviderContextManagement {
+                compact_threshold_tokens: 120_000,
+            }),
+        }
+    }
+
+    #[test]
+    fn payload_uses_chat_shape_and_omits_responses_only_fields() {
+        let payload = build_payload(&base_request()).unwrap();
+        let value = serde_json::to_value(payload).unwrap();
+
+        assert_eq!(value["model"], "local-model");
+        assert_eq!(value["stream"], true);
+        assert_eq!(value["stream_options"]["include_usage"], true);
+        assert_eq!(value["tool_choice"], "auto");
+        assert_eq!(value["reasoning_effort"], "low");
+        assert!(value.get("store").is_none());
+        assert!(value.get("previous_response_id").is_none());
+        assert!(value.get("context_management").is_none());
+        assert!(value.get("prompt_cache_key").is_none());
+
+        let messages = value["messages"].as_array().unwrap();
+        assert_eq!(messages[0]["role"], "system");
+        assert_eq!(messages[1]["role"], "system");
+        assert_eq!(messages[2]["role"], "user");
+
+        let tool = &value["tools"][0];
+        assert_eq!(tool["type"], "function");
+        assert_eq!(tool["function"]["name"], "read_file");
+    }
+
+    #[test]
+    fn assistant_tool_call_and_result_use_chat_replay_shape() {
+        let mut request = base_request();
+        request.messages.push(Message {
+            role: MessageRole::Assistant,
+            content: None,
+            thinking: String::new(),
+            tool_calls: vec![AssistantToolCall {
+                call_id: "call_123".to_owned(),
+                name: "read_file".to_owned(),
+                arguments: r#"{"path":"README.md"}"#.to_owned(),
+                kind: ToolCallKind::Function,
+            }],
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        });
+        request.messages.push(Message {
+            role: MessageRole::ToolResult,
+            content: Some("contents".to_owned()),
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: Some("call_123".to_owned()),
+            tool_name: Some("read_file".to_owned()),
+            tool_call_kind: Some(ToolCallKind::Function),
+        });
+
+        let value = serde_json::to_value(build_payload(&request).unwrap()).unwrap();
+        let messages = value["messages"].as_array().unwrap();
+        assert_eq!(messages[3]["role"], "assistant");
+        assert_eq!(messages[3]["tool_calls"][0]["id"], "call_123");
+        assert_eq!(
+            messages[3]["tool_calls"][0]["function"]["name"],
+            "read_file"
+        );
+        assert_eq!(messages[4]["role"], "tool");
+        assert_eq!(messages[4]["tool_call_id"], "call_123");
+    }
+
+    #[test]
+    fn missing_tool_result_id_is_hard_error() {
+        let mut request = base_request();
+        request.messages.push(Message {
+            role: MessageRole::ToolResult,
+            content: Some("contents".to_owned()),
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: Some("read_file".to_owned()),
+            tool_call_kind: Some(ToolCallKind::Function),
+        });
+
+        let err = build_payload(&request).unwrap_err();
+        assert!(matches!(err, ProviderError::ResponseParseError { .. }));
+    }
+
+    #[test]
+    fn hosted_tools_fail_closed() {
+        let mut request = base_request();
+        request.tools = vec![ProviderToolDefinition::Hosted(
+            HostedToolDefinition::WebSearch(HostedWebSearchTool::default()),
+        )];
+
+        let err = build_payload(&request).unwrap_err();
+        assert!(matches!(err, ProviderError::UnsupportedFeature { .. }));
+    }
+
+    #[test]
+    fn service_tier_uses_compatible_backend_catalog() {
+        let mut request = base_request();
+        request.service_tier = Some(ServiceTier::Fast);
+
+        let err = build_payload(&request).unwrap_err();
+        assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+    }
+}

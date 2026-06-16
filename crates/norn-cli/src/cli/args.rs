@@ -236,6 +236,8 @@ pub enum OutputFormat {
 pub enum ProviderKind {
     /// `OpenAiProvider` — OAuth via `OpenAI` `ChatGPT`, Responses API (default).
     Openai,
+    /// OpenAI-compatible Chat Completions endpoint.
+    OpenaiCompatible,
     /// `ClaudeRunnerAdapter` — routes through Claude Code CLI.
     ClaudeRunner,
 }
@@ -647,6 +649,12 @@ mod tests {
     fn provider_kind_claude_runner_parses() {
         let cli = Cli::try_parse_from(["norn", "--provider", "claude-runner"]).unwrap();
         assert_eq!(cli.provider, Some(ProviderKind::ClaudeRunner));
+    }
+
+    #[test]
+    fn provider_kind_openai_compatible_parses() {
+        let cli = Cli::try_parse_from(["norn", "--provider", "openai-compatible"]).unwrap();
+        assert_eq!(cli.provider, Some(ProviderKind::OpenaiCompatible));
     }
 
     #[test]

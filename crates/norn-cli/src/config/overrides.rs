@@ -240,7 +240,7 @@ pub fn apply_settings_to_agent_config(
 /// defaults below the `-c` layer (NC-004 R3 + NC-005 R4).
 ///
 /// Maps the `provider` section verbatim: `base_url`, `timeout`,
-/// `max_retries`, `options`, `debug_dump_dir`, `rate_limit`,
+/// `max_retries`, `options`, `api_key_env`, `debug_dump_dir`, `rate_limit`,
 /// `rate_limit_interval`, `retry_backoff`, `retry_after_ceiling`, and
 /// `runner_path`. Duration strings are parsed here; `runner_path`
 /// converts to a [`PathBuf`] and is consumed only by the Claude-Runner
@@ -270,6 +270,9 @@ pub fn provider_overrides_from_settings(
     }
     if let Some(options) = provider.options.as_ref() {
         overrides.provider_options = Some(options.clone());
+    }
+    if let Some(api_key_env) = provider.api_key_env.as_deref() {
+        overrides.api_key_env = Some(api_key_env.to_owned());
     }
     if let Some(dump_dir) = provider.debug_dump_dir.as_deref() {
         overrides.debug_dump_dir = Some(PathBuf::from(dump_dir));
@@ -316,6 +319,9 @@ pub fn overlay_cli_provider_overrides(
     }
     if let Some(options) = cli.provider_options.as_ref() {
         overrides.provider_options = Some(options.clone());
+    }
+    if let Some(api_key_env) = cli.api_key_env.as_deref() {
+        overrides.api_key_env = Some(api_key_env.to_owned());
     }
     if let Some(dump_dir) = cli.debug_dump_dir.as_ref() {
         overrides.debug_dump_dir = Some(dump_dir.clone());
@@ -872,6 +878,7 @@ mod tests {
                 timeout: Some("12s".to_owned()),
                 max_retries: Some(4),
                 options: Some(serde_json::json!({"k":"v"})),
+                api_key_env: Some("LOCAL_AI_KEY".to_owned()),
                 debug_dump_dir: Some("/tmp/dump".to_owned()),
                 rate_limit: Some(120),
                 rate_limit_interval: Some("90s".to_owned()),
@@ -897,6 +904,7 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("v"),
         );
+        assert_eq!(overrides.api_key_env.as_deref(), Some("LOCAL_AI_KEY"));
         assert_eq!(overrides.debug_dump_dir, Some(PathBuf::from("/tmp/dump")));
         assert_eq!(overrides.rate_limit, Some(120));
         assert_eq!(overrides.rate_limit_interval, Some(Duration::from_secs(90)));
@@ -1012,6 +1020,7 @@ mod tests {
             max_retries: Some(1),
             request_timeout: Some(Duration::from_secs(5)),
             provider_options: Some(serde_json::json!({"k":"settings"})),
+            api_key_env: Some("SETTINGS_KEY".to_owned()),
             debug_dump_dir: Some(PathBuf::from("/tmp/from-settings")),
             debug_dump_file: None,
             rate_limit: None,
@@ -1025,6 +1034,7 @@ mod tests {
             max_retries: Some(9),
             request_timeout: Some(Duration::from_secs(50)),
             provider_options: Some(serde_json::json!({"k":"cli"})),
+            api_key_env: Some("CLI_KEY".to_owned()),
             debug_dump_dir: Some(PathBuf::from("/tmp/from-cli")),
             rate_limit_interval: Some(Duration::from_secs(30)),
             retry_backoff: Some(Duration::from_millis(500)),
@@ -1042,6 +1052,7 @@ mod tests {
                 .and_then(serde_json::Value::as_str),
             Some("cli"),
         );
+        assert_eq!(base.api_key_env.as_deref(), Some("CLI_KEY"));
         assert_eq!(base.debug_dump_dir, Some(PathBuf::from("/tmp/from-cli")));
         assert_eq!(base.rate_limit_interval, Some(Duration::from_secs(30)));
         assert_eq!(base.retry_backoff, Some(Duration::from_millis(500)));

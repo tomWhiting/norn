@@ -52,6 +52,12 @@ pub(super) fn merge_provider(
             &mut lcl.options,
             &mut ovr.options,
         ),
+        api_key_env: pick_scalar(
+            &mut usr.api_key_env,
+            &mut prj.api_key_env,
+            &mut lcl.api_key_env,
+            &mut ovr.api_key_env,
+        ),
         auth: pick_scalar(&mut usr.auth, &mut prj.auth, &mut lcl.auth, &mut ovr.auth),
         rate_limit: pick_scalar(
             &mut usr.rate_limit,

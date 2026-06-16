@@ -103,6 +103,12 @@
           "auth": "api_key",
           "api_surface": "responses",
           "models": {}
+        },
+        "openai_compatible_chat": {
+          "display_name": "OpenAI-compatible Chat Completions",
+          "auth": "api_key_env",
+          "api_surface": "chat_completions",
+          "models": {}
         }
       }
     }

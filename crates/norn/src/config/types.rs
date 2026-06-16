@@ -144,6 +144,12 @@ pub struct ProviderSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub options: Option<serde_json::Value>,
 
+    /// Environment variable that holds an API key for API-key based
+    /// providers. This stores the variable name only, never the secret
+    /// value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_key_env: Option<String>,
+
     /// Authentication mode selector. Recognised values are `"oauth"`,
     /// `"api_key"`, and `"env"` per `DESIGN.md` D12. Validation of the
     /// string and the actual secret resolution (env var lookup, codex
@@ -660,6 +666,7 @@ mod tests {
         assert!(prov.timeout.is_none());
         assert!(prov.max_retries.is_none());
         assert!(prov.options.is_none());
+        assert!(prov.api_key_env.is_none());
         assert!(prov.auth.is_none());
         assert!(prov.rate_limit.is_none());
         assert!(prov.rate_limit_interval.is_none());
@@ -818,6 +825,7 @@ mod tests {
                 timeout: Some("30s".to_owned()),
                 max_retries: Some(3),
                 options: Some(serde_json::json!({"alpha":1})),
+                api_key_env: Some("LOCAL_AI_KEY".to_owned()),
                 auth: Some("oauth".to_owned()),
                 rate_limit: Some(120),
                 rate_limit_interval: Some("90s".to_owned()),
@@ -907,6 +915,7 @@ mod tests {
         let op = original.provider.as_ref().unwrap();
         assert_eq!(rp.base_url, op.base_url);
         assert_eq!(rp.timeout, op.timeout);
+        assert_eq!(rp.api_key_env, op.api_key_env);
         assert_eq!(rp.rate_limit, op.rate_limit);
         assert_eq!(rp.rate_limit_interval, op.rate_limit_interval);
         assert_eq!(rp.retry_backoff, op.retry_backoff);
