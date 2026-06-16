@@ -12,7 +12,9 @@
 //! mirrored as a local constant because the upstream value in
 //! `norn::provider::openai` is private to that module.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
+use std::thread;
 use std::time::Duration;
 
 use crate::cli::ExitCode;
@@ -26,6 +28,14 @@ const DEFAULT_PROBE_URL: &str = "https://api.openai.com/v1";
 /// Wall-clock budget for the connectivity HEAD request.
 const PROBE_TIMEOUT: Duration = Duration::from_secs(10);
 
+/// Wall-clock budget for a single executable `--version` probe.
+const EXECUTABLE_PROBE_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Known tools worth probing for broken PATH shims. Missing tools are
+/// ignored; the check flags only a command name that resolves to a path
+/// but cannot be executed.
+const PATH_PROBE_TOOLS: &[&str] = &["python3", "python", "node", "git", "rg", "cargo", "claude"];
+
 /// Top-level dispatcher for `norn doctor`.
 pub fn run_doctor() -> ExitCode {
     let mut failed = false;
@@ -33,6 +43,7 @@ pub fn run_doctor() -> ExitCode {
     failed |= !check_auth();
     failed |= !check_connectivity(ProviderKind::Openai);
     failed |= !check_working_dir();
+    failed |= !check_path_executable_shims();
 
     if failed {
         ExitCode::AgentError
@@ -150,6 +161,135 @@ fn check_dir_io(dir: &Path) -> std::io::Result<()> {
     result
 }
 
+// ---------------------------------------------------------------------------
+// 4. PATH executable shims
+// ---------------------------------------------------------------------------
+
+#[derive(Debug, PartialEq, Eq)]
+struct PathExecutableIssue {
+    tool: &'static str,
+    path: PathBuf,
+    reason: String,
+}
+
+fn check_path_executable_shims() -> bool {
+    let issues = path_executable_issues(PATH_PROBE_TOOLS);
+    if issues.is_empty() {
+        eprintln!("[PASS] PATH executable probes runnable");
+        return true;
+    }
+
+    for issue in issues {
+        eprintln!(
+            "[FAIL] PATH executable probe failed for `{}` at {} ({}): Fix or remove the \
+             broken shim, or move a working binary earlier in PATH.",
+            issue.tool,
+            issue.path.display(),
+            issue.reason,
+        );
+    }
+    false
+}
+
+fn path_executable_issues(tools: &[&'static str]) -> Vec<PathExecutableIssue> {
+    tools
+        .iter()
+        .filter_map(|&tool| {
+            let path = resolve_on_path(tool)?;
+            probe_executable(tool, path)
+        })
+        .collect()
+}
+
+fn probe_executable(tool: &'static str, path: PathBuf) -> Option<PathExecutableIssue> {
+    if !is_executable_file(&path) {
+        return Some(PathExecutableIssue {
+            tool,
+            path,
+            reason: "file exists but is not executable".to_owned(),
+        });
+    }
+
+    match run_version_probe(&path) {
+        Ok(ProbeStatus::Ok) => None,
+        Ok(ProbeStatus::BadExit(code)) => Some(PathExecutableIssue {
+            tool,
+            path,
+            reason: match code {
+                Some(code) => format!("`--version` exited with status {code}"),
+                None => "`--version` terminated without an exit status".to_owned(),
+            },
+        }),
+        Ok(ProbeStatus::TimedOut) => Some(PathExecutableIssue {
+            tool,
+            path,
+            reason: format!(
+                "`--version` did not exit within {}s",
+                EXECUTABLE_PROBE_TIMEOUT.as_secs()
+            ),
+        }),
+        Err(err) => Some(PathExecutableIssue {
+            tool,
+            path,
+            reason: format!("cannot execute: {err}"),
+        }),
+    }
+}
+
+enum ProbeStatus {
+    Ok,
+    BadExit(Option<i32>),
+    TimedOut,
+}
+
+fn run_version_probe(path: &Path) -> std::io::Result<ProbeStatus> {
+    let mut child = Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .spawn()?;
+
+    let deadline = std::time::Instant::now() + EXECUTABLE_PROBE_TIMEOUT;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            // Shells report "cannot execute" as 126. Direct spawn usually
+            // returns an io::Error first, but keeping 126 explicit makes
+            // shim failures obvious even when a wrapper shell is involved.
+            if status.success() {
+                return Ok(ProbeStatus::Ok);
+            }
+            return Ok(ProbeStatus::BadExit(status.code()));
+        }
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Ok(ProbeStatus::TimedOut);
+        }
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn resolve_on_path(tool: &str) -> Option<PathBuf> {
+    let paths = std::env::var_os("PATH")?;
+    std::env::split_paths(&paths)
+        .map(|dir| dir.join(tool))
+        .find(|candidate| candidate.is_file())
+}
+
+#[cfg(unix)]
+fn is_executable_file(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable_file(path: &Path) -> bool {
+    path.is_file()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
 mod tests {
@@ -183,5 +323,59 @@ mod tests {
     fn connectivity_for_local_provider_passes_without_network() {
         let ok = check_connectivity(ProviderKind::ClaudeRunner);
         assert!(ok);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial]
+    fn path_probe_flags_non_executable_first_hit() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let shim = tmp.path().join("python3");
+        std::fs::write(&shim, "#!/bin/sh\nexit 0\n").unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o644)).unwrap();
+        let prior = std::env::var_os("PATH");
+        unsafe { std::env::set_var("PATH", tmp.path()) };
+
+        let issues = path_executable_issues(&["python3"]);
+
+        if let Some(value) = prior {
+            unsafe { std::env::set_var("PATH", value) };
+        } else {
+            unsafe { std::env::remove_var("PATH") };
+        }
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].tool, "python3");
+        assert!(issues[0].reason.contains("not executable"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial]
+    fn path_probe_flags_exec_format_error() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let tmp = tempfile::tempdir().unwrap();
+        let shim = tmp.path().join("python3");
+        std::fs::write(&shim, "not a native executable\n").unwrap();
+        std::fs::set_permissions(&shim, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let prior = std::env::var_os("PATH");
+        unsafe { std::env::set_var("PATH", tmp.path()) };
+
+        let issues = path_executable_issues(&["python3"]);
+
+        if let Some(value) = prior {
+            unsafe { std::env::set_var("PATH", value) };
+        } else {
+            unsafe { std::env::remove_var("PATH") };
+        }
+        assert_eq!(issues.len(), 1);
+        assert_eq!(issues[0].tool, "python3");
+        assert!(
+            issues[0].reason.contains("cannot execute") || issues[0].reason.contains("status"),
+            "bad executable must be reported as an issue: {:?}",
+            issues[0],
+        );
     }
 }

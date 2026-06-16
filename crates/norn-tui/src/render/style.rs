@@ -6,7 +6,7 @@
 //! gracefully otherwise:
 //!
 //! - [`colour_for`] — 24-bit RGB, or the nearest 256-colour palette entry.
-//! - [`italic`] — the italic SGR, or underline.
+//! - [`italic`] / [`italic_off`] — italic SGR, or underline fallback.
 //! - [`newline_key_hint`] — the Kitty-protocol newline key, or `Alt+Enter`.
 //! - [`hyperlink`] — an OSC 8 hyperlink, or `text (url)` bracketed text.
 //! - [`sync_render`] — DEC mode 2026 synchronized output, or cursor
@@ -118,6 +118,18 @@ pub fn italic(caps: &TerminalCaps) -> Sgr {
         Sgr::Italic(true)
     } else {
         Sgr::Underline(Underline::Single)
+    }
+}
+
+/// The SGR attribute that closes [`italic`].
+///
+/// This pairs with the fallback path as well: terminals without italic
+/// support receive underline-on from [`italic`] and underline-off here.
+pub fn italic_off(caps: &TerminalCaps) -> Sgr {
+    if caps.italic_support {
+        Sgr::Italic(false)
+    } else {
+        Sgr::Underline(Underline::None)
     }
 }
 
@@ -244,8 +256,10 @@ mod tests {
     fn italic_falls_back_to_underline() {
         let baseline = TerminalCaps::baseline();
         assert_eq!(italic(&baseline), Sgr::Underline(Underline::Single));
+        assert_eq!(italic_off(&baseline), Sgr::Underline(Underline::None));
         let italic_caps = caps_with(|c| c.italic_support = true);
         assert_eq!(italic(&italic_caps), Sgr::Italic(true));
+        assert_eq!(italic_off(&italic_caps), Sgr::Italic(false));
     }
 
     #[test]

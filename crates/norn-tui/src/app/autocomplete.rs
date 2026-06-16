@@ -17,9 +17,8 @@
 //!    snapshot — and seat it on `AppState`.
 //!
 //! Slash snapshot composition follows the brief: project skills shadow
-//! user skills with the same name, and the built-in commands the TUI
-//! always accepts (`/compact`, `/clear`, `/exit`, `/help`, `/model`, `/effort`)
-//! are merged at the top of the list.
+//! user skills with the same name, and the built-in commands from the
+//! TUI slash catalog are merged at the top of the list.
 
 use std::collections::HashSet;
 use std::io::Write as _;
@@ -36,24 +35,8 @@ use crate::input::autocomplete::{
 use crate::terminal::setup::TerminalGuard;
 
 use super::render::sync_input_area;
+use super::slash_catalog::tui_builtin_commands;
 use super::state::AppState;
-
-/// Built-in slash commands surfaced in the `/` popup.
-///
-/// Pairs of `(name, description)`. Execution wiring lives outside the
-/// TUI — these entries make the commands discoverable in the popup so
-/// the user can complete them without remembering the spelling.
-const BUILTIN_SLASH_COMMANDS: &[(&str, &str)] = &[
-    ("clear", "Clear the input buffer"),
-    ("compact", "Compact conversation history"),
-    ("effort", "Set reasoning effort"),
-    ("exit", "Exit the TUI"),
-    ("fast", "Use fast service tier"),
-    ("help", "Show help"),
-    ("model", "Switch model"),
-    ("reasoning-effort", "Set reasoning effort"),
-    ("service-tier", "Set service tier"),
-];
 
 /// Outcome of routing a key press through the popup pre-intercept.
 ///
@@ -150,6 +133,9 @@ fn accept(state: &mut AppState, cols: u16, terminal_rows: u16) {
 /// Returns [`TuiError::Io`] when the popup render or the terminal
 /// flush fails.
 pub fn render_popup(state: &AppState, guard: &mut TerminalGuard) -> Result<(), TuiError> {
+    if state.fixed_panel.autocomplete_popup_rows() == 0 {
+        return Ok(());
+    }
     let Some(popup) = state.autocomplete.as_ref() else {
         return Ok(());
     };
@@ -237,12 +223,11 @@ fn build_popup(trigger: &AutocompleteTrigger, workspace_root: &Path) -> Autocomp
 /// `seen` shadow check before the user-level `~/.norn/skills/` directory
 /// is scanned.
 fn build_slash_snapshot() -> Vec<SlashCandidate> {
-    let mut snapshot: Vec<SlashCandidate> = BUILTIN_SLASH_COMMANDS
-        .iter()
-        .map(|(name, desc)| SlashCandidate {
-            name: (*name).to_owned(),
+    let mut snapshot: Vec<SlashCandidate> = tui_builtin_commands()
+        .map(|command| SlashCandidate {
+            name: command.name.to_owned(),
             source_tag: SourceTag::Builtin,
-            description: (*desc).to_owned(),
+            description: command.autocomplete.to_owned(),
         })
         .collect();
 
@@ -431,8 +416,11 @@ mod tests {
             "fast",
             "help",
             "model",
+            "new",
+            "quit",
             "reasoning-effort",
             "service-tier",
+            "tools",
         ] {
             assert!(
                 names.contains(&name),

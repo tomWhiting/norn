@@ -134,9 +134,9 @@ pub struct AppState {
     /// and the tick handler to move the cursor back to the start of the
     /// dim region before erasing — `\r\x1b[2K` only clears one line.
     pub dim_wrapped_lines: u16,
-    /// Accumulated thinking text (ANSI-wrapped) written to the scroll
-    /// region during the current turn. Erased when the first `TextDelta`
-    /// arrives so content text starts from the correct cursor position.
+    /// Raw thinking text accumulated during the current turn. A
+    /// non-empty buffer means a reasoning summary is pending and must be
+    /// rendered before answer text, tool output, or final status.
     pub thinking_buffer: String,
     /// `true` when the last styled write did not end with `\n`, meaning
     /// the cursor is mid-line after committed content. Dim preview must

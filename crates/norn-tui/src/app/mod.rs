@@ -1,6 +1,7 @@
 //! Application state and event loop.
 
 pub mod autocomplete;
+pub mod child_results;
 pub mod dispatch;
 pub mod edit;
 pub mod event_loop;
@@ -8,6 +9,7 @@ pub mod helpers;
 pub mod render;
 pub mod rotation;
 pub mod slash;
+mod slash_catalog;
 pub mod state;
 pub mod streaming;
 pub mod tool_calls;

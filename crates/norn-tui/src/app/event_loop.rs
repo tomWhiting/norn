@@ -44,6 +44,10 @@ use crate::terminal::caps::TerminalCaps;
 use crate::terminal::setup::TerminalGuard;
 
 use super::autocomplete::{PopupKeyOutcome, dismiss as dismiss_autocomplete, handle_popup_key};
+use super::child_results::{
+    ChildResultRx, PendingChildPrompts, drain_ready_child_results, recv_child_result,
+    render_child_result_batch,
+};
 use super::dispatch::{finalise_turn, handle_agent_event, write_error_line};
 use super::edit::apply_edit_action;
 use super::helpers::{checkpoint_session, flush_pending};
@@ -53,6 +57,7 @@ use super::render::{
 };
 use super::slash::{SlashOutcome, try_dispatch_slash};
 use super::state::AppState;
+use super::streaming::finish_thinking_block;
 
 /// Bundled runtime inputs needed by [`run_app`].
 ///
@@ -177,37 +182,37 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         root_inbound: inputs.root_inbound,
     };
 
+    // The TUI owns the child-result receiver so it can surface final
+    // child/fork results as soon as they arrive, including while the
+    // root turn is still streaming. The framed model injection is queued
+    // and processed at the next safe root-turn boundary.
+    let mut child_results = ChildResultState::new(runtime.loop_context.child_result_rx.take());
+
     if let Some(prompt) = inputs.initial_prompt
         && !prompt.trim().is_empty()
     {
         let trimmed = prompt.trim().to_string();
         write_user_message(&trimmed, &mut state, &mut guard)?;
-        run_turn(
+        run_turn_and_pending(
             &mut state,
             &mut runtime,
             &mut guard,
             &trimmed,
             &mut term_rx,
             &mut agent_event_rx,
+            &mut child_results,
         )
         .await?;
         redraw_panel(&mut state, &mut guard)?;
         render_input(&state, &mut guard)?;
     }
 
-    // Take the child-result receiver from LoopContext so the outer loop
-    // can deliver fork/spawn completions between turns. The runner's
-    // drain_child_results guards with `if let Some(rx)` and handles
-    // None gracefully — mid-turn results will be queued until the turn
-    // ends and the outer loop picks them up as visible user messages.
-    let child_rx = runtime.loop_context.child_result_rx.take();
-
     outer_loop(
         &mut state,
         &mut runtime,
         &mut guard,
         term_rx,
-        child_rx,
+        child_results,
         &mut agent_event_rx,
     )
     .await
@@ -273,6 +278,21 @@ pub(super) struct RuntimeRefs {
     pub(super) root_inbound: Option<InboundChannel>,
 }
 
+/// TUI-owned child-result delivery state.
+struct ChildResultState {
+    rx: ChildResultRx,
+    pending_prompts: PendingChildPrompts,
+}
+
+impl ChildResultState {
+    fn new(rx: ChildResultRx) -> Self {
+        Self {
+            rx,
+            pending_prompts: PendingChildPrompts::new(),
+        }
+    }
+}
+
 /// Outer loop — input dispatch + render ticks between turns.
 ///
 /// The channel is created and the reader thread is spawned in
@@ -283,9 +303,7 @@ async fn outer_loop(
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
     mut term_rx: mpsc::UnboundedReceiver<std::io::Result<Event>>,
-    mut child_rx: Option<
-        tokio::sync::mpsc::Receiver<norn::agent::result_channel::ChildAgentResult>,
-    >,
+    mut child_results: ChildResultState,
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
 ) -> Result<(), TuiError> {
     let mut tick = tokio::time::interval(RENDER_TICK);
@@ -297,28 +315,18 @@ async fn outer_loop(
             msg = term_rx.recv() => {
                 let Some(result) = msg else { return Ok(()); };
                 let event = result.map_err(TuiError::Io)?;
-                match dispatch_input(event, state, runtime, guard, &mut term_rx, agent_event_rx).await? {
+                match dispatch_input(
+                    event,
+                    state,
+                    runtime,
+                    guard,
+                    &mut term_rx,
+                    agent_event_rx,
+                    &mut child_results,
+                ).await? {
                     InputOutcome::Continue => {}
                     InputOutcome::Exit => return Ok(()),
                 }
-            }
-            Some(child_result) = async {
-                match child_rx.as_mut() {
-                    Some(rx) => rx.recv().await,
-                    None => std::future::pending::<Option<norn::agent::result_channel::ChildAgentResult>>().await,
-                }
-            } => {
-                let mut batch = vec![child_result];
-                if let Some(rx) = child_rx.as_mut() {
-                    while let Ok(r) = rx.try_recv() {
-                        batch.push(r);
-                    }
-                }
-                let (display, prompt) = format_child_result_batch(&batch);
-                write_user_message(&display, state, guard)?;
-                run_turn(state, runtime, guard, &prompt, &mut term_rx, agent_event_rx).await?;
-                redraw_panel(state, guard)?;
-                render_input(state, guard)?;
             }
             event = agent_event_rx.recv() => {
                 if let Ok(agent_ev) = event {
@@ -328,6 +336,20 @@ async fn outer_loop(
                 }
             }
             _ = tick.tick() => {
+                drain_ready_child_results(
+                    state,
+                    guard,
+                    &mut child_results.rx,
+                    &mut child_results.pending_prompts,
+                )?;
+                run_pending_child_prompts(
+                    state,
+                    runtime,
+                    guard,
+                    &mut term_rx,
+                    agent_event_rx,
+                    &mut child_results,
+                ).await?;
                 state.tick(Instant::now());
                 if !matches!(state.streaming_indicator, StreamingIndicator::Idle) {
                     state.sync_indicator_into_panel();
@@ -373,6 +395,7 @@ async fn dispatch_input(
     guard: &mut TerminalGuard,
     term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
+    child_results: &mut ChildResultState,
 ) -> Result<InputOutcome, TuiError> {
     match event {
         Event::Key(key) => {
@@ -392,7 +415,16 @@ async fn dispatch_input(
             let Some(action) = map_key_event(key, &caps, popup_open) else {
                 return Ok(InputOutcome::Continue);
             };
-            handle_action(action, state, runtime, guard, term_rx, agent_event_rx).await
+            handle_action(
+                action,
+                state,
+                runtime,
+                guard,
+                term_rx,
+                agent_event_rx,
+                child_results,
+            )
+            .await
         }
         Event::Paste(text) => {
             insert_paste_text(state, &text);
@@ -441,6 +473,7 @@ async fn handle_action(
     guard: &mut TerminalGuard,
     term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
+    child_results: &mut ChildResultState,
 ) -> Result<InputOutcome, TuiError> {
     match action {
         InputAction::Exit => {
@@ -465,7 +498,16 @@ async fn handle_action(
                 Some(SlashOutcome::Continue) => {}
                 None => {
                     write_user_message(&text, state, guard)?;
-                    run_turn(state, runtime, guard, &text, term_rx, agent_event_rx).await?;
+                    run_turn_and_pending(
+                        state,
+                        runtime,
+                        guard,
+                        &text,
+                        term_rx,
+                        agent_event_rx,
+                        child_results,
+                    )
+                    .await?;
                 }
             }
         }
@@ -477,6 +519,40 @@ async fn handle_action(
     sync_input_for_current_geometry(state, guard);
     redraw_all(state, guard)?;
     Ok(InputOutcome::Continue)
+}
+
+async fn run_turn_and_pending(
+    state: &mut AppState,
+    runtime: &mut RuntimeRefs,
+    guard: &mut TerminalGuard,
+    user_prompt: &str,
+    term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
+    agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
+    child_results: &mut ChildResultState,
+) -> Result<(), TuiError> {
+    run_turn(
+        state,
+        runtime,
+        guard,
+        user_prompt,
+        term_rx,
+        agent_event_rx,
+        child_results,
+    )
+    .await?;
+    while let Some(prompt) = child_results.pending_prompts.pop_front() {
+        run_turn(
+            state,
+            runtime,
+            guard,
+            &prompt,
+            term_rx,
+            agent_event_rx,
+            child_results,
+        )
+        .await?;
+    }
+    Ok(())
 }
 
 /// Drive one agent turn from a submitted prompt.
@@ -500,6 +576,7 @@ async fn run_turn(
     user_prompt: &str,
     term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
     agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
+    child_results: &mut ChildResultState,
 ) -> Result<(), TuiError> {
     state.pending_tools.clear();
     state.text_streamed_this_turn = false;
@@ -558,8 +635,11 @@ async fn run_turn(
                 //                    `rx` guarantees the keystroke and
                 //                    structural events are picked up
                 //                    on the very next select round.
-                //   3. rx          — broadcast provider events.
-                //   4. tick        — render cadence.
+                //   3. child_results — final child/fork results; these
+                //                    must not hide behind a high-volume
+                //                    provider/lifecycle event stream.
+                //   4. rx          — broadcast provider events.
+                //   5. tick        — render cadence.
                 biased;
                 res = &mut step_future => {
                     step_result = Some(res);
@@ -621,6 +701,17 @@ async fn run_turn(
                     Some(Err(err)) => return Err(TuiError::Io(err)),
                     None => return Ok(()),
                 },
+                Some(child_result) = recv_child_result(&mut child_results.rx) => {
+                    render_child_result_batch(
+                        state,
+                        guard,
+                        &mut child_results.rx,
+                        &mut child_results.pending_prompts,
+                        child_result,
+                    )?;
+                    redraw_panel(state, guard)?;
+                    render_input(state, guard)?;
+                },
                 event = agent_event_rx.recv() => match event {
                     Ok(agent_ev) => {
                         handle_agent_event(state, guard, &mut renderer, agent_ev)?;
@@ -647,6 +738,7 @@ async fn run_turn(
     if cancelled {
         norn::agent_loop::ensure_tool_results_complete(runtime.store.as_ref()).await;
     }
+    finish_thinking_block(state, guard, &mut renderer)?;
     flush_pending(state, guard, &mut renderer)?;
     finalise_turn(state, guard, step_result, &mut renderer)?;
     if cancelled {
@@ -673,6 +765,29 @@ async fn run_turn(
     Ok(())
 }
 
+async fn run_pending_child_prompts(
+    state: &mut AppState,
+    runtime: &mut RuntimeRefs,
+    guard: &mut TerminalGuard,
+    term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
+    agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
+    child_results: &mut ChildResultState,
+) -> Result<(), TuiError> {
+    while let Some(prompt) = child_results.pending_prompts.pop_front() {
+        run_turn(
+            state,
+            runtime,
+            guard,
+            &prompt,
+            term_rx,
+            agent_event_rx,
+            child_results,
+        )
+        .await?;
+    }
+    Ok(())
+}
+
 /// Detect Ctrl+C on a terminal [`Event`].
 ///
 /// Mirrors the keybindings module's Ctrl+C handling
@@ -689,35 +804,6 @@ fn is_ctrl_c(event: &Event) -> bool {
                 && key.code == KeyCode::Char('c')
                 && key.modifiers.contains(Modifiers::CONTROL),
     )
-}
-
-/// Build the display text (for the scroll region) and the model prompt
-/// (for the API) from a batch of child agent results.
-///
-/// The display text is a short summary the user sees. The model prompt
-/// renders each result through
-/// [`frame_child_result`](norn::agent::result_channel::frame_child_result)
-/// — the harness-built, content-escaped `<agent_result>` frame — so the
-/// model can distinguish auto-delivered results from user input and a
-/// child's output cannot forge an attribution frame.
-fn format_child_result_batch(
-    batch: &[norn::agent::result_channel::ChildAgentResult],
-) -> (String, String) {
-    use norn::agent::result_channel::frame_child_result;
-
-    if batch.len() == 1 {
-        let r = &batch[0];
-        let display = format!("[{} completed]", r.agent_role);
-        (display, frame_child_result(r))
-    } else {
-        let display = format!("[{} agents completed]", batch.len());
-        let mut prompt = format!("Results from {} completed agents:\n\n", batch.len());
-        for r in batch {
-            prompt.push_str(&frame_child_result(r));
-            prompt.push_str("\n\n");
-        }
-        (display, prompt)
-    }
 }
 
 #[cfg(test)]
@@ -849,11 +935,14 @@ mod tests {
     #[test]
     fn handle_action_toggle_thinking_flips_display_toggles() {
         let mut state = fresh_state();
+        assert!(state.display_toggles.thinking_visible);
+        assert!(!state.display_toggles.secondary_fields_visible);
+        state.display_toggles.toggle();
         assert!(!state.display_toggles.thinking_visible);
+        assert!(!state.display_toggles.secondary_fields_visible);
         state.display_toggles.toggle();
         assert!(state.display_toggles.thinking_visible);
-        state.display_toggles.toggle();
-        assert!(!state.display_toggles.thinking_visible);
+        assert!(state.display_toggles.secondary_fields_visible);
     }
 
     #[test]

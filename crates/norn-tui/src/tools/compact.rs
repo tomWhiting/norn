@@ -4,13 +4,15 @@
 //! single header line: [`WriteRenderer`], [`WebSearchRenderer`],
 //! [`WebFetchRenderer`], [`LspRenderer`], [`TaskRenderer`],
 //! [`SkillRenderer`], and [`ToolSearchRenderer`].
-//! Every one returns `None` from [`ToolRenderer::body`] — there is no
-//! expanded view, the header is the whole story.
+//! Expanded bodies are used only when the result shape carries useful
+//! structured detail that would otherwise disappear from the compact header.
 //!
 //! The JSON shapes consumed here are produced by the matching tools in
 //! `crates/norn/src/tools/`. Field access is uniformly defensive — a
 //! missing or mistyped field degrades gracefully rather than panicking,
 //! keeping every renderer total.
+
+use std::fmt::Write as _;
 
 use serde_json::Value;
 
@@ -38,6 +40,50 @@ fn array_len(result: &Value, key: &str) -> usize {
         .get(key)
         .and_then(Value::as_array)
         .map_or(0, Vec::len)
+}
+
+fn count_label(count: usize, singular: &str, plural: &str) -> String {
+    if count == 1 {
+        format!("1 {singular}")
+    } else {
+        format!("{count} {plural}")
+    }
+}
+
+fn result_action(args: &Value, result: &Value) -> String {
+    string_field(args, result, "action")
+}
+
+fn task_summary(task: &Value) -> String {
+    let description = task
+        .get("description")
+        .and_then(Value::as_str)
+        .map_or_else(|| "(no description)".to_string(), truncate_preview);
+    let status = task
+        .get("status")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown");
+    let id = task.get("id").and_then(Value::as_str).unwrap_or("");
+    if id.is_empty() {
+        format!("{description}  ({status})")
+    } else {
+        format!("{description}  [{id}]  ({status})")
+    }
+}
+
+fn format_location(location: &Value) -> String {
+    let path = location
+        .get("path")
+        .or_else(|| location.get("uri"))
+        .and_then(Value::as_str)
+        .unwrap_or("(unknown)");
+    let line = location.get("line").and_then(Value::as_u64);
+    let column = location.get("column").and_then(Value::as_u64);
+    match (line, column) {
+        (Some(line), Some(column)) => format!("{path}:{line}:{column}"),
+        (Some(line), None) => format!("{path}:{line}"),
+        _ => path.to_string(),
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -94,8 +140,40 @@ impl ToolRenderer for WebSearchRenderer {
         format!("web: {query}  {} results", array_len(result, "results"))
     }
 
-    fn body(&self, _args: &Value, _result: &Value, _caps: &TerminalCaps) -> Option<String> {
-        None
+    fn body(&self, _args: &Value, result: &Value, _caps: &TerminalCaps) -> Option<String> {
+        let mut out = String::new();
+        if let Some(results) = result.get("results").and_then(Value::as_array) {
+            for item in results {
+                let title = item
+                    .get("title")
+                    .or_else(|| item.get("name"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let url = item
+                    .get("url")
+                    .or_else(|| item.get("link"))
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let snippet = item
+                    .get("snippet")
+                    .or_else(|| item.get("description"))
+                    .and_then(Value::as_str)
+                    .map(truncate_preview)
+                    .unwrap_or_default();
+
+                if title.is_empty() {
+                    let _ = writeln!(out, "{url}");
+                } else if url.is_empty() {
+                    let _ = writeln!(out, "{title}");
+                } else {
+                    let _ = writeln!(out, "{title}  {url}");
+                }
+                if !snippet.is_empty() {
+                    let _ = writeln!(out, "  {snippet}");
+                }
+            }
+        }
+        (!out.is_empty()).then_some(out)
     }
 
     fn streaming_header(&self, _name: &str, partial_args: &str, _caps: &TerminalCaps) -> String {
@@ -110,7 +188,7 @@ impl ToolRenderer for WebSearchRenderer {
 // WebFetch
 // ---------------------------------------------------------------------
 
-/// Renders `web_fetch` tool calls: `fetch: {url}  {N} bytes`.
+/// Renders `web_fetch` tool calls from the extracted-page summary.
 pub struct WebFetchRenderer;
 
 impl ToolRenderer for WebFetchRenderer {
@@ -122,12 +200,55 @@ impl ToolRenderer for WebFetchRenderer {
         _caps: &TerminalCaps,
     ) -> String {
         let url = string_field(args, result, "url");
-        let bytes = result.get("bytes").and_then(Value::as_u64).unwrap_or(0);
-        format!("fetch: {url}  {bytes} bytes")
+        let line_count = result.get("line_count").and_then(Value::as_u64);
+        let answers = array_len(result, "answers");
+        let truncated = result
+            .get("truncated")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let mut parts = vec![format!("fetch: {url}")];
+        if let Some(lines) = line_count {
+            parts.push(format!("{lines} lines"));
+        }
+        if answers > 0 {
+            parts.push(count_label(answers, "answer", "answers"));
+        }
+        if truncated {
+            parts.push("truncated".to_string());
+        }
+        let content_type = result
+            .get("content_type")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        if !content_type.is_empty() {
+            parts.push(content_type.to_string());
+        }
+        parts.join("  ")
     }
 
-    fn body(&self, _args: &Value, _result: &Value, _caps: &TerminalCaps) -> Option<String> {
-        None
+    fn body(&self, _args: &Value, result: &Value, _caps: &TerminalCaps) -> Option<String> {
+        let mut out = String::new();
+        if let Some(saved) = result.get("saved_to").and_then(Value::as_str) {
+            let _ = writeln!(out, "saved: {saved}");
+        }
+        if let Some(note) = result.get("truncation_note").and_then(Value::as_str) {
+            let _ = writeln!(out, "note: {note}");
+        }
+        if let Some(answers) = result.get("answers").and_then(Value::as_array) {
+            for answer in answers {
+                let question = answer
+                    .get("question")
+                    .map_or_else(String::new, Value::to_string);
+                let lines = answer.get("lines").and_then(Value::as_str).unwrap_or("");
+                let text = answer.get("answer").and_then(Value::as_str).unwrap_or("");
+                if lines.is_empty() {
+                    let _ = writeln!(out, "answer {question}: {text}");
+                } else {
+                    let _ = writeln!(out, "answer {question} [{lines}]: {text}");
+                }
+            }
+        }
+        (!out.is_empty()).then_some(out)
     }
 
     fn streaming_header(&self, _name: &str, partial_args: &str, _caps: &TerminalCaps) -> String {
@@ -142,7 +263,7 @@ impl ToolRenderer for WebFetchRenderer {
 // LSP
 // ---------------------------------------------------------------------
 
-/// Renders `lsp` tool calls: `lsp: {action}  {path}`.
+/// Renders `lsp` tool calls with action-specific result counts.
 pub struct LspRenderer;
 
 impl ToolRenderer for LspRenderer {
@@ -153,17 +274,89 @@ impl ToolRenderer for LspRenderer {
         _duration_ms: u64,
         _caps: &TerminalCaps,
     ) -> String {
-        let action = string_field(args, result, "action");
+        let action = result_action(args, result);
         let path = args.get("path").and_then(Value::as_str).unwrap_or("");
-        if path.is_empty() {
-            format!("lsp: {action}")
-        } else {
-            format!("lsp: {action}  {path}")
+        let mut parts = vec![format!("lsp: {action}")];
+        if !path.is_empty() {
+            parts.push(path.to_string());
         }
+        match action.as_str() {
+            "definition" | "references" => {
+                parts.push(count_label(
+                    array_len(result, "locations"),
+                    "location",
+                    "locations",
+                ));
+            }
+            "symbols" => {
+                parts.push(count_label(
+                    array_len(result, "symbols"),
+                    "symbol",
+                    "symbols",
+                ));
+            }
+            "diagnostics" => {
+                parts.push(count_label(
+                    array_len(result, "diagnostics"),
+                    "diagnostic",
+                    "diagnostics",
+                ));
+            }
+            "hover" if result.get("hover").is_some() => parts.push("hover".to_string()),
+            _ => {}
+        }
+        parts.join("  ")
     }
 
-    fn body(&self, _args: &Value, _result: &Value, _caps: &TerminalCaps) -> Option<String> {
-        None
+    fn body(&self, _args: &Value, result: &Value, _caps: &TerminalCaps) -> Option<String> {
+        let action = result.get("action").and_then(Value::as_str).unwrap_or("");
+        let mut out = String::new();
+        match action {
+            "hover" => {
+                if let Some(content) = result
+                    .get("hover")
+                    .and_then(|hover| hover.get("content"))
+                    .and_then(Value::as_str)
+                {
+                    let _ = writeln!(out, "{content}");
+                }
+            }
+            "definition" | "references" => {
+                if let Some(locations) = result.get("locations").and_then(Value::as_array) {
+                    for location in locations {
+                        let _ = writeln!(out, "{}", format_location(location));
+                    }
+                }
+            }
+            "symbols" => {
+                if let Some(symbols) = result.get("symbols").and_then(Value::as_array) {
+                    for symbol in symbols {
+                        let name = symbol.get("name").and_then(Value::as_str).unwrap_or("");
+                        let kind = symbol.get("kind").and_then(Value::as_str).unwrap_or("");
+                        let location = format_location(symbol);
+                        let _ = writeln!(out, "{name}  {kind}  {location}");
+                    }
+                }
+            }
+            "diagnostics" => {
+                if let Some(diagnostics) = result.get("diagnostics").and_then(Value::as_array) {
+                    for diagnostic in diagnostics {
+                        let severity = diagnostic
+                            .get("severity")
+                            .and_then(Value::as_str)
+                            .unwrap_or("info");
+                        let message = diagnostic
+                            .get("message")
+                            .and_then(Value::as_str)
+                            .unwrap_or("");
+                        let location = format_location(diagnostic);
+                        let _ = writeln!(out, "{severity}: {location}: {message}");
+                    }
+                }
+            }
+            _ => {}
+        }
+        (!out.is_empty()).then_some(out)
     }
 
     fn streaming_header(&self, _name: &str, partial_args: &str, _caps: &TerminalCaps) -> String {
@@ -191,7 +384,7 @@ impl ToolRenderer for TaskRenderer {
         _duration_ms: u64,
         _caps: &TerminalCaps,
     ) -> String {
-        let action = string_field(args, result, "action");
+        let action = result_action(args, result);
         let task = result.get("task");
         let description = task
             .and_then(|t| t.get("description"))
@@ -202,12 +395,47 @@ impl ToolRenderer for TaskRenderer {
                 format!("task: {action} \"{}\"  ({st})", truncate_preview(desc))
             }
             (Some(desc), None) => format!("task: {action} \"{}\"", truncate_preview(desc)),
-            _ => format!("task: {action}"),
+            _ if result.get("tasks").and_then(Value::as_array).is_some() => {
+                format!(
+                    "task: {action}  {}",
+                    count_label(array_len(result, "tasks"), "task", "tasks")
+                )
+            }
+            _ if result.get("groups").and_then(Value::as_array).is_some() => {
+                format!(
+                    "task: {action}  {}",
+                    count_label(array_len(result, "groups"), "group", "groups")
+                )
+            }
+            _ => {
+                let group = result
+                    .get("group_slug")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                if group.is_empty() {
+                    format!("task: {action}")
+                } else {
+                    format!("task: {action}  {group}")
+                }
+            }
         }
     }
 
-    fn body(&self, _args: &Value, _result: &Value, _caps: &TerminalCaps) -> Option<String> {
-        None
+    fn body(&self, _args: &Value, result: &Value, _caps: &TerminalCaps) -> Option<String> {
+        let mut out = String::new();
+        if let Some(tasks) = result.get("tasks").and_then(Value::as_array) {
+            for task in tasks {
+                let _ = writeln!(out, "{}", task_summary(task));
+            }
+        }
+        if let Some(groups) = result.get("groups").and_then(Value::as_array) {
+            for group in groups {
+                if let Some(group) = group.as_str() {
+                    let _ = writeln!(out, "{group}");
+                }
+            }
+        }
+        (!out.is_empty()).then_some(out)
     }
 
     fn streaming_header(&self, _name: &str, partial_args: &str, _caps: &TerminalCaps) -> String {
@@ -237,8 +465,23 @@ impl ToolRenderer for SkillRenderer {
         format!("skill: {name} loaded")
     }
 
-    fn body(&self, _args: &Value, _result: &Value, _caps: &TerminalCaps) -> Option<String> {
-        None
+    fn body(&self, _args: &Value, result: &Value, _caps: &TerminalCaps) -> Option<String> {
+        let mut out = String::new();
+        if let Some(path) = result.get("path").and_then(Value::as_str) {
+            let _ = writeln!(out, "path: {path}");
+        }
+        if let Some(skill_dir) = result.get("skill_dir").and_then(Value::as_str) {
+            let _ = writeln!(out, "dir: {skill_dir}");
+        }
+        if let Some(resources) = result.get("resources").and_then(Value::as_array) {
+            let _ = writeln!(out, "resources: {}", resources.len());
+            for resource in resources {
+                if let Some(resource) = resource.as_str() {
+                    let _ = writeln!(out, "  {resource}");
+                }
+            }
+        }
+        (!out.is_empty()).then_some(out)
     }
 
     fn streaming_header(&self, _name: &str, partial_args: &str, _caps: &TerminalCaps) -> String {
@@ -271,8 +514,40 @@ impl ToolRenderer for ToolSearchRenderer {
         )
     }
 
-    fn body(&self, _args: &Value, _result: &Value, _caps: &TerminalCaps) -> Option<String> {
-        None
+    fn body(&self, _args: &Value, result: &Value, _caps: &TerminalCaps) -> Option<String> {
+        let mut out = String::new();
+        if let Some(results) = result.get("results").and_then(Value::as_array) {
+            for item in results {
+                let name = item.get("name").and_then(Value::as_str).unwrap_or("");
+                let command = item
+                    .get("command_value")
+                    .and_then(Value::as_str)
+                    .unwrap_or("");
+                let description = item
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .map(truncate_preview)
+                    .unwrap_or_default();
+                if command.is_empty() {
+                    let _ = writeln!(out, "{name}: {description}");
+                } else {
+                    let _ = writeln!(out, "{name} ({command}): {description}");
+                }
+                if let Some(fields) = item.get("fields").and_then(Value::as_array)
+                    && !fields.is_empty()
+                {
+                    let field_list = fields
+                        .iter()
+                        .filter_map(Value::as_str)
+                        .collect::<Vec<_>>()
+                        .join(", ");
+                    if !field_list.is_empty() {
+                        let _ = writeln!(out, "  fields: {field_list}");
+                    }
+                }
+            }
+        }
+        (!out.is_empty()).then_some(out)
     }
 
     fn streaming_header(&self, _name: &str, partial_args: &str, _caps: &TerminalCaps) -> String {
@@ -385,31 +660,41 @@ mod tests {
     // --- WebFetch ----------------------------------------------------
 
     #[test]
-    fn web_fetch_header_includes_url_and_length() {
+    fn web_fetch_header_uses_current_result_shape() {
         let header = WebFetchRenderer.header_line(
             &json!({ "url": "https://example.com" }),
             &json!({
                 "url": "https://example.com",
-                "format": "markdown",
-                "bytes": 4096,
+                "line_count": 42,
                 "truncated": false,
                 "content_type": "text/html",
-                "content": "...",
+                "answers": [{ "question": 1, "answer": "Example", "lines": "1-2" }],
+                "saved_to": ".norn/fetched/example.md",
             }),
             0,
             &caps(),
         );
         assert!(header.contains("fetch: https://example.com"));
-        assert!(header.contains("4096 bytes"));
+        assert!(header.contains("42 lines"));
+        assert!(header.contains("1 answer"));
+        assert!(header.contains("text/html"));
+        assert!(!header.contains("bytes"));
     }
 
     #[test]
-    fn web_fetch_body_is_none() {
-        assert!(
-            WebFetchRenderer
-                .body(&json!({}), &json!({}), &caps())
-                .is_none()
-        );
+    fn web_fetch_body_shows_saved_path_and_answers() {
+        let body = WebFetchRenderer
+            .body(
+                &json!({}),
+                &json!({
+                    "saved_to": ".norn/fetched/example.md",
+                    "answers": [{ "question": 1, "answer": "Example Domain", "lines": "1-2" }],
+                }),
+                &caps(),
+            )
+            .unwrap();
+        assert!(body.contains("saved: .norn/fetched/example.md"));
+        assert!(body.contains("answer 1 [1-2]: Example Domain"));
     }
 
     // --- LSP ---------------------------------------------------------
@@ -418,12 +703,37 @@ mod tests {
     fn lsp_header_includes_action_and_path() {
         let header = LspRenderer.header_line(
             &json!({ "action": "definition", "path": "src/a.rs", "line": 10, "column": 4 }),
-            &json!({ "action": "definition", "locations": [] }),
+            &json!({ "action": "definition", "locations": [{ "path": "src/a.rs", "line": 3 }] }),
             0,
             &caps(),
         );
         assert!(header.contains("lsp: definition"));
         assert!(header.contains("src/a.rs"));
+        assert!(header.contains("1 location"));
+    }
+
+    #[test]
+    fn lsp_body_shows_hover_and_locations() {
+        let hover = LspRenderer
+            .body(
+                &json!({}),
+                &json!({ "action": "hover", "hover": { "content": "fn answer() -> u32" } }),
+                &caps(),
+            )
+            .unwrap();
+        assert!(hover.contains("fn answer() -> u32"));
+
+        let locations = LspRenderer
+            .body(
+                &json!({}),
+                &json!({
+                    "action": "references",
+                    "locations": [{ "path": "src/a.rs", "line": 10, "column": 4 }]
+                }),
+                &caps(),
+            )
+            .unwrap();
+        assert!(locations.contains("src/a.rs:10:4"));
     }
 
     // --- Task --------------------------------------------------------
@@ -452,7 +762,34 @@ mod tests {
             0,
             &caps(),
         );
-        assert_eq!(header, "task: list");
+        assert_eq!(header, "task: list  0 tasks");
+    }
+
+    #[test]
+    fn task_body_lists_tasks_and_groups() {
+        let tasks = TaskRenderer
+            .body(
+                &json!({}),
+                &json!({
+                    "action": "children",
+                    "tasks": [
+                        { "id": "t1", "description": "wire the loop", "status": "pending" }
+                    ]
+                }),
+                &caps(),
+            )
+            .unwrap();
+        assert!(tasks.contains("wire the loop"));
+        assert!(tasks.contains("[t1]"));
+
+        let groups = TaskRenderer
+            .body(
+                &json!({}),
+                &json!({ "action": "list_groups", "groups": ["norn-agents"] }),
+                &caps(),
+            )
+            .unwrap();
+        assert!(groups.contains("norn-agents"));
     }
 
     // --- Skill -------------------------------------------------------
@@ -466,6 +803,24 @@ mod tests {
             &caps(),
         );
         assert_eq!(header, "skill: messaging loaded");
+    }
+
+    #[test]
+    fn skill_body_lists_path_and_resources() {
+        let body = SkillRenderer
+            .body(
+                &json!({}),
+                &json!({
+                    "path": "/skills/messaging/SKILL.md",
+                    "skill_dir": "/skills/messaging",
+                    "resources": ["examples/a.md"]
+                }),
+                &caps(),
+            )
+            .unwrap();
+        assert!(body.contains("path: /skills/messaging/SKILL.md"));
+        assert!(body.contains("resources: 1"));
+        assert!(body.contains("examples/a.md"));
     }
 
     // --- ToolSearch --------------------------------------------------
@@ -483,11 +838,24 @@ mod tests {
     }
 
     #[test]
-    fn all_compact_renderers_return_none_body() {
-        let empty = json!({});
-        assert!(LspRenderer.body(&empty, &empty, &caps()).is_none());
-        assert!(TaskRenderer.body(&empty, &empty, &caps()).is_none());
-        assert!(SkillRenderer.body(&empty, &empty, &caps()).is_none());
-        assert!(ToolSearchRenderer.body(&empty, &empty, &caps()).is_none());
+    fn tool_search_body_lists_matches() {
+        let body = ToolSearchRenderer
+            .body(
+                &json!({}),
+                &json!({
+                    "results": [
+                        {
+                            "name": "slack_send",
+                            "command_value": "send",
+                            "description": "Send a Slack message",
+                            "fields": ["channel", "text"]
+                        }
+                    ]
+                }),
+                &caps(),
+            )
+            .unwrap();
+        assert!(body.contains("slack_send (send)"));
+        assert!(body.contains("fields: channel, text"));
     }
 }

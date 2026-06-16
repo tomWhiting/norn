@@ -27,6 +27,7 @@ use crate::r#loop::numeric::{
     f64_to_usize_token_count, token_count_to_f64, usize_token_count_to_f64,
 };
 use crate::r#loop::summarization::request_compaction_summary;
+use crate::r#loop::tokens::TokenEstimator;
 use crate::provider::traits::Provider;
 use crate::provider::usage::Usage;
 use crate::session::context_edit::{AutoCompactionOutcome, ContextEdits, build_compaction_digest};
@@ -68,6 +69,71 @@ pub struct AutoCompactionRun {
     /// empty responses that were rejected, because those tokens were
     /// still spent. `None` only when the call failed before assembly.
     pub summarization_usage: Option<Usage>,
+}
+
+/// Mechanical estimate for manual compaction surfaces such as `/compact`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ManualCompactionEstimate {
+    /// Number of store events that would be superseded by compaction.
+    pub compacted_events: usize,
+    /// Token estimate for the events being superseded.
+    pub token_estimate_freed: usize,
+}
+
+/// Estimate the event count and freed tokens for keeping recent assistant turns.
+///
+/// Returns `None` when the store does not contain more assistant turns
+/// than `keep_recent_turns`. When no token estimator is available,
+/// compaction can still proceed and the freed-token estimate is zero.
+#[must_use]
+pub fn estimate_manual_compaction(
+    store: &EventStore,
+    keep_recent_turns: usize,
+    token_estimator: Option<&dyn TokenEstimator>,
+) -> Option<ManualCompactionEstimate> {
+    let events = store.events();
+    let plan = ContextEdits::new().plan_auto_compaction(store, keep_recent_turns)?;
+    let compacted_events = plan.cut_exclusive();
+    let token_estimate_freed =
+        estimate_event_tokens(token_estimator, &events[..plan.cut_exclusive()]);
+    Some(ManualCompactionEstimate {
+        compacted_events,
+        token_estimate_freed,
+    })
+}
+
+fn estimate_event_tokens(
+    token_estimator: Option<&dyn TokenEstimator>,
+    events: &[SessionEvent],
+) -> usize {
+    let Some(estimator) = token_estimator else {
+        return 0;
+    };
+    let mut total: usize = 0;
+    for event in events {
+        let tokens = match event {
+            SessionEvent::UserMessage { content, .. } => estimator.estimate(content),
+            SessionEvent::AssistantMessage { content, .. } => {
+                if content.is_empty() {
+                    0
+                } else {
+                    estimator.estimate(content)
+                }
+            }
+            SessionEvent::ToolResult { output, .. } => estimator.estimate(&output.to_string()),
+            SessionEvent::SpokenResponse { content, .. } => {
+                estimator.estimate(&content.to_string())
+            }
+            SessionEvent::Compaction { summary, .. } => estimator.estimate(summary),
+            SessionEvent::ModelChange { .. }
+            | SessionEvent::Fork { .. }
+            | SessionEvent::ForkComplete { .. }
+            | SessionEvent::Label { .. }
+            | SessionEvent::Custom { .. } => 0,
+        };
+        total = total.saturating_add(tokens);
+    }
+    total
 }
 
 /// One-shot guard against duplicate auto-compaction within a single
@@ -324,7 +390,15 @@ mod tests {
     use super::*;
     use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::mock::MockProvider;
-    use crate::session::events::{EventBase, EventUsage, SessionEvent};
+    use crate::provider::request::ToolCallKind;
+    use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+
+    fn user(content: &str) -> SessionEvent {
+        SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: content.to_owned(),
+        }
+    }
 
     fn assistant(content: &str) -> SessionEvent {
         SessionEvent::AssistantMessage {
@@ -336,6 +410,109 @@ mod tests {
             stop_reason: String::new(),
             response_id: None,
         }
+    }
+
+    fn assistant_tool_call(call_id: &str) -> SessionEvent {
+        SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            content: "tool".to_owned(),
+            thinking: String::new(),
+            tool_calls: vec![ToolCallEvent {
+                call_id: call_id.to_owned(),
+                name: "read".to_owned(),
+                arguments: serde_json::json!({"path": "Cargo.toml"}),
+                kind: ToolCallKind::Function,
+            }],
+            usage: EventUsage::default(),
+            stop_reason: String::new(),
+            response_id: None,
+        }
+    }
+
+    fn tool_result(call_id: &str) -> SessionEvent {
+        SessionEvent::ToolResult {
+            base: EventBase::new(None),
+            tool_call_id: call_id.to_owned(),
+            tool_name: "read".to_owned(),
+            output: serde_json::json!({"contents": "workspace"}),
+            duration_ms: 1,
+        }
+    }
+
+    struct OneTokenEstimator;
+
+    impl TokenEstimator for OneTokenEstimator {
+        fn estimate(&self, text: &str) -> usize {
+            usize::from(!text.is_empty())
+        }
+    }
+
+    #[test]
+    fn manual_compaction_estimate_keeps_recent_assistant_turns() {
+        let store = EventStore::new();
+        for i in 0..3 {
+            store.append(user(&format!("u{i:03}"))).expect("append");
+            store
+                .append(assistant(&format!("a{i:03}")))
+                .expect("append");
+        }
+        let estimator = crate::r#loop::tokens::SimpleTokenEstimator;
+
+        let estimate = estimate_manual_compaction(&store, 1, Some(&estimator))
+            .expect("three assistant turns with keep=1 should compact");
+
+        assert_eq!(estimate.compacted_events, 4);
+        assert_eq!(estimate.token_estimate_freed, 4);
+    }
+
+    #[test]
+    fn manual_compaction_estimate_is_none_without_enough_turns() {
+        let store = EventStore::new();
+        store.append(user("u000")).expect("append");
+        store.append(assistant("a000")).expect("append");
+
+        assert_eq!(estimate_manual_compaction(&store, 1, None), None);
+    }
+
+    #[test]
+    fn manual_compaction_estimate_allows_missing_token_estimator() {
+        let store = EventStore::new();
+        for i in 0..3 {
+            store.append(user(&format!("u{i:03}"))).expect("append");
+            store
+                .append(assistant(&format!("a{i:03}")))
+                .expect("append");
+        }
+
+        let estimate = estimate_manual_compaction(&store, 1, None)
+            .expect("missing estimator must not block compaction");
+
+        assert_eq!(estimate.compacted_events, 4);
+        assert_eq!(estimate.token_estimate_freed, 0);
+    }
+
+    #[test]
+    fn manual_compaction_estimate_includes_tool_results_for_cut_turn() {
+        let store = EventStore::new();
+        store.append(user("u000")).expect("append");
+        store
+            .append(assistant_tool_call("call_old"))
+            .expect("append");
+        store.append(tool_result("call_old")).expect("append");
+        store.append(user("u001")).expect("append");
+        store.append(assistant("a001")).expect("append");
+
+        let estimate = estimate_manual_compaction(&store, 1, Some(&OneTokenEstimator))
+            .expect("two assistant turns with keep=1 should compact");
+
+        assert_eq!(
+            estimate.compacted_events, 3,
+            "manual estimates must match ContextEdits' tool-result-aware compaction boundary",
+        );
+        assert_eq!(
+            estimate.token_estimate_freed, 3,
+            "user message, assistant text, and tool result should all be counted",
+        );
     }
 
     fn summary_events(text: &str) -> Vec<ProviderEvent> {

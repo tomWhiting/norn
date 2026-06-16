@@ -327,6 +327,65 @@ fn finished_failure(
     )
 }
 
+/// Re-read registry truth after a router failure that may have raced the
+/// recipient's lifecycle transition.
+///
+/// The recipient was already resolved and scope-checked before routing.
+/// If routing lost to a terminal transition, report the recorded finish
+/// instead of a misleading generic route error. If the registry still
+/// says the recipient is live, surface the stronger invariant violation:
+/// the visible agent has no receivable loop.
+fn rechecked_route_failure(
+    infra: &AgentToolInfra,
+    recipient: &Recipient,
+    to: &str,
+    route_error: &RouteError,
+) -> Option<ToolOutput> {
+    if recipient.unregistered_root {
+        return None;
+    }
+
+    let registry = infra.registry.read();
+    if let Some(entry) = registry.get(recipient.id) {
+        if entry.status.is_terminal() {
+            return Some(finished_failure(
+                recipient,
+                to,
+                entry.status,
+                entry.completed_at,
+            ));
+        }
+        let status = entry.status;
+        return Some(ToolOutput::failure_with_content(
+            serde_json::json!({
+                "delivered": false,
+                "to": recipient.id.to_string(),
+                "recipient_status": status,
+            }),
+            ToolErrorPayload::new(
+                ToolErrorKind::ExecutionFailed,
+                format!(
+                    "recipient is not currently receivable: agent '{to}' is {status:?} in \
+                     the registry, but delivery failed with {route_error}. Its inbound loop \
+                     is not accepting messages, so no Sent audit event was recorded.",
+                ),
+            )
+            .with_detail(serde_json::json!({ "to": to })),
+        ));
+    }
+
+    if let Some(tombstone) = registry.tombstone(recipient.id) {
+        return Some(finished_failure(
+            recipient,
+            to,
+            tombstone.status,
+            Some(tombstone.completed_at),
+        ));
+    }
+
+    None
+}
+
 #[async_trait]
 impl Tool for SignalAgentTool {
     fn name(&self) -> &'static str {
@@ -451,7 +510,10 @@ impl Tool for SignalAgentTool {
             // H15: a send the router did not accept is reported as exactly
             // that — no Sent audit event is emitted (nothing was accepted)
             // and nothing is queued where no loop drains.
-            Err(RouteError::NotRouted { .. }) => {
+            Err(e @ RouteError::NotRouted { .. }) => {
+                if let Some(output) = rechecked_route_failure(&infra, &recipient, &args.to, &e) {
+                    return Ok(output);
+                }
                 // The unregistered root is the one recipient whose
                 // NotRouted cause is known precisely (Wave 3 §Routing).
                 let reason = if recipient.unregistered_root {
@@ -475,21 +537,26 @@ impl Tool for SignalAgentTool {
                         .with_detail(serde_json::json!({ "to": args.to })),
                 ))
             }
-            Err(e @ RouteError::ChannelClosed { .. }) => Ok(ToolOutput::failure_with_content(
-                serde_json::json!({
-                    "delivered": false,
-                    "to": recipient.id.to_string(),
-                }),
-                ToolErrorPayload::new(
-                    ToolErrorKind::ExecutionFailed,
-                    format!(
-                        "delivery to '{}' failed: {e}. The recipient's loop ended between \
-                             resolution and delivery — read its result instead of messaging it.",
-                        args.to,
-                    ),
-                )
-                .with_detail(serde_json::json!({ "to": args.to })),
-            )),
+            Err(e @ RouteError::ChannelClosed { .. }) => {
+                if let Some(output) = rechecked_route_failure(&infra, &recipient, &args.to, &e) {
+                    return Ok(output);
+                }
+                Ok(ToolOutput::failure_with_content(
+                    serde_json::json!({
+                        "delivered": false,
+                        "to": recipient.id.to_string(),
+                    }),
+                    ToolErrorPayload::new(
+                        ToolErrorKind::ExecutionFailed,
+                        format!(
+                            "delivery to '{}' failed: {e}. The recipient's loop ended between \
+                                 resolution and delivery — read its result instead of messaging it.",
+                            args.to,
+                        ),
+                    )
+                    .with_detail(serde_json::json!({ "to": args.to })),
+                ))
+            }
             // Structurally unreachable on this path: `deliver()` awaits
             // capacity, so it never reports Full (only the sync
             // `try_deliver` can). Kept exhaustive without a wildcard, and
@@ -1116,10 +1183,11 @@ mod tests {
         assert!(out.is_error());
         assert_eq!(out.content["delivered"], false);
         assert_eq!(out.content["to"], recipient.to_string());
+        assert_eq!(out.content["recipient_status"], "active");
         assert!(
             out.content["error"]["message"]
                 .as_str()
-                .is_some_and(|r| r.contains("no live inbound channel")),
+                .is_some_and(|r| r.contains("not currently receivable")),
             "the failure explains why delivery is impossible: {:?}",
             out.content,
         );
@@ -1157,10 +1225,11 @@ mod tests {
             .expect("executes");
         assert!(out.is_error());
         assert_eq!(out.content["delivered"], false);
+        assert_eq!(out.content["recipient_status"], "active");
         let message = out.content["error"]["message"].as_str().expect("message");
         assert!(
-            message.contains("loop ended"),
-            "closed-channel failure names the cause: {message}",
+            message.contains("not currently receivable"),
+            "closed-channel failure names the live-without-route invariant: {message}",
         );
         assert!(
             sender_store.events().is_empty(),
@@ -1223,6 +1292,73 @@ mod tests {
         let drained = rx.drain();
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].content, "second");
+    }
+
+    /// If a send parks on backpressure and the recipient completes
+    /// before capacity frees, the router reports `NotRouted`; the tool
+    /// re-reads registry truth and surfaces the recorded completion
+    /// instead of a misleading live-route failure.
+    #[tokio::test]
+    async fn signal_agent_rechecks_recipient_when_route_disappears_mid_send() {
+        let sender = Uuid::new_v4();
+        let (infra, registry, router) = build_infra(sender);
+        let recipient = register_agent(&registry, "/parent/child", Some(sender));
+        let sender_store = Arc::clone(&infra.event_store);
+        let (tx, mut rx) = inbound_channel(1);
+        router.register(recipient, tx);
+
+        router
+            .deliver(
+                recipient,
+                ChannelMessage {
+                    id: Uuid::new_v4(),
+                    sender_id: sender,
+                    from: "root".to_owned(),
+                    role: None,
+                    to_id: recipient,
+                    content: "first".to_owned(),
+                    kind: MessageKind::Update,
+                    seq: None,
+                    timestamp: Utc::now(),
+                },
+            )
+            .await
+            .expect("first deliver");
+
+        let ctx = ctx_with(infra);
+        let pending = tokio::spawn(async move {
+            SignalAgentTool::new()
+                .execute(
+                    &envelope_for("signal_agent", send_args("/parent/child", "steer", "late")),
+                    &ctx,
+                )
+                .await
+        });
+        for _ in 0..16 {
+            tokio::task::yield_now().await;
+        }
+        assert!(!pending.is_finished(), "the send must park on backpressure");
+
+        router.deregister(recipient);
+        registry
+            .write()
+            .mark_completed(recipient)
+            .expect("complete recipient");
+        assert_eq!(rx.drain().len(), 1, "free capacity for parked sender");
+
+        let out = pending.await.expect("join").expect("send");
+        assert!(out.is_error());
+        assert_eq!(out.content["delivered"], false);
+        assert_eq!(out.content["recipient_status"], "completed");
+        let message = out.content["error"]["message"].as_str().expect("message");
+        assert!(
+            message.contains("already finished") && message.contains("completed at"),
+            "the completion race must surface recorded registry truth: {message}",
+        );
+        assert!(
+            sender_store.events().is_empty(),
+            "a send rejected after lifecycle re-check must not emit Sent",
+        );
     }
 
     #[tokio::test]

@@ -29,7 +29,10 @@ unicode-width = "0.2"
 uuid = { workspace = true }
 
 [dev-dependencies]
+futures-util = { workspace = true }
+portable-pty = { workspace = true }
 tempfile = { workspace = true }
+vte = { workspace = true }
 
 [lints]
 workspace = true

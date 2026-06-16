@@ -17,7 +17,6 @@
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use norn::session::events::SessionEvent;
 use norn::session::store::EventStore;
 
 use crate::runtime::RuntimeBundle;
@@ -94,29 +93,22 @@ pub fn apply_compact_request(
         return Ok(None);
     }
     let keep = bundle.agent_config.auto_compact_keep_recent_turns;
-    let events = store.events();
-    let assistant_positions: Vec<usize> = events
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, event)| {
-            matches!(event, SessionEvent::AssistantMessage { .. }).then_some(idx)
-        })
-        .collect();
-    if assistant_positions.len() <= keep {
+    let Some(estimate) = norn::agent_loop::estimate_manual_compaction(
+        store,
+        keep,
+        bundle.loop_context.token_estimator.as_deref(),
+    ) else {
         return Ok(Some(CompactOutcome::Nothing));
-    }
-    let cut_idx = assistant_positions[assistant_positions.len() - keep - 1];
-    let event_count = cut_idx + 1;
-    let token_estimate_freed = estimate_freed(bundle, &events[..=cut_idx]);
+    };
 
     let Some(edits) = bundle.loop_context.context_edits.as_mut() else {
         return Ok(Some(CompactOutcome::ContextEditsUnavailable));
     };
 
-    match edits.auto_compact_keeping_recent_turns(store, keep, token_estimate_freed) {
+    match edits.auto_compact_keeping_recent_turns(store, keep, estimate.token_estimate_freed) {
         Ok(Some(_)) => Ok(Some(CompactOutcome::Performed {
-            compacted_events: event_count,
-            token_estimate_freed,
+            compacted_events: estimate.compacted_events,
+            token_estimate_freed: estimate.token_estimate_freed,
         })),
         Ok(None) => Ok(Some(CompactOutcome::Nothing)),
         Err(err) => Err(err.into()),
@@ -134,44 +126,13 @@ pub fn apply_clear_request(state: &SlashState) -> bool {
     }
 }
 
-fn estimate_freed(bundle: &RuntimeBundle, events: &[SessionEvent]) -> usize {
-    let Some(estimator) = bundle.loop_context.token_estimator.as_ref() else {
-        return 0;
-    };
-    let mut total: usize = 0;
-    for event in events {
-        let bytes = match event {
-            SessionEvent::UserMessage { content, .. } => estimator.estimate(content),
-            SessionEvent::AssistantMessage { content, .. } => {
-                if content.is_empty() {
-                    0
-                } else {
-                    estimator.estimate(content)
-                }
-            }
-            SessionEvent::ToolResult { output, .. } => estimator.estimate(&output.to_string()),
-            SessionEvent::SpokenResponse { content, .. } => {
-                estimator.estimate(&content.to_string())
-            }
-            SessionEvent::Compaction { summary, .. } => estimator.estimate(summary),
-            SessionEvent::ModelChange { .. }
-            | SessionEvent::Fork { .. }
-            | SessionEvent::ForkComplete { .. }
-            | SessionEvent::Label { .. }
-            | SessionEvent::Custom { .. } => 0,
-        };
-        total = total.saturating_add(bytes);
-    }
-    total
-}
-
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use std::path::PathBuf;
 
     use clap::Parser;
-    use norn::session::events::{EventBase, EventUsage};
+    use norn::session::events::{EventBase, EventUsage, SessionEvent};
     use norn::session::store::EventStore;
 
     use crate::cli::Cli;

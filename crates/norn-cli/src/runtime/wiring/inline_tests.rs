@@ -518,7 +518,7 @@ mod tests {
     #[test]
     fn slash_state_builder_snapshots_tools_and_registers_all_builtins() {
         use crate::cli::Cli;
-        use crate::commands::slash::CLI_BUILTIN_NAMES;
+        use crate::commands::slash::cli_builtin_names;
         use crate::runtime::RuntimeInputs;
         use crate::runtime::build_runtime;
         use clap::Parser;
@@ -528,7 +528,7 @@ mod tests {
         let (state, registry) =
             build_slash_state_from_bundle(&cli, &bundle, Arc::clone(&store), None);
         assert_eq!(state.model_snapshot(), bundle.model);
-        for name in CLI_BUILTIN_NAMES {
+        for name in cli_builtin_names() {
             assert!(registry.get(name).is_some(), "missing /{name}");
         }
         assert!(Arc::ptr_eq(&store, &state.current_store()));

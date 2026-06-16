@@ -11,6 +11,9 @@
 //!   is dim-previewed immediately; the line pops styled on `\n`.
 //! - **Code fences**: dim preview is suppressed while inside an
 //!   unclosed fence. The entire fence is written styled when it closes.
+//! - **Likely tables**: obvious pipe-table rows buffer silently until
+//!   the table terminates so raw header previews do not leak into
+//!   scrollback before the final table render.
 //!
 //! [`MarkdownRenderer::finalize`] drains the buffer at end-of-stream:
 //! any dim text on the current line is replaced with the styled
@@ -188,7 +191,8 @@ impl MarkdownRenderer {
     /// erased it.
     #[must_use]
     pub fn current_dim_preview(&self) -> String {
-        if self.pending.is_empty() || scan_pending(&self.pending).fence_unclosed {
+        let scan = scan_pending(&self.pending);
+        if self.pending.is_empty() || scan.fence_unclosed || scan.table_unclosed {
             return String::new();
         }
         render_dim_preview(&self.pending, &self.caps)
@@ -219,8 +223,8 @@ impl MarkdownRenderer {
         let styled = self.try_flush_styled();
         let had_dim = self.dim_active;
 
-        let in_fence = scan_pending(&self.pending).fence_unclosed;
-        let dim = if in_fence || self.pending.is_empty() {
+        let scan = scan_pending(&self.pending);
+        let dim = if scan.fence_unclosed || scan.table_unclosed || self.pending.is_empty() {
             String::new()
         } else {
             render_dim_preview(&self.pending, &self.caps)
@@ -437,6 +441,24 @@ mod tests {
         let out = r.feed(input);
         let tail = r.finalize();
         format!("{}{}", out.styled, tail.styled)
+    }
+
+    fn strip_ansi(input: &str) -> String {
+        let mut out = String::new();
+        let mut chars = input.chars().peekable();
+        while let Some(ch) = chars.next() {
+            if ch == '\x1b' && chars.peek() == Some(&'[') {
+                chars.next();
+                for c in chars.by_ref() {
+                    if c.is_ascii_alphabetic() {
+                        break;
+                    }
+                }
+                continue;
+            }
+            out.push(ch);
+        }
+        out
     }
 
     #[test]
@@ -1205,16 +1227,45 @@ mod tests {
     fn table_basic_renders_with_unicode_borders() {
         let mut r = MarkdownRenderer::new(TerminalCaps::baseline(), 40);
         let out = collect_styled(&mut r, "| H1 | H2 |\n| -- | -- |\n| a  | b  |\n");
-        assert!(out.contains("H1"), "header cell preserved: {out:?}");
-        assert!(out.contains("H2"), "header cell preserved: {out:?}");
-        assert!(out.contains('a'), "body cell preserved: {out:?}");
-        assert!(out.contains('b'), "body cell preserved: {out:?}");
-        // UTF8_FULL_CONDENSED preset uses box-drawing characters; at
-        // minimum a vertical bar between cells.
+        let plain = strip_ansi(&out);
+        assert!(plain.contains("╭────┬────╮"), "got: {plain:?}");
+        assert!(plain.contains("│ H1 │ H2 │"), "got: {plain:?}");
+        assert!(plain.contains("├────┼────┤"), "got: {plain:?}");
+        assert!(plain.contains("│ a  │ b  │"), "got: {plain:?}");
+        assert!(plain.contains("╰────┴────╯"), "got: {plain:?}");
+        assert!(!plain.contains('┆'), "must use solid verticals: {plain:?}");
         assert!(
-            out.contains('\u{2502}') || out.contains('\u{2500}'),
-            "expected Unicode box-drawing borders: {out:?}",
+            !plain.contains('╪'),
+            "must use solid intersections: {plain:?}"
         );
+    }
+
+    #[test]
+    fn streaming_table_header_does_not_dim_preview_raw_pipe_row() {
+        let mut r = MarkdownRenderer::new(TerminalCaps::baseline(), 80);
+        let header = r.feed("| Task type | Best behavior |\n");
+        assert!(
+            header.dim.is_empty(),
+            "in-progress table header must not become a raw dim line: {:?}",
+            header.dim,
+        );
+        assert!(header.styled.is_empty());
+
+        let separator = r.feed("| --- | --- |\n");
+        assert!(
+            separator.dim.is_empty(),
+            "in-progress table separator must stay buffered: {:?}",
+            separator.dim,
+        );
+        assert!(separator.styled.is_empty());
+    }
+
+    #[test]
+    fn single_pipe_text_still_dim_previews() {
+        let mut r = MarkdownRenderer::new(TerminalCaps::baseline(), 80);
+        let out = r.feed("cmd | jq");
+        assert!(out.dim.contains("cmd | jq"), "got: {:?}", out.dim);
+        assert!(out.styled.is_empty());
     }
 
     #[test]

@@ -571,9 +571,9 @@ fn iteration_monitor_absent_yields_none_on_loop_context() {
 
 #[test]
 #[serial_test::serial]
-fn slash_state_builder_seeds_loop_context_with_all_eleven_builtins() {
+fn slash_state_builder_seeds_loop_context_with_all_cli_builtins() {
     use norn::session::store::EventStore;
-    use norn_cli::commands::slash::CLI_BUILTIN_NAMES;
+    use norn_cli::commands::slash::cli_builtin_names;
     use norn_cli::runtime::build_slash_state_from_bundle;
 
     let _norn_home = TempNornHome::new();
@@ -588,10 +588,11 @@ fn slash_state_builder_seeds_loop_context_with_all_eleven_builtins() {
         .slash_commands
         .as_ref()
         .expect("slash_commands must be installed after wiring");
-    for name in CLI_BUILTIN_NAMES {
+    let names = cli_builtin_names();
+    for name in &names {
         assert!(installed.get(name).is_some(), "missing /{name}");
     }
-    assert_eq!(installed.len(), CLI_BUILTIN_NAMES.len());
+    assert_eq!(installed.len(), names.len());
 }
 
 #[test]

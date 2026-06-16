@@ -161,6 +161,14 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         input_tokens: 0,
         output_tokens: 0,
         key_hints: "^C exit".to_string(),
+        service_tier: bundle
+            .loop_context
+            .service_tier
+            .map(|tier| tier.as_str().to_string()),
+        reasoning_effort: bundle
+            .loop_context
+            .reasoning_effort
+            .map(|effort| effort.as_str().to_string()),
     };
     let initial_prompt = if cli.prompt.is_empty() {
         None
@@ -206,12 +214,13 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         root_inbound,
     };
 
-    norn_tui::run_app(tui_inputs).await?;
+    let app_result = norn_tui::run_app(tui_inputs).await;
 
-    // NH-006 R8 / C61: fire SessionLifecycleHook::on_session_end on
-    // normal-exit. Errors propagate via `?` above and skip this hook —
-    // the brief's acceptance does not require firing on panic.
+    // NH-006 R8 / C61: fire SessionLifecycleHook::on_session_end after
+    // the TUI returns, including terminal/runtime errors. The hook is
+    // observational; preserve the original TUI result after it runs.
     crate::runtime::wiring::run_session_end(lifecycle_hooks.as_ref(), &session_id).await;
+    app_result?;
 
     Ok(ExitCode::Success)
 }

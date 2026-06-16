@@ -1,0 +1,1049 @@
+//! Pseudo-terminal smoke and screen-state coverage for the TUI lifecycle.
+
+use std::any::Any;
+use std::io::{self, Read, Write as _};
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
+
+use futures_util::stream;
+use norn::agent::child_policy::{ChildPolicy, DelegationBudget, MessagingScope};
+use norn::agent::output::AgentStopReason;
+use norn::agent::registry::AgentRegistry;
+use norn::agent::result_channel::ChildAgentResult;
+use norn::agent_loop::LoopContext;
+use norn::agent_loop::config::AgentLoopConfig;
+use norn::provider::mock::MockProvider;
+use norn::provider::request::ToolCallKind;
+use norn::provider::{
+    AgentEvent, AgentEventSender, Provider, ProviderCapabilities, ProviderError, ProviderEvent,
+    ProviderRequest, ProviderStream, StopReason, Usage,
+};
+use norn::session::store::EventStore;
+use norn::tool::ToolRegistry;
+use norn_tui::input::InputHistory;
+use norn_tui::render::fixed_panel::StatusBar;
+use portable_pty::{Child, CommandBuilder, ExitStatus, PtySize, native_pty_system};
+use vte::{Params, Parser, Perform};
+
+const PTY_LIFECYCLE_CHILD_ENV: &str = "NORN_TUI_RUN_TUI_PTY_CHILD";
+const PTY_APP_CHILD_ENV: &str = "NORN_TUI_RUN_APP_PTY_CHILD";
+const PTY_APP_SCENARIO_ENV: &str = "NORN_TUI_RUN_APP_PTY_SCENARIO";
+const SCREEN_ROWS: u16 = 24;
+const SCREEN_COLS: u16 = 80;
+const APP_OUTPUT_MARKER: &[u8] = b"screen harness output";
+const CHILD_RESULT_MARKER: &[u8] = b"[spawn/worker completed]";
+const CHILD_ACTIVITY_MARKER: &[u8] = b"read_file";
+const SOFT_WRAP_MARKER: &[u8] = b"wrap-alpha";
+const RESIZE_MARKER: &[u8] = b"resize harness output";
+
+struct PtyRun {
+    status: ExitStatus,
+    output: Vec<u8>,
+}
+
+#[test]
+fn run_tui_child_entrypoint() {
+    if std::env::var_os(PTY_LIFECYCLE_CHILD_ENV).is_none() {
+        return;
+    }
+    exit_after_child_result(norn_tui::run_tui());
+}
+
+#[test]
+fn run_app_child_entrypoint() -> Result<(), Box<dyn std::error::Error>> {
+    if std::env::var_os(PTY_APP_CHILD_ENV).is_none() {
+        return Ok(());
+    }
+    let result = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()?
+        .block_on(run_fixture_app());
+    exit_after_child_result(result);
+}
+
+#[test]
+fn run_tui_sets_up_and_restores_terminal_in_pty() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_tui_child_entrypoint",
+        PTY_LIFECYCLE_CHILD_ENV,
+        None,
+        PtyInteraction::None,
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_tui", &run.status, &run.output).into());
+    }
+
+    assert_output_contains(&run.output, b"\x1b[?2004h", "bracketed paste enable")?;
+    assert_output_contains(&run.output, b"\x1b[1;21r", "initial scroll region")?;
+    assert_output_contains(&run.output, b"\x1b[?2004l", "bracketed paste disable")?;
+    assert_output_contains(&run.output, b"\x1b[r", "scroll region reset")?;
+    assert_output_contains(&run.output, b"\x1b[?25h", "cursor show reset")?;
+    assert_output_contains(&run.output, b"\x1b[?7h", "line wrap reset")?;
+
+    Ok(())
+}
+
+#[test]
+fn run_app_renders_provider_output_in_screen_model() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("basic"),
+        PtyInteraction::WaitForOutputThenCtrlC {
+            marker: APP_OUTPUT_MARKER,
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app", &run.status, &run.output).into());
+    }
+
+    let screen = TerminalScreen::from_output(&run.output, SCREEN_ROWS, SCREEN_COLS);
+    assert!(
+        screen.contains("screen harness output"),
+        "assistant output missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("gpt-screen"),
+        "status bar model missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("prompt from pty harness"),
+        "submitted prompt missing from screen:\n{}",
+        screen.debug_text(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn run_app_soft_wraps_long_output_in_screen_model() -> Result<(), Box<dyn std::error::Error>> {
+    let size = PtySizeSpec { rows: 16, cols: 60 };
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("soft-wrap"),
+        PtyInteraction::WaitForOutputThenCtrlC {
+            marker: SOFT_WRAP_MARKER,
+        },
+        size,
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app soft-wrap", &run.status, &run.output).into());
+    }
+
+    let screen = TerminalScreen::from_output(&run.output, size.rows, size.cols);
+    assert!(
+        screen.contains("wrap-alpha"),
+        "wrapped output start missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("wrap-omega"),
+        "wrapped output end missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("^C exit"),
+        "status bar hints missing after soft-wrap output:\n{}",
+        screen.debug_text(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn run_app_surfaces_child_result_while_turn_is_active() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("child-result"),
+        PtyInteraction::WaitForOutputThenCtrlC {
+            marker: CHILD_RESULT_MARKER,
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app child-result", &run.status, &run.output).into());
+    }
+
+    assert_output_contains(
+        &run.output,
+        CHILD_RESULT_MARKER,
+        "live child result completion",
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn run_app_renders_child_activity_rows_in_screen_model() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("child-activity"),
+        PtyInteraction::WaitForOutputThenCtrlC {
+            marker: CHILD_ACTIVITY_MARKER,
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app child-activity", &run.status, &run.output).into());
+    }
+
+    let screen = TerminalScreen::from_output(&run.output, SCREEN_ROWS, SCREEN_COLS);
+    assert!(
+        screen.contains("activity-child"),
+        "child row missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("read_file"),
+        "child activity missing from screen:\n{}",
+        screen.debug_text(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn run_app_handles_resize_during_streaming_output() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("resize"),
+        PtyInteraction::ResizeAfterOutputThenCtrlC {
+            marker: RESIZE_MARKER,
+            rows: 18,
+            cols: 72,
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app resize", &run.status, &run.output).into());
+    }
+
+    assert_output_contains(&run.output, RESIZE_MARKER, "resize scenario output")?;
+    assert_output_contains(
+        &run.output,
+        b"\x1b[1;14r",
+        "scroll region after resize to 18 rows",
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn run_app_grows_and_shrinks_input_panel_without_artifacts()
+-> Result<(), Box<dyn std::error::Error>> {
+    let size = PtySizeSpec { rows: 14, cols: 42 };
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("idle"),
+        PtyInteraction::WriteWaitForOutputWriteWaitThenCtrlC {
+            first_bytes: b"panel-growth-input-abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz",
+            first_marker: b"panel-growth-input",
+            second_bytes: b"\x15",
+            second_wait: Duration::from_millis(250),
+        },
+        size,
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app panel-growth", &run.status, &run.output).into());
+    }
+
+    assert_output_contains(&run.output, b"\x1b[1;9r", "expanded input scroll region")?;
+
+    let screen = TerminalScreen::from_output(&run.output, size.rows, size.cols);
+    assert!(
+        screen.contains("^C exit"),
+        "status bar hints missing after panel shrink:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        !screen.contains("panel-growth-input"),
+        "cleared long input left artifacts:\n{}",
+        screen.debug_text(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn run_app_handles_bracketed_paste_and_autocomplete() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("idle"),
+        PtyInteraction::WriteWaitThenCtrlC {
+            bytes: b"/eff\t\x1b[200~ high\x1b[201~\r",
+            wait: Duration::from_millis(300),
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app paste", &run.status, &run.output).into());
+    }
+
+    assert_output_contains(&run.output, b"Reasoning effort: high", "slash result")?;
+
+    Ok(())
+}
+
+#[test]
+fn run_app_budgets_rows_on_small_terminal() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("idle"),
+        PtyInteraction::WriteWaitThenCtrlC {
+            bytes: b"",
+            wait: Duration::from_millis(100),
+        },
+        PtySizeSpec { rows: 8, cols: 56 },
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app small-terminal", &run.status, &run.output).into());
+    }
+
+    let screen = TerminalScreen::from_output(&run.output, 8, 56);
+    assert!(
+        screen.contains("gpt-sc"),
+        "status bar missing on small terminal:\n{}",
+        screen.debug_text(),
+    );
+
+    Ok(())
+}
+
+async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
+    let scenario = std::env::var(PTY_APP_SCENARIO_ENV).unwrap_or_else(|_| "basic".to_string());
+    let (provider, initial_prompt, loop_context) = scenario_runtime(&scenario)?;
+    let executor = Arc::new(ToolRegistry::new());
+    let store = Arc::new(EventStore::new());
+    let registry = AgentRegistry::shared();
+    let root_id = register_root_agent(&registry, "gpt-screen")?;
+    let (agent_event_tx, agent_event_rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
+    let root_event_sender = AgentEventSender::new(agent_event_tx, root_id, "root".to_string());
+    if scenario == "child-activity" {
+        spawn_child_activity_fixture(&registry, root_id, &root_event_sender)?;
+    }
+
+    norn_tui::run_app(norn_tui::TuiInputs {
+        provider,
+        executor,
+        store,
+        registry,
+        loop_context,
+        agent_config: AgentLoopConfig::default(),
+        model: "gpt-screen".to_string(),
+        tools: Vec::new(),
+        history: InputHistory::in_memory(),
+        status_bar: StatusBar {
+            model_name: "gpt-screen".to_string(),
+            session_name: "pty-screen".to_string(),
+            key_hints: "^C exit".to_string(),
+            ..StatusBar::default()
+        },
+        root_id,
+        initial_prompt,
+        data_dir: None,
+        session_id: None,
+        root_event_sender,
+        agent_event_rx,
+        root_inbound: None,
+    })
+    .await?;
+    Ok(())
+}
+
+type ScenarioRuntime = (Arc<dyn Provider>, Option<String>, LoopContext);
+
+fn scenario_runtime(scenario: &str) -> Result<ScenarioRuntime, Box<dyn std::error::Error>> {
+    match scenario {
+        "basic" => Ok((
+            Arc::new(MockProvider::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: "screen harness output\nsecond visible line".to_string(),
+                },
+                done_event(),
+            ]])),
+            Some("prompt from pty harness".to_string()),
+            LoopContext::default(),
+        )),
+        "soft-wrap" => Ok((
+            Arc::new(MockProvider::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: concat!(
+                        "wrap-alpha beta gamma delta epsilon zeta eta theta iota kappa ",
+                        "lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi ",
+                        "wrap-omega",
+                    )
+                    .to_string(),
+                },
+                done_event(),
+            ]])),
+            Some("soft wrap prompt from pty harness".to_string()),
+            LoopContext::default(),
+        )),
+        "resize" => Ok((
+            Arc::new(MockProvider::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: "resize harness output before resize\n".to_string(),
+                },
+                ProviderEvent::TextDelta {
+                    text: "resize harness output after resize\n".to_string(),
+                },
+                done_event(),
+            ]])),
+            Some("resize prompt from pty harness".to_string()),
+            LoopContext::default(),
+        )),
+        "child-result" => {
+            let (tx, rx) = tokio::sync::mpsc::channel(8);
+            tokio::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(75)).await;
+                let result = ChildAgentResult {
+                    agent_id: uuid::Uuid::new_v4(),
+                    agent_role: "spawn/worker".to_string(),
+                    succeeded: true,
+                    formatted_message: "child result arrived while root turn was active"
+                        .to_string(),
+                    error: None,
+                    stop: None::<AgentStopReason>,
+                    usage: Usage::default(),
+                    subtree_usage: Usage::default(),
+                };
+                let _ = tx.send(result).await;
+            });
+            let loop_context = LoopContext {
+                child_result_rx: Some(rx),
+                ..LoopContext::default()
+            };
+            Ok((
+                Arc::new(DelayedProvider {
+                    events: vec![
+                        ProviderEvent::TextDelta {
+                            text: "root turn still streaming\n".to_string(),
+                        },
+                        ProviderEvent::TextDelta {
+                            text: "root turn finishing after child result\n".to_string(),
+                        },
+                        done_event(),
+                    ],
+                    delay: Duration::from_millis(120),
+                }),
+                Some("child result prompt from pty harness".to_string()),
+                loop_context,
+            ))
+        }
+        "idle" | "child-activity" => Ok((
+            Arc::new(MockProvider::new(Vec::new())),
+            None,
+            LoopContext::default(),
+        )),
+        other => Err(io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("unknown PTY app scenario: {other}"),
+        )
+        .into()),
+    }
+}
+
+fn done_event() -> ProviderEvent {
+    ProviderEvent::Done {
+        stop_reason: StopReason::EndTurn,
+        usage: Usage {
+            input_tokens: 3,
+            output_tokens: 4,
+            ..Usage::default()
+        },
+        response_id: None,
+    }
+}
+
+struct DelayedProvider {
+    events: Vec<ProviderEvent>,
+    delay: Duration,
+}
+
+impl Provider for DelayedProvider {
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+
+    fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        let events = self.events.clone();
+        let delay = self.delay;
+        let stream = stream::unfold(events.into_iter(), move |mut iter| async move {
+            let event = iter.next()?;
+            tokio::time::sleep(delay).await;
+            Some((Ok(event), iter))
+        });
+        Ok(Box::pin(stream))
+    }
+}
+
+fn register_root_agent(
+    registry: &Arc<parking_lot::RwLock<AgentRegistry>>,
+    model: &str,
+) -> Result<uuid::Uuid, Box<dyn std::error::Error>> {
+    let guard = AgentRegistry::reserve(
+        registry,
+        "/root".to_string(),
+        "lead".to_string(),
+        model.to_string(),
+        None,
+        ChildPolicy {
+            messaging: MessagingScope::SiblingsAndParent,
+            delegation: DelegationBudget {
+                remaining_depth: 1,
+                max_concurrent_children: 32,
+            },
+            inbound_capacity: 32,
+            loop_config: None,
+        },
+        None,
+    )?;
+    let id = guard.id();
+    guard.confirm()?;
+    Ok(id)
+}
+
+fn spawn_child_activity_fixture(
+    registry: &Arc<parking_lot::RwLock<AgentRegistry>>,
+    root_id: uuid::Uuid,
+    root_event_sender: &AgentEventSender,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let child_id = register_child_agent(registry, root_id)?;
+    let child_sender = root_event_sender.for_child(child_id, "activity-child".to_string());
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(75)).await;
+        child_sender.send(ProviderEvent::ToolCallComplete {
+            call_id: "tc-activity".to_string(),
+            name: "read_file".to_string(),
+            arguments: serde_json::json!({
+                "tool_use_description": "checking child activity",
+            })
+            .to_string(),
+            kind: ToolCallKind::Function,
+        });
+    });
+    Ok(())
+}
+
+fn register_child_agent(
+    registry: &Arc<parking_lot::RwLock<AgentRegistry>>,
+    root_id: uuid::Uuid,
+) -> Result<uuid::Uuid, Box<dyn std::error::Error>> {
+    let guard = AgentRegistry::reserve(
+        registry,
+        "/root/activity-child".to_string(),
+        "activity-child".to_string(),
+        "gpt-screen".to_string(),
+        Some(root_id),
+        ChildPolicy {
+            messaging: MessagingScope::ParentOnly,
+            delegation: DelegationBudget {
+                remaining_depth: 0,
+                max_concurrent_children: 0,
+            },
+            inbound_capacity: 8,
+            loop_config: None,
+        },
+        None,
+    )?;
+    let id = guard.id();
+    guard.confirm()?;
+    Ok(id)
+}
+
+#[derive(Clone, Copy)]
+enum PtyInteraction<'a> {
+    None,
+    WaitForOutputThenCtrlC {
+        marker: &'a [u8],
+    },
+    ResizeAfterOutputThenCtrlC {
+        marker: &'a [u8],
+        rows: u16,
+        cols: u16,
+    },
+    WriteWaitThenCtrlC {
+        bytes: &'a [u8],
+        wait: Duration,
+    },
+    WriteWaitForOutputWriteWaitThenCtrlC {
+        first_bytes: &'a [u8],
+        first_marker: &'a [u8],
+        second_bytes: &'a [u8],
+        second_wait: Duration,
+    },
+}
+
+#[derive(Clone, Copy)]
+struct PtySizeSpec {
+    rows: u16,
+    cols: u16,
+}
+
+impl Default for PtySizeSpec {
+    fn default() -> Self {
+        Self {
+            rows: SCREEN_ROWS,
+            cols: SCREEN_COLS,
+        }
+    }
+}
+
+fn run_child_to_completion(
+    test_name: &str,
+    child_env: &str,
+    scenario: Option<&str>,
+    interaction: PtyInteraction<'_>,
+    size: PtySizeSpec,
+) -> Result<PtyRun, Box<dyn std::error::Error>> {
+    let pty_system = native_pty_system();
+    let pair = pty_system.openpty(PtySize {
+        rows: size.rows,
+        cols: size.cols,
+        pixel_width: 0,
+        pixel_height: 0,
+    })?;
+
+    let mut cmd = CommandBuilder::new(std::env::current_exe()?);
+    cmd.args(["--exact", test_name, "--nocapture"]);
+    cmd.env(child_env, "1");
+    if let Some(scenario) = scenario {
+        cmd.env(PTY_APP_SCENARIO_ENV, scenario);
+    }
+    cmd.env("TERM", "xterm-256color");
+    cmd.env("COLORTERM", "truecolor");
+
+    let mut child = pair.slave.spawn_command(cmd)?;
+    drop(pair.slave);
+
+    let output = Arc::new(Mutex::new(Vec::new()));
+    let reader_handle = spawn_reader(pair.master.try_clone_reader()?, Arc::clone(&output));
+
+    match interaction {
+        PtyInteraction::None => {}
+        PtyInteraction::WaitForOutputThenCtrlC { marker } => {
+            wait_for_output(&output, marker, Duration::from_secs(5))?;
+            let mut writer = pair.master.take_writer()?;
+            std::thread::sleep(Duration::from_millis(900));
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+        }
+        PtyInteraction::ResizeAfterOutputThenCtrlC { marker, rows, cols } => {
+            wait_for_output(&output, marker, Duration::from_secs(5))?;
+            pair.master.resize(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })?;
+            wait_for_output(&output, b"\x1b[1;14r", Duration::from_secs(5))?;
+            let mut writer = pair.master.take_writer()?;
+            std::thread::sleep(Duration::from_millis(250));
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+        }
+        PtyInteraction::WriteWaitThenCtrlC { bytes, wait } => {
+            wait_for_output(&output, b"gpt-sc", Duration::from_secs(5))?;
+            let mut writer = pair.master.take_writer()?;
+            if !bytes.is_empty() {
+                writer.write_all(bytes)?;
+                writer.flush()?;
+            }
+            std::thread::sleep(wait);
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+        }
+        PtyInteraction::WriteWaitForOutputWriteWaitThenCtrlC {
+            first_bytes,
+            first_marker,
+            second_bytes,
+            second_wait,
+        } => {
+            wait_for_output(&output, b"^C exit", Duration::from_secs(5))?;
+            let mut writer = pair.master.take_writer()?;
+            writer.write_all(first_bytes)?;
+            writer.flush()?;
+            wait_for_output(&output, first_marker, Duration::from_secs(5))?;
+            writer.write_all(second_bytes)?;
+            writer.flush()?;
+            std::thread::sleep(second_wait);
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+        }
+    }
+
+    let status = wait_for_child(&mut *child, Duration::from_secs(5))?;
+    reader_handle.join().map_err(thread_panic_error)??;
+    let output = clone_output(&output)?;
+    Ok(PtyRun { status, output })
+}
+
+fn spawn_reader(
+    mut reader: Box<dyn Read + Send>,
+    output: Arc<Mutex<Vec<u8>>>,
+) -> std::thread::JoinHandle<io::Result<()>> {
+    std::thread::spawn(move || {
+        let mut buf = [0_u8; 4096];
+        loop {
+            match reader.read(&mut buf) {
+                Ok(0) => return Ok(()),
+                Ok(n) => {
+                    output
+                        .lock()
+                        .map_err(|err| {
+                            io::Error::other(format!("PTY output lock poisoned: {err}"))
+                        })?
+                        .extend_from_slice(&buf[..n]);
+                }
+                Err(err) => return Err(err),
+            }
+        }
+    })
+}
+
+fn wait_for_output(
+    output: &Arc<Mutex<Vec<u8>>>,
+    marker: &[u8],
+    timeout: Duration,
+) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let contains_marker = {
+            let guard = output
+                .lock()
+                .map_err(|err| io::Error::other(format!("PTY output lock poisoned: {err}")))?;
+            guard.windows(marker.len()).any(|window| window == marker)
+        };
+        if contains_marker {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            let snapshot = clone_output(output)?;
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "timed out waiting for PTY marker {:?}; output:\n{}",
+                    String::from_utf8_lossy(marker),
+                    String::from_utf8_lossy(&snapshot),
+                ),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn clone_output(output: &Arc<Mutex<Vec<u8>>>) -> io::Result<Vec<u8>> {
+    output
+        .lock()
+        .map(|guard| guard.clone())
+        .map_err(|err| io::Error::other(format!("PTY output lock poisoned: {err}")))
+}
+
+fn thread_panic_error(payload: Box<dyn Any + Send + 'static>) -> io::Error {
+    let message = match payload.downcast::<String>() {
+        Ok(message) => *message,
+        Err(payload) => match payload.downcast::<&'static str>() {
+            Ok(message) => (*message).to_string(),
+            Err(_) => "non-string panic payload".to_string(),
+        },
+    };
+    io::Error::other(format!("PTY reader thread panicked: {message}"))
+}
+
+fn wait_for_child(
+    child: &mut dyn Child,
+    timeout: Duration,
+) -> Result<ExitStatus, Box<dyn std::error::Error>> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        if let Some(status) = child.try_wait()? {
+            return Ok(status);
+        }
+        if Instant::now() >= deadline {
+            child.kill()?;
+            let status = child.wait()?;
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("PTY child timed out after {timeout:?}; status after kill: {status:?}"),
+            )
+            .into());
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn child_failure(label: &str, status: &ExitStatus, output: &[u8]) -> io::Error {
+    io::Error::other(format!(
+        "{label} child exited unsuccessfully: {status:?}\n{}",
+        String::from_utf8_lossy(output),
+    ))
+}
+
+fn exit_after_child_result(result: Result<(), impl std::fmt::Display>) -> ! {
+    match result {
+        Ok(()) => std::process::exit(0),
+        Err(err) => {
+            eprintln!("{err}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn assert_output_contains(
+    output: &[u8],
+    needle: &[u8],
+    label: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if output.windows(needle.len()).any(|window| window == needle) {
+        return Ok(());
+    }
+    Err(io::Error::other(format!(
+        "missing {label} sequence {needle:?} in PTY output:\n{}",
+        String::from_utf8_lossy(output),
+    ))
+    .into())
+}
+
+#[derive(Clone, Copy)]
+struct Cursor {
+    row: usize,
+    col: usize,
+}
+
+struct TerminalScreen {
+    rows: usize,
+    cols: usize,
+    cells: Vec<Vec<char>>,
+    cursor: Cursor,
+    saved_cursor: Cursor,
+    scroll_top: usize,
+    scroll_bottom: usize,
+}
+
+impl TerminalScreen {
+    fn from_output(output: &[u8], rows: u16, cols: u16) -> Self {
+        let mut screen = Self::new(usize::from(rows), usize::from(cols));
+        let mut parser = Parser::new();
+        parser.advance(&mut screen, output);
+        screen
+    }
+
+    fn new(rows: usize, cols: usize) -> Self {
+        let cells = (0..rows).map(|_| vec![' '; cols]).collect();
+        Self {
+            rows,
+            cols,
+            cells,
+            cursor: Cursor { row: 0, col: 0 },
+            saved_cursor: Cursor { row: 0, col: 0 },
+            scroll_top: 0,
+            scroll_bottom: rows.saturating_sub(1),
+        }
+    }
+
+    fn contains(&self, needle: &str) -> bool {
+        self.debug_text().contains(needle)
+    }
+
+    fn debug_text(&self) -> String {
+        self.cells
+            .iter()
+            .map(|line| line.iter().collect::<String>().trim_end().to_string())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    fn blank_line(&self) -> Vec<char> {
+        vec![' '; self.cols]
+    }
+
+    fn put_char(&mut self, ch: char) {
+        if self.rows == 0 || self.cols == 0 {
+            return;
+        }
+        self.clamp_cursor();
+        self.cells[self.cursor.row][self.cursor.col] = ch;
+        if self.cursor.col + 1 >= self.cols {
+            self.cursor.col = 0;
+            self.line_feed();
+        } else {
+            self.cursor.col += 1;
+        }
+    }
+
+    fn line_feed(&mut self) {
+        if self.cursor.row == self.scroll_bottom {
+            self.scroll_up();
+        } else if self.cursor.row + 1 < self.rows {
+            self.cursor.row += 1;
+        }
+    }
+
+    fn scroll_up(&mut self) {
+        if self.scroll_top >= self.scroll_bottom || self.scroll_bottom >= self.rows {
+            return;
+        }
+        for row in self.scroll_top..self.scroll_bottom {
+            self.cells[row] = self.cells[row + 1].clone();
+        }
+        self.cells[self.scroll_bottom] = self.blank_line();
+    }
+
+    fn set_cursor_position(&mut self, row: usize, col: usize) {
+        if self.rows == 0 || self.cols == 0 {
+            self.cursor = Cursor { row: 0, col: 0 };
+            return;
+        }
+        self.cursor = Cursor {
+            row: row.saturating_sub(1).min(self.rows - 1),
+            col: col.saturating_sub(1).min(self.cols - 1),
+        };
+    }
+
+    fn clamp_cursor(&mut self) {
+        if self.rows == 0 || self.cols == 0 {
+            self.cursor = Cursor { row: 0, col: 0 };
+            return;
+        }
+        self.cursor.row = self.cursor.row.min(self.rows - 1);
+        self.cursor.col = self.cursor.col.min(self.cols - 1);
+    }
+
+    fn erase_display(&mut self, mode: usize) {
+        match mode {
+            2 | 3 => {
+                for row in 0..self.rows {
+                    self.cells[row] = self.blank_line();
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn erase_line(&mut self, mode: usize) {
+        if self.rows == 0 || self.cols == 0 {
+            return;
+        }
+        self.clamp_cursor();
+        match mode {
+            0 => {
+                for col in self.cursor.col..self.cols {
+                    self.cells[self.cursor.row][col] = ' ';
+                }
+            }
+            1 => {
+                for col in 0..=self.cursor.col {
+                    self.cells[self.cursor.row][col] = ' ';
+                }
+            }
+            2 => {
+                self.cells[self.cursor.row] = self.blank_line();
+            }
+            _ => {}
+        }
+    }
+
+    fn set_scroll_region(&mut self, params: &Params) {
+        let top = param_or(params, 0, 1).saturating_sub(1);
+        let bottom = param_or(params, 1, self.rows).saturating_sub(1);
+        if top < bottom && bottom < self.rows {
+            self.scroll_top = top;
+            self.scroll_bottom = bottom;
+        } else {
+            self.scroll_top = 0;
+            self.scroll_bottom = self.rows.saturating_sub(1);
+        }
+        self.set_cursor_position(1, 1);
+    }
+}
+
+impl Perform for TerminalScreen {
+    fn print(&mut self, ch: char) {
+        self.put_char(ch);
+    }
+
+    fn execute(&mut self, byte: u8) {
+        match byte {
+            b'\n' => self.line_feed(),
+            b'\r' => self.cursor.col = 0,
+            0x08 => self.cursor.col = self.cursor.col.saturating_sub(1),
+            b'\t' => self.cursor.col = (self.cursor.col + 8).min(self.cols.saturating_sub(1)),
+            _ => {}
+        }
+    }
+
+    fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], ignore: bool, action: char) {
+        if ignore {
+            return;
+        }
+        match action {
+            'H' | 'f' => {
+                self.set_cursor_position(param_or(params, 0, 1), param_or(params, 1, 1));
+            }
+            'A' => {
+                self.cursor.row = self.cursor.row.saturating_sub(param_or(params, 0, 1));
+            }
+            'B' => {
+                self.cursor.row =
+                    (self.cursor.row + param_or(params, 0, 1)).min(self.rows.saturating_sub(1));
+            }
+            'C' => {
+                self.cursor.col =
+                    (self.cursor.col + param_or(params, 0, 1)).min(self.cols.saturating_sub(1));
+            }
+            'D' => {
+                self.cursor.col = self.cursor.col.saturating_sub(param_or(params, 0, 1));
+            }
+            'J' => self.erase_display(param_or(params, 0, 0)),
+            'K' => self.erase_line(param_or(params, 0, 0)),
+            'r' => self.set_scroll_region(params),
+            's' => self.saved_cursor = self.cursor,
+            'u' => self.cursor = self.saved_cursor,
+            _ => {}
+        }
+    }
+
+    fn esc_dispatch(&mut self, _intermediates: &[u8], ignore: bool, byte: u8) {
+        if ignore {
+            return;
+        }
+        match byte {
+            b'7' => self.saved_cursor = self.cursor,
+            b'8' => self.cursor = self.saved_cursor,
+            b'c' => {
+                *self = Self::new(self.rows, self.cols);
+            }
+            _ => {}
+        }
+    }
+}
+
+fn param_or(params: &Params, index: usize, default: usize) -> usize {
+    params
+        .iter()
+        .nth(index)
+        .and_then(|param| param.first())
+        .copied()
+        .filter(|value| *value != 0)
+        .map_or(default, usize::from)
+}

@@ -91,8 +91,10 @@ tree-sitter-rust = "0.24.2"
 tree-sitter-typescript = "0.23.2"
 
 # Dev/Test
+portable-pty = "0.9.0"
 serial_test = "3"
 temp-env = { version = "0.3", features = ["async_closure"] }
+vte = "0.14.1"
 wiremock = "0.6"
 
 [workspace.lints.rust]

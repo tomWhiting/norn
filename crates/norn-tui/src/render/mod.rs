@@ -7,11 +7,13 @@ pub mod scroll_region;
 pub mod style;
 pub mod syntax;
 pub mod text;
+pub mod thinking;
 
 pub use fixed_panel::{FixedPanel, StatusBar, StreamingIndicator};
 pub use markdown::MarkdownRenderer;
 pub use scroll_region::{write_separator, write_to_scroll};
 pub use style::{
-    colour_for, colour_spec, hyperlink, italic, nearest_256, newline_key_hint, sync_render,
+    colour_for, colour_spec, hyperlink, italic, italic_off, nearest_256, newline_key_hint,
+    sync_render,
 };
 pub use syntax::SyntaxHighlighter;

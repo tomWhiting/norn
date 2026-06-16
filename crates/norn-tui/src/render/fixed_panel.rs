@@ -75,14 +75,27 @@ fn render_separator<W: io::Write>(row: u16, width: u16, writer: &mut W) -> io::R
 /// Compose a single line with `left` left-aligned and `right`
 /// right-aligned, padded with spaces to `width` display columns.
 ///
-/// When the two segments cannot both fit within `width`, they are joined
-/// by a single space and the line is allowed to exceed `width` — the
-/// terminal truncates on display.
+/// When the two segments cannot both fit within `width`, the left side
+/// is truncated first because the right side contains live usage and
+/// key hints. If the right side itself exceeds the available width, it
+/// is truncated explicitly. The returned line never exceeds `width`
+/// display columns.
 fn compose_left_right(left: &str, right: &str, width: u16) -> String {
     let width = usize::from(width);
+    if width == 0 {
+        return String::new();
+    }
     let left_width = left.width();
     let right_width = right.width();
     if left_width + right_width + 1 >= width {
+        if right_width >= width {
+            return truncate_with_ellipsis(right, u16::try_from(width).unwrap_or(u16::MAX));
+        }
+        let left_budget = width.saturating_sub(right_width).saturating_sub(1);
+        let left = truncate_with_ellipsis(left, u16::try_from(left_budget).unwrap_or(u16::MAX));
+        if left.is_empty() {
+            return right.to_owned();
+        }
         return format!("{left} {right}");
     }
     let gap = width - left_width - right_width;
@@ -102,6 +115,10 @@ pub struct StatusBar {
     pub output_tokens: u64,
     /// Free-form key-hint text shown alongside the newline-key hint.
     pub key_hints: String,
+    /// Active provider service tier, when explicitly set.
+    pub service_tier: Option<String>,
+    /// Active reasoning effort, when explicitly set.
+    pub reasoning_effort: Option<String>,
 }
 
 impl StatusBar {
@@ -118,7 +135,18 @@ impl StatusBar {
         writer: &mut W,
         caps: &TerminalCaps,
     ) -> io::Result<()> {
-        let left = format!("{} │ {}", self.model_name, self.session_name);
+        let mut left_parts = vec![self.model_name.as_str(), self.session_name.as_str()];
+        let service_tier;
+        if let Some(tier) = self.service_tier.as_deref() {
+            service_tier = format!("tier:{tier}");
+            left_parts.push(service_tier.as_str());
+        }
+        let reasoning_effort;
+        if let Some(effort) = self.reasoning_effort.as_deref() {
+            reasoning_effort = format!("effort:{effort}");
+            left_parts.push(reasoning_effort.as_str());
+        }
+        let left = left_parts.join(" │ ");
         let right = format!(
             "{}↑ {}↓ │ {} ^O verbose ^E thinking {}",
             format_count(self.input_tokens),
@@ -541,6 +569,20 @@ mod tests {
     use super::*;
 
     #[test]
+    fn compose_left_right_truncates_left_to_width() {
+        let out = compose_left_right("abcdef", "XYZ", 6);
+        assert_eq!(out, "a… XYZ");
+        assert!(out.width() <= 6);
+    }
+
+    #[test]
+    fn compose_left_right_truncates_right_when_it_cannot_fit() {
+        let out = compose_left_right("abcdef", "XYZXYZ", 5);
+        assert_eq!(out, "XYZX…");
+        assert!(out.width() <= 5);
+    }
+
+    #[test]
     fn total_height_default_is_separator_plus_input_plus_status_bar() {
         let panel = FixedPanel::new(StatusBar::default());
         // 1 separator + 1 input + 1 status bar.
@@ -699,6 +741,8 @@ mod tests {
             input_tokens: 12_345,
             output_tokens: 678,
             key_hints: "^C exit".to_string(),
+            service_tier: None,
+            reasoning_effort: None,
         };
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
@@ -713,6 +757,25 @@ mod tests {
         assert!(out.contains("678↓"), "output tokens with arrow: {out:?}");
         assert!(out.contains("^O verbose"), "verbosity hint: {out:?}");
         assert!(out.contains("^E thinking"), "thinking hint: {out:?}");
+    }
+
+    #[test]
+    fn status_bar_render_shows_runtime_mode_badges() {
+        let bar = StatusBar {
+            model_name: "gpt-5.5".to_string(),
+            session_name: "demo".to_string(),
+            input_tokens: 1,
+            output_tokens: 2,
+            key_hints: "^C exit".to_string(),
+            service_tier: Some("fast".to_string()),
+            reasoning_effort: Some("high".to_string()),
+        };
+        let caps = TerminalCaps::baseline();
+        let mut buf: Vec<u8> = Vec::new();
+        bar.render(0, 120, &mut buf, &caps).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("tier:fast"), "service tier badge: {out:?}");
+        assert!(out.contains("effort:high"), "effort badge: {out:?}");
     }
 
     #[test]

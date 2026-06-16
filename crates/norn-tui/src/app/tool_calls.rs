@@ -7,11 +7,12 @@
 //! per-tool renderers.
 
 use serde_json::Value;
+use termina::style::RgbColor;
 
 use crate::TuiError;
-use crate::render::MarkdownRenderer;
 use crate::render::fixed_panel::ToolUseInFlight;
 use crate::render::scroll_region::write_to_scroll;
+use crate::render::{MarkdownRenderer, colour_for};
 use crate::terminal::setup::TerminalGuard;
 use crate::tools::VerbosityState;
 use crate::tools::renderer::renderer_for;
@@ -20,7 +21,9 @@ use super::helpers::{
     clear_dim_state, extract_tool_use_description, flush_terminal, sync_with_guard,
 };
 use super::state::{AppState, PendingToolCall};
-use super::streaming::clear_thinking_buffer;
+use super::streaming::finish_thinking_block;
+
+const TOOL_ERROR_RED: RgbColor = RgbColor::new(200, 80, 80);
 
 /// Accumulate a `ToolCallDelta` into the pending map keyed by id.
 ///
@@ -132,6 +135,57 @@ pub fn parse_args(pending: &PendingToolCall) -> Value {
     serde_json::from_str(&pending.arguments).unwrap_or(Value::Null)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct StructuredToolError {
+    header: String,
+    body: Option<String>,
+}
+
+fn structured_tool_error(output: &Value, expanded: bool) -> Option<StructuredToolError> {
+    let error = output.get("error")?;
+    let (kind, message, detail) = match error {
+        Value::Object(map) => {
+            let kind = map.get("kind").and_then(Value::as_str).unwrap_or("");
+            let message = map
+                .get("message")
+                .and_then(Value::as_str)
+                .unwrap_or("tool failed");
+            let detail = map.get("detail");
+            (kind, message, detail)
+        }
+        Value::String(message) => ("", message.as_str(), None),
+        other => ("", other.as_str().unwrap_or("tool failed"), None),
+    };
+    let message = truncate_error_message(message);
+    let header = if kind.is_empty() {
+        format!("error: {message}")
+    } else {
+        format!("error [{kind}]: {message}")
+    };
+    let body = if expanded {
+        detail
+            .and_then(|detail| serde_json::to_string_pretty(detail).ok())
+            .filter(|text| !text.is_empty())
+    } else {
+        None
+    };
+    Some(StructuredToolError { header, body })
+}
+
+fn truncate_error_message(message: &str) -> String {
+    const LIMIT: usize = 220;
+    if message.len() <= LIMIT {
+        return message.to_owned();
+    }
+    let end = message
+        .char_indices()
+        .map(|(idx, _)| idx)
+        .take_while(|idx| *idx <= LIMIT)
+        .last()
+        .unwrap_or(0);
+    format!("{}...", &message[..end])
+}
+
 /// Render a [`norn::provider::events::ProviderEvent::ToolResult`]
 /// through the per-tool renderer.
 ///
@@ -154,10 +208,40 @@ pub fn write_tool_result(
     duration_ms: u64,
 ) -> Result<(), TuiError> {
     clear_dim_state(state, guard, renderer.as_mut())?;
-    clear_thinking_buffer(state, guard)?;
+    finish_thinking_block(state, guard, renderer)?;
     if state.text_streamed_this_turn || state.last_was_tool_result {
         write_to_scroll("\n", guard.terminal_mut())?;
         guard.note_scroll_newlines("\n")?;
+    }
+
+    let expanded = matches!(state.verbosity, VerbosityState::Expanded);
+    if let Some(error) = structured_tool_error(output, expanded) {
+        let colour = colour_for(TOOL_ERROR_RED, &state.terminal_caps);
+        let mut out = format!(
+            "\x1b[2m│ {tool_name}\x1b[22m  {colour}{}\x1b[39m",
+            error.header,
+        );
+        if !out.ends_with('\n') {
+            out.push('\n');
+        }
+        if let Some(body) = error.body
+            && !body.is_empty()
+        {
+            for line in body.lines() {
+                out.push_str("\x1b[2m│\x1b[22m ");
+                out.push_str(line);
+                out.push('\n');
+            }
+        }
+        let caps = state.terminal_caps.clone();
+        sync_with_guard(&caps, guard, |guard| {
+            write_to_scroll(&out, guard.terminal_mut())?;
+            guard.note_scroll_newlines(&out)?;
+            Ok(())
+        })?;
+        state.last_was_tool_result = true;
+        state.text_streamed_this_turn = false;
+        return flush_terminal(guard);
     }
 
     let Some(renderer) = renderer_for(tool_name) else {
@@ -170,7 +254,6 @@ pub fn write_tool_result(
         return flush_terminal(guard);
     };
     let header = renderer.header_line(args, output, duration_ms, &state.terminal_caps);
-    let expanded = matches!(state.verbosity, VerbosityState::Expanded);
     let body = if expanded || header.is_empty() {
         let blocks = renderer.body_blocks(args, output, &state.terminal_caps);
         if let Some(ref blocks) = blocks {
@@ -291,6 +374,39 @@ mod tests {
     fn parse_args_handles_empty_arguments() {
         let empty = PendingToolCall::default();
         assert_eq!(parse_args(&empty), Value::Null);
+    }
+
+    #[test]
+    fn structured_tool_error_surfaces_kind_and_message() {
+        let output = serde_json::json!({
+            "error": {
+                "kind": "unsupported",
+                "message": "image search is not available on this text-only web surface",
+                "detail": { "tool": "image_query" }
+            }
+        });
+        let rendered = structured_tool_error(&output, false).unwrap();
+
+        assert_eq!(
+            rendered.header,
+            "error [unsupported]: image search is not available on this text-only web surface",
+        );
+        assert!(rendered.body.is_none());
+    }
+
+    #[test]
+    fn structured_tool_error_includes_detail_when_expanded() {
+        let output = serde_json::json!({
+            "error": {
+                "kind": "capability_unavailable",
+                "message": "image search unavailable",
+                "detail": { "surface": "text-only" }
+            }
+        });
+        let rendered = structured_tool_error(&output, true).unwrap();
+
+        assert!(rendered.header.contains("capability_unavailable"));
+        assert!(rendered.body.unwrap().contains("text-only"));
     }
 
     #[test]

@@ -26,7 +26,331 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::NornError;
-use crate::provider::request::{AssistantToolCall, Message, MessageRole};
+use crate::provider::request::{
+    AssistantToolCall, Message, MessageRole, ReasoningEffort, ServiceTier,
+};
+
+/// UI surface a built-in slash command is available on.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SlashSurface {
+    /// Headless/REPL CLI slash-command surface.
+    Cli,
+    /// Interactive TUI slash-command surface.
+    Tui,
+}
+
+/// Stable semantic identity for built-in slash commands.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum BuiltinSlashKind {
+    /// `/new`.
+    New,
+    /// `/clear`.
+    Clear,
+    /// `/compact`.
+    Compact,
+    /// `/exit`.
+    Exit,
+    /// `/quit`.
+    Quit,
+    /// `/help`.
+    Help,
+    /// `/model`.
+    Model,
+    /// `/effort` and `/reasoning-effort`.
+    Effort,
+    /// `/service-tier`.
+    ServiceTier,
+    /// `/fast`.
+    Fast,
+    /// `/tools`.
+    Tools,
+    /// `/schema`.
+    Schema,
+    /// `/session`.
+    Session,
+    /// `/name`.
+    Name,
+    /// `/variables`.
+    Variables,
+}
+
+/// Shared metadata for one built-in slash command.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct BuiltinSlashCommand {
+    /// Side-effecting handler kind selected by each UI adapter.
+    pub kind: BuiltinSlashKind,
+    /// Command name without the leading slash.
+    pub name: &'static str,
+    /// Usage text rendered in help surfaces.
+    pub usage: &'static str,
+    /// Help text rendered in detailed help.
+    pub help: &'static str,
+    /// Short description rendered by autocomplete.
+    pub autocomplete: &'static str,
+    /// Compact description rendered by CLI `/help`.
+    pub cli_description: &'static str,
+    cli: bool,
+    tui: bool,
+}
+
+impl BuiltinSlashCommand {
+    /// Whether this command belongs to `surface`.
+    #[must_use]
+    pub const fn supports(self, surface: SlashSurface) -> bool {
+        match surface {
+            SlashSurface::Cli => self.cli,
+            SlashSurface::Tui => self.tui,
+        }
+    }
+}
+
+/// Built-in slash command metadata shared by CLI and TUI adapters.
+pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::New,
+        name: "new",
+        usage: "/new",
+        help: "Start a new session (rotates the JSONL file)",
+        autocomplete: "Start a new session",
+        cli_description: "Start a new session",
+        cli: false,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Clear,
+        name: "clear",
+        usage: "/clear",
+        help: "Reset the conversation history",
+        autocomplete: "Reset the conversation history",
+        cli_description: "Reset the conversation history",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Compact,
+        name: "compact",
+        usage: "/compact",
+        help: "Compact older conversation context",
+        autocomplete: "Compact conversation history",
+        cli_description: "Compact older conversation context",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Exit,
+        name: "exit",
+        usage: "/exit",
+        help: "Exit the REPL",
+        autocomplete: "Exit",
+        cli_description: "Exit the REPL",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Quit,
+        name: "quit",
+        usage: "/quit",
+        help: "Exit the REPL",
+        autocomplete: "Exit",
+        cli_description: "Exit the REPL",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Help,
+        name: "help",
+        usage: "/help",
+        help: "Show available commands",
+        autocomplete: "Show help",
+        cli_description: "Show available commands",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Model,
+        name: "model",
+        usage: "/model <name>",
+        help: "Show or switch the active model",
+        autocomplete: "Switch model",
+        cli_description: "Show or switch the active model",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Effort,
+        name: "effort",
+        usage: "/effort <none|low|medium|high|x-high|default>",
+        help: "Show, set, or clear reasoning effort",
+        autocomplete: "Set reasoning effort",
+        cli_description: "Show, set, or clear the active reasoning effort",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Effort,
+        name: "reasoning-effort",
+        usage: "/reasoning-effort <none|low|medium|high|x-high|default>",
+        help: "Alias for /effort",
+        autocomplete: "Set reasoning effort",
+        cli_description: "Alias for /effort",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::ServiceTier,
+        name: "service-tier",
+        usage: "/service-tier <fast|none>",
+        help: "Show, set, or clear the active service tier",
+        autocomplete: "Set service tier",
+        cli_description: "Show, set, or clear the active service tier",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Fast,
+        name: "fast",
+        usage: "/fast",
+        help: "Use the fast service tier",
+        autocomplete: "Use fast service tier",
+        cli_description: "Use the fast service tier",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Tools,
+        name: "tools",
+        usage: "/tools",
+        help: "List available tools",
+        autocomplete: "List tools available to the model",
+        cli_description: "List available tools",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Schema,
+        name: "schema",
+        usage: "/schema <json-or-path>",
+        help: "Show or set the output schema",
+        autocomplete: "Set output schema",
+        cli_description: "Show or set the output schema",
+        cli: true,
+        tui: false,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Session,
+        name: "session",
+        usage: "/session",
+        help: "Show session ID, name, turn count, and token totals",
+        autocomplete: "Show session state",
+        cli_description: "Show session ID, name, turn count, and token totals",
+        cli: true,
+        tui: false,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Name,
+        name: "name",
+        usage: "/name <text>",
+        help: "Set the session's human-readable name",
+        autocomplete: "Set session name",
+        cli_description: "Set the session's human-readable name",
+        cli: true,
+        tui: false,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Variables,
+        name: "variables",
+        usage: "/variables",
+        help: "List active session variables",
+        autocomplete: "List session variables",
+        cli_description: "List active session variables",
+        cli: true,
+        tui: false,
+    },
+];
+
+/// Iterate shared built-ins available on `surface` in display order.
+pub fn builtin_slash_commands(
+    surface: SlashSurface,
+) -> impl Iterator<Item = &'static BuiltinSlashCommand> {
+    BUILTIN_SLASH_COMMANDS
+        .iter()
+        .filter(move |command| command.supports(surface))
+}
+
+/// Find a built-in slash command by name for `surface`.
+#[must_use]
+pub fn find_builtin_slash_command(
+    surface: SlashSurface,
+    name: &str,
+) -> Option<&'static BuiltinSlashCommand> {
+    builtin_slash_commands(surface).find(|command| command.name == name)
+}
+
+/// Parsed reasoning-effort slash command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffortCommand {
+    /// Set a concrete effort value.
+    Set(ReasoningEffort),
+    /// Clear the override.
+    Clear,
+}
+
+/// Parse `/effort` and `/reasoning-effort` arguments.
+#[must_use]
+pub fn parse_effort_command(value: &str) -> Option<EffortCommand> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "none" => Some(EffortCommand::Set(ReasoningEffort::None)),
+        "low" => Some(EffortCommand::Set(ReasoningEffort::Low)),
+        "medium" => Some(EffortCommand::Set(ReasoningEffort::Medium)),
+        "high" => Some(EffortCommand::Set(ReasoningEffort::High)),
+        "x-high" | "xhigh" => Some(EffortCommand::Set(ReasoningEffort::XHigh)),
+        "default" | "off" | "clear" => Some(EffortCommand::Clear),
+        _ => None,
+    }
+}
+
+/// Display label for a reasoning-effort value.
+#[must_use]
+pub fn effort_label(effort: ReasoningEffort) -> &'static str {
+    effort.as_str()
+}
+
+/// Parsed `/service-tier` command.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ServiceTierCommand {
+    /// Set `service_tier=fast`.
+    Fast,
+    /// Clear the override.
+    Clear,
+}
+
+/// Parse `/service-tier` arguments.
+#[must_use]
+pub fn parse_service_tier_command(value: &str) -> Option<ServiceTierCommand> {
+    match value.trim().to_ascii_lowercase().as_str() {
+        "fast" => Some(ServiceTierCommand::Fast),
+        "none" | "off" | "default" => Some(ServiceTierCommand::Clear),
+        _ => None,
+    }
+}
+
+/// Whether `tier` is present for `model` in the generated model catalog.
+#[must_use]
+pub fn service_tier_supported_for_model(model: &str, tier: ServiceTier) -> bool {
+    crate::model_catalog::find_service_tier(
+        crate::model_catalog::DEFAULT_PROVIDER,
+        crate::model_catalog::DEFAULT_BACKEND,
+        model,
+        tier.as_str(),
+    )
+    .is_some()
+}
+
+/// Standard unsupported-service-tier diagnostic.
+#[must_use]
+pub fn unsupported_service_tier_message(model: &str, tier: &str) -> String {
+    format!("norn: service tier '{tier}' is not supported for model '{model}'")
+}
 
 /// Closure shape used by [`SlashCommandHandler::Custom`].
 ///

@@ -5,7 +5,7 @@
 //! of focused renderers:
 //!
 //! - [`render_user_message`] — coloured `> ` prefix for human input.
-//! - [`render_thinking`] — dim-styled reasoning content, gated by the
+//! - [`render_thinking`] — dim/italic reasoning content, gated by the
 //!   [`DisplayToggles::thinking_visible`] flag.
 //! - [`render_assistant_message`] — thinking (when visible) followed by
 //!   the assistant text, run through the streaming
@@ -39,6 +39,7 @@ use norn::session::events::SessionEvent;
 
 use crate::render::markdown::MarkdownRenderer;
 use crate::render::style::colour_for;
+use crate::render::thinking::render_thinking as render_thinking_block;
 use crate::terminal::caps::TerminalCaps;
 use crate::tools::renderer::renderer_for;
 
@@ -57,10 +58,11 @@ const PRIMARY_KEY_PRIORITY: &[&str] = &["text", "content", "written", "response"
 
 /// Visibility toggles for rendering output.
 ///
-/// Both fields ride together: pressing Ctrl+E in NT-011 flips both at
-/// once via [`Self::toggle`]. The wiring of the keystroke itself lives
-/// in NT-011 — this brief only exposes the data type and its mutators.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+/// Thinking is visible by default so provider reasoning summaries are
+/// not silently dropped from the live TUI. Secondary structured fields
+/// remain hidden initially to avoid expanding every structured event.
+/// Pressing Ctrl+E toggles the whole extra-output layer off or on.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DisplayToggles {
     /// Whether thinking content is rendered into the scroll region.
     pub thinking_visible: bool,
@@ -68,20 +70,33 @@ pub struct DisplayToggles {
     pub secondary_fields_visible: bool,
 }
 
+impl Default for DisplayToggles {
+    fn default() -> Self {
+        Self {
+            thinking_visible: true,
+            secondary_fields_visible: false,
+        }
+    }
+}
+
 impl DisplayToggles {
-    /// Construct with both fields disabled.
+    /// Construct with thinking visible and secondary fields hidden.
     #[must_use]
     pub const fn new() -> Self {
         Self {
-            thinking_visible: false,
+            thinking_visible: true,
             secondary_fields_visible: false,
         }
     }
 
-    /// Flip both visibility booleans simultaneously.
+    /// Toggle the extra-output layer.
+    ///
+    /// Turning it off hides both thinking and secondary structured
+    /// fields. Turning it on shows both.
     pub fn toggle(&mut self) {
-        self.thinking_visible = !self.thinking_visible;
-        self.secondary_fields_visible = !self.secondary_fields_visible;
+        let visible = !self.thinking_visible;
+        self.thinking_visible = visible;
+        self.secondary_fields_visible = visible;
     }
 
     /// Render the human-readable status string shown momentarily after
@@ -201,34 +216,26 @@ pub fn render_user_message(content: &str, caps: &TerminalCaps) -> String {
 ///
 /// Returns an empty string when `toggles.thinking_visible` is false, so
 /// the caller can unconditionally append the result to its output
-/// buffer. The same function is used for live `ThinkingDelta` events
-/// and for replayed `AssistantMessage.thinking` strings — both call
-/// sites take a `&str`.
+/// buffer. Replayed `AssistantMessage.thinking` strings use this block
+/// renderer; live `ThinkingDelta` chunks are buffered and then rendered
+/// through the same path from `app::streaming`.
 ///
-/// Multi-line thinking text gets the `thinking: ` prefix on the first
-/// line only; continuation lines indent to the same column. The whole
-/// block is bracketed by dim/normal-intensity SGR escapes.
+/// GPT-style markdown-heading summaries (`**Heading**\n\nBody`) render
+/// as a compact `Thought about ...` block. Other text gets the legacy
+/// `thinking: ` prefix and is otherwise preserved verbatim. The whole
+/// block is bracketed by dim, italic (or underline fallback), and reset
+/// SGR escapes.
 #[must_use]
-pub fn render_thinking(text: &str, toggles: DisplayToggles) -> String {
+pub fn render_thinking(
+    text: &str,
+    caps: &TerminalCaps,
+    toggles: DisplayToggles,
+    terminal_width: u16,
+) -> String {
     if !toggles.thinking_visible || text.is_empty() {
         return String::new();
     }
-    let dim = Csi::Sgr(Sgr::Intensity(Intensity::Dim)).to_string();
-    let normal = Csi::Sgr(Sgr::Intensity(Intensity::Normal)).to_string();
-    let mut out = String::new();
-    out.push_str(&dim);
-    for (i, line) in text.split('\n').enumerate() {
-        if i == 0 {
-            out.push_str("thinking: ");
-        } else {
-            // Ten spaces — the visible width of "thinking: ".
-            out.push_str("          ");
-        }
-        out.push_str(line);
-        out.push('\n');
-    }
-    out.push_str(&normal);
-    out
+    render_thinking_block(text, caps, terminal_width)
 }
 
 /// Render an assistant message — thinking (when visible) followed by
@@ -246,7 +253,7 @@ pub fn render_assistant_message(
     toggles: DisplayToggles,
     terminal_width: u16,
 ) -> String {
-    let mut out = render_thinking(thinking, toggles);
+    let mut out = render_thinking(thinking, caps, toggles, terminal_width);
     if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(content)
         && map.len() > 1
     {
@@ -485,15 +492,23 @@ mod tests {
     // ---------------- DisplayToggles (R3) ----------------
 
     #[test]
-    fn display_toggles_default_is_all_off() {
+    fn display_toggles_default_shows_thinking_only() {
         let t = DisplayToggles::default();
-        assert!(!t.thinking_visible);
+        assert!(t.thinking_visible);
         assert!(!t.secondary_fields_visible);
     }
 
     #[test]
-    fn display_toggles_toggle_flips_both() {
+    fn display_toggles_toggle_flips_extra_output_layer() {
         let mut t = DisplayToggles::default();
+        t.toggle();
+        assert_eq!(
+            t,
+            DisplayToggles {
+                thinking_visible: false,
+                secondary_fields_visible: false,
+            }
+        );
         t.toggle();
         assert_eq!(
             t,
@@ -502,17 +517,18 @@ mod tests {
                 secondary_fields_visible: true,
             }
         );
-        t.toggle();
-        assert_eq!(t, DisplayToggles::default());
     }
 
     #[test]
     fn display_toggles_status_text_reports_both() {
-        let off = DisplayToggles::default();
-        assert_eq!(off.status_text(), "thinking: off, details: off");
-        let mut on = off;
-        on.toggle();
+        let on = DisplayToggles {
+            thinking_visible: true,
+            secondary_fields_visible: true,
+        };
         assert_eq!(on.status_text(), "thinking: on, details: on");
+        let mut off = on;
+        off.toggle();
+        assert_eq!(off.status_text(), "thinking: off, details: off");
     }
 
     // ---------------- render_user_message (R5) ----------------
@@ -549,34 +565,69 @@ mod tests {
 
     #[test]
     fn thinking_invisible_returns_empty() {
-        let out = render_thinking("inner monologue", DisplayToggles::default());
+        let toggles = DisplayToggles {
+            thinking_visible: false,
+            secondary_fields_visible: false,
+        };
+        let out = render_thinking("inner monologue", &caps(), toggles, 80);
         assert!(out.is_empty(), "got: {out:?}");
     }
 
     #[test]
-    fn thinking_visible_emits_dim_sgr_and_prefix() {
-        let mut toggles = DisplayToggles::default();
-        toggles.toggle();
-        let out = render_thinking("considering", toggles);
+    fn thinking_visible_emits_dim_italic_sgr_and_prefix() {
+        let toggles = DisplayToggles::default();
+        let mut caps = caps();
+        caps.italic_support = true;
+        let out = render_thinking("considering", &caps, toggles, 80);
         assert!(out.contains("\x1b[2m"), "expected dim SGR: {out:?}");
+        assert!(out.contains("\x1b[3m"), "expected italic SGR: {out:?}");
+        assert!(out.contains("\x1b[23m"), "expected italic reset: {out:?}");
         assert!(out.contains("thinking: considering"));
     }
 
     #[test]
-    fn thinking_multi_line_prefix_on_first_line_only() {
-        let mut toggles = DisplayToggles::default();
-        toggles.toggle();
-        let out = render_thinking("one\ntwo", toggles);
-        assert!(out.contains("thinking: one"));
-        assert!(out.contains("          two"));
+    fn thinking_preserves_blank_line_first_character() {
+        let toggles = DisplayToggles::default();
+        let out = render_thinking("one\n\nI need", &caps(), toggles, 80);
+        assert!(out.contains("thinking: one\n\nI need"), "got: {out:?}");
+        assert!(!out.contains("\n\n need"), "got: {out:?}");
+    }
+
+    #[test]
+    fn thinking_falls_back_to_underline_without_italic_support() {
+        let toggles = DisplayToggles::default();
+        let out = render_thinking("considering", &caps(), toggles, 80);
+        assert!(
+            out.contains("\x1b[4m"),
+            "expected underline fallback: {out:?}"
+        );
+        assert!(
+            out.contains("\x1b[24m"),
+            "expected underline reset: {out:?}"
+        );
     }
 
     #[test]
     fn thinking_empty_visible_returns_empty() {
-        let mut toggles = DisplayToggles::default();
-        toggles.toggle();
-        let out = render_thinking("", toggles);
+        let toggles = DisplayToggles::default();
+        let out = render_thinking("", &caps(), toggles, 80);
         assert!(out.is_empty());
+    }
+
+    #[test]
+    fn thinking_markdown_summary_renders_thought_about_heading() {
+        let toggles = DisplayToggles::default();
+        let out = render_thinking(
+            "**Creating a markdown table**\n\nI need",
+            &caps(),
+            toggles,
+            80,
+        );
+        assert!(out.contains("Thought about"), "got: {out:?}");
+        assert!(out.contains("Creating a markdown table"), "got: {out:?}");
+        assert!(out.contains("│"), "got: {out:?}");
+        assert!(out.contains("I need"), "got: {out:?}");
+        assert!(!out.contains("thinking:"), "got: {out:?}");
     }
 
     // ---------------- render_assistant_message (R1, R4) ----------------
@@ -589,8 +640,7 @@ mod tests {
 
     #[test]
     fn assistant_message_includes_thinking_when_visible() {
-        let mut toggles = DisplayToggles::default();
-        toggles.toggle();
+        let toggles = DisplayToggles::default();
         let out = render_assistant_message("answer", "deliberating", &caps(), toggles, 80);
         assert!(out.contains("thinking: deliberating"), "got: {out:?}");
         assert!(out.contains("answer"), "got: {out:?}");
@@ -598,13 +648,11 @@ mod tests {
 
     #[test]
     fn assistant_message_omits_thinking_when_hidden() {
-        let out = render_assistant_message(
-            "answer",
-            "deliberating",
-            &caps(),
-            DisplayToggles::default(),
-            80,
-        );
+        let toggles = DisplayToggles {
+            thinking_visible: false,
+            secondary_fields_visible: false,
+        };
+        let out = render_assistant_message("answer", "deliberating", &caps(), toggles, 80);
         assert!(!out.contains("deliberating"), "got: {out:?}");
     }
 
@@ -619,8 +667,10 @@ mod tests {
 
     #[test]
     fn structured_assistant_message_renders_secondary_when_visible() {
-        let mut toggles = DisplayToggles::default();
-        toggles.toggle();
+        let toggles = DisplayToggles {
+            thinking_visible: true,
+            secondary_fields_visible: true,
+        };
         let json = r#"{"text": "primary value", "extra": "secondary value"}"#;
         let out = render_assistant_message(json, "", &caps(), toggles, 80);
         assert!(out.contains("primary value"), "got: {out:?}");

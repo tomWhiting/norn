@@ -225,9 +225,6 @@ pub(crate) fn dim_line_count(text: &str, cols: u16) -> u16 {
             visible.div_ceil(cols)
         };
     }
-    if text.ends_with('\n') && total_lines > 0 {
-        total_lines -= 1;
-    }
     u16::try_from(total_lines).unwrap_or(u16::MAX).max(1)
 }
 
@@ -459,6 +456,11 @@ mod tests {
     #[test]
     fn dim_line_count_empty() {
         assert_eq!(dim_line_count("", 80), 0);
+    }
+
+    #[test]
+    fn dim_line_count_includes_trailing_newline_cursor_row() {
+        assert_eq!(dim_line_count("| H1 | H2 |\n", 80), 2);
     }
 
     #[test]

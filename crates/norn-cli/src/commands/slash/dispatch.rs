@@ -19,7 +19,7 @@
 use norn::agent_loop::commands::{PreprocessResult, SlashCommandRegistry, preprocess_input};
 use norn::error::NornError;
 
-use super::registry::CLI_BUILTIN_NAMES;
+use super::registry::cli_builtin_names;
 
 /// Outcome reported by [`dispatch_input`].
 #[derive(Debug, Clone)]
@@ -77,7 +77,7 @@ fn split_command(input: &str) -> Option<(&str, &str)> {
 }
 
 fn is_cli_builtin(name: &str) -> bool {
-    CLI_BUILTIN_NAMES.contains(&name)
+    cli_builtin_names().contains(&name)
 }
 
 #[cfg(test)]

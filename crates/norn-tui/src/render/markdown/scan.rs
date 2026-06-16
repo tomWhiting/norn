@@ -1,7 +1,7 @@
 //! Pending-buffer scan for the streaming markdown renderer.
 //!
 //! [`scan_pending`] walks a byte stream looking for unclosed code
-//! fences, unclosed inline emphasis markers, and in-progress tables,
+//! fences, unclosed inline emphasis markers, and likely in-progress tables,
 //! returning the earliest position at which it is safe to flush content
 //! through pulldown-cmark plus a flag indicating whether the buffer
 //! ends inside an unclosed fence (so
@@ -30,10 +30,16 @@ pub(super) struct ScanResult {
     /// `true`, `finalize` flushes the buffer as plain text instead of
     /// invoking the markdown parser.
     pub(super) fence_unclosed: bool,
+    /// Whether the buffer currently holds an in-progress pipe table.
+    ///
+    /// Streaming table previews are suppressed while this is true. A
+    /// multi-line dim preview can scroll into permanent history before
+    /// the line-pop erase path has a chance to replace it.
+    pub(super) table_unclosed: bool,
 }
 
 /// Scan `s` for unclosed code fences, inline emphasis markers, and
-/// in-progress tables.
+/// likely in-progress tables.
 ///
 /// Walks the input byte-by-byte tracking four pieces of state:
 ///
@@ -47,10 +53,12 @@ pub(super) struct ScanResult {
 ///    before italic so `***` reads as `**` then `*`, and `~~~` outside
 ///    a fence reads as `~~` then `~` (the latter is harmless plain
 ///    text).
-/// 3. Lines containing `|` start a streaming-table buffering window
-///    that persists until a blank line, a non-pipe line, or
+/// 3. Table-like pipe rows start a streaming-table buffering window
+///    that persists until a blank line, a non-table-like line, or
 ///    end-of-buffer terminates it. Mirrors the fence-buffer pattern so
-///    pulldown-cmark sees complete tables rather than line-fragments.
+///    pulldown-cmark sees complete tables rather than line-fragments,
+///    without hiding ordinary prose or shell snippets containing a
+///    single pipe.
 ///
 /// Returns the position of the earliest unclosed marker, the earliest
 /// open fence, or the earliest table header line — whichever comes
@@ -67,7 +75,6 @@ pub(super) fn scan_pending(s: &str) -> ScanResult {
     let mut strike_open: Option<usize> = None;
     let mut table_start: Option<usize> = None;
     let mut line_start: usize = 0;
-    let mut line_has_pipe = false;
 
     while i < n {
         // Triple-marker check — fence open or close. Open only at line
@@ -112,7 +119,6 @@ pub(super) fn scan_pending(s: &str) -> ScanResult {
         if fence_kind.is_some() {
             if bytes[i] == b'\n' {
                 line_start = i + 1;
-                line_has_pipe = false;
             }
             i += 1;
             continue;
@@ -144,21 +150,27 @@ pub(super) fn scan_pending(s: &str) -> ScanResult {
             i += 1;
             continue;
         }
-        if bytes[i] == b'|' {
-            line_has_pipe = true;
-            if table_start.is_none() {
-                table_start = Some(line_start);
-            }
-        }
         if bytes[i] == b'\n' {
-            let line_was_blank = i == line_start;
-            if line_was_blank || !line_has_pipe {
+            let line = &bytes[line_start..i];
+            if is_blank_line(line) {
+                table_start = None;
+            } else if is_table_like_row(line) {
+                table_start.get_or_insert(line_start);
+            } else {
                 table_start = None;
             }
             line_start = i + 1;
-            line_has_pipe = false;
         }
         i += 1;
+    }
+
+    if line_start < n {
+        let line = &bytes[line_start..n];
+        if is_table_like_row(line) {
+            table_start.get_or_insert(line_start);
+        } else if !is_blank_line(line) {
+            table_start = None;
+        }
     }
 
     let mut earliest = n;
@@ -181,6 +193,7 @@ pub(super) fn scan_pending(s: &str) -> ScanResult {
     ScanResult {
         safe_end: earliest,
         fence_unclosed: fence_kind.is_some(),
+        table_unclosed: table_start.is_some(),
     }
 }
 
@@ -203,6 +216,40 @@ fn is_valid_fence_close(bytes: &[u8], pos: usize, n: usize) -> bool {
         }
     }
     true
+}
+
+fn is_blank_line(line: &[u8]) -> bool {
+    line.iter().all(u8::is_ascii_whitespace)
+}
+
+fn is_table_like_row(line: &[u8]) -> bool {
+    let trimmed = trim_ascii(line);
+    if trimmed.is_empty() || !trimmed.contains(&b'|') {
+        return false;
+    }
+    if trimmed.starts_with(b"|") || trimmed.ends_with(b"|") {
+        return true;
+    }
+    let mut cell_count = 0;
+    for cell in trimmed.split(|&b| b == b'|') {
+        if trim_ascii(cell).is_empty() {
+            return false;
+        }
+        cell_count += 1;
+    }
+    cell_count >= 3
+}
+
+fn trim_ascii(line: &[u8]) -> &[u8] {
+    let start = line
+        .iter()
+        .position(|b| !b.is_ascii_whitespace())
+        .unwrap_or(line.len());
+    let end = line
+        .iter()
+        .rposition(|b| !b.is_ascii_whitespace())
+        .map_or(start, |idx| idx + 1);
+    &line[start..end]
 }
 
 /// Fast check for whether `s` is pure plain text with no markdown
@@ -317,11 +364,36 @@ mod tests {
 
     #[test]
     fn scan_pending_table_header_line_holds_safe_end() {
-        // A line containing a pipe opens a table-buffering window —
+        // An obvious pipe-table row opens a table-buffering window:
         // safe_end clamps back to the line start so pulldown-cmark
         // receives the complete table at once.
         let r = scan_pending("intro\n| H1 | H2 |");
         assert_eq!(r.safe_end, "intro\n".len());
+        assert!(r.table_unclosed);
+    }
+
+    #[test]
+    fn scan_pending_single_pipe_text_does_not_open_table() {
+        let s = "run cmd | jq";
+        let r = scan_pending(s);
+        assert_eq!(r.safe_end, s.len());
+        assert!(!r.table_unclosed);
+    }
+
+    #[test]
+    fn scan_pending_single_separator_pipe_row_does_not_hold() {
+        let s = "intro\nA | B\n";
+        let r = scan_pending(s);
+        assert_eq!(r.safe_end, s.len());
+        assert!(!r.table_unclosed);
+    }
+
+    #[test]
+    fn scan_pending_shell_or_pipe_text_does_not_open_table() {
+        let s = "cmd || true";
+        let r = scan_pending(s);
+        assert_eq!(r.safe_end, s.len());
+        assert!(!r.table_unclosed);
     }
 
     #[test]
@@ -331,6 +403,7 @@ mod tests {
         let s = "| H |\n| - |\n| x |\n\nafter";
         let r = scan_pending(s);
         assert_eq!(r.safe_end, s.len());
+        assert!(!r.table_unclosed);
     }
 
     #[test]
@@ -338,6 +411,7 @@ mod tests {
         let s = "| H |\n| - |\nplain text\n";
         let r = scan_pending(s);
         assert_eq!(r.safe_end, s.len());
+        assert!(!r.table_unclosed);
     }
 
     #[test]

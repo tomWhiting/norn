@@ -4,12 +4,15 @@ pub use crate::error::SchemaError;
 
 pub use crate::r#loop::children_usage::ChildrenUsage;
 pub use crate::r#loop::commands::{
-    CustomSlashHandler, PreprocessResult, SlashCommand, SlashCommandHandler, SlashCommandRegistry,
-    preprocess_input,
+    BuiltinSlashCommand, BuiltinSlashKind, CustomSlashHandler, EffortCommand, PreprocessResult,
+    ServiceTierCommand, SlashCommand, SlashCommandHandler, SlashCommandRegistry, SlashSurface,
+    builtin_slash_commands, effort_label, find_builtin_slash_command, parse_effort_command,
+    parse_service_tier_command, preprocess_input, service_tier_supported_for_model,
+    unsupported_service_tier_message,
 };
 pub use crate::r#loop::compaction::{
-    AutoCompactArgs, AutoCompactionRun, CompactionState, CompactionSummarySource, TimeoutState,
-    maybe_auto_compact,
+    AutoCompactArgs, AutoCompactionRun, CompactionState, CompactionSummarySource,
+    ManualCompactionEstimate, TimeoutState, estimate_manual_compaction, maybe_auto_compact,
 };
 pub use crate::r#loop::iteration::{
     IterationMonitorConfig, IterationMonitorState, IterationSignal, QualitySignal,

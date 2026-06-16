@@ -22,8 +22,24 @@ const SEPARATOR_CHAR: char = '═';
 /// `\r\n` before writing, ensuring lines start at column 0 in the scroll
 /// region.
 pub fn write_to_scroll<W: io::Write>(content: &str, writer: &mut W) -> io::Result<()> {
-    let translated = content.replace('\n', "\r\n");
+    if !content.contains('\n') {
+        return writer.write_all(content.as_bytes());
+    }
+    let translated = normalize_newlines(content);
     writer.write_all(translated.as_bytes())
+}
+
+fn normalize_newlines(content: &str) -> String {
+    let mut translated = String::with_capacity(content.len());
+    let mut previous_was_carriage_return = false;
+    for ch in content.chars() {
+        if ch == '\n' && !previous_was_carriage_return {
+            translated.push('\r');
+        }
+        translated.push(ch);
+        previous_was_carriage_return = ch == '\r';
+    }
+    translated
 }
 
 /// Append a full-width separator line centred on `label`.
@@ -69,6 +85,22 @@ mod tests {
         write_to_scroll("second\n", &mut buf).unwrap();
         let out = String::from_utf8(buf).unwrap();
         assert_eq!(out, "first\r\nsecond\r\n");
+    }
+
+    #[test]
+    fn write_to_scroll_preserves_existing_crlf() {
+        let mut buf: Vec<u8> = Vec::new();
+        write_to_scroll("first\r\nsecond\r\n", &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert_eq!(out, "first\r\nsecond\r\n");
+    }
+
+    #[test]
+    fn write_to_scroll_handles_mixed_newline_forms() {
+        let mut buf: Vec<u8> = Vec::new();
+        write_to_scroll("a\nb\r\nc\rd\n", &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert_eq!(out, "a\r\nb\r\nc\rd\r\n");
     }
 
     #[test]

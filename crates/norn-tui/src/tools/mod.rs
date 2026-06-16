@@ -5,6 +5,7 @@ mod helpers;
 pub mod minimal;
 pub mod renderer;
 pub mod rich;
+pub mod status;
 
 pub use renderer::{ToolRenderer, renderer_for};
 

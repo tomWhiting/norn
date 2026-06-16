@@ -21,6 +21,7 @@ use super::minimal::{
     CloseAgentRenderer, ForkRenderer, SignalAgentRenderer, SpawnAgentRenderer, WaitAgentRenderer,
 };
 use super::rich::{ApplyPatchRenderer, BashRenderer, EditRenderer, ReadRenderer, SearchRenderer};
+use super::status::{ActionLogRenderer, AgentsRenderer};
 use crate::render::content::ContentBlock;
 use crate::terminal::caps::TerminalCaps;
 
@@ -97,6 +98,8 @@ pub fn renderer_for(tool_name: &str) -> Option<Box<dyn ToolRenderer>> {
         "task" => Some(Box::new(TaskRenderer)),
         "skill" => Some(Box::new(SkillRenderer)),
         "tool_search" => Some(Box::new(ToolSearchRenderer)),
+        "action_log" => Some(Box::new(ActionLogRenderer)),
+        "agents" => Some(Box::new(AgentsRenderer)),
         // Tier 3 — minimal
         "spawn_agent" => Some(Box::new(SpawnAgentRenderer)),
         "fork" => Some(Box::new(ForkRenderer)),
@@ -127,6 +130,8 @@ mod tests {
             "task",
             "skill",
             "tool_search",
+            "action_log",
+            "agents",
             "spawn_agent",
             "fork",
             "signal_agent",

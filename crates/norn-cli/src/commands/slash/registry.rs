@@ -2,7 +2,7 @@
 //!
 //! [`build_slash_registry`] merges a (currently empty by design)
 //! profile-supplied [`SlashCommandRegistry`] with the CLI
-//! built-in commands listed in [`CLI_BUILTIN_NAMES`]. Profile commands
+//! built-in commands from libnorn's shared slash catalog. Profile commands
 //! are registered first; CLI builtins overwrite same-named entries
 //! second so the CLI surface always wins on collision. After both
 //! sources have been applied the function populates the
@@ -20,10 +20,13 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
-use norn::agent_loop::commands::{
-    CustomSlashHandler, SlashCommand, SlashCommandHandler, SlashCommandRegistry,
+use norn::agent_loop::{
+    BuiltinSlashKind, CustomSlashHandler, EffortCommand, ServiceTierCommand, SlashCommand,
+    SlashCommandHandler, SlashCommandRegistry, SlashSurface, builtin_slash_commands, effort_label,
+    parse_effort_command, parse_service_tier_command, service_tier_supported_for_model,
+    unsupported_service_tier_message,
 };
-use norn::provider::request::ReasoningEffort;
+use norn::provider::request::ServiceTier;
 
 use crate::config::parse_inline_or_file;
 use crate::session::SessionManager;
@@ -33,23 +36,12 @@ use super::state::SlashState;
 /// CLI built-in command names. The CLI surface registers each entry as
 /// a [`SlashCommandHandler::Custom`] so the slash dispatcher can
 /// intercept by name before invoking the agent.
-pub const CLI_BUILTIN_NAMES: &[&str] = &[
-    "help",
-    "tools",
-    "model",
-    "effort",
-    "reasoning-effort",
-    "service-tier",
-    "fast",
-    "schema",
-    "compact",
-    "clear",
-    "session",
-    "name",
-    "variables",
-    "exit",
-    "quit",
-];
+#[must_use]
+pub fn cli_builtin_names() -> Vec<&'static str> {
+    builtin_slash_commands(SlashSurface::Cli)
+        .map(|command| command.name)
+        .collect()
+}
 
 /// Static `(name, description)` rows used by `/help` and by the
 /// initial population of
@@ -57,29 +49,12 @@ pub const CLI_BUILTIN_NAMES: &[&str] = &[
 ///
 /// `/exit` and `/quit` are deliberately listed with the same description
 /// so users see both aliases in `/help` output.
-pub const BUILTIN_DESCRIPTIONS: &[(&str, &str)] = &[
-    ("help", "Show available commands"),
-    ("tools", "List available tools"),
-    ("model", "Show or switch the active model"),
-    ("effort", "Show, set, or clear the active reasoning effort"),
-    ("reasoning-effort", "Alias for /effort"),
-    (
-        "service-tier",
-        "Show, set, or clear the active service tier",
-    ),
-    ("fast", "Use the fast service tier"),
-    ("schema", "Show or set the output schema"),
-    ("compact", "Compact older conversation context"),
-    ("clear", "Reset the conversation history"),
-    (
-        "session",
-        "Show session ID, name, turn count, and token totals",
-    ),
-    ("name", "Set the session's human-readable name"),
-    ("variables", "List active session variables"),
-    ("exit", "Exit the REPL"),
-    ("quit", "Exit the REPL"),
-];
+#[must_use]
+pub fn builtin_descriptions() -> Vec<(&'static str, &'static str)> {
+    builtin_slash_commands(SlashSurface::Cli)
+        .map(|command| (command.name, command.cli_description))
+        .collect()
+}
 
 /// Placeholder description used for profile-registered slash commands.
 /// libnorn's [`SlashCommand`] struct does not carry a description field,
@@ -125,7 +100,7 @@ pub fn build_slash_registry(
 
 /// Refresh the `command_descriptions` snapshot inside `state` from the
 /// merged registry. CLI builtins use their fixed
-/// [`BUILTIN_DESCRIPTIONS`] descriptions; every other name is tagged
+/// shared built-in descriptions; every other name is tagged
 /// [`PROFILE_DESCRIPTION_PLACEHOLDER`].
 ///
 /// Public so tests can exercise the snapshot in isolation when the
@@ -147,27 +122,29 @@ pub fn refresh_command_snapshot(registry: &SlashCommandRegistry, state: &SlashSt
 }
 
 fn builtin_description_map() -> std::collections::HashMap<&'static str, &'static str> {
-    BUILTIN_DESCRIPTIONS.iter().copied().collect()
+    builtin_descriptions().into_iter().collect()
 }
 
 fn register_cli_builtins(registry: &mut SlashCommandRegistry, state: &SlashState) {
-    register_custom(registry, "help", help_handler(state));
-    register_custom(registry, "tools", tools_handler(state));
-    register_custom(registry, "model", model_handler(state));
-    let effort_arc = effort_handler(state);
-    register_custom(registry, "effort", Arc::clone(&effort_arc));
-    register_custom(registry, "reasoning-effort", effort_arc);
-    register_custom(registry, "service-tier", service_tier_handler(state));
-    register_custom(registry, "fast", fast_handler(state));
-    register_custom(registry, "schema", schema_handler(state));
-    register_custom(registry, "compact", compact_handler(state));
-    register_custom(registry, "clear", clear_handler(state));
-    register_custom(registry, "session", session_handler(state));
-    register_custom(registry, "name", name_handler(state));
-    register_custom(registry, "variables", variables_handler(state));
-    let exit_arc = exit_handler(state);
-    register_custom(registry, "exit", Arc::clone(&exit_arc));
-    register_custom(registry, "quit", exit_arc);
+    for command in builtin_slash_commands(SlashSurface::Cli) {
+        let handler = match command.kind {
+            BuiltinSlashKind::Help => help_handler(state),
+            BuiltinSlashKind::Tools => tools_handler(state),
+            BuiltinSlashKind::Model => model_handler(state),
+            BuiltinSlashKind::Effort => effort_handler(state),
+            BuiltinSlashKind::ServiceTier => service_tier_handler(state),
+            BuiltinSlashKind::Fast => fast_handler(state),
+            BuiltinSlashKind::Schema => schema_handler(state),
+            BuiltinSlashKind::Compact => compact_handler(state),
+            BuiltinSlashKind::Clear => clear_handler(state),
+            BuiltinSlashKind::Session => session_handler(state),
+            BuiltinSlashKind::Name => name_handler(state),
+            BuiltinSlashKind::Variables => variables_handler(state),
+            BuiltinSlashKind::Exit | BuiltinSlashKind::Quit => exit_handler(state),
+            BuiltinSlashKind::New => continue,
+        };
+        register_custom(registry, command.name, handler);
+    }
 }
 
 fn register_custom(registry: &mut SlashCommandRegistry, name: &str, handler: CustomSlashHandler) {
@@ -212,6 +189,7 @@ fn tools_handler(state: &SlashState) -> CustomSlashHandler {
 
 fn model_handler(state: &SlashState) -> CustomSlashHandler {
     let model = Arc::clone(&state.model);
+    let service_tier = Arc::clone(&state.service_tier);
     Arc::new(move |arg| {
         let trimmed = arg.trim();
         if trimmed.is_empty() {
@@ -219,7 +197,15 @@ fn model_handler(state: &SlashState) -> CustomSlashHandler {
             eprintln!("{current}");
         } else {
             trimmed.clone_into(&mut model.lock());
-            eprintln!("Switched to model: {trimmed}");
+            let cleared_tier = clear_unsupported_service_tier(trimmed, &service_tier);
+            if let Some(tier) = cleared_tier {
+                eprintln!(
+                    "Switched to model: {trimmed}; cleared service tier '{}' because it is unsupported",
+                    tier.as_str(),
+                );
+            } else {
+                eprintln!("Switched to model: {trimmed}");
+            }
         }
         Ok(Vec::new())
     })
@@ -227,42 +213,12 @@ fn model_handler(state: &SlashState) -> CustomSlashHandler {
 
 // -- /effort / /reasoning-effort -------------------------------------------
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EffortCommand {
-    Set(ReasoningEffort),
-    Clear,
-}
-
-fn parse_effort_command(value: &str) -> Option<EffortCommand> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "none" => Some(EffortCommand::Set(ReasoningEffort::None)),
-        "low" => Some(EffortCommand::Set(ReasoningEffort::Low)),
-        "medium" => Some(EffortCommand::Set(ReasoningEffort::Medium)),
-        "high" => Some(EffortCommand::Set(ReasoningEffort::High)),
-        "x-high" | "xhigh" => Some(EffortCommand::Set(ReasoningEffort::XHigh)),
-        "default" | "off" | "clear" => Some(EffortCommand::Clear),
-        _ => None,
-    }
-}
-
-fn effort_label(effort: ReasoningEffort) -> &'static str {
-    match effort {
-        ReasoningEffort::None => "none",
-        ReasoningEffort::Low => "low",
-        ReasoningEffort::Medium => "medium",
-        ReasoningEffort::High => "high",
-        ReasoningEffort::XHigh => "x-high",
-    }
-}
-
 fn effort_handler(state: &SlashState) -> CustomSlashHandler {
     let reasoning_effort = Arc::clone(&state.reasoning_effort);
     Arc::new(move |arg| {
         let trimmed = arg.trim();
         if trimmed.is_empty() {
-            let current = (*reasoning_effort.lock())
-                .map(effort_label)
-                .unwrap_or("default");
+            let current = (*reasoning_effort.lock()).map_or("default", effort_label);
             eprintln!("{current}");
             return Ok(Vec::new());
         }
@@ -289,6 +245,7 @@ fn effort_handler(state: &SlashState) -> CustomSlashHandler {
 
 fn service_tier_handler(state: &SlashState) -> CustomSlashHandler {
     let service_tier = Arc::clone(&state.service_tier);
+    let model = Arc::clone(&state.model);
     Arc::new(move |arg| {
         let trimmed = arg.trim().to_ascii_lowercase();
         if trimmed.is_empty() {
@@ -299,17 +256,22 @@ fn service_tier_handler(state: &SlashState) -> CustomSlashHandler {
             eprintln!("{current}");
             return Ok(Vec::new());
         }
-        match trimmed.as_str() {
-            "fast" => {
-                *service_tier.lock() = Some(norn::provider::request::ServiceTier::Fast);
-                eprintln!("Service tier: fast");
+        match parse_service_tier_command(&trimmed) {
+            Some(ServiceTierCommand::Fast) => {
+                let model_name = model.lock().clone();
+                if service_tier_supported_for_model(&model_name, ServiceTier::Fast) {
+                    *service_tier.lock() = Some(ServiceTier::Fast);
+                    eprintln!("Service tier: fast");
+                } else {
+                    eprintln!("{}", unsupported_service_tier_message(&model_name, "fast"));
+                }
             }
-            "none" | "off" | "default" => {
+            Some(ServiceTierCommand::Clear) => {
                 *service_tier.lock() = None;
                 eprintln!("Service tier cleared.");
             }
-            other => {
-                eprintln!("norn: invalid service tier '{other}'; expected fast or none");
+            None => {
+                eprintln!("norn: invalid service tier '{trimmed}'; expected fast or none");
             }
         }
         Ok(Vec::new())
@@ -318,11 +280,30 @@ fn service_tier_handler(state: &SlashState) -> CustomSlashHandler {
 
 fn fast_handler(state: &SlashState) -> CustomSlashHandler {
     let service_tier = Arc::clone(&state.service_tier);
+    let model = Arc::clone(&state.model);
     Arc::new(move |_arg| {
-        *service_tier.lock() = Some(norn::provider::request::ServiceTier::Fast);
-        eprintln!("Service tier: fast");
+        let model_name = model.lock().clone();
+        if service_tier_supported_for_model(&model_name, ServiceTier::Fast) {
+            *service_tier.lock() = Some(ServiceTier::Fast);
+            eprintln!("Service tier: fast");
+        } else {
+            eprintln!("{}", unsupported_service_tier_message(&model_name, "fast"));
+        }
         Ok(Vec::new())
     })
+}
+
+fn clear_unsupported_service_tier(
+    model: &str,
+    service_tier: &Arc<parking_lot::Mutex<Option<ServiceTier>>>,
+) -> Option<ServiceTier> {
+    let mut guard = service_tier.lock();
+    let tier = (*guard)?;
+    if service_tier_supported_for_model(model, tier) {
+        return None;
+    }
+    *guard = None;
+    Some(tier)
 }
 
 // -- /schema ----------------------------------------------------------------
@@ -475,7 +456,7 @@ mod tests {
     use std::sync::atomic::Ordering;
 
     use norn::error::NornError;
-    use norn::provider::request::{Message, ServiceTier};
+    use norn::provider::request::{Message, ReasoningEffort, ServiceTier};
     use norn::session::store::EventStore;
 
     use super::super::state::{SlashState, SlashStateSeed};
@@ -517,10 +498,11 @@ mod tests {
     fn registry_contains_all_builtins() {
         let state = SlashState::new(empty_seed());
         let registry = build_slash_registry(&state, None);
-        for name in CLI_BUILTIN_NAMES {
+        let names = cli_builtin_names();
+        for name in &names {
             assert!(registry.get(name).is_some(), "missing CLI builtin: /{name}");
         }
-        assert_eq!(registry.len(), CLI_BUILTIN_NAMES.len());
+        assert_eq!(registry.len(), names.len());
     }
 
     #[test]
@@ -528,8 +510,9 @@ mod tests {
         let state = SlashState::new(empty_seed());
         let _registry = build_slash_registry(&state, None);
         let rows = state.command_descriptions.lock().clone();
-        assert_eq!(rows.len(), CLI_BUILTIN_NAMES.len());
-        for name in CLI_BUILTIN_NAMES {
+        let names = cli_builtin_names();
+        assert_eq!(rows.len(), names.len());
+        for name in &names {
             assert!(
                 rows.iter().any(|(n, _)| n == name),
                 "/help snapshot missing /{name}",
@@ -619,7 +602,9 @@ mod tests {
 
     #[test]
     fn service_tier_commands_update_runtime_state() {
-        let state = SlashState::new(empty_seed());
+        let mut seed = empty_seed();
+        seed.model = "gpt-5.5".to_owned();
+        let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
 
         fire(&registry, "service-tier", "fast");
@@ -630,6 +615,34 @@ mod tests {
 
         fire(&registry, "fast", "");
         assert_eq!(state.service_tier_snapshot(), Some(ServiceTier::Fast));
+    }
+
+    #[test]
+    fn service_tier_fast_rejects_unsupported_model() {
+        let mut seed = empty_seed();
+        seed.model = "gpt-5.4-mini".to_owned();
+        let state = SlashState::new(seed);
+        let registry = build_slash_registry(&state, None);
+
+        fire(&registry, "service-tier", "fast");
+        assert_eq!(state.service_tier_snapshot(), None);
+
+        fire(&registry, "fast", "");
+        assert_eq!(state.service_tier_snapshot(), None);
+    }
+
+    #[test]
+    fn model_switch_clears_unsupported_service_tier() {
+        let mut seed = empty_seed();
+        seed.model = "gpt-5.5".to_owned();
+        seed.service_tier = Some(ServiceTier::Fast);
+        let state = SlashState::new(seed);
+        let registry = build_slash_registry(&state, None);
+
+        fire(&registry, "model", "gpt-5.4-mini");
+
+        assert_eq!(state.model_snapshot(), "gpt-5.4-mini");
+        assert_eq!(state.service_tier_snapshot(), None);
     }
 
     #[test]

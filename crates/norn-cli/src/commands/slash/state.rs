@@ -91,8 +91,7 @@ pub struct SlashState {
     pub tools_snapshot: Arc<Vec<(String, String)>>,
 
     /// Snapshot of `(command_name, description)` rows used by `/help`.
-    /// CLI builtins have a fixed description (see
-    /// [`super::registry::BUILTIN_DESCRIPTIONS`]); profile-registered
+    /// CLI builtins have a fixed shared-catalog description; profile-registered
     /// commands appear with the placeholder string `"(profile)"`.
     pub command_descriptions: Arc<Mutex<Vec<(String, String)>>>,
 

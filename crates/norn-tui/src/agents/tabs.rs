@@ -214,11 +214,11 @@ impl TabState {
 /// terminal (CO7 — append-only at the cursor).
 ///
 /// `toggles.thinking_visible` controls whether persisted
-/// `AssistantMessage.thinking` content surfaces under the dim
-/// `thinking: …` prefix; the underlying renderer
-/// ([`crate::events::render_assistant_message`]) reads the field
-/// from the event itself so replay sees the same thinking the live
-/// session recorded.
+/// `AssistantMessage.thinking` content surfaces in the scrollback. The
+/// underlying renderer ([`crate::events::render_assistant_message`])
+/// reads the field from the event itself so replay sees the same
+/// thinking the live session recorded, including GPT-style `Thought
+/// about ...` summary blocks.
 ///
 /// # Errors
 ///
@@ -598,8 +598,7 @@ mod tests {
             .append(assistant("answer", "deliberating"))
             .expect("append");
 
-        let mut toggles = DisplayToggles::default();
-        toggles.toggle();
+        let toggles = DisplayToggles::default();
         assert!(toggles.thinking_visible);
 
         let mut buf: Vec<u8> = Vec::new();
@@ -616,13 +615,37 @@ mod tests {
     }
 
     #[test]
+    fn replay_assistant_with_markdown_summary_renders_thought_block() {
+        let store = EventStore::new();
+        store
+            .append(assistant(
+                "answer",
+                "**Creating a markdown table**\n\nI need to prepare an answer.",
+            ))
+            .expect("append");
+
+        let mut buf: Vec<u8> = Vec::new();
+        replay_events(&store, 5, &caps(), DisplayToggles::default(), 80, &mut buf).expect("replay");
+        let out = String::from_utf8(buf).expect("utf8");
+        assert!(out.contains("Thought about"), "got: {out:?}");
+        assert!(out.contains("Creating a markdown table"), "got: {out:?}");
+        assert!(out.contains("I need to prepare an answer."), "got: {out:?}");
+        assert!(!out.contains("thinking:"), "got: {out:?}");
+        assert!(out.contains("answer"), "got: {out:?}");
+    }
+
+    #[test]
     fn replay_assistant_without_thinking_visible_omits_thinking() {
         let store = EventStore::new();
         store
             .append(assistant("answer", "deliberating"))
             .expect("append");
+        let toggles = DisplayToggles {
+            thinking_visible: false,
+            secondary_fields_visible: false,
+        };
         let mut buf: Vec<u8> = Vec::new();
-        replay_events(&store, 5, &caps(), DisplayToggles::default(), 80, &mut buf).expect("replay");
+        replay_events(&store, 5, &caps(), toggles, 80, &mut buf).expect("replay");
         let out = String::from_utf8(buf).expect("utf8");
         assert!(
             !out.contains("deliberating"),

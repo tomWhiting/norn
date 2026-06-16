@@ -117,7 +117,7 @@ pub(crate) fn build_payload(
     let tools: Vec<serde_json::Value> = request.tools.iter().map(serialize_tool).collect();
 
     let reasoning = Some(ReasoningParam {
-        effort: request.reasoning_effort.clone(),
+        effort: request.reasoning_effort,
         summary: request.reasoning_summary.clone().unwrap_or_default(),
     });
 

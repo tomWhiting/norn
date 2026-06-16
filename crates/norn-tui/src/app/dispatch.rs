@@ -3,10 +3,10 @@
 //! [`handle_agent_event`] is the top-level entry point: it receives
 //! a tagged [`AgentEvent`] and routes by payload kind and agent
 //! identity — root provider events flow through the full rendering
-//! pipeline via [`handle_provider_event`], child provider events route
-//! only to the activity log and agent status panel via
-//! [`handle_child_event`], and typed subagent lifecycle events drive
-//! the status panel via [`handle_subagent_lifecycle`].
+//! pipeline via [`handle_provider_event`], child provider events update
+//! live child status/activity via [`handle_child_event`], and typed
+//! subagent lifecycle events drive the status panel via
+//! [`handle_subagent_lifecycle`].
 //!
 //! The rendering legs live in sibling modules: [`super::streaming`]
 //! owns the dim-stream text/thinking path and [`super::tool_calls`]
@@ -17,7 +17,7 @@ use std::time::{Duration, Instant};
 use norn::agent_loop::config::AgentStepResult;
 use norn::error::{NornError, ProviderError};
 use norn::provider::agent_event::{
-    AgentEvent, AgentEventKind, AgentMessageLifecycle, SubagentLifecycle,
+    AgentEvent, AgentEventKind, AgentMessageLifecycle, SubagentKind, SubagentLifecycle,
 };
 use norn::provider::events::ProviderEvent;
 use norn::provider::usage::Usage;
@@ -35,7 +35,7 @@ use super::helpers::{
     flush_terminal, format_usage_summary,
 };
 use super::state::AppState;
-use super::streaming::{clear_thinking_buffer, handle_text_delta, handle_thinking_delta};
+use super::streaming::{finish_thinking_block, handle_text_delta, handle_thinking_delta};
 use super::tool_calls::{
     accumulate_tool_call_delta, handle_tool_call_complete, handle_tool_result,
 };
@@ -113,28 +113,58 @@ fn message_activity_entry(
     }
 }
 
+fn subagent_kind_label(kind: SubagentKind) -> &'static str {
+    match kind {
+        SubagentKind::Spawn => "spawn",
+        SubagentKind::Fork => "fork",
+    }
+}
+
 /// Route a typed subagent lifecycle event to the status panel.
 ///
-/// `Started` seeds the child's activity as idle (its row appears from
-/// the registry snapshot); `Completed` sets the terminal result text the
-/// panel shows during its hold window. Hold/reclaim timing itself is
-/// registry-status-driven and untouched here.
+/// `Started` records the child's provenance in the activity log and
+/// seeds its activity as idle. `Completed` sets the terminal result text
+/// the panel shows during its hold window and records error/stop context
+/// when present. Hold/reclaim timing itself is registry-status-driven
+/// and untouched here.
 fn handle_subagent_lifecycle(state: &mut AppState, lifecycle: &SubagentLifecycle) {
     match lifecycle {
-        SubagentLifecycle::Started { child_id, .. } => {
+        SubagentLifecycle::Started {
+            child_id,
+            descriptor,
+            ..
+        } => {
             state
                 .agent_panel
                 .set_activity(*child_id, AgentActivity::Idle);
+            state.activity_log.push(ActivityLogEntry {
+                agent_role: descriptor.role.clone(),
+                tool_name: format!("{} started", subagent_kind_label(descriptor.kind)),
+                description: Some(descriptor.model.clone()),
+                at: Instant::now(),
+            });
         }
         SubagentLifecycle::Completed {
             child_id,
+            descriptor,
             succeeded,
+            error,
+            stop,
             ..
         } => {
             let summary = if *succeeded { "completed" } else { "failed" };
             state
                 .agent_panel
                 .set_activity(*child_id, AgentActivity::Result(summary.to_string()));
+            let description = error
+                .clone()
+                .or_else(|| stop.as_ref().map(|reason| format!("{reason:?}")));
+            state.activity_log.push(ActivityLogEntry {
+                agent_role: descriptor.role.clone(),
+                tool_name: format!("{} {summary}", subagent_kind_label(descriptor.kind)),
+                description,
+                at: Instant::now(),
+            });
         }
     }
 }
@@ -142,10 +172,9 @@ fn handle_subagent_lifecycle(state: &mut AppState, lifecycle: &SubagentLifecycle
 /// Route a child agent's provider event to the activity log and status
 /// panel.
 ///
-/// Only `ToolCallComplete`, `ToolResult`, and `Done` carry
-/// meaningful observability data for the external printer; delta
-/// events from children are silently dropped since children don't
-/// render into the scroll region.
+/// Child text and thinking deltas update the status panel only; they do
+/// not stream into root scrollback. Complete tool calls, errors, and
+/// lifecycle-significant events also push compact activity-log rows.
 fn handle_child_event(
     state: &mut AppState,
     child_id: uuid::Uuid,
@@ -153,6 +182,23 @@ fn handle_child_event(
     event: ProviderEvent,
 ) {
     match event {
+        ProviderEvent::TextDelta { text } if !text.is_empty() => {
+            state
+                .agent_panel
+                .set_activity(child_id, AgentActivity::Running("writing".to_string()));
+        }
+        ProviderEvent::ThinkingDelta { text } if !text.is_empty() => {
+            state
+                .agent_panel
+                .set_activity(child_id, AgentActivity::Running("thinking".to_string()));
+        }
+        ProviderEvent::ToolCallDelta {
+            name: Some(name), ..
+        } => {
+            state
+                .agent_panel
+                .set_activity(child_id, AgentActivity::Running(name));
+        }
         ProviderEvent::ToolCallComplete {
             name, arguments, ..
         } => {
@@ -181,6 +227,17 @@ fn handle_child_event(
                 .agent_panel
                 .set_tokens(child_id, usage.input_tokens, usage.output_tokens);
         }
+        ProviderEvent::Error { error } => {
+            state
+                .agent_panel
+                .set_activity(child_id, AgentActivity::Result("error".to_string()));
+            state.activity_log.push(ActivityLogEntry {
+                agent_role: agent_role.to_string(),
+                tool_name: "error".to_string(),
+                description: Some(error.to_string()),
+                at: Instant::now(),
+            });
+        }
         _ => {}
     }
 }
@@ -195,7 +252,10 @@ pub fn handle_provider_event(
     state.note_event_received(Instant::now());
     match event {
         ProviderEvent::TextDelta { text } => handle_text_delta(state, guard, renderer, &text),
-        ProviderEvent::ThinkingDelta { text } => handle_thinking_delta(state, guard, &text),
+        ProviderEvent::ThinkingDelta { text } => {
+            handle_thinking_delta(state, &text);
+            Ok(())
+        }
         ProviderEvent::ToolCallDelta {
             item_id,
             name,
@@ -276,7 +336,7 @@ pub fn handle_done(
     usage: &Usage,
     renderer: &mut Option<MarkdownRenderer>,
 ) -> Result<(), TuiError> {
-    clear_thinking_buffer(state, guard)?;
+    finish_thinking_block(state, guard, renderer)?;
     flush_markdown(state, guard, renderer)?;
     if state.text_streamed_this_turn {
         write_to_scroll("\n", guard.terminal_mut())?;
@@ -299,6 +359,7 @@ pub fn handle_error(
     error: &ProviderError,
     renderer: &mut Option<MarkdownRenderer>,
 ) -> Result<(), TuiError> {
+    finish_thinking_block(state, guard, renderer)?;
     flush_pending(state, guard, renderer)?;
     write_error_line(state, guard, &error.to_string())
 }
@@ -314,6 +375,7 @@ pub fn finalise_turn(
     let Some(result) = step_result else {
         return Ok(());
     };
+    finish_thinking_block(state, guard, renderer)?;
     match result {
         Ok(step) => set_complete_from_step(state, &step),
         Err(err) => {
@@ -477,7 +539,7 @@ mod tests {
     // rendering pass — which is the only externally observable proof
     // that activity/tokens stuck — is identical regardless of caller.
 
-    fn state_with_one_child() -> (AppState, uuid::Uuid) {
+    fn state_with_one_child() -> (AppState, uuid::Uuid, uuid::Uuid) {
         let registry: Arc<RwLock<AgentRegistry>> = AgentRegistry::shared();
         let root_guard = AgentRegistry::reserve(
             &registry,
@@ -518,6 +580,7 @@ mod tests {
             None,
         )
         .unwrap();
+        let child_id = child_guard.id();
         child_guard.confirm().unwrap();
 
         let state = AppState::new(
@@ -527,12 +590,28 @@ mod tests {
             root_id,
             StatusBar::default(),
         );
-        (state, root_id)
+        (state, root_id, child_id)
+    }
+
+    fn render_agent_panel(state: &mut AppState) -> String {
+        let mut buf: Vec<u8> = Vec::new();
+        let caps = TerminalCaps::baseline();
+        state
+            .agent_panel
+            .render(
+                0,
+                &mut buf,
+                &caps,
+                std::time::Instant::now(),
+                chrono::Utc::now(),
+            )
+            .unwrap();
+        String::from_utf8(buf).unwrap()
     }
 
     #[test]
     fn tool_call_complete_running_activity_surfaces_in_render() {
-        let (mut state, root_id) = state_with_one_child();
+        let (mut state, root_id, _child_id) = state_with_one_child();
         // Mirror the dispatch hook for ProviderEvent::ToolCallComplete.
         state
             .agent_panel
@@ -559,7 +638,7 @@ mod tests {
 
     #[test]
     fn tool_result_sets_result_activity_on_root() {
-        let (mut state, root_id) = state_with_one_child();
+        let (mut state, root_id, _child_id) = state_with_one_child();
         // Mirror the dispatch hook for ProviderEvent::ToolResult.
         state
             .agent_panel
@@ -586,7 +665,7 @@ mod tests {
 
     #[test]
     fn done_event_sets_idle_and_token_counts() {
-        let (mut state, root_id) = state_with_one_child();
+        let (mut state, root_id, _child_id) = state_with_one_child();
         // Mirror the dispatch hook for ProviderEvent::Done.
         state.agent_panel.set_activity(root_id, AgentActivity::Idle);
         state.agent_panel.set_tokens(root_id, 5_000, 2_000);
@@ -658,7 +737,7 @@ mod tests {
     /// exercisable end-to-end, unlike the provider-event arms).
     #[test]
     fn message_event_pushes_activity_log_entry_via_helper() {
-        let (mut state, _root_id) = state_with_one_child();
+        let (mut state, _root_id, _child_id) = state_with_one_child();
         let lifecycle = AgentMessageLifecycle::Sent {
             message_id: uuid::Uuid::from_u128(9),
             from_id: uuid::Uuid::from_u128(1),
@@ -690,7 +769,7 @@ mod tests {
         // new entry with the tool name and the extracted envelope
         // description, agent_role hardcoded to "root" for the interim
         // wire.
-        let (mut state, _root_id) = state_with_one_child();
+        let (mut state, _root_id, _child_id) = state_with_one_child();
         let args = serde_json::json!({
             "tool_use_description": "listing docs folder",
             "command": "ls docs/"
@@ -716,7 +795,7 @@ mod tests {
         // Some("") from the envelope is normalised to None by
         // extract_tool_use_description — the activity log keeps the
         // same policy as the streaming indicator.
-        let (mut state, _root_id) = state_with_one_child();
+        let (mut state, _root_id, _child_id) = state_with_one_child();
         let args = serde_json::json!({
             "tool_use_description": "   ",
             "command": "ls"
@@ -732,5 +811,118 @@ mod tests {
 
         let entry = state.activity_log.entries().front().unwrap();
         assert!(entry.description.is_none());
+    }
+
+    #[test]
+    fn child_text_and_thinking_update_status_without_activity_spam() {
+        let (mut state, _root_id, child_id) = state_with_one_child();
+
+        handle_child_event(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            ProviderEvent::TextDelta {
+                text: "hello".to_string(),
+            },
+        );
+        let out = render_agent_panel(&mut state);
+        assert!(out.contains("writing"), "got: {out:?}");
+        assert_eq!(state.activity_log.len(), 0);
+
+        handle_child_event(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            ProviderEvent::ThinkingDelta {
+                text: "considering".to_string(),
+            },
+        );
+        let out = render_agent_panel(&mut state);
+        assert!(out.contains("thinking"), "got: {out:?}");
+        assert_eq!(state.activity_log.len(), 0);
+    }
+
+    #[test]
+    fn child_tool_delta_and_error_surface_live() {
+        let (mut state, _root_id, child_id) = state_with_one_child();
+
+        handle_child_event(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            ProviderEvent::ToolCallDelta {
+                item_id: "tc".to_string(),
+                name: Some("bash".to_string()),
+                arguments_delta: "{}".to_string(),
+                kind: norn::provider::request::ToolCallKind::Function,
+            },
+        );
+        let out = render_agent_panel(&mut state);
+        assert!(out.contains("bash"), "got: {out:?}");
+
+        handle_child_event(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            ProviderEvent::Error {
+                error: ProviderError::StreamInterrupted {
+                    reason: "network".to_string(),
+                },
+            },
+        );
+        let out = render_agent_panel(&mut state);
+        assert!(out.contains("error"), "got: {out:?}");
+        let entry = state.activity_log.entries().back().unwrap();
+        assert_eq!(entry.tool_name, "error");
+        assert!(entry.description.as_deref().unwrap().contains("network"));
+    }
+
+    #[test]
+    fn subagent_lifecycle_pushes_activity_with_descriptor_context() {
+        let (mut state, root_id, child_id) = state_with_one_child();
+        let descriptor = norn::provider::agent_event::SubagentDescriptor {
+            kind: norn::provider::agent_event::SubagentKind::Spawn,
+            role: "smoke-child".to_string(),
+            model: "gpt-5.5".to_string(),
+            profile: None,
+        };
+
+        handle_subagent_lifecycle(
+            &mut state,
+            &SubagentLifecycle::Started {
+                parent_id: root_id,
+                child_id,
+                descriptor: descriptor.clone(),
+                started_at: chrono::Utc::now(),
+            },
+        );
+        let started = state.activity_log.entries().back().unwrap();
+        assert_eq!(started.agent_role, "smoke-child");
+        assert_eq!(started.tool_name, "spawn started");
+        assert_eq!(started.description.as_deref(), Some("gpt-5.5"));
+
+        handle_subagent_lifecycle(
+            &mut state,
+            &SubagentLifecycle::Completed {
+                parent_id: root_id,
+                child_id,
+                descriptor,
+                started_at: chrono::Utc::now(),
+                completed_at: chrono::Utc::now(),
+                usage: Usage::default(),
+                subtree_usage: Usage::default(),
+                succeeded: false,
+                error: Some("cancelled by parent".to_string()),
+                stop: None,
+            },
+        );
+        let completed = state.activity_log.entries().back().unwrap();
+        assert_eq!(completed.tool_name, "spawn failed");
+        assert_eq!(
+            completed.description.as_deref(),
+            Some("cancelled by parent")
+        );
+        let out = render_agent_panel(&mut state);
+        assert!(out.contains("failed"), "got: {out:?}");
     }
 }

@@ -1,15 +1,15 @@
 //! Generate Rust model metadata from the workspace model catalog asset.
 
 use std::env;
+use std::fmt;
+use std::fmt::Write as _;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde_json::Value;
 
-fn main() {
-    if let Err(err) = run() {
-        panic!("model catalog generation failed: {err}");
-    }
+fn main() -> Result<(), String> {
+    run().map_err(|err| format!("model catalog generation failed: {err}"))
 }
 
 fn run() -> Result<(), String> {
@@ -71,17 +71,23 @@ fn generate_catalog(root: &Value) -> Result<String, String> {
     out.push_str(";\n\n");
 
     out.push_str("pub(super) const CATALOG: ModelCatalog = ModelCatalog {\n");
-    out.push_str(&format!("    schema_version: {schema_version},\n"));
+    push_fmt(
+        &mut out,
+        format_args!("    schema_version: {schema_version},\n"),
+    )?;
     out.push_str("    default: ModelSelection {\n");
-    out.push_str(&format!(
-        "        provider: {},\n",
-        rust_str(default_provider)
-    ));
-    out.push_str(&format!(
-        "        backend: {},\n",
-        rust_str(default_backend)
-    ));
-    out.push_str(&format!("        model: {},\n", rust_str(default_model)));
+    push_fmt(
+        &mut out,
+        format_args!("        provider: {},\n", rust_str(default_provider)),
+    )?;
+    push_fmt(
+        &mut out,
+        format_args!("        backend: {},\n", rust_str(default_backend)),
+    )?;
+    push_fmt(
+        &mut out,
+        format_args!("        model: {},\n", rust_str(default_model)),
+    )?;
     out.push_str("    },\n");
     out.push_str("    providers: &[\n");
 
@@ -98,11 +104,14 @@ fn generate_catalog(root: &Value) -> Result<String, String> {
         }
 
         out.push_str("        ProviderEntry {\n");
-        out.push_str(&format!("            id: {},\n", rust_str(provider_id)));
-        out.push_str(&format!(
-            "            display_name: {},\n",
-            rust_str(display_name)
-        ));
+        push_fmt(
+            &mut out,
+            format_args!("            id: {},\n", rust_str(provider_id)),
+        )?;
+        push_fmt(
+            &mut out,
+            format_args!("            display_name: {},\n", rust_str(display_name)),
+        )?;
         out.push_str("            backends: &[\n");
 
         for (backend_id, backend) in backends {
@@ -123,19 +132,28 @@ fn generate_catalog(root: &Value) -> Result<String, String> {
             }
 
             out.push_str("                BackendEntry {\n");
-            out.push_str(&format!(
-                "                    id: {},\n",
-                rust_str(backend_id)
-            ));
-            out.push_str(&format!(
-                "                    display_name: {},\n",
-                rust_str(backend_display_name)
-            ));
-            out.push_str(&format!("                    auth: {},\n", rust_str(auth)));
-            out.push_str(&format!(
-                "                    api_surface: {},\n",
-                rust_str(api_surface)
-            ));
+            push_fmt(
+                &mut out,
+                format_args!("                    id: {},\n", rust_str(backend_id)),
+            )?;
+            push_fmt(
+                &mut out,
+                format_args!(
+                    "                    display_name: {},\n",
+                    rust_str(backend_display_name)
+                ),
+            )?;
+            push_fmt(
+                &mut out,
+                format_args!("                    auth: {},\n", rust_str(auth)),
+            )?;
+            push_fmt(
+                &mut out,
+                format_args!(
+                    "                    api_surface: {},\n",
+                    rust_str(api_surface)
+                ),
+            )?;
             out.push_str("                    models: &[\n");
 
             for (model_id, model) in models {
@@ -143,95 +161,143 @@ fn generate_catalog(root: &Value) -> Result<String, String> {
                     format!("providers.{provider_id}.backends.{backend_id}.models.{model_id} must be an object")
                 })?;
                 out.push_str("                        ModelEntry {\n");
-                out.push_str(&format!(
-                    "                            id: {},\n",
-                    rust_str(model_id)
-                ));
-                out.push_str(&format!(
-                    "                            display_name: {},\n",
-                    rust_str(required_str(model_obj, "display_name")?)
-                ));
-                out.push_str(&format!(
-                    "                            description: {},\n",
-                    rust_str(required_str(model_obj, "description")?)
-                ));
-                out.push_str(&format!(
-                    "                            context_window: {},\n",
-                    required_u64(model_obj, "context_window")?
-                ));
-                out.push_str(&format!(
-                    "                            max_context_window: {},\n",
-                    required_u64(model_obj, "max_context_window")?
-                ));
-                out.push_str(&format!(
-                    "                            default_reasoning_effort: {},\n",
-                    rust_str(required_str(model_obj, "default_reasoning_effort")?)
-                ));
+                push_fmt(
+                    &mut out,
+                    format_args!("                            id: {},\n", rust_str(model_id)),
+                )?;
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            display_name: {},\n",
+                        rust_str(required_str(model_obj, "display_name")?)
+                    ),
+                )?;
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            description: {},\n",
+                        rust_str(required_str(model_obj, "description")?)
+                    ),
+                )?;
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            context_window: {},\n",
+                        rust_u64(required_u64(model_obj, "context_window")?)
+                    ),
+                )?;
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            max_context_window: {},\n",
+                        rust_u64(required_u64(model_obj, "max_context_window")?)
+                    ),
+                )?;
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            default_reasoning_effort: {},\n",
+                        rust_str(required_str(model_obj, "default_reasoning_effort")?)
+                    ),
+                )?;
                 out.push_str("                            supported_reasoning_efforts: ");
                 out.push_str(&rust_str_slice(required_str_array(
                     model_obj,
                     "supported_reasoning_efforts",
                 )?));
                 out.push_str(",\n");
-                out.push_str(&format!(
-                    "                            default_reasoning_summary: {},\n",
-                    rust_str(required_str(model_obj, "default_reasoning_summary")?)
-                ));
-                out.push_str(&format!(
-                    "                            supports_reasoning_summaries: {},\n",
-                    required_bool(model_obj, "supports_reasoning_summaries")?
-                ));
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            default_reasoning_summary: {},\n",
+                        rust_str(required_str(model_obj, "default_reasoning_summary")?)
+                    ),
+                )?;
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            supports_reasoning_summaries: {},\n",
+                        required_bool(model_obj, "supports_reasoning_summaries")?
+                    ),
+                )?;
                 out.push_str("                            service_tiers: &[\n");
                 for tier in required_array(model_obj, "service_tiers")? {
                     let tier_obj = tier.as_object().ok_or_else(|| {
                         format!("{model_id}.service_tiers entries must be objects")
                     })?;
                     out.push_str("                                ServiceTierEntry {\n");
-                    out.push_str(&format!(
-                        "                                    id: {},\n",
-                        rust_str(required_str(tier_obj, "id")?)
-                    ));
-                    out.push_str(&format!(
-                        "                                    provider_value: {},\n",
-                        rust_str(required_str(tier_obj, "provider_value")?)
-                    ));
-                    out.push_str(&format!(
-                        "                                    display_name: {},\n",
-                        rust_str(required_str(tier_obj, "display_name")?)
-                    ));
-                    out.push_str(&format!(
-                        "                                    description: {},\n",
-                        rust_str(required_str(tier_obj, "description")?)
-                    ));
+                    push_fmt(
+                        &mut out,
+                        format_args!(
+                            "                                    id: {},\n",
+                            rust_str(required_str(tier_obj, "id")?)
+                        ),
+                    )?;
+                    push_fmt(
+                        &mut out,
+                        format_args!(
+                            "                                    provider_value: {},\n",
+                            rust_str(required_str(tier_obj, "provider_value")?)
+                        ),
+                    )?;
+                    push_fmt(
+                        &mut out,
+                        format_args!(
+                            "                                    display_name: {},\n",
+                            rust_str(required_str(tier_obj, "display_name")?)
+                        ),
+                    )?;
+                    push_fmt(
+                        &mut out,
+                        format_args!(
+                            "                                    description: {},\n",
+                            rust_str(required_str(tier_obj, "description")?)
+                        ),
+                    )?;
                     out.push_str("                                },\n");
                 }
                 out.push_str("                            ],\n");
-                out.push_str(&format!(
-                    "                            web_search_tool_type: {},\n",
-                    rust_str(required_str(model_obj, "web_search_tool_type")?)
-                ));
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            web_search_tool_type: {},\n",
+                        rust_str(required_str(model_obj, "web_search_tool_type")?)
+                    ),
+                )?;
                 out.push_str("                            input_modalities: ");
                 out.push_str(&rust_str_slice(required_str_array(
                     model_obj,
                     "input_modalities",
                 )?));
                 out.push_str(",\n");
-                out.push_str(&format!(
-                    "                            supports_image_detail_original: {},\n",
-                    required_bool(model_obj, "supports_image_detail_original")?
-                ));
-                out.push_str(&format!(
-                    "                            supports_search_tool: {},\n",
-                    required_bool(model_obj, "supports_search_tool")?
-                ));
-                out.push_str(&format!(
-                    "                            supports_parallel_tool_calls: {},\n",
-                    required_bool(model_obj, "supports_parallel_tool_calls")?
-                ));
-                out.push_str(&format!(
-                    "                            apply_patch_tool_type: {},\n",
-                    rust_str(required_str(model_obj, "apply_patch_tool_type")?)
-                ));
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            supports_image_detail_original: {},\n",
+                        required_bool(model_obj, "supports_image_detail_original")?
+                    ),
+                )?;
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            supports_search_tool: {},\n",
+                        required_bool(model_obj, "supports_search_tool")?
+                    ),
+                )?;
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            supports_parallel_tool_calls: {},\n",
+                        required_bool(model_obj, "supports_parallel_tool_calls")?
+                    ),
+                )?;
+                push_fmt(
+                    &mut out,
+                    format_args!(
+                        "                            apply_patch_tool_type: {},\n",
+                        rust_str(required_str(model_obj, "apply_patch_tool_type")?)
+                    ),
+                )?;
                 out.push_str("                        },\n");
             }
 
@@ -246,6 +312,11 @@ fn generate_catalog(root: &Value) -> Result<String, String> {
     out.push_str("    ],\n");
     out.push_str("};\n");
     Ok(out)
+}
+
+fn push_fmt(out: &mut String, args: fmt::Arguments<'_>) -> Result<(), String> {
+    out.write_fmt(args)
+        .map_err(|_err| "failed to render generated model catalog".to_string())
 }
 
 fn required_object<'a>(
@@ -307,7 +378,29 @@ fn required_str_array<'a>(
 }
 
 fn rust_str(value: &str) -> String {
-    serde_json::to_string(value).expect("string serialization cannot fail")
+    format!("{value:?}")
+}
+
+fn rust_u64(value: u64) -> String {
+    let digits = value.to_string();
+    if digits.len() <= 3 {
+        return digits;
+    }
+
+    let mut out = String::with_capacity(digits.len() + ((digits.len() - 1) / 3));
+    let first_group_len = match digits.len() % 3 {
+        0 => 3,
+        len => len,
+    };
+    out.push_str(&digits[..first_group_len]);
+
+    let mut index = first_group_len;
+    while index < digits.len() {
+        out.push('_');
+        out.push_str(&digits[index..index + 3]);
+        index += 3;
+    }
+    out
 }
 
 fn rust_str_slice(values: Vec<&str>) -> String {

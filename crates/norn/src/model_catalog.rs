@@ -97,7 +97,7 @@ pub struct ModelEntry {
 pub struct ServiceTierEntry {
     /// Norn-facing tier identifier, e.g. `fast`.
     pub id: &'static str,
-    /// Provider wire value, e.g. OpenAI `priority`.
+    /// Provider wire value, e.g. `OpenAI` `priority`.
     pub provider_value: &'static str,
     /// Human-readable tier name.
     pub display_name: &'static str,

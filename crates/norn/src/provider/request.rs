@@ -26,6 +26,20 @@ pub enum ReasoningEffort {
     XHigh,
 }
 
+impl ReasoningEffort {
+    /// Norn-facing identifier used in config, profiles, and slash commands.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::None => "none",
+            Self::Low => "low",
+            Self::Medium => "medium",
+            Self::High => "high",
+            Self::XHigh => "x-high",
+        }
+    }
+}
+
 /// Reasoning summary verbosity level.
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]

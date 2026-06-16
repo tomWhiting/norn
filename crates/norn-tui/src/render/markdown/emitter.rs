@@ -7,7 +7,6 @@
 
 use std::fmt::Write as _;
 
-use comfy_table::presets::UTF8_FULL_CONDENSED;
 use comfy_table::{Attribute, Cell, CellAlignment, ContentArrangement, Table};
 use pulldown_cmark::{Alignment, CodeBlockKind, Event, HeadingLevel, Tag, TagEnd};
 use termina::escape::csi::{Csi, Sgr};
@@ -18,6 +17,13 @@ use crate::render::syntax::SyntaxHighlighter;
 use crate::terminal::caps::TerminalCaps;
 
 use super::{BLOCKQUOTE_PREFIX, INLINE_CODE_COLOUR, italic_off};
+
+/// Rounded outer corners, solid inner/header rules, no body row dividers.
+///
+/// Component order follows `comfy_table::TableComponent::iter()`:
+/// left/right/top/bottom border, header intersections, vertical lines,
+/// hidden body-row separators, top/bottom intersections, corners.
+const NORN_TABLE_PRESET: &str = "││──├─┼┤│    ┬┴╭╮╰╯";
 
 /// Per-segment event handler — owns the running ANSI output buffer and
 /// the inline/list/link state that spans multiple events.
@@ -533,7 +539,7 @@ impl<'a> Emitter<'a> {
 
     /// Build and render the accumulated table through comfy-table.
     ///
-    /// Uses [`UTF8_FULL_CONDENSED`] for clean Unicode box-drawing
+    /// Uses [`NORN_TABLE_PRESET`] for rounded Unicode box-drawing
     /// without per-row dividers, [`ContentArrangement::Dynamic`] so
     /// columns fit the terminal width, and [`set_width`] to clamp the
     /// total table width. Header cells receive the bold attribute;
@@ -541,7 +547,6 @@ impl<'a> Emitter<'a> {
     /// `comfy-table` `CellAlignment` values (markdown's `None` reads
     /// as left).
     ///
-    /// [`UTF8_FULL_CONDENSED`]: comfy_table::presets::UTF8_FULL_CONDENSED
     /// [`ContentArrangement::Dynamic`]: comfy_table::ContentArrangement
     /// [`set_width`]: comfy_table::Table::set_width
     fn end_table(&mut self) {
@@ -555,7 +560,7 @@ impl<'a> Emitter<'a> {
 
         let mut table = Table::new();
         table
-            .load_preset(UTF8_FULL_CONDENSED)
+            .load_preset(NORN_TABLE_PRESET)
             .set_content_arrangement(ContentArrangement::Dynamic)
             .set_width(self.width)
             // Norn writes to a TTY but comfy-table can't detect that

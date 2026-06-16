@@ -5,7 +5,7 @@
 //! [`layout`] computes this mapping on demand from the current buffer and
 //! cursor state — no persistent wrap state is cached.
 
-use unicode_width::UnicodeWidthChar as _;
+use crate::render::text::input_display_width;
 
 /// One visual row in the wrapped layout.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -61,7 +61,7 @@ pub fn layout(lines: &[String], cursor_row: usize, cursor_col: usize, width: u16
         let mut char_idx = 0;
 
         for ch in line.chars() {
-            let ch_width = ch.width().unwrap_or(0);
+            let ch_width = input_display_width(ch);
 
             if col + ch_width > effective_width && col > 0 {
                 rows.push(VisualRow {
@@ -120,7 +120,7 @@ pub fn visual_row_width(line: &str, char_start: usize, char_end: usize) -> u16 {
         .chars()
         .skip(char_start)
         .take(char_end.saturating_sub(char_start))
-        .map(|ch| ch.width().unwrap_or(0))
+        .map(input_display_width)
         .sum();
     u16::try_from(width).unwrap_or(u16::MAX)
 }
@@ -149,7 +149,7 @@ pub fn display_col_to_char(
         if col == target {
             return i;
         }
-        let ch_width = ch.width().unwrap_or(0);
+        let ch_width = input_display_width(ch);
         if col + ch_width > target {
             return i;
         }
@@ -222,6 +222,17 @@ mod tests {
         let w = layout(&lines, 0, 2, 5);
         assert_eq!(w.rows.len(), 2);
         assert_eq!(w.rows[0].char_end, 2);
+    }
+
+    #[test]
+    fn control_characters_occupy_placeholder_columns() {
+        let lines = vec!["a\x1bb\tc".to_owned()];
+        let w = layout(&lines, 0, 3, 3);
+        assert_eq!(w.rows.len(), 2);
+        assert_eq!(w.rows[0].char_end, 3);
+        assert_eq!(w.rows[1].char_start, 3);
+        assert_eq!(w.cursor.visual_row, 1);
+        assert_eq!(w.cursor.display_col, 0);
     }
 
     #[test]

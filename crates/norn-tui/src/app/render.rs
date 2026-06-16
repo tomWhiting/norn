@@ -19,7 +19,9 @@ use crate::agents::status_line::height_from_view;
 use crate::input::editor::InputEditor;
 use crate::input::wrap;
 use crate::render::MarkdownRenderer;
+use crate::render::fixed_panel::StreamingIndicator;
 use crate::render::scroll_region::write_to_scroll;
+use crate::render::text::{terminal_safe_input_text, truncate_to_width};
 use crate::terminal::setup::TerminalGuard;
 
 use super::autocomplete::render_popup;
@@ -28,6 +30,8 @@ use super::state::AppState;
 
 /// Maximum visual rows reserved for input before the editor scrolls internally.
 pub(crate) const INPUT_AREA_MAX_ROWS: u16 = 12;
+/// Minimum conversation rows to preserve above the fixed panel.
+const MIN_SCROLL_REGION_ROWS: u16 = 4;
 
 /// Input rows visible for the given terminal height and editor contents.
 #[must_use]
@@ -125,7 +129,9 @@ fn render_input_frame<W: std::io::Write>(
         let text = lines
             .get(row.logical_row)
             .map_or("", |line| char_slice(line, row.char_start, row.char_end));
-        write!(writer, "\x1b[{row_1b};1H\x1b[2K{text}")?;
+        let safe_text = terminal_safe_input_text(text);
+        let clipped = truncate_to_width(safe_text.as_ref(), cols);
+        write!(writer, "\x1b[{row_1b};1H\x1b[2K{clipped}")?;
     }
 
     let cursor_visual_row = u16::try_from(layout.cursor.visual_row).unwrap_or(u16::MAX);
@@ -193,26 +199,26 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
     // expiry boundary would silently shrink the view relative to the
     // height the fixed panel was sized to.
     let (view, entries) = state.agent_panel.snapshot(now);
-    let agent_rows = height_from_view(&view);
+    let mut agent_rows = height_from_view(&view);
     state.fixed_panel.set_agent_lines(agent_rows);
 
     let rows = guard.terminal_rows();
     let activity_snap = state.activity_log.snapshot(now);
     let proposed_activity_rows = height_from_log(&activity_snap);
-    // Chop Suey's floor guard: skip the activity log when it would
-    // squeeze the scroll region below four rows. Set tentatively, then
-    // revert to zero if the resulting total height crowds the scroll
-    // region. The agent panel is treated as a non-negotiable surface;
-    // the activity log is the discretionary one.
+    // First-pass floor guard: skip the activity log when it would
+    // squeeze the scroll region below the minimum conversation rows.
+    // The broader row budget below can shed additional optional
+    // surfaces when the terminal is especially short.
     state.fixed_panel.set_activity_lines(proposed_activity_rows);
-    let activity_rows = if proposed_activity_rows > 0
-        && rows.saturating_sub(state.fixed_panel.total_height()) < 4
+    let mut activity_rows = if proposed_activity_rows > 0
+        && rows.saturating_sub(state.fixed_panel.total_height()) < MIN_SCROLL_REGION_ROWS
     {
         state.fixed_panel.set_activity_lines(0);
         0
     } else {
         proposed_activity_rows
     };
+    enforce_scroll_region_floor(state, rows, &mut agent_rows, &mut activity_rows);
 
     if state.fixed_panel.height_dirty() {
         let old_height = guard.panel_height();
@@ -275,6 +281,47 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
     }
     guard.terminal_mut().flush()?;
     Ok(())
+}
+
+fn enforce_scroll_region_floor(
+    state: &mut AppState,
+    terminal_rows: u16,
+    agent_rows: &mut u16,
+    activity_rows: &mut u16,
+) {
+    if has_scroll_floor(state, terminal_rows) {
+        return;
+    }
+    if *activity_rows > 0 {
+        state.fixed_panel.set_activity_lines(0);
+        *activity_rows = 0;
+        if has_scroll_floor(state, terminal_rows) {
+            return;
+        }
+    }
+    if state.fixed_panel.autocomplete_popup_rows() > 0 {
+        state.fixed_panel.set_autocomplete_popup(0);
+        state.autocomplete = None;
+        if has_scroll_floor(state, terminal_rows) {
+            return;
+        }
+    }
+    if *agent_rows > 0 {
+        state.fixed_panel.set_agent_lines(0);
+        *agent_rows = 0;
+        if has_scroll_floor(state, terminal_rows) {
+            return;
+        }
+    }
+    if !matches!(state.streaming_indicator, StreamingIndicator::Idle) {
+        state
+            .fixed_panel
+            .set_streaming_indicator(StreamingIndicator::Idle);
+    }
+}
+
+fn has_scroll_floor(state: &AppState, terminal_rows: u16) -> bool {
+    terminal_rows.saturating_sub(state.fixed_panel.total_height()) >= MIN_SCROLL_REGION_ROWS
 }
 
 /// Redraw the panel, then the popup, then the input — the canonical
@@ -380,8 +427,9 @@ mod tests {
     use norn::agent::registry::AgentRegistry;
 
     use super::*;
+    use crate::input::autocomplete::{AutocompletePopup, SlashCandidate, SourceTag};
     use crate::input::history::InputHistory;
-    use crate::render::fixed_panel::StatusBar;
+    use crate::render::fixed_panel::{StatusBar, StreamingIndicator};
     use crate::terminal::caps::TerminalCaps;
 
     fn fresh_state() -> Result<AppState, Box<dyn std::error::Error>> {
@@ -424,6 +472,54 @@ mod tests {
         }
     }
 
+    fn seed_popup(state: &mut AppState, rows: u16) {
+        let candidates = vec![SlashCandidate {
+            name: "help".to_owned(),
+            source_tag: SourceTag::Builtin,
+            description: "Show help".to_owned(),
+        }];
+        state.autocomplete = Some(AutocompletePopup::new_slash(candidates, "", 0));
+        state.fixed_panel.set_autocomplete_popup(rows);
+    }
+
+    #[test]
+    fn row_budget_drops_optional_surfaces_before_scroll_floor()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
+        let mut agent_rows = 3;
+        let mut activity_rows = 2;
+        state.fixed_panel.set_agent_lines(agent_rows);
+        state.fixed_panel.set_activity_lines(activity_rows);
+        seed_popup(&mut state, 5);
+
+        enforce_scroll_region_floor(&mut state, 12, &mut agent_rows, &mut activity_rows);
+
+        assert_eq!(activity_rows, 0);
+        assert_eq!(state.fixed_panel.autocomplete_popup_rows(), 0);
+        assert!(state.autocomplete.is_none());
+        assert!(12u16.saturating_sub(state.fixed_panel.total_height()) >= MIN_SCROLL_REGION_ROWS);
+        Ok(())
+    }
+
+    #[test]
+    fn row_budget_hides_streaming_indicator_when_terminal_is_tiny()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
+        state.streaming_indicator = StreamingIndicator::Generating {
+            elapsed: std::time::Duration::from_secs(1),
+            est_output_tokens: 0,
+            in_flight: None,
+        };
+        state.sync_indicator_into_panel();
+        let mut agent_rows = 0;
+        let mut activity_rows = 0;
+
+        enforce_scroll_region_floor(&mut state, 6, &mut agent_rows, &mut activity_rows);
+
+        assert_eq!(state.fixed_panel.total_height(), 3);
+        Ok(())
+    }
+
     #[test]
     fn render_paints_visual_rows_and_cursor() -> Result<(), Box<dyn std::error::Error>> {
         let mut state = fresh_state()?;
@@ -451,6 +547,23 @@ mod tests {
         assert!(out.contains("\x1b[21;1H\x1b[2Kshort"));
         assert!(out.contains("\x1b[22;1H\x1b[2Kverylongli"));
         assert!(out.contains("\x1b[23;1H\x1b[2KneHERE"));
+        Ok(())
+    }
+
+    #[test]
+    fn render_input_replaces_control_characters() -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = fresh_state()?;
+        type_text(&mut state.input_editor, "a\x1b[31mb\tc");
+        let input_rows = sync_input_area(&mut state.input_editor, 20, 24);
+        state.fixed_panel.set_input_area(input_rows);
+        let mut buf = Vec::new();
+        render_input_frame(&state, 24, 20, &mut buf)?;
+        let out = String::from_utf8(buf)?;
+        assert!(out.contains("a?[31mb?c"), "got: {out:?}");
+        assert!(
+            !out.contains("\x1b[31m"),
+            "raw SGR from input must not reach terminal output: {out:?}",
+        );
         Ok(())
     }
 }

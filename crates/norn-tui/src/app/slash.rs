@@ -19,9 +19,12 @@ use std::fmt::Write as _;
 use std::io::Write as IoWrite;
 use std::sync::Arc;
 
-use norn::provider::request::ReasoningEffort;
+use norn::agent_loop::{
+    ServiceTierCommand, parse_service_tier_command, service_tier_supported_for_model,
+    unsupported_service_tier_message,
+};
+use norn::provider::request::ServiceTier;
 use norn::session::context_edit::ContextEdits;
-use norn::session::events::SessionEvent;
 use norn::session::{
     CreateSessionOptions, DurabilityPolicy, EventStore, SessionManager, SessionPersistError,
 };
@@ -32,7 +35,14 @@ use crate::terminal::setup::TerminalGuard;
 
 use super::dispatch::write_error_line;
 use super::event_loop::RuntimeRefs;
+use super::slash_catalog::{
+    EffortCommand, SlashClass, TuiBuiltinKind, classify_slash, effort_label,
+    find_tui_builtin_command, parse_effort_command, tui_builtin_commands,
+};
 use super::state::AppState;
+
+#[cfg(test)]
+use super::slash_catalog::{is_tui_builtin, split_first_word};
 
 /// Outcome of a recognised slash command.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,105 +51,6 @@ pub(super) enum SlashOutcome {
     Continue,
     /// Slash handled — the TUI should exit cleanly.
     Exit,
-}
-
-/// Static help table — one row per supported builtin.
-const HELP_ENTRIES: &[(&str, &str)] = &[
-    ("/new", "Start a new session (rotates the JSONL file)"),
-    ("/clear", "Alias for /new"),
-    (
-        "/compact",
-        "Compact older context using the auto-compact threshold",
-    ),
-    ("/exit", "Exit the TUI"),
-    ("/quit", "Exit the TUI"),
-    ("/help", "Show this help"),
-    ("/model <name>", "Switch the active model for the next turn"),
-    (
-        "/effort <none|low|medium|high|x-high|default>",
-        "Show, set, or clear reasoning effort",
-    ),
-    (
-        "/reasoning-effort <none|low|medium|high|x-high|default>",
-        "Alias for /effort",
-    ),
-    (
-        "/service-tier <fast|none>",
-        "Show, set, or clear the service tier",
-    ),
-    ("/fast", "Use the fast service tier for the next turn"),
-    ("/tools", "List tools available to the model"),
-];
-
-/// Classification result for [`classify_slash`].
-///
-/// Separates the parse-and-recognise step from the do-the-work step so
-/// the matching logic can be unit-tested without constructing a
-/// [`TerminalGuard`] or a [`RuntimeRefs`].
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum SlashClass<'a> {
-    /// Text is not a slash command at all (no leading `/`, ignoring
-    /// surrounding whitespace).
-    NotSlash,
-    /// Text is `/` followed by whitespace or nothing — fall through to
-    /// the agent like REPL behaviour.
-    Empty,
-    /// Recognised Phase 1 command name and its trimmed argument tail.
-    Recognised {
-        /// Command name as typed (case preserved). Lowercasing happens
-        /// at the dispatch site in [`try_dispatch_slash`] so the
-        /// classifier stays zero-allocation — the borrowed `&str`
-        /// points back into the original input.
-        cmd: &'a str,
-        /// Trimmed argument tail (may be empty).
-        arg: &'a str,
-    },
-}
-
-/// Parse `text` against the Phase 1 grammar.
-pub(super) fn classify_slash(text: &str) -> SlashClass<'_> {
-    let trimmed = text.trim();
-    let Some(rest) = trimmed.strip_prefix('/') else {
-        return SlashClass::NotSlash;
-    };
-    let (cmd, arg) = split_first_word(rest);
-    if cmd.is_empty() {
-        return SlashClass::Empty;
-    }
-    SlashClass::Recognised { cmd, arg }
-}
-
-/// Builtin command names currently recognised by
-/// [`try_dispatch_slash`].
-///
-/// Kept as a single source of truth so [`is_tui_builtin`] and the test
-/// that asserts help-table coverage cannot drift from the match arms in
-/// [`try_dispatch_slash`].
-#[cfg(test)]
-const TUI_BUILTINS: &[&str] = &[
-    "new",
-    "clear",
-    "compact",
-    "exit",
-    "quit",
-    "help",
-    "model",
-    "effort",
-    "reasoning-effort",
-    "service-tier",
-    "fast",
-    "tools",
-];
-
-/// Whether `cmd` (without leading slash) is a TUI builtin.
-///
-/// Test-only helper today — the production dispatch path lists each
-/// command explicitly in [`try_dispatch_slash`]'s match arms so the
-/// compiler exhaustiveness check catches additions. Phase 2's unified
-/// registry replaces both surfaces.
-#[cfg(test)]
-fn is_tui_builtin(cmd: &str) -> bool {
-    TUI_BUILTINS.contains(&cmd)
 }
 
 /// Try to dispatch `text` as a slash command.
@@ -166,52 +77,47 @@ pub(super) fn try_dispatch_slash(
     // the lowercase allocation happens here, at the only site that
     // needs it.
     let lower = cmd.to_ascii_lowercase();
-    match lower.as_str() {
-        "new" | "clear" => {
+    let Some(command) = find_tui_builtin_command(&lower) else {
+        return Ok(None);
+    };
+    match command.kind {
+        TuiBuiltinKind::New | TuiBuiltinKind::Clear => {
             handle_new(state, runtime, guard)?;
             Ok(Some(SlashOutcome::Continue))
         }
-        "compact" => {
+        TuiBuiltinKind::Compact => {
             handle_compact(state, runtime, guard)?;
             Ok(Some(SlashOutcome::Continue))
         }
-        "exit" | "quit" => Ok(Some(SlashOutcome::Exit)),
-        "help" => {
+        TuiBuiltinKind::Exit | TuiBuiltinKind::Quit => Ok(Some(SlashOutcome::Exit)),
+        TuiBuiltinKind::Help => {
             handle_help(guard)?;
             Ok(Some(SlashOutcome::Continue))
         }
-        "model" => {
+        TuiBuiltinKind::Model => {
             handle_model(state, runtime, guard, arg)?;
             Ok(Some(SlashOutcome::Continue))
         }
-        "effort" | "reasoning-effort" => {
-            handle_reasoning_effort(runtime, guard, arg)?;
+        TuiBuiltinKind::Effort => {
+            handle_reasoning_effort(state, runtime, guard, arg)?;
             Ok(Some(SlashOutcome::Continue))
         }
-        "service-tier" => {
-            handle_service_tier(runtime, guard, arg)?;
+        TuiBuiltinKind::ServiceTier => {
+            handle_service_tier(state, runtime, guard, arg)?;
             Ok(Some(SlashOutcome::Continue))
         }
-        "fast" => {
-            runtime.loop_context.service_tier = Some(norn::provider::request::ServiceTier::Fast);
-            write_dim_line("Service tier: fast", guard)?;
+        TuiBuiltinKind::Fast => {
+            set_fast_service_tier(state, runtime, guard)?;
             Ok(Some(SlashOutcome::Continue))
         }
-        "tools" => {
+        TuiBuiltinKind::Tools => {
             handle_tools(runtime, guard)?;
             Ok(Some(SlashOutcome::Continue))
         }
-        _ => Ok(None),
-    }
-}
-
-/// Split `s` on the first whitespace run, returning
-/// `(first_word, trimmed_rest)`.
-fn split_first_word(s: &str) -> (&str, &str) {
-    let trimmed = s.trim_start();
-    match trimmed.find(char::is_whitespace) {
-        Some(idx) => (&trimmed[..idx], trimmed[idx..].trim()),
-        None => (trimmed, ""),
+        TuiBuiltinKind::Schema
+        | TuiBuiltinKind::Session
+        | TuiBuiltinKind::Name
+        | TuiBuiltinKind::Variables => Ok(None),
     }
 }
 
@@ -353,11 +259,9 @@ fn handle_new(
 /// [`ContextEdits::auto_compact_keeping_recent_turns`] against the
 /// current event store.
 ///
-/// The TUI's [`RuntimeRefs::loop_context`] carries the same
-/// `context_edits` field the CLI uses; calling it here means Phase 1
-/// does not need the norn-cli `apply_compact_request` helper (which
-/// would be a cross-crate dependency violation). Phase 2 will lift
-/// both into a shared layer and remove this duplication.
+/// The TUI keeps its own terminal rendering for the command result, but
+/// shares the mechanical compaction estimate with CLI mode through
+/// [`norn::agent_loop::estimate_manual_compaction`].
 fn handle_compact(
     state: &AppState,
     runtime: &mut RuntimeRefs,
@@ -365,24 +269,13 @@ fn handle_compact(
 ) -> Result<(), TuiError> {
     let keep = runtime.agent_config.auto_compact_keep_recent_turns;
 
-    // Count assistant turns. If we don't have more than `keep`,
-    // there is nothing to do — surface a dim line and return.
-    let events = runtime.store.events();
-    let assistant_count = events
-        .iter()
-        .filter(|e| matches!(e, SessionEvent::AssistantMessage { .. }))
-        .count();
-    if assistant_count <= keep {
+    let Some(estimate) = norn::agent_loop::estimate_manual_compaction(
+        &runtime.store,
+        keep,
+        runtime.loop_context.token_estimator.as_deref(),
+    ) else {
         return write_dim_line("Nothing to compact.", guard);
-    }
-    drop(events);
-
-    // Estimate freed tokens by summing the byte counts of every event
-    // up to and including the cut. Mirrors norn-cli's
-    // `apply_compact_request::estimate_freed` but pared down to the
-    // fields the TUI's `RuntimeRefs` exposes. Phase 2 deletes this
-    // duplicate when the helper is lifted.
-    let token_estimate_freed = estimate_freed_tokens(runtime, keep);
+    };
 
     let Some(edits) = runtime.loop_context.context_edits.as_mut() else {
         return write_dim_line(
@@ -391,10 +284,15 @@ fn handle_compact(
         );
     };
 
-    match edits.auto_compact_keeping_recent_turns(&runtime.store, keep, token_estimate_freed) {
+    match edits.auto_compact_keeping_recent_turns(
+        &runtime.store,
+        keep,
+        estimate.token_estimate_freed,
+    ) {
         Ok(Some(_)) => {
             let line = format!(
-                "Compacted older turns, freed ~{token_estimate_freed} tokens (keeping {keep} most recent)."
+                "Compacted older turns, freed ~{} tokens (keeping {keep} most recent).",
+                estimate.token_estimate_freed,
             );
             write_dim_line(&line, guard)?;
             // The compaction appended a Compaction event through the
@@ -415,55 +313,6 @@ fn handle_compact(
     }
 }
 
-/// Estimate the bytes freed by compacting everything up to the cut
-/// index that retains `keep` most-recent assistant turns.
-///
-/// Mirrors `crates/norn-cli/src/commands/slash/actions.rs::estimate_freed`
-/// pared down to the event variants and the token-estimator field the
-/// TUI's runtime makes available. Returns zero when the estimator is
-/// absent — the compact still proceeds but its freed-token figure
-/// shows as `~0`.
-fn estimate_freed_tokens(runtime: &RuntimeRefs, keep: usize) -> usize {
-    let Some(estimator) = runtime.loop_context.token_estimator.as_ref() else {
-        return 0;
-    };
-    let events = runtime.store.events();
-    let assistant_positions: Vec<usize> = events
-        .iter()
-        .enumerate()
-        .filter_map(|(idx, e)| matches!(e, SessionEvent::AssistantMessage { .. }).then_some(idx))
-        .collect();
-    if assistant_positions.len() <= keep {
-        return 0;
-    }
-    let cut_idx = assistant_positions[assistant_positions.len() - keep - 1];
-    let mut total: usize = 0;
-    for event in &events[..=cut_idx] {
-        let bytes = match event {
-            SessionEvent::UserMessage { content, .. } => estimator.estimate(content),
-            SessionEvent::AssistantMessage { content, .. } => {
-                if content.is_empty() {
-                    0
-                } else {
-                    estimator.estimate(content)
-                }
-            }
-            SessionEvent::ToolResult { output, .. } => estimator.estimate(&output.to_string()),
-            SessionEvent::SpokenResponse { content, .. } => {
-                estimator.estimate(&content.to_string())
-            }
-            SessionEvent::Compaction { summary, .. } => estimator.estimate(summary),
-            SessionEvent::ModelChange { .. }
-            | SessionEvent::Fork { .. }
-            | SessionEvent::ForkComplete { .. }
-            | SessionEvent::Label { .. }
-            | SessionEvent::Custom { .. } => 0,
-        };
-        total = total.saturating_add(bytes);
-    }
-    total
-}
-
 /// `/help` — write a static help block to the scroll region.
 ///
 /// The transient-overlay alternative would require cursor-addressed
@@ -473,11 +322,23 @@ fn estimate_freed_tokens(runtime: &RuntimeRefs, keep: usize) -> usize {
 /// user can scroll back to find it.
 fn handle_help(guard: &mut TerminalGuard) -> Result<(), TuiError> {
     let mut block = String::from("\x1b[2mSlash commands:\x1b[22m\n");
-    for (name, desc) in HELP_ENTRIES {
+    let commands: Vec<_> = tui_builtin_commands().collect();
+    let usage_width = commands
+        .iter()
+        .map(|command| command.usage.chars().count())
+        .max()
+        .unwrap_or(0);
+    for command in commands {
         // `write!` into a String via `std::fmt::Write` — clippy rejects
         // `block.push_str(&format!(...))` because the intermediate
         // allocation is avoidable.
-        let _ = writeln!(block, "\x1b[2m  {name:<16}  {desc}\x1b[22m");
+        let _ = writeln!(
+            block,
+            "\x1b[2m  {usage:<width$}  {help}\x1b[22m",
+            usage = command.usage,
+            width = usage_width,
+            help = command.help,
+        );
     }
     write_to_scroll(&block, guard.terminal_mut())?;
     guard.note_scroll_newlines(&block)?;
@@ -505,41 +366,22 @@ fn handle_model(
     }
     runtime.model = name.to_string();
     state.fixed_panel.status_bar_mut().model_name = name.to_string();
-    let line = format!("Switched model to {name}");
+    let cleared_tier = clear_unsupported_service_tier(state, runtime);
+    let line = if let Some(tier) = cleared_tier {
+        format!(
+            "Switched model to {name}; cleared service tier '{}' because it is unsupported",
+            tier.as_str(),
+        )
+    } else {
+        format!("Switched model to {name}")
+    };
     write_dim_line(&line, guard)
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum EffortCommand {
-    Set(ReasoningEffort),
-    Clear,
-}
-
-fn parse_effort_command(value: &str) -> Option<EffortCommand> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "none" => Some(EffortCommand::Set(ReasoningEffort::None)),
-        "low" => Some(EffortCommand::Set(ReasoningEffort::Low)),
-        "medium" => Some(EffortCommand::Set(ReasoningEffort::Medium)),
-        "high" => Some(EffortCommand::Set(ReasoningEffort::High)),
-        "x-high" | "xhigh" => Some(EffortCommand::Set(ReasoningEffort::XHigh)),
-        "default" | "off" | "clear" => Some(EffortCommand::Clear),
-        _ => None,
-    }
-}
-
-fn effort_label(effort: ReasoningEffort) -> &'static str {
-    match effort {
-        ReasoningEffort::None => "none",
-        ReasoningEffort::Low => "low",
-        ReasoningEffort::Medium => "medium",
-        ReasoningEffort::High => "high",
-        ReasoningEffort::XHigh => "x-high",
-    }
 }
 
 /// `/effort <none|low|medium|high|x-high|default>` — mutate the reasoning
 /// effort read by the next `run_turn` provider request.
 fn handle_reasoning_effort(
+    state: &mut AppState,
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
     arg: &str,
@@ -549,14 +391,15 @@ fn handle_reasoning_effort(
         let current = runtime
             .loop_context
             .reasoning_effort
-            .map(effort_label)
-            .unwrap_or("default");
+            .map_or("default", effort_label);
         return write_dim_line(current, guard);
     }
 
     match parse_effort_command(value) {
         Some(EffortCommand::Set(effort)) => {
             runtime.loop_context.reasoning_effort = Some(effort);
+            state.fixed_panel.status_bar_mut().reasoning_effort =
+                Some(effort_label(effort).to_string());
             write_dim_line(
                 &format!("Reasoning effort: {}", effort_label(effort)),
                 guard,
@@ -564,6 +407,7 @@ fn handle_reasoning_effort(
         }
         Some(EffortCommand::Clear) => {
             runtime.loop_context.reasoning_effort = None;
+            state.fixed_panel.status_bar_mut().reasoning_effort = None;
             write_dim_line("Reasoning effort cleared.", guard)
         }
         None => write_dim_line(
@@ -578,6 +422,7 @@ fn handle_reasoning_effort(
 /// `/service-tier <fast|none>` — mutate the service tier read by the
 /// next `run_turn` provider request.
 fn handle_service_tier(
+    state: &mut AppState,
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
     arg: &str,
@@ -590,20 +435,48 @@ fn handle_service_tier(
         };
         return write_dim_line(current, guard);
     }
-    match value.as_str() {
-        "fast" => {
-            runtime.loop_context.service_tier = Some(norn::provider::request::ServiceTier::Fast);
-            write_dim_line("Service tier: fast", guard)
-        }
-        "none" | "off" | "default" => {
+    match parse_service_tier_command(&value) {
+        Some(ServiceTierCommand::Fast) => set_fast_service_tier(state, runtime, guard),
+        Some(ServiceTierCommand::Clear) => {
             runtime.loop_context.service_tier = None;
+            state.fixed_panel.status_bar_mut().service_tier = None;
             write_dim_line("Service tier cleared.", guard)
         }
-        other => write_dim_line(
-            &format!("norn: invalid service tier '{other}'; expected fast or none"),
+        None => write_dim_line(
+            &format!("norn: invalid service tier '{value}'; expected fast or none"),
             guard,
         ),
     }
+}
+
+fn set_fast_service_tier(
+    state: &mut AppState,
+    runtime: &mut RuntimeRefs,
+    guard: &mut TerminalGuard,
+) -> Result<(), TuiError> {
+    if service_tier_supported_for_model(&runtime.model, ServiceTier::Fast) {
+        runtime.loop_context.service_tier = Some(ServiceTier::Fast);
+        state.fixed_panel.status_bar_mut().service_tier = Some("fast".to_string());
+        return write_dim_line("Service tier: fast", guard);
+    }
+
+    write_dim_line(
+        &unsupported_service_tier_message(&runtime.model, "fast"),
+        guard,
+    )
+}
+
+fn clear_unsupported_service_tier(
+    state: &mut AppState,
+    runtime: &mut RuntimeRefs,
+) -> Option<ServiceTier> {
+    let tier = runtime.loop_context.service_tier?;
+    if service_tier_supported_for_model(&runtime.model, tier) {
+        return None;
+    }
+    runtime.loop_context.service_tier = None;
+    state.fixed_panel.status_bar_mut().service_tier = None;
+    Some(tier)
 }
 
 /// `/tools` — list every [`ToolDefinition`] currently advertised to
@@ -657,7 +530,8 @@ fn format_tools_block(tools: &[norn::provider::request::ToolDefinition]) -> Stri
 mod tests {
     use super::*;
 
-    use norn::session::events::EventBase;
+    use norn::provider::request::ReasoningEffort;
+    use norn::session::events::{EventBase, SessionEvent};
     use norn::session::{read_index, read_session_events};
 
     #[test]
@@ -757,30 +631,30 @@ mod tests {
     }
 
     #[test]
-    fn help_entries_cover_all_tui_builtins() {
-        // Defensive: the help block must list every command
-        // try_dispatch_slash recognises. If we add a new branch above
-        // and forget the help entry, this test fails.
-        let names: Vec<&str> = HELP_ENTRIES.iter().map(|(n, _)| *n).collect();
-        for needle in [
-            "/new",
-            "/clear",
-            "/compact",
-            "/exit",
-            "/quit",
-            "/help",
-            "/model <name>",
-            "/effort <none|low|medium|high|x-high|default>",
-            "/reasoning-effort <none|low|medium|high|x-high|default>",
-            "/service-tier <fast|none>",
-            "/fast",
-            "/tools",
-        ] {
-            assert!(
-                names.contains(&needle),
-                "help table missing `{needle}`: {names:?}",
-            );
-        }
+    fn command_catalog_covers_all_tui_builtins() {
+        // The catalog feeds `/help`, autocomplete, and dispatch. This
+        // exact shape prevents aliases from silently drifting to a
+        // wrong handler kind.
+        let catalog: Vec<(&str, TuiBuiltinKind)> = tui_builtin_commands()
+            .map(|command| (command.name, command.kind))
+            .collect();
+        assert_eq!(
+            catalog,
+            vec![
+                ("new", TuiBuiltinKind::New),
+                ("clear", TuiBuiltinKind::Clear),
+                ("compact", TuiBuiltinKind::Compact),
+                ("exit", TuiBuiltinKind::Exit),
+                ("quit", TuiBuiltinKind::Quit),
+                ("help", TuiBuiltinKind::Help),
+                ("model", TuiBuiltinKind::Model),
+                ("effort", TuiBuiltinKind::Effort),
+                ("reasoning-effort", TuiBuiltinKind::Effort),
+                ("service-tier", TuiBuiltinKind::ServiceTier),
+                ("fast", TuiBuiltinKind::Fast),
+                ("tools", TuiBuiltinKind::Tools),
+            ],
+        );
     }
 
     #[test]
@@ -858,9 +732,9 @@ mod tests {
     #[test]
     fn classify_passes_through_unknown_command_name() {
         // Unknown slashes are *recognised* as having a command name but
-        // are NOT routed by try_dispatch_slash (the match arm falls to
-        // `_ => Ok(None)`). The classifier only parses; the dispatcher
-        // decides what to do with the name.
+        // are NOT routed by try_dispatch_slash because catalog lookup
+        // fails. The classifier only parses; the dispatcher decides
+        // what to do with the name.
         assert!(matches!(
             classify_slash("/deploy staging"),
             SlashClass::Recognised {
@@ -874,7 +748,18 @@ mod tests {
     #[test]
     fn tui_builtins_are_recognised() {
         for name in [
-            "new", "clear", "compact", "exit", "quit", "help", "model", "tools",
+            "new",
+            "clear",
+            "compact",
+            "exit",
+            "quit",
+            "help",
+            "model",
+            "effort",
+            "reasoning-effort",
+            "service-tier",
+            "fast",
+            "tools",
         ] {
             assert!(is_tui_builtin(name), "`{name}` must be a TUI builtin");
         }
@@ -923,6 +808,19 @@ mod tests {
                 "case-insensitive match must collapse `{raw}` to `new`",
             );
         }
+    }
+
+    #[test]
+    fn service_tier_support_uses_model_catalog() {
+        assert!(service_tier_supported_for_model(
+            "gpt-5.5",
+            ServiceTier::Fast,
+        ));
+        assert!(!service_tier_supported_for_model(
+            "gpt-5.4-mini",
+            ServiceTier::Fast,
+        ));
+        assert!(unsupported_service_tier_message("gpt-5.4-mini", "fast").contains("gpt-5.4-mini"),);
     }
 
     fn tool_def(name: &str, description: &str) -> norn::provider::request::ToolDefinition {

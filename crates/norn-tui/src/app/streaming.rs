@@ -2,39 +2,45 @@
 //!
 //! Extracted from `dispatch.rs` to keep that module under the 500-line
 //! production code limit. Owns the streaming text path: dim preview
-//! writes, the styled line-pop replacement, and ephemeral thinking
-//! output.
+//! writes, the styled line-pop replacement, and reasoning-summary
+//! buffering.
 
 use std::io::Write as _;
 
 use termina::Terminal as _;
 
 use crate::TuiError;
-use crate::events::DisplayToggles;
 use crate::render::MarkdownRenderer;
 use crate::render::markdown::FeedOutput;
 use crate::render::scroll_region::write_to_scroll;
+use crate::render::thinking::render_thinking;
 use crate::terminal::setup::TerminalGuard;
 
-use super::helpers::{dim_line_count, erase_dim_lines, flush_terminal, sync_with_guard};
+use super::helpers::{
+    clear_dim_state, dim_line_count, erase_dim_lines, flush_terminal, sync_with_guard,
+};
 use super::state::AppState;
 
-/// Erase any thinking dim text from the scroll region.
+/// Render and finish any pending reasoning summary before another
+/// scroll-region surface writes normal content.
 ///
-/// Thinking deltas write dim SGR text without calling
-/// `note_scroll_newlines`, so the software cursor falls behind the
-/// hardware cursor. Erasing before non-thinking writes prevents
-/// blank-line accumulation during tool-heavy work.
-pub(super) fn clear_thinking_buffer(
+/// Reasoning summary chunks are buffered so heading-aware block
+/// formatting can be decided from the complete summary. Rendering here
+/// keeps answer text, tool output, or final status below the thought
+/// block in normal scrollback order.
+pub(super) fn finish_thinking_block(
     state: &mut AppState,
     guard: &mut TerminalGuard,
+    renderer: &mut Option<MarkdownRenderer>,
 ) -> Result<(), TuiError> {
     if state.thinking_buffer.is_empty() {
         return Ok(());
     }
+    clear_dim_state(state, guard, renderer.as_mut())?;
     let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-    let lines = dim_line_count(&state.thinking_buffer, cols);
-    erase_dim_lines(lines, guard)?;
+    let thought_block = render_thinking(&state.thinking_buffer, &state.terminal_caps, cols);
+    write_to_scroll(&thought_block, guard.terminal_mut())?;
+    guard.note_scroll_newlines(&thought_block)?;
     state.thinking_buffer.clear();
     Ok(())
 }
@@ -56,7 +62,7 @@ pub(super) fn handle_text_delta(
     if text.is_empty() {
         return Ok(());
     }
-    clear_thinking_buffer(state, guard)?;
+    finish_thinking_block(state, guard, renderer)?;
     if state.last_was_tool_result {
         write_to_scroll("\n", guard.terminal_mut())?;
         guard.note_scroll_newlines("\n")?;
@@ -140,37 +146,21 @@ fn write_styled_then_dim(
     Ok(wrote)
 }
 
-/// Accept a `ThinkingDelta`: render dim-styled output when thinking is
-/// visible, otherwise discard (ephemeral, never persisted — C12).
+/// Accept a `ThinkingDelta`: buffer it when thinking is visible,
+/// otherwise discard it.
 ///
 /// The tokens are spent regardless of whether the bytes are painted, so
 /// [`AppState::est_output_bytes`] accumulates either way. `ThinkingDelta`
 /// also signals the model has moved past any pending tool call (it's
 /// processing, not executing), so [`AppState::current_tool_use`] is
 /// cleared.
-pub(super) fn handle_thinking_delta(
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    text: &str,
-) -> Result<(), TuiError> {
+pub(super) fn handle_thinking_delta(state: &mut AppState, text: &str) {
     state.est_output_bytes = state.est_output_bytes.saturating_add(text.len());
     state.current_tool_use = None;
-    let dim = render_thinking_delta(text, state.display_toggles);
-    if dim.is_empty() {
-        return Ok(());
+    if text.is_empty() || !state.display_toggles.thinking_visible {
+        return;
     }
-    state.thinking_buffer.push_str(&dim);
-    write_to_scroll(&dim, guard.terminal_mut())?;
-    flush_terminal(guard)
-}
-
-/// Render a `ThinkingDelta` chunk wrapped in dim SGR markers, or return
-/// the empty string when thinking is hidden.
-pub fn render_thinking_delta(text: &str, toggles: DisplayToggles) -> String {
-    if !toggles.thinking_visible || text.is_empty() {
-        return String::new();
-    }
-    format!("\x1b[2m{text}\x1b[22m")
+    state.thinking_buffer.push_str(text);
 }
 
 #[cfg(test)]
@@ -197,21 +187,5 @@ mod tests {
         }
         let out = String::from_utf8(buf).unwrap();
         assert!(out.contains("hello"), "got: {out:?}");
-    }
-
-    #[test]
-    fn render_thinking_delta_hidden_yields_empty() {
-        let toggles = DisplayToggles::default();
-        assert!(render_thinking_delta("pondering", toggles).is_empty());
-    }
-
-    #[test]
-    fn render_thinking_delta_visible_wraps_in_dim_sgr() {
-        let mut toggles = DisplayToggles::default();
-        toggles.toggle();
-        let out = render_thinking_delta("pondering", toggles);
-        assert!(out.contains("\x1b[2m"));
-        assert!(out.contains("\x1b[22m"));
-        assert!(out.contains("pondering"));
     }
 }

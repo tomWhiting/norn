@@ -24,5 +24,5 @@ pub mod state;
 
 pub use actions::{CompactOutcome, apply_clear_request, apply_compact_request};
 pub use dispatch::{DispatchOutcome, dispatch_input};
-pub use registry::{BUILTIN_DESCRIPTIONS, CLI_BUILTIN_NAMES, build_slash_registry};
+pub use registry::{build_slash_registry, builtin_descriptions, cli_builtin_names};
 pub use state::SlashState;

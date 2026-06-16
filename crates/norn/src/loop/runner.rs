@@ -45,7 +45,9 @@ use crate::rules::types::RuleInjection;
 use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
 use crate::session::store::EventStore;
 
-use super::delivery::{drain_and_partition, drain_child_results, inject_inbound_messages};
+use super::delivery::{
+    drain_and_partition, drain_child_results, flush_inbound_messages, inject_inbound_messages,
+};
 use super::helpers::{
     ToolBatchRequest, ToolResultRecord, accept_schema_tool_call, append_and_notify,
     append_tool_result, apply_rule_injections, build_initial_messages,
@@ -287,6 +289,18 @@ async fn run_agent_step_inner(
     )
     .await?;
 
+    let mut follow_up_buffer: Vec<ChannelMessage> = Vec::new();
+
+    flush_inbound_messages(
+        store,
+        &mut messages,
+        inbound.as_deref_mut(),
+        &mut follow_up_buffer,
+        loop_context.hooks.as_deref(),
+        event_tx,
+    )
+    .await?;
+
     drain_child_results(
         store,
         &mut messages,
@@ -302,7 +316,6 @@ async fn run_agent_step_inner(
     let mut budget_consumed: u32 = 0;
     let mut iterations: u32 = 0;
     let mut best_attempt: Option<Value> = None;
-    let mut follow_up_buffer: Vec<ChannelMessage> = Vec::new();
     let mut pending_before_injections: Vec<RuleInjection> = Vec::new();
     let mut compaction_state = CompactionState::new();
     // REVIEW item 4: failures produced by each iteration (tool errors and
@@ -331,6 +344,20 @@ async fn run_agent_step_inner(
         }
         iterations += 1;
         timeout_state.lock().iterations = iterations as usize;
+
+        // Child/fork completions can arrive while the parent is executing
+        // tools from the previous provider response. Drain them here so
+        // the very next provider request sees the framed result instead
+        // of holding it until a would-stop boundary.
+        drain_child_results(
+            store,
+            &mut messages,
+            loop_context.child_result_rx.as_mut(),
+            loop_context.hooks.as_deref(),
+            None,
+            &loop_context.children_usage,
+        )
+        .await?;
 
         // Rules cleared at the top of each iteration so re-firings produce
         // fresh dynamic sections rather than accumulating duplicates.
@@ -440,7 +467,7 @@ async fn run_agent_step_inner(
             messages: request_messages,
             tools: provider_tools,
             model: model.to_string(),
-            reasoning_effort: loop_context.reasoning_effort.clone(),
+            reasoning_effort: loop_context.reasoning_effort,
             reasoning_summary: loop_context.reasoning_summary.clone(),
             service_tier: loop_context.service_tier,
             config: None,
@@ -2238,6 +2265,87 @@ mod tests {
         assert_eq!(output["answer"], "second");
     }
 
+    // -- R7 regression: idle-root inbound reaches first request ----------
+
+    /// A message delivered while the root loop is idle between user turns
+    /// must be injected before the next provider request. Without the
+    /// pre-request drain this message would only surface at the stop
+    /// boundary of the second step, wasting a provider turn and delaying
+    /// the push.
+    #[tokio::test]
+    async fn inbound_message_queued_between_steps_reaches_next_request() {
+        let provider = MockProvider::new(vec![
+            vec![text_delta("first"), done_event(StopReason::EndTurn)],
+            vec![text_delta("second"), done_event(StopReason::EndTurn)],
+        ]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+        let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
+        let mut loop_ctx = LoopContext::new("system");
+
+        let first = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        let (first_output, _) = assert_completed(first);
+        assert_eq!(first_output, Value::String("first".to_string()));
+
+        tx.send(make_channel_message(
+            "spawn/worker",
+            "idle push",
+            crate::r#loop::inbound::MessageKind::Update,
+            0,
+        ))
+        .await
+        .expect("send idle message");
+
+        let second = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        let (second_output, _) = assert_completed(second);
+        assert_eq!(second_output, Value::String("second".to_string()));
+
+        let requests = provider.requests().expect("requests");
+        assert_eq!(
+            requests.len(),
+            2,
+            "idle inbound should not force an extra provider turn",
+        );
+        let second_request_text = requests[1]
+            .messages
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            second_request_text.contains("<agent_message from=\"spawn/worker\"")
+                && second_request_text.contains("kind=\"update\"")
+                && second_request_text.contains("\nidle push\n"),
+            "second request must include idle inbound message: {second_request_text}",
+        );
+    }
+
     // -- R3 (N-011) regression: drain still works between turns ----------
     //
     // The existing `steer_message_injected_between_turns` test above (and
@@ -2979,7 +3087,7 @@ mod tests {
             &self,
             request: &crate::provider::request::ProviderRequest,
         ) -> crate::integration::hooks::HookOutcome {
-            *self.observed.lock() = request.reasoning_effort.clone();
+            *self.observed.lock() = request.reasoning_effort;
             crate::integration::hooks::HookOutcome::Proceed
         }
     }
@@ -3028,7 +3136,7 @@ mod tests {
 
         let (output, _) = assert_completed(result);
         assert_eq!(output["answer"], "ok");
-        let captured = observed.lock().clone();
+        let captured = *observed.lock();
         assert_eq!(
             captured,
             Some(ReasoningEffort::Low),
@@ -4854,6 +4962,96 @@ mod tests {
             "both buffered subtrees fold exactly once: 7 + 11",
         );
         assert_eq!(children_usage.output_tokens, 9, "3 + 6");
+    }
+
+    /// Child results that arrive while a parent is executing tools must
+    /// be injected before the next provider request, not held until the
+    /// parent reaches a would-stop boundary.
+    #[tokio::test]
+    async fn child_results_arriving_during_tool_iteration_reach_next_request() {
+        use crate::agent::result_channel::ChildAgentResult;
+        use uuid::Uuid;
+
+        let provider = MockProvider::new(vec![
+            vec![
+                tool_call_delta("tc1", Some("send_child_result"), "{}"),
+                done_event(StopReason::ToolUse),
+            ],
+            vec![text_delta("done"), done_event(StopReason::EndTurn)],
+        ]);
+        let store = EventStore::new();
+        let (tx, rx) = tokio::sync::mpsc::channel(4);
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.child_result_rx = Some(rx);
+
+        let mut handlers: std::collections::HashMap<String, ToolHandler> =
+            std::collections::HashMap::new();
+        handlers.insert(
+            "send_child_result".to_string(),
+            Box::new(move |_| {
+                tx.try_send(ChildAgentResult {
+                    agent_id: Uuid::new_v4(),
+                    agent_role: "spawn/worker".to_string(),
+                    succeeded: true,
+                    formatted_message: "child finished during tool batch".to_string(),
+                    error: None,
+                    stop: None,
+                    usage: Usage {
+                        input_tokens: 7,
+                        output_tokens: 3,
+                        ..Usage::default()
+                    },
+                    subtree_usage: Usage {
+                        input_tokens: 7,
+                        output_tokens: 3,
+                        ..Usage::default()
+                    },
+                })
+                .expect("child result send");
+                Ok(serde_json::json!({ "queued_child_result": true }))
+            }),
+        );
+        let executor = MockToolExecutor::new(handlers);
+        let tools = [ToolDefinition {
+            name: "send_child_result".to_string(),
+            description: "queue a child result".to_string(),
+            parameters: serde_json::json!({}),
+        }];
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &tools,
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+
+        let AgentStepResult::Completed { children_usage, .. } = result else {
+            panic!("expected Completed");
+        };
+        assert_eq!(children_usage.input_tokens, 7);
+        assert_eq!(children_usage.output_tokens, 3);
+
+        let requests = provider.requests().expect("requests");
+        assert_eq!(requests.len(), 2, "tool result should force a second turn");
+        let second_request_text = requests[1]
+            .messages
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            second_request_text.contains("<agent_result from=\"spawn/worker\"")
+                && second_request_text.contains("child finished during tool batch"),
+            "second request must include the prompt child result: {second_request_text}",
+        );
     }
 
     /// REVIEW W3.6 HIGH-1 regression: every step's `children_usage`
