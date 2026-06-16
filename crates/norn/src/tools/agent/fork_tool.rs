@@ -591,7 +591,7 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use super::super::handle::SharedSessionTree;
+    use super::super::handle::{AgentWakeRegistry, SharedSessionTree};
     use super::super::infra::AgentToolInfra;
     use super::*;
     use crate::agent::fork::{FORK_SYSTEM_PREAMBLE, ForkRequirement};
@@ -693,6 +693,7 @@ mod tests {
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
         ctx.insert_extension(Arc::new(AgentHandles::new()));
+        ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
         ctx.insert_extension(Arc::new(test_envelope()));
         (ctx, event_store)
     }
@@ -2920,7 +2921,12 @@ mod tests {
                             }
                             tokio::time::sleep(Duration::from_millis(25)).await;
                         }
-                        panic!("fork grandchild was never reclaimed — test cannot proceed");
+                        let snapshot = registry.read().list();
+                        let tombstones = registry.read().tombstones();
+                        panic!(
+                            "fork grandchild was never reclaimed — test cannot proceed; \
+                             entries={snapshot:?}; tombstones={tombstones:?}",
+                        );
                     })
                     .flat_map(move |()| {
                         stream::iter(vec![

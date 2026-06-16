@@ -19,7 +19,7 @@ use serde::Deserialize;
 use super::delegation::{
     auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
 };
-use super::handle::{AgentHandles, ChildBranchMetadata, SharedSessionTree};
+use super::handle::{AgentHandles, AgentWakeRegistry, ChildBranchMetadata, SharedSessionTree};
 use super::infra::{
     AgentCancellation, SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list,
 };
@@ -359,6 +359,7 @@ impl Tool for SpawnAgentTool {
         // `build_runtime` installs it during runtime construction; a
         // missing extension surfaces as a typed `MissingExtension` error.
         let handles = ctx.require_extension::<AgentHandles>()?;
+        let wake_registry = ctx.require_extension::<AgentWakeRegistry>()?;
 
         // The coordination envelope is the runtime's deliberate child
         // policy (W3.0 made it builder-required; the CLI assembly
@@ -513,12 +514,11 @@ impl Tool for SpawnAgentTool {
         // parent can observe and steer it.
         let result_sender = ctx.get_extension::<ChildResultSender>();
 
-        // Delivery-anchored reclamation is enabled only when the runtime
-        // declared it (no external status observer) AND a result channel
-        // exists to anchor "delivered" to. The wrapper is the sole
-        // reclaimer; the oneshot ack (resolved after `handles.insert`
-        // below) tells it when the handle is guaranteed to be stored.
-        // See `super::reclaim`.
+        let persistent = infra
+            .registry
+            .read()
+            .get(infra.agent_id)
+            .is_none_or(|entry| entry.role != "fork");
         let reclaim_on_delivery =
             result_sender.is_some() && ctx.get_extension::<ReclaimOnResultDelivery>().is_some();
         let (handle_installed_tx, reclaim_handshake) = if reclaim_on_delivery {
@@ -612,19 +612,13 @@ impl Tool for SpawnAgentTool {
             inbound_capacity: child_policy.inbound_capacity,
             loop_config: child_policy.loop_config,
             cancel: child_cancel,
+            wake_registry: persistent.then(|| Arc::clone(&wake_registry)),
+            persistent,
         });
         handles.insert(handle);
-
-        // Handshake: the handle is stored — tell the wrapper its
-        // reclamation pass may run. This closes the insert/finish race
-        // without a second reclaimer: a child that finished before the
-        // insert above is parked at this ack inside its wrapper, which
-        // then reclaims both the handle and the registry entry itself. A
-        // send error means the wrapper exited without entering its
-        // reclaim pass (stop hook suppressed the terminal transition, or
-        // something external killed the wrapper task); whoever ended it
-        // owns any remaining cleanup, so there is nothing further for
-        // this path to do.
+        if persistent && let Some(handle) = handles.wake_handle(child_id) {
+            wake_registry.insert(handle);
+        }
         if let Some(tx) = handle_installed_tx
             && tx.send(()).is_err()
         {
@@ -771,12 +765,17 @@ mod tests {
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
         ctx.insert_extension(Arc::new(AgentHandles::new()));
+        ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
         ctx.insert_extension(Arc::new(test_envelope()));
         ctx
     }
 
-    /// Drives a spawn to completion: runs the tool, then takes the child's
-    /// handle out of the parent's `AgentHandles` and awaits the join handle.
+    /// Drives a spawn until the child is no longer actively running.
+    ///
+    /// Natural child completion now parks the spawned child in
+    /// [`AgentStatus::Idle`] so it can be woken later; only hard terminal
+    /// outcomes make the wrapper exit. This helper therefore observes the
+    /// status watch instead of taking and joining the handle.
     async fn spawn_and_join(
         tool: &SpawnAgentTool,
         ctx: &ToolContext,
@@ -791,12 +790,19 @@ mod tests {
         );
         let child_id =
             Uuid::parse_str(out.content["agent_id"].as_str().expect("agent_id")).expect("uuid");
-        let handle = ctx
+        let mut status_rx = ctx
             .get_extension::<AgentHandles>()
             .expect("AgentHandles installed")
-            .remove(child_id)
-            .expect("handle stored for child");
-        handle.join_handle.await.expect("child task joins");
+            .status_rx(child_id)
+            .expect("status receiver stored for child");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            status_rx
+                .wait_for(|status| *status == AgentStatus::Idle || status.is_terminal())
+                .await
+        })
+        .await
+        .expect("child reaches idle or terminal status")
+        .expect("status watch remains open");
         child_id
     }
 
@@ -896,6 +902,19 @@ mod tests {
         }
     }
 
+    struct RequestCapturingProvider {
+        captured: Arc<StdMutex<Vec<ProviderRequest>>>,
+        responses: StdMutex<Vec<Vec<ProviderEvent>>>,
+    }
+
+    impl Provider for RequestCapturingProvider {
+        fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            self.captured.lock().unwrap().push(request);
+            let seq = self.responses.lock().unwrap().remove(0);
+            Ok(Box::pin(stream::iter(seq.into_iter().map(Ok))))
+        }
+    }
+
     /// R6: spawn returns immediately with `status: "active"` while the child
     /// is still blocked, then the child completes asynchronously.
     #[tokio::test]
@@ -940,24 +959,25 @@ mod tests {
         // permit even if the child has not yet reached `notified()`, so
         // this is race-free regardless of scheduling.
         gate.notify_one();
-        let handle = ctx
+        let mut status_rx = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
-            .remove(child_id)
-            .expect("handle");
-        let mut status_rx = handle.status_rx.clone();
-        handle.join_handle.await.expect("join");
-        // Terminal transition retains the entry (status displays hold it)
-        // with terminal status; the watch channel carries it too.
+            .status_rx(child_id)
+            .expect("status_rx tracked");
+        status_rx
+            .wait_for(|status| *status == AgentStatus::Idle)
+            .await
+            .expect("child reaches idle");
+        // Natural completion parks the child as a wakeable idle actor.
         assert_eq!(
             agent_registry
                 .read()
                 .get(child_id)
-                .expect("completed child entry stays observable until reclaimed")
+                .expect("idle child entry stays observable")
                 .status,
-            AgentStatus::Completed,
+            AgentStatus::Idle,
         );
-        assert_eq!(*status_rx.borrow_and_update(), AgentStatus::Completed);
+        assert_eq!(*status_rx.borrow_and_update(), AgentStatus::Idle);
     }
 
     #[tokio::test]
@@ -996,6 +1016,7 @@ mod tests {
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
         ctx.insert_extension(Arc::new(AgentHandles::new()));
+        ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
 
         let tool = SpawnAgentTool::new();
         let err = tool
@@ -1204,7 +1225,139 @@ mod tests {
         );
     }
 
-    /// R7: the failure path still marks the registry `Failed` and still
+    #[tokio::test]
+    async fn signal_to_idle_child_queues_follow_up_and_wake_drains_mailbox() {
+        use crate::tools::agent::coord::{SignalAgentTool, WakeAgentTool};
+
+        let captured = Arc::new(StdMutex::new(Vec::new()));
+        let provider: Arc<dyn Provider> = Arc::new(RequestCapturingProvider {
+            captured: Arc::clone(&captured),
+            responses: StdMutex::new(vec![
+                vec![
+                    ProviderEvent::TextDelta {
+                        text: "initial result".to_string(),
+                    },
+                    done_event(),
+                ],
+                vec![
+                    ProviderEvent::TextDelta {
+                        text: "woke and handled queued work".to_string(),
+                    },
+                    done_event(),
+                ],
+            ]),
+        });
+        let parent = Uuid::new_v4();
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            parent,
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
+
+        let spawn_tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &spawn_tool,
+            &ctx,
+            json!({"task": "wait for later instructions", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+        let initial = rx.try_recv().expect("initial child result delivered");
+        assert_eq!(initial.agent_id, child_id);
+        assert!(initial.succeeded);
+
+        let signal_tool = SignalAgentTool::new();
+        let signal_out = signal_tool
+            .execute(
+                &ToolEnvelope {
+                    tool_call_id: "signal-idle".to_owned(),
+                    tool_name: "signal_agent".to_owned(),
+                    model_args: json!({
+                        "to": child_id.to_string(),
+                        "kind": "steer",
+                        "content": "queued instruction from parent",
+                    }),
+                    runtime_inputs: RuntimeInputs::default(),
+                    metadata: serde_json::Value::Null,
+                },
+                &ctx,
+            )
+            .await
+            .expect("signal executes");
+        assert!(!signal_out.is_error(), "{:?}", signal_out.content);
+        assert_eq!(signal_out.content["queued"], true);
+        assert_eq!(signal_out.content["resume_required"], true);
+
+        let follow_ups =
+            crate::tool::traits::Tool::register_follow_ups(&signal_tool, &signal_out, &ctx).await;
+        assert_eq!(
+            follow_ups.len(),
+            1,
+            "queued signal exposes a wake follow-up"
+        );
+        assert_eq!(follow_ups[0].tool, "wake_agent");
+        assert_eq!(follow_ups[0].args["agent_id"], child_id.to_string());
+
+        let wake_out = WakeAgentTool::new()
+            .execute(
+                &ToolEnvelope {
+                    tool_call_id: "wake-idle".to_owned(),
+                    tool_name: "wake_agent".to_owned(),
+                    model_args: json!({ "agent_id": child_id.to_string() }),
+                    runtime_inputs: RuntimeInputs::default(),
+                    metadata: serde_json::Value::Null,
+                },
+                &ctx,
+            )
+            .await
+            .expect("wake executes");
+        assert!(!wake_out.is_error(), "{:?}", wake_out.content);
+        assert_eq!(wake_out.content["woken"], true);
+        assert_eq!(wake_out.content["queued_messages"], 1);
+
+        let resumed = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("resumed result delivered")
+            .expect("channel open");
+        assert_eq!(resumed.agent_id, child_id);
+        assert!(resumed.succeeded);
+        assert!(
+            resumed
+                .formatted_message
+                .contains("woke and handled queued work"),
+            "{}",
+            resumed.formatted_message,
+        );
+        wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
+
+        let requests = captured.lock().unwrap().clone();
+        assert_eq!(requests.len(), 2, "initial step + wake step");
+        let woke_with_message = requests[1].messages.iter().any(|message| {
+            message.content.as_deref().is_some_and(|content| {
+                content.contains("<agent_message")
+                    && content.contains("queued instruction from parent")
+            })
+        });
+        assert!(
+            woke_with_message,
+            "wake step must receive the queued message through the normal frame: {:?}",
+            requests[1].messages,
+        );
+        let infra = ctx.get_extension::<AgentToolInfra>().expect("infra");
+        assert!(
+            infra
+                .pending_messages
+                .messages_for_delivery(child_id)
+                .is_empty(),
+            "wake step drains the durable mailbox"
+        );
+    }
+
+    /// R7: the hard-error path still marks the registry `Failed` and still
     /// sends a result through the child result channel with
     /// `succeeded: false`.
     #[tokio::test]
@@ -1534,8 +1687,8 @@ mod tests {
         assert!(!result.succeeded, "panicked child must report failure");
         let error = result.error.expect("error present after panic");
         assert!(
-            error.contains("terminated without an outcome"),
-            "error must be honest about the missing outcome: {error}",
+            error.contains("panicked before completing"),
+            "error must be honest about the panic: {error}",
         );
 
         // Lifecycle: `Completed` is emitted — no dangling `Started`.
@@ -1559,7 +1712,7 @@ mod tests {
         assert!(
             error
                 .unwrap_or_default()
-                .contains("terminated without an outcome"),
+                .contains("panicked before completing"),
             "lifecycle error must name the panic outcome",
         );
         assert_eq!(usage.input_tokens, 0, "usage is unknown after a panic");
@@ -1670,15 +1823,15 @@ mod tests {
             json!({"task": "try bash", "model": "haiku", "role": "worker", "tools": ["search"]}),
         )
         .await;
-        // The child completed — the disallowed tool call did not fail the
-        // run. The entry stays observable with Completed status.
+        // The child completed its step — the disallowed tool call did not fail
+        // the run. The entry stays observable and wakeable with Idle status.
         assert_eq!(
             agent_registry
                 .read()
                 .get(child_id)
-                .expect("completed child entry stays observable until reclaimed")
+                .expect("idle child entry stays observable")
                 .status,
-            AgentStatus::Completed,
+            AgentStatus::Idle,
         );
     }
 
@@ -1896,11 +2049,11 @@ mod tests {
             0,
             "a tool denied in the parent must never execute inside a spawned child",
         );
-        // The child itself still finishes (the deny surfaces as a blocked
-        // tool result, not a child crash).
+        // The child itself still finishes its step and parks idle (the deny
+        // surfaces as a blocked tool result, not a child crash).
         assert_eq!(
             agent_registry.read().get(child_id).expect("entry").status,
-            AgentStatus::Completed,
+            AgentStatus::Idle,
         );
     }
 
@@ -1951,13 +2104,12 @@ mod tests {
             .expect("spawn");
         let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
 
-        let handle = ctx
+        wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
+        let event_store = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
-            .remove(child_id)
-            .expect("handle stored for child");
-        let event_store = Arc::clone(&handle.event_store);
-        handle.join_handle.await.expect("child task joins");
+            .event_store(child_id)
+            .expect("child store remains reachable while idle");
 
         let events = event_store.events();
         let found = events.iter().any(|e| match e {
@@ -2024,12 +2176,7 @@ mod tests {
         assert_eq!(meta.parent_agent_id, parent);
         assert!(meta.profile_name.is_none());
 
-        let handle = handles.remove(child_id).expect("handle stored for child");
-        assert!(
-            Arc::ptr_eq(&store_via_accessor, &handle.event_store),
-            "accessor and handle must share the same EventStore Arc",
-        );
-        handle.join_handle.await.expect("child task joins");
+        wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
 
         assert!(
             !store_via_accessor.is_empty(),
@@ -2102,17 +2249,17 @@ mod tests {
             "branching appends a Fork event to the parent's store",
         );
 
-        let handle = ctx
+        let tree_store = tree.get_store(child_session_id).expect("child store");
+        let handle_store = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
-            .remove(child_id)
-            .expect("handle stored for child");
-        let tree_store = tree.get_store(child_session_id).expect("child store");
+            .event_store(child_id)
+            .expect("child store remains reachable while idle");
         assert!(
-            Arc::ptr_eq(&tree_store, &handle.event_store),
+            Arc::ptr_eq(&tree_store, &handle_store),
             "handle.event_store must alias the SessionTree branch store",
         );
-        handle.join_handle.await.expect("child task joins");
+        wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
     }
 
     // NH-006 R5 / C56 + C57: SubagentHook fires on launch (`start`)
@@ -2200,13 +2347,23 @@ mod tests {
         }
     }
 
-    /// Unbounded-retention regression: with [`ReclaimOnResultDelivery`]
-    /// installed and a result channel present, a naturally-completed
-    /// child's registry entry AND parent-held handle are reclaimed once
-    /// its result has been delivered — nothing pins the child's
-    /// EventStore forever in embedded/headless runs.
+    async fn wait_for_child_status(ctx: &ToolContext, child_id: Uuid, expected: AgentStatus) {
+        let handles = ctx
+            .get_extension::<AgentHandles>()
+            .expect("AgentHandles installed");
+        let mut status_rx = handles.status_rx(child_id).expect("status_rx tracked");
+        status_rx
+            .wait_for(|status| *status == expected)
+            .await
+            .expect("child reaches expected status");
+    }
+
+    /// Wakeable-spawn regression: a naturally-completed spawned child is
+    /// retained as Idle even when [`ReclaimOnResultDelivery`] is installed.
+    /// Explicit `close_agent` is the cleanup boundary for persistent
+    /// spawned actors.
     #[tokio::test]
-    async fn delivered_result_reclaims_registry_and_handle_when_marker_present() {
+    async fn delivered_result_retains_registry_and_handle_when_marker_present() {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
             ProviderEvent::TextDelta {
                 text: "child done".to_string(),
@@ -2243,11 +2400,15 @@ mod tests {
         assert!(result.succeeded);
 
         let handles = ctx.get_extension::<AgentHandles>().unwrap();
-        wait_for_condition(
-            || agent_registry.read().get(child_id).is_none() && !handles.contains(child_id),
-            "registry entry and handle reclaimed after result delivery",
-        )
-        .await;
+        assert!(handles.contains(child_id));
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(child_id)
+                .expect("idle child retained")
+                .status,
+            AgentStatus::Idle,
+        );
     }
 
     /// Reclamation ownership: with the marker installed but NO result
@@ -2284,9 +2445,9 @@ mod tests {
         let handles = ctx.get_extension::<AgentHandles>().unwrap();
         let mut status_rx = handles.status_rx(child_id).expect("status_rx tracked");
         status_rx
-            .wait_for(|s| s.is_terminal())
+            .wait_for(|s| *s == AgentStatus::Idle)
             .await
-            .expect("child reaches terminal status");
+            .expect("child reaches idle status");
 
         assert!(
             handles.contains(child_id),
@@ -2298,7 +2459,7 @@ mod tests {
                 .get(child_id)
                 .expect("entry stays observable")
                 .status,
-            AgentStatus::Completed,
+            AgentStatus::Idle,
         );
     }
 
@@ -2342,9 +2503,9 @@ mod tests {
         let handles = ctx.get_extension::<AgentHandles>().unwrap();
         let mut status_rx = handles.status_rx(child_id).expect("status_rx tracked");
         status_rx
-            .wait_for(|s| s.is_terminal())
+            .wait_for(|s| *s == AgentStatus::Idle)
             .await
-            .expect("child reaches terminal status");
+            .expect("child reaches idle status");
         assert!(
             handles.contains(child_id),
             "without the marker the external observer owns reclamation",
@@ -2353,9 +2514,9 @@ mod tests {
             agent_registry
                 .read()
                 .get(child_id)
-                .expect("terminal entry stays observable for the hold window")
+                .expect("idle entry stays observable for wake")
                 .status,
-            AgentStatus::Completed,
+            AgentStatus::Idle,
         );
     }
 
@@ -2417,9 +2578,9 @@ mod tests {
         let handles = ctx.get_extension::<AgentHandles>().unwrap();
         let mut status_rx = handles.status_rx(child_id).expect("status_rx tracked");
         status_rx
-            .wait_for(|s| s.is_terminal())
+            .wait_for(|s| *s == AgentStatus::Idle)
             .await
-            .expect("watch reaches terminal status");
+            .expect("watch reaches idle status");
 
         assert!(
             handles.contains(child_id),
@@ -2431,8 +2592,8 @@ mod tests {
                 .get(child_id)
                 .expect("hook-blocked child stays registered")
                 .status,
-            AgentStatus::Active,
-            "Block suppresses the terminal transition, so the entry stays Active",
+            AgentStatus::Idle,
+            "Block suppresses the terminal transition; persistent children park idle",
         );
     }
 
@@ -2660,13 +2821,12 @@ mod tests {
             .await
             .expect("spawn");
         let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
-        let handle = ctx
+        wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
+        let child_store = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
-            .remove(child_id)
-            .expect("handle");
-        let child_store = Arc::clone(&handle.event_store);
-        handle.join_handle.await.expect("join");
+            .event_store(child_id)
+            .expect("child store remains reachable while idle");
 
         let results = read_results(&child_store.events());
         assert_eq!(results.len(), 2, "both reads produced results: {results:?}");
@@ -2730,13 +2890,12 @@ mod tests {
             .await
             .expect("spawn");
         let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
-        let handle = ctx
+        wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
+        let child_store = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
-            .remove(child_id)
-            .expect("handle");
-        let child_store = Arc::clone(&handle.event_store);
-        handle.join_handle.await.expect("join");
+            .event_store(child_id)
+            .expect("child store remains reachable while idle");
 
         let results = read_results(&child_store.events());
         assert_eq!(results.len(), 1, "the read produced a result: {results:?}");
@@ -3027,13 +3186,12 @@ mod tests {
             .await
             .expect("spawn");
         let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
-        let handle = ctx
+        wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
+        let child_store = ctx
             .get_extension::<AgentHandles>()
             .unwrap()
-            .remove(child_id)
-            .expect("handle");
-        let child_store = Arc::clone(&handle.event_store);
-        handle.join_handle.await.expect("join");
+            .event_store(child_id)
+            .expect("child store remains reachable while idle");
 
         // The child's action_log call succeeded — the MissingExtension
         // regression is pinned here.
@@ -3082,11 +3240,12 @@ mod tests {
     }
 
     /// Route ownership (W3.2): the launch path registers the child's
-    /// inbound route at launch and the completion wrapper deregisters at
-    /// the run's end — `signal_agent` reaches a live child without any
-    /// tool-side registration, and a finished child is NotRouted.
+    /// inbound route at launch and the step wrapper deregisters when the
+    /// child parks idle — `signal_agent` reaches a running child without
+    /// any tool-side registration, while an idle child queues into its
+    /// durable mailbox for `wake_agent`.
     #[tokio::test]
-    async fn spawn_registers_route_at_launch_and_deregisters_at_terminal() {
+    async fn spawn_registers_route_at_launch_and_deregisters_at_idle() {
         let gate = Arc::new(tokio::sync::Notify::new());
         let provider: Arc<dyn Provider> = Arc::new(GatedProvider {
             gate: Arc::clone(&gate),
@@ -3122,15 +3281,10 @@ mod tests {
         );
 
         gate.notify_one();
-        let handle = ctx
-            .get_extension::<AgentHandles>()
-            .unwrap()
-            .remove(child_id)
-            .expect("handle");
-        handle.join_handle.await.expect("join");
+        wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
         assert!(
             !router.is_routed(child_id),
-            "the completion wrapper must deregister the route at the run's end",
+            "an idle child must not keep a live inbound route",
         );
     }
 
@@ -3156,6 +3310,7 @@ mod tests {
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
         ctx.insert_extension(Arc::new(AgentHandles::new()));
+        ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
 
         let tool = SpawnAgentTool::new();
         let err = tool
@@ -3343,6 +3498,7 @@ mod tests {
             let ctx = ToolContext::empty();
             ctx.insert_extension(infra);
             ctx.insert_extension(Arc::new(AgentHandles::new()));
+            ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
             let mut envelope = test_envelope();
             envelope.child_policy.messaging = MessagingScope::ParentOnly;
             envelope.child_policy.inbound_capacity = 7;
@@ -3722,7 +3878,11 @@ mod tests {
 
         let reg = agent_registry.read();
         let entry = reg.get(child_id).expect("child entry retained");
-        assert_eq!(entry.status, AgentStatus::Completed, "the child completed");
+        assert_eq!(
+            entry.status,
+            AgentStatus::Idle,
+            "the child completed and idled"
+        );
         assert_eq!(entry.policy.delegation.remaining_depth, 0, "leaf grant");
         assert_eq!(
             reg.len(),
@@ -3733,10 +3893,18 @@ mod tests {
         assert!(reg.tombstones().is_empty(), "nothing was reclaimed");
     }
 
+    fn idle_grandchild_entry(
+        registry: &RwLock<AgentRegistry>,
+    ) -> Option<crate::agent::registry::AgentEntry> {
+        registry.read().list().into_iter().find(|entry| {
+            entry.path.matches("/spawn/").count() == 2 && entry.status == AgentStatus::Idle
+        })
+    }
+
     /// Routes provider scripts by conversation identity (the first user
     /// message) so a mid-tree child and its grandchild can share the one
     /// workspace provider deterministically; the child's would-stop turn
-    /// is held until the registry shows the grandchild reclaimed, which
+    /// is held until the registry shows the grandchild parked idle, which
     /// guarantees its result is already in the child's channel.
     struct TreeProvider {
         registry: Arc<RwLock<AgentRegistry>>,
@@ -3787,17 +3955,12 @@ mod tests {
                     let registry = Arc::clone(&self.registry);
                     let s = stream::once(async move {
                         for _ in 0..2400 {
-                            let reclaimed = registry
-                                .read()
-                                .tombstones()
-                                .iter()
-                                .any(|t| t.path.matches("/spawn/").count() == 2);
-                            if reclaimed {
+                            if idle_grandchild_entry(&registry).is_some() {
                                 return;
                             }
                             tokio::time::sleep(Duration::from_millis(25)).await;
                         }
-                        panic!("grandchild was never reclaimed — the test cannot proceed");
+                        panic!("grandchild never parked idle — the test cannot proceed");
                     })
                     .flat_map(|()| {
                         stream::iter(vec![
@@ -3823,9 +3986,9 @@ mod tests {
     /// spawns a grandchild; the grandchild's result is delivered into the
     /// **child's** conversation (one hop — never to the root), the child's
     /// own result reaches the root's channel, the agents tree nests, and
-    /// every registry entry at every level is reclaimed.
+    /// every spawned actor remains idle and addressable.
     #[tokio::test]
-    async fn grandchild_results_bubble_one_hop_and_reclaim_at_every_level() {
+    async fn grandchild_results_bubble_one_hop_and_idle_at_every_level() {
         let agent_registry = AgentRegistry::shared();
         let provider: Arc<dyn Provider> = Arc::new(TreeProvider {
             registry: Arc::clone(&agent_registry),
@@ -3845,9 +4008,9 @@ mod tests {
         envelope.child_policy.delegation.remaining_depth = 2;
         ctx.insert_extension(Arc::new(envelope));
 
-        // Root result channel + delivery-anchored reclamation, so the
-        // wrappers reclaim at every level (the recorded grandchild-leak
-        // gap this step closes).
+        // Root result channel + delivery-anchored marker. Persistent
+        // spawned children deliberately ignore the marker on natural
+        // completion so they remain wakeable.
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
         ctx.insert_extension(Arc::new(ReclaimOnResultDelivery));
@@ -3900,45 +4063,49 @@ mod tests {
             "the grandchild's result must never reach the root directly",
         );
 
-        // Reclamation at every level: both entries leave, both tombstones
-        // stay, parent links and nested paths intact.
-        let deadline = std::time::Instant::now() + Duration::from_secs(30);
-        loop {
-            if agent_registry.read().is_empty() {
-                break;
-            }
-            assert!(
-                std::time::Instant::now() < deadline,
-                "registry entries leaked: {:?}",
-                agent_registry.read().list(),
-            );
-            tokio::time::sleep(Duration::from_millis(20)).await;
-        }
+        // Wakeable tree at every level: both entries remain observable,
+        // idle, and correctly linked.
+        wait_for_condition(
+            || {
+                let reg = agent_registry.read();
+                let child_idle = reg
+                    .get(child_id)
+                    .is_some_and(|entry| entry.status == AgentStatus::Idle);
+                let grandchild_idle = reg.children(child_id).iter().any(|entry| {
+                    entry.status == AgentStatus::Idle
+                        && entry.path.starts_with(&format!("{child_path}/spawn/"))
+                });
+                child_idle && grandchild_idle
+            },
+            "child and grandchild must both park idle",
+        )
+        .await;
         let reg = agent_registry.read();
-        let tombstones = reg.tombstones();
-        assert_eq!(tombstones.len(), 2, "child + grandchild reclaimed");
-        let child_tomb = tombstones
-            .iter()
-            .find(|t| t.id == child_id)
-            .expect("child tombstone");
-        assert_eq!(child_tomb.parent_id, Some(root_id));
-        assert_eq!(child_tomb.status, AgentStatus::Completed);
-        let grandchild_tomb = tombstones
-            .iter()
-            .find(|t| t.id != child_id)
-            .expect("grandchild tombstone");
         assert_eq!(
-            grandchild_tomb.parent_id,
+            reg.tombstones().len(),
+            0,
+            "natural idle creates no tombstones"
+        );
+        let child_entry = reg.get(child_id).expect("child entry retained");
+        assert_eq!(child_entry.parent_id, Some(root_id));
+        assert_eq!(child_entry.status, AgentStatus::Idle);
+        let grandchild_entry = reg
+            .children(child_id)
+            .into_iter()
+            .find(|entry| entry.path.starts_with(&format!("{child_path}/spawn/")))
+            .expect("grandchild entry retained");
+        assert_eq!(
+            grandchild_entry.parent_id,
             Some(child_id),
             "the grandchild's parent is the mid-tree child, not the root",
         );
-        assert_eq!(grandchild_tomb.status, AgentStatus::Completed);
+        assert_eq!(grandchild_entry.status, AgentStatus::Idle);
         assert!(
-            grandchild_tomb
+            grandchild_entry
                 .path
                 .starts_with(&format!("{child_path}/spawn/")),
             "grandchild path nests under the child: {}",
-            grandchild_tomb.path,
+            grandchild_entry.path,
         );
         drop(reg);
 
@@ -3987,7 +4154,7 @@ mod tests {
     /// usage on every level and call — grandchild (7, 3); child calls
     /// (100, 50), (200, 60), (300, 70) — so any double count or dropped
     /// level changes the totals. The child's would-stop turn is held
-    /// until the registry shows the grandchild reclaimed, guaranteeing
+    /// until the registry shows the grandchild parked idle, guaranteeing
     /// its result (and its `subtree_usage`) is already in the child's
     /// channel when the boundary sweep folds it.
     struct UsageTreeProvider {
@@ -4034,17 +4201,12 @@ mod tests {
                     let registry = Arc::clone(&self.registry);
                     let s = stream::once(async move {
                         for _ in 0..2400 {
-                            let reclaimed = registry
-                                .read()
-                                .tombstones()
-                                .iter()
-                                .any(|t| t.path.matches("/spawn/").count() == 2);
-                            if reclaimed {
+                            if idle_grandchild_entry(&registry).is_some() {
                                 return;
                             }
                             tokio::time::sleep(Duration::from_millis(25)).await;
                         }
-                        panic!("grandchild was never reclaimed — the test cannot proceed");
+                        panic!("grandchild never parked idle — the test cannot proceed");
                     })
                     .flat_map(|()| {
                         stream::iter(vec![
@@ -4271,7 +4433,7 @@ mod tests {
                 .error
                 .as_deref()
                 .unwrap_or_default()
-                .contains("terminated without an outcome"),
+                .contains("panicked before completing"),
             "the panic must surface honestly: {:?}",
             child_result.error,
         );
@@ -4890,19 +5052,16 @@ mod tests {
             }),
         );
 
-        let handle = ctx
-            .get_extension::<AgentHandles>()
-            .expect("handles")
-            .remove(child_id)
-            .expect("handle stored");
-        handle.join_handle.await.expect("child task joins");
-
         // The complete subtree reached the root as exactly one result:
         // the child's final answer, produced *after* the late grandchild
         // result was drained at the lingering stop boundary.
-        let child_result = rx.try_recv().expect("the child's result is delivered");
+        let child_result = tokio::time::timeout(Duration::from_secs(5), rx.recv())
+            .await
+            .expect("child result is delivered")
+            .expect("channel open");
         assert_eq!(child_result.agent_id, child_id);
         assert!(child_result.succeeded, "{:?}", child_result.error);
+        wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
         assert!(
             child_result
                 .formatted_message
@@ -5022,8 +5181,8 @@ mod tests {
         );
         assert_eq!(
             agent_registry.read().get(child_id).expect("entry").status,
-            AgentStatus::Failed,
-            "a capped-out child is an honest failure, never a fake completion",
+            AgentStatus::Idle,
+            "a capped-out child reports failure but remains wakeable",
         );
         let result = rx.try_recv().expect("result delivered");
         assert!(!result.succeeded);
@@ -5084,7 +5243,7 @@ mod tests {
 
         assert_eq!(
             agent_registry.read().get(child_id).expect("entry").status,
-            AgentStatus::Failed,
+            AgentStatus::Idle,
         );
         let result = rx.try_recv().expect("result delivered");
         assert!(!result.succeeded);

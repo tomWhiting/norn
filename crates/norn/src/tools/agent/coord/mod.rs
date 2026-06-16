@@ -15,6 +15,7 @@
 mod close;
 mod helpers;
 mod signal_agent;
+mod wake;
 
 #[cfg(test)]
 pub(crate) mod test_support;
@@ -22,3 +23,4 @@ pub(crate) mod test_support;
 pub use close::CloseAgentTool;
 pub(crate) use helpers::sender_attribution;
 pub use signal_agent::{SIGNAL_AGENT_TOOL_NAME, SignalAgentTool};
+pub use wake::{WAKE_AGENT_TOOL_NAME, WakeAgentTool};

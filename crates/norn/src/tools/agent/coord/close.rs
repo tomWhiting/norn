@@ -65,8 +65,10 @@ fn status_label(status: AgentStatus) -> &'static str {
         AgentStatus::Spawning => "spawning",
         AgentStatus::Active => "active",
         AgentStatus::Completing => "completing",
+        AgentStatus::Idle => "idle",
         AgentStatus::Completed => "completed",
         AgentStatus::Failed => "failed",
+        AgentStatus::Closed => "closed",
     }
 }
 

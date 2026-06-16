@@ -1,12 +1,12 @@
 Use when work can be delegated to an independent agent that does not need the parent's conversation history. The sub-agent starts with a clean EventStore — it sees only the task string, not prior turns. Provide a clear, self-contained task description since the sub-agent has no other context.
 
-Spawn is asynchronous: it returns immediately with the agent_id and registry path while the child runs in the background. Continue with your own work after spawning — do not block. When the child completes, its result is delivered back to you automatically. To check whether a child is still running, use the agents tool.
+Spawn is asynchronous: it returns immediately with the agent_id and registry path while the child runs in the background. Continue with your own work after spawning — do not block. When the child finishes a step, its result is delivered back to you automatically and the child parks as an idle, addressable actor. Send later work with signal_agent; if the message queues because the child is idle, use the wake_agent follow-up to resume it. To check whether a child is running, idle, or terminal, use the agents tool.
 
 Pass a bare profile name (e.g. "developer", "code-reviewer") in the profile parameter to resolve a markdown profile from $WORKSPACE/.norn/profiles, $WORKSPACE/.meridian/profiles, or ~/.norn/profiles. The profile supplies the child's system instructions, tool allow-list, and reasoning config. Omit profile for a minimal default whose system instruction is built from the task itself.
 
 Use the tools parameter to restrict which tools the sub-agent may call; it takes precedence over the profile's tool list. Omit it to inherit the profile's tools, or the full parent registry when no profile is given.
 
-To parallelise work, spawn several children for independent subtasks. Results are delivered automatically when each child completes.
+To parallelise work, spawn several children for independent subtasks. Results are delivered automatically when each child finishes a step; close idle children explicitly when they are no longer needed.
 
 Delegation is budgeted, not flat: every agent carries a granted policy with a delegation budget (remaining_depth, max_concurrent_children). You can spawn only while your own remaining_depth is at least 1, and a child you create always receives strictly less depth than you hold — by default your own policy with remaining_depth reduced by one. remaining_depth 0 means the child is a leaf and cannot delegate at all. A spawn that exceeds your budget (depth exhausted, or too many concurrently live children) fails with a typed error naming the budget.
 

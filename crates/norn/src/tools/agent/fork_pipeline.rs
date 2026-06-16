@@ -18,7 +18,7 @@ use chrono::Utc;
 use parking_lot::RwLock;
 use uuid::Uuid;
 
-use super::handle::{AgentHandles, SharedSessionTree};
+use super::handle::{AgentHandles, AgentWakeRegistry, SharedSessionTree};
 use super::infra::{AgentCancellation, AgentToolInfra, ParentGrant};
 use super::reclaim::log_terminal_transition_violation;
 use super::spawn_context::wire_child_action_log;
@@ -129,6 +129,9 @@ pub(super) fn build_fork_context(
     child_ctx.insert_extension(Arc::new(child_infra));
     child_ctx.insert_extension(Arc::new(AgentCancellation(child_cancel)));
     child_ctx.insert_extension(Arc::new(AgentHandles::new()));
+    if let Some(wake_registry) = parent_ctx.get_extension::<AgentWakeRegistry>() {
+        child_ctx.insert_extension(wake_registry);
+    }
     if let Some(task_store) = parent_ctx.get_extension::<SharedTaskStore>() {
         child_ctx.insert_extension(task_store);
     }

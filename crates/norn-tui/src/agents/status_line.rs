@@ -13,8 +13,8 @@
 //! ## Visibility rules
 //!
 //! - The single-agent (root-only) case shows zero rows — R1 / C56.
-//! - When a child reaches [`AgentStatus::Completed`] or
-//!   [`AgentStatus::Failed`], its line is held for
+//! - When a child reaches [`AgentStatus::Completed`],
+//!   [`AgentStatus::Failed`], or [`AgentStatus::Closed`], its line is held for
 //!   [`HOLD_DURATION`] showing the terminal icon/state, then reclaimed.
 //! - The collapse heuristic in [`super::tree::collapse`] limits visible
 //!   rows to five; the panel emits a `⋯ N more active agents` overflow
@@ -39,7 +39,7 @@ use crate::terminal::caps::TerminalCaps;
 
 use super::tree::{self, CandidateEntry, CollapsedView};
 
-/// Duration a completed or failed agent's status line stays visible
+/// Duration a terminal agent's status line stays visible
 /// before the row is reclaimed.
 pub const HOLD_DURATION: Duration = Duration::from_secs(3);
 
@@ -92,8 +92,10 @@ pub fn icon_for(status: AgentStatus) -> char {
     match status {
         AgentStatus::Spawning => '⊙',
         AgentStatus::Active | AgentStatus::Completing => '●',
+        AgentStatus::Idle => '◌',
         AgentStatus::Completed => '✓',
         AgentStatus::Failed => '✗',
+        AgentStatus::Closed => '×',
     }
 }
 
@@ -217,7 +219,8 @@ fn row_colour(
                 Some(colour_for(GREEN_RUNNING, caps))
             }
         }
-        AgentStatus::Completed => Some(colour_for(GREEN_RUNNING, caps)),
+        AgentStatus::Idle => None,
+        AgentStatus::Completed | AgentStatus::Closed => Some(colour_for(GREEN_RUNNING, caps)),
         AgentStatus::Failed => Some(colour_for(RED_FAILED, caps)),
     }
 }
@@ -391,7 +394,10 @@ impl AgentStatusPanel {
             if prev != Some(entry.status) {
                 self.last_change_at.insert(entry.id, now);
                 self.last_status.insert(entry.id, entry.status);
-                if matches!(entry.status, AgentStatus::Completed | AgentStatus::Failed) {
+                if matches!(
+                    entry.status,
+                    AgentStatus::Completed | AgentStatus::Failed | AgentStatus::Closed
+                ) {
                     self.holds.insert(entry.id, now + HOLD_DURATION);
                 }
             }
@@ -414,8 +420,11 @@ impl AgentStatusPanel {
 
     fn is_visible_candidate(&self, entry: &AgentEntry, now: Instant) -> bool {
         match entry.status {
-            AgentStatus::Spawning | AgentStatus::Active | AgentStatus::Completing => true,
-            AgentStatus::Completed | AgentStatus::Failed => self
+            AgentStatus::Spawning
+            | AgentStatus::Active
+            | AgentStatus::Completing
+            | AgentStatus::Idle => true,
+            AgentStatus::Completed | AgentStatus::Failed | AgentStatus::Closed => self
                 .holds
                 .get(&entry.id)
                 .is_some_and(|deadline| now < *deadline),
@@ -456,8 +465,10 @@ impl AgentStatusPanel {
         line: &str,
     ) -> io::Result<()> {
         clear_row(row, writer)?;
-        let idle_active = matches!(status, AgentStatus::Active | AgentStatus::Completing)
-            && matches!(activity, Some(AgentActivity::Idle));
+        let idle_active = matches!(
+            status,
+            AgentStatus::Active | AgentStatus::Completing | AgentStatus::Idle
+        ) && matches!(activity, Some(AgentActivity::Idle));
         if idle_active {
             // Idle swap: dim attribute, no foreground colour. Replace
             // the lifecycle `●` icon with the explicit-idle `◌`.

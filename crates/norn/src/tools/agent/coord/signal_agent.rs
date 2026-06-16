@@ -18,8 +18,9 @@
 //! [`InboundChannel`](crate::r#loop::inbound::InboundChannel) and drains at
 //! the recipient loop's step boundaries, injected as a harness-framed
 //! `<agent_message>` turn. Route registration is owned by the spawn/fork
-//! launch wrappers (register at launch, deregister at terminal transition);
-//! this tool only routes — it never registers.
+//! launch wrappers (register while a step is running, deregister while a
+//! spawned child is idle or terminal); this tool only routes — it never
+//! registers.
 //!
 //! ## Scope enforcement (Wave 3 §Permissioning)
 //!
@@ -54,8 +55,8 @@
 //! event when a channel is installed. A resolved, in-scope recipient with no
 //! live route is a second accepted state: the message is recorded as
 //! `agent_message.queued` in the sender/parent stores and the shared pending
-//! store, then drained by the recipient's next resumed loop step. Terminal
-//! recipients still fail honestly with their recorded outcome.
+//! store, then drained by the recipient's next resumed or wake-triggered loop
+//! step. Terminal recipients still fail honestly with their recorded outcome.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -75,10 +76,13 @@ use crate::provider::agent_event::{
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
+use crate::tool::follow_up::{
+    BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction, FollowUpArgsMode,
+};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
-use crate::tools::agent::append_message_audit;
 use crate::tools::agent::infra::{AgentToolInfra, ResolvedAgent, infra_from, resolve_agent};
+use crate::tools::agent::{WAKE_AGENT_TOOL_NAME, append_message_audit};
 
 /// Public tool name for the Norn inter-agent messaging tool.
 pub const SIGNAL_AGENT_TOOL_NAME: &str = "signal_agent";
@@ -307,10 +311,10 @@ fn finished_failure(
     completed_at: Option<DateTime<Utc>>,
 ) -> ToolOutput {
     let when = completed_at.map_or_else(|| "an unrecorded time".to_owned(), |ts| ts.to_rfc3339());
-    let outcome = if status == AgentStatus::Failed {
-        "failed"
-    } else {
-        "completed"
+    let outcome = match status {
+        AgentStatus::Failed => "failed",
+        AgentStatus::Closed => "closed",
+        _ => "completed",
     };
     ToolOutput::failure_with_content(
         serde_json::json!({
@@ -590,6 +594,34 @@ impl Tool for SignalAgentTool {
             )),
         }
     }
+
+    async fn register_follow_ups(
+        &self,
+        output: &ToolOutput,
+        _ctx: &ToolContext,
+    ) -> Vec<FollowUpAction> {
+        if output
+            .content
+            .get("queued")
+            .and_then(serde_json::Value::as_bool)
+            != Some(true)
+        {
+            return Vec::new();
+        }
+        let Some(agent_id) = output.content.get("to").and_then(serde_json::Value::as_str) else {
+            return Vec::new();
+        };
+        vec![FollowUpAction {
+            action: "wake_agent".to_owned(),
+            description: "Wake the recipient so it drains the queued mailbox message.".to_owned(),
+            tool: WAKE_AGENT_TOOL_NAME.to_owned(),
+            args: serde_json::json!({ "agent_id": agent_id }),
+            args_mode: FollowUpArgsMode::Replace,
+            expires: ExpiryCondition::Never,
+            confidence: Confidence::High,
+            before_content: BeforeContentSource::Unavailable,
+        }]
+    }
 }
 
 #[cfg(test)]
@@ -769,6 +801,12 @@ mod tests {
         assert_eq!(out.content["delivery_state"], "queued");
         assert_eq!(out.content["to"], recipient.to_string());
         assert_eq!(pending_store.pending_for(recipient), 1);
+        let follow_ups = SignalAgentTool::new().register_follow_ups(&out, &ctx).await;
+        assert_eq!(follow_ups.len(), 1);
+        assert_eq!(follow_ups[0].action, "wake_agent");
+        assert_eq!(follow_ups[0].tool, WAKE_AGENT_TOOL_NAME);
+        assert_eq!(follow_ups[0].args_mode, FollowUpArgsMode::Replace);
+        assert_eq!(follow_ups[0].args["agent_id"], recipient.to_string());
 
         let queued_events = sender_store
             .events()

@@ -977,6 +977,7 @@ mod tests {
             "spawn_agent",
             "fork",
             "signal_agent",
+            "wake_agent",
             "close_agent",
             "agents",
         ];
@@ -1834,9 +1835,9 @@ mod tests {
             result.formatted_message,
         );
 
-        // Delivery-anchored reclamation: the wrapper reclaims after the
-        // send completes, which can land just after `recv` returns —
-        // poll briefly instead of asserting immediately.
+        // Spawned children are wakeable actors: after result delivery the
+        // registry entry and parent-held handle remain so signal_agent can
+        // queue work and wake_agent can resume the child explicitly.
         let ctx = agent
             .registry
             .shared_context()
@@ -1844,15 +1845,8 @@ mod tests {
         let handles = ctx
             .get_extension::<AgentHandles>()
             .expect("AgentHandles installed");
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
-        while agent_registry.read().get(child_id).is_some() || handles.contains(child_id) {
-            assert!(
-                std::time::Instant::now() < deadline,
-                "timed out waiting for the delivered child's registry entry \
-                 and handle to be reclaimed",
-            );
-            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        }
+        assert!(agent_registry.read().get(child_id).is_some());
+        assert!(handles.contains(child_id));
     }
 
     /// Track B finding 1 (blocker): `workspace_root` must produce a built

@@ -27,18 +27,22 @@ pub enum AgentStatus {
     Active,
     /// Wrapping up — emitting final output.
     Completing,
+    /// Not currently running, but still addressable and wakeable.
+    Idle,
     /// Finished successfully.
     Completed,
     /// Terminated with a failure.
     Failed,
+    /// Explicitly closed and no longer wakeable.
+    Closed,
 }
 
 impl AgentStatus {
     /// True for statuses that end the agent's lifecycle
-    /// ([`Self::Completed`] and [`Self::Failed`]).
+    /// ([`Self::Completed`], [`Self::Failed`], and [`Self::Closed`]).
     #[must_use]
     pub fn is_terminal(self) -> bool {
-        matches!(self, Self::Completed | Self::Failed)
+        matches!(self, Self::Completed | Self::Failed | Self::Closed)
     }
 }
 
@@ -297,6 +301,17 @@ impl AgentRegistry {
         self.set_status(id, AgentStatus::Completing)
     }
 
+    /// Transition an entry to [`AgentStatus::Idle`].
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatusTransitionError::NotFound`] if `id` is not
+    /// registered, or [`StatusTransitionError::TerminalImmutable`] if the
+    /// entry is already terminal.
+    pub fn mark_idle(&mut self, id: Uuid) -> Result<(), StatusTransitionError> {
+        self.set_status(id, AgentStatus::Idle)
+    }
+
     /// Transition an entry to [`AgentStatus::Completed`], freeing its path
     /// for reuse. The entry itself stays listed (with terminal status) for
     /// observers such as status displays until [`Self::remove_terminal`]
@@ -325,6 +340,20 @@ impl AgentRegistry {
     /// failed entry is an accepted no-op.
     pub fn mark_failed(&mut self, id: Uuid) -> Result<(), StatusTransitionError> {
         self.set_status(id, AgentStatus::Failed)
+    }
+
+    /// Transition an entry to [`AgentStatus::Closed`], freeing its path for
+    /// reuse. The entry itself stays listed with terminal status until
+    /// [`Self::remove_terminal`] reclaims it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`StatusTransitionError::NotFound`] if `id` is not
+    /// registered, or [`StatusTransitionError::TerminalImmutable`] if the
+    /// entry is already [`AgentStatus::Completed`] or [`AgentStatus::Failed`].
+    /// Re-marking an already closed entry is an accepted no-op.
+    pub fn mark_closed(&mut self, id: Uuid) -> Result<(), StatusTransitionError> {
+        self.set_status(id, AgentStatus::Closed)
     }
 
     /// Reclaim a terminal entry, removing it from the registry and leaving

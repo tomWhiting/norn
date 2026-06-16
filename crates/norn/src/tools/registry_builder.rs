@@ -16,7 +16,9 @@ use std::sync::Arc;
 
 use crate::tool::registry::ToolRegistry;
 use crate::tools::action_log::ActionLogTool;
-use crate::tools::agent::{CloseAgentTool, ForkTool, SignalAgentTool, SpawnAgentTool};
+use crate::tools::agent::{
+    CloseAgentTool, ForkTool, SignalAgentTool, SpawnAgentTool, WakeAgentTool,
+};
 use crate::tools::agents::AgentsTool;
 use crate::tools::bash::BashTool;
 use crate::tools::edit::EditTool;
@@ -33,8 +35,8 @@ use crate::tools::write::WriteTool;
 ///
 /// The set: `read`, `write`, `edit`, `bash`, `apply_patch`, `search`, `lsp`,
 /// `task`, `tool_search`, `action_log`, `web_fetch`, `web_search`, the
-/// four agent-coordination tools (`spawn_agent`, `fork`, `signal_agent`,
-/// `close_agent`), and the read-only `agents` status view.
+/// agent-coordination tools (`spawn_agent`, `fork`, `signal_agent`,
+/// `wake_agent`, `close_agent`), and the read-only `agents` status view.
 ///
 /// `action_log` reads an [`ActionLog`](crate::session::action_log::ActionLog)
 /// published as a [`ToolContext`](crate::tool::context::ToolContext)
@@ -90,6 +92,7 @@ pub fn register_standard_tools(
     registry.register(Box::new(SpawnAgentTool::new()));
     registry.register(Box::new(ForkTool::new()));
     registry.register(Box::new(SignalAgentTool::new()));
+    registry.register(Box::new(WakeAgentTool::new()));
     registry.register(Box::new(CloseAgentTool::new()));
     registry.register(Box::new(AgentsTool::new()));
 }
@@ -118,6 +121,7 @@ mod tests {
             "spawn_agent",
             "fork",
             "signal_agent",
+            "wake_agent",
             "close_agent",
             "agents",
         ] {

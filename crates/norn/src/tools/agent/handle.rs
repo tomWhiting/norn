@@ -17,10 +17,12 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use chrono::{DateTime, Utc};
 use parking_lot::Mutex;
-use tokio::sync::watch;
+use tokio::sync::mpsc::error::TrySendError;
+use tokio::sync::{mpsc, watch};
 use tokio::task::JoinHandle;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -82,6 +84,14 @@ pub struct AgentHandle {
     /// Sender the parent uses to push `Steer` / `FollowUp` messages into the
     /// child's inbound channel at the child's next tool boundary.
     pub inbound_tx: InboundSender,
+    /// Wake signal for a stopped child actor. `wake_agent` sends on this
+    /// channel; the spawned child's controller task receives it and starts a
+    /// real resumed step that drains the durable pending-message mailbox.
+    pub wake_tx: mpsc::Sender<()>,
+    /// Guards the single wake slot so repeated `wake_agent` calls while a
+    /// wake is already queued are reported as idempotent instead of enqueueing
+    /// duplicate no-op wake cycles.
+    pub wake_pending: Arc<AtomicBool>,
     /// Cooperative cancellation trigger for the child's *run*. A clone of
     /// this token is passed as `cancel` into the child's
     /// [`run_agent_step`](crate::r#loop::runner::run_agent_step) request,
@@ -108,6 +118,106 @@ pub struct AgentHandle {
     pub event_store: Arc<EventStore>,
     /// Provenance metadata captured when the child was spawned (NA-008 R3).
     pub branch_metadata: ChildBranchMetadata,
+}
+
+impl AgentHandle {
+    /// Build the globally-shareable wake handle for this spawned child.
+    #[must_use]
+    pub fn wake_handle(&self) -> AgentWakeHandle {
+        AgentWakeHandle {
+            agent_id: self.agent_id,
+            status_rx: self.status_rx.clone(),
+            wake_tx: self.wake_tx.clone(),
+            wake_pending: Arc::clone(&self.wake_pending),
+        }
+    }
+}
+
+/// Cloneable wake-only handle published in the workspace wake registry.
+#[derive(Clone)]
+pub struct AgentWakeHandle {
+    agent_id: Uuid,
+    status_rx: watch::Receiver<AgentStatus>,
+    wake_tx: mpsc::Sender<()>,
+    wake_pending: Arc<AtomicBool>,
+}
+
+/// Result of requesting a wake for a spawned child.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum WakeRequestOutcome {
+    /// A wake signal was accepted by the child's controller.
+    Queued,
+    /// A previous wake signal is already queued for the stopped child.
+    AlreadyQueued,
+    /// The child is currently running and does not need a wake.
+    AlreadyActive(AgentStatus),
+    /// The child reached a terminal status and cannot be woken.
+    Terminal(AgentStatus),
+    /// The child has no wake controller registered.
+    NotRegistered,
+    /// The controller channel was closed before it could accept the wake.
+    ChannelClosed,
+}
+
+/// Workspace-shared registry of wakeable spawned child controllers.
+pub struct AgentWakeRegistry {
+    inner: Mutex<HashMap<Uuid, AgentWakeHandle>>,
+}
+
+impl AgentWakeRegistry {
+    /// Construct an empty wake registry.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            inner: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// Register or replace the wake handle for a spawned child.
+    pub fn insert(&self, handle: AgentWakeHandle) {
+        self.inner.lock().insert(handle.agent_id, handle);
+    }
+
+    /// Remove the wake handle for `agent_id`, if present.
+    pub fn remove(&self, agent_id: Uuid) -> Option<AgentWakeHandle> {
+        self.inner.lock().remove(&agent_id)
+    }
+
+    /// Request that a stopped child resume for one mailbox-draining step.
+    #[must_use]
+    pub fn request_wake(&self, agent_id: Uuid) -> WakeRequestOutcome {
+        let Some(handle) = self.inner.lock().get(&agent_id).cloned() else {
+            return WakeRequestOutcome::NotRegistered;
+        };
+        let status = *handle.status_rx.borrow();
+        if status.is_terminal() {
+            return WakeRequestOutcome::Terminal(status);
+        }
+        if status != AgentStatus::Idle {
+            return WakeRequestOutcome::AlreadyActive(status);
+        }
+        if handle
+            .wake_pending
+            .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+            .is_err()
+        {
+            return WakeRequestOutcome::AlreadyQueued;
+        }
+        match handle.wake_tx.try_send(()) {
+            Ok(()) => WakeRequestOutcome::Queued,
+            Err(TrySendError::Full(())) => WakeRequestOutcome::AlreadyQueued,
+            Err(TrySendError::Closed(())) => {
+                handle.wake_pending.store(false, Ordering::SeqCst);
+                WakeRequestOutcome::ChannelClosed
+            }
+        }
+    }
+}
+
+impl Default for AgentWakeRegistry {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 /// Collection of live sub-agent handles keyed by agent id.
@@ -201,6 +311,15 @@ impl AgentHandles {
             .map(|h| h.inbound_tx.clone())
     }
 
+    /// Returns a cloneable wake-only handle for the shared wake registry.
+    #[must_use]
+    pub fn wake_handle(&self, agent_id: Uuid) -> Option<AgentWakeHandle> {
+        self.inner
+            .lock()
+            .get(&agent_id)
+            .map(AgentHandle::wake_handle)
+    }
+
     /// Returns a clone of the child's [`EventStore`] handle for `agent_id`
     /// (NA-008 R3).
     ///
@@ -281,6 +400,8 @@ mod tests {
             agent_id,
             status_rx,
             inbound_tx,
+            wake_tx: mpsc::channel(1).0,
+            wake_pending: Arc::new(AtomicBool::new(false)),
             cancel: CancellationToken::new(),
             join_handle,
             event_store: Arc::new(EventStore::new()),

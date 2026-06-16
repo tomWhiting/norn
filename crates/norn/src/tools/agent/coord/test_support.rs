@@ -10,10 +10,11 @@
 )]
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Duration;
 
 use parking_lot::RwLock;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use crate::agent::message_router::MessageRouter;
@@ -144,6 +145,8 @@ pub(crate) fn synthetic_handle(
             agent_id: id,
             status_rx,
             inbound_tx,
+            wake_tx: mpsc::channel(1).0,
+            wake_pending: Arc::new(AtomicBool::new(false)),
             cancel,
             join_handle,
             event_store: Arc::new(crate::session::store::EventStore::new()),

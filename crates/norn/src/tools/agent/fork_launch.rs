@@ -7,11 +7,12 @@
 //! (CO5) — mirroring the [`super::spawn_launch`] / spawn split.
 
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::time::Instant;
 
 use chrono::Utc;
 use parking_lot::RwLock;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
 use super::fork_pipeline::{
@@ -338,6 +339,8 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         agent_id: fork_id,
         status_rx,
         inbound_tx,
+        wake_tx: mpsc::channel(1).0,
+        wake_pending: Arc::new(AtomicBool::new(false)),
         cancel,
         join_handle,
         event_store: handle_store,

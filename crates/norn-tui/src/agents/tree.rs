@@ -70,9 +70,9 @@ pub struct CollapsedView {
 }
 
 /// Whether `status` counts as active for steps 2 and 4 — anything that
-/// is not yet terminal (`Completed`, `Failed`).
+/// is not yet terminal.
 fn is_active(status: AgentStatus) -> bool {
-    !matches!(status, AgentStatus::Completed | AgentStatus::Failed)
+    !status.is_terminal()
 }
 
 /// Reduce `entries` to at most [`MAX_VISIBLE`] rows plus an overflow

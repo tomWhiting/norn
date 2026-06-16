@@ -7,18 +7,22 @@
 //! sequence — registry mark, lifecycle `Completed`, result delivery,
 //! status broadcast, reclamation — lives here.
 
+use std::any::Any;
+use std::panic::AssertUnwindSafe;
 use std::sync::Arc;
+use std::sync::atomic::Ordering;
 
+use futures_util::FutureExt;
 use parking_lot::RwLock;
-use tokio::sync::watch;
+use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
-use super::handle::{AgentHandle, ChildBranchMetadata};
+use super::handle::{AgentHandle, AgentWakeRegistry, ChildBranchMetadata};
 use super::infra::SubAgentExecutor;
 use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
 use super::reclaim::{ReclaimHandshake, reclaim_delivered_child};
 use super::spawn_outcome::{
-    extract_outcome_summary, mark_terminal_in_registry, panicked_outcome_summary,
+    extract_outcome_summary, mark_terminal_in_registry, panic_outcome_summary,
 };
 use crate::agent::child_policy::ChildLoopConfig;
 use crate::agent::message_router::MessageRouter;
@@ -27,7 +31,9 @@ use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
 use crate::r#loop::inbound::inbound_channel;
 use crate::r#loop::loop_context::LoopContext;
-use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
+use crate::r#loop::runner::{
+    AgentMessageStepRequest, AgentStepRequest, run_agent_step, run_agent_step_from_messages,
+};
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
@@ -123,14 +129,118 @@ pub(super) struct ChildLaunch {
     /// the parent-held [`AgentHandle`]; a clone rides into the inner
     /// run's [`AgentStepRequest`].
     pub(super) cancel: tokio_util::sync::CancellationToken,
+    /// Shared wake registry. Spawn registers this child when the handle is
+    /// installed, and the controller removes it before exiting.
+    pub(super) wake_registry: Option<Arc<AgentWakeRegistry>>,
+    /// Whether natural completion parks the child in Idle for future wakes.
+    ///
+    /// Children spawned inside forks are one-shot because the fork
+    /// reintegrates into its parent and drops its own handle map.
+    pub(super) persistent: bool,
 }
 
-/// Launch the child on its own `tokio` task and return the [`AgentHandle`]
+fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
+    if let Some(message) = payload.downcast_ref::<&str>() {
+        return (*message).to_owned();
+    }
+    if let Some(message) = payload.downcast_ref::<String>() {
+        return message.clone();
+    }
+    "non-string panic payload".to_owned()
+}
+
+fn mark_idle_in_registry(registry: &RwLock<AgentRegistry>, child_id: Uuid) {
+    let mut reg = registry.write();
+    if let Err(e) = reg.mark_idle(child_id) {
+        super::reclaim::log_terminal_transition_violation(&reg, child_id, "spawn_agent", &e);
+    }
+}
+
+fn mark_active_in_registry(registry: &RwLock<AgentRegistry>, child_id: Uuid) {
+    let mut reg = registry.write();
+    if let Err(e) = reg.mark_active(child_id) {
+        super::reclaim::log_terminal_transition_violation(&reg, child_id, "spawn_agent", &e);
+    }
+}
+
+fn mark_closed_in_registry(registry: &RwLock<AgentRegistry>, child_id: Uuid) {
+    let mut reg = registry.write();
+    if let Err(e) = reg.mark_closed(child_id) {
+        super::reclaim::log_terminal_transition_violation(&reg, child_id, "spawn_agent", &e);
+    }
+}
+
+async fn deliver_step_result(
+    result_sender: Option<&ChildResultSender>,
+    child_id: Uuid,
+    agent_role: &str,
+    summary: &super::spawn_outcome::ChildOutcomeSummary,
+) {
+    let succeeded = summary.status == AgentStatus::Completed;
+    let subtree_usage = summary.usage.clone() + summary.children_usage.clone();
+    if let Some(sender) = result_sender {
+        let formatted_message = if succeeded {
+            crate::agent::fork::format_spawn_result(
+                child_id,
+                agent_role,
+                summary.output_text.as_deref().unwrap_or("(no output)"),
+            )
+        } else {
+            crate::agent::fork::format_spawn_failure(
+                child_id,
+                agent_role,
+                summary.error.as_deref().unwrap_or("unknown error"),
+            )
+        };
+        let result = ChildAgentResult {
+            agent_id: child_id,
+            agent_role: agent_role.to_owned(),
+            succeeded,
+            formatted_message,
+            error: summary.error.clone(),
+            stop: summary.stop.clone(),
+            usage: summary.usage.clone(),
+            subtree_usage,
+        };
+        if let Err(e) = sender.0.send(result).await {
+            tracing::error!(
+                child_id = %child_id,
+                error = %e,
+                "spawn_agent: failed to send result through child result channel",
+            );
+        }
+    } else {
+        tracing::error!(
+            child_id = %child_id,
+            "spawn_agent: no child-result channel on the spawning context; \
+             the child's result cannot be delivered",
+        );
+    }
+}
+
+async fn reclaim_after_result_delivery(
+    reclaim: &mut Option<ReclaimHandshake>,
+    registry: &RwLock<AgentRegistry>,
+    child_id: Uuid,
+) {
+    if let Some(handshake) = reclaim.take() {
+        if handshake.handle_installed.await.is_err() {
+            tracing::warn!(
+                child_id = %child_id,
+                "spawn_agent: handle-installed ack dropped before launch completed; \
+                 reclaiming without a stored handle",
+            );
+        }
+        reclaim_delivered_child(registry, &handshake.handles, child_id);
+    }
+}
+
+/// Launch the child on its own controller task and return the [`AgentHandle`]
 /// the parent keeps.
 ///
-/// The spawned task runs [`run_agent_step`] to completion, marks the
-/// child's terminal registry status, sends the formatted result through
-/// the child result channel, and updates the status watch channel.
+/// The controller runs the initial child step, delivers that result, then parks
+/// in [`AgentStatus::Idle`] until `wake_agent` asks it to run another
+/// mailbox-draining step or `close_agent` cancels it.
 pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let ChildLaunch {
         provider,
@@ -154,222 +264,163 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         inbound_capacity,
         loop_config,
         cancel,
+        wake_registry,
+        persistent,
     } = launch;
 
     let handle_store = Arc::clone(&store);
     let (status_tx, status_rx) = watch::channel(AgentStatus::Active);
     let (inbound_tx, mut inbound_rx) = inbound_channel(inbound_capacity);
-    // Route registration ownership (Wave 3 §Routing): the launch path
-    // registers the child's inbound sender the moment the channel exists,
-    // so `signal_agent` can reach the child for its entire run; the
-    // completion wrapper below deregisters — the same single ownership as
-    // the registry entry, never two actors.
+    let (wake_tx, mut wake_rx) = mpsc::channel::<()>(1);
+    let wake_pending = Arc::new(std::sync::atomic::AtomicBool::new(false));
     router.register(child_id, inbound_tx.clone());
     let agent_role = format!("spawn/{model}");
-    // Cooperative cancellation: the trigger lives on the parent-held
-    // AgentHandle and a clone rides into the inner run's AgentStepRequest,
-    // so `close_agent` can terminate the run itself — not just the wrapper
-    // task. The token arrives on the launch (W3.5): the spawn tool created
-    // it as a child of the spawner's own token, so cancelling any ancestor
-    // cascades here too. The loop observes the token at the top of every
-    // iteration and races it (cancel-priority) against the in-flight
-    // provider call, returning `AgentStepResult::Cancelled`, which the
-    // wrapper records as the run's real outcome through its normal
-    // terminal sequence below.
+    let wake_pending_for_task = Arc::clone(&wake_pending);
+    let inbound_tx_for_task = inbound_tx.clone();
     let run_cancel = cancel.clone();
 
     let join_handle = tokio::spawn(async move {
-        // W3.6 usage rollup: cheap-clone handle to the child's
-        // children-usage accumulator, captured before `loop_ctx` moves
-        // into the inner task. The loop folds every delivered grandchild
-        // `subtree_usage` into it; the wrapper reads it below even when
-        // the inner task panics or the run hard-errors (the arms of a
-        // normal `AgentStepResult` carry the same value — the snapshot
-        // is the fallback for the no-result paths).
+        let child_config = ChildLoopConfig::resolve(loop_config);
         let delivered_children = loop_ctx.children_usage.clone();
-        // Panic isolation: the agent step runs on its own inner task so a
-        // panic inside a tool or provider (workspace code denies panics,
-        // but a dependency inside the child's task can still unwind)
-        // surfaces here as a `JoinError` instead of killing the wrapper.
-        // The wrapper then completes every obligation of the normal
-        // failure path — stop hook, lifecycle `Completed`, result-channel
-        // delivery, status broadcast, registry transition, reclamation —
-        // so observers never see a dangling `Started`.
-        let inner = tokio::spawn(async move {
-            // R5: the child's loop config is the granted ChildLoopConfig
-            // applied onto AgentLoopConfig::default(); an absent grant is
-            // byte-for-byte the default — the pre-R5 behavior.
-            let child_config = ChildLoopConfig::resolve(loop_config);
-            run_agent_step(AgentStepRequest {
-                provider: provider.as_ref(),
-                executor: &executor,
-                store: store.as_ref(),
-                user_prompt: &task,
-                tools: &tool_defs,
-                output_schema: output_schema.as_ref(),
-                model: &model,
-                config: &child_config,
-                event_tx: event_sender.as_ref(),
-                inbound: Some(&mut inbound_rx),
-                loop_context: &mut loop_ctx,
-                cancel: Some(run_cancel),
-            })
-            .await
-        });
-        let outcome = inner.await;
+        let result_sender = result_sender;
+        let mut reclaim = reclaim;
+        let mut initial = Some(task);
 
-        // The child's loop has ended: nothing will ever drain its inbound
-        // channel again, so the route is removed now — unconditionally,
-        // even when a stop hook below suppresses the registry's terminal
-        // transition (route ownership follows the loop's life, i.e.
-        // delivery possibility; the registry entry tracks observability).
-        // Later sends fail fast as NotRouted instead of enqueueing into a
-        // buffer nothing reads.
-        router.deregister(child_id);
+        loop {
+            let outcome = if let Some(task) = initial.take() {
+                AssertUnwindSafe(run_agent_step(AgentStepRequest {
+                    provider: provider.as_ref(),
+                    executor: &executor,
+                    store: store.as_ref(),
+                    user_prompt: &task,
+                    tools: &tool_defs,
+                    output_schema: output_schema.as_ref(),
+                    model: &model,
+                    config: &child_config,
+                    event_tx: event_sender.as_ref(),
+                    inbound: Some(&mut inbound_rx),
+                    loop_context: &mut loop_ctx,
+                    cancel: Some(run_cancel.clone()),
+                }))
+                .catch_unwind()
+                .await
+            } else {
+                AssertUnwindSafe(run_agent_step_from_messages(AgentMessageStepRequest {
+                    provider: provider.as_ref(),
+                    executor: &executor,
+                    store: store.as_ref(),
+                    tools: &tool_defs,
+                    output_schema: output_schema.as_ref(),
+                    model: &model,
+                    config: &child_config,
+                    event_tx: event_sender.as_ref(),
+                    initial_messages: Vec::new(),
+                    inbound: Some(&mut inbound_rx),
+                    loop_context: &mut loop_ctx,
+                    cancel: Some(run_cancel.clone()),
+                }))
+                .catch_unwind()
+                .await
+            };
 
-        // NH-006 R5 / C57: fire SubagentHook::on_subagent_stop before
-        // marking the registry's terminal status. A Block suppresses
-        // the Completed/Failed transition (the agent stays in its
-        // pre-terminal registry state) while the result-channel
-        // summary still surfaces so the parent observes the child's
-        // outcome. Hooks is None → marking happens unconditionally,
-        // matching pre-NH-006 behaviour. Fires on the panic path too —
-        // the child stopped either way.
-        let stop_blocked = if let Some(hooks_arc) = hooks.as_ref() {
-            matches!(
-                hooks_arc
-                    .run_subagent_stop(&child_id.to_string(), &role_label)
-                    .await,
-                HookOutcome::Block { .. },
-            )
-        } else {
-            false
-        };
+            router.deregister(child_id);
 
-        let summary = match outcome {
-            Ok(step_outcome) => {
-                extract_outcome_summary(step_outcome, delivered_children.snapshot())
-            }
-            Err(join_error) => {
-                tracing::error!(
-                    child_id = %child_id,
-                    error = %join_error,
-                    "spawn_agent: child task panicked or was aborted before completing",
-                );
-                panicked_outcome_summary(&join_error, delivered_children.snapshot())
-            }
-        };
-        let terminal_status = summary.status;
-        let succeeded = terminal_status == AgentStatus::Completed;
-        // W3.6: the child's subtree total — its own provider spend plus
-        // everything its descendants delivered. Own usage stays
-        // own-calls-only on `summary.usage`; the aggregation is explicit
-        // here and computed exactly once per child, so no level ever
-        // double-counts.
-        let subtree_usage = summary.usage.clone() + summary.children_usage.clone();
-
-        if !stop_blocked {
-            mark_terminal_in_registry(&agent_registry, child_id, terminal_status);
-        }
-
-        // Typed lifecycle: the run itself finished, so `Completed` is
-        // emitted unconditionally — a stop hook's Block only suppresses
-        // the registry transition above, not the observable outcome.
-        lifecycle.emit_completed(SubagentCompletion {
-            usage: summary.usage.clone(),
-            subtree_usage: subtree_usage.clone(),
-            succeeded,
-            error: summary.error.clone(),
-            stop: summary.stop.clone(),
-        });
-
-        if let Some(sender) = result_sender {
-            let formatted_message = if succeeded {
-                crate::agent::fork::format_spawn_result(
-                    child_id,
-                    &agent_role,
-                    summary.output_text.as_deref().unwrap_or("(no output)"),
+            let stop_blocked = if let Some(hooks_arc) = hooks.as_ref() {
+                matches!(
+                    hooks_arc
+                        .run_subagent_stop(&child_id.to_string(), &role_label)
+                        .await,
+                    HookOutcome::Block { .. },
                 )
             } else {
-                crate::agent::fork::format_spawn_failure(
-                    child_id,
-                    &agent_role,
-                    summary.error.as_deref().unwrap_or("unknown error"),
-                )
+                false
             };
-            let result = ChildAgentResult {
-                agent_id: child_id,
-                agent_role,
-                succeeded,
-                formatted_message,
-                error: summary.error,
-                stop: summary.stop,
-                usage: summary.usage,
+
+            let summary = match outcome {
+                Ok(step_outcome) => {
+                    extract_outcome_summary(step_outcome, delivered_children.snapshot())
+                }
+                Err(payload) => {
+                    let message = format!(
+                        "sub-agent task panicked before completing: {}",
+                        panic_payload_message(payload.as_ref()),
+                    );
+                    tracing::error!(child_id = %child_id, error = %message);
+                    panic_outcome_summary(message, delivered_children.snapshot())
+                }
+            };
+            let subtree_usage = summary.usage.clone() + summary.children_usage.clone();
+            let succeeded = summary.status == AgentStatus::Completed;
+
+            lifecycle.emit_completed(SubagentCompletion {
+                usage: summary.usage.clone(),
                 subtree_usage,
-            };
-            // A send into a dropped receiver means the parent's run ended
-            // before this child finished. Since R5 closed, a parent at
-            // any depth can be granted a linger (child_policy.loop_config)
-            // to wait for exactly this result; a parent that was granted
-            // none — or whose linger deadline expired — still loses it.
-            // A cascaded cancel (W3.5) hits this path by design — a
-            // cancelled mid-tree parent's loop ends and drops its
-            // receiver while this child's own cancelled run is still
-            // wrapping up. Error-logged, never silent; reclamation below
-            // still runs — nothing can observe the entry through the
-            // channel anymore.
-            if let Err(e) = sender.0.send(result).await {
-                tracing::error!(
-                    child_id = %child_id,
-                    error = %e,
-                    "spawn_agent: failed to send result through child result channel",
-                );
+                succeeded,
+                error: summary.error.clone(),
+                stop: summary.stop.clone(),
+            });
+            deliver_step_result(result_sender.as_ref(), child_id, &agent_role, &summary).await;
+
+            if !persistent {
+                if !stop_blocked {
+                    mark_terminal_in_registry(&agent_registry, child_id, summary.status);
+                }
+                let _ = status_tx.send_replace(summary.status);
+                if !stop_blocked {
+                    reclaim_after_result_delivery(&mut reclaim, &agent_registry, child_id).await;
+                }
+                break;
             }
-        } else {
-            // Only reachable on embedder contexts assembled without
-            // install_agent_infra: a spawner that passed the budget gate
-            // has a channel by construction. The result is undeliverable
-            // — say so, never drop it silently.
-            tracing::error!(
-                child_id = %child_id,
-                "spawn_agent: no child-result channel on the spawning context; \
-                 the child's result cannot be delivered",
-            );
+
+            if run_cancel.is_cancelled() {
+                if !stop_blocked {
+                    mark_terminal_in_registry(&agent_registry, child_id, summary.status);
+                }
+                let _ = status_tx.send_replace(summary.status);
+                if !stop_blocked {
+                    reclaim_after_result_delivery(&mut reclaim, &agent_registry, child_id).await;
+                }
+                break;
+            }
+
+            if summary.status == AgentStatus::Failed && summary.stop.is_none() {
+                if !stop_blocked {
+                    mark_terminal_in_registry(&agent_registry, child_id, summary.status);
+                }
+                let _ = status_tx.send_replace(summary.status);
+                if !stop_blocked {
+                    reclaim_after_result_delivery(&mut reclaim, &agent_registry, child_id).await;
+                }
+                break;
+            }
+
+            mark_idle_in_registry(&agent_registry, child_id);
+            let _ = status_tx.send_replace(AgentStatus::Idle);
+
+            tokio::select! {
+                biased;
+                () = run_cancel.cancelled() => {
+                    mark_closed_in_registry(&agent_registry, child_id);
+                    let _ = status_tx.send_replace(AgentStatus::Closed);
+                    break;
+                }
+                wake = wake_rx.recv() => {
+                    if wake.is_none() {
+                        mark_closed_in_registry(&agent_registry, child_id);
+                        let _ = status_tx.send_replace(AgentStatus::Closed);
+                        break;
+                    }
+                    mark_active_in_registry(&agent_registry, child_id);
+                    let _ = status_tx.send_replace(AgentStatus::Active);
+                    wake_pending_for_task.store(false, Ordering::SeqCst);
+                    router.register(child_id, inbound_tx_for_task.clone());
+                }
+            }
         }
 
-        let _ = status_tx.send_replace(terminal_status);
-
-        // Delivery-anchored reclamation (embedded/headless runtimes):
-        // the parent's record of this child is now the delivered result,
-        // so the registry entry and the parent-held handle can go.
-        // Skipped when a stop hook suppressed the terminal transition
-        // (the child is then deliberately left observable and
-        // non-terminal). A failed result send means the receiver is gone
-        // — reclaiming is still correct, nothing can observe the entry
-        // through the channel anymore.
-        //
-        // The wrapper is the sole reclaimer (see super::reclaim): it
-        // first awaits the tool's handle-installed ack so a child that
-        // finished before `AgentHandles::insert` ran is still reclaimed
-        // with the handle present — no second actor ever reclaims
-        // concurrently, and nothing infers state from registry-entry
-        // absence. This holds at every depth: a grandchild's wrapper
-        // reclaims its entry from the mid-tree parent's handle map the
-        // same way (the MERIDIAN-HANDOFF §6 grandchild-leak gap is
-        // closed by the per-agent result channel plus this pass).
-        if !stop_blocked && let Some(handshake) = reclaim {
-            if handshake.handle_installed.await.is_err() {
-                // The tool's execute was torn down between launching the
-                // child and storing the handle (e.g. the parent task was
-                // cancelled mid-launch): there is no handle to drop, but
-                // the registry entry still must not leak.
-                tracing::warn!(
-                    child_id = %child_id,
-                    "spawn_agent: handle-installed ack dropped before launch completed; \
-                     reclaiming without a stored handle",
-                );
-            }
-            reclaim_delivered_child(&agent_registry, &handshake.handles, child_id);
+        router.deregister(child_id);
+        if let Some(registry) = wake_registry {
+            registry.remove(child_id);
         }
     });
 
@@ -377,6 +428,8 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         agent_id: child_id,
         status_rx,
         inbound_tx,
+        wake_tx,
+        wake_pending,
         cancel,
         join_handle,
         event_store: handle_store,

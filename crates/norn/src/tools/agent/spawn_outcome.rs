@@ -251,33 +251,16 @@ pub(super) fn extract_outcome_summary(
     }
 }
 
-/// Project a child task that never produced an outcome — its inner
-/// `tokio` task panicked or was aborted, surfacing as a
-/// [`tokio::task::JoinError`] — onto the failure summary the wrapper
-/// delivers.
-///
-/// Workspace code denies panics, but a tool or provider dependency inside
-/// the child's task can still unwind; this keeps that defense loud: the
-/// wrapper emits the lifecycle `Completed` event, the result-channel
-/// failure, and the registry transition from this summary instead of
-/// leaving observers a dangling `Started`. Own usage is
-/// [`Usage::default`] (unknown — the panicked task took its accumulated
-/// usage with it; see [`ChildOutcomeSummary::usage`]), but
-/// `delivered_children_usage` — the wrapper's snapshot of the shared
-/// [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
-/// accumulator, which survives the unwound task — still carries every
-/// grandchild subtree the child's loop delivered before the panic
-/// (W3.6: partial truth beats silent loss).
-pub(super) fn panicked_outcome_summary(
-    join_error: &tokio::task::JoinError,
+/// Project a caught panic message onto the same failure summary as a
+/// panicked inner task.
+pub(super) fn panic_outcome_summary(
+    message: String,
     delivered_children_usage: Usage,
 ) -> ChildOutcomeSummary {
     ChildOutcomeSummary {
         status: AgentStatus::Failed,
         output_text: None,
-        error: Some(format!(
-            "sub-agent task terminated without an outcome (panicked or aborted): {join_error}"
-        )),
+        error: Some(message),
         stop: None,
         usage: Usage::default(),
         children_usage: delivered_children_usage,
@@ -461,27 +444,27 @@ mod tests {
         );
     }
 
-    /// A panicked/aborted child task projects onto an honest failure
+    /// A caught child panic projects onto an honest failure
     /// summary: Failed status, an error naming the panic, no stop reason,
     /// unknown (zero) own usage — and the delivered grandchild subtrees
     /// still present from the shared accumulator (W3.6).
-    #[tokio::test]
+    #[test]
     #[allow(clippy::panic, clippy::expect_used)]
-    async fn panicked_outcome_summary_reports_honest_failure() {
-        let join_error = tokio::spawn(async { panic!("dependency exploded") })
-            .await
-            .expect_err("task must panic");
-        let summary = panicked_outcome_summary(&join_error, children_fixture());
+    fn panicked_outcome_summary_reports_honest_failure() {
+        let summary = panic_outcome_summary(
+            "sub-agent task panicked before completing: dependency exploded".to_owned(),
+            children_fixture(),
+        );
         assert_eq!(summary.status, AgentStatus::Failed);
         assert!(summary.output_text.is_none());
         let error = summary.error.unwrap_or_default();
         assert!(
-            error.contains("terminated without an outcome"),
-            "error must say the task never produced an outcome: {error}"
+            error.contains("panicked before completing"),
+            "error must say the task panicked before completion: {error}"
         );
         assert!(
-            error.contains("panic"),
-            "error must surface the JoinError detail: {error}"
+            error.contains("dependency exploded"),
+            "error must surface the panic detail: {error}"
         );
         assert!(summary.stop.is_none());
         assert_eq!(

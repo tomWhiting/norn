@@ -11,7 +11,7 @@ use crate::skill::SkillCatalog;
 use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 use crate::tool::context::ToolContext;
 use crate::tool::registry::ToolRegistry;
-use crate::tools::agent::{AgentHandles, ReclaimOnResultDelivery};
+use crate::tools::agent::{AgentHandles, AgentWakeRegistry, ReclaimOnResultDelivery};
 use crate::tools::context_paths::ContextSearchPaths;
 use crate::tools::skill::SkillSearchPaths;
 use crate::tools::task::SharedTaskStore;
@@ -118,6 +118,7 @@ pub fn install_terminal_reclamation(ctx: &ToolContext) {
 /// the two paths cannot drift.
 pub fn install_agent_handles(ctx: &ToolContext) {
     ctx.insert_extension(Arc::new(AgentHandles::new()));
+    ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
 }
 
 /// Publish the searchable tool catalog (registry tools plus any
