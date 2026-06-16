@@ -1,15 +1,13 @@
-//! Shallow argument merge for follow-up dispatch.
+//! Argument preparation for follow-up dispatch.
 //!
 //! A registered [`FollowUpAction`](crate::tool::follow_up::FollowUpAction)
-//! carries pre-populated `args` that override the original call's arguments
-//! at execution time: fields present in the overrides replace the matching
-//! fields in the original, fields absent from the overrides are inherited,
-//! and fields only in the overrides are added. The merge is shallow (one
-//! level deep — nested objects are replaced wholesale, not merged) and
-//! deterministic.
+//! carries pre-populated `args` plus a mode deciding whether those args
+//! shallowly override the original call's arguments or replace them outright.
 
 use serde_json::Value;
 use thiserror::Error;
+
+use crate::tool::follow_up::FollowUpArgsMode;
 
 /// Failure merging follow-up overrides onto the original arguments.
 ///
@@ -74,6 +72,28 @@ pub fn merge_args(original: &Value, overrides: &Value) -> Result<Value, MergeArg
         merged.insert(key.clone(), value.clone());
     }
     Ok(Value::Object(merged))
+}
+
+/// Build the arguments for a follow-up's target tool according to `mode`.
+///
+/// [`FollowUpArgsMode::MergeOriginal`] preserves historical behavior by
+/// shallowly merging `overrides` onto `original`. [`FollowUpArgsMode::Replace`]
+/// returns `overrides` exactly, allowing cross-tool follow-ups to avoid
+/// inheriting irrelevant fields from the source call.
+///
+/// # Errors
+///
+/// Returns [`MergeArgsError`] only when `mode` is
+/// [`FollowUpArgsMode::MergeOriginal`] and either side is not a JSON object.
+pub fn prepare_args(
+    original: &Value,
+    overrides: &Value,
+    mode: FollowUpArgsMode,
+) -> Result<Value, MergeArgsError> {
+    match mode {
+        FollowUpArgsMode::MergeOriginal => merge_args(original, overrides),
+        FollowUpArgsMode::Replace => Ok(overrides.clone()),
+    }
 }
 
 #[cfg(test)]
@@ -162,5 +182,23 @@ mod tests {
             err,
             MergeArgsError::OriginalNotObject { got: "null" }
         ));
+    }
+
+    #[test]
+    fn replace_mode_returns_overrides_exactly() {
+        let original = json!({ "to": "/worker", "kind": "update", "content": "hi" });
+        let overrides = json!({ "agent": "/worker" });
+        let prepared =
+            prepare_args(&original, &overrides, FollowUpArgsMode::Replace).expect("prepare");
+        assert_eq!(prepared, json!({ "agent": "/worker" }));
+    }
+
+    #[test]
+    fn replace_mode_allows_non_object_overrides() {
+        let original = json!({ "a": 1 });
+        let overrides = json!("freeform target input");
+        let prepared =
+            prepare_args(&original, &overrides, FollowUpArgsMode::Replace).expect("prepare");
+        assert_eq!(prepared, json!("freeform target input"));
     }
 }

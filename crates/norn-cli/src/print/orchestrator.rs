@@ -57,7 +57,7 @@ use norn::tools::lsp::build_lsp_backend;
 
 use crate::runtime::{
     RuntimeBundle, RuntimeInputs, apply_system_prompt, install_agent_tool_infra,
-    register_standard_tools,
+    install_pending_agent_messages_for_loop, register_standard_tools,
 };
 use crate::session::SessionPersistError;
 use uuid::Uuid;
@@ -339,6 +339,7 @@ async fn orchestrate(
         agent_registry,
         envelope,
     );
+    install_pending_agent_messages_for_loop(&bundle.registry, &mut bundle.loop_context);
     crate::runtime::install_child_result_sender(&bundle.registry, child_sender);
     // Headless reclamation: print mode has no agent status panel, so once
     // a child's result is delivered through the channel above, its

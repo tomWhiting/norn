@@ -48,12 +48,14 @@
 //!
 //! ## Audit (Wave 3 §Audit trail)
 //!
-//! Every accepted send appends one `agent_message.sent` record to the
+//! Every live-router send appends one `agent_message.sent` record to the
 //! sender's own store **and** to the scope-granting parent's store
 //! ([`ParentGrant::parent_store`]), and broadcasts a sender-tagged live
-//! event when a channel is installed. A send the router rejected emits no
-//! `Sent` record — nothing was accepted. There is no store-and-forward
-//! path: a recipient that cannot receive fails honestly.
+//! event when a channel is installed. A resolved, in-scope recipient with no
+//! live route is a second accepted state: the message is recorded as
+//! `agent_message.queued` in the sender/parent stores and the shared pending
+//! store, then drained by the recipient's next resumed loop step. Terminal
+//! recipients still fail honestly with their recorded outcome.
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
@@ -64,6 +66,7 @@ use super::helpers::sender_attribution;
 use crate::agent::child_policy::MessagingScope;
 use crate::agent::message_router::RouteError;
 use crate::agent::registry::AgentStatus;
+use crate::agent::{PendingAgentMessage, append_pending_message_audit};
 use crate::error::ToolError;
 use crate::r#loop::inbound::{ChannelMessage, MessageKind};
 use crate::provider::agent_event::{
@@ -88,7 +91,8 @@ pub const SIGNAL_AGENT_TOOL_NAME: &str = "signal_agent";
 /// `update` batches at step boundaries and never wakes a lingering
 /// recipient. Failures are structured and honest: out-of-scope target,
 /// already-finished recipient (with its recorded completion), or no live
-/// inbound route — never a silent queue into storage nothing drains.
+/// live inbound route, or queued into the shared pending-message store when
+/// the recipient is valid but not currently attached to a route.
 pub struct SignalAgentTool;
 
 impl SignalAgentTool {
@@ -327,19 +331,17 @@ fn finished_failure(
     )
 }
 
-/// Re-read registry truth after a router failure that may have raced the
-/// recipient's lifecycle transition.
+/// Re-read registry truth after a router failure that may have raced a
+/// terminal transition.
 ///
-/// The recipient was already resolved and scope-checked before routing.
-/// If routing lost to a terminal transition, report the recorded finish
-/// instead of a misleading generic route error. If the registry still
-/// says the recipient is live, surface the stronger invariant violation:
-/// the visible agent has no receivable loop.
-fn rechecked_route_failure(
+/// The recipient was already resolved and scope-checked before routing. If
+/// routing lost to a terminal transition, report the recorded finish instead
+/// of queueing into a run that has no future consumer. A still-live or
+/// unregistered-root recipient is queueable and returns `None`.
+fn terminal_route_failure(
     infra: &AgentToolInfra,
     recipient: &Recipient,
     to: &str,
-    route_error: &RouteError,
 ) -> Option<ToolOutput> {
     if recipient.unregistered_root {
         return None;
@@ -355,23 +357,7 @@ fn rechecked_route_failure(
                 entry.completed_at,
             ));
         }
-        let status = entry.status;
-        return Some(ToolOutput::failure_with_content(
-            serde_json::json!({
-                "delivered": false,
-                "to": recipient.id.to_string(),
-                "recipient_status": status,
-            }),
-            ToolErrorPayload::new(
-                ToolErrorKind::ExecutionFailed,
-                format!(
-                    "recipient is not currently receivable: agent '{to}' is {status:?} in \
-                     the registry, but delivery failed with {route_error}. Its inbound loop \
-                     is not accepting messages, so no Sent audit event was recorded.",
-                ),
-            )
-            .with_detail(serde_json::json!({ "to": to })),
-        ));
+        return None;
     }
 
     if let Some(tombstone) = registry.tombstone(recipient.id) {
@@ -384,6 +370,54 @@ fn rechecked_route_failure(
     }
 
     None
+}
+
+fn queue_for_later_delivery(
+    infra: &AgentToolInfra,
+    recipient: &Recipient,
+    args: &SignalAgentArgs,
+    message: ChannelMessage,
+    queued_at: DateTime<Utc>,
+) -> Result<ToolOutput, ToolError> {
+    let message_id = message.id;
+    let pending = PendingAgentMessage::new(message, recipient.label.clone(), queued_at);
+    let Some(event) = infra.pending_messages.queue(pending) else {
+        tracing::warn!(
+            message_id = %message_id,
+            recipient_id = %recipient.id,
+            "signal_agent: duplicate pending message id ignored",
+        );
+        return Err(ToolError::ExecutionFailed {
+            reason: format!("duplicate pending message id ignored: {message_id}"),
+        });
+    };
+    if let Err(error) = append_pending_message_audit(&infra.event_store, &event) {
+        infra.pending_messages.remove_message(message_id);
+        return Err(ToolError::ExecutionFailed {
+            reason: format!("failed to persist pending message audit: {error}"),
+        });
+    }
+    if let Some(grant) = infra.grant.as_ref()
+        && let Err(error) = append_pending_message_audit(&grant.parent_store, &event)
+    {
+        infra.pending_messages.remove_message(message_id);
+        return Err(ToolError::ExecutionFailed {
+            reason: format!("failed to persist parent pending message audit: {error}"),
+        });
+    }
+
+    Ok(ToolOutput::success(serde_json::json!({
+        "delivered": false,
+        "queued": true,
+        "delivery_state": "queued",
+        "to": recipient.id.to_string(),
+        "recipient": recipient.label,
+        "kind": args.kind.as_str(),
+        "message_id": message_id.to_string(),
+        "queued_at": queued_at.to_rfc3339(),
+        "resume_required": true,
+        "note": "recipient is not currently attached to a live inbound route; the message is queued and will be injected through the normal agent_message path when that agent next resumes or wakes",
+    })))
 }
 
 #[async_trait]
@@ -474,7 +508,7 @@ impl Tool for SignalAgentTool {
             timestamp: sent_at,
         };
 
-        match infra.router.deliver(recipient.id, msg).await {
+        match infra.router.deliver(recipient.id, msg.clone()).await {
             Ok(seq) => {
                 // Audit: the router accepted the send. Store carriers on
                 // the sender's own store AND the scope-granting parent's
@@ -507,55 +541,33 @@ impl Tool for SignalAgentTool {
                     "message_id": message_id.to_string(),
                 })))
             }
-            // H15: a send the router did not accept is reported as exactly
-            // that — no Sent audit event is emitted (nothing was accepted)
-            // and nothing is queued where no loop drains.
+            // A router miss has two honest outcomes after rechecking
+            // lifecycle truth: terminal recipients fail with their recorded
+            // finish; still-valid recipients are accepted into the durable
+            // pending-message store for a future resumed loop step. No Sent
+            // audit event is emitted because the live router did not accept
+            // the send.
             Err(e @ RouteError::NotRouted { .. }) => {
-                if let Some(output) = rechecked_route_failure(&infra, &recipient, &args.to, &e) {
+                if let Some(output) = terminal_route_failure(&infra, &recipient, &args.to) {
                     return Ok(output);
                 }
-                // The unregistered root is the one recipient whose
-                // NotRouted cause is known precisely (Wave 3 §Routing).
-                let reason = if recipient.unregistered_root {
-                    "no delivery route to recipient: the root agent has no inbound \
-                     channel configured and cannot receive messages."
-                        .to_owned()
-                } else {
-                    format!(
-                        "no delivery route to recipient: '{}' has no live inbound channel \
-                         registered in the message router — its run just ended (read its \
-                         delivered result).",
-                        args.to,
-                    )
-                };
-                Ok(ToolOutput::failure_with_content(
-                    serde_json::json!({
-                        "delivered": false,
-                        "to": recipient.id.to_string(),
-                    }),
-                    ToolErrorPayload::new(ToolErrorKind::NotFound, reason)
-                        .with_detail(serde_json::json!({ "to": args.to })),
-                ))
+                tracing::debug!(
+                    recipient_id = %recipient.id,
+                    error = %e,
+                    "signal_agent: recipient has no live route; queueing for later delivery",
+                );
+                queue_for_later_delivery(&infra, &recipient, &args, msg, sent_at)
             }
             Err(e @ RouteError::ChannelClosed { .. }) => {
-                if let Some(output) = rechecked_route_failure(&infra, &recipient, &args.to, &e) {
+                if let Some(output) = terminal_route_failure(&infra, &recipient, &args.to) {
                     return Ok(output);
                 }
-                Ok(ToolOutput::failure_with_content(
-                    serde_json::json!({
-                        "delivered": false,
-                        "to": recipient.id.to_string(),
-                    }),
-                    ToolErrorPayload::new(
-                        ToolErrorKind::ExecutionFailed,
-                        format!(
-                            "delivery to '{}' failed: {e}. The recipient's loop ended between \
-                                 resolution and delivery — read its result instead of messaging it.",
-                            args.to,
-                        ),
-                    )
-                    .with_detail(serde_json::json!({ "to": args.to })),
-                ))
+                tracing::debug!(
+                    recipient_id = %recipient.id,
+                    error = %e,
+                    "signal_agent: route closed before enqueue; queueing for later delivery",
+                );
+                queue_for_later_delivery(&infra, &recipient, &args, msg, sent_at)
             }
             // Structurally unreachable on this path: `deliver()` awaits
             // capacity, so it never reports Full (only the sync
@@ -634,6 +646,7 @@ mod tests {
         Arc::new(AgentToolInfra {
             registry: Arc::clone(registry),
             router: Arc::clone(router),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: sender,
@@ -728,6 +741,50 @@ mod tests {
         assert_eq!(drained.len(), 1);
         assert_eq!(drained[0].kind, MessageKind::Update);
         assert_eq!(drained[0].content, "fyi");
+    }
+
+    #[tokio::test]
+    async fn signal_agent_queues_valid_unrouted_recipient() {
+        let sender = Uuid::new_v4();
+        let (infra, registry, _router) = build_infra(sender);
+        let recipient = register_agent(&registry, "/parent/sleeping-child", Some(sender));
+        let sender_store = Arc::clone(&infra.event_store);
+        let pending_store = Arc::clone(&infra.pending_messages);
+
+        let ctx = ctx_with(infra);
+        let out = SignalAgentTool::new()
+            .execute(
+                &envelope_for(
+                    "signal_agent",
+                    send_args("/parent/sleeping-child", "update", "queue me"),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("send");
+
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["delivered"], false);
+        assert_eq!(out.content["queued"], true);
+        assert_eq!(out.content["delivery_state"], "queued");
+        assert_eq!(out.content["to"], recipient.to_string());
+        assert_eq!(pending_store.pending_for(recipient), 1);
+
+        let queued_events = sender_store
+            .events()
+            .into_iter()
+            .filter(|event| {
+                matches!(
+                    event,
+                    SessionEvent::Custom { event_type, .. }
+                        if event_type == crate::agent::AGENT_MESSAGE_QUEUED_EVENT_TYPE
+                )
+            })
+            .count();
+        assert_eq!(
+            queued_events, 1,
+            "queued sends must leave a durable audit record in the sender store",
+        );
     }
 
     /// An invalid kind is rejected at the argument boundary — never
@@ -896,11 +953,12 @@ mod tests {
         );
     }
 
-    /// `"parent"` resolving to an unregistered root with NO inbound route
-    /// fails with the precise reason the design specifies — "no inbound
-    /// channel configured" — not the generic just-ended wording.
+    /// `"parent"` resolving to an unregistered root with no live inbound
+    /// route is accepted into the durable pending-message store. That is the
+    /// root-resume path: the root may not be running right now, but it has a
+    /// real future consumer when the driver resumes a root turn.
     #[tokio::test]
-    async fn signal_agent_unrouted_root_parent_names_the_precise_cause() {
+    async fn signal_agent_unrouted_root_parent_is_queued() {
         let registry = AgentRegistry::shared();
         let router = Arc::new(MessageRouter::new());
         let root = Uuid::new_v4(); // never registered, never routed
@@ -915,6 +973,7 @@ mod tests {
             &parent_store,
         );
         let sender_store = Arc::clone(&infra.event_store);
+        let pending_store = Arc::clone(&infra.pending_messages);
 
         let ctx = ctx_with(infra);
         let tool = SignalAgentTool::new();
@@ -925,21 +984,20 @@ mod tests {
             )
             .await
             .expect("executes");
-        assert!(out.is_error());
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["delivered"], false);
-        let message = out.content["error"]["message"].as_str().expect("message");
-        assert!(
-            message.contains("root agent has no inbound channel configured"),
-            "the unrouted-root cause is named precisely: {message}",
-        );
-        assert!(
-            !message.contains("just ended"),
-            "the just-ended guess must not appear for the known root case: {message}",
-        );
-        assert!(
-            sender_store.events().is_empty() && parent_store.events().is_empty(),
-            "no Sent for a rejected send",
-        );
+        assert_eq!(out.content["queued"], true);
+        assert_eq!(pending_store.pending_for(root), 1);
+        for store in [&sender_store, &parent_store] {
+            assert!(
+                store.events().iter().any(|event| matches!(
+                    event,
+                    SessionEvent::Custom { event_type, .. }
+                        if event_type == crate::agent::AGENT_MESSAGE_QUEUED_EVENT_TYPE
+                )),
+                "queued root-bound sends must be audited in sender and parent stores",
+            );
+        }
     }
 
     /// A root sender has no parent: `"parent"` fails typed, with no
@@ -1134,6 +1192,7 @@ mod tests {
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(&registry),
             router,
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: sender,
@@ -1162,14 +1221,16 @@ mod tests {
         }
     }
 
-    /// H15: a recipient with no live route fails structurally — never a
-    /// fake success into a queue nothing drains — and emits no Sent event.
+    /// A recipient with no live route is accepted into the durable
+    /// pending-message store after resolution and scope enforcement. It is
+    /// not reported as delivered until a future loop drains it.
     #[tokio::test]
-    async fn signal_agent_reports_not_routed_honestly() {
+    async fn signal_agent_queues_not_routed_recipient() {
         let sender = Uuid::new_v4();
         let (infra, registry, router) = build_infra(sender);
         let recipient = register_agent(&registry, "/parent/child", Some(sender));
         let sender_store = Arc::clone(&infra.event_store);
+        let pending_store = Arc::clone(&infra.pending_messages);
 
         let ctx = ctx_with(infra);
         let tool = SignalAgentTool::new();
@@ -1180,33 +1241,32 @@ mod tests {
             )
             .await
             .expect("executes");
-        assert!(out.is_error());
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["delivered"], false);
+        assert_eq!(out.content["queued"], true);
         assert_eq!(out.content["to"], recipient.to_string());
-        assert_eq!(out.content["recipient_status"], "active");
-        assert!(
-            out.content["error"]["message"]
-                .as_str()
-                .is_some_and(|r| r.contains("not currently receivable")),
-            "the failure explains why delivery is impossible: {:?}",
-            out.content,
-        );
+        assert_eq!(pending_store.pending_for(recipient), 1);
         assert!(!router.is_routed(recipient), "no route was fabricated");
         assert!(
-            sender_store.events().is_empty(),
-            "a rejected send must not leave a Sent audit event",
+            sender_store.events().iter().any(|event| matches!(
+                event,
+                SessionEvent::Custom { event_type, .. }
+                    if event_type == crate::agent::AGENT_MESSAGE_QUEUED_EVENT_TYPE
+            )),
+            "a queued send must leave a queued audit event",
         );
     }
 
     /// A recipient whose loop ended between resolution and delivery (its
-    /// inbound receiver is gone) fails honestly as a closed channel, with
-    /// no Sent audit event.
+    /// inbound receiver is gone) is queued after the terminal re-check
+    /// confirms the registry still has a non-terminal recipient.
     #[tokio::test]
-    async fn signal_agent_reports_closed_channel_honestly() {
+    async fn signal_agent_queues_closed_channel_when_recipient_not_terminal() {
         let sender = Uuid::new_v4();
         let (infra, registry, router) = build_infra(sender);
         let _recipient = register_agent(&registry, "/parent/child", Some(sender));
         let sender_store = Arc::clone(&infra.event_store);
+        let pending_store = Arc::clone(&infra.pending_messages);
 
         // Route registered, but the receiver half is already dropped.
         let recipient_id = registry.read().get_by_path("/parent/child").unwrap().id;
@@ -1223,17 +1283,17 @@ mod tests {
             )
             .await
             .expect("executes");
-        assert!(out.is_error());
+        assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["delivered"], false);
-        assert_eq!(out.content["recipient_status"], "active");
-        let message = out.content["error"]["message"].as_str().expect("message");
+        assert_eq!(out.content["queued"], true);
+        assert_eq!(pending_store.pending_for(recipient_id), 1);
         assert!(
-            message.contains("not currently receivable"),
-            "closed-channel failure names the live-without-route invariant: {message}",
-        );
-        assert!(
-            sender_store.events().is_empty(),
-            "no Sent event for a send the channel rejected",
+            sender_store.events().iter().any(|event| matches!(
+                event,
+                SessionEvent::Custom { event_type, .. }
+                    if event_type == crate::agent::AGENT_MESSAGE_QUEUED_EVENT_TYPE
+            )),
+            "closed-channel queueing must be audited",
         );
     }
 

@@ -333,6 +333,66 @@ pub fn resolve_session(
     Ok(entry)
 }
 
+/// Resolve the most recently updated session whose indexed working
+/// directory matches `working_dir`.
+///
+/// The exact stored path is checked first so non-existent historical
+/// working directories can still match their original string. When both
+/// paths can be canonicalised, the canonical forms are compared as well
+/// so symlinked or syntactically different references to the same
+/// directory resolve to the same session.
+pub fn resolve_latest_session_in_working_dir(
+    data_dir: &Path,
+    working_dir: &Path,
+) -> Result<SessionIndexEntry, SessionPersistError> {
+    let entries = read_index(data_dir)?;
+    let entry = resolve_latest_in_working_dir_entries(entries, working_dir)?;
+    ensure_session_id_not_reserved(&entry.id)?;
+    Ok(entry)
+}
+
+fn resolve_latest_in_working_dir_entries(
+    entries: Vec<SessionIndexEntry>,
+    working_dir: &Path,
+) -> Result<SessionIndexEntry, SessionPersistError> {
+    let canonical_working_dir = fs::canonicalize(working_dir).ok();
+    entries
+        .into_iter()
+        .filter(|entry| {
+            working_dir_matches(
+                &entry.working_dir,
+                working_dir,
+                canonical_working_dir.as_deref(),
+            )
+        })
+        .max_by_key(|entry| entry.updated_at)
+        .ok_or_else(|| SessionPersistError::NotFound {
+            input: format!(
+                "<no sessions in working directory {}>",
+                working_dir.display()
+            ),
+        })
+}
+
+fn working_dir_matches(
+    stored: &str,
+    working_dir: &Path,
+    canonical_working_dir: Option<&Path>,
+) -> bool {
+    let stored_path = Path::new(stored);
+    if stored_path == working_dir {
+        return true;
+    }
+
+    if let Some(canonical_working_dir) = canonical_working_dir
+        && let Ok(canonical_stored) = fs::canonicalize(stored_path)
+    {
+        return canonical_stored == canonical_working_dir;
+    }
+
+    false
+}
+
 /// The resolution rules of [`resolve_session`], over an already-read
 /// index snapshot.
 fn resolve_in_entries(

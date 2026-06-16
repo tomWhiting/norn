@@ -26,7 +26,7 @@ use crate::cli::{Cli, ExitCode};
 use crate::print::build_provider;
 use crate::runtime::{
     RuntimeBundle, RuntimeInputs, apply_system_prompt, build_runtime, install_agent_tool_infra,
-    register_standard_tools,
+    install_pending_agent_messages_for_loop, register_standard_tools,
 };
 use crate::session::{CreateSessionOptions, OpenSession, SessionManager};
 
@@ -55,7 +55,7 @@ pub fn run(cli: &Cli) -> ExitCode {
 }
 
 async fn run_async(cli: &Cli) -> ExitCode {
-    match drive(cli).await {
+    match Box::pin(drive(cli)).await {
         Ok(code) => code,
         Err(err) => {
             eprintln!("norn: TUI error: {err}");
@@ -141,6 +141,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         Arc::clone(&registry),
         envelope,
     );
+    install_pending_agent_messages_for_loop(&bundle.registry, &mut bundle.loop_context);
 
     let (child_tx, child_rx) = tokio::sync::mpsc::channel::<
         norn::agent::result_channel::ChildAgentResult,
@@ -247,9 +248,12 @@ struct TuiSessionHandle {
 /// - `--no-session`: a fresh in-memory [`EventStore`] with no sink and no
 ///   on-disk record.
 /// - `--resume <id>`: replay the persisted session and continue
-///   appending to the same file through its write-through sink.
+///   appending to the same file through its write-through sink. With no
+///   argument, resumes the most recently updated session for the current
+///   working directory.
 /// - `--fork <id>`: copy the source session into a new one (with its
-///   `Fork` marker).
+///   `Fork` marker). With no argument, forks the most recently updated
+///   session for the current working directory.
 /// - `--session-id <id>`: create a fresh persisted session under the
 ///   caller's exact ID — a typed failure when the ID already exists
 ///   unless `--resume-if-exists` is also supplied
@@ -286,17 +290,22 @@ fn open_session(
     let manager = SessionManager::new(&data_dir);
 
     let opened = if let Some(id) = cli.resume.as_deref() {
-        manager.resume(id, DurabilityPolicy::Flush)?
+        if id.trim().is_empty() {
+            manager.resume_latest_in_working_dir(&working_dir, DurabilityPolicy::Flush)?
+        } else {
+            manager.resume(id, DurabilityPolicy::Flush)?
+        }
     } else if let Some(id) = cli.fork.as_deref() {
-        manager.fork(
-            id,
-            CreateSessionOptions {
-                model: bundle.model.clone(),
-                working_dir,
-                name: None,
-            },
-            DurabilityPolicy::Flush,
-        )?
+        let options = CreateSessionOptions {
+            model: bundle.model.clone(),
+            working_dir: working_dir.clone(),
+            name: None,
+        };
+        if id.trim().is_empty() {
+            manager.fork_latest_in_working_dir(&working_dir, options, DurabilityPolicy::Flush)?
+        } else {
+            manager.fork(id, options, DurabilityPolicy::Flush)?
+        }
     } else if let Some(id) = cli.session_id.as_deref() {
         let options = CreateSessionOptions {
             model: bundle.model.clone(),
@@ -366,4 +375,65 @@ fn register_root_agent(
 
 fn collect_tool_definitions(bundle: &RuntimeBundle) -> Vec<ToolDefinition> {
     norn::provider::collect_function_definitions(&bundle.registry, None)
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
+mod tests {
+    use clap::Parser;
+
+    use super::*;
+
+    struct TempNornHome {
+        prior: Option<std::ffi::OsString>,
+        _tempdir: tempfile::TempDir,
+    }
+
+    impl TempNornHome {
+        fn new(tempdir: tempfile::TempDir) -> Self {
+            let prior = std::env::var_os("NORN_HOME");
+            // SAFETY: paired with the `#[serial]` marker on every consumer;
+            // no concurrent reader observes the mutated env.
+            unsafe { std::env::set_var("NORN_HOME", tempdir.path()) };
+            Self {
+                prior,
+                _tempdir: tempdir,
+            }
+        }
+    }
+
+    impl Drop for TempNornHome {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(val) => unsafe { std::env::set_var("NORN_HOME", val) },
+                None => unsafe { std::env::remove_var("NORN_HOME") },
+            }
+        }
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn empty_resume_selects_latest_session_for_tui_working_dir() {
+        let _home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let create_cli = Cli::try_parse_from(["norn"]).unwrap();
+        let bundle = build_runtime(&create_cli, RuntimeInputs::default()).unwrap();
+        let current_session = open_session(&create_cli, &bundle, "/repo/current".to_owned())
+            .expect("current-dir session created");
+        let current_id = current_session.session_id.clone();
+        drop(current_session);
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let other_session = open_session(&create_cli, &bundle, "/repo/other".to_owned())
+            .expect("other-dir session created");
+        let other_id = other_session.session_id.clone();
+        drop(other_session);
+
+        let resume_cli = Cli::try_parse_from(["norn", "--resume"]).unwrap();
+        let resumed = open_session(&resume_cli, &bundle, "/repo/current".to_owned())
+            .expect("current-dir session resumed");
+        assert_eq!(
+            resumed.session_id, current_id,
+            "must not resume globally newer other-dir session {other_id}",
+        );
+    }
 }

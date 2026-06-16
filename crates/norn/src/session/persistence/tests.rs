@@ -125,8 +125,12 @@ fn options(model: &str, working_dir: &str, name: Option<&str>) -> CreateSessionO
 /// leaving the index entry (and the header-only session file) behind —
 /// the setup most batch-path tests want.
 fn fresh_session(dir: &Path) -> SessionIndexEntry {
+    fresh_session_at(dir, "/work")
+}
+
+fn fresh_session_at(dir: &Path, working_dir: &str) -> SessionIndexEntry {
     manager(dir)
-        .create(options("gpt-x", "/work", None), DurabilityPolicy::Flush)
+        .create(options("gpt-x", working_dir, None), DurabilityPolicy::Flush)
         .unwrap()
         .entry
 }
@@ -541,6 +545,44 @@ fn resume_empty_string_resolves_latest_updated() {
         "expected `a` (most recently updated), not `b={}`",
         b.id
     );
+}
+
+#[test]
+fn resolve_latest_in_working_dir_ignores_newer_other_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let current_dir = fresh_session_at(tmp.path(), "/repo/current");
+    std::thread::sleep(std::time::Duration::from_millis(5));
+    let other_dir = fresh_session_at(tmp.path(), "/repo/other");
+
+    let resolved =
+        resolve_latest_session_in_working_dir(tmp.path(), Path::new("/repo/current")).unwrap();
+    assert_eq!(
+        resolved.id, current_dir.id,
+        "expected current-dir session, not globally newer other-dir session {}",
+        other_dir.id,
+    );
+}
+
+#[test]
+fn resolve_latest_in_working_dir_uses_canonical_match_when_available() {
+    let tmp = tempfile::tempdir().unwrap();
+    let project = tmp.path().join("project");
+    fs::create_dir(&project).unwrap();
+    let stored_path = project.join(".");
+    let entry = fresh_session_at(tmp.path(), &stored_path.to_string_lossy());
+
+    let resolved = resolve_latest_session_in_working_dir(tmp.path(), &project).unwrap();
+    assert_eq!(resolved.id, entry.id);
+}
+
+#[test]
+fn resolve_latest_in_working_dir_reports_not_found_for_unmatched_directory() {
+    let tmp = tempfile::tempdir().unwrap();
+    let _ = fresh_session_at(tmp.path(), "/repo/other");
+
+    let err =
+        resolve_latest_session_in_working_dir(tmp.path(), Path::new("/repo/current")).unwrap_err();
+    assert!(matches!(err, SessionPersistError::NotFound { .. }));
 }
 
 #[test]

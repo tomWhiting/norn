@@ -15,6 +15,7 @@ use uuid::Uuid;
 
 use crate::agent::child_policy::ChildPolicy;
 use crate::agent::message_router::MessageRouter;
+use crate::agent::pending_messages::PendingAgentMessages;
 use crate::agent::registry::{AgentEntry, AgentRegistry, AgentTombstone};
 use crate::error::ToolError;
 use crate::r#loop::runner::ToolExecutor;
@@ -39,6 +40,13 @@ pub struct AgentToolInfra {
     /// Router delivering inter-agent messages onto recipients' inbound
     /// channels (shared workspace-wide, like the registry).
     pub router: Arc<MessageRouter>,
+    /// Durable pending messages accepted for dormant-but-resumable agents.
+    ///
+    /// This is shared by the whole agent tree. `signal_agent` records into it
+    /// only when a message has a real future consumer: an explicit
+    /// resume/wake path that drains this store before the resumed provider
+    /// request. Live routes continue through [`Self::router`].
+    pub pending_messages: Arc<PendingAgentMessages>,
     /// Provider used for sub-agent and fork model calls.
     pub provider: Arc<dyn Provider>,
     /// Parent agent's session event store.
@@ -412,6 +420,7 @@ mod tests {
         Arc::new(AgentToolInfra {
             registry: AgentRegistry::shared(),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id,

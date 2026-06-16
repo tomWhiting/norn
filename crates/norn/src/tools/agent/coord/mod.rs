@@ -7,10 +7,10 @@
 //! [`MessageRouter`](crate::agent::message_router::MessageRouter), with
 //! who-may-message-whom enforced from the sender's granted
 //! [`MessagingScope`](crate::agent::child_policy::MessagingScope) against
-//! registry ground truth. A recipient with no live route fails honestly
-//! rather than queueing where nothing drains; finished recipients
-//! (terminal or reclaimed) produce a structured delivery failure carrying
-//! their status and completion time.
+//! registry ground truth. A resolved, in-scope recipient with no live route
+//! is queued into the shared pending-message store for the next resumed
+//! loop step; finished recipients (terminal or reclaimed) produce a
+//! structured delivery failure carrying their status and completion time.
 
 mod close;
 mod helpers;

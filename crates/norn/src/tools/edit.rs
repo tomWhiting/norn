@@ -445,6 +445,7 @@ impl Tool for EditTool {
                 description: format!("Apply edit at occurrence {n} (line {line}, in {context})"),
                 tool: "edit".to_string(),
                 args: serde_json::json!({ "occurrence": n }),
+                args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
                 expires: ExpiryCondition::FileModified {
                     path: path.clone(),
                     content_hash: file_hash.clone(),

@@ -109,6 +109,7 @@ pub(super) async fn strict_escalation_follow_ups(output: &ToolOutput) -> Vec<Fol
         ),
         tool: "apply_patch".to_string(),
         args: serde_json::json!({ "mode": "auto" }),
+        args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
         expires,
         confidence: Confidence::High,
         before_content: BeforeContentSource::Unavailable,

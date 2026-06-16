@@ -52,6 +52,7 @@ pub(crate) fn build_infra(
     let infra = Arc::new(AgentToolInfra {
         registry: Arc::clone(&registry),
         router: Arc::clone(&router),
+        pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
         provider,
         event_store: Arc::new(EventStore::new()),
         agent_id: sender,

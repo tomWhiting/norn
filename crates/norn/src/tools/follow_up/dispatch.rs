@@ -2,7 +2,7 @@
 //!
 //! This module owns the orchestration of a single follow-up execution:
 //! parse the model arguments, load the original call, resolve and expiry-check
-//! the named action, merge argument overrides, and dispatch the target tool
+//! the named action, prepare target arguments, and dispatch the target tool
 //! through the shared [`ToolRegistry`]'s full lifecycle (pre-validate,
 //! execute, post-validate, on-success, register-follow-ups). The target's
 //! result is returned verbatim — the `follow_up` tool contributes no
@@ -34,7 +34,7 @@ use crate::tool::traits::ToolOutput;
 
 use super::expiry::check_not_expired;
 use super::lookup::{self, ActionSelection};
-use super::merge::merge_args;
+use super::merge::prepare_args;
 
 /// Shared tool registry published on the [`ToolContext`] so tools can dispatch
 /// other tools through the full lifecycle.
@@ -65,12 +65,12 @@ fn missing_target_output(tool: &str) -> ToolOutput {
     )
 }
 
-/// Build the structured invalid-argument-merge error output.
-fn merge_error_output(message: &str) -> ToolOutput {
+/// Build the structured invalid argument-preparation error output.
+fn argument_error_output(message: &str) -> ToolOutput {
     ToolOutput::failure(
         ToolErrorPayload::new(
             ToolErrorKind::InvalidArguments,
-            "could not merge follow-up arguments",
+            "could not prepare follow-up arguments",
         )
         .with_detail(serde_json::json!({ "reason": message })),
     )
@@ -78,12 +78,11 @@ fn merge_error_output(message: &str) -> ToolOutput {
 
 /// Execute the deferred action referenced by the `follow_up` envelope.
 ///
-/// Resolves the original call, checks expiry, merges argument overrides, and
+/// Resolves the original call, checks expiry, prepares target arguments, and
 /// dispatches the target tool through the registry's full lifecycle. The
 /// target's [`ToolOutput`] is returned unchanged. When the dispatch produces a
-/// result, an action-log entry is recorded for the target with
-/// `source_tool_call_id` set to the original call's id, chaining
-/// `original -> follow-up -> result`.
+/// result, an action-log entry is recorded for the target with explicit
+/// follow-up origin metadata linking back to the source call and action.
 ///
 /// # Errors
 ///
@@ -157,9 +156,9 @@ pub async fn dispatch_follow_up(
         ));
     }
 
-    let merged = match merge_args(&loaded.args, &action.args) {
-        Ok(merged) => merged,
-        Err(e) => return Ok(merge_error_output(&e.to_string())),
+    let target_args = match prepare_args(&loaded.args, &action.args, action.args_mode) {
+        Ok(prepared) => prepared,
+        Err(e) => return Ok(argument_error_output(&e.to_string())),
     };
 
     let registry = ctx.require_extension::<SharedToolRegistry>()?;
@@ -170,40 +169,49 @@ pub async fn dispatch_follow_up(
 
     // Dispatch the target through the registry's full lifecycle. A target
     // gate-mode failure propagates as a `ToolError`, matching a direct call.
-    let output = registry
+    let outcome = registry
         .0
-        .execute(&action.tool, &args.tool_call_id, merged.clone())
+        .execute_with_outcome(&action.tool, &args.tool_call_id, target_args.clone())
         .await?;
 
-    record_chain_entry(
-        &action_log,
-        &action.tool,
-        &args.tool_call_id,
-        envelope,
-        &output,
-        merged,
-        started.elapsed(),
-    );
+    record_chain_entry(ChainRecord {
+        action_log: &action_log,
+        target_tool: &action.tool,
+        source_tool_call_id: &args.tool_call_id,
+        source_action: &args.action,
+        follow_up_call_id: &envelope.tool_call_id,
+        content: &outcome.content,
+        args: target_args,
+        duration: started.elapsed(),
+        follow_ups: outcome.follow_ups.clone(),
+        post_validate_outcome: outcome.post_validate_outcome.clone(),
+    });
 
     // Re-type the target's result: the registry returned model-facing
     // content, so reconstruct the error payload from the `error`-key
     // convention.
-    Ok(ToolOutput::from_content(output))
+    Ok(ToolOutput::from_content(outcome.content))
+}
+
+struct ChainRecord<'a> {
+    action_log: &'a crate::session::action_log::ActionLog,
+    target_tool: &'a str,
+    source_tool_call_id: &'a str,
+    source_action: &'a str,
+    follow_up_call_id: &'a str,
+    content: &'a serde_json::Value,
+    args: serde_json::Value,
+    duration: Duration,
+    follow_ups: Vec<crate::tool::follow_up::FollowUpAction>,
+    post_validate_outcome: Option<serde_json::Value>,
 }
 
 /// Record the dispatched target's completion in the action log with a chain
 /// reference back to the original call.
-fn record_chain_entry(
-    action_log: &crate::session::action_log::ActionLog,
-    target_tool: &str,
-    source_tool_call_id: &str,
-    envelope: &ToolEnvelope,
-    content: &serde_json::Value,
-    args: serde_json::Value,
-    duration: Duration,
-) {
-    let entry_id = format!("{source_tool_call_id}->{target_tool}");
-    let outcome = match content
+fn record_chain_entry(record: ChainRecord<'_>) {
+    let entry_id = format!("{}->{}", record.follow_up_call_id, record.target_tool);
+    let outcome = match record
+        .content
         .get("error")
         .and_then(ToolErrorPayload::from_error_value)
     {
@@ -212,18 +220,22 @@ fn record_chain_entry(
         },
         None => Outcome::Success,
     };
-    let duration_ms = u64::try_from(duration.as_millis()).unwrap_or(u64::MAX);
+    let duration_ms = u64::try_from(record.duration.as_millis()).unwrap_or(u64::MAX);
 
-    action_log.record_completion(CompletionRecord {
-        tool_name: target_tool,
-        tool_call_id: &entry_id,
-        tool_use_description: &envelope.tool_call_id,
-        outcome,
-        output: content,
-        args,
-        duration_ms,
-        follow_ups: Vec::new(),
-        post_validate_outcome: None,
-        level_1_only: false,
-    });
+    record.action_log.record_follow_up_completion(
+        CompletionRecord {
+            tool_name: record.target_tool,
+            tool_call_id: &entry_id,
+            tool_use_description: record.follow_up_call_id,
+            outcome,
+            output: record.content,
+            args: record.args,
+            duration_ms,
+            follow_ups: record.follow_ups,
+            post_validate_outcome: record.post_validate_outcome,
+            level_1_only: false,
+        },
+        record.source_tool_call_id,
+        record.source_action,
+    );
 }

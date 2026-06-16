@@ -214,6 +214,9 @@ pub fn install_agent_tool_infra(
     let infra = AgentToolInfra {
         registry: agent_registry,
         router,
+        pending_messages: Arc::new(norn::agent::PendingAgentMessages::from_events(
+            &event_store.events(),
+        )),
         provider,
         event_store,
         agent_id,
@@ -223,6 +226,28 @@ pub fn install_agent_tool_infra(
     };
     shared.insert_extension(Arc::new(infra));
     root_inbound_rx
+}
+
+/// Stamp the installed root agent identity and pending-message store onto
+/// the loop context.
+///
+/// [`install_agent_tool_infra`] publishes the authoritative
+/// [`AgentToolInfra`] on the registry's shared tool context. The runner
+/// cannot read tool-context extensions directly, so root drivers call this
+/// after installation to let queued `signal_agent` messages drain into the
+/// next root step.
+pub fn install_pending_agent_messages_for_loop(
+    registry: &ToolRegistry,
+    loop_context: &mut norn::agent_loop::loop_context::LoopContext,
+) {
+    let Some(shared) = registry.shared_context() else {
+        return;
+    };
+    let Some(infra) = shared.get_extension::<AgentToolInfra>() else {
+        return;
+    };
+    loop_context.agent_id = Some(infra.agent_id);
+    loop_context.pending_agent_messages = Some(Arc::clone(&infra.pending_messages));
 }
 
 /// Install a [`ChildResultSender`] on the registry's shared

@@ -131,7 +131,7 @@ pub struct Cli {
     pub partial: bool,
 
     // -- Session control (NC6) --
-    /// Resume a session by ID or name (no argument = most recent).
+    /// Resume a session by ID or name (no argument = most recent in cwd).
     #[arg(
         short = 'r',
         long,
@@ -142,7 +142,7 @@ pub struct Cli {
     )]
     pub resume: Option<String>,
 
-    /// Fork a session by ID or name (no argument = most recent).
+    /// Fork a session by ID or name (no argument = most recent in cwd).
     #[arg(long, num_args = 0..=1, default_missing_value = "", value_name = "ID|NAME")]
     pub fork: Option<String>,
 

@@ -180,6 +180,28 @@ impl InboundChannel {
         drained
     }
 
+    /// Drain buffered messages only when at least one [`MessageKind::Steer`]
+    /// is ready.
+    ///
+    /// This is the non-blocking idle-wake primitive for event loops that
+    /// cannot hold a mutable borrow across `select!`. Updates alone are put
+    /// back into the peek buffer and return `None`, preserving the invariant
+    /// that [`MessageKind::Update`] does not wake an idle or lingering agent.
+    /// When a steer is present, the full drained batch is returned in arrival
+    /// order so preceding updates ride along with the wake exactly as they do
+    /// in [`Self::steer_ready`].
+    pub fn drain_if_steer_ready(&mut self) -> Option<Vec<ChannelMessage>> {
+        let drained = self.drain();
+        if drained.is_empty() {
+            return None;
+        }
+        if drained.iter().any(|msg| msg.kind == MessageKind::Steer) {
+            return Some(drained);
+        }
+        self.peeked = drained;
+        None
+    }
+
     /// Await until a [`MessageKind::Steer`] message is available, moving
     /// every received message (steer and update alike) into the peek
     /// buffer for the next [`Self::drain`]. Returns `true` the moment a
@@ -380,6 +402,47 @@ mod tests {
 
         let second = rx.drain();
         assert!(second.is_empty());
+    }
+
+    #[tokio::test]
+    async fn drain_if_steer_ready_preserves_update_only_batch() {
+        let (tx, mut rx) = inbound_channel(4);
+        tx.send(make_message("/a", "fyi", MessageKind::Update))
+            .await
+            .expect("send");
+
+        assert!(
+            rx.drain_if_steer_ready().is_none(),
+            "updates alone must not wake",
+        );
+
+        let drained = rx.drain();
+        assert_eq!(drained.len(), 1);
+        assert_eq!(drained[0].content, "fyi");
+        assert_eq!(drained[0].kind, MessageKind::Update);
+    }
+
+    #[tokio::test]
+    async fn drain_if_steer_ready_returns_prior_updates_with_steer() {
+        let (tx, mut rx) = inbound_channel(4);
+        tx.send(make_message("/a", "fyi", MessageKind::Update))
+            .await
+            .expect("send");
+        assert!(rx.drain_if_steer_ready().is_none());
+
+        tx.send(make_message("/b", "act", MessageKind::Steer))
+            .await
+            .expect("send");
+
+        let drained = rx
+            .drain_if_steer_ready()
+            .expect("steer wakes and returns batch");
+        assert_eq!(drained.len(), 2);
+        assert_eq!(drained[0].content, "fyi");
+        assert_eq!(drained[0].kind, MessageKind::Update);
+        assert_eq!(drained[1].content, "act");
+        assert_eq!(drained[1].kind, MessageKind::Steer);
+        assert!(rx.drain().is_empty());
     }
 
     #[tokio::test]

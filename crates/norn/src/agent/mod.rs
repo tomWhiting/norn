@@ -13,6 +13,7 @@ pub mod instance;
 pub mod message_router;
 pub mod monitor;
 pub mod output;
+pub mod pending_messages;
 pub mod registry;
 pub mod result_channel;
 pub mod resume;
@@ -37,6 +38,10 @@ pub use instance::Agent;
 pub use message_router::{MessageRouter, RouteError};
 pub use monitor::{MonitorConfig, MonitorHandle, MonitorStatus, run_monitored};
 pub use output::{AgentOutput, AgentStopReason, RunOutcome};
+pub use pending_messages::{
+    AGENT_MESSAGE_DEQUEUED_EVENT_TYPE, AGENT_MESSAGE_QUEUED_EVENT_TYPE, PendingAgentMessage,
+    PendingAgentMessageLifecycle, PendingAgentMessages, append_pending_message_audit,
+};
 pub use registry::{AgentEntry, AgentRegistry, AgentStatus, AgentTombstone, SpawnGuard};
 pub use result_channel::{ChildAgentResult, ChildResultSender, frame_child_result};
 pub use resume::rebuild_action_log;

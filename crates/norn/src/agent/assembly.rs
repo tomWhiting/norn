@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use crate::agent::child_policy::CoordinationEnvelope;
 use crate::agent::message_router::MessageRouter;
+use crate::agent::pending_messages::PendingAgentMessages;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::error::{ConfigError, NornError};
@@ -738,6 +739,9 @@ pub(crate) fn install_agent_infra(
     let infra = AgentToolInfra {
         registry: parts.registry,
         router,
+        pending_messages: Arc::new(PendingAgentMessages::from_events(
+            &parts.event_store.events(),
+        )),
         provider: parts.provider,
         event_store: parts.event_store,
         agent_id: parts.id,

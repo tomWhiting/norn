@@ -14,7 +14,9 @@ pub use self::envelope::{
     wrap_schema_with_envelope,
 };
 pub use self::failure::{ToolErrorKind, ToolErrorPayload};
-pub use self::follow_up::{BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction};
+pub use self::follow_up::{
+    BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction, FollowUpArgsMode,
+};
 pub use self::lifecycle::{
     Advisory, AdvisorySeverity, BlockDecision, CheckOverride, PostCheckResult, PostValidateMode,
     PostValidateOutcome, PreValidateOutcome, RuntimeOnSuccessAction, RuntimePostValidateCheck,

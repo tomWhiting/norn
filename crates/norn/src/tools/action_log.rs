@@ -26,7 +26,8 @@
 //! * `events` — the session's Custom audit events, via
 //!   [`ActionLog::custom_events`]: typed subagent lifecycle records
 //!   (`subagent.started` / `subagent.completed`), the Wave 3 inter-agent
-//!   message audit trail (`agent_message.sent` / `agent_message.delivered`),
+//!   message audit trail (`agent_message.sent` / `agent_message.delivered`
+//!   / `agent_message.queued` / `agent_message.dequeued`),
 //!   and any embedder-defined event types — payloads verbatim (they are the
 //!   serde-stable audit contract). `filter.event_type` narrows to one type
 //!   and `filter.last` bounds the result; the other filter fields describe
@@ -430,7 +431,7 @@ impl Tool for ActionLogTool {
          `filter.tool`/`filter.outcome` scoping; `events` returns the \
          session's typed audit events — subagent lifecycle \
          (subagent.started/completed) and inter-agent messaging \
-         (agent_message.sent/delivered) — with optional \
+         (agent_message.sent/delivered/queued/dequeued) — with optional \
          `filter.event_type` and `filter.last` narrowing. The optional \
          `scope` widens list/detail/context/mutations/events beyond your \
          own log: `children` (you plus your direct sub-agents), `all` \
@@ -452,7 +453,7 @@ impl Tool for ActionLogTool {
                 "query": {
                     "type": "string",
                     "enum": ["list", "detail", "context", "mutations", "follow_ups", "events"],
-                    "description": "list: Level 1 summaries with optional filter. detail: Level 2 data for one call_id. context: Level 3 data for one call_id. mutations: file-change ledger with live revert status, optionally scoped by filter.file. follow_ups: unexpired follow-up actions, optionally scoped by filter.tool (registering tool) and filter.outcome. events: the session's typed Custom audit events (subagent.started/completed, agent_message.sent/delivered, embedder-defined types) with payloads verbatim, optionally scoped by filter.event_type and filter.last."
+                    "description": "list: Level 1 summaries with optional filter. detail: Level 2 data for one call_id. context: Level 3 data for one call_id. mutations: file-change ledger with live revert status, optionally scoped by filter.file. follow_ups: unexpired follow-up actions, optionally scoped by filter.tool (registering tool) and filter.outcome. events: the session's typed Custom audit events (subagent.started/completed, agent_message.sent/delivered/queued/dequeued, embedder-defined types) with payloads verbatim, optionally scoped by filter.event_type and filter.last."
                 },
                 "filter": {
                     "type": "object",
@@ -482,7 +483,7 @@ impl Tool for ActionLogTool {
                         },
                         "event_type": {
                             "type": "string",
-                            "description": "events query only: return only Custom session events with exactly this event_type, e.g. \"agent_message.sent\", \"agent_message.delivered\", \"subagent.started\", \"subagent.completed\". Rejected on every other query."
+                            "description": "events query only: return only Custom session events with exactly this event_type, e.g. \"agent_message.sent\", \"agent_message.delivered\", \"agent_message.queued\", \"agent_message.dequeued\", \"subagent.started\", \"subagent.completed\". Rejected on every other query."
                         }
                     },
                     "additionalProperties": false
@@ -841,6 +842,7 @@ mod tests {
             description: "Revert".to_owned(),
             tool: "apply_patch".to_owned(),
             args: json!({}),
+            args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
             expires: ExpiryCondition::Never,
             confidence: Confidence::High,
             before_content: BeforeContentSource::StoredContent { files },
@@ -1104,6 +1106,7 @@ mod tests {
             description: format!("{action} via {target_tool}"),
             tool: target_tool.to_owned(),
             args: json!({}),
+            args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
             expires,
             confidence: Confidence::High,
             before_content: BeforeContentSource::Unavailable,
@@ -1287,6 +1290,7 @@ mod tests {
         Arc::new(AgentToolInfra {
             registry: Arc::clone(registry),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id,

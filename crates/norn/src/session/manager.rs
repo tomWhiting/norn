@@ -46,7 +46,8 @@ use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
 
 use super::persistence::index::{
     append_index_entry, insert_index_entry_for_new_session, insert_index_entry_if_absent,
-    read_index, remove_index_entry, resolve_session, sum_usage_from_events, update_index_entry,
+    read_index, remove_index_entry, resolve_latest_session_in_working_dir, resolve_session,
+    sum_usage_from_events, update_index_entry,
 };
 use super::persistence::io::{append_events, read_session_events, session_file_path};
 use super::persistence::types::{
@@ -216,6 +217,27 @@ impl SessionManager {
         self.resume_entry(entry, durability)
     }
 
+    /// Resume the most recently updated persisted session whose indexed
+    /// working directory matches `working_dir`.
+    ///
+    /// This is the no-argument `--resume` primitive for CLI surfaces
+    /// where "latest" should mean latest for the current project rather
+    /// than latest globally across every directory.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionPersistError::NotFound`] when no indexed session belongs
+    /// to `working_dir`, plus the same replay and sink-opening errors as
+    /// [`Self::resume`].
+    pub fn resume_latest_in_working_dir(
+        &self,
+        working_dir: impl AsRef<Path>,
+        durability: DurabilityPolicy,
+    ) -> Result<OpenSession, SessionPersistError> {
+        let entry = resolve_latest_session_in_working_dir(&self.data_dir, working_dir.as_ref())?;
+        self.resume_entry(entry, durability)
+    }
+
     /// Fork a session: copy every recovered source event into a brand
     /// new session (durable batch append), append a `Fork` event whose
     /// `source_event_id` is the source's last event, and return the new
@@ -240,6 +262,40 @@ impl SessionManager {
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
         let source_entry = resolve_session(&self.data_dir, source)?;
+        self.fork_entry(&source_entry, options, durability)
+    }
+
+    /// Fork the most recently updated session whose indexed working
+    /// directory matches `working_dir`.
+    ///
+    /// This mirrors [`Self::resume_latest_in_working_dir`] for
+    /// no-argument `--fork`: the source is selected within the current
+    /// project, while the new fork records the caller-supplied
+    /// [`CreateSessionOptions`].
+    ///
+    /// # Errors
+    ///
+    /// [`SessionPersistError::NotFound`] when no indexed session belongs
+    /// to `working_dir`, [`SessionPersistError::EmptySource`] when the
+    /// selected source has no recoverable events, plus the same I/O
+    /// errors as [`Self::fork`].
+    pub fn fork_latest_in_working_dir(
+        &self,
+        working_dir: impl AsRef<Path>,
+        options: CreateSessionOptions,
+        durability: DurabilityPolicy,
+    ) -> Result<OpenSession, SessionPersistError> {
+        let source_entry =
+            resolve_latest_session_in_working_dir(&self.data_dir, working_dir.as_ref())?;
+        self.fork_entry(&source_entry, options, durability)
+    }
+
+    fn fork_entry(
+        &self,
+        source_entry: &SessionIndexEntry,
+        options: CreateSessionOptions,
+        durability: DurabilityPolicy,
+    ) -> Result<OpenSession, SessionPersistError> {
         let read = read_session_events(&self.data_dir, &source_entry.id)?;
         let last_event_id = read
             .events
@@ -560,6 +616,14 @@ mod tests {
         }
     }
 
+    fn options_in(model: &str, working_dir: &str) -> CreateSessionOptions {
+        CreateSessionOptions {
+            model: model.to_owned(),
+            working_dir: working_dir.to_owned(),
+            name: None,
+        }
+    }
+
     fn user_msg(text: &str) -> SessionEvent {
         SessionEvent::UserMessage {
             base: EventBase::new(None),
@@ -733,6 +797,69 @@ mod tests {
         drop(resumed);
         let read = read_session_events(tmp.path(), &id).unwrap();
         assert_eq!(read.events.len(), 3);
+    }
+
+    #[test]
+    fn resume_latest_in_working_dir_ignores_global_latest_elsewhere() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionManager::new(tmp.path());
+        let current = manager
+            .create(options_in("gpt", "/repo/current"), DurabilityPolicy::Flush)
+            .unwrap();
+        let current_id = current.entry.id.clone();
+        drop(current);
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let other = manager
+            .create(options_in("gpt", "/repo/other"), DurabilityPolicy::Flush)
+            .unwrap();
+        let other_id = other.entry.id.clone();
+        drop(other);
+
+        let resumed = manager
+            .resume_latest_in_working_dir("/repo/current", DurabilityPolicy::Flush)
+            .unwrap();
+        assert_eq!(
+            resumed.entry.id, current_id,
+            "must not resume globally newer session {other_id} from another working directory",
+        );
+    }
+
+    #[test]
+    fn fork_latest_in_working_dir_uses_current_directory_source() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionManager::new(tmp.path());
+        let current = manager
+            .create(options_in("gpt", "/repo/current"), DurabilityPolicy::Flush)
+            .unwrap();
+        let current_id = current.entry.id.clone();
+        current.store.append(user_msg("current source")).unwrap();
+        drop(current);
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        let other = manager
+            .create(options_in("gpt", "/repo/other"), DurabilityPolicy::Flush)
+            .unwrap();
+        other.store.append(user_msg("other source")).unwrap();
+        drop(other);
+
+        let fork = manager
+            .fork_latest_in_working_dir(
+                "/repo/current",
+                options_in("gpt", "/repo/current"),
+                DurabilityPolicy::Flush,
+            )
+            .unwrap();
+        assert_ne!(fork.entry.id, current_id, "fork creates a new session");
+        let events = fork.store.events();
+        assert_eq!(events.len(), 2, "source event plus fork marker");
+        assert!(
+            matches!(
+                &events[0],
+                SessionEvent::UserMessage { content, .. } if content == "current source"
+            ),
+            "fork must copy the current-directory source session",
+        );
     }
 
     /// Regression: the pre-manager resume path dropped the tolerant

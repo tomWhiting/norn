@@ -2,9 +2,10 @@
 //!
 //! The `agents` tool's `messages` action renders inter-agent messaging
 //! activity as **edges** (sender → recipient summaries) derived
-//! read-only from the `agent_message.sent` / `agent_message.delivered`
-//! [`SessionEvent::Custom`] audit events already persisted in the
-//! calling agent's own event store. Nothing here emits events or
+//! read-only from the `agent_message.sent`, `agent_message.delivered`,
+//! `agent_message.queued`, and `agent_message.dequeued`
+//! [`SessionEvent::Custom`] audit events already persisted in the calling
+//! agent's own event store. Nothing here emits events or
 //! touches the router — this is a pure projection of the audit trail.
 //!
 //! # What one store can honestly attest
@@ -14,9 +15,9 @@
 //! `delivered` record lands in the recipient's store only. The caller's
 //! own store therefore contains:
 //!
-//! - `sent` records for messages the caller sent, and for messages its
+//! - `sent`/`queued` records for messages the caller sent, and for messages its
 //!   **direct children** exchanged (the caller granted their scope);
-//! - `delivered` records for messages delivered **to the caller**.
+//! - `delivered`/`dequeued` records for messages delivered **to the caller**.
 //!
 //! Edges render exactly what the store attests and mark everything else
 //! unknown: `sent`/`delivered` counts are JSON `null` when the caller's
@@ -31,6 +32,10 @@ use serde_json::Value;
 use uuid::Uuid;
 
 use crate::agent::registry::AgentRegistry;
+use crate::agent::{
+    AGENT_MESSAGE_DEQUEUED_EVENT_TYPE, AGENT_MESSAGE_QUEUED_EVENT_TYPE,
+    PendingAgentMessageLifecycle,
+};
 use crate::provider::agent_event::{
     AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AGENT_MESSAGE_SENT_EVENT_TYPE, AgentMessageLifecycle,
 };
@@ -57,6 +62,8 @@ struct EdgeAccum {
     /// replayed/duplicated audit line can never inflate an edge.
     sent_ids: HashSet<Uuid>,
     delivered_ids: HashSet<Uuid>,
+    queued_ids: HashSet<Uuid>,
+    dequeued_ids: HashSet<Uuid>,
     /// Per-kind send counts (deduplicated alongside `sent_ids`).
     steer: u64,
     update: u64,
@@ -74,6 +81,8 @@ impl EdgeAccum {
             to_label: None,
             sent_ids: HashSet::new(),
             delivered_ids: HashSet::new(),
+            queued_ids: HashSet::new(),
+            dequeued_ids: HashSet::new(),
             steer: 0,
             update: 0,
             first_at: at,
@@ -117,6 +126,7 @@ pub(crate) fn derive_message_edges(
     registry: &AgentRegistry,
 ) -> MessageEdges {
     let mut accums: HashMap<(Uuid, Uuid), EdgeAccum> = HashMap::new();
+    let mut message_edges: HashMap<Uuid, (Uuid, Uuid)> = HashMap::new();
     let mut malformed = 0usize;
 
     for event in events {
@@ -127,10 +137,38 @@ pub(crate) fn derive_message_edges(
             continue;
         };
         let expects_sent = match event_type.as_str() {
-            AGENT_MESSAGE_SENT_EVENT_TYPE => true,
-            AGENT_MESSAGE_DELIVERED_EVENT_TYPE => false,
-            _ => continue,
+            AGENT_MESSAGE_SENT_EVENT_TYPE => Some(true),
+            AGENT_MESSAGE_DELIVERED_EVENT_TYPE => Some(false),
+            _ => None,
         };
+        if expects_sent.is_none() {
+            match event_type.as_str() {
+                AGENT_MESSAGE_QUEUED_EVENT_TYPE | AGENT_MESSAGE_DEQUEUED_EVENT_TYPE => {
+                    match serde_json::from_value::<PendingAgentMessageLifecycle>(data.clone()) {
+                        Ok(lifecycle) => {
+                            handle_pending_lifecycle(
+                                event_type,
+                                lifecycle,
+                                &mut accums,
+                                &mut message_edges,
+                                &mut malformed,
+                            );
+                        }
+                        Err(error) => {
+                            malformed += 1;
+                            tracing::warn!(
+                                event_type = %event_type,
+                                %error,
+                                "agents messages: unparseable pending agent_message audit payload",
+                            );
+                        }
+                    }
+                }
+                _ => {}
+            }
+            continue;
+        }
+        let expects_sent = expects_sent.unwrap_or(false);
         let lifecycle: AgentMessageLifecycle = match serde_json::from_value(data.clone()) {
             Ok(lifecycle) => lifecycle,
             Err(error) => {
@@ -169,6 +207,7 @@ pub(crate) fn derive_message_edges(
                     .entry((from_id, to_id))
                     .or_insert_with(|| EdgeAccum::new(sent_at));
                 accum.observe(sent_at, seq);
+                message_edges.insert(message_id, (from_id, to_id));
                 accum.from_label = Some(from);
                 accum.to_label = Some(to);
                 if accum.sent_ids.insert(message_id) {
@@ -215,6 +254,92 @@ pub(crate) fn derive_message_edges(
     MessageEdges { edges, malformed }
 }
 
+fn handle_pending_lifecycle(
+    event_type: &str,
+    lifecycle: PendingAgentMessageLifecycle,
+    accums: &mut HashMap<(Uuid, Uuid), EdgeAccum>,
+    message_edges: &mut HashMap<Uuid, (Uuid, Uuid)>,
+    malformed: &mut usize,
+) {
+    match lifecycle {
+        PendingAgentMessageLifecycle::Queued {
+            message_id,
+            from_id,
+            from,
+            to_id,
+            to,
+            kind,
+            queued_at,
+            ..
+        } => {
+            if event_type != AGENT_MESSAGE_QUEUED_EVENT_TYPE {
+                *malformed += 1;
+                tracing::warn!(
+                    event_type,
+                    %message_id,
+                    "agents messages: event_type/phase mismatch (queued payload \
+                     under a non-queued event type)",
+                );
+                return;
+            }
+            message_edges.insert(message_id, (from_id, to_id));
+            let accum = accums
+                .entry((from_id, to_id))
+                .or_insert_with(|| EdgeAccum::new(queued_at));
+            accum.observe(queued_at, 0);
+            accum.from_label = Some(from);
+            accum.to_label = Some(to);
+            if accum.queued_ids.insert(message_id) {
+                match kind {
+                    crate::r#loop::inbound::MessageKind::Steer => accum.steer += 1,
+                    crate::r#loop::inbound::MessageKind::Update => accum.update += 1,
+                }
+            }
+        }
+        PendingAgentMessageLifecycle::Dequeued {
+            message_id,
+            to_id,
+            dequeued_at,
+        } => {
+            if event_type != AGENT_MESSAGE_DEQUEUED_EVENT_TYPE {
+                *malformed += 1;
+                tracing::warn!(
+                    event_type,
+                    %message_id,
+                    "agents messages: event_type/phase mismatch (dequeued payload \
+                     under a non-dequeued event type)",
+                );
+                return;
+            }
+            let Some((from_id, edge_to_id)) = message_edges.get(&message_id).copied() else {
+                *malformed += 1;
+                tracing::warn!(
+                    event_type,
+                    %message_id,
+                    "agents messages: dequeued audit has no prior queued/sent edge in this store",
+                );
+                return;
+            };
+            if edge_to_id != to_id {
+                *malformed += 1;
+                tracing::warn!(
+                    event_type,
+                    %message_id,
+                    expected_to = %edge_to_id,
+                    actual_to = %to_id,
+                    "agents messages: dequeued recipient does not match queued edge",
+                );
+                return;
+            }
+            let accum = accums
+                .entry((from_id, to_id))
+                .or_insert_with(|| EdgeAccum::new(dequeued_at));
+            accum.observe(dequeued_at, 0);
+            accum.dequeued_ids.insert(message_id);
+        }
+    }
+}
+
 /// Render one edge. `sent` is `null` when this store holds no send
 /// audit for the edge (the caller is neither the sender nor the
 /// sender's scope-granting parent); `delivered` is `null` when delivery
@@ -243,6 +368,8 @@ fn edge_json(
         "to_id": to_id.to_string(),
         "sent": Value::Null,
         "delivered": Value::Null,
+        "queued": Value::Null,
+        "dequeued": Value::Null,
         "first_at": accum.first_at.to_rfc3339(),
         "last_at": accum.last_at.to_rfc3339(),
         "last_seq": accum.last_seq,
@@ -256,6 +383,12 @@ fn edge_json(
     }
     if to_id == caller || !accum.delivered_ids.is_empty() {
         edge["delivered"] = serde_json::json!(accum.delivered_ids.len());
+    }
+    if !accum.queued_ids.is_empty() {
+        edge["queued"] = serde_json::json!(accum.queued_ids.len());
+    }
+    if to_id == caller || !accum.dequeued_ids.is_empty() {
+        edge["dequeued"] = serde_json::json!(accum.dequeued_ids.len());
     }
     edge
 }
@@ -317,6 +450,46 @@ mod tests {
         SessionEvent::Custom {
             base: EventBase::new(None),
             event_type: AGENT_MESSAGE_DELIVERED_EVENT_TYPE.to_owned(),
+            data: serde_json::to_value(&lifecycle).unwrap(),
+        }
+    }
+
+    fn queued_event(
+        message_id: Uuid,
+        from_id: Uuid,
+        from: &str,
+        to_id: Uuid,
+        to: &str,
+        kind: MessageKind,
+        queued_at: &str,
+    ) -> SessionEvent {
+        let lifecycle = PendingAgentMessageLifecycle::Queued {
+            message_id,
+            from_id,
+            from: from.to_owned(),
+            role: None,
+            to_id,
+            to: to.to_owned(),
+            kind,
+            content: "payload".to_owned(),
+            queued_at: DateTime::parse_from_rfc3339(queued_at).unwrap().to_utc(),
+        };
+        SessionEvent::Custom {
+            base: EventBase::new(None),
+            event_type: AGENT_MESSAGE_QUEUED_EVENT_TYPE.to_owned(),
+            data: serde_json::to_value(&lifecycle).unwrap(),
+        }
+    }
+
+    fn dequeued_event(message_id: Uuid, to_id: Uuid, dequeued_at: &str) -> SessionEvent {
+        let lifecycle = PendingAgentMessageLifecycle::Dequeued {
+            message_id,
+            to_id,
+            dequeued_at: DateTime::parse_from_rfc3339(dequeued_at).unwrap().to_utc(),
+        };
+        SessionEvent::Custom {
+            base: EventBase::new(None),
+            event_type: AGENT_MESSAGE_DEQUEUED_EVENT_TYPE.to_owned(),
             data: serde_json::to_value(&lifecycle).unwrap(),
         }
     }
@@ -475,6 +648,36 @@ mod tests {
             edge["delivered"].is_null(),
             "delivery to a non-caller recipient is unknowable from this store: {edge}",
         );
+    }
+
+    #[test]
+    fn queued_and_dequeued_edge_counts_are_visible() {
+        let caller = Uuid::from_u128(1);
+        let child = Uuid::from_u128(2);
+        let message = Uuid::from_u128(10);
+        let events = vec![
+            queued_event(
+                message,
+                child,
+                "/root/spawn/c",
+                caller,
+                "root",
+                MessageKind::Update,
+                "2026-06-12T10:00:00Z",
+            ),
+            dequeued_event(message, caller, "2026-06-12T10:00:03Z"),
+        ];
+
+        let out = derive_message_edges(&events, caller, &empty_registry());
+
+        assert_eq!(out.malformed, 0);
+        assert_eq!(out.edges.len(), 1);
+        let edge = &out.edges[0];
+        assert!(edge["sent"].is_null(), "queued is distinct from sent");
+        assert_eq!(edge["queued"], 1);
+        assert_eq!(edge["dequeued"], 1);
+        assert_eq!(edge["first_at"], "2026-06-12T10:00:00+00:00");
+        assert_eq!(edge["last_at"], "2026-06-12T10:00:03+00:00");
     }
 
     /// A caller that received a message from its parent holds only the

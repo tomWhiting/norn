@@ -12,12 +12,14 @@ use norn::agent::registry::AgentRegistry;
 use norn::agent::result_channel::ChildAgentResult;
 use norn::agent_loop::LoopContext;
 use norn::agent_loop::config::AgentLoopConfig;
+use norn::agent_loop::inbound::{ChannelMessage, MessageKind, inbound_channel};
 use norn::provider::mock::MockProvider;
 use norn::provider::request::ToolCallKind;
 use norn::provider::{
     AgentEvent, AgentEventSender, Provider, ProviderCapabilities, ProviderError, ProviderEvent,
     ProviderRequest, ProviderStream, StopReason, Usage,
 };
+use norn::session::events::{EventBase, EventUsage, SessionEvent};
 use norn::session::store::EventStore;
 use norn::tool::ToolRegistry;
 use norn_tui::input::InputHistory;
@@ -33,7 +35,8 @@ const SCREEN_COLS: u16 = 80;
 const APP_OUTPUT_MARKER: &[u8] = b"screen harness output";
 const CHILD_RESULT_MARKER: &[u8] = b"[spawn/worker completed]";
 const CHILD_ACTIVITY_MARKER: &[u8] = b"read_file";
-const SOFT_WRAP_MARKER: &[u8] = b"wrap-alpha";
+const ROOT_INBOUND_MARKER: &[u8] = b"root inbound wake handled";
+const SOFT_WRAP_END_MARKER: &[u8] = b"wrap-omega";
 const RESIZE_MARKER: &[u8] = b"resize harness output";
 
 struct PtyRun {
@@ -122,6 +125,58 @@ fn run_app_renders_provider_output_in_screen_model() -> Result<(), Box<dyn std::
 }
 
 #[test]
+fn run_app_replays_resumed_session_history_in_screen_model()
+-> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("resume-history"),
+        PtyInteraction::WaitForOutputThenCtrlC {
+            marker: b"prior assistant resume answer",
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app resume-history", &run.status, &run.output).into());
+    }
+
+    let screen = TerminalScreen::from_output(&run.output, SCREEN_ROWS, SCREEN_COLS);
+    assert!(
+        screen.contains("prior user resume question"),
+        "prior user message missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("Thought about"),
+        "prior thinking block heading missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("Earlier reasoning summary"),
+        "prior thinking body missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("prior assistant resume answer"),
+        "prior assistant message missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("prior tool resume result"),
+        "prior tool result missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("gpt-screen"),
+        "status bar missing after replay:\n{}",
+        screen.debug_text(),
+    );
+
+    Ok(())
+}
+
+#[test]
 fn run_app_soft_wraps_long_output_in_screen_model() -> Result<(), Box<dyn std::error::Error>> {
     let size = PtySizeSpec { rows: 16, cols: 60 };
     let run = run_child_to_completion(
@@ -129,7 +184,7 @@ fn run_app_soft_wraps_long_output_in_screen_model() -> Result<(), Box<dyn std::e
         PTY_APP_CHILD_ENV,
         Some("soft-wrap"),
         PtyInteraction::WaitForOutputThenCtrlC {
-            marker: SOFT_WRAP_MARKER,
+            marker: SOFT_WRAP_END_MARKER,
         },
         size,
     )?;
@@ -164,8 +219,9 @@ fn run_app_surfaces_child_result_while_turn_is_active() -> Result<(), Box<dyn st
         "run_app_child_entrypoint",
         PTY_APP_CHILD_ENV,
         Some("child-result"),
-        PtyInteraction::WaitForOutputThenCtrlC {
+        PtyInteraction::WaitForOutputScreenThenCancelThenCtrlC {
             marker: CHILD_RESULT_MARKER,
+            screen_needle: "child result arrived while root turn was active",
         },
         PtySizeSpec::default(),
     )?;
@@ -174,11 +230,17 @@ fn run_app_surfaces_child_result_while_turn_is_active() -> Result<(), Box<dyn st
         return Err(child_failure("run_app child-result", &run.status, &run.output).into());
     }
 
-    assert_output_contains(
-        &run.output,
-        CHILD_RESULT_MARKER,
-        "live child result completion",
-    )?;
+    let screen = TerminalScreen::from_output(&run.output, SCREEN_ROWS, SCREEN_COLS);
+    assert!(
+        screen.contains("[spawn/worker completed]"),
+        "child completion header missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("child result arrived while root turn was active"),
+        "child result body missing from screen:\n{}",
+        screen.debug_text(),
+    );
 
     Ok(())
 }
@@ -208,6 +270,43 @@ fn run_app_renders_child_activity_rows_in_screen_model() -> Result<(), Box<dyn s
     assert!(
         screen.contains("read_file"),
         "child activity missing from screen:\n{}",
+        screen.debug_text(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn run_app_wakes_idle_root_on_inbound_steer() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("root-inbound-steer"),
+        PtyInteraction::WaitForOutputWaitForOutputThenCtrlC {
+            first_marker: ROOT_INBOUND_MARKER,
+            second_marker: b"[3 in / 4 out",
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app root-inbound-steer", &run.status, &run.output).into());
+    }
+
+    let screen = TerminalScreen::from_output(&run.output, SCREEN_ROWS, SCREEN_COLS);
+    assert!(
+        screen.contains("[root] msg delivered"),
+        "root inbound delivery row missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("[3 in / 4 out"),
+        "root inbound usage line missing from screen:\n{}",
+        screen.debug_text(),
+    );
+    assert!(
+        screen.contains("gpt-screen"),
+        "status bar missing after root inbound wake:\n{}",
         screen.debug_text(),
     );
 
@@ -250,11 +349,11 @@ fn run_app_grows_and_shrinks_input_panel_without_artifacts()
         "run_app_child_entrypoint",
         PTY_APP_CHILD_ENV,
         Some("idle"),
-        PtyInteraction::WriteWaitForOutputWriteWaitThenCtrlC {
+        PtyInteraction::WriteWaitForOutputWriteWaitForOutputThenCtrlC {
             first_bytes: b"panel-growth-input-abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz",
             first_marker: b"panel-growth-input",
             second_bytes: b"\x15",
-            second_wait: Duration::from_millis(250),
+            second_marker: b"\x1b[1;11r",
         },
         size,
     )?;
@@ -286,9 +385,9 @@ fn run_app_handles_bracketed_paste_and_autocomplete() -> Result<(), Box<dyn std:
         "run_app_child_entrypoint",
         PTY_APP_CHILD_ENV,
         Some("idle"),
-        PtyInteraction::WriteWaitThenCtrlC {
+        PtyInteraction::WriteWaitForOutputThenCtrlC {
             bytes: b"/eff\t\x1b[200~ high\x1b[201~\r",
-            wait: Duration::from_millis(300),
+            marker: b"Reasoning effort: high",
         },
         PtySizeSpec::default(),
     )?;
@@ -297,7 +396,12 @@ fn run_app_handles_bracketed_paste_and_autocomplete() -> Result<(), Box<dyn std:
         return Err(child_failure("run_app paste", &run.status, &run.output).into());
     }
 
-    assert_output_contains(&run.output, b"Reasoning effort: high", "slash result")?;
+    let screen = TerminalScreen::from_output(&run.output, SCREEN_ROWS, SCREEN_COLS);
+    assert!(
+        screen.contains("effo"),
+        "reasoning effort status badge missing from screen:\n{}",
+        screen.debug_text(),
+    );
 
     Ok(())
 }
@@ -308,9 +412,9 @@ fn run_app_budgets_rows_on_small_terminal() -> Result<(), Box<dyn std::error::Er
         "run_app_child_entrypoint",
         PTY_APP_CHILD_ENV,
         Some("idle"),
-        PtyInteraction::WriteWaitThenCtrlC {
+        PtyInteraction::WriteWaitForOutputThenCtrlC {
             bytes: b"",
-            wait: Duration::from_millis(100),
+            marker: b"gpt-sc",
         },
         PtySizeSpec { rows: 8, cols: 56 },
     )?;
@@ -333,7 +437,7 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
     let scenario = std::env::var(PTY_APP_SCENARIO_ENV).unwrap_or_else(|_| "basic".to_string());
     let (provider, initial_prompt, loop_context) = scenario_runtime(&scenario)?;
     let executor = Arc::new(ToolRegistry::new());
-    let store = Arc::new(EventStore::new());
+    let store = Arc::new(fixture_store(&scenario)?);
     let registry = AgentRegistry::shared();
     let root_id = register_root_agent(&registry, "gpt-screen")?;
     let (agent_event_tx, agent_event_rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
@@ -341,6 +445,24 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
     if scenario == "child-activity" {
         spawn_child_activity_fixture(&registry, root_id, &root_event_sender)?;
     }
+    let root_inbound = if scenario == "root-inbound-steer" {
+        let (tx, rx) = inbound_channel(8);
+        tx.send(ChannelMessage {
+            id: uuid::Uuid::new_v4(),
+            sender_id: uuid::Uuid::new_v4(),
+            from: "spawn/worker".to_string(),
+            role: Some("worker".to_string()),
+            to_id: root_id,
+            content: "wake the idle root".to_string(),
+            kind: MessageKind::Steer,
+            seq: Some(1),
+            timestamp: chrono::Utc::now(),
+        })
+        .await?;
+        Some(rx)
+    } else {
+        None
+    };
 
     norn_tui::run_app(norn_tui::TuiInputs {
         provider,
@@ -364,7 +486,7 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
         session_id: None,
         root_event_sender,
         agent_event_rx,
-        root_inbound: None,
+        root_inbound,
     })
     .await?;
     Ok(())
@@ -450,8 +572,18 @@ fn scenario_runtime(scenario: &str) -> Result<ScenarioRuntime, Box<dyn std::erro
                 loop_context,
             ))
         }
-        "idle" | "child-activity" => Ok((
+        "idle" | "child-activity" | "resume-history" => Ok((
             Arc::new(MockProvider::new(Vec::new())),
+            None,
+            LoopContext::default(),
+        )),
+        "root-inbound-steer" => Ok((
+            Arc::new(MockProvider::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: "root inbound wake handled\n".to_string(),
+                },
+                done_event(),
+            ]])),
             None,
             LoopContext::default(),
         )),
@@ -461,6 +593,33 @@ fn scenario_runtime(scenario: &str) -> Result<ScenarioRuntime, Box<dyn std::erro
         )
         .into()),
     }
+}
+
+fn fixture_store(scenario: &str) -> Result<EventStore, Box<dyn std::error::Error>> {
+    let store = EventStore::new();
+    if scenario == "resume-history" {
+        store.append(SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: "prior user resume question".to_string(),
+        })?;
+        store.append(SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            content: "prior assistant resume answer".to_string(),
+            thinking: "**Remembering context**\n\nEarlier reasoning summary".to_string(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_string(),
+            response_id: None,
+        })?;
+        store.append(SessionEvent::ToolResult {
+            base: EventBase::new(None),
+            tool_call_id: "call_prior_resume".to_string(),
+            tool_name: "resume_tool".to_string(),
+            output: serde_json::json!("prior tool resume result"),
+            duration_ms: 12,
+        })?;
+    }
+    Ok(store)
 }
 
 fn done_event() -> ProviderEvent {
@@ -577,20 +736,28 @@ enum PtyInteraction<'a> {
     WaitForOutputThenCtrlC {
         marker: &'a [u8],
     },
+    WaitForOutputWaitForOutputThenCtrlC {
+        first_marker: &'a [u8],
+        second_marker: &'a [u8],
+    },
+    WaitForOutputScreenThenCancelThenCtrlC {
+        marker: &'a [u8],
+        screen_needle: &'a str,
+    },
     ResizeAfterOutputThenCtrlC {
         marker: &'a [u8],
         rows: u16,
         cols: u16,
     },
-    WriteWaitThenCtrlC {
+    WriteWaitForOutputThenCtrlC {
         bytes: &'a [u8],
-        wait: Duration,
+        marker: &'a [u8],
     },
-    WriteWaitForOutputWriteWaitThenCtrlC {
+    WriteWaitForOutputWriteWaitForOutputThenCtrlC {
         first_bytes: &'a [u8],
         first_marker: &'a [u8],
         second_bytes: &'a [u8],
-        second_wait: Duration,
+        second_marker: &'a [u8],
     },
 }
 
@@ -644,7 +811,32 @@ fn run_child_to_completion(
         PtyInteraction::WaitForOutputThenCtrlC { marker } => {
             wait_for_output(&output, marker, Duration::from_secs(5))?;
             let mut writer = pair.master.take_writer()?;
-            std::thread::sleep(Duration::from_millis(900));
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+        }
+        PtyInteraction::WaitForOutputWaitForOutputThenCtrlC {
+            first_marker,
+            second_marker,
+        } => {
+            wait_for_output(&output, first_marker, Duration::from_secs(5))?;
+            wait_for_output(&output, second_marker, Duration::from_secs(5))?;
+            let mut writer = pair.master.take_writer()?;
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+        }
+        PtyInteraction::WaitForOutputScreenThenCancelThenCtrlC {
+            marker,
+            screen_needle,
+        } => {
+            wait_for_output(&output, marker, Duration::from_secs(5))?;
+            wait_for_screen(&output, screen_needle, size, Duration::from_secs(5))?;
+            let mut writer = pair.master.take_writer()?;
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+            wait_for_output_count(&output, b"[cancelled]", 1, Duration::from_secs(5))?;
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+            wait_for_output_count(&output, b"[cancelled]", 2, Duration::from_secs(5))?;
             writer.write_all(b"\x03")?;
             writer.flush()?;
         }
@@ -658,26 +850,25 @@ fn run_child_to_completion(
             })?;
             wait_for_output(&output, b"\x1b[1;14r", Duration::from_secs(5))?;
             let mut writer = pair.master.take_writer()?;
-            std::thread::sleep(Duration::from_millis(250));
             writer.write_all(b"\x03")?;
             writer.flush()?;
         }
-        PtyInteraction::WriteWaitThenCtrlC { bytes, wait } => {
+        PtyInteraction::WriteWaitForOutputThenCtrlC { bytes, marker } => {
             wait_for_output(&output, b"gpt-sc", Duration::from_secs(5))?;
             let mut writer = pair.master.take_writer()?;
             if !bytes.is_empty() {
                 writer.write_all(bytes)?;
                 writer.flush()?;
             }
-            std::thread::sleep(wait);
+            wait_for_output(&output, marker, Duration::from_secs(5))?;
             writer.write_all(b"\x03")?;
             writer.flush()?;
         }
-        PtyInteraction::WriteWaitForOutputWriteWaitThenCtrlC {
+        PtyInteraction::WriteWaitForOutputWriteWaitForOutputThenCtrlC {
             first_bytes,
             first_marker,
             second_bytes,
-            second_wait,
+            second_marker,
         } => {
             wait_for_output(&output, b"^C exit", Duration::from_secs(5))?;
             let mut writer = pair.master.take_writer()?;
@@ -686,7 +877,7 @@ fn run_child_to_completion(
             wait_for_output(&output, first_marker, Duration::from_secs(5))?;
             writer.write_all(second_bytes)?;
             writer.flush()?;
-            std::thread::sleep(second_wait);
+            wait_for_output(&output, second_marker, Duration::from_secs(5))?;
             writer.write_all(b"\x03")?;
             writer.flush()?;
         }
@@ -726,15 +917,27 @@ fn wait_for_output(
     marker: &[u8],
     timeout: Duration,
 ) -> io::Result<()> {
+    wait_for_output_count(output, marker, 1, timeout)
+}
+
+fn wait_for_output_count(
+    output: &Arc<Mutex<Vec<u8>>>,
+    marker: &[u8],
+    count: usize,
+    timeout: Duration,
+) -> io::Result<()> {
     let deadline = Instant::now() + timeout;
     loop {
-        let contains_marker = {
+        let marker_count = {
             let guard = output
                 .lock()
                 .map_err(|err| io::Error::other(format!("PTY output lock poisoned: {err}")))?;
-            guard.windows(marker.len()).any(|window| window == marker)
+            guard
+                .windows(marker.len())
+                .filter(|window| *window == marker)
+                .count()
         };
-        if contains_marker {
+        if marker_count >= count {
             return Ok(());
         }
         if Instant::now() >= deadline {
@@ -742,9 +945,35 @@ fn wait_for_output(
             return Err(io::Error::new(
                 io::ErrorKind::TimedOut,
                 format!(
-                    "timed out waiting for PTY marker {:?}; output:\n{}",
+                    "timed out waiting for PTY marker {:?} count {count}; output:\n{}",
                     String::from_utf8_lossy(marker),
                     String::from_utf8_lossy(&snapshot),
+                ),
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+fn wait_for_screen(
+    output: &Arc<Mutex<Vec<u8>>>,
+    marker: &str,
+    size: PtySizeSpec,
+    timeout: Duration,
+) -> io::Result<()> {
+    let deadline = Instant::now() + timeout;
+    loop {
+        let snapshot = clone_output(output)?;
+        let screen = TerminalScreen::from_output(&snapshot, size.rows, size.cols);
+        if screen.contains(marker) {
+            return Ok(());
+        }
+        if Instant::now() >= deadline {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!(
+                    "timed out waiting for screen marker {marker:?}; screen:\n{}",
+                    screen.debug_text(),
                 ),
             ));
         }

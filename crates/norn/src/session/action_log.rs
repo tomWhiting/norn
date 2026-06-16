@@ -69,6 +69,11 @@ pub struct ActionLogEntry {
     /// One-line, model-readable summary of the result (e.g.
     /// `"edit committed: src/handler.rs +5/-3"`).
     pub summary_line: String,
+    /// Where this action-log entry came from. Direct model tool calls omit
+    /// this field in serialized output; entries created by `follow_up`
+    /// retain an explicit link to the source call and action.
+    #[serde(default, skip_serializing_if = "ActionOrigin::is_direct")]
+    pub origin: ActionOrigin,
 }
 
 impl ActionLogEntry {
@@ -107,14 +112,43 @@ impl ActionLogEntry {
     /// arguments, and follow-ups are reached via Level 2 detail queries.
     #[must_use]
     pub fn compact_json(&self) -> serde_json::Value {
-        serde_json::json!({
+        let mut value = serde_json::json!({
             "tool": self.tool_name,
             "id": self.tool_call_id,
             "desc": self.tool_use_description,
             "ts": self.timestamp.to_rfc3339(),
             "outcome": self.outcome.tag(),
             "summary": self.summary_line,
-        })
+        });
+        if !self.origin.is_direct() {
+            value["origin"] = serde_json::to_value(&self.origin)
+                .unwrap_or_else(|_| serde_json::Value::String("unserializable".to_owned()));
+        }
+        value
+    }
+}
+
+/// Origin of an action-log entry.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ActionOrigin {
+    /// A normal model-issued tool call.
+    #[default]
+    Direct,
+    /// A target tool invocation triggered through the `follow_up` tool.
+    FollowUp {
+        /// Tool-call id of the source call whose follow-up was executed.
+        source_tool_call_id: String,
+        /// Follow-up action name selected from the source call.
+        action: String,
+    },
+}
+
+impl ActionOrigin {
+    /// Whether this origin is [`Self::Direct`].
+    #[must_use]
+    pub fn is_direct(&self) -> bool {
+        matches!(self, Self::Direct)
     }
 }
 
@@ -208,7 +242,8 @@ pub struct ActionLogContext {
 /// Wave 3 made the session's Custom audit events first-class on the
 /// query surface: subagent lifecycle (`subagent.started` /
 /// `subagent.completed`), inter-agent messaging (`agent_message.sent` /
-/// `agent_message.delivered`), and any embedder-defined event types.
+/// `agent_message.delivered` / `agent_message.queued` /
+/// `agent_message.dequeued`), and any embedder-defined event types.
 /// The record carries the payload verbatim — these payloads are the
 /// serde-stable audit contract, so no lossy summarisation happens here.
 #[derive(Clone, Debug, Serialize)]
@@ -373,6 +408,30 @@ impl ActionLog {
     /// [`SessionEvent::ToolResult`](crate::session::events::SessionEvent::ToolResult)
     /// event has been appended to the [`EventStore`].
     pub fn record_completion(&self, record: CompletionRecord<'_>) {
+        self.record_completion_with_origin(record, ActionOrigin::Direct);
+    }
+
+    /// Record a tool dispatch produced by executing a follow-up action.
+    ///
+    /// This keeps normal call-site boilerplate out of the common path while
+    /// making follow-up lineage queryable through every action-log view that
+    /// surfaces [`ActionLogEntry`].
+    pub fn record_follow_up_completion(
+        &self,
+        record: CompletionRecord<'_>,
+        source_tool_call_id: &str,
+        action: &str,
+    ) {
+        self.record_completion_with_origin(
+            record,
+            ActionOrigin::FollowUp {
+                source_tool_call_id: source_tool_call_id.to_owned(),
+                action: action.to_owned(),
+            },
+        );
+    }
+
+    fn record_completion_with_origin(&self, record: CompletionRecord<'_>, origin: ActionOrigin) {
         let summary_line = compute_summary(record.tool_name, &record.outcome, record.output);
 
         // Update the session mutation ledger for successful mutation-tool
@@ -400,6 +459,7 @@ impl ActionLog {
             timestamp: Utc::now(),
             outcome: record.outcome,
             summary_line,
+            origin,
         };
 
         let id = record.tool_call_id.to_owned();
@@ -546,7 +606,8 @@ impl ActionLog {
     ///
     /// This is the data source for the `action_log` tool's `events`
     /// query: it makes the typed Custom audit events — subagent
-    /// lifecycle, `agent_message.sent`/`agent_message.delivered`, and
+    /// lifecycle, `agent_message.sent`/`agent_message.delivered`,
+    /// `agent_message.queued`/`agent_message.dequeued`, and
     /// embedder-defined types — queryable instead of invisible. The scan
     /// reads the store at call time, so events appended by other parts
     /// of the runtime (e.g. message audit writes into this agent's
@@ -825,6 +886,7 @@ mod tests {
             timestamp: Utc::now(),
             outcome: Outcome::Success,
             summary_line: "edit committed: src/a.rs +1/-0".to_owned(),
+            origin: ActionOrigin::Direct,
         };
         let json = serde_json::to_string(&entry).unwrap();
         let parsed: ActionLogEntry = serde_json::from_str(&json).unwrap();
@@ -953,6 +1015,7 @@ mod tests {
             description: "Revert".to_owned(),
             tool: "apply_patch".to_owned(),
             args: serde_json::json!({}),
+            args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
             expires: ExpiryCondition::Never,
             confidence: Confidence::High,
             before_content: BeforeContentSource::StoredContent { files },
@@ -1022,6 +1085,7 @@ mod tests {
             timestamp: Utc::now(),
             outcome: Outcome::Success,
             summary_line: "edit committed: src/a.rs +1/-0".to_owned(),
+            origin: ActionOrigin::Direct,
         };
         let line = entry.compact_line();
         let fields: Vec<&str> = line.split('|').collect();
@@ -1043,6 +1107,7 @@ mod tests {
             timestamp: Utc::now(),
             outcome: Outcome::Success,
             summary_line: "日本語のサマリー".repeat(10),
+            origin: ActionOrigin::Direct,
         };
         let line = entry.compact_line();
         let summary = line.split('|').nth(3).unwrap();
@@ -1059,6 +1124,7 @@ mod tests {
             timestamp: Utc::now(),
             outcome: Outcome::Success,
             summary_line: "x".repeat(40),
+            origin: ActionOrigin::Direct,
         };
         let line = entry.compact_line();
         assert_eq!(line.split('|').nth(3).unwrap(), &"x".repeat(40));
@@ -1127,6 +1193,7 @@ mod tests {
             timestamp: Utc::now(),
             outcome,
             summary_line: "s".to_owned(),
+            origin: ActionOrigin::Direct,
         };
         let outcome_of = |line: &str| line.split('|').nth(2).unwrap().to_owned();
         assert_eq!(outcome_of(&mk(Outcome::Success).compact_line()), "success");
@@ -1245,6 +1312,7 @@ mod tests {
             description: "Revert".to_owned(),
             tool: "apply_patch".to_owned(),
             args: serde_json::json!({}),
+            args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
             expires: ExpiryCondition::Never,
             confidence: Confidence::High,
             before_content: BeforeContentSource::Unavailable,
@@ -1280,6 +1348,7 @@ mod tests {
             timestamp: Utc::now(),
             outcome: Outcome::Success,
             summary_line: "edit committed: src/a.rs +1/-0".to_owned(),
+            origin: ActionOrigin::Direct,
         };
         let json = entry.compact_json();
         let obj = json.as_object().unwrap();
@@ -1432,6 +1501,7 @@ mod tests {
             description: "Revert".to_owned(),
             tool: "apply_patch".to_owned(),
             args: serde_json::json!({}),
+            args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
             expires: ExpiryCondition::Never,
             confidence: Confidence::High,
             before_content: BeforeContentSource::StoredContent { files },
@@ -1572,6 +1642,7 @@ mod tests {
             description: format!("{action} via {tool}"),
             tool: tool.to_owned(),
             args: serde_json::json!({}),
+            args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
             expires,
             confidence: Confidence::High,
             before_content: BeforeContentSource::Unavailable,

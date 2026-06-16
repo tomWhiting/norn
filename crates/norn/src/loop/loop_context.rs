@@ -15,6 +15,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use tokio::process::Command;
+use uuid::Uuid;
 
 use crate::context::loader::ContextLoader;
 use crate::integration::DiagnosticCollector;
@@ -178,6 +179,22 @@ pub struct LoopContext {
     /// the matching events.
     pub action_log: Option<Arc<ActionLog>>,
 
+    /// Current agent id for delivery of durable queued inter-agent messages.
+    ///
+    /// Runtime assembly stamps this for roots, spawned children, and forks
+    /// when agent coordination is installed. Paired with
+    /// [`Self::pending_agent_messages`]; both must be present before the
+    /// runner drains queued messages into this loop.
+    pub agent_id: Option<Uuid>,
+
+    /// Shared pending-message store for this agent tree.
+    ///
+    /// `signal_agent` writes here when a resolved, in-scope recipient has no
+    /// live router route but can still have a future consumer. The runner
+    /// drains the current agent's queue at step start and injects those
+    /// messages through the normal `<agent_message>` path.
+    pub pending_agent_messages: Option<Arc<crate::agent::PendingAgentMessages>>,
+
     /// Optional always-on `NORN.md` context loader. When present,
     /// [`Self::refresh_context_if_stale`] stats both layers per
     /// iteration and reports back whether `system_sections[0]` needs
@@ -279,6 +296,8 @@ impl LoopContext {
             context_edits: None,
             diagnostics: None,
             action_log: None,
+            agent_id: None,
+            pending_agent_messages: None,
             context_loader: None,
             base_prefix: String::new(),
             base_suffix: String::new(),

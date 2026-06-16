@@ -405,6 +405,7 @@ mod tests {
         Arc::new(AgentToolInfra {
             registry: Arc::clone(registry),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id,

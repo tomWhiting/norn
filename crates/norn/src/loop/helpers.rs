@@ -73,19 +73,26 @@ pub(super) struct InitialMessages {
 /// closure or a serialization failure in the
 /// [`SlashCommandHandler::Tool`] expansion.
 pub(super) fn build_initial_messages(
-    user_prompt: &str,
+    user_prompt: Option<&str>,
     loop_context: &LoopContext,
     store: &EventStore,
 ) -> Result<InitialMessages, NornError> {
     let slash_expansion: Option<Vec<Message>> = match loop_context.slash_commands.as_ref() {
-        Some(registry) => match preprocess_input(user_prompt, registry)? {
-            PreprocessResult::Expanded { messages } => Some(messages),
-            PreprocessResult::Passthrough(_) => None,
+        Some(registry) => match user_prompt {
+            Some(prompt) => match preprocess_input(prompt, registry)? {
+                PreprocessResult::Expanded { messages } => Some(messages),
+                PreprocessResult::Passthrough(_) => None,
+            },
+            None => None,
         },
         None => None,
     };
 
-    let new_msg_count = slash_expansion.as_ref().map_or(1, Vec::len);
+    let new_msg_count = match (&slash_expansion, user_prompt) {
+        (Some(expansion), _) => expansion.len(),
+        (None, Some(_)) => 1,
+        (None, None) => 0,
+    };
 
     let (history_events, include_compactions) =
         if let Some(edits) = loop_context.context_edits.as_ref() {
@@ -133,10 +140,10 @@ pub(super) fn build_initial_messages(
     let input_start = messages.len();
     if let Some(expansion) = slash_expansion {
         messages.extend(expansion);
-    } else {
+    } else if let Some(prompt) = user_prompt {
         messages.push(Message {
             role: MessageRole::User,
-            content: Some(user_prompt.to_string()),
+            content: Some(prompt.to_string()),
             thinking: String::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,

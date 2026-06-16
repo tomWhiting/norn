@@ -1551,6 +1551,7 @@ mod tests {
             description: format!("follow-up {action}"),
             tool: "apply_patch".to_string(),
             args: serde_json::json!({}),
+            args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
             expires: ExpiryCondition::Never,
             confidence: Confidence::High,
             before_content: BeforeContentSource::Unavailable,

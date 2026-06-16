@@ -374,6 +374,8 @@ impl Tool for ForkTool {
             combine_system_instruction(&parent_base),
             child_ctx.shared_working_dir(),
         );
+        loop_ctx.agent_id = Some(fork_id);
+        loop_ctx.pending_agent_messages = Some(Arc::clone(&infra.pending_messages));
         // Hook coverage (parent → fork): the fork's loop dispatches
         // pre/post-tool hooks from its *own* LoopContext, so the parent's
         // shared registry must be installed here — otherwise operator
@@ -680,6 +682,7 @@ mod tests {
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(agent_registry),
             router,
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::clone(&event_store),
             agent_id: parent_id,
@@ -2105,6 +2108,7 @@ mod tests {
         let closer_infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(&agent_registry),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider: closer_provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -2596,6 +2600,7 @@ mod tests {
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(&agent_registry),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),

@@ -48,9 +48,11 @@ fn working_dir_string() -> Result<String, PrintError> {
 /// - `--no-session`: a fresh in-memory [`EventStore`] with no sink and no
 ///   on-disk record.
 /// - `--resume <id>`: replay the persisted session and continue appending
-///   through its write-through sink.
+///   through its write-through sink. With no argument, resumes the most
+///   recently updated session for the current working directory.
 /// - `--fork <id>`: copy the source session (with its `Fork` marker) into
-///   a new one.
+///   a new one. With no argument, forks the most recently updated session
+///   for the current working directory.
 /// - `--session-id <id>`: create a fresh persisted session under the
 ///   caller's exact ID — a typed failure when the ID already exists
 ///   unless `--resume-if-exists` is also supplied
@@ -82,17 +84,9 @@ pub(crate) fn open_session(cli: &Cli, bundle: &RuntimeBundle) -> Result<SessionH
 
     let manager = SessionManager::new(session_data_dir());
     let opened = if let Some(id) = cli.resume.as_deref() {
-        manager.resume(id, DurabilityPolicy::Flush)?
+        open_resume_request(&manager, id)?
     } else if let Some(id) = cli.fork.as_deref() {
-        manager.fork(
-            id,
-            CreateSessionOptions {
-                model: bundle.model.clone(),
-                working_dir: working_dir_string()?,
-                name: None,
-            },
-            DurabilityPolicy::Flush,
-        )?
+        open_fork_request(&manager, id, bundle)?
     } else if let Some(id) = cli.session_id.as_deref() {
         let options = CreateSessionOptions {
             model: bundle.model.clone(),
@@ -121,6 +115,38 @@ pub(crate) fn open_session(cli: &Cli, bundle: &RuntimeBundle) -> Result<SessionH
     })
 }
 
+fn open_resume_request(
+    manager: &SessionManager,
+    id_or_name: &str,
+) -> Result<OpenSession, PrintError> {
+    if id_or_name.trim().is_empty() {
+        let working_dir = working_dir_string()?;
+        return Ok(manager.resume_latest_in_working_dir(&working_dir, DurabilityPolicy::Flush)?);
+    }
+    Ok(manager.resume(id_or_name, DurabilityPolicy::Flush)?)
+}
+
+fn open_fork_request(
+    manager: &SessionManager,
+    id_or_name: &str,
+    bundle: &RuntimeBundle,
+) -> Result<OpenSession, PrintError> {
+    let working_dir = working_dir_string()?;
+    let options = CreateSessionOptions {
+        model: bundle.model.clone(),
+        working_dir: working_dir.clone(),
+        name: None,
+    };
+    if id_or_name.trim().is_empty() {
+        return Ok(manager.fork_latest_in_working_dir(
+            &working_dir,
+            options,
+            DurabilityPolicy::Flush,
+        )?);
+    }
+    Ok(manager.fork(id_or_name, options, DurabilityPolicy::Flush)?)
+}
+
 /// Surface a partial replay on stderr: the tolerant reader skips torn,
 /// corrupt, unknown, and duplicate lines instead of failing the load,
 /// and that count must reach the user.
@@ -136,6 +162,8 @@ fn warn_if_lines_skipped(opened: &OpenSession) {
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
 mod tests {
+    use std::path::{Path, PathBuf};
+
     use clap::Parser;
     use norn::session::events::{EventBase, EventUsage, SessionEvent};
 
@@ -171,6 +199,38 @@ mod tests {
             match &self.prior {
                 Some(val) => unsafe { std::env::set_var("NORN_HOME", val) },
                 None => unsafe { std::env::remove_var("NORN_HOME") },
+            }
+        }
+    }
+
+    struct TempCurrentDir {
+        prior: PathBuf,
+        current: PathBuf,
+    }
+
+    impl TempCurrentDir {
+        fn new(path: &Path) -> Self {
+            let prior = std::env::current_dir().unwrap();
+            std::env::set_current_dir(path).unwrap();
+            Self {
+                prior,
+                current: path.to_owned(),
+            }
+        }
+
+        fn set(&mut self, path: &Path) {
+            self.current = path.to_owned();
+            std::env::set_current_dir(&self.current).unwrap();
+        }
+    }
+
+    impl Drop for TempCurrentDir {
+        fn drop(&mut self) {
+            if let Err(err) = std::env::set_current_dir(&self.prior) {
+                eprintln!(
+                    "failed to restore test working directory {}: {err}",
+                    self.prior.display(),
+                );
             }
         }
     }
@@ -300,6 +360,45 @@ mod tests {
         let index = read_index(&session_data_dir()).unwrap();
         assert_eq!(index.len(), 1, "retry must not create a duplicate entry");
         assert_eq!(index[0].id, "wf-run-43");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn resume_without_id_selects_latest_session_for_current_working_dir() {
+        let _home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let workspace = tempfile::tempdir().unwrap();
+        let current_dir = workspace.path().join("current");
+        let other_dir = workspace.path().join("other");
+        std::fs::create_dir_all(&current_dir).unwrap();
+        std::fs::create_dir_all(&other_dir).unwrap();
+        let mut cwd = TempCurrentDir::new(&current_dir);
+
+        let create_cli = Cli::try_parse_from(["norn"]).unwrap();
+        let bundle = build_runtime(&create_cli, RuntimeInputs::default()).unwrap();
+        let current_session = open_session(&create_cli, &bundle).unwrap();
+        let current_id = current_session
+            .id()
+            .expect("created current-dir session")
+            .to_owned();
+        drop(current_session);
+
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        cwd.set(&other_dir);
+        let other_session = open_session(&create_cli, &bundle).unwrap();
+        let other_id = other_session
+            .id()
+            .expect("created other-dir session")
+            .to_owned();
+        drop(other_session);
+
+        cwd.set(&current_dir);
+        let resume_cli = Cli::try_parse_from(["norn", "--resume"]).unwrap();
+        let resumed = open_session(&resume_cli, &bundle).unwrap();
+        assert_eq!(
+            resumed.id(),
+            Some(current_id.as_str()),
+            "must not resume globally newer other-dir session {other_id}",
+        );
     }
 
     /// clap rejects every contradictory pairing of the session-control

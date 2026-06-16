@@ -30,7 +30,7 @@ use norn::agent::registry::AgentRegistry;
 use norn::agent_loop::config::AgentLoopConfig;
 use norn::agent_loop::inbound::InboundChannel;
 use norn::agent_loop::loop_context::LoopContext;
-use norn::agent_loop::runner::{AgentStepRequest, AgentStepResult, ToolExecutor, run_agent_step};
+use norn::agent_loop::runner::ToolExecutor;
 use norn::provider::request::ToolDefinition;
 use norn::provider::traits::Provider;
 use norn::session::store::EventStore;
@@ -38,26 +38,19 @@ use norn::session::store::EventStore;
 use crate::TuiError;
 use crate::input::history::InputHistory;
 use crate::input::keybindings::{InputAction, map_key_event};
-use crate::render::MarkdownRenderer;
 use crate::render::fixed_panel::{StatusBar, StreamingIndicator};
 use crate::terminal::caps::TerminalCaps;
 use crate::terminal::setup::TerminalGuard;
 
 use super::autocomplete::{PopupKeyOutcome, dismiss as dismiss_autocomplete, handle_popup_key};
-use super::child_results::{
-    ChildResultRx, PendingChildPrompts, drain_ready_child_results, recv_child_result,
-    render_child_result_batch,
-};
-use super::dispatch::{finalise_turn, handle_agent_event, write_error_line};
+use super::child_results::{ChildResultRx, PendingChildPrompts, drain_ready_child_results};
+use super::dispatch::handle_agent_event;
 use super::edit::apply_edit_action;
-use super::helpers::{checkpoint_session, flush_pending};
-use super::render::{
-    redraw_all, redraw_panel, render_input, sync_input_area, write_cancelled_line,
-    write_user_message,
-};
+use super::render::{redraw_all, redraw_panel, render_input, sync_input_area, write_user_message};
+use super::session_replay::replay_visible_session_history;
 use super::slash::{SlashOutcome, try_dispatch_slash};
 use super::state::AppState;
-use super::streaming::finish_thinking_block;
+use super::turn::{run_pending_child_prompts, run_ready_root_inbound, run_turn_and_pending};
 
 /// Bundled runtime inputs needed by [`run_app`].
 ///
@@ -118,7 +111,7 @@ pub struct TuiInputs {
 
 /// Render-tick cadence — 120 fps for tear-free panel redraws and
 /// immediate input painting during streaming.
-const RENDER_TICK: Duration = Duration::from_millis(8);
+pub(super) const RENDER_TICK: Duration = Duration::from_millis(8);
 
 /// Drive the TUI to completion.
 ///
@@ -144,8 +137,6 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
     write!(guard.terminal_mut(), "\x1b[2J\x1b[H")?;
     guard.terminal_mut().flush()?;
     guard.reset_scroll_cursor(1);
-    guard.save_scroll_cursor()?;
-    guard.terminal_mut().flush()?;
 
     let caps = guard.caps().clone();
     let mut state = AppState::new(
@@ -155,6 +146,10 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         inputs.root_id,
         inputs.status_bar,
     );
+
+    replay_visible_session_history(&state, &inputs.store, &mut guard)?;
+    guard.save_scroll_cursor()?;
+    guard.terminal_mut().flush()?;
 
     redraw_panel(&mut state, &mut guard)?;
     render_input(&state, &mut guard)?;
@@ -279,9 +274,9 @@ pub(super) struct RuntimeRefs {
 }
 
 /// TUI-owned child-result delivery state.
-struct ChildResultState {
-    rx: ChildResultRx,
-    pending_prompts: PendingChildPrompts,
+pub(super) struct ChildResultState {
+    pub(super) rx: ChildResultRx,
+    pub(super) pending_prompts: PendingChildPrompts,
 }
 
 impl ChildResultState {
@@ -342,6 +337,14 @@ async fn outer_loop(
                     &mut child_results.rx,
                     &mut child_results.pending_prompts,
                 )?;
+                run_ready_root_inbound(
+                    state,
+                    runtime,
+                    guard,
+                    &mut term_rx,
+                    agent_event_rx,
+                    &mut child_results,
+                ).await?;
                 run_pending_child_prompts(
                     state,
                     runtime,
@@ -449,13 +452,13 @@ async fn dispatch_input(
 /// `term_rx` is only consumed by the [`InputAction::Submit`] arm, where
 /// it is forwarded into [`run_turn`] so a mid-turn Ctrl+C key event can
 /// abort the in-flight agent step.
-fn sync_input_for_current_geometry(state: &mut AppState, guard: &mut TerminalGuard) {
+pub(super) fn sync_input_for_current_geometry(state: &mut AppState, guard: &mut TerminalGuard) {
     let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
     let input_rows = sync_input_area(&mut state.input_editor, cols, guard.terminal_rows());
     state.fixed_panel.set_input_area(input_rows);
 }
 
-fn insert_paste_text(state: &mut AppState, text: &str) {
+pub(super) fn insert_paste_text(state: &mut AppState, text: &str) {
     dismiss_autocomplete(state);
     for ch in text.chars() {
         if ch == '\n' {
@@ -521,273 +524,6 @@ async fn handle_action(
     Ok(InputOutcome::Continue)
 }
 
-async fn run_turn_and_pending(
-    state: &mut AppState,
-    runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
-    user_prompt: &str,
-    term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
-    agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
-    child_results: &mut ChildResultState,
-) -> Result<(), TuiError> {
-    run_turn(
-        state,
-        runtime,
-        guard,
-        user_prompt,
-        term_rx,
-        agent_event_rx,
-        child_results,
-    )
-    .await?;
-    while let Some(prompt) = child_results.pending_prompts.pop_front() {
-        run_turn(
-            state,
-            runtime,
-            guard,
-            &prompt,
-            term_rx,
-            agent_event_rx,
-            child_results,
-        )
-        .await?;
-    }
-    Ok(())
-}
-
-/// Drive one agent turn from a submitted prompt.
-///
-/// `term_rx` is read from inside the inner `tokio::select!` so a
-/// Ctrl+C keystroke can interrupt an in-flight agent step. A
-/// `WindowResized` event arriving mid-turn is also honoured — it
-/// reissues DECSTBM and repaints the panel so the geometry tracks
-/// the new dimensions. Any other terminal event is dropped silently
-/// (the input area is not interactive while the agent runs).
-///
-/// On cancel the step future is dropped (which propagates tokio
-/// cancellation into the provider's HTTP request), the broadcast
-/// senders are closed, any buffered provider events are drained, the
-/// renderer is finalised, a dim `[cancelled]` indicator is written
-/// into the scroll region, and the streaming indicator is reset.
-async fn run_turn(
-    state: &mut AppState,
-    runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
-    user_prompt: &str,
-    term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
-    agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
-    child_results: &mut ChildResultState,
-) -> Result<(), TuiError> {
-    state.pending_tools.clear();
-    state.text_streamed_this_turn = false;
-    state.last_was_tool_result = false;
-    state.dim_wrapped_lines = 0;
-    state.thinking_buffer.clear();
-    state.styled_mid_line = false;
-    state.turn_start = None;
-    state.complete_at = None;
-    state.streaming_indicator = StreamingIndicator::Idle;
-    let mut renderer: Option<MarkdownRenderer> = None;
-
-    let model = runtime.model.clone();
-    let agent_config = runtime.agent_config.clone();
-    let tools = runtime.tools.clone();
-
-    runtime.loop_context.clear_dynamic_sections();
-    runtime.loop_context.evaluate_prompt_commands().await;
-
-    let prompt = user_prompt.to_string();
-
-    let mut tick = tokio::time::interval(RENDER_TICK);
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-    let mut step_result: Option<Result<AgentStepResult, norn::error::NornError>> = None;
-    let mut cancelled = false;
-
-    {
-        let step_future = run_agent_step(AgentStepRequest {
-            provider: runtime.provider.as_ref(),
-            executor: runtime.executor.as_ref(),
-            store: runtime.store.as_ref(),
-            user_prompt: &prompt,
-            tools: &tools,
-            output_schema: None,
-            model: &model,
-            config: &agent_config,
-            event_tx: Some(&runtime.root_event_sender),
-            // The root's inbound channel: child→root signal_agent
-            // messages (and anything buffered between turns) drain at
-            // this step's boundaries through the framed <agent_message>
-            // injection path. A mid-step Steer wakes the existing
-            // inbound machinery; no loop code is TUI-specific.
-            inbound: runtime.root_inbound.as_mut(),
-            loop_context: &mut runtime.loop_context,
-            cancel: None,
-        });
-        tokio::pin!(step_future);
-        while step_result.is_none() && !cancelled {
-            tokio::select! {
-                // Bias order matters here:
-                //   1. step_future — observe natural completion ASAP.
-                //   2. term_rx     — Ctrl+C and WindowResized MUST NOT
-                //                    be starved by a fast TextDelta
-                //                    storm on the broadcast channel
-                //                    below. Putting `term_rx` above
-                //                    `rx` guarantees the keystroke and
-                //                    structural events are picked up
-                //                    on the very next select round.
-                //   3. child_results — final child/fork results; these
-                //                    must not hide behind a high-volume
-                //                    provider/lifecycle event stream.
-                //   4. rx          — broadcast provider events.
-                //   5. tick        — render cadence.
-                biased;
-                res = &mut step_future => {
-                    step_result = Some(res);
-                }
-                msg = term_rx.recv() => match msg {
-                    Some(Ok(event)) => {
-                        if is_ctrl_c(&event) {
-                            cancelled = true;
-                        } else if let Event::WindowResized(size) = event {
-                            // Resize is structural — DECSTBM and the
-                            // panel must follow the new dimensions or
-                            // every subsequent paint lands at stale
-                            // rows. Same clamping save/restore dance
-                            // as the tick arm so the scroll-region
-                            // cursor survives the panel redraw — and,
-                            // if the panel grew, gets clamped back
-                            // into the (now smaller) scroll region
-                            // instead of being parked over the panel.
-                            guard.save_scroll_cursor()?;
-                            guard.handle_resize(size.rows)?;
-                            sync_input_for_current_geometry(state, guard);
-                            redraw_panel(state, guard)?;
-                            render_input(state, guard)?;
-                            guard.restore_scroll_cursor_clamped()?;
-                            guard.terminal_mut().flush()?;
-                        } else if let Event::Paste(text) = event {
-                            insert_paste_text(state, &text);
-                            sync_input_for_current_geometry(state, guard);
-                            redraw_panel(state, guard)?;
-                            render_input(state, guard)?;
-                        } else if let Event::Key(key) = event
-                            && key.kind == KeyEventKind::Press
-                        {
-                            // Allow editing while the agent runs so
-                            // the user can compose their next prompt
-                            // during output streaming. The next tick
-                            // repaints the input area with the changes.
-                            let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-                            if state.autocomplete.is_some()
-                                && matches!(
-                                    handle_popup_key(key, state, cols, guard.terminal_rows()),
-                                    PopupKeyOutcome::Consumed
-                                )
-                            {
-                                // Popup key handled.
-                            } else {
-                                let caps = state.terminal_caps.clone();
-                                let popup_open = state.autocomplete.is_some();
-                                if let Some(action) = map_key_event(key, &caps, popup_open) {
-                                    let cols = guard
-                                        .terminal_mut()
-                                        .get_dimensions()
-                                        .map_or(80, |d| d.cols);
-                                    apply_edit_action(action, state, cols, guard.terminal_rows());
-                                }
-                            }
-                        }
-                    }
-                    Some(Err(err)) => return Err(TuiError::Io(err)),
-                    None => return Ok(()),
-                },
-                Some(child_result) = recv_child_result(&mut child_results.rx) => {
-                    render_child_result_batch(
-                        state,
-                        guard,
-                        &mut child_results.rx,
-                        &mut child_results.pending_prompts,
-                        child_result,
-                    )?;
-                    redraw_panel(state, guard)?;
-                    render_input(state, guard)?;
-                },
-                event = agent_event_rx.recv() => match event {
-                    Ok(agent_ev) => {
-                        handle_agent_event(state, guard, &mut renderer, agent_ev)?;
-                    }
-                    Err(broadcast::error::RecvError::Lagged(n)) => {
-                        tracing::warn!(missed = n, "agent event receiver lagged — {n} events dropped");
-                    }
-                    Err(broadcast::error::RecvError::Closed) => break,
-                },
-                _ = tick.tick() => {
-                    super::render::redraw_streaming_tick(state, guard, renderer.as_ref(), Instant::now())?;
-                }
-            }
-        }
-    }
-
-    // step_future has dropped — drain any buffered events that arrived
-    // between the last select! round and the future completing. On
-    // cancel, dropping the future propagates tokio's cancellation into
-    // the provider HTTP request.
-    while let Ok(agent_ev) = agent_event_rx.try_recv() {
-        handle_agent_event(state, guard, &mut renderer, agent_ev)?;
-    }
-    if cancelled {
-        norn::agent_loop::ensure_tool_results_complete(runtime.store.as_ref()).await;
-    }
-    finish_thinking_block(state, guard, &mut renderer)?;
-    flush_pending(state, guard, &mut renderer)?;
-    finalise_turn(state, guard, step_result, &mut renderer)?;
-    if cancelled {
-        write_cancelled_line(guard)?;
-        state.streaming_indicator = StreamingIndicator::Idle;
-        state.complete_at = None;
-        state.sync_indicator_into_panel();
-    }
-    // Turn boundary: flush the store's index-registered sink so the
-    // session index entry (event count, usage, updated_at) tracks this
-    // turn instead of going stale until clean shutdown — an abort would
-    // lose the pending delta entirely. Failure is surfaced in the red
-    // error-line style (and logged inside the helper) but never aborts
-    // the turn: the on-screen conversation and the write-through JSONL
-    // event file are both intact.
-    if let Some(message) = checkpoint_session(runtime.store.as_ref()) {
-        write_error_line(state, guard, &message)?;
-    }
-    // Save scroll position (cursor is in scroll region after all writes).
-    // The save persists into the next outer-loop iteration so the next
-    // user submission's write_user_message restores to this same row.
-    guard.save_scroll_cursor()?;
-    redraw_panel(state, guard)?;
-    Ok(())
-}
-
-async fn run_pending_child_prompts(
-    state: &mut AppState,
-    runtime: &mut RuntimeRefs,
-    guard: &mut TerminalGuard,
-    term_rx: &mut mpsc::UnboundedReceiver<std::io::Result<Event>>,
-    agent_event_rx: &mut broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
-    child_results: &mut ChildResultState,
-) -> Result<(), TuiError> {
-    while let Some(prompt) = child_results.pending_prompts.pop_front() {
-        run_turn(
-            state,
-            runtime,
-            guard,
-            &prompt,
-            term_rx,
-            agent_event_rx,
-            child_results,
-        )
-        .await?;
-    }
-    Ok(())
-}
-
 /// Detect Ctrl+C on a terminal [`Event`].
 ///
 /// Mirrors the keybindings module's Ctrl+C handling
@@ -796,7 +532,7 @@ async fn run_pending_child_prompts(
 /// triggers cancellation. Inlined here rather than going through
 /// [`map_key_event`] so the cancel path doesn't depend on the broader
 /// [`InputAction`] enum or popup-state argument.
-fn is_ctrl_c(event: &Event) -> bool {
+pub(super) fn is_ctrl_c(event: &Event) -> bool {
     matches!(
         event,
         Event::Key(key)

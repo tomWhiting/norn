@@ -29,18 +29,22 @@ This is a focused worklist from the TUI rendering review. The current TUI is str
   - Do not stream every child log into root scrollback by default; deliver final results promptly and keep live child deltas as compact status/activity UI unless an explicit transcript view is added.
 
 - [x] Make signal delivery reliable for live active and idle root agents.
-  - The route/completion race is now rechecked against registry truth: if a send loses to terminal transition, `signal_agent` reports the recorded completion; if the registry still says live but the route is gone, it reports a distinct not-receivable invariant instead of a misleading route guess.
+  - The route/completion race is now rechecked against registry truth: if a send loses to terminal transition, `signal_agent` reports the recorded completion; if the registry still says valid but the route is gone, it queues the message into durable pending state and reports `queued: true`.
   - Active root delivery is handled by the root inbound channel threaded into every CLI/TUI `run_agent_step`.
-  - Idle root delivery is handled by the same root inbound channel staying alive between turns, plus a pre-request runner drain so a message queued between turns is injected into the next provider request instead of waiting for that step's stop boundary.
-  - Current coverage includes active route delivery, route/terminal race rechecks, and `inbound_message_queued_between_steps_reaches_next_request`.
+  - Idle root delivery is handled by the same root inbound channel staying alive between turns. `steer` messages wake the TUI from the outer event loop and start a message-seeded root turn; `update` messages remain buffered until a later prompt or steer, preserving the existing distinction between act-now and FYI traffic.
+  - Current coverage includes active route delivery, route/terminal race rechecks, `inbound_message_queued_between_steps_reaches_next_request`, `message_seeded_step_records_delivery_without_empty_prompt`, and the PTY `run_app_wakes_idle_root_on_inbound_steer` scenario.
   - A signal from a child or sibling to a live visible root agent is pushed to the target route whether the root is actively in a provider call or between turns.
   - Preserve the distinction between `steer` and `update`, but make the routing/wake semantics match the user's mental model: messages addressed to a valid visible agent should arrive.
 
-- [ ] Define terminal child/fork signal continuation semantics.
+- [x] Define terminal child/fork signal continuation semantics.
   - Completed spawned agents and forks currently have no live loop to drain inbound messages: launch wrappers deregister their route after `run_agent_step` returns, and `Agent` is a single-use value consumed by `run`.
-  - A proper fix must choose one explicit model: restart/wake a persistent child actor with retained provider/executor/tool/context state, or persist a pending delivery that a deliberately resumed child/fork turn drains automatically.
-  - Do not add a hidden queue that no loop consumes; that would make `signal_agent` report success while the target never sees the message.
+  - The chosen model is explicit pending delivery plus deliberate resume: messages accepted for a valid but unrouted recipient are persisted into shared pending state, and a resumed message-seeded step drains that state before its provider request through the normal `<agent_message>` path.
+  - The resume entry point is `run_agent_step_from_messages`: it can run from a seeded live message batch, from durable pending messages only, or both. It records no synthetic empty user prompt and errors if no external message input exists.
+  - Do not add a hidden queue that no loop consumes; queued signal delivery drains before the recipient's resumed provider request and emits `agent_message.dequeued`.
+  - Pending message delivery is crash-safe at-least-once rather than exactly-once: `queued: true` is only reported after the queue audit persists, resume persists the framed `UserMessage` before the `dequeued` audit removes the in-memory pending record, and a crash in that handoff can replay rather than silently drop the accepted signal.
   - The current behavior for terminal children/forks remains an honest failure with the recorded completion status.
+  - Follow-up/action-log foundation is now in place for the eventual resume affordance: follow-up actions can replace target args instead of shallow-merging source args, chained action-log entries carry explicit origin metadata, and target tools invoked through `follow_up` retain their own registered follow-ups.
+  - Pending agent-message state is now shared through root/child/fork infra, rebuilt from session events on root resume, and drained into message-seeded loop steps with `agent_message.dequeued`. A future operator command can wrap this primitive for a named parked child/fork if the runtime grows persistent child actor state; terminal completed children/forks are not revived implicitly.
 
 - [x] Render unsupported or unavailable tool paths clearly.
   - Example from smoke testing: an advertised image-search path was rejected by the current text-only web surface.
@@ -80,7 +84,7 @@ This is a focused worklist from the TUI rendering review. The current TUI is str
 - [x] Show current service tier and reasoning effort in the status bar.
   - `/fast`, `/service-tier`, and `/effort` currently write a confirmation line, but there is no persistent visual state.
   - Add compact badges such as `tier:fast` and `effort:high`.
-  - Keep the badges hidden when values are default/none unless there is enough room.
+  - Keep badges hidden when values are default/none, and let the display-width-aware status composer truncate them predictably on narrow terminals.
 
 - [x] Complete slash autocomplete coverage.
   - The TUI recognizes `/new`, `/quit`, and `/tools`, but the slash autocomplete list does not currently expose all of them.
@@ -111,6 +115,8 @@ This is a focused worklist from the TUI rendering review. The current TUI is str
 - [x] `cargo test -p norn signal_agent --quiet`
 - [x] `cargo test -p norn child_results --quiet`
 - [x] `cargo test -p norn inbound_message_queued_between_steps_reaches_next_request --quiet`
+- [x] `cargo test -p norn loop::runner::tests::message_seeded_step_records_delivery_without_empty_prompt --quiet`
+- [x] `cargo test -p norn loop::runner::tests::pending_message_seeded_step_resumes_without_empty_prompt --quiet`
 - [x] `cargo test -p norn-cli commands::doctor --quiet`
 - [x] `cargo test -p norn-cli commands::slash --quiet`
 - [x] `cargo test -p norn-cli --test build_runtime_integration slash_state_builder_seeds_loop_context_with_all_cli_builtins --quiet`
@@ -125,3 +131,4 @@ This is a focused worklist from the TUI rendering review. The current TUI is str
 - [x] PTY smoke test for small terminal row budgeting
 - [x] PTY smoke test for prompt child-result surfacing while a root turn is active
 - [x] PTY smoke test for child-agent activity rows
+- [x] PTY smoke test for idle-root inbound steer wake-up

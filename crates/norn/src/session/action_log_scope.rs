@@ -289,7 +289,7 @@ pub fn collect_mutations(scoped: &[ScopedLog]) -> Vec<(usize, MutationLedgerEntr
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
-    use crate::session::action_log::{CompletionRecord, Outcome};
+    use crate::session::action_log::{ActionOrigin, CompletionRecord, Outcome};
     use crate::session::store::EventStore;
 
     fn log_with(ids: &[&str], tool: &str) -> Arc<ActionLog> {
@@ -375,6 +375,7 @@ mod tests {
             timestamp,
             outcome: Outcome::Success,
             summary_line: String::new(),
+            origin: ActionOrigin::Direct,
         };
         let now = chrono::Utc::now();
         // The clock regressed between insertions: the SECOND entry

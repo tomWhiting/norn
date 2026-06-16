@@ -16,6 +16,7 @@ pub use wiring::{
     build_diagnostic_collector, build_skill_catalog, build_skill_search_paths,
     build_slash_state_from_bundle, build_slash_state_with_schema, build_write_tool,
     cli_coordination_envelope, install_action_log, install_agent_tool_infra,
-    install_child_result_sender, install_headless_reclamation, install_shared_agent_event_channel,
+    install_child_result_sender, install_headless_reclamation,
+    install_pending_agent_messages_for_loop, install_shared_agent_event_channel,
     iteration_monitor_from_profile, length_limit_from_profile,
 };

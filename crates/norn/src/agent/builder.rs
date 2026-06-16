@@ -555,6 +555,10 @@ impl AgentBuilder {
             // would complete into a channel nothing reads.
             loop_context.child_result_rx = Some(child_rx);
         }
+        loop_context.agent_id = Some(agent_id);
+        if let Some(infra) = shared.get_extension::<crate::tools::agent::AgentToolInfra>() {
+            loop_context.pending_agent_messages = Some(Arc::clone(&infra.pending_messages));
+        }
 
         let (session_entry, replay) = match opened_session {
             Some((entry, replay)) => (Some(entry), Some(replay)),

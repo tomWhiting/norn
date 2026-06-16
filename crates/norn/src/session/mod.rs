@@ -26,8 +26,9 @@ pub use persistence::{
     RESERVED_SESSION_ID_STEMS, SESSION_FORMAT_VERSION, SessionFileHeader, SessionFileRead,
     SessionIndexEntry, SessionPersistError, SessionStatus, append_events, append_index_entry,
     index_file_path, insert_index_entry_if_absent, is_reserved_session_id, read_index,
-    read_session_events, remove_index_entry, resolve_session, session_file_path,
-    sum_usage_from_events, update_index_entry, update_session_index, write_index_atomic,
+    read_session_events, remove_index_entry, resolve_latest_session_in_working_dir,
+    resolve_session, session_file_path, sum_usage_from_events, update_index_entry,
+    update_session_index, write_index_atomic,
 };
 pub use store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};
 pub use tree::{BranchConfig, SessionId, SessionMetadata, SessionNode, SessionTree};

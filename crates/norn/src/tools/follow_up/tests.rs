@@ -17,11 +17,15 @@ use parking_lot::Mutex;
 use super::{FollowUpTool, SharedToolRegistry};
 use crate::error::ToolError;
 use crate::r#loop::runner::ToolExecutor;
-use crate::session::action_log::{ActionLog, CompletionRecord, Outcome, hash_content};
+use crate::session::action_log::{
+    ActionLog, ActionOrigin, CompletionRecord, Outcome, hash_content,
+};
 use crate::session::store::EventStore;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
-use crate::tool::follow_up::{BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction};
+use crate::tool::follow_up::{
+    BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction, FollowUpArgsMode,
+};
 use crate::tool::lifecycle::{PostValidateMode, PostValidateOutcome};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::scheduling::ToolEffect;
@@ -33,6 +37,7 @@ use crate::tool::traits::{Tool, ToolOutput};
 struct RecordingTool {
     seen_args: Arc<Mutex<Option<serde_json::Value>>>,
     gate_fail: bool,
+    follow_ups_to_return: Vec<FollowUpAction>,
 }
 
 #[async_trait]
@@ -81,6 +86,14 @@ impl Tool for RecordingTool {
             PostValidateOutcome::Pass
         }
     }
+
+    async fn register_follow_ups(
+        &self,
+        _output: &ToolOutput,
+        _ctx: &ToolContext,
+    ) -> Vec<FollowUpAction> {
+        self.follow_ups_to_return.clone()
+    }
 }
 
 /// Wired-up test fixture: a registry holding `follow_up` and a
@@ -95,12 +108,20 @@ struct Harness {
 /// Build a registry containing `follow_up` and a [`RecordingTool`], wired with
 /// a fresh action log and the registry self-handle on the shared context.
 fn harness(gate_fail: bool) -> Harness {
+    harness_with_target_follow_ups(gate_fail, Vec::new())
+}
+
+fn harness_with_target_follow_ups(
+    gate_fail: bool,
+    follow_ups_to_return: Vec<FollowUpAction>,
+) -> Harness {
     let seen_args = Arc::new(Mutex::new(None));
     let mut registry = ToolRegistry::new();
     registry.register(Box::new(FollowUpTool::new()));
     registry.register(Box::new(RecordingTool {
         seen_args: Arc::clone(&seen_args),
         gate_fail,
+        follow_ups_to_return,
     }));
     let registry = Arc::new(registry);
 
@@ -124,11 +145,22 @@ fn follow_up_action(
     args: serde_json::Value,
     expires: ExpiryCondition,
 ) -> FollowUpAction {
+    follow_up_action_with_args_mode(action, tool, args, FollowUpArgsMode::MergeOriginal, expires)
+}
+
+fn follow_up_action_with_args_mode(
+    action: &str,
+    tool: &str,
+    args: serde_json::Value,
+    args_mode: FollowUpArgsMode,
+    expires: ExpiryCondition,
+) -> FollowUpAction {
     FollowUpAction {
         action: action.to_owned(),
         description: format!("{action} via {tool}"),
         tool: tool.to_owned(),
         args,
+        args_mode,
         expires,
         confidence: Confidence::High,
         before_content: BeforeContentSource::Unavailable,
@@ -195,6 +227,39 @@ async fn follow_up_merges_override_and_dispatches_target() {
     // The result is the target's output, verbatim.
     assert_eq!(content["echo"]["mode"], "structural");
     assert_eq!(content["committed"], true);
+}
+
+#[tokio::test]
+async fn follow_up_replace_args_dispatches_without_original_fields() {
+    let Harness {
+        registry,
+        log,
+        seen_args,
+    } = harness(false);
+    seed_original(
+        &log,
+        "tc-orig",
+        serde_json::json!({ "to": "/worker/a", "kind": "update", "content": "queued message" }),
+        vec![follow_up_action_with_args_mode(
+            "resume_recipient",
+            "recording_target",
+            serde_json::json!({ "agent": "/worker/a" }),
+            FollowUpArgsMode::Replace,
+            ExpiryCondition::Never,
+        )],
+    );
+
+    registry
+        .execute(
+            "follow_up",
+            "test-call",
+            serde_json::json!({ "tool_call_id": "tc-orig", "action": "resume_recipient" }),
+        )
+        .await
+        .expect("dispatch succeeds");
+
+    let seen = seen_args.lock().clone().expect("target was dispatched");
+    assert_eq!(seen, serde_json::json!({ "agent": "/worker/a" }));
 }
 
 #[tokio::test]
@@ -378,6 +443,52 @@ async fn follow_up_result_has_no_follow_ups_key() {
     );
 }
 
-// NOTE: `source_tool_call_id` chain-tracking test removed — the field is
-// not present on `ActionLogEntry` in main. Will be re-added when the
-// follow-up chaining infrastructure lands.
+#[tokio::test]
+async fn follow_up_records_origin_and_target_follow_ups() {
+    let target_follow_up = follow_up_action(
+        "inspect_result",
+        "recording_target",
+        serde_json::json!({ "mode": "inspect" }),
+        ExpiryCondition::Never,
+    );
+    let Harness { registry, log, .. } =
+        harness_with_target_follow_ups(false, vec![target_follow_up]);
+    seed_original(
+        &log,
+        "tc-orig",
+        serde_json::json!({ "path": "src/a.rs" }),
+        vec![follow_up_action(
+            "reapply",
+            "recording_target",
+            serde_json::json!({}),
+            ExpiryCondition::Never,
+        )],
+    );
+
+    let output = registry
+        .execute(
+            "follow_up",
+            "follow-call",
+            serde_json::json!({ "tool_call_id": "tc-orig", "action": "reapply" }),
+        )
+        .await
+        .expect("dispatch succeeds");
+
+    assert!(
+        output.get("follow_ups").is_some(),
+        "target follow-ups should remain visible on target output: {output}",
+    );
+
+    let detail = log
+        .get_detail("follow-call->recording_target")
+        .expect("nested target entry recorded");
+    assert_eq!(
+        detail.entry.origin,
+        ActionOrigin::FollowUp {
+            source_tool_call_id: "tc-orig".to_owned(),
+            action: "reapply".to_owned(),
+        },
+    );
+    assert_eq!(detail.follow_ups.len(), 1);
+    assert_eq!(detail.follow_ups[0].action, "inspect_result");
+}

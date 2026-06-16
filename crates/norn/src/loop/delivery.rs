@@ -10,6 +10,7 @@
 use std::fmt::Write as _;
 
 use crate::agent::result_channel::frame_child_result;
+use crate::agent::{PendingAgentMessages, append_pending_message_audit};
 use crate::error::SessionError;
 use crate::integration::hooks::HookRegistry;
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel, MessageKind, frame_message};
@@ -17,10 +18,11 @@ use crate::provider::agent_event::{
     AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AgentEventSender, AgentMessageLifecycle,
 };
 use crate::provider::request::{Message, MessageRole};
-use crate::session::events::{EventBase, SessionEvent};
+use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
 use super::helpers::append_and_notify;
+use super::loop_context::LoopContext;
 
 /// Drain the inbound channel (if present) and partition messages by
 /// [`MessageKind`]. Returns `(steer, update)` — steers inject at the next
@@ -70,11 +72,12 @@ pub(super) async fn inject_inbound_messages(
     mut msgs: Vec<ChannelMessage>,
     hooks: Option<&HookRegistry>,
     event_tx: Option<&AgentEventSender>,
-) -> Result<(), SessionError> {
+) -> Result<Vec<EventId>, SessionError> {
     if msgs.is_empty() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     msgs.sort_by_key(|m| (m.seq.is_none(), m.seq.unwrap_or(0), m.timestamp));
+    let mut user_event_ids = Vec::with_capacity(msgs.len());
     for msg in msgs {
         if let Some(seq) = msg.seq {
             let delivered = AgentMessageLifecycle::Delivered {
@@ -112,7 +115,7 @@ pub(super) async fn inject_inbound_messages(
             }
         }
         let formatted = frame_message(&msg);
-        append_and_notify(
+        let user_event_id = append_and_notify(
             store,
             SessionEvent::UserMessage {
                 base: EventBase::new(store.last_event_id()),
@@ -121,6 +124,7 @@ pub(super) async fn inject_inbound_messages(
             hooks,
         )
         .await?;
+        user_event_ids.push(user_event_id);
         messages.push(Message {
             role: MessageRole::User,
             content: Some(formatted),
@@ -131,7 +135,52 @@ pub(super) async fn inject_inbound_messages(
             tool_call_kind: None,
         });
     }
-    Ok(())
+    Ok(user_event_ids)
+}
+
+/// Drain durable queued messages for the current loop agent.
+///
+/// This is the resume/wake handoff for `signal_agent` sends accepted while a
+/// recipient had no live router route. The messages still enter the
+/// conversation through [`inject_inbound_messages`], so framing, hooks, and
+/// session persistence stay identical to live-routed inbound delivery. The
+/// pending store emits `agent_message.dequeued` only after the framed
+/// `UserMessage` delivery has persisted; if persistence fails before that
+/// point, the pending messages remain replayable on the next resume.
+pub(super) async fn flush_pending_agent_messages(
+    store: &EventStore,
+    messages: &mut Vec<Message>,
+    loop_context: &LoopContext,
+    event_tx: Option<&AgentEventSender>,
+) -> Result<Vec<EventId>, SessionError> {
+    let (Some(agent_id), Some(pending)) = (
+        loop_context.agent_id,
+        loop_context.pending_agent_messages.as_ref(),
+    ) else {
+        return Ok(Vec::new());
+    };
+    let queued_messages = pending.messages_for_delivery(agent_id);
+    if queued_messages.is_empty() {
+        return Ok(Vec::new());
+    }
+    let dequeued_events = PendingAgentMessages::dequeued_events_for(agent_id, &queued_messages);
+    let message_ids = queued_messages
+        .iter()
+        .map(|message| message.id)
+        .collect::<Vec<_>>();
+    let injected = inject_inbound_messages(
+        store,
+        messages,
+        queued_messages,
+        loop_context.hooks.as_deref(),
+        event_tx,
+    )
+    .await?;
+    for event in &dequeued_events {
+        append_pending_message_audit(store, event)?;
+    }
+    pending.mark_dequeued(message_ids);
+    Ok(injected)
 }
 
 /// Drain the inbound channel, then inject steer messages and any buffered
@@ -144,18 +193,20 @@ pub(super) async fn flush_inbound_messages(
     follow_up_buffer: &mut Vec<ChannelMessage>,
     hooks: Option<&HookRegistry>,
     event_tx: Option<&AgentEventSender>,
-) -> Result<bool, SessionError> {
+) -> Result<Vec<EventId>, SessionError> {
     let (steer, update) = drain_and_partition(inbound);
     follow_up_buffer.extend(update);
 
     if steer.is_empty() && follow_up_buffer.is_empty() {
-        return Ok(false);
+        return Ok(Vec::new());
     }
 
-    inject_inbound_messages(store, messages, steer, hooks, event_tx).await?;
+    let mut user_event_ids =
+        inject_inbound_messages(store, messages, steer, hooks, event_tx).await?;
     let buffered = std::mem::take(follow_up_buffer);
-    inject_inbound_messages(store, messages, buffered, hooks, event_tx).await?;
-    Ok(true)
+    user_event_ids
+        .extend(inject_inbound_messages(store, messages, buffered, hooks, event_tx).await?);
+    Ok(user_event_ids)
 }
 
 /// Drain pending child-agent results and inject them into the running

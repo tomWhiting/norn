@@ -441,6 +441,8 @@ impl Tool for SpawnAgentTool {
             reason: format!("spawn reservation failed: {e}"),
         })?;
         let child_id = guard.id();
+        child_loop_ctx.agent_id = Some(child_id);
+        child_loop_ctx.pending_agent_messages = Some(Arc::clone(&infra.pending_messages));
 
         // Resolve the child's event store: a named branch under the parent's
         // session when an orchestrator published a SessionTree, otherwise a
@@ -758,6 +760,7 @@ mod tests {
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(agent_registry),
             router,
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: parent_id,
@@ -982,6 +985,7 @@ mod tests {
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(&registry),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -1021,6 +1025,7 @@ mod tests {
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(&registry),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -1791,6 +1796,7 @@ mod tests {
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -2499,6 +2505,7 @@ mod tests {
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -2550,6 +2557,7 @@ mod tests {
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -3137,6 +3145,7 @@ mod tests {
         let infra = Arc::new(AgentToolInfra {
             registry: Arc::clone(&agent_registry),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -3323,6 +3332,7 @@ mod tests {
             let infra = Arc::new(AgentToolInfra {
                 registry: Arc::clone(&agent_registry),
                 router: Arc::new(MessageRouter::new()),
+                pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
                 provider,
                 event_store: parent_event_store,
                 agent_id: parent,

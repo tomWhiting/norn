@@ -6,7 +6,7 @@
 //! works in any crate that depends on `norn` and `serde_json`, regardless of
 //! local `use` statements.
 //!
-//! Reconciliation with the brief: the live `FollowUpAction` has seven fields
+//! Reconciliation with the brief: the live `FollowUpAction` has eight fields
 //! (the brief's "4 fields" wording predates the NTF-001 type), and
 //! `ExpiryCondition::FileModified` carries `content_hash` rather than the
 //! brief's obsolete `modified_at`/`chrono::Utc::now()` field. Because the macro
@@ -16,8 +16,9 @@
 //! as an author-supplied expression sourced from the output: `content_hash` for
 //! `FileModified`, the `(path, hash)` pairs for `AnyFileModified`, and `turn_id`
 //! for `TurnScoped`. The generated code therefore populates these fields with
-//! real captured values, never empty placeholders. `confidence` defaults to
-//! `High` and `before_content` to `Unavailable`.
+//! real captured values, never empty placeholders. `args_mode` defaults to the
+//! historical `MergeOriginal`, `confidence` to `High`, and `before_content` to
+//! `Unavailable`.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -99,6 +100,7 @@ fn action_block(action: &ActionDecl, tool_name: &str) -> TokenStream {
                 description: #description,
                 tool: ::std::string::String::from(#tool_lit),
                 args: #args,
+                args_mode: ::norn::tool::follow_up::FollowUpArgsMode::MergeOriginal,
                 expires: #expires,
                 confidence: ::norn::tool::follow_up::Confidence::High,
                 before_content: ::norn::tool::follow_up::BeforeContentSource::Unavailable,

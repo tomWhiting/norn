@@ -25,10 +25,15 @@ pub struct FollowUpAction {
     pub description: String,
     /// Name of the target tool to invoke when the follow-up is executed.
     pub tool: String,
-    /// Pre-populated argument overrides merged with the original call's args
-    /// at execution time. Fields here replace fields in the original call;
-    /// all other fields are inherited.
+    /// Pre-populated arguments or argument overrides used when the action is
+    /// executed. Interpretation is controlled by [`Self::args_mode`].
     pub args: serde_json::Value,
+    /// How [`Self::args`] is applied to the original tool-call arguments.
+    ///
+    /// Defaults to [`FollowUpArgsMode::MergeOriginal`] so existing persisted
+    /// and in-memory follow-ups retain their historical behavior.
+    #[serde(default)]
+    pub args_mode: FollowUpArgsMode,
     /// Condition that, when no longer true, invalidates this follow-up.
     pub expires: ExpiryCondition,
     /// Confidence the registering tool has in this suggestion.
@@ -52,6 +57,21 @@ impl FollowUpAction {
             "expires": self.expires.model_facing(),
         })
     }
+}
+
+/// How a follow-up action builds the target tool's arguments.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FollowUpArgsMode {
+    /// Shallowly merge [`FollowUpAction::args`] onto the original call's
+    /// arguments. This is the historical mode and is suited to same-tool
+    /// refinements such as "rerun with a longer timeout".
+    #[default]
+    MergeOriginal,
+    /// Dispatch the target tool with [`FollowUpAction::args`] exactly. This
+    /// is required for cross-tool affordances such as "resume the recipient"
+    /// where inheriting the original tool's fields would be invalid.
+    Replace,
 }
 
 /// How likely a registering tool believes a suggested follow-up action is to
@@ -148,6 +168,7 @@ mod tests {
                 .into(),
             tool: "apply_patch".into(),
             args: serde_json::json!({ "mode": "structural" }),
+            args_mode: FollowUpArgsMode::MergeOriginal,
             expires: ExpiryCondition::FileModified {
                 path: PathBuf::from("src/handler.rs"),
                 content_hash: "abc123".into(),
@@ -168,12 +189,13 @@ mod tests {
         assert_eq!(original_value, parsed_value);
 
         let obj = original_value.as_object().expect("top-level object");
-        assert_eq!(obj.len(), 7);
+        assert_eq!(obj.len(), 8);
         for key in [
             "action",
             "description",
             "tool",
             "args",
+            "args_mode",
             "expires",
             "confidence",
             "before_content",
@@ -217,6 +239,10 @@ mod tests {
         assert!(
             !obj.contains_key("args"),
             "model-facing JSON must not include internal args field"
+        );
+        assert!(
+            !obj.contains_key("args_mode"),
+            "model-facing JSON must not include internal args mode field"
         );
         assert!(
             !obj.contains_key("confidence"),

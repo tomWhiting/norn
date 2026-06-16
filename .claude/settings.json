@@ -1,81 +1,126 @@
 {
   "hooks": {
-    "PermissionRequest": [
+    "SessionStart": [
       {
+        "matcher": "",
         "hooks": [
           {
-            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}'",
-            "timeout": 3,
-            "type": "command"
+            "type": "command",
+            "command": "collective activity active --stdin 2>/dev/null || true"
           }
-        ],
-        "matcher": "Edit|Write|Bash|ExitPlanMode"
-      }
-    ],
-    "PostToolUse": [
+        ]
+      },
       {
+        "matcher": "",
         "hooks": [
           {
-            "command": "collective notify check --stdin --dm-only --xml",
-            "type": "command"
+            "type": "command",
+            "command": "collective register --stdin 2>/dev/null || true"
           }
-        ],
-        "matcher": ""
-      }
-    ],
-    "PreToolUse": [
-      {
-        "hooks": [
-          {
-            "command": "collective notify check --stdin --dm-only --xml",
-            "type": "command"
-          }
-        ],
-        "matcher": "Edit|Write|Read"
+        ]
       }
     ],
     "SessionEnd": [
       {
+        "matcher": "",
         "hooks": [
           {
-            "command": "collective activity available --stdin 2>/dev/null || true",
-            "type": "command"
+            "type": "command",
+            "command": "collective activity available --stdin 2>/dev/null || true"
           }
-        ],
-        "matcher": ""
-      }
-    ],
-    "SessionStart": [
-      {
-        "hooks": [
-          {
-            "command": "collective activity active --stdin 2>/dev/null || true",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
-      }
-    ],
-    "Stop": [
-      {
-        "hooks": [
-          {
-            "command": "collective notify check --stdin --xml",
-            "type": "command"
-          }
-        ],
-        "matcher": ""
+        ]
       }
     ],
     "UserPromptSubmit": [
       {
+        "matcher": "",
         "hooks": [
           {
-            "command": "collective notify summary --stdin --quiet --xml 2>/dev/null || true",
-            "type": "command"
+            "type": "command",
+            "command": "collective notify summary --stdin --quiet --text 2>/dev/null || true"
           }
-        ],
-        "matcher": ""
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "collective notify summary --stdin --quiet --xml 2>/dev/null || true"
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "collective notify check --stdin --dm-only"
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write|Read",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "collective notify check --stdin --dm-only --xml"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "collective notify check --stdin --dm-only"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "collective notify check --stdin --dm-only --xml"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "collective notify check --stdin"
+          }
+        ]
+      },
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "collective notify check --stdin --xml"
+          }
+        ]
+      }
+    ],
+    "PermissionRequest": [
+      {
+        "matcher": "Edit|Write|Bash|ExitPlanMode",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "printf '{\"hookSpecificOutput\":{\"hookEventName\":\"PermissionRequest\",\"decision\":{\"behavior\":\"allow\"}}}'",
+            "timeout": 3
+          }
+        ]
       }
     ]
   }

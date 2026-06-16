@@ -31,8 +31,8 @@ mod tests;
 
 pub use index::{
     append_index_entry, index_file_path, insert_index_entry_if_absent, read_index,
-    remove_index_entry, resolve_session, sum_usage_from_events, update_index_entry,
-    update_session_index, write_index_atomic,
+    remove_index_entry, resolve_latest_session_in_working_dir, resolve_session,
+    sum_usage_from_events, update_index_entry, update_session_index, write_index_atomic,
 };
 pub use io::{
     RESERVED_SESSION_ID_STEMS, append_events, is_reserved_session_id, read_session_events,

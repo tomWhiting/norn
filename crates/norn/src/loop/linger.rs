@@ -257,7 +257,7 @@ async fn sweep(
     loop_context: &mut LoopContext,
     event_tx: Option<&AgentEventSender>,
 ) -> Result<bool, SessionError> {
-    if flush_inbound_messages(
+    if !flush_inbound_messages(
         store,
         messages,
         inbound,
@@ -266,6 +266,7 @@ async fn sweep(
         event_tx,
     )
     .await?
+    .is_empty()
     {
         return Ok(true);
     }

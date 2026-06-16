@@ -109,6 +109,7 @@ pub(super) fn build_fork_context(
     let child_infra = AgentToolInfra {
         registry: Arc::clone(&parent_infra.registry),
         router: Arc::clone(&parent_infra.router),
+        pending_messages: Arc::clone(&parent_infra.pending_messages),
         provider: Arc::clone(&parent_infra.provider),
         event_store: child_store,
         agent_id: child_id,
@@ -544,6 +545,7 @@ mod tests {
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -600,6 +602,7 @@ mod tests {
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),
@@ -658,6 +661,7 @@ mod tests {
         let infra = AgentToolInfra {
             registry: AgentRegistry::shared(),
             router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
             event_store: Arc::new(EventStore::new()),
             agent_id: Uuid::new_v4(),

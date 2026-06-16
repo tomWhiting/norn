@@ -14,7 +14,7 @@ use std::sync::Arc;
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
-use crate::error::{HookType, NornError, ProviderError, SchemaError};
+use crate::error::{ConfigError, HookType, NornError, ProviderError, SchemaError};
 use crate::integration::diagnostics::NornDiagnostic;
 use crate::integration::hooks::{HookOutcome, LlmCallSummary};
 use crate::r#loop::classify::{ResponseClass, call_provider, classify_response, record_truncation};
@@ -42,11 +42,12 @@ use crate::provider::surface::{ResolvedToolSurface, hosted_tools_prompt_section}
 use crate::provider::traits::Provider;
 use crate::provider::usage::Usage;
 use crate::rules::types::RuleInjection;
-use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+use crate::session::events::{EventBase, EventId, EventUsage, SessionEvent, ToolCallEvent};
 use crate::session::store::EventStore;
 
 use super::delivery::{
-    drain_and_partition, drain_child_results, flush_inbound_messages, inject_inbound_messages,
+    drain_and_partition, drain_child_results, flush_inbound_messages, flush_pending_agent_messages,
+    inject_inbound_messages,
 };
 use super::helpers::{
     ToolBatchRequest, ToolResultRecord, accept_schema_tool_call, append_and_notify,
@@ -162,6 +163,58 @@ pub struct AgentStepRequest<'a> {
     pub cancel: Option<CancellationToken>,
 }
 
+/// Request for a step woken by already-buffered messages instead of a
+/// human/operator prompt.
+///
+/// This is the idle-agent wake surface for TUI and embedders: the step starts
+/// by delivering durable pending messages plus the supplied message batch
+/// through the normal `<agent_message>` path, then calls the provider. No
+/// synthetic empty user prompt is recorded.
+pub struct AgentMessageStepRequest<'a> {
+    /// The model provider that issues completion requests for this step.
+    pub provider: &'a dyn Provider,
+    /// Executes tool calls requested by the model during the step.
+    pub executor: &'a dyn ToolExecutor,
+    /// Event store that persists the conversation and usage events.
+    pub store: &'a EventStore,
+    /// Tool definitions advertised to the model for this step.
+    pub tools: &'a [ToolDefinition],
+    /// Optional JSON schema constraining the model's structured output.
+    pub output_schema: Option<&'a Value>,
+    /// Identifier of the model to invoke.
+    pub model: &'a str,
+    /// Loop configuration (timeouts, iteration limits, and hooks).
+    pub config: &'a AgentLoopConfig,
+    /// Optional sender for streaming agent events to observers.
+    pub event_tx: Option<&'a AgentEventSender>,
+    /// Messages that woke and seed this step.
+    pub initial_messages: Vec<ChannelMessage>,
+    /// Optional channel to keep draining for messages that arrive while the
+    /// step is running.
+    pub inbound: Option<&'a mut InboundChannel>,
+    /// Mutable per-loop context threaded through the step.
+    pub loop_context: &'a mut LoopContext,
+    /// Optional cancellation token.
+    pub cancel: Option<CancellationToken>,
+}
+
+struct AgentStepRunRequest<'a> {
+    provider: &'a dyn Provider,
+    executor: &'a dyn ToolExecutor,
+    store: &'a EventStore,
+    user_prompt: Option<&'a str>,
+    initial_messages: Vec<ChannelMessage>,
+    wake_from_external: bool,
+    tools: &'a [ToolDefinition],
+    output_schema: Option<&'a Value>,
+    model: &'a str,
+    config: &'a AgentLoopConfig,
+    event_tx: Option<&'a AgentEventSender>,
+    inbound: Option<&'a mut InboundChannel>,
+    loop_context: &'a mut LoopContext,
+    cancel: Option<CancellationToken>,
+}
+
 /// Drive a single agent step to completion.
 ///
 /// Runs [`run_agent_step_inner`] under the configured step timeout (if any),
@@ -179,6 +232,57 @@ pub struct AgentStepRequest<'a> {
 /// the `AssistantMessage` event and the accompanying `loop.truncated`
 /// Custom event.
 pub async fn run_agent_step(request: AgentStepRequest<'_>) -> Result<AgentStepResult, NornError> {
+    run_agent_step_common(AgentStepRunRequest {
+        provider: request.provider,
+        executor: request.executor,
+        store: request.store,
+        user_prompt: Some(request.user_prompt),
+        initial_messages: Vec::new(),
+        wake_from_external: false,
+        tools: request.tools,
+        output_schema: request.output_schema,
+        model: request.model,
+        config: request.config,
+        event_tx: request.event_tx,
+        inbound: request.inbound,
+        loop_context: request.loop_context,
+        cancel: request.cancel,
+    })
+    .await
+}
+
+/// Drive one step seeded by inbound messages already buffered for the agent.
+///
+/// # Errors
+///
+/// Returns [`NornError::Config`] when no pending, seeded, or inbound messages were
+/// actually available to seed the step; otherwise mirrors
+/// [`run_agent_step`].
+pub async fn run_agent_step_from_messages(
+    request: AgentMessageStepRequest<'_>,
+) -> Result<AgentStepResult, NornError> {
+    run_agent_step_common(AgentStepRunRequest {
+        provider: request.provider,
+        executor: request.executor,
+        store: request.store,
+        user_prompt: None,
+        initial_messages: request.initial_messages,
+        wake_from_external: true,
+        tools: request.tools,
+        output_schema: request.output_schema,
+        model: request.model,
+        config: request.config,
+        event_tx: request.event_tx,
+        inbound: request.inbound,
+        loop_context: request.loop_context,
+        cancel: request.cancel,
+    })
+    .await
+}
+
+async fn run_agent_step_common(
+    request: AgentStepRunRequest<'_>,
+) -> Result<AgentStepResult, NornError> {
     let timeout_state = crate::r#loop::compaction::shared_timeout_state();
     let started = std::time::Instant::now();
     let store = request.store;
@@ -216,13 +320,15 @@ pub async fn run_agent_step(request: AgentStepRequest<'_>) -> Result<AgentStepRe
 }
 
 async fn run_agent_step_inner(
-    request: AgentStepRequest<'_>,
+    request: AgentStepRunRequest<'_>,
     timeout_state: crate::r#loop::compaction::SharedTimeoutState,
 ) -> Result<AgentStepResult, NornError> {
     let provider = request.provider;
     let executor = request.executor;
     let store = request.store;
     let user_prompt = request.user_prompt;
+    let seed_messages = request.initial_messages;
+    let wake_from_external = request.wake_from_external;
     let tools = request.tools;
     let output_schema = request.output_schema;
     let model = request.model;
@@ -242,15 +348,14 @@ async fn run_agent_step_inner(
         all_tools.push(build_schema_tool(&config.schema_tool_name, schema));
     }
 
-    // NH-006 R3: UserPromptHook fires before the prompt enters the agent
-    // loop, ahead of slash-command expansion and the initial UserMessage
-    // session-event append. A Block returns immediately so the prompt is
-    // never recorded and the loop never runs — the orchestrator sees the
-    // typed `HookBlocked { hook_type: UserPrompt, .. }` error.
-    if let Some(hooks) = loop_context.hooks.as_deref() {
+    // NH-006 R3: UserPromptHook fires before an operator prompt enters the
+    // agent loop, ahead of slash-command expansion and the initial
+    // UserMessage session-event append. Inbound-wake steps have no
+    // operator prompt; their delivered messages pass through the
+    // SessionEventHook path when injected below instead.
+    if let (Some(prompt), Some(hooks)) = (user_prompt, loop_context.hooks.as_deref()) {
         let session_id = config.cache_key.as_deref().unwrap_or("");
-        if let HookOutcome::Block { reason } = hooks.run_user_prompt(user_prompt, session_id).await
-        {
+        if let HookOutcome::Block { reason } = hooks.run_user_prompt(prompt, session_id).await {
             return Err(NornError::HookBlocked {
                 hook_type: HookType::UserPrompt,
                 reason,
@@ -277,29 +382,62 @@ async fn run_agent_step_inner(
     // explicit index, never located by first-role matching, so resumed
     // histories containing Developer-role compaction summaries are safe.
     let mut dev_message = ManagedDevMessage::new(initial_messages.managed_developer_index);
-    let new_input_len = initial_messages.new_input_len;
+    let mut new_input_len = initial_messages.new_input_len;
 
-    let prompt_event_id = append_and_notify(
-        store,
-        SessionEvent::UserMessage {
-            base: EventBase::new(store.last_event_id()),
-            content: user_prompt.to_string(),
-        },
-        loop_context.hooks.as_deref(),
-    )
-    .await?;
+    let prompt_event_id = if let Some(prompt) = user_prompt {
+        append_and_notify(
+            store,
+            SessionEvent::UserMessage {
+                base: EventBase::new(store.last_event_id()),
+                content: prompt.to_string(),
+            },
+            loop_context.hooks.as_deref(),
+        )
+        .await?
+    } else {
+        EventId::new()
+    };
 
     let mut follow_up_buffer: Vec<ChannelMessage> = Vec::new();
 
-    flush_inbound_messages(
-        store,
-        &mut messages,
-        inbound.as_deref_mut(),
-        &mut follow_up_buffer,
-        loop_context.hooks.as_deref(),
-        event_tx,
-    )
-    .await?;
+    let mut injected_event_ids =
+        flush_pending_agent_messages(store, &mut messages, loop_context, event_tx).await?;
+
+    injected_event_ids.extend(
+        inject_inbound_messages(
+            store,
+            &mut messages,
+            seed_messages,
+            loop_context.hooks.as_deref(),
+            event_tx,
+        )
+        .await?,
+    );
+
+    injected_event_ids.extend(
+        flush_inbound_messages(
+            store,
+            &mut messages,
+            inbound.as_deref_mut(),
+            &mut follow_up_buffer,
+            loop_context.hooks.as_deref(),
+            event_tx,
+        )
+        .await?,
+    );
+
+    let prompt_event_id = if wake_from_external {
+        let Some(event_id) = injected_event_ids.last().cloned() else {
+            return Err(NornError::Config(ConfigError::InvalidConfig {
+                reason: "external-message wake step started without pending or inbound messages"
+                    .to_owned(),
+            }));
+        };
+        new_input_len = 1;
+        event_id
+    } else {
+        prompt_event_id
+    };
 
     drain_child_results(
         store,
@@ -988,11 +1126,65 @@ async fn run_agent_step_inner(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use std::sync::Mutex;
+    use std::time::Duration;
+
+    use futures_util::stream;
+
     use super::*;
     use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::mock::MockProvider;
+    use crate::provider::tools::ProviderCapabilities;
+    use crate::provider::traits::ProviderStream;
 
     // -- Helpers ----------------------------------------------------------
+
+    struct DelayedProvider {
+        responses: Mutex<Vec<Vec<ProviderEvent>>>,
+        delay: Duration,
+    }
+
+    impl DelayedProvider {
+        fn new(responses: Vec<Vec<ProviderEvent>>, delay: Duration) -> Self {
+            Self {
+                responses: Mutex::new(responses),
+                delay,
+            }
+        }
+    }
+
+    impl Provider for DelayedProvider {
+        fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            let mut responses =
+                self.responses
+                    .lock()
+                    .map_err(|error| ProviderError::StreamError {
+                        reason: format!("delayed provider lock poisoned: {error}"),
+                    })?;
+            if responses.is_empty() {
+                return Err(ProviderError::StreamError {
+                    reason: "delayed provider exhausted".to_owned(),
+                });
+            }
+            let events = responses.remove(0);
+            let delay = self.delay;
+            let event_stream = stream::unfold(
+                (events.into_iter(), true),
+                move |(mut iter, first)| async move {
+                    let event = iter.next()?;
+                    if first {
+                        tokio::time::sleep(delay).await;
+                    }
+                    Some((Ok(event), (iter, false)))
+                },
+            );
+            Ok(Box::pin(event_stream))
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::default()
+        }
+    }
 
     fn done_event(reason: StopReason) -> ProviderEvent {
         ProviderEvent::Done {
@@ -1101,7 +1293,7 @@ mod tests {
     /// Bundled inputs for the `run_step*` helpers, keeping each helper
     /// within the workspace argument-count lint budget.
     struct StepArgs<'a> {
-        provider: &'a MockProvider,
+        provider: &'a dyn Provider,
         executor: &'a MockToolExecutor,
         store: &'a EventStore,
         tools: &'a [ToolDefinition],
@@ -2062,20 +2254,23 @@ mod tests {
             done_event(StopReason::ToolUse),
         ];
 
-        let provider = MockProvider::new(vec![turn1, turn2]);
+        let provider = DelayedProvider::new(vec![turn1, turn2], Duration::from_millis(20));
         let store = EventStore::new();
         let executor = MockToolExecutor::empty();
         let schema = simple_schema();
 
         let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
-        tx.send(make_channel_message(
-            "operator",
-            "any more thoughts?",
-            crate::r#loop::inbound::MessageKind::Update,
-            0,
-        ))
-        .await
-        .expect("send");
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            tx.send(make_channel_message(
+                "operator",
+                "any more thoughts?",
+                crate::r#loop::inbound::MessageKind::Update,
+                0,
+            ))
+            .await
+            .expect("send");
+        });
 
         let result = run_step_full(
             StepArgs {
@@ -2118,19 +2313,22 @@ mod tests {
         let turn1 = vec![text_delta("first text"), done_event(StopReason::EndTurn)];
         let turn2 = vec![text_delta("second text"), done_event(StopReason::EndTurn)];
 
-        let provider = MockProvider::new(vec![turn1, turn2]);
+        let provider = DelayedProvider::new(vec![turn1, turn2], Duration::from_millis(20));
         let store = EventStore::new();
         let executor = MockToolExecutor::empty();
 
         let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
-        tx.send(make_channel_message(
-            "operator",
-            "say more",
-            crate::r#loop::inbound::MessageKind::Update,
-            0,
-        ))
-        .await
-        .expect("send");
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            tx.send(make_channel_message(
+                "operator",
+                "say more",
+                crate::r#loop::inbound::MessageKind::Update,
+                0,
+            ))
+            .await
+            .expect("send");
+        });
 
         let result = run_step_full(
             StepArgs {
@@ -2228,20 +2426,23 @@ mod tests {
             done_event(StopReason::ToolUse),
         ];
 
-        let provider = MockProvider::new(vec![turn1, turn2]);
+        let provider = DelayedProvider::new(vec![turn1, turn2], Duration::from_millis(20));
         let store = EventStore::new();
         let executor = MockToolExecutor::empty();
         let schema = simple_schema();
 
         let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
-        tx.send(make_channel_message(
-            "operator",
-            "more please",
-            crate::r#loop::inbound::MessageKind::Update,
-            0,
-        ))
-        .await
-        .expect("send");
+        tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_millis(5)).await;
+            tx.send(make_channel_message(
+                "operator",
+                "more please",
+                crate::r#loop::inbound::MessageKind::Update,
+                0,
+            ))
+            .await
+            .expect("send");
+        });
 
         // Budget = 1: if follow-up consumed budget, the second turn would
         // result in SchemaUnreachable. Successful Completed proves the
@@ -2344,6 +2545,231 @@ mod tests {
                 && second_request_text.contains("\nidle push\n"),
             "second request must include idle inbound message: {second_request_text}",
         );
+    }
+
+    #[tokio::test]
+    async fn message_seeded_step_records_delivery_without_empty_prompt() {
+        let provider = MockProvider::new(vec![vec![
+            text_delta("handled"),
+            done_event(StopReason::EndTurn),
+        ]]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+        let mut loop_ctx = LoopContext::new("system");
+        let mut message = make_channel_message(
+            "spawn/worker",
+            "wake root",
+            crate::r#loop::inbound::MessageKind::Steer,
+            0,
+        );
+        message.seq = Some(1);
+        let message_id = message.id;
+
+        let result = run_agent_step_from_messages(AgentMessageStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            tools: &[],
+            output_schema: None,
+            model: "test-model",
+            config: &default_config(),
+            event_tx: None,
+            initial_messages: vec![message],
+            inbound: None,
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+        .expect("message-seeded step completes");
+        let (output, _) = assert_completed(result);
+        assert_eq!(output, Value::String("handled".to_string()));
+
+        let events = store.events();
+        let user_messages = events
+            .iter()
+            .filter_map(|event| match event {
+                SessionEvent::UserMessage { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(user_messages.len(), 1, "no synthetic empty prompt");
+        assert!(user_messages[0].contains("<agent_message from=\"spawn/worker\""));
+        assert!(user_messages[0].contains("\nwake root\n"));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                SessionEvent::Custom {
+                    event_type,
+                    data,
+                    ..
+                } if event_type == crate::provider::agent_event::AGENT_MESSAGE_DELIVERED_EVENT_TYPE
+                    && data["message_id"] == message_id.to_string()
+            )
+        }));
+
+        let requests = provider.requests().expect("requests");
+        assert_eq!(requests.len(), 1);
+        let request_text = requests[0]
+            .messages
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            request_text.contains("<agent_message from=\"spawn/worker\"")
+                && request_text.contains("kind=\"steer\"")
+                && request_text.contains("\nwake root\n"),
+            "request must include delivered wake message: {request_text}",
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_agent_message_reaches_next_request() {
+        let provider = MockProvider::new(vec![vec![
+            text_delta("handled"),
+            done_event(StopReason::EndTurn),
+        ]]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+        let agent_id = uuid::Uuid::new_v4();
+        let pending = std::sync::Arc::new(crate::agent::PendingAgentMessages::new());
+        let queued = make_channel_message(
+            "spawn/worker",
+            "durable push",
+            crate::r#loop::inbound::MessageKind::Update,
+            0,
+        );
+        let message_id = queued.id;
+        let message_id_string = message_id.to_string();
+        let queued_at = queued.timestamp;
+        let to_label = "/root".to_owned();
+        let mut queued = queued;
+        queued.to_id = agent_id;
+        pending
+            .queue(crate::agent::PendingAgentMessage::new(
+                queued, to_label, queued_at,
+            ))
+            .expect("queue pending message");
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.agent_id = Some(agent_id);
+        loop_ctx.pending_agent_messages = Some(std::sync::Arc::clone(&pending));
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        let (output, _) = assert_completed(result);
+        assert_eq!(output, Value::String("handled".to_string()));
+        assert!(pending.is_empty(), "pending message must be drained once");
+
+        let requests = provider.requests().expect("requests");
+        let request_text = requests[0]
+            .messages
+            .iter()
+            .filter_map(|message| message.content.as_deref())
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(
+            request_text.contains("<agent_message from=\"spawn/worker\"")
+                && request_text.contains("kind=\"update\"")
+                && request_text.contains("\ndurable push\n"),
+            "first request must include queued agent message: {request_text}",
+        );
+        assert!(
+            store.events().iter().any(|event| matches!(
+                event,
+                SessionEvent::Custom { event_type, data, .. }
+                    if event_type == crate::agent::AGENT_MESSAGE_DEQUEUED_EVENT_TYPE
+                        && data.get("message_id").and_then(serde_json::Value::as_str)
+                            == Some(message_id_string.as_str())
+            )),
+            "draining the pending message must append a dequeued audit event",
+        );
+    }
+
+    #[tokio::test]
+    async fn pending_message_seeded_step_resumes_without_empty_prompt() {
+        let provider = MockProvider::new(vec![vec![
+            text_delta("resumed"),
+            done_event(StopReason::EndTurn),
+        ]]);
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+        let agent_id = uuid::Uuid::new_v4();
+        let pending = std::sync::Arc::new(crate::agent::PendingAgentMessages::new());
+        let mut queued = make_channel_message(
+            "spawn/worker",
+            "durable resume",
+            crate::r#loop::inbound::MessageKind::Steer,
+            0,
+        );
+        queued.to_id = agent_id;
+        let message_id = queued.id;
+        let queued_at = queued.timestamp;
+        pending
+            .queue(crate::agent::PendingAgentMessage::new(
+                queued,
+                "/root".to_owned(),
+                queued_at,
+            ))
+            .expect("queue pending message");
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.agent_id = Some(agent_id);
+        loop_ctx.pending_agent_messages = Some(std::sync::Arc::clone(&pending));
+
+        let result = run_agent_step_from_messages(AgentMessageStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            tools: &[],
+            output_schema: None,
+            model: "test-model",
+            config: &default_config(),
+            event_tx: None,
+            initial_messages: Vec::new(),
+            inbound: None,
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+        .expect("pending-message step completes");
+        let (output, _) = assert_completed(result);
+        assert_eq!(output, Value::String("resumed".to_string()));
+
+        let events = store.events();
+        let user_messages = events
+            .iter()
+            .filter_map(|event| match event {
+                SessionEvent::UserMessage { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(user_messages.len(), 1, "no synthetic empty prompt");
+        assert!(user_messages[0].contains("\ndurable resume\n"));
+        assert!(events.iter().any(|event| {
+            matches!(
+                event,
+                SessionEvent::Custom {
+                    event_type,
+                    data,
+                    ..
+                } if event_type == crate::agent::AGENT_MESSAGE_DEQUEUED_EVENT_TYPE
+                    && data["message_id"] == message_id.to_string()
+            )
+        }));
+        assert!(pending.is_empty(), "resume step drains pending store");
     }
 
     // -- R3 (N-011) regression: drain still works between turns ----------

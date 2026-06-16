@@ -117,6 +117,7 @@ pub(super) fn rotate_store_dependents(
             ctx.insert_extension(Arc::new(AgentToolInfra {
                 registry: Arc::clone(&old_infra.registry),
                 router: Arc::clone(&old_infra.router),
+                pending_messages: Arc::clone(&old_infra.pending_messages),
                 provider: Arc::clone(&old_infra.provider),
                 event_store: Arc::clone(&new_store),
                 agent_id: old_infra.agent_id,
@@ -307,6 +308,7 @@ mod tests {
         ctx.insert_extension(Arc::new(AgentToolInfra {
             registry: Arc::clone(&agent_registry),
             router: Arc::clone(&router),
+            pending_messages: Arc::new(norn::agent::PendingAgentMessages::new()),
             provider: Arc::clone(&provider),
             event_store: Arc::clone(&old_store),
             agent_id,

@@ -155,6 +155,7 @@ mod tests {
             description: format!("{action} via {tool}"),
             tool: tool.to_owned(),
             args: serde_json::json!({}),
+            args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
             expires: ExpiryCondition::Never,
             confidence: Confidence::High,
             before_content: BeforeContentSource::Unavailable,
