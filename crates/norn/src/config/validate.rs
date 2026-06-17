@@ -38,6 +38,8 @@ use crate::error::ConfigError;
 pub fn validate_settings(settings: &NornSettings) -> Result<(), ConfigError> {
     validate_durations(settings)?;
     validate_numeric_ranges(settings)?;
+    validate_provider_profiles(settings)?;
+    validate_model_aliases(settings)?;
     validate_permissions(settings)?;
     validate_mcp_servers(settings)?;
     Ok(())
@@ -49,23 +51,7 @@ pub fn validate_settings(settings: &NornSettings) -> Result<(), ConfigError> {
 
 fn validate_durations(settings: &NornSettings) -> Result<(), ConfigError> {
     if let Some(provider) = settings.provider.as_ref() {
-        if let Some(timeout) = provider.timeout.as_deref() {
-            check_duration("provider.timeout", timeout)?;
-        }
-        // The three rate/retry knobs are durations that must also be
-        // non-zero: a zero replenishment window or zero backoff degrades
-        // to a busy loop, and a zero Retry-After ceiling would clamp
-        // every server-requested wait to nothing — defeating the rate
-        // limiter entirely.
-        if let Some(interval) = provider.rate_limit_interval.as_deref() {
-            check_nonzero_duration("provider.rate_limit_interval", interval)?;
-        }
-        if let Some(backoff) = provider.retry_backoff.as_deref() {
-            check_nonzero_duration("provider.retry_backoff", backoff)?;
-        }
-        if let Some(ceiling) = provider.retry_after_ceiling.as_deref() {
-            check_nonzero_duration("provider.retry_after_ceiling", ceiling)?;
-        }
+        validate_provider_durations("provider", provider)?;
     }
     if let Some(agent) = settings.agent.as_ref() {
         if let Some(step) = agent.step_timeout.as_deref() {
@@ -79,6 +65,30 @@ fn validate_durations(settings: &NornSettings) -> Result<(), ConfigError> {
         && let Some(base) = retry.base_delay.as_deref()
     {
         check_duration("retry.base_delay", base)?;
+    }
+    Ok(())
+}
+
+fn validate_provider_durations(
+    prefix: &str,
+    provider: &crate::config::types::ProviderSettings,
+) -> Result<(), ConfigError> {
+    if let Some(timeout) = provider.timeout.as_deref() {
+        check_duration(&format!("{prefix}.timeout"), timeout)?;
+    }
+    // The three rate/retry knobs are durations that must also be
+    // non-zero: a zero replenishment window or zero backoff degrades
+    // to a busy loop, and a zero Retry-After ceiling would clamp
+    // every server-requested wait to nothing — defeating the rate
+    // limiter entirely.
+    if let Some(interval) = provider.rate_limit_interval.as_deref() {
+        check_nonzero_duration(&format!("{prefix}.rate_limit_interval"), interval)?;
+    }
+    if let Some(backoff) = provider.retry_backoff.as_deref() {
+        check_nonzero_duration(&format!("{prefix}.retry_backoff"), backoff)?;
+    }
+    if let Some(ceiling) = provider.retry_after_ceiling.as_deref() {
+        check_nonzero_duration(&format!("{prefix}.retry_after_ceiling"), ceiling)?;
     }
     Ok(())
 }
@@ -145,6 +155,85 @@ fn validate_numeric_ranges(settings: &NornSettings) -> Result<(), ConfigError> {
             reason: "provider.rate_limit must be greater than 0 (zero permits would deadlock the \
                      rate limiter)"
                 .to_string(),
+        });
+    }
+    if let Some(profiles) = settings.provider_profiles.as_ref() {
+        for (name, profile) in profiles {
+            if profile.provider.rate_limit == Some(0) {
+                return Err(ConfigError::InvalidConfig {
+                    reason: format!(
+                        "provider_profiles.{name}.rate_limit must be greater than 0 \
+                         (zero permits would deadlock the rate limiter)",
+                    ),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Provider profiles
+// ---------------------------------------------------------------------------
+
+fn validate_provider_profiles(settings: &NornSettings) -> Result<(), ConfigError> {
+    let Some(profiles) = settings.provider_profiles.as_ref() else {
+        return Ok(());
+    };
+    for (name, profile) in profiles {
+        crate::provider::ProviderProfileId::new(name).map_err(|err| {
+            ConfigError::InvalidConfig {
+                reason: format!("invalid provider profile id '{name}': {err}"),
+            }
+        })?;
+        validate_provider_durations(&format!("provider_profiles.{name}"), &profile.provider)?;
+        if let Some(api_shape) = profile.api_shape.as_deref() {
+            check_nonempty_clean(&format!("provider_profiles.{name}.api_shape"), api_shape)?;
+            api_shape
+                .parse::<crate::provider::ApiShape>()
+                .map_err(|err| ConfigError::InvalidConfig {
+                    reason: format!("invalid value for provider_profiles.{name}.api_shape: {err}"),
+                })?;
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Model aliases
+// ---------------------------------------------------------------------------
+
+fn validate_model_aliases(settings: &NornSettings) -> Result<(), ConfigError> {
+    let Some(aliases) = settings.model_aliases.as_ref() else {
+        return Ok(());
+    };
+    for (alias, target) in aliases {
+        check_nonempty_clean("model_aliases key", alias)?;
+        check_nonempty_clean(&format!("model_aliases.{alias}.model"), target.model())?;
+        if let Some(profile) = target.provider_profile() {
+            check_nonempty_clean(&format!("model_aliases.{alias}.provider_profile"), profile)?;
+        }
+        if let Some(api_shape) = target.api_shape() {
+            check_nonempty_clean(&format!("model_aliases.{alias}.api_shape"), api_shape)?;
+            api_shape
+                .parse::<crate::provider::ApiShape>()
+                .map_err(|err| ConfigError::InvalidConfig {
+                    reason: format!("invalid value for model_aliases.{alias}.api_shape: {err}"),
+                })?;
+        }
+    }
+    Ok(())
+}
+
+fn check_nonempty_clean(field: &str, value: &str) -> Result<(), ConfigError> {
+    if value.trim().is_empty() {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!("invalid value for {field}: must not be empty"),
+        });
+    }
+    if value.chars().any(char::is_control) {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!("invalid value for {field}: must not contain control characters"),
         });
     }
     Ok(())
@@ -257,7 +346,8 @@ mod tests {
 
     use super::*;
     use crate::config::types::{
-        AgentSettings, McpServerSettings, PermissionSettings, ProviderSettings, RetrySettings,
+        AgentSettings, McpServerSettings, ModelAliasSelection, ModelAliasSettings,
+        PermissionSettings, ProviderProfileSettings, ProviderSettings, RetrySettings,
     };
 
     #[test]
@@ -501,6 +591,138 @@ mod tests {
         };
         assert!(reason.contains("retry.base_delay"));
         assert!(reason.contains("???"));
+    }
+
+    #[test]
+    fn model_aliases_with_valid_api_shape_pass() {
+        let mut aliases = BTreeMap::new();
+        aliases.insert(
+            "55".to_owned(),
+            ModelAliasSettings::Model("gpt-5.5".to_owned()),
+        );
+        aliases.insert(
+            "local".to_owned(),
+            ModelAliasSettings::Selection(ModelAliasSelection {
+                provider_profile: Some("lmstudio".to_owned()),
+                api_shape: Some("openai_chat_completions".to_owned()),
+                model: "google/gemma-4-e4b".to_owned(),
+            }),
+        );
+        let s = NornSettings {
+            model_aliases: Some(aliases),
+            ..NornSettings::default()
+        };
+        validate_settings(&s).unwrap();
+    }
+
+    #[test]
+    fn empty_model_alias_target_caught() {
+        let mut aliases = BTreeMap::new();
+        aliases.insert(
+            "blank".to_owned(),
+            ModelAliasSettings::Model(" ".to_owned()),
+        );
+        let s = NornSettings {
+            model_aliases: Some(aliases),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(reason.contains("model_aliases.blank.model"));
+        assert!(reason.contains("empty"));
+    }
+
+    #[test]
+    fn invalid_model_alias_api_shape_caught() {
+        let mut aliases = BTreeMap::new();
+        aliases.insert(
+            "local".to_owned(),
+            ModelAliasSettings::Selection(ModelAliasSelection {
+                provider_profile: Some("lmstudio".to_owned()),
+                api_shape: Some("not-a-shape".to_owned()),
+                model: "google/gemma-4-e4b".to_owned(),
+            }),
+        );
+        let s = NornSettings {
+            model_aliases: Some(aliases),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(reason.contains("model_aliases.local.api_shape"));
+        assert!(reason.contains("not-a-shape"));
+    }
+
+    #[test]
+    fn provider_profile_with_valid_api_shape_passes() {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "lmstudio".to_owned(),
+            ProviderProfileSettings {
+                api_shape: Some("openai_chat_completions".to_owned()),
+                provider: ProviderSettings {
+                    base_url: Some("http://localhost:1234/v1".to_owned()),
+                    api_key_env: Some("NORN_OPENAI_COMPAT_API_KEY".to_owned()),
+                    timeout: Some("30s".to_owned()),
+                    ..ProviderSettings::default()
+                },
+            },
+        );
+        let s = NornSettings {
+            provider_profiles: Some(profiles),
+            ..NornSettings::default()
+        };
+        validate_settings(&s).unwrap();
+    }
+
+    #[test]
+    fn provider_profile_invalid_api_shape_caught() {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "lmstudio".to_owned(),
+            ProviderProfileSettings {
+                api_shape: Some("custom_magic".to_owned()),
+                provider: ProviderSettings::default(),
+            },
+        );
+        let s = NornSettings {
+            provider_profiles: Some(profiles),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(reason.contains("provider_profiles.lmstudio.api_shape"));
+        assert!(reason.contains("custom_magic"));
+    }
+
+    #[test]
+    fn provider_profile_zero_rate_limit_caught() {
+        let mut profiles = BTreeMap::new();
+        profiles.insert(
+            "local".to_owned(),
+            ProviderProfileSettings {
+                api_shape: Some("openai_chat_completions".to_owned()),
+                provider: ProviderSettings {
+                    rate_limit: Some(0),
+                    ..ProviderSettings::default()
+                },
+            },
+        );
+        let s = NornSettings {
+            provider_profiles: Some(profiles),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(reason.contains("provider_profiles.local.rate_limit"));
     }
 
     #[test]

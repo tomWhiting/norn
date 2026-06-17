@@ -232,6 +232,18 @@ impl SenderProvider {
         if saw_done {
             return Ok(());
         }
+        if let Some(done) = mapper.finish_on_clean_close()? {
+            tracing::debug!(
+                total_s = request_start.elapsed().as_secs_f64(),
+                chunks = chunk_count,
+                events = event_count,
+                "chat completions stream closed cleanly without finish_reason; synthesized end_turn"
+            );
+            if tx.send(Ok(done)).await.is_err() {
+                return Ok(());
+            }
+            return Ok(());
+        }
         Err(ProviderError::StreamInterrupted {
             reason: format!(
                 "chat completions stream ended before terminal finish_reason; chunks={chunk_count}, events={event_count}, last_chunk_age_s={:.1}",
@@ -375,5 +387,47 @@ mod tests {
             }
             other => panic!("expected terminal Done event, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn stream_clean_close_after_text_synthesizes_end_turn() {
+        let server = MockServer::start().await;
+        let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n\
+                    data: [DONE]\n\n";
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer test-key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(&server.uri());
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let mut text = String::new();
+        let mut done = None;
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(ProviderEvent::TextDelta { text: delta }) => text.push_str(&delta),
+                Ok(event @ ProviderEvent::Done { .. }) => done = Some(event),
+                Ok(_) => {}
+                Err(err) => panic!("unexpected provider error: {err}"),
+            }
+        }
+
+        assert_eq!(text, "hello");
+        assert!(matches!(
+            done,
+            Some(ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                ..
+            }),
+        ));
     }
 }

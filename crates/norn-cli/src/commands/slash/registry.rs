@@ -23,7 +23,8 @@ use std::sync::atomic::Ordering;
 use norn::agent_loop::{
     BuiltinSlashKind, CustomSlashHandler, EffortCommand, ServiceTierCommand, SlashCommand,
     SlashCommandHandler, SlashCommandRegistry, SlashSurface, builtin_slash_commands, effort_label,
-    parse_effort_command, parse_service_tier_command, service_tier_supported_for_model,
+    parse_effort_command, parse_service_tier_command, reasoning_effort_supported_for_model,
+    service_tier_supported_for_model, unsupported_reasoning_effort_message,
     unsupported_service_tier_message,
 };
 use norn::provider::request::ServiceTier;
@@ -214,6 +215,7 @@ fn model_handler(state: &SlashState) -> CustomSlashHandler {
 // -- /effort / /reasoning-effort -------------------------------------------
 
 fn effort_handler(state: &SlashState) -> CustomSlashHandler {
+    let model = Arc::clone(&state.model);
     let reasoning_effort = Arc::clone(&state.reasoning_effort);
     Arc::new(move |arg| {
         let trimmed = arg.trim();
@@ -224,8 +226,16 @@ fn effort_handler(state: &SlashState) -> CustomSlashHandler {
         }
         match parse_effort_command(trimmed) {
             Some(EffortCommand::Set(effort)) => {
-                *reasoning_effort.lock() = Some(effort);
-                eprintln!("Reasoning effort: {}", effort_label(effort));
+                let model_name = model.lock().clone();
+                if reasoning_effort_supported_for_model(&model_name, effort) {
+                    *reasoning_effort.lock() = Some(effort);
+                    eprintln!("Reasoning effort: {}", effort_label(effort));
+                } else {
+                    eprintln!(
+                        "{}",
+                        unsupported_reasoning_effort_message(&model_name, effort_label(effort)),
+                    );
+                }
             }
             Some(EffortCommand::Clear) => {
                 *reasoning_effort.lock() = None;
@@ -647,7 +657,9 @@ mod tests {
 
     #[test]
     fn effort_commands_update_runtime_state() {
-        let state = SlashState::new(empty_seed());
+        let mut seed = empty_seed();
+        seed.model = "gpt-5.5".to_owned();
+        let state = SlashState::new(seed);
         let registry = build_slash_registry(&state, None);
 
         fire(&registry, "effort", "high");
@@ -663,6 +675,16 @@ mod tests {
         );
 
         fire(&registry, "effort", "default");
+        assert_eq!(state.reasoning_effort_snapshot(), None);
+    }
+
+    #[test]
+    fn effort_command_rejects_unsupported_model() {
+        let state = SlashState::new(empty_seed());
+        let registry = build_slash_registry(&state, None);
+
+        fire(&registry, "effort", "high");
+
         assert_eq!(state.reasoning_effort_snapshot(), None);
     }
 

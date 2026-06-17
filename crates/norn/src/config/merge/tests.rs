@@ -12,8 +12,9 @@ use std::collections::BTreeMap;
 
 use super::merge_settings;
 use crate::config::types::{
-    HookEntry, HookSettings, LengthOverrideEntry, McpServerSettings, NornSettings,
-    PermissionSettings, ProviderSettings, ToolSettings, WriteToolSettings,
+    HookEntry, HookSettings, LengthOverrideEntry, McpServerSettings, ModelAliasSettings,
+    NornSettings, PermissionSettings, ProviderProfileSettings, ProviderSettings, ToolSettings,
+    WriteToolSettings,
 };
 
 fn ns_model(model: &str) -> NornSettings {
@@ -402,6 +403,97 @@ fn provider_rate_and_retry_knobs_merge_per_field() {
 }
 
 #[test]
+fn model_aliases_merge_by_name_with_higher_layer_replacing() {
+    let mut user_aliases = BTreeMap::new();
+    user_aliases.insert(
+        "55".to_owned(),
+        ModelAliasSettings::Model("gpt-5.5".to_owned()),
+    );
+    user_aliases.insert(
+        "spark".to_owned(),
+        ModelAliasSettings::Model("gpt-5.3-codex-spark".to_owned()),
+    );
+    let mut project_aliases = BTreeMap::new();
+    project_aliases.insert(
+        "55".to_owned(),
+        ModelAliasSettings::Model("gpt-5.4".to_owned()),
+    );
+
+    let mut user = NornSettings {
+        model_aliases: Some(user_aliases),
+        ..NornSettings::default()
+    };
+    let mut project = NornSettings {
+        model_aliases: Some(project_aliases),
+        ..NornSettings::default()
+    };
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings::default();
+
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    let aliases = merged.model_aliases.expect("model aliases present");
+    assert_eq!(aliases["55"].model(), "gpt-5.4");
+    assert_eq!(aliases["spark"].model(), "gpt-5.3-codex-spark");
+}
+
+#[test]
+fn provider_profiles_merge_by_name_with_higher_layer_replacing() {
+    let mut user_profiles = BTreeMap::new();
+    user_profiles.insert(
+        "local".to_owned(),
+        ProviderProfileSettings {
+            api_shape: Some("openai_chat_completions".to_owned()),
+            provider: ProviderSettings {
+                base_url: Some("http://user.example/v1".to_owned()),
+                ..ProviderSettings::default()
+            },
+        },
+    );
+    user_profiles.insert(
+        "codex".to_owned(),
+        ProviderProfileSettings {
+            api_shape: Some("openai_responses".to_owned()),
+            provider: ProviderSettings::default(),
+        },
+    );
+    let mut local_profiles = BTreeMap::new();
+    local_profiles.insert(
+        "local".to_owned(),
+        ProviderProfileSettings {
+            api_shape: Some("openai_chat_completions".to_owned()),
+            provider: ProviderSettings {
+                base_url: Some("http://localhost:1234/v1".to_owned()),
+                api_key_env: Some("NORN_OPENAI_COMPAT_API_KEY".to_owned()),
+                ..ProviderSettings::default()
+            },
+        },
+    );
+
+    let mut user = NornSettings {
+        provider_profiles: Some(user_profiles),
+        ..NornSettings::default()
+    };
+    let mut project = NornSettings::default();
+    let mut local = NornSettings {
+        provider_profiles: Some(local_profiles),
+        ..NornSettings::default()
+    };
+    let mut cli = NornSettings::default();
+
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    let profiles = merged.provider_profiles.expect("provider profiles present");
+    assert_eq!(
+        profiles["local"].provider.base_url.as_deref(),
+        Some("http://localhost:1234/v1"),
+    );
+    assert_eq!(
+        profiles["local"].provider.api_key_env.as_deref(),
+        Some("NORN_OPENAI_COMPAT_API_KEY"),
+    );
+    assert!(profiles.contains_key("codex"));
+}
+
+#[test]
 fn all_none_layers_produce_all_none_result() {
     let mut usr = NornSettings::default();
     let mut prj = NornSettings::default();
@@ -409,6 +501,8 @@ fn all_none_layers_produce_all_none_result() {
     let mut ovr = NornSettings::default();
     let merged = merge_settings(&mut usr, &mut prj, &mut lcl, &mut ovr);
     assert!(merged.model.is_none());
+    assert!(merged.model_aliases.is_none());
+    assert!(merged.provider_profiles.is_none());
     assert!(merged.provider.is_none());
     assert!(merged.permissions.is_none());
     assert!(merged.hooks.is_none());

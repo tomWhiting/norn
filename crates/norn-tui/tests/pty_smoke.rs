@@ -111,7 +111,7 @@ fn run_app_renders_provider_output_in_screen_model() -> Result<(), Box<dyn std::
         screen.debug_text(),
     );
     assert!(
-        screen.contains("gpt-screen"),
+        screen.contains("gpt-5.5"),
         "status bar model missing from screen:\n{}",
         screen.debug_text(),
     );
@@ -168,7 +168,7 @@ fn run_app_replays_resumed_session_history_in_screen_model()
         screen.debug_text(),
     );
     assert!(
-        screen.contains("gpt-screen"),
+        screen.contains("gpt-5.5"),
         "status bar missing after replay:\n{}",
         screen.debug_text(),
     );
@@ -305,7 +305,7 @@ fn run_app_wakes_idle_root_on_inbound_steer() -> Result<(), Box<dyn std::error::
         screen.debug_text(),
     );
     assert!(
-        screen.contains("gpt-screen"),
+        screen.contains("gpt-5.5"),
         "status bar missing after root inbound wake:\n{}",
         screen.debug_text(),
     );
@@ -414,7 +414,7 @@ fn run_app_budgets_rows_on_small_terminal() -> Result<(), Box<dyn std::error::Er
         Some("idle"),
         PtyInteraction::WriteWaitForOutputThenCtrlC {
             bytes: b"",
-            marker: b"gpt-sc",
+            marker: b"gpt-5",
         },
         PtySizeSpec { rows: 8, cols: 56 },
     )?;
@@ -425,7 +425,7 @@ fn run_app_budgets_rows_on_small_terminal() -> Result<(), Box<dyn std::error::Er
 
     let screen = TerminalScreen::from_output(&run.output, 8, 56);
     assert!(
-        screen.contains("gpt-sc"),
+        screen.contains("gpt-5"),
         "status bar missing on small terminal:\n{}",
         screen.debug_text(),
     );
@@ -439,7 +439,7 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
     let executor = Arc::new(ToolRegistry::new());
     let store = Arc::new(fixture_store(&scenario)?);
     let registry = AgentRegistry::shared();
-    let root_id = register_root_agent(&registry, "gpt-screen")?;
+    let root_id = register_root_agent(&registry, "gpt-5.5")?;
     let (agent_event_tx, agent_event_rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
     let root_event_sender = AgentEventSender::new(agent_event_tx, root_id, "root".to_string());
     if scenario == "child-activity" {
@@ -471,11 +471,11 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
         registry,
         loop_context,
         agent_config: AgentLoopConfig::default(),
-        model: "gpt-screen".to_string(),
+        model: "gpt-5.5".to_string(),
         tools: Vec::new(),
         history: InputHistory::in_memory(),
         status_bar: StatusBar {
-            model_name: "gpt-screen".to_string(),
+            model_name: "gpt-5.5".to_string(),
             session_name: "pty-screen".to_string(),
             key_hints: "^C exit".to_string(),
             ..StatusBar::default()
@@ -712,7 +712,7 @@ fn register_child_agent(
         registry,
         "/root/activity-child".to_string(),
         "activity-child".to_string(),
-        "gpt-screen".to_string(),
+        "gpt-5.5".to_string(),
         Some(root_id),
         ChildPolicy {
             messaging: MessagingScope::ParentOnly,
@@ -854,7 +854,7 @@ fn run_child_to_completion(
             writer.flush()?;
         }
         PtyInteraction::WriteWaitForOutputThenCtrlC { bytes, marker } => {
-            wait_for_output(&output, b"gpt-sc", Duration::from_secs(5))?;
+            wait_for_output(&output, b"gpt-5", Duration::from_secs(5))?;
             let mut writer = pair.master.take_writer()?;
             if !bytes.is_empty() {
                 writer.write_all(bytes)?;

@@ -8,7 +8,7 @@ use crate::error::ProviderError;
 use crate::provider::auth::{AuthProvider, build_from_auth_source};
 use crate::provider::events::ProviderEvent;
 use crate::provider::openai::rate_limiter::RateLimiter;
-use crate::provider::request::{ProviderConfig, ProviderRequest};
+use crate::provider::request::{ProviderConfig, ProviderOptions, ProviderRequest};
 use crate::provider::tools::ProviderCapabilities;
 use crate::provider::traits::{Provider, ProviderStream};
 
@@ -80,7 +80,10 @@ impl Provider for OpenAiCompatibleProvider {
         ProviderCapabilities::default()
     }
 
-    fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+    fn stream(&self, mut request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        if request.config.is_none() {
+            request.config = self.config.provider_options.clone().map(ProviderOptions);
+        }
         let sender = SenderProvider {
             client: self.client.clone(),
             endpoint: self.endpoint.clone(),

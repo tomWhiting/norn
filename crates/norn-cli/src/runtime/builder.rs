@@ -30,6 +30,9 @@ use norn::agent_loop::loop_context::LoopContext;
 use norn::agent_loop::retry::RetryPolicy;
 use norn::agent_loop::runner::ToolExecutor;
 use norn::agent_loop::tokens::SimpleTokenEstimator;
+use norn::agent_loop::{
+    effort_label, reasoning_effort_supported_for_model, unsupported_reasoning_effort_message,
+};
 use norn::config::{NornSettings, load_settings, merge_settings, validate_settings};
 use norn::context::{ContextLoader, scan_rule_dirs};
 use norn::integration::DiagnosticCollector;
@@ -62,10 +65,12 @@ use crate::config::overrides::{
     AppliedOverrides, apply_cli_profile_overrides, apply_config_overrides_to_loop,
     apply_loop_config_overrides, apply_settings_reasoning_to_profile,
     apply_settings_to_agent_config, apply_working_dir, default_agent_loop_config,
-    overlay_cli_provider_overrides, provider_overrides_from_settings,
-    retry_policy_from_settings_and_overrides,
+    overlay_cli_provider_overrides, overlay_provider_profile_overrides,
+    provider_overrides_from_settings, retry_policy_from_settings_and_overrides,
 };
+use crate::config::resolve_model_selection;
 use crate::config::resolve_profile;
+use crate::config::resolve_provider_selection;
 
 /// Assemble the [`RuntimeBundle`] from the parsed CLI and the caller-
 /// supplied registry / hooks.
@@ -91,8 +96,17 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
     let merged_settings = load_and_merge_settings()?;
 
     let mut profile = resolve_profile(cli.profile.as_deref())?;
+    if cli.profile.is_none()
+        && cli.model.is_none()
+        && let Some(model) = merged_settings.model.as_deref()
+    {
+        model.clone_into(&mut profile.model);
+    }
     apply_settings_reasoning_to_profile(&merged_settings, &mut profile)?;
     let applied = apply_cli_profile_overrides(cli, &mut profile)?;
+    let model_selection = resolve_model_selection(&profile.model, &merged_settings)?;
+    profile.model.clone_from(&model_selection.model);
+    validate_reasoning_effort_for_model(&profile)?;
 
     let mut config_overrides = ConfigOverrides::parse(&cli.config)?;
     if let Some(debug_api) = &cli.debug_api {
@@ -115,7 +129,20 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
     apply_config_overrides_to_loop(&config_overrides, &mut agent_config);
     apply_loop_config_overrides(cli, &mut agent_config)?;
 
+    let provider_selection = resolve_provider_selection(cli, &merged_settings, &model_selection)?;
     let mut provider_overrides = provider_overrides_from_settings(&merged_settings)?;
+    if let Some(profile_name) = provider_selection.profile_name.as_deref() {
+        let profile = merged_settings
+            .provider_profiles
+            .as_ref()
+            .and_then(|profiles| profiles.get(profile_name))
+            .ok_or_else(|| {
+                BuildError::Argument(format!(
+                    "provider profile '{profile_name}' disappeared during runtime assembly",
+                ))
+            })?;
+        overlay_provider_profile_overrides(&mut provider_overrides, profile_name, profile)?;
+    }
     overlay_cli_provider_overrides(&mut provider_overrides, &config_overrides);
 
     let retry_policy =
@@ -242,12 +269,26 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
         registry,
         agent_config,
         provider_overrides,
+        provider_kind: provider_selection.kind,
         model,
         extension_uris,
         disallowed_tools: applied.disallowed_tools,
         diagnostics,
         shared_task_store,
     })
+}
+
+fn validate_reasoning_effort_for_model(profile: &Profile) -> Result<(), BuildError> {
+    let Some(effort) = profile.reasoning_effort else {
+        return Ok(());
+    };
+    if reasoning_effort_supported_for_model(&profile.model, effort) {
+        return Ok(());
+    }
+    Err(BuildError::Argument(unsupported_reasoning_effort_message(
+        &profile.model,
+        effort_label(effort),
+    )))
 }
 
 /// Load the three settings layers from disk, merge them with an empty
@@ -604,6 +645,170 @@ mod tests {
         assert_eq!(bundle.model, "gpt-5.5");
         // model isn't a field on LoopContext; reflected via bundle.model only.
         assert_eq!(bundle.loop_context.system_sections.len(), 1);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn settings_model_alias_flows_into_bundle_model() {
+        let guard = TempNornHome::new(tempfile::tempdir().unwrap());
+        write_user_settings(
+            &guard,
+            r#"{
+                "model_aliases": {
+                    "55": "gpt-5.5"
+                },
+                "model": "55"
+            }"#,
+        );
+
+        let cli = cli_from(&["norn"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+
+        assert_eq!(bundle.model, "gpt-5.5");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn cli_model_alias_flows_into_bundle_model() {
+        let guard = TempNornHome::new(tempfile::tempdir().unwrap());
+        write_user_settings(
+            &guard,
+            r#"{
+                "model_aliases": {
+                    "spark": "gpt-5.3-codex-spark"
+                }
+            }"#,
+        );
+
+        let cli = cli_from(&["norn", "-m", "spark"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+
+        assert_eq!(bundle.model, "gpt-5.3-codex-spark");
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn provider_profile_selects_chat_completions_and_overrides_connection() {
+        let guard = TempNornHome::new(tempfile::tempdir().unwrap());
+        write_user_settings(
+            &guard,
+            r#"{
+                "provider_profiles": {
+                    "lmstudio": {
+                        "api_shape": "openai_chat_completions",
+                        "base_url": "http://localhost:1234/v1",
+                        "api_key_env": "NORN_OPENAI_COMPAT_API_KEY",
+                        "options": {
+                            "api_options": {
+                                "openai_chat_completions": {
+                                    "seed": 7
+                                }
+                            }
+                        }
+                    }
+                }
+            }"#,
+        );
+
+        let cli = cli_from(&["norn", "--provider-profile", "lmstudio"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+
+        assert_eq!(
+            bundle.provider_kind,
+            crate::cli::ProviderKind::OpenaiCompatible,
+        );
+        assert_eq!(
+            bundle.provider_overrides.base_url.as_deref(),
+            Some("http://localhost:1234/v1"),
+        );
+        assert_eq!(
+            bundle.provider_overrides.api_key_env.as_deref(),
+            Some("NORN_OPENAI_COMPAT_API_KEY"),
+        );
+        assert_eq!(
+            bundle
+                .provider_overrides
+                .provider_options
+                .as_ref()
+                .and_then(|value| value.pointer("/api_options/openai_chat_completions/seed")),
+            Some(&serde_json::json!(7)),
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn object_model_alias_selects_model_and_provider_profile() {
+        let guard = TempNornHome::new(tempfile::tempdir().unwrap());
+        write_user_settings(
+            &guard,
+            r#"{
+                "model_aliases": {
+                    "local": {
+                        "provider_profile": "lmstudio",
+                        "model": "google/gemma-4-e4b"
+                    }
+                },
+                "provider_profiles": {
+                    "lmstudio": {
+                        "api_shape": "openai_chat_completions",
+                        "base_url": "http://localhost:1234/v1",
+                        "api_key_env": "NORN_OPENAI_COMPAT_API_KEY"
+                    }
+                }
+            }"#,
+        );
+
+        let cli = cli_from(&["norn", "-m", "local"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+
+        assert_eq!(bundle.model, "google/gemma-4-e4b");
+        assert_eq!(
+            bundle.provider_kind,
+            crate::cli::ProviderKind::OpenaiCompatible,
+        );
+        assert_eq!(
+            bundle.provider_overrides.base_url.as_deref(),
+            Some("http://localhost:1234/v1"),
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reasoning_effort_for_catalog_model_passes_runtime_validation() {
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = cli_from(&["norn", "-m", "gpt-5.5", "--reasoning-effort", "high"]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+
+        assert_eq!(
+            bundle.loop_context.reasoning_effort,
+            Some(norn::provider::request::ReasoningEffort::High),
+        );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn reasoning_effort_for_unknown_local_model_is_argument_error() {
+        let _norn_home = TempNornHome::new(tempfile::tempdir().unwrap());
+        let cli = cli_from(&[
+            "norn",
+            "-m",
+            "local-model",
+            "--api-shape",
+            "openai-chat-completions",
+            "--reasoning-effort",
+            "high",
+        ]);
+        let Err(err) = build_runtime(&cli, RuntimeInputs::default()) else {
+            panic!("expected reasoning effort support error");
+        };
+
+        match err {
+            BuildError::Argument(reason) => {
+                assert!(reason.contains("reasoning effort"));
+                assert!(reason.contains("local-model"));
+            }
+            BuildError::Auth(reason) => panic!("expected argument error, got auth error: {reason}"),
+        }
     }
 
     #[test]

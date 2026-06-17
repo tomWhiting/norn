@@ -346,6 +346,29 @@ pub fn service_tier_supported_for_model(model: &str, tier: ServiceTier) -> bool 
     .is_some()
 }
 
+/// Whether `effort` is declared for `model` in the generated model catalog.
+#[must_use]
+pub fn reasoning_effort_supported_for_model(model: &str, effort: ReasoningEffort) -> bool {
+    crate::model_catalog::find_model(
+        crate::model_catalog::DEFAULT_PROVIDER,
+        crate::model_catalog::DEFAULT_BACKEND,
+        model,
+    )
+    .is_some_and(|entry| {
+        let label = effort.as_str();
+        entry
+            .supported_reasoning_efforts
+            .iter()
+            .any(|supported| *supported == label || (*supported == "xhigh" && label == "x-high"))
+    })
+}
+
+/// Standard unsupported-reasoning-effort diagnostic.
+#[must_use]
+pub fn unsupported_reasoning_effort_message(model: &str, effort: &str) -> String {
+    format!("norn: reasoning effort '{effort}' is not supported for model '{model}'")
+}
+
 /// Standard unsupported-service-tier diagnostic.
 #[must_use]
 pub fn unsupported_service_tier_message(model: &str, tier: &str) -> String {
@@ -771,6 +794,29 @@ mod tests {
             }
             PreprocessResult::Passthrough(_) => panic!("expected expansion"),
         }
+    }
+
+    #[test]
+    fn reasoning_effort_support_uses_model_catalog() {
+        assert!(reasoning_effort_supported_for_model(
+            "gpt-5.5",
+            ReasoningEffort::High,
+        ));
+        assert!(reasoning_effort_supported_for_model(
+            "gpt-5.5",
+            ReasoningEffort::XHigh,
+        ));
+        assert!(!reasoning_effort_supported_for_model(
+            "unknown-local-model",
+            ReasoningEffort::High,
+        ));
+    }
+
+    #[test]
+    fn unsupported_reasoning_effort_message_names_model_and_effort() {
+        let message = unsupported_reasoning_effort_message("local", "high");
+        assert!(message.contains("local"));
+        assert!(message.contains("high"));
     }
 
     #[test]

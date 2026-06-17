@@ -6,6 +6,9 @@ pub use self::agent_event::{
     SUBAGENT_STARTED_EVENT_TYPE, SharedAgentEventChannel, SubagentDescriptor, SubagentKind,
     SubagentLifecycle,
 };
+pub use self::api_shape::{
+    ApiShape, ApiShapeParseError, ProviderProfileId, ProviderProfileIdError,
+};
 pub use self::auth::{
     ApiKeyAuthProvider, AuthProvider, AuthSource, LoginConfig, OAuthAuthProvider,
     build_from_auth_source, login, logout,
@@ -30,6 +33,7 @@ pub use self::usage::Usage;
 pub use crate::error::ProviderError;
 
 pub mod agent_event;
+pub mod api_shape;
 pub mod auth;
 pub mod debug;
 pub mod events;

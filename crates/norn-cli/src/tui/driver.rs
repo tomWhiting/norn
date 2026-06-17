@@ -112,8 +112,12 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let registry = AgentRegistry::shared();
     let root_id = register_root_agent(&registry, &bundle.model)?;
     let active_model = bundle.model.clone();
-    let built_provider =
-        build_provider(cli.provider, &bundle.provider_overrides, &active_model).await?;
+    let built_provider = build_provider(
+        bundle.provider_kind,
+        &bundle.provider_overrides,
+        &active_model,
+    )
+    .await?;
     // The root agent has a single identity: the same `root_id` is used for
     // the registry entry (above), the `AgentToolInfra.agent_id` (here), and
     // the root `AgentEventSender` (below). Children spawned from the root

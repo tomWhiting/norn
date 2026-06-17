@@ -20,7 +20,8 @@ use std::io::Write as IoWrite;
 use std::sync::Arc;
 
 use norn::agent_loop::{
-    ServiceTierCommand, parse_service_tier_command, service_tier_supported_for_model,
+    ServiceTierCommand, parse_service_tier_command, reasoning_effort_supported_for_model,
+    service_tier_supported_for_model, unsupported_reasoning_effort_message,
     unsupported_service_tier_message,
 };
 use norn::provider::request::ServiceTier;
@@ -397,6 +398,12 @@ fn handle_reasoning_effort(
 
     match parse_effort_command(value) {
         Some(EffortCommand::Set(effort)) => {
+            if !reasoning_effort_supported_for_model(&runtime.model, effort) {
+                return write_dim_line(
+                    &unsupported_reasoning_effort_message(&runtime.model, effort_label(effort)),
+                    guard,
+                );
+            }
             runtime.loop_context.reasoning_effort = Some(effort);
             state.fixed_panel.status_bar_mut().reasoning_effort =
                 Some(effort_label(effort).to_string());
@@ -821,6 +828,22 @@ mod tests {
             ServiceTier::Fast,
         ));
         assert!(unsupported_service_tier_message("gpt-5.4-mini", "fast").contains("gpt-5.4-mini"),);
+    }
+
+    #[test]
+    fn reasoning_effort_support_uses_model_catalog() {
+        assert!(reasoning_effort_supported_for_model(
+            "gpt-5.5",
+            ReasoningEffort::High,
+        ));
+        assert!(!reasoning_effort_supported_for_model(
+            "unknown-local-model",
+            ReasoningEffort::High,
+        ));
+        assert!(
+            unsupported_reasoning_effort_message("unknown-local-model", "high")
+                .contains("unknown-local-model"),
+        );
     }
 
     fn tool_def(name: &str, description: &str) -> norn::provider::request::ToolDefinition {

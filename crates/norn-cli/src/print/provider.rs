@@ -144,14 +144,23 @@ impl From<ProviderError> for ProviderBuildError {
 /// [`ProviderBuildError::Provider`] for any other underlying
 /// [`ProviderError`].
 pub async fn build_provider(
-    kind: Option<ProviderKind>,
+    kind: ProviderKind,
     overrides: &ProviderConfigOverrides,
     model: &str,
 ) -> Result<BuiltProvider, ProviderBuildError> {
-    match kind.unwrap_or(ProviderKind::Openai) {
+    match kind {
         ProviderKind::Openai => {
+            let auth_source = match overrides.api_key_env.as_deref() {
+                Some(api_key_env) => AuthSource::ApiKey {
+                    key: SecretString::new(read_required_api_key(
+                        api_key_env,
+                        "--api-shape openai-responses",
+                    )?),
+                },
+                None => AuthSource::OAuth { codex_home: None },
+            };
             let config = ProviderConfig {
-                auth_source: AuthSource::OAuth { codex_home: None },
+                auth_source,
                 base_url: overrides.base_url.clone(),
                 timeout: overrides.request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
                 max_retries: overrides.max_retries.unwrap_or(DEFAULT_MAX_RETRIES),
@@ -176,16 +185,7 @@ pub async fn build_provider(
                 .api_key_env
                 .as_deref()
                 .unwrap_or(DEFAULT_OPENAI_COMPAT_API_KEY_ENV);
-            let api_key = std::env::var(api_key_env).map_err(|err| {
-                ProviderBuildError::Auth(format!(
-                    "--provider openai-compatible requires API key env var {api_key_env}: {err}"
-                ))
-            })?;
-            if api_key.trim().is_empty() {
-                return Err(ProviderBuildError::Auth(format!(
-                    "--provider openai-compatible requires non-empty API key env var {api_key_env}"
-                )));
-            }
+            let api_key = read_required_api_key(api_key_env, "--provider openai-compatible")?;
             let config = ProviderConfig {
                 auth_source: AuthSource::ApiKey {
                     key: SecretString::new(api_key),
@@ -221,6 +221,20 @@ pub async fn build_provider(
             )))
         }
     }
+}
+
+fn read_required_api_key(api_key_env: &str, selector: &str) -> Result<String, ProviderBuildError> {
+    let api_key = std::env::var(api_key_env).map_err(|err| {
+        ProviderBuildError::Auth(format!(
+            "{selector} requires API key env var {api_key_env}: {err}",
+        ))
+    })?;
+    if api_key.trim().is_empty() {
+        return Err(ProviderBuildError::Auth(format!(
+            "{selector} requires non-empty API key env var {api_key_env}",
+        )));
+    }
+    Ok(api_key)
 }
 
 #[cfg(test)]
@@ -313,11 +327,7 @@ mod tests {
         };
         let result = temp_env::async_with_vars(
             [("NORN_TEST_COMPAT_KEY_BASE_URL", Some("test-key"))],
-            build_provider(
-                Some(ProviderKind::OpenaiCompatible),
-                &overrides,
-                "local-model",
-            ),
+            build_provider(ProviderKind::OpenaiCompatible, &overrides, "local-model"),
         )
         .await;
         let Err(err) = result else {
@@ -340,11 +350,7 @@ mod tests {
         };
         let result = temp_env::async_with_vars(
             [("NORN_TEST_COMPAT_KEY_MISSING", None::<&str>)],
-            build_provider(
-                Some(ProviderKind::OpenaiCompatible),
-                &overrides,
-                "local-model",
-            ),
+            build_provider(ProviderKind::OpenaiCompatible, &overrides, "local-model"),
         )
         .await;
         let Err(err) = result else {
@@ -369,11 +375,7 @@ mod tests {
         };
         let built = temp_env::async_with_vars(
             [("NORN_TEST_COMPAT_KEY_PRESENT", Some("test-key"))],
-            build_provider(
-                Some(ProviderKind::OpenaiCompatible),
-                &overrides,
-                "local-model",
-            ),
+            build_provider(ProviderKind::OpenaiCompatible, &overrides, "local-model"),
         )
         .await
         .expect("compatible provider builds without network I/O");
@@ -386,6 +388,26 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn openai_responses_builds_with_api_key_env_when_selected() {
+        let overrides = ProviderConfigOverrides {
+            api_key_env: Some("NORN_TEST_OPENAI_KEY_PRESENT".to_owned()),
+            ..ProviderConfigOverrides::default()
+        };
+        let built = temp_env::async_with_vars(
+            [("NORN_TEST_OPENAI_KEY_PRESENT", Some("test-key"))],
+            build_provider(ProviderKind::Openai, &overrides, "gpt-5.5"),
+        )
+        .await
+        .expect("OpenAI provider builds without network I/O");
+        match built {
+            BuiltProvider::OpenAi(_) => {}
+            BuiltProvider::OpenAiCompatible(_) | BuiltProvider::ClaudeRunner(_) => {
+                panic!("expected OpenAi variant")
+            }
+        }
+    }
+
+    #[tokio::test]
     async fn claude_runner_honors_settings_runner_path_override() {
         // Regression for the ignored `settings.provider.runner_path`:
         // the documented override must reach the constructed adapter.
@@ -393,7 +415,7 @@ mod tests {
             runner_path: Some(PathBuf::from("/opt/tools/claude-custom")),
             ..ProviderConfigOverrides::default()
         };
-        let built = build_provider(Some(ProviderKind::ClaudeRunner), &overrides, "sonnet")
+        let built = build_provider(ProviderKind::ClaudeRunner, &overrides, "sonnet")
             .await
             .expect("claude-runner construction is infallible");
         match built {
@@ -410,7 +432,7 @@ mod tests {
     #[tokio::test]
     async fn claude_runner_defaults_to_claude_when_runner_path_unset() {
         let overrides = ProviderConfigOverrides::default();
-        let built = build_provider(Some(ProviderKind::ClaudeRunner), &overrides, "sonnet")
+        let built = build_provider(ProviderKind::ClaudeRunner, &overrides, "sonnet")
             .await
             .expect("claude-runner construction is infallible");
         match built {
@@ -429,7 +451,7 @@ mod tests {
         // ClaudeRunnerAdapter::new is infallible — verify build_provider
         // wraps it correctly and returns a usable &dyn Provider.
         let overrides = ProviderConfigOverrides::default();
-        let built = build_provider(Some(ProviderKind::ClaudeRunner), &overrides, "sonnet")
+        let built = build_provider(ProviderKind::ClaudeRunner, &overrides, "sonnet")
             .await
             .expect("claude-runner construction is infallible");
         match built {

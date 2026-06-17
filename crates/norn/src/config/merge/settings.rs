@@ -9,7 +9,8 @@
 use crate::config::types::NornSettings;
 
 use super::collection_sections::{
-    merge_context, merge_env_map, merge_hooks, merge_mcp_servers, merge_permissions, merge_skills,
+    merge_context, merge_env_map, merge_hooks, merge_mcp_servers, merge_model_aliases,
+    merge_permissions, merge_provider_profiles, merge_skills,
 };
 use super::primitives::pick_scalar;
 use super::scalar_sections::{
@@ -33,6 +34,18 @@ pub fn merge_settings(
             &mut prj.model,
             &mut lcl.model,
             &mut ovr.model,
+        ),
+        model_aliases: merge_model_aliases(
+            &mut usr.model_aliases,
+            &mut prj.model_aliases,
+            &mut lcl.model_aliases,
+            &mut ovr.model_aliases,
+        ),
+        provider_profiles: merge_provider_profiles(
+            &mut usr.provider_profiles,
+            &mut prj.provider_profiles,
+            &mut lcl.provider_profiles,
+            &mut ovr.provider_profiles,
         ),
         provider: merge_provider(
             &mut usr.provider,

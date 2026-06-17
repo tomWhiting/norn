@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::error::ProviderError;
 use crate::provider::request::{
-    Message, MessageRole, ProviderRequest, ReasoningEffort, ToolCallKind,
+    Message, MessageRole, ProviderOptions, ProviderRequest, ReasoningEffort, ToolCallKind,
 };
 use crate::provider::tools::ProviderToolDefinition;
 
@@ -49,9 +49,7 @@ pub(super) struct StreamOptions {
 ///
 /// Returns [`ProviderError`] when the request contains a tool surface or
 /// replay item that Chat Completions cannot represent safely.
-pub(super) fn build_payload(
-    request: &ProviderRequest,
-) -> Result<ChatCompletionsPayload, ProviderError> {
+pub(super) fn build_payload(request: &ProviderRequest) -> Result<serde_json::Value, ProviderError> {
     let messages = request
         .messages
         .iter()
@@ -67,7 +65,7 @@ pub(super) fn build_payload(
     } else {
         Some("auto".to_string())
     };
-    Ok(ChatCompletionsPayload {
+    let payload = ChatCompletionsPayload {
         model: request.model.clone(),
         messages,
         tools,
@@ -78,7 +76,80 @@ pub(super) fn build_payload(
         },
         service_tier: service_tier_provider_value(request)?,
         reasoning_effort: request.reasoning_effort,
-    })
+    };
+    let mut value =
+        serde_json::to_value(payload).map_err(|err| ProviderError::ResponseParseError {
+            reason: format!("failed to serialize chat completions request: {err}"),
+        })?;
+    merge_provider_options(&mut value, request.config.as_ref())?;
+    Ok(value)
+}
+
+fn merge_provider_options(
+    payload: &mut serde_json::Value,
+    options: Option<&ProviderOptions>,
+) -> Result<(), ProviderError> {
+    let Some(options) = options else {
+        return Ok(());
+    };
+    let option_object = select_chat_completion_options(&options.0)?;
+    let Some(payload_object) = payload.as_object_mut() else {
+        return Err(ProviderError::ResponseParseError {
+            reason: "chat completions payload was not a JSON object".to_string(),
+        });
+    };
+    for (key, value) in option_object {
+        reject_protected_option_key(key)?;
+        payload_object.insert(key.clone(), value.clone());
+    }
+    Ok(())
+}
+
+fn select_chat_completion_options(
+    options: &serde_json::Value,
+) -> Result<&serde_json::Map<String, serde_json::Value>, ProviderError> {
+    let object = options
+        .as_object()
+        .ok_or_else(|| ProviderError::InvalidRequest {
+            message:
+                "provider_options for openai-compatible chat completions must be a JSON object"
+                    .to_string(),
+        })?;
+    if let Some(scoped) = object
+        .get("api_options")
+        .and_then(|value| value.get("openai_chat_completions"))
+    {
+        return scoped
+            .as_object()
+            .ok_or_else(|| ProviderError::InvalidRequest {
+                message:
+                    "provider_options.api_options.openai_chat_completions must be a JSON object"
+                        .to_string(),
+            });
+    }
+    if let Some(scoped) = object.get("openai_chat_completions") {
+        return scoped
+            .as_object()
+            .ok_or_else(|| ProviderError::InvalidRequest {
+                message: "provider_options.openai_chat_completions must be a JSON object"
+                    .to_string(),
+            });
+    }
+    Ok(object)
+}
+
+fn reject_protected_option_key(key: &str) -> Result<(), ProviderError> {
+    if matches!(
+        key,
+        "model" | "messages" | "tools" | "stream" | "functions" | "function_call"
+    ) {
+        return Err(ProviderError::InvalidRequest {
+            message: format!(
+                "provider_options.openai_chat_completions.{key} is owned by Norn and cannot be overridden",
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn serialize_message(message: &Message) -> Result<serde_json::Value, ProviderError> {
@@ -368,6 +439,57 @@ mod tests {
         request.service_tier = Some(ServiceTier::Fast);
 
         let err = build_payload(&request).unwrap_err();
+        assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+    }
+
+    #[test]
+    fn provider_options_merge_advanced_chat_fields() {
+        let mut request = base_request();
+        request.config = Some(ProviderOptions(serde_json::json!({
+            "logprobs": true,
+            "top_logprobs": 5,
+            "seed": 1234,
+            "response_format": {"type": "json_object"}
+        })));
+
+        let value = build_payload(&request).unwrap();
+
+        assert_eq!(value["logprobs"], true);
+        assert_eq!(value["top_logprobs"], 5);
+        assert_eq!(value["seed"], 1234);
+        assert_eq!(value["response_format"]["type"], "json_object");
+        assert_eq!(value["model"], "local-model");
+        assert_eq!(value["messages"].as_array().unwrap().len(), 3);
+    }
+
+    #[test]
+    fn provider_options_support_scoped_chat_fields() {
+        let mut request = base_request();
+        request.config = Some(ProviderOptions(serde_json::json!({
+            "api_options": {
+                "openai_chat_completions": {
+                    "logit_bias": {"42": -100},
+                    "temperature": 0.2
+                }
+            }
+        })));
+
+        let value = build_payload(&request).unwrap();
+
+        assert_eq!(value["logit_bias"]["42"], -100);
+        assert_eq!(value["temperature"], 0.2);
+        assert!(value.get("api_options").is_none());
+    }
+
+    #[test]
+    fn provider_options_reject_protected_chat_fields() {
+        let mut request = base_request();
+        request.config = Some(ProviderOptions(serde_json::json!({
+            "messages": []
+        })));
+
+        let err = build_payload(&request).unwrap_err();
+
         assert!(matches!(err, ProviderError::InvalidRequest { .. }));
     }
 }

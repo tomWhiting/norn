@@ -5,7 +5,8 @@ use serde::Serialize;
 use super::tools::serialize_tool;
 use crate::error::ProviderError;
 use crate::provider::request::{
-    Message, MessageRole, ProviderRequest, ReasoningEffort, ReasoningSummary, ToolCallKind,
+    Message, MessageRole, ProviderOptions, ProviderRequest, ReasoningEffort, ReasoningSummary,
+    ToolCallKind,
 };
 
 /// Serialized payload for `POST /v1/responses`.
@@ -83,9 +84,7 @@ pub(crate) enum ContextManagementItem {
 /// silently corrupt the conversation. A missing `tool_call_id` is always an
 /// upstream bug; surfacing it here lets the caller fail the turn rather than
 /// dispatch an unmoored tool result.
-pub(crate) fn build_payload(
-    request: &ProviderRequest,
-) -> Result<ResponsesApiPayload, ProviderError> {
+pub(crate) fn build_payload(request: &ProviderRequest) -> Result<serde_json::Value, ProviderError> {
     let mut instructions = String::new();
     let mut input = Vec::new();
 
@@ -136,7 +135,7 @@ pub(crate) fn build_payload(
     };
     let service_tier = service_tier_provider_value(request)?;
 
-    Ok(ResponsesApiPayload {
+    let payload = ResponsesApiPayload {
         model: request.model.clone(),
         instructions,
         input,
@@ -152,7 +151,88 @@ pub(crate) fn build_payload(
         previous_response_id: request.previous_response_id.clone(),
         prompt_cache_retention: None,
         context_management,
-    })
+    };
+    let mut value =
+        serde_json::to_value(payload).map_err(|err| ProviderError::ResponseParseError {
+            reason: format!("failed to serialize responses request: {err}"),
+        })?;
+    merge_provider_options(&mut value, request.config.as_ref())?;
+    Ok(value)
+}
+
+fn merge_provider_options(
+    payload: &mut serde_json::Value,
+    options: Option<&ProviderOptions>,
+) -> Result<(), ProviderError> {
+    let Some(options) = options else {
+        return Ok(());
+    };
+    let option_object = select_responses_options(&options.0)?;
+    let Some(payload_object) = payload.as_object_mut() else {
+        return Err(ProviderError::ResponseParseError {
+            reason: "responses payload was not a JSON object".to_string(),
+        });
+    };
+    for (key, value) in option_object {
+        reject_protected_option_key(key)?;
+        payload_object.insert(key.clone(), value.clone());
+    }
+    Ok(())
+}
+
+fn select_responses_options(
+    options: &serde_json::Value,
+) -> Result<&serde_json::Map<String, serde_json::Value>, ProviderError> {
+    let object = options
+        .as_object()
+        .ok_or_else(|| ProviderError::InvalidRequest {
+            message: "provider_options for OpenAI Responses must be a JSON object".to_string(),
+        })?;
+    if let Some(scoped) = object
+        .get("api_options")
+        .and_then(|value| value.get("openai_responses"))
+    {
+        return scoped
+            .as_object()
+            .ok_or_else(|| ProviderError::InvalidRequest {
+                message: "provider_options.api_options.openai_responses must be a JSON object"
+                    .to_string(),
+            });
+    }
+    if let Some(scoped) = object.get("openai_responses") {
+        return scoped
+            .as_object()
+            .ok_or_else(|| ProviderError::InvalidRequest {
+                message: "provider_options.openai_responses must be a JSON object".to_string(),
+            });
+    }
+    Ok(object)
+}
+
+fn reject_protected_option_key(key: &str) -> Result<(), ProviderError> {
+    if matches!(
+        key,
+        "model"
+            | "instructions"
+            | "input"
+            | "tools"
+            | "tool_choice"
+            | "parallel_tool_calls"
+            | "stream"
+            | "store"
+            | "include"
+            | "reasoning"
+            | "prompt_cache_key"
+            | "previous_response_id"
+            | "context_management"
+    ) {
+        return Err(ProviderError::InvalidRequest {
+            message: format!(
+                "provider_options.openai_responses.{key} is owned by Norn and cannot be overridden",
+            ),
+        });
+    }
+    Ok(())
 }
 
 fn service_tier_provider_value(request: &ProviderRequest) -> Result<Option<String>, ProviderError> {
@@ -308,7 +388,9 @@ fn serialize_tool_result(msg: &Message) -> Result<serde_json::Value, ProviderErr
 )]
 mod tests {
     use super::*;
-    use crate::provider::request::{ProviderContextManagement, ServiceTier, ToolDefinition};
+    use crate::provider::request::{
+        ProviderContextManagement, ProviderOptions, ServiceTier, ToolDefinition,
+    };
     use crate::provider::tools::{
         HostedToolDefinition, HostedWebSearchTool, ProviderToolDefinition,
     };
@@ -422,7 +504,8 @@ mod tests {
         ));
 
         let payload = build_payload(&req).expect("build_payload");
-        assert!(payload.tools.iter().any(|tool| {
+        let tools = payload["tools"].as_array().unwrap();
+        assert!(tools.iter().any(|tool| {
             tool.get("type").and_then(serde_json::Value::as_str) == Some("web_search")
                 && tool.get("name").is_none()
                 && tool.get("parameters").is_none()
@@ -433,10 +516,11 @@ mod tests {
     fn system_message_becomes_instructions() {
         let req = make_request();
         let payload = build_payload(&req).expect("build_payload");
-        assert_eq!(payload.instructions, "You are helpful.");
+        assert_eq!(payload["instructions"], "You are helpful.");
         assert!(
-            payload
-                .input
+            payload["input"]
+                .as_array()
+                .unwrap()
                 .iter()
                 .all(|item| item.get("role").and_then(|r| r.as_str()) != Some("system"))
         );
@@ -483,6 +567,41 @@ mod tests {
     }
 
     #[test]
+    fn provider_options_merge_advanced_responses_fields() {
+        let mut req = make_request();
+        req.config = Some(ProviderOptions(serde_json::json!({
+            "api_options": {
+                "openai_responses": {
+                    "temperature": 0.2,
+                    "top_p": 0.9,
+                    "max_output_tokens": 1024,
+                    "text": {"format": {"type": "json_object"}}
+                }
+            }
+        })));
+
+        let payload = build_payload(&req).expect("build_payload");
+
+        assert_eq!(payload["temperature"], 0.2);
+        assert_eq!(payload["top_p"], 0.9);
+        assert_eq!(payload["max_output_tokens"], 1024);
+        assert_eq!(payload["text"]["format"]["type"], "json_object");
+        assert!(payload.get("api_options").is_none());
+    }
+
+    #[test]
+    fn provider_options_reject_protected_responses_fields() {
+        let mut req = make_request();
+        req.config = Some(ProviderOptions(serde_json::json!({
+            "input": []
+        })));
+
+        let err = build_payload(&req).unwrap_err();
+
+        assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+    }
+
+    #[test]
     fn reasoning_effort_medium() {
         let mut req = make_request();
         req.reasoning_effort = Some(ReasoningEffort::Medium);
@@ -514,14 +633,14 @@ mod tests {
         let mut req = make_request();
         req.model = "custom-model-xyz-v99".to_string();
         let payload = build_payload(&req).expect("build_payload");
-        assert_eq!(payload.model, "custom-model-xyz-v99");
+        assert_eq!(payload["model"], "custom-model-xyz-v99");
     }
 
     #[test]
     fn tools_serialize_as_functions() {
         let req = make_request();
         let payload = build_payload(&req).expect("build_payload");
-        for tool in &payload.tools {
+        for tool in payload["tools"].as_array().unwrap() {
             assert_eq!(tool["type"], "function");
             assert_eq!(tool["strict"], false);
         }
@@ -544,11 +663,12 @@ mod tests {
         );
         let payload = build_payload(&req).expect("build_payload");
         assert_eq!(
-            payload.instructions, "You are helpful.",
+            payload["instructions"], "You are helpful.",
             "system message must go to instructions",
         );
-        let dev_items: Vec<_> = payload
-            .input
+        let dev_items: Vec<_> = payload["input"]
+            .as_array()
+            .unwrap()
             .iter()
             .filter(|item| item.get("role").and_then(|r| r.as_str()) == Some("developer"))
             .collect();
@@ -665,14 +785,15 @@ mod tests {
             context_management: None,
         };
         let payload = build_payload(&req).expect("build_payload");
-        assert_eq!(payload.input.len(), 1);
-        assert_eq!(payload.input[0]["type"], "custom_tool_call");
-        assert_eq!(payload.input[0]["call_id"], "call_custom");
-        assert_eq!(payload.input[0]["name"], "freeform_tool");
-        assert_eq!(payload.input[0]["input"], "*** BEGIN PATCH ***");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["type"], "custom_tool_call");
+        assert_eq!(input[0]["call_id"], "call_custom");
+        assert_eq!(input[0]["name"], "freeform_tool");
+        assert_eq!(input[0]["input"], "*** BEGIN PATCH ***");
         // The function-call-only `arguments` field must be absent so the API
         // does not double-encode the body.
-        assert!(payload.input[0].get("arguments").is_none());
+        assert!(input[0].get("arguments").is_none());
     }
 
     #[test]
@@ -706,9 +827,10 @@ mod tests {
             context_management: None,
         };
         let payload = build_payload(&req).expect("build_payload");
-        assert_eq!(payload.input[0]["type"], "function_call");
-        assert_eq!(payload.input[0]["arguments"], r#"{"path":"a"}"#);
-        assert!(payload.input[0].get("input").is_none());
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input[0]["type"], "function_call");
+        assert_eq!(input[0]["arguments"], r#"{"path":"a"}"#);
+        assert!(input[0].get("input").is_none());
     }
 
     #[test]
@@ -737,9 +859,10 @@ mod tests {
             context_management: None,
         };
         let payload = build_payload(&req).expect("build_payload");
-        assert_eq!(payload.input[0]["type"], "custom_tool_call_output");
-        assert_eq!(payload.input[0]["call_id"], "call_custom");
-        assert_eq!(payload.input[0]["output"], "hunk applied");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input[0]["type"], "custom_tool_call_output");
+        assert_eq!(input[0]["call_id"], "call_custom");
+        assert_eq!(input[0]["output"], "hunk applied");
     }
 
     #[test]
@@ -769,7 +892,8 @@ mod tests {
             context_management: None,
         };
         let payload = build_payload(&req).expect("build_payload");
-        assert_eq!(payload.input[0]["type"], "function_call_output");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input[0]["type"], "function_call_output");
     }
 
     #[test]
@@ -796,9 +920,10 @@ mod tests {
             context_management: None,
         };
         let payload = build_payload(&req).expect("build_payload");
-        assert_eq!(payload.input.len(), 1);
-        assert_eq!(payload.input[0]["type"], "function_call_output");
-        assert_eq!(payload.input[0]["call_id"], "call_xyz");
-        assert_eq!(payload.input[0]["output"], r#"{"lines":42}"#);
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 1);
+        assert_eq!(input[0]["type"], "function_call_output");
+        assert_eq!(input[0]["call_id"], "call_xyz");
+        assert_eq!(input[0]["output"], r#"{"lines":42}"#);
     }
 }

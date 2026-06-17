@@ -18,7 +18,7 @@ use std::time::Duration;
 
 use norn::agent_loop::config::{AgentLoopConfig, ConversationStateMode};
 use norn::agent_loop::retry::RetryPolicy;
-use norn::config::NornSettings;
+use norn::config::{NornSettings, ProviderProfileSettings, ProviderSettings};
 use norn::profile::Profile;
 use norn::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
 
@@ -259,11 +259,42 @@ pub fn provider_overrides_from_settings(
     let Some(provider) = settings.provider.as_ref() else {
         return Ok(overrides);
     };
+    overlay_provider_settings(&mut overrides, "provider", provider)?;
+    Ok(overrides)
+}
+
+/// Overlay a selected provider profile onto already-merged provider
+/// overrides. Profile fields replace top-level provider defaults; CLI `-c`
+/// values are applied after this function and still win.
+///
+/// # Errors
+///
+/// Returns [`BuildError::Argument`] when a profile duration field is invalid.
+pub fn overlay_provider_profile_overrides(
+    overrides: &mut ProviderConfigOverrides,
+    profile_name: &str,
+    profile: &ProviderProfileSettings,
+) -> Result<(), BuildError> {
+    overlay_provider_settings(
+        overrides,
+        &format!("provider_profiles.{profile_name}"),
+        &profile.provider,
+    )
+}
+
+fn overlay_provider_settings(
+    overrides: &mut ProviderConfigOverrides,
+    prefix: &str,
+    provider: &ProviderSettings,
+) -> Result<(), BuildError> {
     if let Some(base_url) = provider.base_url.as_deref() {
         overrides.base_url = Some(base_url.to_owned());
     }
     if let Some(timeout) = provider.timeout.as_deref() {
-        overrides.request_timeout = Some(parse_settings_duration("provider.timeout", timeout)?);
+        overrides.request_timeout = Some(parse_settings_duration(
+            &format!("{prefix}.timeout"),
+            timeout,
+        )?);
     }
     if let Some(max_retries) = provider.max_retries {
         overrides.max_retries = Some(max_retries);
@@ -282,23 +313,26 @@ pub fn provider_overrides_from_settings(
     }
     if let Some(interval) = provider.rate_limit_interval.as_deref() {
         overrides.rate_limit_interval = Some(parse_settings_duration(
-            "provider.rate_limit_interval",
+            &format!("{prefix}.rate_limit_interval"),
             interval,
         )?);
     }
     if let Some(backoff) = provider.retry_backoff.as_deref() {
-        overrides.retry_backoff = Some(parse_settings_duration("provider.retry_backoff", backoff)?);
+        overrides.retry_backoff = Some(parse_settings_duration(
+            &format!("{prefix}.retry_backoff"),
+            backoff,
+        )?);
     }
     if let Some(ceiling) = provider.retry_after_ceiling.as_deref() {
         overrides.retry_after_ceiling = Some(parse_settings_duration(
-            "provider.retry_after_ceiling",
+            &format!("{prefix}.retry_after_ceiling"),
             ceiling,
         )?);
     }
     if let Some(runner_path) = provider.runner_path.as_deref() {
         overrides.runner_path = Some(PathBuf::from(runner_path));
     }
-    Ok(overrides)
+    Ok(())
 }
 
 /// Overlay `-c` provider values on top of a settings-derived

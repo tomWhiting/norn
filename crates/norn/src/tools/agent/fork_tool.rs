@@ -76,15 +76,6 @@ impl Default for ForkTool {
     }
 }
 
-/// Valid model identifiers for the fork tool.
-const FORK_ALLOWED_MODELS: &[&str] = &[
-    "gpt-5.5",
-    "gpt-5.4",
-    "gpt-5.4-mini",
-    "gpt-5.3-codex",
-    "gpt-5.3-codex-spark",
-];
-
 // deny_unknown_fields: a typo'd key (e.g. `child_polciy`) must fail
 // loudly, not silently hand the fork a default grant where the caller
 // intended a narrowing.
@@ -137,8 +128,8 @@ impl Tool for ForkTool {
                 },
                 "model": {
                     "type": "string",
-                    "enum": FORK_ALLOWED_MODELS,
-                    "description": "Model for the forked agent."
+                    "minLength": 1,
+                    "description": "Model identifier for the forked agent. Use a model supported by the current provider/backend."
                 },
                 "requirements": {
                     "type": "array",
@@ -230,13 +221,9 @@ impl Tool for ForkTool {
         })?;
         let infra = infra_from(ctx)?;
 
-        if !FORK_ALLOWED_MODELS.contains(&args.model.as_str()) {
+        if args.model.trim().is_empty() {
             return Err(ToolError::ExecutionFailed {
-                reason: format!(
-                    "fork model '{}' is not available; must be one of: {}",
-                    args.model,
-                    FORK_ALLOWED_MODELS.join(", "),
-                ),
+                reason: "fork model must be non-empty".to_string(),
             });
         }
 

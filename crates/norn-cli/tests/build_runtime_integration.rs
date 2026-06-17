@@ -81,7 +81,7 @@ system_instructions = ["from profile"]
         "--profile",
         profile_path.to_str().unwrap(),
         "-m",
-        "cli-model",
+        "gpt-5.5",
         "-S",
         "cli prompt",
         "--append-system-prompt",
@@ -114,7 +114,7 @@ system_instructions = ["from profile"]
     let bundle = build_runtime(&cli(&args), RuntimeInputs::default()).unwrap();
 
     // Model: CLI override wins over profile.
-    assert_eq!(bundle.model, "cli-model");
+    assert_eq!(bundle.model, "gpt-5.5");
 
     // System sections: cli prompt + appended snippet.
     let base = &bundle.loop_context.system_sections[0];

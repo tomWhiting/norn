@@ -43,6 +43,17 @@ pub struct NornSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
 
+    /// User-defined short aliases for model selections. Aliases are resolved
+    /// before provider construction; exact model IDs still win over aliases
+    /// when the name is ambiguous.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_aliases: Option<BTreeMap<String, ModelAliasSettings>>,
+
+    /// Named provider deployment profiles. A profile selects an API shape
+    /// and supplies provider connection settings for that deployment.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_profiles: Option<BTreeMap<String, ProviderProfileSettings>>,
+
     /// Provider connection, retry, and runner-binary settings.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<ProviderSettings>,
@@ -109,9 +120,108 @@ pub struct NornSettings {
     pub env: Option<BTreeMap<String, String>>,
 }
 
+/// User-defined model alias target.
+///
+/// The compact string form is convenient for simple aliases:
+///
+/// ```json
+/// { "model_aliases": { "55": "gpt-5.5" } }
+/// ```
+///
+/// The object form reserves room for full backend selections:
+///
+/// ```json
+/// {
+///   "model_aliases": {
+///     "local": {
+///       "provider_profile": "lmstudio_local",
+///       "api_shape": "openai_chat_completions",
+///       "model": "google/gemma-4-e4b"
+///     }
+///   }
+/// }
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ModelAliasSettings {
+    /// Alias targets only a model id.
+    Model(String),
+    /// Alias targets a future full backend selection.
+    Selection(ModelAliasSelection),
+}
+
+impl ModelAliasSettings {
+    /// Returns the aliased model id.
+    #[must_use]
+    pub fn model(&self) -> &str {
+        match self {
+            Self::Model(model) => model,
+            Self::Selection(selection) => &selection.model,
+        }
+    }
+
+    /// Returns the optional provider profile id.
+    #[must_use]
+    pub fn provider_profile(&self) -> Option<&str> {
+        match self {
+            Self::Model(_) => None,
+            Self::Selection(selection) => selection.provider_profile.as_deref(),
+        }
+    }
+
+    /// Returns the optional API shape id.
+    #[must_use]
+    pub fn api_shape(&self) -> Option<&str> {
+        match self {
+            Self::Model(_) => None,
+            Self::Selection(selection) => selection.api_shape.as_deref(),
+        }
+    }
+}
+
+/// Full model alias target shape.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ModelAliasSelection {
+    /// Optional provider profile id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_profile: Option<String>,
+    /// Optional API shape id.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_shape: Option<String>,
+    /// Provider model id.
+    pub model: String,
+}
+
 // ---------------------------------------------------------------------------
 // Provider
 // ---------------------------------------------------------------------------
+
+/// Named provider deployment profile.
+///
+/// The provider fields are flattened intentionally so a profile has the same
+/// spelling as the top-level `provider` section, plus an optional `api_shape`:
+///
+/// ```json
+/// {
+///   "provider_profiles": {
+///     "lmstudio": {
+///       "api_shape": "openai_chat_completions",
+///       "base_url": "http://localhost:1234/v1",
+///       "api_key_env": "NORN_OPENAI_COMPAT_API_KEY"
+///     }
+///   }
+/// }
+/// ```
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ProviderProfileSettings {
+    /// API shape exposed by this provider profile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_shape: Option<String>,
+
+    /// Provider connection settings for this profile.
+    #[serde(flatten)]
+    pub provider: ProviderSettings,
+}
 
 /// Provider connection settings.
 ///
@@ -747,6 +857,8 @@ mod tests {
         // We assert each top-level field individually rather than deriving
         // PartialEq for the public struct (serde_json::Value isn't Eq).
         assert!(s.model.is_none());
+        assert!(s.model_aliases.is_none());
+        assert!(s.provider_profiles.is_none());
         assert!(s.provider.is_none());
         assert!(s.agent.is_none());
         assert!(s.retry.is_none());
@@ -818,8 +930,37 @@ mod tests {
         let mut env = BTreeMap::new();
         env.insert("OPENAI_LOG".to_owned(), "debug".to_owned());
 
+        let mut model_aliases = BTreeMap::new();
+        model_aliases.insert(
+            "55".to_owned(),
+            ModelAliasSettings::Model("gpt-5.5".to_owned()),
+        );
+        model_aliases.insert(
+            "local".to_owned(),
+            ModelAliasSettings::Selection(ModelAliasSelection {
+                provider_profile: Some("lmstudio_local".to_owned()),
+                api_shape: Some("openai_chat_completions".to_owned()),
+                model: "google/gemma-4-e4b".to_owned(),
+            }),
+        );
+
+        let mut provider_profiles = BTreeMap::new();
+        provider_profiles.insert(
+            "lmstudio_local".to_owned(),
+            ProviderProfileSettings {
+                api_shape: Some("openai_chat_completions".to_owned()),
+                provider: ProviderSettings {
+                    base_url: Some("http://localhost:1234/v1".to_owned()),
+                    api_key_env: Some("NORN_OPENAI_COMPAT_API_KEY".to_owned()),
+                    ..ProviderSettings::default()
+                },
+            },
+        );
+
         let original = NornSettings {
             model: Some("gpt-5.5".to_owned()),
+            model_aliases: Some(model_aliases),
+            provider_profiles: Some(provider_profiles),
             provider: Some(ProviderSettings {
                 base_url: Some("https://api.example.com".to_owned()),
                 timeout: Some("30s".to_owned()),
@@ -911,6 +1052,21 @@ mod tests {
         let roundtripped: NornSettings = serde_json::from_str(&json).unwrap();
 
         assert_eq!(roundtripped.model, original.model);
+        assert_eq!(roundtripped.model_aliases, original.model_aliases);
+        let rprofiles = roundtripped.provider_profiles.as_ref().unwrap();
+        let oprofiles = original.provider_profiles.as_ref().unwrap();
+        assert_eq!(
+            rprofiles["lmstudio_local"].api_shape,
+            oprofiles["lmstudio_local"].api_shape,
+        );
+        assert_eq!(
+            rprofiles["lmstudio_local"].provider.base_url,
+            oprofiles["lmstudio_local"].provider.base_url,
+        );
+        assert_eq!(
+            rprofiles["lmstudio_local"].provider.api_key_env,
+            oprofiles["lmstudio_local"].provider.api_key_env,
+        );
         let rp = roundtripped.provider.as_ref().unwrap();
         let op = original.provider.as_ref().unwrap();
         assert_eq!(rp.base_url, op.base_url);

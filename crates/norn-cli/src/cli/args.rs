@@ -171,8 +171,17 @@ pub struct Cli {
     pub resume_if_exists: bool,
 
     /// Provider backend selection.
-    #[arg(long, value_name = "PROVIDER", value_enum)]
+    #[arg(long, value_name = "PROVIDER", value_enum, conflicts_with_all = ["api_shape", "provider_profile"])]
     pub provider: Option<ProviderKind>,
+
+    /// Provider wire API shape. Prefer this with --provider-profile for
+    /// non-default deployments; --provider remains as a compatibility alias.
+    #[arg(long, value_name = "API_SHAPE", value_enum)]
+    pub api_shape: Option<ApiShapeKind>,
+
+    /// Named provider profile from `settings.provider_profiles`.
+    #[arg(long, value_name = "NAME")]
+    pub provider_profile: Option<String>,
 
     /// Dump raw API requests and responses to a directory for debugging.
     /// Defaults to `~/.norn/debug/` when used without a value.
@@ -240,6 +249,26 @@ pub enum ProviderKind {
     OpenaiCompatible,
     /// `ClaudeRunnerAdapter` — routes through Claude Code CLI.
     ClaudeRunner,
+}
+
+/// Provider API-shape choices for `--api-shape`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum ApiShapeKind {
+    /// `OpenAI` Responses-compatible request and stream shape.
+    OpenaiResponses,
+    /// `OpenAI` Chat Completions-compatible request and stream shape.
+    OpenaiChatCompletions,
+    /// Anthropic Messages-compatible request and stream shape.
+    AnthropicMessages,
+    /// `OpenAI` Harmony prompt/response format.
+    OpenaiHarmony,
+    /// LM Studio native API shape.
+    LmstudioNative,
+    /// Local/remote agent RPC adapter.
+    AgentRpc,
+    /// Agent Client Protocol integration.
+    AgentClientProtocol,
 }
 
 /// Top-level subcommands. The agent path runs when `command` is `None`.
@@ -655,6 +684,33 @@ mod tests {
     fn provider_kind_openai_compatible_parses() {
         let cli = Cli::try_parse_from(["norn", "--provider", "openai-compatible"]).unwrap();
         assert_eq!(cli.provider, Some(ProviderKind::OpenaiCompatible));
+    }
+
+    #[test]
+    fn api_shape_and_provider_profile_parse() {
+        let cli = Cli::try_parse_from([
+            "norn",
+            "--api-shape",
+            "openai-chat-completions",
+            "--provider-profile",
+            "lmstudio",
+        ])
+        .unwrap();
+        assert_eq!(cli.api_shape, Some(ApiShapeKind::OpenaiChatCompletions));
+        assert_eq!(cli.provider_profile.as_deref(), Some("lmstudio"));
+    }
+
+    #[test]
+    fn provider_conflicts_with_api_shape_path() {
+        let err = Cli::try_parse_from([
+            "norn",
+            "--provider",
+            "openai-compatible",
+            "--api-shape",
+            "openai-responses",
+        ])
+        .unwrap_err();
+        assert_eq!(err.kind(), clap::error::ErrorKind::ArgumentConflict);
     }
 
     #[test]

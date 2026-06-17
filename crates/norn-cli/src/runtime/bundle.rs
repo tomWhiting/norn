@@ -15,6 +15,7 @@ use norn::tool::registry::ToolRegistry;
 use norn::tools::SharedTaskStore;
 use norn::tools::lsp::{LspBackend, LspWorkspace};
 
+use crate::cli::ProviderKind;
 use crate::config::ProviderConfigOverrides;
 
 /// Inputs to [`crate::runtime::build_runtime`] that the caller assembles
@@ -82,6 +83,9 @@ pub struct RuntimeBundle {
     /// Provider-config overrides (NC-003 consumes these when building
     /// the [`norn::provider::request::ProviderConfig`]).
     pub provider_overrides: ProviderConfigOverrides,
+    /// Existing provider implementation selected by `--provider` or by the
+    /// `--api-shape` / `--provider-profile` mapping.
+    pub provider_kind: ProviderKind,
     /// Model identifier to pass to `run_agent_step`. NOT carried on
     /// [`LoopContext`] because the runtime treats it as a per-call
     /// argument.

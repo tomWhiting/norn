@@ -299,12 +299,16 @@ async fn orchestrate(
     bundle.loop_context.service_tier = slash_state.service_tier_snapshot();
     bundle.loop_context.reasoning_effort = slash_state.reasoning_effort_snapshot();
 
-    let built_provider = build_provider(cli.provider, &bundle.provider_overrides, &active_model)
-        .await
-        .map_err(|err| match err.exit_code() {
-            ExitCode::AuthError => PrintError::Auth(err.to_string()),
-            _ => PrintError::Agent(err.to_string()),
-        })?;
+    let built_provider = build_provider(
+        bundle.provider_kind,
+        &bundle.provider_overrides,
+        &active_model,
+    )
+    .await
+    .map_err(|err| match err.exit_code() {
+        ExitCode::AuthError => PrintError::Auth(err.to_string()),
+        _ => PrintError::Agent(err.to_string()),
+    })?;
 
     // The CLI's deliberate coordination envelope: child policy for every
     // spawn/fork plus the result-channel capacity, published alongside the

@@ -14,6 +14,7 @@ use crate::provider::usage::Usage;
 pub(super) struct ChatCompletionsMapper {
     tool_calls: BTreeMap<ToolKey, ToolCallState>,
     latest_usage: Usage,
+    emitted_output: bool,
 }
 
 impl ChatCompletionsMapper {
@@ -22,6 +23,9 @@ impl ChatCompletionsMapper {
         &mut self,
         event: &crate::provider::openai::sse::SseEvent,
     ) -> Vec<Result<ProviderEvent, ProviderError>> {
+        if let Some(message) = stream_error_message(&event.data) {
+            return vec![Err(stream_error_from_message(message))];
+        }
         let Ok(chunk) = ChatChunk::deserialize(&event.data) else {
             return vec![Err(ProviderError::ResponseParseError {
                 reason: format!(
@@ -48,7 +52,14 @@ impl ChatCompletionsMapper {
         if let Some(content) = choice.delta.content
             && !content.is_empty()
         {
+            self.emitted_output = true;
             out.push(Ok(ProviderEvent::TextDelta { text: content }));
+        }
+        if let Some(reasoning) = choice.delta.reasoning_content
+            && !reasoning.is_empty()
+        {
+            self.emitted_output = true;
+            out.push(Ok(ProviderEvent::ThinkingDelta { text: reasoning }));
         }
         for call in choice.delta.tool_calls {
             self.map_tool_delta(choice.index, call, out);
@@ -195,6 +206,26 @@ impl ChatCompletionsMapper {
         }
         all_complete
     }
+
+    /// Builds a terminal event for local-compatible backends that close a text
+    /// stream cleanly without emitting a final `finish_reason`.
+    pub(super) fn finish_on_clean_close(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
+        if !self.tool_calls.is_empty() {
+            return Err(ProviderError::ResponseParseError {
+                reason:
+                    "chat completions stream ended with incomplete tool calls before finish_reason"
+                        .to_string(),
+            });
+        }
+        if !self.emitted_output {
+            return Ok(None);
+        }
+        Ok(Some(ProviderEvent::Done {
+            stop_reason: StopReason::EndTurn,
+            usage: self.latest_usage.clone(),
+            response_id: None,
+        }))
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -234,6 +265,8 @@ struct ChatChoice {
 #[derive(Debug, Default, Deserialize)]
 struct ChatDelta {
     content: Option<String>,
+    #[serde(default, alias = "reasoning")]
+    reasoning_content: Option<String>,
     #[serde(default)]
     tool_calls: Vec<ToolCallDelta>,
     function_call: Option<FunctionDelta>,
@@ -267,6 +300,32 @@ impl From<ChatUsage> for Usage {
             output_tokens: value.completion_tokens,
             ..Self::default()
         }
+    }
+}
+
+fn stream_error_message(data: &serde_json::Value) -> Option<String> {
+    let error = data.get("error")?;
+    if let Some(message) = error.get("message").and_then(serde_json::Value::as_str) {
+        return Some(message.to_owned());
+    }
+    if let Some(message) = error.as_str() {
+        return Some(message.to_owned());
+    }
+    data.get("message")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+}
+
+fn stream_error_from_message(message: String) -> ProviderError {
+    let lower = message.to_ascii_lowercase();
+    if lower.contains("context length")
+        || lower.contains("context window")
+        || lower.contains("number of tokens")
+    {
+        return ProviderError::InvalidRequest { message };
+    }
+    ProviderError::StreamError {
+        reason: format!("provider stream error: {message}"),
     }
 }
 
@@ -315,6 +374,42 @@ mod tests {
                 usage,
                 response_id: None,
             }) if usage.input_tokens == 10 && usage.output_tokens == 3,
+        ));
+    }
+
+    #[test]
+    fn maps_reasoning_content_delta_to_thinking() {
+        let mut mapper = ChatCompletionsMapper::default();
+        let events = mapper.map_event(&event(serde_json::json!({
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"reasoning_content": "thinking"},
+                    "finish_reason": null
+                }
+            ]
+        })));
+
+        assert!(matches!(
+            &events[0],
+            Ok(ProviderEvent::ThinkingDelta { text }) if text == "thinking",
+        ));
+    }
+
+    #[test]
+    fn maps_stream_error_object_to_terminal_error() {
+        let mut mapper = ChatCompletionsMapper::default();
+        let events = mapper.map_event(&event(serde_json::json!({
+            "error": {
+                "message": "The number of tokens to keep from the initial prompt is greater than the context length"
+            },
+            "message": "The number of tokens to keep from the initial prompt is greater than the context length"
+        })));
+
+        assert!(matches!(
+            &events[0],
+            Err(ProviderError::InvalidRequest { message })
+                if message.contains("context length"),
         ));
     }
 
@@ -419,6 +514,56 @@ mod tests {
                 .iter()
                 .any(|event| matches!(event, Ok(ProviderEvent::Done { .. })))
         );
+    }
+
+    #[test]
+    fn clean_close_after_text_synthesizes_end_turn() {
+        let mut mapper = ChatCompletionsMapper::default();
+        let events = mapper.map_event(&event(serde_json::json!({
+            "choices": [
+                {"index": 0, "delta": {"content": "hello"}, "finish_reason": null}
+            ]
+        })));
+        assert!(matches!(
+            &events[0],
+            Ok(ProviderEvent::TextDelta { text }) if text == "hello",
+        ));
+
+        let done = mapper
+            .finish_on_clean_close()
+            .expect("clean close should be accepted");
+        assert!(matches!(
+            done,
+            Some(ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                ..
+            }),
+        ));
+    }
+
+    #[test]
+    fn clean_close_with_incomplete_tool_call_is_error() {
+        let mut mapper = ChatCompletionsMapper::default();
+        let _ = mapper.map_event(&event(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{\"path\""}
+                    }]
+                },
+                "finish_reason": null
+            }]
+        })));
+
+        assert!(matches!(
+            mapper.finish_on_clean_close(),
+            Err(ProviderError::ResponseParseError { reason })
+                if reason.contains("incomplete tool calls"),
+        ));
     }
 
     #[test]

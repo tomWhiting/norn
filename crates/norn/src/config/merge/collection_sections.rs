@@ -6,7 +6,8 @@
 use std::collections::BTreeMap;
 
 use crate::config::types::{
-    ContextSettings, HookSettings, McpServerSettings, PermissionSettings, SkillsSettings,
+    ContextSettings, HookSettings, McpServerSettings, ModelAliasSettings, PermissionSettings,
+    ProviderProfileSettings, SkillsSettings,
 };
 
 use super::primitives::{concat_hook_slot, concat_string_paths, merge_dedup};
@@ -129,6 +130,52 @@ pub(super) fn merge_mcp_servers(
     {
         for (name, def) in map {
             out.insert(name, def);
+        }
+    }
+    Some(out)
+}
+
+/// Merge model aliases by alias name: a same-name entry at a later layer
+/// replaces the earlier definition wholesale (no deep merge).
+pub(super) fn merge_model_aliases(
+    usr: &mut Option<BTreeMap<String, ModelAliasSettings>>,
+    prj: &mut Option<BTreeMap<String, ModelAliasSettings>>,
+    lcl: &mut Option<BTreeMap<String, ModelAliasSettings>>,
+    ovr: &mut Option<BTreeMap<String, ModelAliasSettings>>,
+) -> Option<BTreeMap<String, ModelAliasSettings>> {
+    if usr.is_none() && prj.is_none() && lcl.is_none() && ovr.is_none() {
+        return None;
+    }
+    let mut out: BTreeMap<String, ModelAliasSettings> = BTreeMap::new();
+    for map in [usr.take(), prj.take(), lcl.take(), ovr.take()]
+        .into_iter()
+        .flatten()
+    {
+        for (name, alias) in map {
+            out.insert(name, alias);
+        }
+    }
+    Some(out)
+}
+
+/// Merge provider profiles by profile id: a same-name entry at a later layer
+/// replaces the earlier definition wholesale (no deep merge).
+pub(super) fn merge_provider_profiles(
+    usr: &mut Option<BTreeMap<String, ProviderProfileSettings>>,
+    prj: &mut Option<BTreeMap<String, ProviderProfileSettings>>,
+    lcl: &mut Option<BTreeMap<String, ProviderProfileSettings>>,
+    ovr: &mut Option<BTreeMap<String, ProviderProfileSettings>>,
+) -> Option<BTreeMap<String, ProviderProfileSettings>> {
+    if usr.is_none() && prj.is_none() && lcl.is_none() && ovr.is_none() {
+        return None;
+    }
+    let mut out: BTreeMap<String, ProviderProfileSettings> = BTreeMap::new();
+    for map in [usr.take(), prj.take(), lcl.take(), ovr.take()]
+        .into_iter()
+        .flatten()
+    {
+        for (name, profile) in map {
+            out.insert(name, profile);
         }
     }
     Some(out)
