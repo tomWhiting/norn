@@ -144,6 +144,23 @@ pub fn find_model(provider: &str, backend: &str, model: &str) -> Option<&'static
         .find(|entry| entry.id == model)
 }
 
+/// Return the smallest catalogued context window for a model id.
+///
+/// The same provider model id can appear under several backends with different
+/// limits. Budgeting code should use the smallest known value unless it has a
+/// more specific provider/backend selection.
+#[must_use]
+pub fn smallest_context_window_for_model(model: &str) -> Option<u64> {
+    catalog()
+        .providers
+        .iter()
+        .flat_map(|provider| provider.backends)
+        .flat_map(|backend| backend.models)
+        .filter(|entry| entry.id == model)
+        .map(|entry| entry.context_window)
+        .min()
+}
+
 /// Find a service tier supported by the selected backend/model pair.
 #[must_use]
 pub fn find_service_tier(
@@ -193,5 +210,11 @@ mod tests {
             service_tier_provider_value("openai", "codex_subscription", "gpt-5.5", "fast"),
             Some("priority"),
         );
+    }
+
+    #[test]
+    fn smallest_context_window_returns_catalogued_model_limit() {
+        assert!(smallest_context_window_for_model(default_selection().model).is_some());
+        assert_eq!(smallest_context_window_for_model("not-in-catalog"), None);
     }
 }

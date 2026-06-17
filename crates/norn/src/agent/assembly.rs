@@ -526,6 +526,8 @@ pub(crate) struct ToolContextParts {
     pub(crate) provider: Arc<dyn Provider>,
     /// The shared action log (same `Arc` as the loop context's).
     pub(crate) action_log: Arc<ActionLog>,
+    /// Effective context window used to derive model-facing tool-output caps.
+    pub(crate) context_window_limit: Option<u64>,
     /// Consumer-supplied extension installers, run last so embedding
     /// runtimes can contribute tool-catalog extras before publication.
     pub(crate) extensions: Vec<ExtensionInstaller>,
@@ -552,6 +554,7 @@ pub(crate) fn assemble_tool_context(parts: ToolContextParts) -> ToolContext {
         ctx.insert_extension(hooks);
     }
     ctx.post_checks.extend(parts.post_checks);
+    crate::runtime_init::install_tool_output_budget(&ctx, parts.context_window_limit);
     ctx.insert_extension(Arc::new(SharedProvider(parts.provider)));
     ctx.insert_extension(parts.action_log);
     for install in parts.extensions {

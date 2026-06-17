@@ -16,6 +16,6 @@ pub use base::{
 pub use extensions::{
     install_agent_handles, install_context_search_paths, install_permission_policy,
     install_runtime_extensions, install_skill_infra, install_terminal_reclamation,
-    install_tool_catalog,
+    install_tool_catalog, install_tool_output_budget,
 };
 pub use hooks::assemble_hook_registry;

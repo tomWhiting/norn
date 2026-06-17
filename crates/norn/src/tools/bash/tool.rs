@@ -16,6 +16,7 @@ use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::{Confidence, ExpiryCondition, FollowUpAction};
 use crate::tool::lifecycle::PreValidateOutcome;
+use crate::tool::output_budget::READ_DEFAULT_LINE_LIMIT;
 use crate::tool::risk::{BashRiskTier, classify_risk};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
@@ -343,9 +344,10 @@ impl Tool for BashTool {
         {
             follow_ups.push(FollowUpAction {
                 action: "read_output".to_string(),
-                description: "Read the first 200 lines of the redirected bash output".to_string(),
+                description: "Read a bounded first window of the redirected bash output"
+                    .to_string(),
                 tool: "read".to_string(),
-                args: json!({ "path": output_path, "offset": 1, "limit": 200 }),
+                args: json!({ "path": output_path, "offset": 1, "limit": READ_DEFAULT_LINE_LIMIT }),
                 args_mode: crate::tool::follow_up::FollowUpArgsMode::MergeOriginal,
                 expires: ExpiryCondition::Never,
                 confidence: Confidence::High,

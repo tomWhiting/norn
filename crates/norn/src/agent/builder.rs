@@ -450,6 +450,9 @@ impl AgentBuilder {
         // is read from the same source for the same reason.
         let has_auto_compact = config_override.auto_compact_threshold_pct.is_some()
             && config_override.context_window_limit.is_some();
+        let tool_output_context_window = config_override
+            .context_window_limit
+            .or_else(|| crate::model_catalog::smallest_context_window_for_model(&model));
         // The provider is bound here, so the prompt's tools section is
         // resolved against its capabilities — hosted-replaced tools are
         // described as provider-native, never as callable functions. A
@@ -483,6 +486,7 @@ impl AgentBuilder {
             post_checks: self.additional_post_checks,
             provider: Arc::clone(&self.provider),
             action_log: Arc::clone(&action_log),
+            context_window_limit: tool_output_context_window,
             extensions: self.extensions,
         });
         registry.set_context(Arc::new(ctx));

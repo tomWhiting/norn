@@ -61,6 +61,7 @@ use crate::session::store::EventStore;
 use crate::tool::envelope::{RuntimeInputs, ToolEnvelope, split_envelope_fields};
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::FollowUpAction;
+use crate::tool::output_budget::cap_model_output;
 
 use super::helpers::append_and_notify;
 
@@ -216,6 +217,11 @@ fn record_dispatch_completion(loop_context: &LoopContext, mut record: Completion
     action_log.record_completion(record);
 }
 
+/// Return the bounded model-facing projection of a tool result.
+pub(super) fn model_safe_tool_output(tool_name: &str, tool_call_id: &str, output: &Value) -> Value {
+    cap_model_output(tool_name, tool_call_id, output)
+}
+
 /// Identity and payload of one tool result to append via
 /// [`append_tool_result`].
 ///
@@ -253,6 +259,7 @@ pub(super) async fn append_tool_result(
         output,
         duration_ms,
     } = record;
+    let output = model_safe_tool_output(tool_name, tool_call_id, output);
     let parent = store.last_event_id();
     append_and_notify(
         store,
@@ -276,7 +283,7 @@ pub(super) async fn append_tool_result(
         });
     }
 
-    let content = serde_json::to_string(output).ok();
+    let content = serde_json::to_string(&output).ok();
 
     messages.push(Message {
         role: MessageRole::ToolResult,
@@ -427,6 +434,39 @@ mod tests {
         assert!(matches!(entries[0].outcome, Outcome::Error { .. }));
         let detail = action_log.get_detail("tc-e").expect("detail recorded");
         assert!(detail.output.get("error").is_some());
+    }
+
+    #[tokio::test]
+    async fn dispatch_caps_oversized_tool_result_before_persisting() {
+        let store = Arc::new(EventStore::new());
+        let action_log = Arc::new(ActionLog::new(Arc::clone(&store)));
+        let mut loop_context = loop_with_log(&action_log);
+
+        let mut handlers: HashMap<String, ToolHandler> = HashMap::new();
+        handlers.insert(
+            "read".to_owned(),
+            Box::new(|_args| {
+                Ok(json!({
+                    "path": "huge.log",
+                    "content": "x".repeat(
+                        crate::tool::output_budget::MODEL_OUTPUT_INLINE_CHAR_LIMIT + 1
+                    ),
+                    "follow_ups": [{ "action": "next" }],
+                }))
+            }),
+        );
+        let executor = MockToolExecutor::new(handlers);
+
+        let response = response_with(tool_call("tc-big", "read", r#"{"path":"huge.log"}"#));
+        dispatch(&executor, store.as_ref(), &mut loop_context, &response).await;
+
+        let output = persisted_tool_result(store.as_ref(), "read");
+        assert_eq!(output["truncated_for_model"], true);
+        assert_eq!(output["path"], "huge.log");
+        assert_eq!(output["follow_ups"][0]["action"], "next");
+
+        let detail = action_log.get_detail("tc-big").expect("detail recorded");
+        assert_eq!(detail.output["truncated_for_model"], true);
     }
 
     /// The persisted `ToolResult` output for `tool_name`, from the store.

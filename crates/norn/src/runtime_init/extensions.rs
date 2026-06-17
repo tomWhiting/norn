@@ -10,6 +10,7 @@ use crate::r#loop::config::ToolExecutor;
 use crate::skill::SkillCatalog;
 use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 use crate::tool::context::ToolContext;
+use crate::tool::output_budget::ToolOutputBudget;
 use crate::tool::registry::ToolRegistry;
 use crate::tools::agent::{AgentHandles, AgentWakeRegistry, ReclaimOnResultDelivery};
 use crate::tools::context_paths::ContextSearchPaths;
@@ -56,6 +57,17 @@ pub fn install_runtime_extensions(
 ) {
     ctx.insert_extension(Arc::clone(task_store));
     ctx.insert_extension(Arc::clone(diagnostics));
+}
+
+/// Publish the model-aware tool-output budget on the tool context.
+///
+/// A `None` context window keeps conservative defaults. A known window scales
+/// the default read character budget but still clamps it under the hard caps in
+/// [`ToolOutputBudget`], so large-context models never imply unbounded reads.
+pub fn install_tool_output_budget(ctx: &ToolContext, context_window_tokens: Option<u64>) {
+    ctx.insert_extension(Arc::new(ToolOutputBudget::for_context_window(
+        context_window_tokens,
+    )));
 }
 
 /// Compile the merged `permissions` settings into a [`PermissionPolicy`]

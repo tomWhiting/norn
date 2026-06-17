@@ -149,6 +149,9 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
         retry_policy_from_settings_and_overrides(&merged_settings, &config_overrides)?;
 
     let model = profile.model.clone();
+    let tool_output_context_window = agent_config
+        .context_window_limit
+        .or_else(|| norn::model_catalog::smallest_context_window_for_model(&model));
     let iteration_monitor = iteration_monitor_from_profile(&profile)?;
     let diagnostics = build_diagnostic_collector();
 
@@ -253,6 +256,7 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
             ));
         };
         norn::runtime_init::install_permission_policy(&shared, &merged_settings);
+        norn::runtime_init::install_tool_output_budget(&shared, tool_output_context_window);
         norn::runtime_init::install_runtime_extensions(&shared, &shared_task_store, &diagnostics);
         norn::runtime_init::install_skill_infra(&shared, skill_paths, Arc::clone(&skill_catalog));
         norn::runtime_init::install_context_search_paths(&shared, &merged_settings, &cwd);

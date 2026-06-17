@@ -33,7 +33,7 @@ use crate::tool::traits::ToolOutput;
 
 use super::{
     SingleToolResult, ToolResultRecord, append_tool_result, build_envelope, execute_single_tool,
-    record_dispatch_completion,
+    model_safe_tool_output, record_dispatch_completion,
 };
 use crate::provider::request::Message;
 
@@ -210,6 +210,7 @@ pub(super) async fn finish_blocked_call(
     output: &Value,
     reason: &str,
 ) -> Result<(), NornError> {
+    let output = model_safe_tool_output(&tc.name, &tc.call_id, output);
     append_tool_result(
         env.store,
         messages,
@@ -217,7 +218,7 @@ pub(super) async fn finish_blocked_call(
             tool_call_id: &tc.call_id,
             tool_name: &tc.name,
             kind: tc.kind,
-            output,
+            output: &output,
             duration_ms: 0,
         },
         loop_context.hooks.as_deref(),
@@ -233,7 +234,7 @@ pub(super) async fn finish_blocked_call(
             outcome: Outcome::Blocked {
                 reason: reason.to_owned(),
             },
-            output,
+            output: &output,
             args: prepared.envelope.model_args.clone(),
             duration_ms: 0,
             follow_ups: Vec::new(),
@@ -262,6 +263,7 @@ pub(super) async fn finish_executed_call(
         follow_ups,
         post_validate_outcome,
     } = result;
+    let output = model_safe_tool_output(&tc.name, &tc.call_id, &output);
 
     append_tool_result(
         env.store,

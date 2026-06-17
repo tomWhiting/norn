@@ -6,7 +6,6 @@
 //! instead of raw bytes. Successful reads are recorded in `ToolContext`
 //! so the Write and Edit tools can enforce read-before-modify.
 
-use std::fmt::Write as _;
 use std::path::Path;
 
 use async_trait::async_trait;
@@ -17,6 +16,7 @@ use crate::error::ToolError;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
+use crate::tool::output_budget::ToolOutputBudget;
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
@@ -88,7 +88,7 @@ impl Tool for ReadTool {
                 "limit": {
                     "type": "integer",
                     "minimum": 1,
-                    "description": "Maximum number of lines to return. Defaults to all remaining lines."
+                    "description": "Maximum number of lines to return. Defaults to a bounded first window; large requests are capped."
                 }
             }
         })
@@ -167,12 +167,28 @@ impl Tool for ReadTool {
             }
         };
 
-        let rendered = render_with_line_numbers(text, args.offset, args.limit);
+        let budget = read_budget(ctx);
+        let rendered = render_with_line_numbers(text, args.offset, args.limit, budget);
+        let warnings = read_warnings(&path, text, &rendered, budget);
 
         let payload = serde_json::json!({
             "path": args.path,
             "kind": "text",
-            "content": rendered,
+            "content": rendered.content,
+            "offset": rendered.offset,
+            "requested_limit": args.limit,
+            "effective_line_limit": rendered.effective_line_limit,
+            "content_char_limit": rendered.content_char_limit,
+            "returned_lines": rendered.returned_lines,
+            "total_lines": rendered.total_lines,
+            "file_size_bytes": bytes.len(),
+            "content_chars": rendered.content_chars,
+            "max_line_chars": rendered.max_line_chars,
+            "next_offset": rendered.next_offset,
+            "truncated": rendered.truncated(),
+            "truncated_by": rendered.truncated_by(),
+            "truncated_long_lines": rendered.truncated_long_lines,
+            "warnings": warnings,
         });
 
         Ok(ToolOutput::success(payload))
@@ -219,42 +235,192 @@ fn is_binary(bytes: &[u8]) -> bool {
     scan.contains(&0u8)
 }
 
-/// Renders `text` in `cat -n` format. `offset` is the 1-based starting
-/// line (defaults to 1). `limit` caps the number of lines returned
-/// (defaults to all remaining lines).
-fn render_with_line_numbers(text: &str, offset: Option<u64>, limit: Option<u64>) -> String {
+#[derive(Debug)]
+struct RenderedRead {
+    content: String,
+    offset: u64,
+    effective_line_limit: u64,
+    content_char_limit: usize,
+    returned_lines: u64,
+    total_lines: u64,
+    content_chars: usize,
+    max_line_chars: usize,
+    next_offset: Option<u64>,
+    truncated_by_line_limit: bool,
+    truncated_by_char_limit: bool,
+    truncated_long_lines: u64,
+}
+
+impl RenderedRead {
+    fn truncated(&self) -> bool {
+        self.truncated_by_line_limit
+            || self.truncated_by_char_limit
+            || self.truncated_long_lines > 0
+    }
+
+    fn truncated_by(&self) -> Vec<&'static str> {
+        let mut reasons = Vec::new();
+        if self.truncated_by_line_limit {
+            reasons.push("line_limit");
+        }
+        if self.truncated_by_char_limit {
+            reasons.push("char_limit");
+        }
+        if self.truncated_long_lines > 0 {
+            reasons.push("long_line_limit");
+        }
+        reasons
+    }
+}
+
+fn read_budget(ctx: &ToolContext) -> ToolOutputBudget {
+    ctx.get_extension::<ToolOutputBudget>()
+        .map_or_else(ToolOutputBudget::default, |budget| *budget)
+}
+
+/// Renders `text` in `cat -n` format. `offset` is the 1-based starting line
+/// (defaults to 1). `limit` caps lines but cannot bypass the character budget.
+fn render_with_line_numbers(
+    text: &str,
+    offset: Option<u64>,
+    limit: Option<u64>,
+    budget: ToolOutputBudget,
+) -> RenderedRead {
     let offset_usize = match offset {
         None | Some(0) => 1usize,
         Some(n) => usize::try_from(n).unwrap_or(usize::MAX),
     };
-    let limit_usize = limit.map(|n| usize::try_from(n).unwrap_or(usize::MAX));
+    let offset_u64 = u64::try_from(offset_usize).unwrap_or(u64::MAX);
+    let effective_line_limit = limit
+        .unwrap_or(budget.read_default_line_limit)
+        .min(budget.read_hard_line_limit);
+    let content_char_limit = budget
+        .read_output_char_limit
+        .min(budget.read_hard_output_char_limit);
+    let total_lines = u64::try_from(text.split_inclusive('\n').count()).unwrap_or(u64::MAX);
 
     let mut out = String::new();
-    let mut wrote_any = false;
-
-    let lines = text.split_inclusive('\n');
     let skip = offset_usize.saturating_sub(1);
+    let mut content_chars = 0usize;
+    let mut returned_lines = 0u64;
+    let mut next_offset = None;
+    let mut truncated_by_line_limit = false;
+    let mut truncated_by_char_limit = false;
+    let mut truncated_long_lines = 0u64;
+    let mut max_line_chars = 0usize;
 
-    let iter: Box<dyn Iterator<Item = (usize, &str)>> = match limit_usize {
-        Some(limit) => Box::new(lines.enumerate().skip(skip).take(limit)),
-        None => Box::new(lines.enumerate().skip(skip)),
-    };
-
-    for (idx, line) in iter {
+    for (idx, line) in text.split_inclusive('\n').enumerate().skip(skip) {
+        if returned_lines >= effective_line_limit {
+            truncated_by_line_limit = true;
+            next_offset = Some(u64::try_from(idx + 1).unwrap_or(u64::MAX));
+            break;
+        }
         let lineno = idx + 1;
         let trimmed = line.strip_suffix('\n').unwrap_or(line);
-        let _ = writeln!(out, "{lineno}\t{trimmed}");
-        wrote_any = true;
+        let original_line_chars = trimmed.chars().count();
+        max_line_chars = max_line_chars.max(original_line_chars);
+        let (line_text, line_truncated) = cap_line(trimmed, budget.read_line_char_limit);
+        if line_truncated {
+            truncated_long_lines = truncated_long_lines.saturating_add(1);
+        }
+        let suffix = if line_truncated {
+            format!(" … [line truncated; original_chars={original_line_chars}]")
+        } else {
+            String::new()
+        };
+        let candidate = format!("{lineno}\t{line_text}{suffix}\n");
+        let candidate_chars = candidate.chars().count();
+        if content_chars.saturating_add(candidate_chars) > content_char_limit {
+            truncated_by_char_limit = true;
+            next_offset = Some(u64::try_from(idx + 1).unwrap_or(u64::MAX));
+            break;
+        }
+
+        out.push_str(&candidate);
+        content_chars = content_chars.saturating_add(candidate_chars);
+        returned_lines = returned_lines.saturating_add(1);
     }
 
-    if !wrote_any {
-        // Either an empty file or an out-of-range offset; return an
-        // empty string rather than an error so the caller still gets a
-        // well-formed text result.
-        return String::new();
+    RenderedRead {
+        content: out,
+        offset: offset_u64,
+        effective_line_limit,
+        content_char_limit,
+        returned_lines,
+        total_lines,
+        content_chars,
+        max_line_chars,
+        next_offset,
+        truncated_by_line_limit,
+        truncated_by_char_limit,
+        truncated_long_lines,
     }
+}
 
-    out
+fn cap_line(line: &str, limit: usize) -> (String, bool) {
+    let original_chars = line.chars().count();
+    if original_chars <= limit {
+        return (line.to_owned(), false);
+    }
+    (line.chars().take(limit).collect(), true)
+}
+
+fn read_warnings(
+    path: &Path,
+    text: &str,
+    rendered: &RenderedRead,
+    budget: ToolOutputBudget,
+) -> Vec<serde_json::Value> {
+    let mut warnings = Vec::new();
+    if rendered.max_line_chars > budget.read_line_char_limit {
+        warnings.push(serde_json::json!({
+            "kind": "long_line",
+            "message": "At least one physical line exceeds the per-line read budget; long lines are sampled rather than returned in full.",
+            "max_line_chars": rendered.max_line_chars,
+            "line_char_limit": budget.read_line_char_limit,
+        }));
+    }
+    warnings.extend(build_artifact_warnings(path, text));
+    warnings
+}
+
+fn build_artifact_warnings(path: &Path, text: &str) -> Vec<serde_json::Value> {
+    let mut warnings = Vec::new();
+    let path_text = normalized_path_text(path);
+    if path_text.contains("/target/") {
+        warnings.push(noise_warning(
+            "rust_build_artifact_path",
+            "The file path is inside target/, which is usually generated Rust build output.",
+        ));
+    }
+    if path_text.contains("/node_modules/") {
+        warnings.push(noise_warning(
+            "dependency_tree_path",
+            "The file path is inside node_modules/, which is usually dependency output.",
+        ));
+    }
+    let fingerprint_hits = text.matches("target/debug/.fingerprint").count()
+        + text.matches("target/release/.fingerprint").count()
+        + text.matches(".fingerprint/").count();
+    if fingerprint_hits >= 5 {
+        warnings.push(serde_json::json!({
+            "kind": "rust_fingerprint_noise",
+            "message": "Content is dominated by Rust Cargo fingerprint/build-artifact paths; prefer a narrower grep/search or exclude target/.",
+            "matches": fingerprint_hits,
+        }));
+    }
+    warnings
+}
+
+fn normalized_path_text(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn noise_warning(kind: &str, message: &str) -> serde_json::Value {
+    serde_json::json!({
+        "kind": kind,
+        "message": message,
+    })
 }
 
 #[cfg(test)]
@@ -284,6 +450,7 @@ fn render_with_line_numbers(text: &str, offset: Option<u64>, limit: Option<u64>)
 )]
 mod tests {
     use std::fmt::Write as _;
+    use std::sync::Arc;
     use std::time::Duration;
 
     use serde_json::json;
@@ -404,6 +571,90 @@ mod tests {
         }
         assert!(!content.contains("9\tline9"));
         assert!(!content.contains("15\tline15"));
+    }
+
+    #[tokio::test]
+    async fn no_limit_defaults_to_bounded_first_window() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("many.txt");
+        let mut body = String::new();
+        for i in 1..=300 {
+            let _ = writeln!(body, "line{i}");
+        }
+        tokio::fs::write(&path, &body).await.unwrap();
+
+        let tool = ReadTool::new();
+        let envelope = envelope_for(json!({ "path": path.to_string_lossy() }));
+        let ctx = ToolContext::empty();
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+
+        let content = out.content["content"].as_str().unwrap();
+        assert!(content.contains("200\tline200\n"));
+        assert!(!content.contains("201\tline201\n"));
+        assert_eq!(out.content["truncated"], true);
+        assert_eq!(out.content["next_offset"], 201);
+        assert_eq!(out.content["returned_lines"], 200);
+        assert_eq!(out.content["total_lines"], 300);
+    }
+
+    #[tokio::test]
+    async fn read_caps_long_physical_lines() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("long-line.txt");
+        tokio::fs::write(&path, format!("{}\nshort\n", "x".repeat(200)))
+            .await
+            .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(ToolOutputBudget {
+            read_default_line_limit: 200,
+            read_hard_line_limit: 250,
+            read_output_char_limit: 8_000,
+            read_hard_output_char_limit: 8_000,
+            read_line_char_limit: 40,
+            model_output_inline_char_limit: 64_000,
+        }));
+        let tool = ReadTool::new();
+        let envelope = envelope_for(json!({ "path": path.to_string_lossy() }));
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+
+        let content = out.content["content"].as_str().unwrap();
+        assert!(content.contains("[line truncated; original_chars=200]"));
+        assert_eq!(out.content["truncated"], true);
+        assert_eq!(out.content["truncated_long_lines"], 1);
+        let warnings = out.content["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning["kind"] == "long_line")
+        );
+    }
+
+    #[tokio::test]
+    async fn read_warns_on_cargo_fingerprint_noise() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("repo-scan.log");
+        let mut body = String::new();
+        for i in 0..10 {
+            let _ = writeln!(
+                body,
+                " D target/debug/.fingerprint/package-{i}/dep-lib-package"
+            );
+        }
+        tokio::fs::write(&path, &body).await.unwrap();
+
+        let tool = ReadTool::new();
+        let envelope = envelope_for(json!({ "path": path.to_string_lossy() }));
+        let ctx = ToolContext::empty();
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+
+        let warnings = out.content["warnings"].as_array().unwrap();
+        assert!(
+            warnings
+                .iter()
+                .any(|warning| warning["kind"] == "rust_fingerprint_noise"),
+            "expected fingerprint warning: {warnings:?}",
+        );
     }
 
     #[tokio::test]
