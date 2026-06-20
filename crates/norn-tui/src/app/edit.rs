@@ -187,7 +187,7 @@ mod tests {
         let text = "a".repeat(60);
         type_action_text(&mut state, &text, 20, 80);
         assert_eq!(state.input_editor.visual_height(20), 3);
-        assert_eq!(state.fixed_panel.total_height(), 5);
+        assert_eq!(state.fixed_panel.total_height(), 6);
         Ok(())
     }
 
@@ -196,7 +196,7 @@ mod tests {
         let mut state = fresh_state()?;
         let text = (0..50).map(|_| "x").collect::<Vec<_>>().join("\n");
         type_action_text(&mut state, &text, 80, 24);
-        assert_eq!(state.fixed_panel.total_height(), 14);
+        assert_eq!(state.fixed_panel.total_height(), 15);
         let layout = wrap::layout(
             state.input_editor.lines(),
             state.input_editor.cursor_position().0,
@@ -236,11 +236,11 @@ mod tests {
         let mut state = fresh_state()?;
         let text = "a".repeat(60);
         type_action_text(&mut state, &text, 80, 80);
-        assert_eq!(state.fixed_panel.total_height(), 3);
+        assert_eq!(state.fixed_panel.total_height(), 4);
         let input_rows = sync_input_area(&mut state.input_editor, 20, 80);
         state.fixed_panel.set_input_area(input_rows);
         assert_eq!(state.input_editor.visual_height(20), 3);
-        assert_eq!(state.fixed_panel.total_height(), 5);
+        assert_eq!(state.fixed_panel.total_height(), 6);
         Ok(())
     }
 }

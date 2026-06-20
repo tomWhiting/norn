@@ -652,7 +652,7 @@ mod tests {
         insert_paste_text(&mut state, "line1\nline2\nline3");
         let grown_rows = sync_input_area(&mut state.input_editor, cols, terminal_rows);
         state.fixed_panel.set_input_area(grown_rows);
-        assert_eq!(state.fixed_panel.total_height(), 5);
+        assert_eq!(state.fixed_panel.total_height(), 6);
 
         for _ in 0..=5 {
             state.input_editor.backspace();
@@ -662,7 +662,7 @@ mod tests {
 
         assert_eq!(state.input_editor.text(), "line1\nline2");
         assert_eq!(shrunk_rows, state.input_editor.visual_height(cols));
-        assert_eq!(state.fixed_panel.total_height(), 2 + shrunk_rows);
+        assert_eq!(state.fixed_panel.total_height(), 3 + shrunk_rows);
     }
 
     #[test]

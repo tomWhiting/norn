@@ -130,7 +130,7 @@ fn render_input_frame<W: std::io::Write>(
     writer: &mut W,
 ) -> std::io::Result<()> {
     let input_height = capped_input_height(&state.input_editor, cols, rows);
-    let input_top = rows.saturating_sub(1).saturating_sub(input_height);
+    let input_top = state.fixed_panel.input_area_top(rows);
     let viewport_top = state.input_editor.viewport_top();
     let viewport_bottom = viewport_top.saturating_add(input_height);
 
@@ -162,7 +162,7 @@ fn render_input_frame<W: std::io::Write>(
 
 fn input_cursor_position(state: &AppState, rows: u16, cols: u16) -> Option<(u16, u16)> {
     let input_height = capped_input_height(&state.input_editor, cols, rows);
-    let input_top = rows.saturating_sub(1).saturating_sub(input_height);
+    let input_top = state.fixed_panel.input_area_top(rows);
     let viewport_top = state.input_editor.viewport_top();
     let viewport_bottom = viewport_top.saturating_add(input_height);
 
@@ -244,10 +244,10 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
     let rows = guard.terminal_rows();
     let activity_snap = state.activity_log.snapshot(now);
     let proposed_activity_rows = height_from_log(&activity_snap);
-    let active_input_status = u16::from(state.in_flight_input.status_line().is_some());
     state
         .fixed_panel
-        .set_active_input_status(active_input_status);
+        .set_input_mode_label(state.in_flight_input.mode().label());
+    state.fixed_panel.set_active_input_status(0);
     // First-pass floor guard: skip the activity log when it would
     // squeeze the scroll region below the minimum conversation rows.
     // The broader row budget below can shed additional optional
@@ -301,7 +301,6 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
     let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
     let agent_top = state.fixed_panel.agent_rows_top(rows);
     let activity_top = state.fixed_panel.activity_rows_top(rows);
-    let active_input_top = state.fixed_panel.active_input_status_top(rows);
     state
         .fixed_panel
         .render(guard.terminal_mut(), &caps, rows, cols)?;
@@ -326,29 +325,7 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
             cols,
         )?;
     }
-    if state.fixed_panel.active_input_status_rows() > 0 {
-        render_active_input_status(state, active_input_top, cols, guard)?;
-    }
     guard.terminal_mut().flush()?;
-    Ok(())
-}
-
-fn render_active_input_status(
-    state: &AppState,
-    row: u16,
-    cols: u16,
-    guard: &mut TerminalGuard,
-) -> Result<(), TuiError> {
-    let Some(status) = state.in_flight_input.status_line() else {
-        return Ok(());
-    };
-    let safe = terminal_safe_input_text(&status);
-    let text = truncate_to_width(&safe, cols.saturating_sub(2));
-    let row_1b = row.saturating_add(1);
-    write!(
-        guard.terminal_mut(),
-        "\x1b[{row_1b};1H\x1b[2K\x1b[2m↳ {text}\x1b[22m",
-    )?;
     Ok(())
 }
 
@@ -584,21 +561,19 @@ mod tests {
     }
 
     #[test]
-    fn row_budget_hides_streaming_indicator_when_terminal_is_tiny()
+    fn row_budget_hides_completion_indicator_when_terminal_is_tiny()
     -> Result<(), Box<dyn std::error::Error>> {
         let mut state = fresh_state()?;
-        state.streaming_indicator = StreamingIndicator::Generating {
-            elapsed: std::time::Duration::from_secs(1),
-            est_output_tokens: 0,
-            in_flight: None,
+        state.streaming_indicator = StreamingIndicator::Complete {
+            usage_summary: "[1 in / 1 out, 1s]".to_string(),
         };
         state.sync_indicator_into_panel();
         let mut agent_rows = 0;
         let mut activity_rows = 0;
 
-        enforce_scroll_region_floor(&mut state, 6, &mut agent_rows, &mut activity_rows);
+        enforce_scroll_region_floor(&mut state, 8, &mut agent_rows, &mut activity_rows);
 
-        assert_eq!(state.fixed_panel.total_height(), 3);
+        assert_eq!(state.fixed_panel.total_height(), 4);
         Ok(())
     }
 
@@ -611,9 +586,9 @@ mod tests {
         let mut buf = Vec::new();
         render_input_frame(&state, 24, 5, &mut buf)?;
         let out = String::from_utf8(buf)?;
-        assert!(out.contains("\x1b[22;1H\x1b[2Kabcde"));
-        assert!(out.contains("\x1b[23;1H\x1b[2Kfghij"));
-        assert!(out.contains("\x1b[23;5H"));
+        assert!(out.contains("\x1b[21;1H\x1b[2Kabcde"));
+        assert!(out.contains("\x1b[22;1H\x1b[2Kfghij"));
+        assert!(out.contains("\x1b[22;5H"));
         Ok(())
     }
 
@@ -626,9 +601,9 @@ mod tests {
         let mut buf = Vec::new();
         render_input_frame(&state, 24, 10, &mut buf)?;
         let out = String::from_utf8(buf)?;
-        assert!(out.contains("\x1b[21;1H\x1b[2Kshort"));
-        assert!(out.contains("\x1b[22;1H\x1b[2Kverylongli"));
-        assert!(out.contains("\x1b[23;1H\x1b[2KneHERE"));
+        assert!(out.contains("\x1b[20;1H\x1b[2Kshort"));
+        assert!(out.contains("\x1b[21;1H\x1b[2Kverylongli"));
+        assert!(out.contains("\x1b[22;1H\x1b[2KneHERE"));
         Ok(())
     }
 

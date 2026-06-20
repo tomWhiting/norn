@@ -117,14 +117,48 @@ fn clear_row<W: io::Write>(row: u16, writer: &mut W) -> io::Result<()> {
     write!(writer, "{}{}", cursor_to(row), erase_line())
 }
 
-/// Last path segment as the agent's display name.
+/// Compact path-derived display name for an agent row.
 ///
 /// Mirrors the design's `path.rsplit('/').next().unwrap_or(path)`
-/// idiom. `rsplit` always yields at least one element, so the fallback
-/// is unreachable for any non-empty path; it preserves the original
-/// string defensively.
-fn agent_name(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
+/// idiom for ordinary names, but shortens generated fork/spawn UUID paths
+/// so the tree can stay readable in the fixed panel.
+fn agent_name(path: &str) -> String {
+    let mut segments = path.rsplit('/');
+    let last = segments.next().unwrap_or(path);
+    if let Some(kind @ ("fork" | "spawn")) = segments.next()
+        && looks_like_generated_id(last)
+    {
+        let short = last.chars().take(8).collect::<String>();
+        return format!("{kind}/{short}");
+    }
+    last.to_string()
+}
+
+fn looks_like_generated_id(value: &str) -> bool {
+    value.len() >= 8 && value.chars().all(|ch| ch.is_ascii_hexdigit() || ch == '-')
+}
+
+fn tree_prefix(depth: usize, last_at_depth: bool) -> String {
+    if depth == 0 {
+        return String::new();
+    }
+    let branch = if last_at_depth { "╰─ " } else { "├─ " };
+    format!("{}{branch}", "  ".repeat(depth.saturating_sub(1)))
+}
+
+fn is_last_at_depth(ordered: &[(CandidateEntry, usize)], index: usize) -> bool {
+    let Some((_, depth)) = ordered.get(index) else {
+        return true;
+    };
+    for (_, next_depth) in ordered.iter().skip(index.saturating_add(1)) {
+        if next_depth == depth {
+            return false;
+        }
+        if next_depth < depth {
+            return true;
+        }
+    }
+    true
 }
 
 /// Format `n` tokens in the compact form used in status lines.
@@ -172,34 +206,33 @@ fn activity_text(activity: Option<&AgentActivity>) -> String {
 
 /// Format one status line as plain text (no SGR escapes).
 ///
-/// The format is `{indent}{icon} {name}  {activity}  {tokens}  {elapsed}`
+/// The format is `{prefix}{icon} {name}  {activity}  {tokens}  {elapsed}`
 /// — note the double space between every field after the icon. Colour
 /// and dim attributes are applied around this string by
 /// [`AgentStatusPanel::render`]; tests inspecting the textual form can
 /// rely on byte-for-byte prefixes.
 ///
-/// `depth` is the row's display depth from
+/// `prefix` is derived from the row's display depth from
 /// [`tree::order_for_display`] — genealogical (`parent_id`-derived)
-/// nesting under the nearest visible ancestor, two spaces per level.
-/// It is deliberately not derived from the registry path: auto-generated
-/// paths interleave literal `spawn`/`fork` namespace segments
-/// (`/root/spawn/{id}/spawn/{id}`), so segment counting over-indents,
-/// and explicit `path` arguments need not nest under the spawner at all.
+/// nesting under the nearest visible ancestor. It is deliberately not
+/// derived from the registry path: auto-generated paths interleave literal
+/// `spawn`/`fork` namespace segments (`/root/spawn/{id}/spawn/{id}`), so
+/// segment counting over-indents, and explicit `path` arguments need not
+/// nest under the spawner at all.
 fn format_status_line(
     entry: &AgentEntry,
     activity: Option<&AgentActivity>,
     input_tokens: u64,
     output_tokens: u64,
     now: DateTime<Utc>,
-    depth: usize,
+    prefix: &str,
 ) -> String {
-    let indent = " ".repeat(2 * depth);
     let icon = icon_for(entry.status);
     let name = agent_name(&entry.path);
     let activity_str = activity_text(activity);
     let tokens = format_tokens(input_tokens.saturating_add(output_tokens));
     let elapsed = format_elapsed(entry.spawned_at, now);
-    format!("{indent}{icon} {name}  {activity_str}  {tokens}  {elapsed}")
+    format!("{prefix}{icon} {name}  {activity_str}  {tokens}  {elapsed}")
 }
 
 /// SGR foreground colour for an agent row given its current status and
@@ -368,11 +401,12 @@ impl AgentStatusPanel {
         let ordered = tree::order_for_display(view.visible.clone(), &parent_of);
 
         let mut row = top_row;
-        for (candidate, depth) in &ordered {
+        for (index, (candidate, depth)) in ordered.iter().enumerate() {
             if let Some(entry) = entries_by_id.get(&candidate.id) {
                 let activity = self.activity.get(&candidate.id);
                 let (input, output) = self.tokens.get(&candidate.id).copied().unwrap_or((0, 0));
-                let line = format_status_line(entry, activity, input, output, now_utc, *depth);
+                let prefix = tree_prefix(*depth, is_last_at_depth(&ordered, index));
+                let line = format_status_line(entry, activity, input, output, now_utc, &prefix);
                 Self::write_styled_line(row, writer, caps, entry.status, activity, &line)?;
             } else {
                 // Entry vanished between snapshot and re-read — clear
@@ -595,6 +629,10 @@ mod tests {
     #[test]
     fn agent_name_returns_last_segment() {
         assert_eq!(agent_name("/root/child"), "child");
+        assert_eq!(
+            agent_name("/root/fork/33f24e84-63c8-4a16-93e0-b83cae8ed02e"),
+            "fork/33f24e84"
+        );
         assert_eq!(agent_name("/root"), "root");
     }
 
@@ -649,7 +687,7 @@ mod tests {
     }
 
     #[test]
-    fn status_line_for_depth_one_running_agent_has_two_space_indent_and_filled_circle() {
+    fn status_line_for_child_agent_has_tree_connector_and_filled_circle() {
         let entry = AgentEntry {
             id: Uuid::new_v4(),
             path: "/root/child".to_string(),
@@ -669,10 +707,11 @@ mod tests {
                 loop_config: None,
             },
         };
-        let line = format_status_line(&entry, None, 0, 0, Utc::now(), 1);
+        let prefix = tree_prefix(1, false);
+        let line = format_status_line(&entry, None, 0, 0, Utc::now(), &prefix);
         assert!(
-            line.starts_with("  ●"),
-            "expected 2-space indent + ●, got: {line:?}"
+            line.starts_with("├─ ●"),
+            "expected tree connector + ●, got: {line:?}"
         );
     }
 
@@ -701,10 +740,11 @@ mod tests {
                 loop_config: None,
             },
         };
-        let line = format_status_line(&entry, None, 0, 0, Utc::now(), 1);
+        let prefix = tree_prefix(1, true);
+        let line = format_status_line(&entry, None, 0, 0, Utc::now(), &prefix);
         assert!(
-            line.starts_with("  ●"),
-            "depth-1 child of root indents one level regardless of its \
+            line.starts_with("╰─ ●"),
+            "depth-1 child of root renders one connector regardless of its \
              path shape, got: {line:?}"
         );
     }
@@ -849,16 +889,16 @@ mod tests {
         let out = String::from_utf8(buf).expect("utf8");
 
         let root_pos = out.find("root  ").expect("root row");
-        let mid_pos = out.find("  ● mid").expect("child row indented one level");
+        let mid_pos = out.find("╰─ ● mid").expect("child row one level down");
         let leaf_pos = out
-            .find("    ● leaf")
-            .expect("grandchild row indented two levels");
+            .find("  ╰─ ● leaf")
+            .expect("grandchild row two levels down");
         assert!(
             root_pos < mid_pos && mid_pos < leaf_pos,
             "rows must paint in preorder: {out:?}"
         );
         assert!(
-            !out.contains("      ● "),
+            !out.contains("      ╰─ ● "),
             "no row may over-indent from path-segment counting: {out:?}"
         );
     }
@@ -885,7 +925,7 @@ mod tests {
             .expect("render");
         let out = String::from_utf8(buf).expect("utf8");
         assert!(
-            out.contains("  ● leaf"),
+            out.contains("╰─ ● leaf"),
             "leaf anchors one level under the root (its visible \
              ancestor) via the tombstone's parent link: {out:?}"
         );

@@ -14,6 +14,7 @@ use termina::{OneBased, PlatformTerminal, Terminal};
 
 use super::caps::TerminalCaps;
 use crate::TuiError;
+use crate::render::fixed_panel::MIN_PANEL_HEIGHT;
 
 /// Kitty keyboard flags pushed on entry when the terminal supports the
 /// protocol. Matches what Helix and Kakoune push at the time of writing
@@ -87,8 +88,8 @@ impl TerminalGuard {
     ///
     /// Enters raw mode, registers a panic hook for cleanup, detects
     /// capabilities, and establishes the initial DECSTBM scroll region
-    /// with a minimal fixed panel (1 row separator + 1 row input + 1 row
-    /// status bar).
+    /// with a minimal fixed panel (input divider + input row + metadata
+    /// divider + help row).
     pub fn new() -> Result<Self, TuiError> {
         let mut terminal = PlatformTerminal::new()?;
         terminal.enter_raw_mode()?;
@@ -110,7 +111,7 @@ impl TerminalGuard {
         terminal.flush()?;
         let dims = terminal.get_dimensions()?;
         let terminal_rows = dims.rows;
-        let initial_panel_height: u16 = 3;
+        let initial_panel_height: u16 = MIN_PANEL_HEIGHT;
 
         let mut guard = Self {
             terminal,

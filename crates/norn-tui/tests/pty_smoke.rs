@@ -82,7 +82,7 @@ fn run_tui_sets_up_and_restores_terminal_in_pty() -> Result<(), Box<dyn std::err
     }
 
     assert_output_contains(&run.output, b"\x1b[?2004h", "bracketed paste enable")?;
-    assert_output_contains(&run.output, b"\x1b[1;21r", "initial scroll region")?;
+    assert_output_contains(&run.output, b"\x1b[1;20r", "initial scroll region")?;
     assert_output_contains(&run.output, b"\x1b[?2004l", "bracketed paste disable")?;
     assert_output_contains(&run.output, b"\x1b[r", "scroll region reset")?;
     assert_output_contains(&run.output, b"\x1b[?25h", "cursor show reset")?;
@@ -410,7 +410,7 @@ fn run_app_grows_and_shrinks_input_panel_without_artifacts()
             first_bytes: b"panel-growth-input-abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz-abcdefghijklmnopqrstuvwxyz",
             first_marker: b"panel-growth-input",
             second_bytes: b"\x15",
-            second_marker: b"\x1b[1;11r",
+            second_marker: b"\x1b[1;10r\x1b[?25l\x1b[11;1H",
         },
         size,
     )?;
@@ -419,7 +419,7 @@ fn run_app_grows_and_shrinks_input_panel_without_artifacts()
         return Err(child_failure("run_app panel-growth", &run.status, &run.output).into());
     }
 
-    assert_output_contains(&run.output, b"\x1b[1;9r", "expanded input scroll region")?;
+    assert_output_contains(&run.output, b"\x1b[1;8r", "expanded input scroll region")?;
 
     let screen = TerminalScreen::from_output(&run.output, size.rows, size.cols);
     assert!(

@@ -1,12 +1,13 @@
 //! Fixed-panel compositor.
 //!
 //! The fixed panel occupies the bottom rows of the terminal — below the
-//! DECSTBM scroll region — and holds, from top to bottom: agent status
-//! lines, the streaming indicator, the autocomplete popup, the input
-//! area, and the status bar. [`FixedPanel`] tracks which components are
-//! active and their row counts, computes the total panel height, and
-//! performs a cursor-addressed redraw confined strictly to the panel
-//! rows (CO8: the fixed panel is the only cursor-addressed rendering).
+//! DECSTBM scroll region — and holds, from top to bottom: the input-mode
+//! divider, autocomplete/input rows, the session metadata divider, live
+//! status rows, agent/activity rows, and the key-hint row. [`FixedPanel`]
+//! tracks which components are active and their row counts, computes the
+//! total panel height, and performs a cursor-addressed redraw confined
+//! strictly to the panel rows (CO8: the fixed panel is the only
+//! cursor-addressed rendering).
 //!
 //! The compositor does not own the terminal guard. NT-011 reads
 //! [`FixedPanel::height_dirty`] and [`FixedPanel::total_height`] to
@@ -25,11 +26,18 @@ use super::style::{colour_for, newline_key_hint, sync_render};
 use super::text::{format_count, truncate_with_ellipsis};
 use crate::terminal::caps::TerminalCaps;
 
-/// Rows occupied by the always-present status bar.
-const STATUS_BAR_ROWS: u16 = 1;
+/// Rows occupied by the always-present key-hint row.
+const HELP_BAR_ROWS: u16 = 1;
 
-/// Rows occupied by the always-present scroll-region/panel separator.
+/// Rows occupied by the always-present input-mode divider.
 pub(crate) const SEPARATOR_ROWS: u16 = 1;
+
+/// Rows occupied by the always-present session metadata divider.
+const METADATA_SEPARATOR_ROWS: u16 = 1;
+
+/// Minimal fixed-panel height used before optional surfaces are active.
+pub(crate) const MIN_PANEL_HEIGHT: u16 =
+    SEPARATOR_ROWS + 1 + METADATA_SEPARATOR_ROWS + HELP_BAR_ROWS;
 
 /// Box-drawings light horizontal (U+2500) — the separator glyph.
 const SEPARATOR_CHAR: char = '\u{2500}';
@@ -55,16 +63,45 @@ fn clear_row<W: io::Write>(row: u16, writer: &mut W) -> io::Result<()> {
     write!(writer, "{}{}", cursor_to(row), erase_line())
 }
 
-/// Render the panel separator at zero-based `row` spanning `width` columns.
-///
-/// Writes a dim, full-width horizontal line using [`SEPARATOR_CHAR`] —
-/// the visual boundary between the scroll region above and the rest of
-/// the fixed panel below.
-fn render_separator<W: io::Write>(row: u16, width: u16, writer: &mut W) -> io::Result<()> {
-    let separator: String = std::iter::repeat_n(SEPARATOR_CHAR, usize::from(width)).collect();
+/// Build a horizontal rule of exactly `width` display columns.
+fn rule(width: usize) -> String {
+    std::iter::repeat_n(SEPARATOR_CHAR, width).collect()
+}
+
+fn fit_line_to_width(line: &str, width: u16) -> String {
+    let truncated = truncate_with_ellipsis(line, width);
+    let width = usize::from(width);
+    let padding = width.saturating_sub(truncated.width());
+    format!("{truncated}{}", rule(padding))
+}
+
+fn left_chip_separator(label: &str, width: u16) -> String {
+    let prefix = rule(3);
+    let chip = format!("🮠 {label} 🮣");
+    let used = prefix.width().saturating_add(chip.width());
+    let target = usize::from(width);
+    if used >= target {
+        return fit_line_to_width(&format!("{prefix}{chip}"), width);
+    }
+    format!("{prefix}{chip}{}", rule(target - used))
+}
+
+fn right_chip_separator(label: &str, width: u16) -> String {
+    let suffix = rule(3);
+    let chip = format!("🮠 {label} 🮣");
+    let used = chip.width().saturating_add(suffix.width());
+    let target = usize::from(width);
+    if used >= target {
+        return truncate_with_ellipsis(&format!("{chip}{suffix}"), width);
+    }
+    format!("{}{chip}{suffix}", rule(target - used))
+}
+
+/// Render a dim separator line at zero-based `row`.
+fn render_separator_line<W: io::Write>(row: u16, line: &str, writer: &mut W) -> io::Result<()> {
     write!(
         writer,
-        "{}{}{}{separator}{}",
+        "{}{}{}{line}{}",
         cursor_to(row),
         erase_line(),
         Csi::Sgr(Sgr::Intensity(Intensity::Dim)),
@@ -72,37 +109,7 @@ fn render_separator<W: io::Write>(row: u16, width: u16, writer: &mut W) -> io::R
     )
 }
 
-/// Compose a single line with `left` left-aligned and `right`
-/// right-aligned, padded with spaces to `width` display columns.
-///
-/// When the two segments cannot both fit within `width`, the left side
-/// is truncated first because the right side contains live usage and
-/// key hints. If the right side itself exceeds the available width, it
-/// is truncated explicitly. The returned line never exceeds `width`
-/// display columns.
-fn compose_left_right(left: &str, right: &str, width: u16) -> String {
-    let width = usize::from(width);
-    if width == 0 {
-        return String::new();
-    }
-    let left_width = left.width();
-    let right_width = right.width();
-    if left_width + right_width + 1 >= width {
-        if right_width >= width {
-            return truncate_with_ellipsis(right, u16::try_from(width).unwrap_or(u16::MAX));
-        }
-        let left_budget = width.saturating_sub(right_width).saturating_sub(1);
-        let left = truncate_with_ellipsis(left, u16::try_from(left_budget).unwrap_or(u16::MAX));
-        if left.is_empty() {
-            return right.to_owned();
-        }
-        return format!("{left} {right}");
-    }
-    let gap = width - left_width - right_width;
-    format!("{left}{}{right}", " ".repeat(gap))
-}
-
-/// The single-row status bar pinned to the bottom of the fixed panel.
+/// Session metadata and key hints shown in the fixed panel.
 #[derive(Clone, Debug, Default)]
 pub struct StatusBar {
     /// Name of the active model.
@@ -122,12 +129,39 @@ pub struct StatusBar {
 }
 
 impl StatusBar {
-    /// Render the status bar as a single styled line at zero-based `row`.
-    ///
-    /// Model and session names are left-aligned; token usage and key
-    /// hints — including the capability-appropriate newline key — are
-    /// right-aligned. The line is dimmed so it recedes behind the
-    /// conversation content.
+    fn metadata_label(&self) -> String {
+        let mut parts = Vec::new();
+        if !self.model_name.is_empty() {
+            parts.push(self.model_name.clone());
+        }
+        if let Some(tier) = self.service_tier.as_deref() {
+            parts.push(format!("tier:{tier}"));
+        }
+        if let Some(effort) = self.reasoning_effort.as_deref() {
+            parts.push(format!("effort:{effort}"));
+        }
+        if !self.session_name.is_empty() {
+            parts.push(self.session_name.clone());
+        }
+        if parts.is_empty() {
+            "norn".to_string()
+        } else {
+            parts.join(" • ")
+        }
+    }
+
+    /// Render the right-aligned metadata divider below the input area.
+    pub fn render_metadata_divider<W: io::Write>(
+        &self,
+        row: u16,
+        width: u16,
+        writer: &mut W,
+    ) -> io::Result<()> {
+        let line = right_chip_separator(&self.metadata_label(), width);
+        render_separator_line(row, &line, writer)
+    }
+
+    /// Render the bottom key-hint row.
     pub fn render<W: io::Write>(
         &self,
         row: u16,
@@ -135,26 +169,28 @@ impl StatusBar {
         writer: &mut W,
         caps: &TerminalCaps,
     ) -> io::Result<()> {
-        let mut left_parts = vec![self.model_name.as_str(), self.session_name.as_str()];
-        let service_tier;
-        if let Some(tier) = self.service_tier.as_deref() {
-            service_tier = format!("tier:{tier}");
-            left_parts.push(service_tier.as_str());
-        }
-        let reasoning_effort;
-        if let Some(effort) = self.reasoning_effort.as_deref() {
-            reasoning_effort = format!("effort:{effort}");
-            left_parts.push(reasoning_effort.as_str());
-        }
-        let left = left_parts.join(" │ ");
-        let right = format!(
-            "{}↑ {}↓ │ {} ^O verbose ^E thinking {}",
-            format_count(self.input_tokens),
-            format_count(self.output_tokens),
+        self.render_help(row, width, writer, caps, "steer")
+    }
+
+    fn render_help<W: io::Write>(
+        &self,
+        row: u16,
+        width: u16,
+        writer: &mut W,
+        caps: &TerminalCaps,
+        input_mode: &str,
+    ) -> io::Result<()> {
+        let toggle_target = match input_mode {
+            "steer" => "queue",
+            "queue" => "steer",
+            _ => "mode",
+        };
+        let line = format!(
+            "{}  ^O verbose  ^E thinking  ^T {toggle_target}  {}",
             self.key_hints,
             newline_key_hint(caps),
         );
-        let line = compose_left_right(&left, &right, width);
+        let line = truncate_with_ellipsis(line.trim(), width);
         write!(
             writer,
             "{}{}{}{line}{}",
@@ -216,12 +252,14 @@ pub enum StreamingIndicator {
 impl StreamingIndicator {
     /// Rows this indicator contributes to the fixed panel height.
     ///
-    /// [`StreamingIndicator::Idle`] contributes zero rows; the other
-    /// states contribute one.
+    /// Live generation is shown in the input-mode divider, so
+    /// [`StreamingIndicator::Generating`] contributes zero body rows.
+    /// [`StreamingIndicator::Complete`] contributes one short-lived body
+    /// row for the final usage summary.
     pub const fn height(&self) -> u16 {
         match self {
-            Self::Idle => 0,
-            Self::Generating { .. } | Self::Complete { .. } => 1,
+            Self::Idle | Self::Generating { .. } => 0,
+            Self::Complete { .. } => 1,
         }
     }
 
@@ -352,6 +390,22 @@ fn format_generating_body(
     format!("{head}: '{trimmed}'{tail}")
 }
 
+fn live_output_tokens(indicator: &StreamingIndicator, status_bar: &StatusBar) -> u64 {
+    match indicator {
+        StreamingIndicator::Generating {
+            est_output_tokens, ..
+        } => *est_output_tokens,
+        StreamingIndicator::Idle | StreamingIndicator::Complete { .. } => status_bar.output_tokens,
+    }
+}
+
+fn elapsed_seconds(indicator: &StreamingIndicator) -> Option<u64> {
+    match indicator {
+        StreamingIndicator::Generating { elapsed, .. } => Some(elapsed.as_secs()),
+        StreamingIndicator::Idle | StreamingIndicator::Complete { .. } => None,
+    }
+}
+
 /// Compositor for the bottom fixed panel.
 ///
 /// Tracks the active components and their row counts. NT-002 builds the
@@ -377,6 +431,8 @@ pub struct FixedPanel {
     autocomplete_popup: u16,
     /// Number of input area rows (NT-004 wires their contents); minimum 1.
     input_area: u16,
+    /// Current input mode label shown in the top divider.
+    input_mode_label: String,
     /// The status bar component.
     status_bar: StatusBar,
     /// Panel height at the last render — used for the dirty check.
@@ -396,6 +452,7 @@ impl FixedPanel {
             active_input_status: 0,
             autocomplete_popup: 0,
             input_area: 1,
+            input_mode_label: "steer".to_string(),
             status_bar,
             last_height: 0,
         };
@@ -405,19 +462,19 @@ impl FixedPanel {
 
     /// Total panel height — the sum of every active component's rows.
     ///
-    /// The separator row at the top of the panel and the status bar row
-    /// at the bottom are always present; the agent status lines, the
-    /// activity log, the streaming indicator, and the autocomplete popup
-    /// contribute zero rows when inactive.
+    /// The input divider, metadata divider, input area, and help row are
+    /// always present; the agent status lines, activity log, completion
+    /// row, and autocomplete popup contribute zero rows when inactive.
     pub fn total_height(&self) -> u16 {
         SEPARATOR_ROWS
-            .saturating_add(self.agent_lines)
-            .saturating_add(self.activity_lines)
-            .saturating_add(self.streaming_indicator.height())
-            .saturating_add(self.active_input_status)
             .saturating_add(self.autocomplete_popup)
             .saturating_add(self.input_area.max(1))
-            .saturating_add(STATUS_BAR_ROWS)
+            .saturating_add(METADATA_SEPARATOR_ROWS)
+            .saturating_add(self.streaming_indicator.height())
+            .saturating_add(self.agent_lines)
+            .saturating_add(self.activity_lines)
+            .saturating_add(self.active_input_status)
+            .saturating_add(HELP_BAR_ROWS)
     }
 
     /// Whether the panel height has changed since the last [`render`].
@@ -433,17 +490,15 @@ impl FixedPanel {
     }
 
     /// Zero-based row of the first agent status line.
-    ///
-    /// The agent rows sit between the separator (always row 0 of the
-    /// panel) and the streaming indicator, popup, input, and status bar.
-    /// Callers — the event loop in [`crate::app::event_loop`] — use this
-    /// to position [`crate::agents::status_line::AgentStatusPanel::render`]
-    /// directly after the fixed-panel frame is drawn.
     #[must_use]
     pub fn agent_rows_top(&self, terminal_rows: u16) -> u16 {
         terminal_rows
             .saturating_sub(self.total_height())
             .saturating_add(SEPARATOR_ROWS)
+            .saturating_add(self.autocomplete_popup)
+            .saturating_add(self.input_area.max(1))
+            .saturating_add(METADATA_SEPARATOR_ROWS)
+            .saturating_add(self.streaming_indicator.height())
     }
 
     /// Set the number of agent status line rows.
@@ -490,6 +545,11 @@ impl FixedPanel {
         self.active_input_status = rows;
     }
 
+    /// Set the input mode label shown in the top divider.
+    pub fn set_input_mode_label(&mut self, label: impl Into<String>) {
+        self.input_mode_label = label.into();
+    }
+
     /// Current active-input status rows.
     #[must_use]
     pub const fn active_input_status_rows(&self) -> u16 {
@@ -501,7 +561,6 @@ impl FixedPanel {
     pub fn active_input_status_top(&self, terminal_rows: u16) -> u16 {
         self.activity_rows_top(terminal_rows)
             .saturating_add(self.activity_lines)
-            .saturating_add(self.streaming_indicator.height())
     }
 
     /// Current number of autocomplete popup rows.
@@ -519,11 +578,16 @@ impl FixedPanel {
     /// the fixed panel has cleared its placeholder rows.
     #[must_use]
     pub fn autocomplete_popup_top(&self, terminal_rows: u16) -> u16 {
-        let input = self.input_area.max(1);
         terminal_rows
-            .saturating_sub(STATUS_BAR_ROWS)
-            .saturating_sub(input)
-            .saturating_sub(self.autocomplete_popup)
+            .saturating_sub(self.total_height())
+            .saturating_add(SEPARATOR_ROWS)
+    }
+
+    /// Zero-based row of the first input editor line.
+    #[must_use]
+    pub fn input_area_top(&self, terminal_rows: u16) -> u16 {
+        self.autocomplete_popup_top(terminal_rows)
+            .saturating_add(self.autocomplete_popup)
     }
 
     /// Set the number of input area rows. Values below one are clamped
@@ -574,12 +638,41 @@ impl FixedPanel {
         let input_area = self.input_area.max(1);
         let indicator = &self.streaming_indicator;
         let status_bar = &self.status_bar;
+        let input_mode = self.input_mode_label.as_str();
 
         sync_render(caps, writer, |w| {
             let mut row = top;
-            // Separator — full-width dim horizontal line, always present.
-            render_separator(row, terminal_cols, w)?;
+            let live_output = live_output_tokens(indicator, status_bar);
+            let mut top_parts = vec![
+                input_mode.to_string(),
+                format!(
+                    "{}↑ {}↓",
+                    format_count(status_bar.input_tokens),
+                    format_count(live_output)
+                ),
+            ];
+            if let Some(secs) = elapsed_seconds(indicator) {
+                top_parts.push(format!("{secs}s"));
+            }
+            let input_divider = left_chip_separator(&top_parts.join(" • "), terminal_cols);
+            render_separator_line(row, &input_divider, w)?;
             row = row.saturating_add(1);
+            // Autocomplete popup — cleared placeholders (NT-010 wires data).
+            for _ in 0..popup {
+                clear_row(row, w)?;
+                row = row.saturating_add(1);
+            }
+            // Input area — cleared placeholders (NT-004 wires data).
+            for _ in 0..input_area {
+                clear_row(row, w)?;
+                row = row.saturating_add(1);
+            }
+            status_bar.render_metadata_divider(row, terminal_cols, w)?;
+            row = row.saturating_add(1);
+            if indicator.height() == 1 {
+                indicator.render(row, w, caps, terminal_cols)?;
+                row = row.saturating_add(1);
+            }
             // Agent status lines — cleared placeholders (NT-006 wires data).
             for _ in 0..agent_lines {
                 clear_row(row, w)?;
@@ -592,28 +685,13 @@ impl FixedPanel {
                 clear_row(row, w)?;
                 row = row.saturating_add(1);
             }
-            // Streaming indicator — renders its own content.
-            if indicator.height() == 1 {
-                indicator.render(row, w, caps, terminal_cols)?;
-                row = row.saturating_add(1);
-            }
             // Active-input status — cleared placeholder; app/render wires content.
             for _ in 0..active_input_status {
                 clear_row(row, w)?;
                 row = row.saturating_add(1);
             }
-            // Autocomplete popup — cleared placeholders (NT-010 wires data).
-            for _ in 0..popup {
-                clear_row(row, w)?;
-                row = row.saturating_add(1);
-            }
-            // Input area — cleared placeholders (NT-004 wires data).
-            for _ in 0..input_area {
-                clear_row(row, w)?;
-                row = row.saturating_add(1);
-            }
-            // Status bar — bottom row, renders its own content.
-            status_bar.render(row, terminal_cols, w, caps)
+            // Help row — bottom row, renders its own content.
+            status_bar.render_help(row, terminal_cols, w, caps, input_mode)
         })?;
 
         self.last_height = total;
@@ -627,24 +705,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn compose_left_right_truncates_left_to_width() {
-        let out = compose_left_right("abcdef", "XYZ", 6);
-        assert_eq!(out, "a… XYZ");
-        assert!(out.width() <= 6);
-    }
-
-    #[test]
-    fn compose_left_right_truncates_right_when_it_cannot_fit() {
-        let out = compose_left_right("abcdef", "XYZXYZ", 5);
-        assert_eq!(out, "XYZX…");
-        assert!(out.width() <= 5);
-    }
-
-    #[test]
-    fn total_height_default_is_separator_plus_input_plus_status_bar() {
+    fn total_height_default_is_input_divider_input_metadata_and_help() {
         let panel = FixedPanel::new(StatusBar::default());
-        // 1 separator + 1 input + 1 status bar.
-        assert_eq!(panel.total_height(), 3);
+        // 1 input divider + 1 input + 1 metadata divider + 1 help row.
+        assert_eq!(panel.total_height(), 4);
     }
 
     #[test]
@@ -658,41 +722,42 @@ mod tests {
             est_output_tokens: 0,
             in_flight: None,
         });
-        // 1 separator + 3 agent + 1 indicator + 5 popup + 2 input + 1 status bar.
+        // 1 input divider + 5 popup + 2 input + 1 metadata divider
+        // + 3 agent + 1 help row. Generating lives in the input divider.
         assert_eq!(panel.total_height(), 13);
     }
 
     #[test]
     fn agent_rows_top_returns_first_row_after_separator() {
         let mut panel = FixedPanel::new(StatusBar::default());
-        // Default panel: separator + input + status bar = 3 rows.
-        // With 24 terminal rows, panel top is row 21 (zero-based),
-        // so agent rows start at row 22.
-        assert_eq!(panel.agent_rows_top(24), 22);
+        // Default panel: input divider + input + metadata + help = 4 rows.
+        // With 24 terminal rows, panel top is row 20 (zero-based), so
+        // an agent slot would start after the metadata divider at row 23.
+        assert_eq!(panel.agent_rows_top(24), 23);
 
-        // Adding agent rows grows total_height but the agent slot still
-        // sits immediately after the separator — so the top row moves up.
+        // Adding agent rows grows total_height; the agent slot remains below
+        // the input field and metadata divider.
         panel.set_agent_lines(3);
-        // total_height = 1 sep + 3 agent + 1 input + 1 status = 6.
-        // panel top = 24 - 6 = 18, agent_top = 18 + 1 = 19.
-        assert_eq!(panel.agent_rows_top(24), 19);
+        // total_height = 1 input divider + 1 input + 1 metadata + 3 agent
+        // + 1 help = 7. panel top = 17, agent_top = 20.
+        assert_eq!(panel.agent_rows_top(24), 20);
     }
 
     #[test]
     fn activity_rows_top_sits_immediately_after_agent_lines() {
         let mut panel = FixedPanel::new(StatusBar::default());
-        // No agent panel — activity log sits directly after separator.
-        // Default panel + 2 activity rows: panel top = 24 - 5 = 19,
-        // agent_top = 19 + 1 = 20, activity_top = 20 + 0 = 20.
+        // No agent panel — activity log sits in the activity area below
+        // input + metadata. Default panel + 2 activity rows: panel top =
+        // 18, agent_top = 21, activity_top = 21.
         panel.set_activity_lines(2);
-        assert_eq!(panel.activity_rows_top(24), 20);
+        assert_eq!(panel.activity_rows_top(24), 21);
 
         // Agent panel with 3 rows (visible+overflow already folded in
         // by height_from_view), activity log with 2 rows.
-        // total = 1 sep + 3 agent + 2 activity + 1 input + 1 status = 8.
-        // panel top = 24 - 8 = 16, agent_top = 17, activity_top = 20.
+        // total = 1 input divider + 1 input + 1 metadata + 3 agent
+        // + 2 activity + 1 help = 9. panel top = 15, activity_top = 21.
         panel.set_agent_lines(3);
-        assert_eq!(panel.activity_rows_top(24), 20);
+        assert_eq!(panel.activity_rows_top(24), 21);
     }
 
     #[test]
@@ -700,8 +765,9 @@ mod tests {
         let mut panel = FixedPanel::new(StatusBar::default());
         panel.set_agent_lines(2);
         panel.set_activity_lines(3);
-        // 1 sep + 2 agent + 3 activity + 1 input + 1 status = 8.
-        assert_eq!(panel.total_height(), 8);
+        // 1 input divider + 1 input + 1 metadata + 2 agent + 3 activity
+        // + 1 help = 9.
+        assert_eq!(panel.total_height(), 9);
     }
 
     #[test]
@@ -731,21 +797,22 @@ mod tests {
         let mut panel = FixedPanel::new(StatusBar::default());
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        // 24 rows, panel height 3 → panel occupies zero-based rows 21-23,
-        // i.e. one-based rows 22-24 (separator, input, status bar).
+        // 24 rows, panel height 4 → panel occupies zero-based rows 20-23,
+        // i.e. one-based rows 21-24.
         panel.render(&mut buf, &caps, 24, 80).unwrap();
         let out = String::from_utf8(buf).unwrap();
         assert!(
-            out.contains("\x1b[22;1H"),
+            out.contains("\x1b[21;1H"),
             "separator row must be addressed"
         );
-        assert!(out.contains("\x1b[23;1H"), "input row must be addressed");
+        assert!(out.contains("\x1b[22;1H"), "input row must be addressed");
         assert!(
-            out.contains("\x1b[24;1H"),
-            "status bar row must be addressed"
+            out.contains("\x1b[23;1H"),
+            "metadata divider row must be addressed"
         );
-        // No cursor position may target a scroll region row (1..=21).
-        for one_based in 1..=21u16 {
+        assert!(out.contains("\x1b[24;1H"), "help row must be addressed");
+        // No cursor position may target a scroll region row (1..=20).
+        for one_based in 1..=20u16 {
             let escape = format!("\x1b[{one_based};1H");
             assert!(
                 !out.contains(&escape),
@@ -761,10 +828,10 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         panel.render(&mut buf, &caps, 24, 80).unwrap();
         let out = String::from_utf8(buf).unwrap();
-        // Separator sits at one-based row 22 with 24 terminal rows and a
-        // 3-row default panel.
+        // Separator sits at one-based row 21 with 24 terminal rows and a
+        // 4-row default panel.
         assert!(
-            out.contains("\x1b[22;1H"),
+            out.contains("\x1b[21;1H"),
             "separator row must be addressed: {out:?}"
         );
         assert!(
@@ -778,21 +845,43 @@ mod tests {
     }
 
     #[test]
-    fn separator_spans_full_terminal_width() {
+    fn input_divider_shows_mode_and_token_chip() {
         let mut panel = FixedPanel::new(StatusBar::default());
+        panel.set_input_mode_label("queue");
+        panel.status_bar_mut().input_tokens = 12;
+        panel.status_bar_mut().output_tokens = 34;
         let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
         panel.render(&mut buf, &caps, 24, 40).unwrap();
         let out = String::from_utf8(buf).unwrap();
-        let separator_line: String = std::iter::repeat_n('\u{2500}', 40).collect();
         assert!(
-            out.contains(&separator_line),
-            "separator must be repeated terminal_cols times: {out:?}"
+            out.contains("🮠 queue • 12↑ 34↓ 🮣"),
+            "top chip must show mode and token counters: {out:?}"
         );
     }
 
     #[test]
-    fn status_bar_render_shows_model_and_token_counts() {
+    fn metadata_divider_shows_model_and_session() {
+        let bar = StatusBar {
+            model_name: "claude-opus".to_string(),
+            session_name: "demo".to_string(),
+            input_tokens: 12_345,
+            output_tokens: 678,
+            key_hints: "^C exit".to_string(),
+            service_tier: None,
+            reasoning_effort: None,
+        };
+        let mut buf: Vec<u8> = Vec::new();
+        bar.render_metadata_divider(0, 80, &mut buf).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("claude-opus"));
+        assert!(out.contains("demo"));
+        assert!(out.contains("🮠"), "metadata chip left cap: {out:?}");
+        assert!(out.contains("🮣"), "metadata chip right cap: {out:?}");
+    }
+
+    #[test]
+    fn status_bar_render_shows_key_hints() {
         let bar = StatusBar {
             model_name: "claude-opus".to_string(),
             session_name: "demo".to_string(),
@@ -806,15 +895,10 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         bar.render(0, 80, &mut buf, &caps).unwrap();
         let out = String::from_utf8(buf).unwrap();
-        assert!(out.contains("claude-opus"));
-        assert!(out.contains("12,345"));
-        assert!(out.contains("678"));
         assert!(out.contains("Alt+Enter"), "newline key hint must appear");
-        assert!(out.contains("│"), "section separator must appear");
-        assert!(out.contains("12,345↑"), "input tokens with arrow: {out:?}");
-        assert!(out.contains("678↓"), "output tokens with arrow: {out:?}");
         assert!(out.contains("^O verbose"), "verbosity hint: {out:?}");
         assert!(out.contains("^E thinking"), "thinking hint: {out:?}");
+        assert!(out.contains("^T queue"), "mode-toggle hint: {out:?}");
     }
 
     #[test]
@@ -828,9 +912,8 @@ mod tests {
             service_tier: Some("fast".to_string()),
             reasoning_effort: Some("high".to_string()),
         };
-        let caps = TerminalCaps::baseline();
         let mut buf: Vec<u8> = Vec::new();
-        bar.render(0, 120, &mut buf, &caps).unwrap();
+        bar.render_metadata_divider(0, 120, &mut buf).unwrap();
         let out = String::from_utf8(buf).unwrap();
         assert!(out.contains("tier:fast"), "service tier badge: {out:?}");
         assert!(out.contains("effort:high"), "effort badge: {out:?}");
@@ -846,7 +929,7 @@ mod tests {
                 in_flight: None,
             }
             .height(),
-            1
+            0
         );
         assert_eq!(
             StreamingIndicator::Complete {
