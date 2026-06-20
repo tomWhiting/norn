@@ -382,6 +382,7 @@ fn reset_turn_state(state: &mut AppState) {
     state.turn_start = None;
     state.complete_at = None;
     state.streaming_indicator = StreamingIndicator::Idle;
+    state.reset_live_usage();
 }
 
 fn handle_mid_turn_event(
@@ -449,7 +450,9 @@ fn agent_event_needs_panel_redraw(state: &AppState, agent_ev: &AgentEvent) -> bo
             root_provider_event_needs_panel_redraw(event)
         }
         AgentEventKind::Provider(event) => child_provider_event_needs_panel_redraw(event),
-        AgentEventKind::Subagent(_) | AgentEventKind::Message(_) => true,
+        AgentEventKind::Subagent(_)
+        | AgentEventKind::Message(_)
+        | AgentEventKind::UsageEstimate(_) => true,
     }
 }
 

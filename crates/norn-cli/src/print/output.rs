@@ -305,23 +305,36 @@ pub fn spawn_stream_renderer(
 /// `partial` delta filter. Returns `false` when stdout is gone (broken
 /// pipe) and the renderer should stop.
 fn write_stream_event(agent_event: &norn::provider::AgentEvent, partial: bool) -> bool {
-    let line = match &agent_event.event {
-        norn::provider::AgentEventKind::Provider(event) => {
-            if !partial && is_delta_event(event) {
-                return true;
-            }
-            provider_event_to_ndjson(event)
-        }
-        norn::provider::AgentEventKind::Subagent(lifecycle) => subagent_event_to_ndjson(lifecycle),
-        norn::provider::AgentEventKind::Message(lifecycle) => message_event_to_ndjson(lifecycle),
-    };
-    let Some(line) = line else {
+    let Some(line) = agent_event_to_ndjson(agent_event, partial) else {
         return true;
     };
     let mut stdout = std::io::stdout().lock();
     stdout.write_all(line.as_bytes()).is_ok()
         && stdout.write_all(b"\n").is_ok()
         && stdout.flush().is_ok()
+}
+
+fn agent_event_to_ndjson(
+    agent_event: &norn::provider::AgentEvent,
+    partial: bool,
+) -> Option<String> {
+    match &agent_event.event {
+        norn::provider::AgentEventKind::Provider(event) => {
+            if !partial && is_delta_event(event) {
+                return None;
+            }
+            provider_event_to_ndjson(event)
+        }
+        norn::provider::AgentEventKind::Subagent(lifecycle) => subagent_event_to_ndjson(lifecycle),
+        norn::provider::AgentEventKind::Message(lifecycle) => message_event_to_ndjson(lifecycle),
+        norn::provider::AgentEventKind::UsageEstimate(estimate) => Some(
+            json!({
+                "type": "usage_estimate",
+                "input_tokens": estimate.input_tokens,
+            })
+            .to_string(),
+        ),
+    }
 }
 
 /// Translate a typed [`norn::provider::SubagentLifecycle`] event into an
@@ -841,6 +854,23 @@ mod tests {
         assert_eq!(parsed["type"].as_str(), Some("tool_call_delta"));
         assert_eq!(parsed["item_id"].as_str(), Some("fc_1"));
         assert_eq!(parsed["name"].as_str(), Some("read"));
+    }
+
+    #[test]
+    fn usage_estimate_event_serialises_for_stream_json() {
+        let event = norn::provider::AgentEvent {
+            agent_id: uuid::Uuid::nil(),
+            agent_role: Arc::from("root"),
+            event: norn::provider::AgentEventKind::UsageEstimate(
+                norn::provider::AgentUsageEstimate {
+                    input_tokens: 12_345,
+                },
+            ),
+        };
+        let line = agent_event_to_ndjson(&event, false).unwrap();
+        let parsed: Value = serde_json::from_str(&line).unwrap();
+        assert_eq!(parsed["type"].as_str(), Some("usage_estimate"));
+        assert_eq!(parsed["input_tokens"].as_u64(), Some(12_345));
     }
 
     #[test]

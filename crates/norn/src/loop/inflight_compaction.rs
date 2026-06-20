@@ -86,6 +86,9 @@ pub(super) struct PreflightArgs<'a> {
 /// What the preflight did, reported back to the runner.
 #[derive(Debug, Default)]
 pub(super) struct PreflightOutcome {
+    /// Estimated prompt/input tokens for the provider request that will
+    /// be sent after preflight. `None` means no estimator is configured.
+    pub(super) request_input_estimate: Option<usize>,
     /// Usage of the compaction-summarization provider call, when one was
     /// issued. The runner must fold this into the step's accumulated
     /// usage exactly like any other provider call.
@@ -122,6 +125,7 @@ pub(super) async fn run_context_preflight(
     // exceeds the configured limit, emit a single-event `loop.token_warning`
     // Custom session event for observers.
     let estimated = estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools);
+    let mut request_input_estimate = estimated;
     let hooks = args.loop_context.hooks.clone();
     if let Some(limit) = args.config.context_window_limit
         && u64::try_from(estimated).unwrap_or(u64::MAX) > limit
@@ -159,7 +163,10 @@ pub(super) async fn run_context_preflight(
     })
     .await?;
     let Some(run) = run else {
-        return Ok(PreflightOutcome::default());
+        return Ok(PreflightOutcome {
+            request_input_estimate: Some(request_input_estimate),
+            summarization_usage: None,
+        });
     };
     tracing::debug!(
         freed_token_estimate = run.freed_token_estimate,
@@ -204,25 +211,32 @@ pub(super) async fn run_context_preflight(
     // next request replays the full (compacted) conversation.
     args.conversation_state.reset_thread_anchor();
 
-    let outcome = PreflightOutcome {
-        summarization_usage: run.summarization_usage,
-    };
+    let summarization_usage = run.summarization_usage;
 
     let Some(edits) = args.loop_context.context_edits.as_ref() else {
         // Unreachable by construction: `maybe_auto_compact` only fires when
         // a ContextEdits tracker is present. Guarded rather than unwrapped.
         tracing::error!("compaction fired without a ContextEdits tracker");
-        return Ok(outcome);
+        return Ok(PreflightOutcome {
+            request_input_estimate: Some(request_input_estimate),
+            summarization_usage,
+        });
     };
-    apply_compaction_in_flight(
+    if apply_compaction_in_flight(
         args.store,
         edits,
         &run.outcome,
         &args.layout,
         args.messages,
         args.conversation_state,
-    );
-    Ok(outcome)
+    ) {
+        request_input_estimate =
+            estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools);
+    }
+    Ok(PreflightOutcome {
+        request_input_estimate: Some(request_input_estimate),
+        summarization_usage,
+    })
 }
 
 /// Rewrite the live message list to reflect a just-fired compaction:

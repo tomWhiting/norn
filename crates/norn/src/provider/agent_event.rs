@@ -280,8 +280,22 @@ impl AgentMessageLifecycle {
     }
 }
 
+/// Live token estimate for the next provider request.
+///
+/// This is runtime telemetry, not provider-reported billing usage. The
+/// runner emits it after context preflight and any in-flight compaction,
+/// immediately before calling the provider, so operator surfaces can show
+/// a useful live `↑` count while the stream is still open.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentUsageEstimate {
+    /// Estimated prompt/input tokens for the provider request about to be
+    /// sent.
+    pub input_tokens: u64,
+}
+
 /// The payload of an [`AgentEvent`]: a raw provider stream event, a
-/// typed subagent lifecycle event, or a typed inter-agent message event.
+/// typed subagent lifecycle event, typed usage telemetry, or a typed
+/// inter-agent message event.
 #[derive(Clone, Debug)]
 pub enum AgentEventKind {
     /// A raw provider stream event from the tagged agent's own loop.
@@ -294,6 +308,9 @@ pub enum AgentEventKind {
     /// [`AgentMessageLifecycle::Sent`] and the *recipient's* for
     /// [`AgentMessageLifecycle::Delivered`].
     Message(AgentMessageLifecycle),
+    /// A live prompt/input estimate for the tagged agent's next provider
+    /// request.
+    UsageEstimate(AgentUsageEstimate),
 }
 
 /// An [`AgentEventKind`] tagged with the identity of the agent it
@@ -374,6 +391,15 @@ impl AgentEventSender {
             agent_id: self.agent_id,
             agent_role: Arc::clone(&self.agent_role),
             event: AgentEventKind::Message(event),
+        });
+    }
+
+    /// Tag and broadcast live request-usage telemetry.
+    pub fn send_usage_estimate(&self, estimate: AgentUsageEstimate) {
+        let _ = self.tx.send(AgentEvent {
+            agent_id: self.agent_id,
+            agent_role: Arc::clone(&self.agent_role),
+            event: AgentEventKind::UsageEstimate(estimate),
         });
     }
 
@@ -473,6 +499,25 @@ mod tests {
     }
 
     #[test]
+    fn send_usage_estimate_tags_agent_identity() {
+        let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
+        let sender = AgentEventSender::new(tx, Uuid::nil(), "root".to_string());
+        sender.send_usage_estimate(AgentUsageEstimate {
+            input_tokens: 12_345,
+        });
+
+        let received = rx.try_recv().unwrap();
+        assert_eq!(received.agent_id, Uuid::nil());
+        assert_eq!(&*received.agent_role, "root");
+        assert!(matches!(
+            received.event,
+            AgentEventKind::UsageEstimate(AgentUsageEstimate {
+                input_tokens: 12_345
+            })
+        ));
+    }
+
+    #[test]
     fn send_subagent_tags_with_child_identity() {
         let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
         let parent_id = Uuid::from_u128(1);
@@ -496,7 +541,9 @@ mod tests {
                 assert_eq!(lifecycle.parent_id(), parent_id);
                 assert_eq!(lifecycle.descriptor().kind, SubagentKind::Spawn);
             }
-            AgentEventKind::Provider(_) | AgentEventKind::Message(_) => {
+            AgentEventKind::Provider(_)
+            | AgentEventKind::Message(_)
+            | AgentEventKind::UsageEstimate(_) => {
                 panic!("expected subagent lifecycle event")
             }
         }

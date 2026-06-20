@@ -1,11 +1,10 @@
-//! Activity log — a 3-5 row stream of recent tool-call initiations.
+//! Activity log — a backing stream of recent tool-call initiations.
 //!
-//! Slots into the fixed panel between the agent status lines and the
-//! streaming indicator (CO8: panel is the only cursor-addressed render
-//! surface). Each entry represents a `ProviderEvent::ToolCallComplete`
-//! seen by the dispatch layer; the log shows the *initiation* — the
-//! per-tool result renderer in the scroll region shows the *completion*.
-//! The temporal gap is intentional UX, not a bug.
+//! The main fixed panel now folds live work into per-agent status rows,
+//! but this ring remains available as a compact backing/debug view. Each
+//! entry represents a `ProviderEvent::ToolCallComplete` seen by the
+//! dispatch layer; the log shows the *initiation* — the per-tool result
+//! renderer in the scroll region shows the *completion*.
 //!
 //! ## Data source
 //!

@@ -45,7 +45,7 @@ use super::tool_calls::{
 ///
 /// Root-agent provider events flow through the full rendering pipeline
 /// (scroll region, markdown, tool renderers). Child-agent provider
-/// events route only to the activity log and the agent status panel —
+/// events route to the agent status panel and backing diagnostics log;
 /// their streaming text and tool output stay out of the main scroll
 /// region. Typed [`SubagentLifecycle`] events (always child-tagged)
 /// drive the status panel's activity column directly.
@@ -64,16 +64,23 @@ pub fn handle_agent_event(
             handle_child_event(state, agent_event.agent_id, &agent_event.agent_role, event);
         }
         AgentEventKind::Subagent(lifecycle) => handle_subagent_lifecycle(state, &lifecycle),
-        // Inter-agent message events (W3.1) surface in the activity log
-        // — the same panel that shows tool-call initiations — so the
-        // operator sees who messaged whom live. The durable record is
-        // the agent_message.* audit trail in the session stores.
+        // Inter-agent message events update the agent row directly so
+        // the fixed panel has one live multi-agent surface. The
+        // activity log still records the event as a backing trail.
         AgentEventKind::Message(lifecycle) => {
+            state
+                .agent_panel
+                .set_activity(agent_event.agent_id, message_activity(&lifecycle));
             state.activity_log.push(message_activity_entry(
                 &agent_event.agent_role,
                 &lifecycle,
                 Instant::now(),
             ));
+        }
+        AgentEventKind::UsageEstimate(estimate) => {
+            if agent_event.agent_id == root_id {
+                state.set_root_input_estimate(estimate.input_tokens);
+            }
         }
     }
     Ok(())
@@ -113,6 +120,24 @@ fn message_activity_entry(
     }
 }
 
+fn message_activity(lifecycle: &AgentMessageLifecycle) -> AgentActivity {
+    match lifecycle {
+        AgentMessageLifecycle::Sent { to, kind, .. } => {
+            AgentActivity::Running(format!("msg:{} → {to}", kind.as_str()))
+        }
+        AgentMessageLifecycle::Delivered { seq, .. } => {
+            AgentActivity::Result(format!("msg delivered (seq {seq})"))
+        }
+    }
+}
+
+fn tool_activity_label(tool_name: &str, description: Option<&str>) -> String {
+    let Some(description) = description.map(str::trim).filter(|d| !d.is_empty()) else {
+        return tool_name.to_string();
+    };
+    format!("{tool_name}: {description}")
+}
+
 fn subagent_kind_label(kind: SubagentKind) -> &'static str {
     match kind {
         SubagentKind::Spawn => "spawn",
@@ -122,11 +147,11 @@ fn subagent_kind_label(kind: SubagentKind) -> &'static str {
 
 /// Route a typed subagent lifecycle event to the status panel.
 ///
-/// `Started` records the child's provenance in the activity log and
-/// seeds its activity as idle. `Completed` sets the terminal result text
-/// the panel shows during its hold window and records error/stop context
-/// when present. Hold/reclaim timing itself is registry-status-driven
-/// and untouched here.
+/// `Started` records the child's provenance in the backing log and seeds
+/// its activity as idle. `Completed` sets the terminal result text the
+/// panel shows during its hold window and records error/stop context when
+/// present. Hold/reclaim timing itself is registry-status-driven and
+/// untouched here.
 fn handle_subagent_lifecycle(state: &mut AppState, lifecycle: &SubagentLifecycle) {
     match lifecycle {
         SubagentLifecycle::Started {
@@ -150,12 +175,14 @@ fn handle_subagent_lifecycle(state: &mut AppState, lifecycle: &SubagentLifecycle
             succeeded,
             error,
             stop,
+            usage,
             ..
         } => {
             let summary = if *succeeded { "completed" } else { "failed" };
             state
                 .agent_panel
                 .set_activity(*child_id, AgentActivity::Result(summary.to_string()));
+            state.reconcile_usage_total(*child_id, usage.input_tokens, usage.output_tokens);
             let description = error
                 .clone()
                 .or_else(|| stop.as_ref().map(|reason| format!("{reason:?}")));
@@ -169,12 +196,12 @@ fn handle_subagent_lifecycle(state: &mut AppState, lifecycle: &SubagentLifecycle
     }
 }
 
-/// Route a child agent's provider event to the activity log and status
-/// panel.
+/// Route a child agent's provider event to the status panel and backing
+/// log.
 ///
 /// Child text and thinking deltas update the status panel only; they do
 /// not stream into root scrollback. Complete tool calls, errors, and
-/// lifecycle-significant events also push compact activity-log rows.
+/// lifecycle-significant events also push compact backing-log rows.
 fn handle_child_event(
     state: &mut AppState,
     child_id: uuid::Uuid,
@@ -202,11 +229,12 @@ fn handle_child_event(
         ProviderEvent::ToolCallComplete {
             name, arguments, ..
         } => {
-            state
-                .agent_panel
-                .set_activity(child_id, AgentActivity::Running(name.clone()));
             let description = extract_tool_use_description(&arguments)
                 .or_else(|| extract_argument_summary(&arguments));
+            let activity = tool_activity_label(&name, description.as_deref());
+            state
+                .agent_panel
+                .set_activity(child_id, AgentActivity::Running(activity));
             state.activity_log.push(ActivityLogEntry {
                 agent_role: agent_role.to_string(),
                 tool_name: name,
@@ -220,12 +248,8 @@ fn handle_child_event(
                 .set_activity(child_id, AgentActivity::Result(tool_name));
         }
         ProviderEvent::Done { usage, .. } => {
-            state
-                .agent_panel
-                .set_activity(child_id, AgentActivity::Idle);
-            state
-                .agent_panel
-                .set_tokens(child_id, usage.input_tokens, usage.output_tokens);
+            state.agent_panel.mark_idle(child_id);
+            state.record_agent_usage_delta(child_id, usage.input_tokens, usage.output_tokens);
         }
         ProviderEvent::Error { error } => {
             state
@@ -272,11 +296,12 @@ pub fn handle_provider_event(
             kind: _,
         } => {
             let root_id = state.tab_state.root_id();
-            state
-                .agent_panel
-                .set_activity(root_id, AgentActivity::Running(name.clone()));
             let description = extract_tool_use_description(&arguments)
                 .or_else(|| extract_argument_summary(&arguments));
+            let activity = tool_activity_label(&name, description.as_deref());
+            state
+                .agent_panel
+                .set_activity(root_id, AgentActivity::Running(activity));
             state.activity_log.push(ActivityLogEntry {
                 agent_role: "root".to_string(),
                 tool_name: name.clone(),
@@ -308,13 +333,17 @@ pub fn handle_provider_event(
         }
         ProviderEvent::Done { usage, .. } => {
             let root_id = state.tab_state.root_id();
-            state.agent_panel.set_activity(root_id, AgentActivity::Idle);
-            state
-                .agent_panel
-                .set_tokens(root_id, usage.input_tokens, usage.output_tokens);
+            state.agent_panel.mark_idle(root_id);
+            state.record_root_provider_usage(root_id, usage.input_tokens, usage.output_tokens);
             handle_done(state, guard, &usage, renderer)
         }
-        ProviderEvent::Error { error } => handle_error(state, guard, &error, renderer),
+        ProviderEvent::Error { error } => {
+            let root_id = state.tab_state.root_id();
+            state
+                .agent_panel
+                .set_activity(root_id, AgentActivity::Result("error".to_string()));
+            handle_error(state, guard, &error, renderer)
+        }
         ProviderEvent::TextComplete { .. }
         | ProviderEvent::ThinkingComplete { .. }
         | ProviderEvent::Compaction { .. } => Ok(()),
@@ -392,6 +421,8 @@ fn set_complete_from_step(state: &mut AppState, step: &AgentStepResult) {
         return;
     }
     let usage = extract_usage(step);
+    let root_id = state.tab_state.root_id();
+    state.record_root_provider_usage(root_id, usage.input_tokens, usage.output_tokens);
     let elapsed = state
         .turn_start
         .map_or(Duration::ZERO, |start| start.elapsed());
@@ -604,6 +635,7 @@ mod tests {
                 &caps,
                 std::time::Instant::now(),
                 chrono::Utc::now(),
+                120,
             )
             .unwrap();
         String::from_utf8(buf).unwrap()
@@ -627,6 +659,7 @@ mod tests {
                 &caps,
                 std::time::Instant::now(),
                 chrono::Utc::now(),
+                120,
             )
             .unwrap();
         let out = String::from_utf8(buf).unwrap();
@@ -654,6 +687,7 @@ mod tests {
                 &caps,
                 std::time::Instant::now(),
                 chrono::Utc::now(),
+                120,
             )
             .unwrap();
         let out = String::from_utf8(buf).unwrap();
@@ -667,8 +701,8 @@ mod tests {
     fn done_event_sets_idle_and_token_counts() {
         let (mut state, root_id, _child_id) = state_with_one_child();
         // Mirror the dispatch hook for ProviderEvent::Done.
-        state.agent_panel.set_activity(root_id, AgentActivity::Idle);
-        state.agent_panel.set_tokens(root_id, 5_000, 2_000);
+        state.agent_panel.mark_idle(root_id);
+        state.record_root_provider_usage(root_id, 5_000, 2_000);
 
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
@@ -680,6 +714,7 @@ mod tests {
                 &caps,
                 std::time::Instant::now(),
                 chrono::Utc::now(),
+                120,
             )
             .unwrap();
         let out = String::from_utf8(buf).unwrap();
@@ -691,6 +726,9 @@ mod tests {
             out.contains("7k"),
             "Combined 7k tokens (5k in + 2k out) must surface: {out:?}"
         );
+        let status = state.fixed_panel.status_bar();
+        assert_eq!(status.input_tokens, 5_000);
+        assert_eq!(status.output_tokens, 2_000);
     }
 
     // ---------------- Inter-agent message events (W3.7) ----------------
@@ -732,9 +770,27 @@ mod tests {
         assert!(entry.description.is_none());
     }
 
-    /// The full dispatch path: a Message-kind agent event lands in the
-    /// activity log (the arm needs no terminal guard, so it is
-    /// exercisable end-to-end, unlike the provider-event arms).
+    #[test]
+    fn message_event_activity_targets_agent_row() {
+        let lifecycle = AgentMessageLifecycle::Sent {
+            message_id: uuid::Uuid::from_u128(9),
+            from_id: uuid::Uuid::from_u128(1),
+            from: "/root/child".to_owned(),
+            to_id: uuid::Uuid::from_u128(2),
+            to: "/root/other".to_owned(),
+            kind: norn::agent_loop::inbound::MessageKind::Update,
+            seq: 1,
+            content: "fyi".to_owned(),
+            sent_at: chrono::Utc::now(),
+        };
+        assert_eq!(
+            message_activity(&lifecycle),
+            AgentActivity::Running("msg:update → /root/other".to_string())
+        );
+    }
+
+    /// Message events still record a backing activity entry for diagnostics;
+    /// normal rendering surfaces the live state on the agent row.
     #[test]
     fn message_event_pushes_activity_log_entry_via_helper() {
         let (mut state, _root_id, _child_id) = state_with_one_child();
@@ -811,6 +867,31 @@ mod tests {
 
         let entry = state.activity_log.entries().front().unwrap();
         assert!(entry.description.is_none());
+    }
+
+    #[test]
+    fn child_tool_call_description_surfaces_on_agent_row() {
+        let (mut state, _root_id, child_id) = state_with_one_child();
+        handle_child_event(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            ProviderEvent::ToolCallComplete {
+                call_id: "tc".to_string(),
+                name: "signal_agent".to_string(),
+                arguments: serde_json::json!({
+                    "tool_use_description": "wake the idle worker",
+                })
+                .to_string(),
+                kind: norn::provider::request::ToolCallKind::Function,
+            },
+        );
+
+        let out = render_agent_panel(&mut state);
+        assert!(
+            out.contains("signal_agent: wake the idle worker"),
+            "tool intent should live on the agent row: {out:?}"
+        );
     }
 
     #[test]

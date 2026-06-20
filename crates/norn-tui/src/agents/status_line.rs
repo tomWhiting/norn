@@ -35,6 +35,7 @@ use uuid::Uuid;
 use norn::agent::registry::{AgentEntry, AgentRegistry, AgentStatus};
 
 use crate::render::style::colour_for;
+use crate::render::text::truncate_with_ellipsis;
 use crate::terminal::caps::TerminalCaps;
 
 use super::tree::{self, CandidateEntry, CollapsedView};
@@ -42,6 +43,10 @@ use super::tree::{self, CandidateEntry, CollapsedView};
 /// Duration a terminal agent's status line stays visible
 /// before the row is reclaimed.
 pub const HOLD_DURATION: Duration = Duration::from_secs(3);
+
+/// Duration a completed tool/message activity stays readable after the
+/// agent returns to idle.
+pub const ACTIVITY_HOLD_DURATION: Duration = Duration::from_secs(10);
 
 /// Foreground colour for the running / completed icon.
 const GREEN_RUNNING: RgbColor = RgbColor::new(95, 215, 95);
@@ -67,6 +72,15 @@ pub fn height_from_view(view: &CollapsedView) -> u16 {
     visible.saturating_add(overflow_row)
 }
 
+/// Render-time context shared by every agent status row in one frame.
+#[derive(Clone, Copy, Debug)]
+pub struct AgentStatusRenderContext {
+    /// Wall-clock timestamp used for row ages.
+    pub now_utc: DateTime<Utc>,
+    /// Terminal width used to truncate long integrated tool intents.
+    pub terminal_cols: u16,
+}
+
 /// Activity state a panel client (NT-011) attaches to an agent.
 ///
 /// The registry only knows lifecycle status; activity comes from the
@@ -80,6 +94,38 @@ pub enum AgentActivity {
     Running(String),
     /// Terminal result summary, shown during the hold window.
     Result(String),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+enum ActivityPhase {
+    Live,
+    HeldUntil(Instant),
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct ActivityEntry {
+    activity: AgentActivity,
+    phase: ActivityPhase,
+}
+
+impl ActivityEntry {
+    fn live(activity: AgentActivity) -> Self {
+        Self {
+            activity,
+            phase: ActivityPhase::Live,
+        }
+    }
+
+    fn held(activity: AgentActivity, now: Instant) -> Self {
+        Self {
+            activity,
+            phase: ActivityPhase::HeldUntil(now + ACTIVITY_HOLD_DURATION),
+        }
+    }
+
+    fn expired(&self, now: Instant) -> bool {
+        matches!(self.phase, ActivityPhase::HeldUntil(deadline) if now >= deadline)
+    }
 }
 
 /// Lifecycle-status icon for an agent row.
@@ -181,17 +227,30 @@ fn format_tokens(n: u64) -> String {
     }
 }
 
-/// Format elapsed wall-clock between `spawned_at` and `now` as `"{n}s"`,
-/// `"{n}m"`, or `"{n}h"` — whichever bucket the duration falls in.
+/// Format elapsed wall-clock between `spawned_at` and `now` as compact
+/// seconds, minutes+seconds, or hours+minutes.
 fn format_elapsed(spawned_at: DateTime<Utc>, now: DateTime<Utc>) -> String {
     let raw = (now - spawned_at).num_seconds().max(0);
     let secs = u64::try_from(raw).unwrap_or(0);
     if secs < 60 {
-        format!("{secs}s")
-    } else if secs < 3600 {
-        format!("{}m", secs / 60)
+        return format!("{secs}s");
+    }
+    let minutes = secs / 60;
+    let seconds = secs % 60;
+    if minutes < 60 {
+        if seconds == 0 {
+            format!("{minutes}m")
+        } else {
+            format!("{minutes}m{seconds}s")
+        }
     } else {
-        format!("{}h", secs / 3600)
+        let hours = minutes / 60;
+        let rem_minutes = minutes % 60;
+        if rem_minutes == 0 {
+            format!("{hours}h")
+        } else {
+            format!("{hours}h{rem_minutes:02}m")
+        }
     }
 }
 
@@ -266,7 +325,7 @@ pub struct AgentStatusPanel {
     holds: HashMap<Uuid, Instant>,
     last_status: HashMap<Uuid, AgentStatus>,
     last_change_at: HashMap<Uuid, Instant>,
-    activity: HashMap<Uuid, AgentActivity>,
+    activity: HashMap<Uuid, ActivityEntry>,
     tokens: HashMap<Uuid, (u64, u64)>,
 }
 
@@ -286,7 +345,31 @@ impl AgentStatusPanel {
     /// Record live activity for an agent. NT-011 calls this from its
     /// event loop; the value is read on the next [`Self::render`] pass.
     pub fn set_activity(&mut self, id: Uuid, activity: AgentActivity) {
-        self.activity.insert(id, activity);
+        self.set_activity_at(id, activity, Instant::now());
+    }
+
+    fn set_activity_at(&mut self, id: Uuid, activity: AgentActivity, _now: Instant) {
+        self.activity.insert(id, ActivityEntry::live(activity));
+    }
+
+    /// Mark an agent as idle while keeping the last non-idle activity
+    /// visible briefly. This prevents short tool calls from flashing in
+    /// the tree and disappearing before a reader can parse them.
+    pub fn mark_idle(&mut self, id: Uuid) {
+        self.mark_idle_at(id, Instant::now());
+    }
+
+    fn mark_idle_at(&mut self, id: Uuid, now: Instant) {
+        match self.activity.get_mut(&id) {
+            Some(entry) if !matches!(entry.activity, AgentActivity::Idle) => {
+                let activity = entry.activity.clone();
+                *entry = ActivityEntry::held(activity, now);
+            }
+            _ => {
+                self.activity
+                    .insert(id, ActivityEntry::live(AgentActivity::Idle));
+            }
+        }
     }
 
     /// Accumulate token counts for an agent.
@@ -312,6 +395,11 @@ impl AgentStatusPanel {
         self.tokens.remove(&id);
     }
 
+    /// Drop every cached token tally.
+    pub fn reset_all_tokens(&mut self) {
+        self.tokens.clear();
+    }
+
     /// Capture the registry, detect transitions, apply hold reclaim,
     /// and run the collapse heuristic.
     ///
@@ -323,6 +411,7 @@ impl AgentStatusPanel {
         let entries = self.registry.read().list();
 
         self.absorb_transitions(&entries, now);
+        self.reclaim_expired_activities(now);
         let candidates = self.build_candidates(&entries, now);
         let view = tree::collapse(&candidates, now);
         self.reclaim_expired_holds(now);
@@ -358,9 +447,20 @@ impl AgentStatusPanel {
         caps: &TerminalCaps,
         now: Instant,
         now_utc: DateTime<Utc>,
+        terminal_cols: u16,
     ) -> io::Result<()> {
         let (view, entries) = self.snapshot(now);
-        self.render_view(&view, &entries, top_row, writer, caps, now_utc)
+        self.render_view(
+            &view,
+            &entries,
+            top_row,
+            writer,
+            caps,
+            AgentStatusRenderContext {
+                now_utc,
+                terminal_cols,
+            },
+        )
     }
 
     /// Redraw using an already-computed snapshot.
@@ -379,7 +479,7 @@ impl AgentStatusPanel {
         top_row: u16,
         writer: &mut W,
         caps: &TerminalCaps,
-        now_utc: DateTime<Utc>,
+        context: AgentStatusRenderContext,
     ) -> io::Result<()> {
         let entries_by_id: HashMap<Uuid, &AgentEntry> = entries.iter().map(|e| (e.id, e)).collect();
 
@@ -403,10 +503,15 @@ impl AgentStatusPanel {
         let mut row = top_row;
         for (index, (candidate, depth)) in ordered.iter().enumerate() {
             if let Some(entry) = entries_by_id.get(&candidate.id) {
-                let activity = self.activity.get(&candidate.id);
+                let activity = self
+                    .activity
+                    .get(&candidate.id)
+                    .map(|entry| &entry.activity);
                 let (input, output) = self.tokens.get(&candidate.id).copied().unwrap_or((0, 0));
                 let prefix = tree_prefix(*depth, is_last_at_depth(&ordered, index));
-                let line = format_status_line(entry, activity, input, output, now_utc, &prefix);
+                let line =
+                    format_status_line(entry, activity, input, output, context.now_utc, &prefix);
+                let line = truncate_with_ellipsis(&line, context.terminal_cols);
                 Self::write_styled_line(row, writer, caps, entry.status, activity, &line)?;
             } else {
                 // Entry vanished between snapshot and re-read — clear
@@ -436,6 +541,10 @@ impl AgentStatusPanel {
                 }
             }
         }
+    }
+
+    fn reclaim_expired_activities(&mut self, now: Instant) {
+        self.activity.retain(|_, entry| !entry.expired(now));
     }
 
     fn build_candidates(&self, entries: &[AgentEntry], now: Instant) -> Vec<CandidateEntry> {
@@ -659,8 +768,16 @@ mod tests {
         );
         assert_eq!(format_elapsed(t0, t0 + chrono::Duration::seconds(60)), "1m");
         assert_eq!(
+            format_elapsed(t0, t0 + chrono::Duration::seconds(80)),
+            "1m20s"
+        );
+        assert_eq!(
             format_elapsed(t0, t0 + chrono::Duration::seconds(3_600)),
             "1h"
+        );
+        assert_eq!(
+            format_elapsed(t0, t0 + chrono::Duration::seconds(3_900)),
+            "1h05m"
         );
     }
 
@@ -819,7 +936,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
-            .render(10, &mut buf, &caps, Instant::now(), Utc::now())
+            .render(10, &mut buf, &caps, Instant::now(), Utc::now(), 120)
             .expect("render");
         let out = String::from_utf8(buf).expect("utf8");
         assert!(
@@ -836,7 +953,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
-            .render(10, &mut buf, &caps, Instant::now(), Utc::now())
+            .render(10, &mut buf, &caps, Instant::now(), Utc::now(), 120)
             .expect("render");
         assert!(
             buf.is_empty(),
@@ -856,7 +973,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
-            .render(0, &mut buf, &caps, Instant::now(), Utc::now())
+            .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
             .expect("render");
         let out = String::from_utf8(buf).expect("utf8");
         assert!(
@@ -867,6 +984,65 @@ mod tests {
             out.contains("idle-child"),
             "child name must appear, got: {out:?}"
         );
+    }
+
+    #[test]
+    fn mark_idle_holds_last_activity_then_expires_to_idle() {
+        let registry = fresh_registry();
+        let root = confirm_root(&registry);
+        let child = confirm_child(&registry, "/root/tool-child", root);
+        let mut panel = AgentStatusPanel::new(Arc::clone(&registry));
+        let t0 = Instant::now();
+        panel.set_activity_at(
+            child,
+            AgentActivity::Running("bash: checking status".to_string()),
+            t0,
+        );
+        panel.mark_idle_at(child, t0 + Duration::from_secs(1));
+
+        let (view, entries) = panel.snapshot(t0 + Duration::from_secs(2));
+        let mut buf: Vec<u8> = Vec::new();
+        let caps = TerminalCaps::baseline();
+        panel
+            .render_view(
+                &view,
+                &entries,
+                0,
+                &mut buf,
+                &caps,
+                AgentStatusRenderContext {
+                    now_utc: Utc::now(),
+                    terminal_cols: 120,
+                },
+            )
+            .expect("render held activity");
+        let out = String::from_utf8(buf).expect("utf8");
+        assert!(
+            out.contains("bash: checking status"),
+            "tool activity should stay readable after idle mark: {out:?}"
+        );
+
+        let (view, entries) = panel.snapshot(t0 + Duration::from_secs(12));
+        let mut buf: Vec<u8> = Vec::new();
+        panel
+            .render_view(
+                &view,
+                &entries,
+                0,
+                &mut buf,
+                &caps,
+                AgentStatusRenderContext {
+                    now_utc: Utc::now(),
+                    terminal_cols: 120,
+                },
+            )
+            .expect("render expired activity");
+        let out = String::from_utf8(buf).expect("utf8");
+        assert!(
+            !out.contains("bash: checking status"),
+            "held tool activity should expire: {out:?}"
+        );
+        assert!(out.contains("idle"), "row falls back to idle: {out:?}");
     }
 
     /// A depth-2 tree (W3.4 recursion) paints in genealogical preorder
@@ -884,7 +1060,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
-            .render(0, &mut buf, &caps, Instant::now(), Utc::now())
+            .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
             .expect("render");
         let out = String::from_utf8(buf).expect("utf8");
 
@@ -921,7 +1097,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
-            .render(0, &mut buf, &caps, Instant::now(), Utc::now())
+            .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
             .expect("render");
         let out = String::from_utf8(buf).expect("utf8");
         assert!(
@@ -949,7 +1125,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
-            .render(0, &mut buf, &caps, Instant::now(), Utc::now())
+            .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
             .expect("render");
         let out = String::from_utf8(buf).expect("utf8");
         // 7_000 in + 3_000 out = 10_000 total → format_tokens → "10k"
@@ -985,7 +1161,7 @@ mod tests {
         let mut buf: Vec<u8> = Vec::new();
         let caps = TerminalCaps::baseline();
         panel
-            .render(0, &mut buf, &caps, Instant::now(), Utc::now())
+            .render(0, &mut buf, &caps, Instant::now(), Utc::now(), 120)
             .expect("render");
         let out = String::from_utf8(buf).expect("utf8");
         assert!(out.contains("bash"), "activity must surface: {out:?}");

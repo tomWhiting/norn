@@ -14,8 +14,7 @@ use chrono::Utc;
 use termina::Terminal as _;
 
 use crate::TuiError;
-use crate::agents::activity_log::{height_from_log, render_view as render_activity_view};
-use crate::agents::status_line::height_from_view;
+use crate::agents::status_line::{AgentStatusRenderContext, height_from_view};
 use crate::input::editor::InputEditor;
 use crate::input::wrap;
 use crate::render::MarkdownRenderer;
@@ -229,38 +228,30 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
 
     let now = Instant::now();
     let now_utc = Utc::now();
-    // Snapshot the agent panel and the activity log ONCE each per
-    // redraw and feed the same snapshots into both the height
-    // calculation (which sizes the fixed panel) and the render call.
+    // Snapshot the agent panel ONCE per redraw and feed the same
+    // snapshot into both the height calculation and render call.
     // `AgentStatusPanel::snapshot` mutates the hold map via
-    // `reclaim_expired_holds` and `ActivityLog::snapshot` mutates the
-    // entry deque via `reclaim_expired`; a second internal call at an
-    // expiry boundary would silently shrink the view relative to the
-    // height the fixed panel was sized to.
+    // `reclaim_expired_holds`; a second internal call at an expiry
+    // boundary would silently shrink the view relative to the height
+    // the fixed panel was sized to. The backing activity log is still
+    // snapshotted to reclaim expired entries, but it is not rendered as
+    // a separate fixed-panel surface.
     let (view, entries) = state.agent_panel.snapshot(now);
     let mut agent_rows = height_from_view(&view);
     state.fixed_panel.set_agent_lines(agent_rows);
 
     let rows = guard.terminal_rows();
-    let activity_snap = state.activity_log.snapshot(now);
-    let proposed_activity_rows = height_from_log(&activity_snap);
+    let _activity_snap = state.activity_log.snapshot(now);
     state
         .fixed_panel
         .set_input_mode_label(state.in_flight_input.mode().label());
     state.fixed_panel.set_active_input_status(0);
-    // First-pass floor guard: skip the activity log when it would
-    // squeeze the scroll region below the minimum conversation rows.
-    // The broader row budget below can shed additional optional
-    // surfaces when the terminal is especially short.
-    state.fixed_panel.set_activity_lines(proposed_activity_rows);
-    let mut activity_rows = if proposed_activity_rows > 0
-        && rows.saturating_sub(state.fixed_panel.total_height()) < MIN_SCROLL_REGION_ROWS
-    {
-        state.fixed_panel.set_activity_lines(0);
-        0
-    } else {
-        proposed_activity_rows
-    };
+    // The activity log remains an internal/backing trail, but the
+    // controlled region renders one live multi-agent surface: the agent
+    // tree. Tool/message goals are folded into per-agent activity rows
+    // by dispatch.
+    state.fixed_panel.set_activity_lines(0);
+    let mut activity_rows = 0;
     enforce_scroll_region_floor(state, rows, &mut agent_rows, &mut activity_rows);
 
     if state.fixed_panel.height_dirty() {
@@ -300,7 +291,6 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
     let caps = state.terminal_caps.clone();
     let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
     let agent_top = state.fixed_panel.agent_rows_top(rows);
-    let activity_top = state.fixed_panel.activity_rows_top(rows);
     state
         .fixed_panel
         .render(guard.terminal_mut(), &caps, rows, cols)?;
@@ -311,18 +301,10 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
             agent_top,
             guard.terminal_mut(),
             &caps,
-            now_utc,
-        )?;
-    }
-    if activity_rows > 0 {
-        render_activity_view(
-            &activity_snap,
-            activity_top,
-            guard.terminal_mut(),
-            &caps,
-            now,
-            now_utc,
-            cols,
+            AgentStatusRenderContext {
+                now_utc,
+                terminal_cols: cols,
+            },
         )?;
     }
     guard.terminal_mut().flush()?;

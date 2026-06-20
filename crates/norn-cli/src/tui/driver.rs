@@ -183,7 +183,9 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         model_name: bundle.model.clone(),
         session_name: session_id.clone(),
         input_tokens: 0,
+        input_tokens_estimated: false,
         output_tokens: 0,
+        output_tokens_estimated: false,
         key_hints: "^C exit".to_string(),
         service_tier: bundle
             .loop_context

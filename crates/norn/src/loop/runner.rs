@@ -33,7 +33,7 @@ use crate::r#loop::retry::retry_with_backoff;
 use crate::r#loop::schema::{
     build_schema_tool, check_reserved_envelope_keys, format_nudge, format_validation_feedback,
 };
-use crate::provider::agent_event::AgentEventSender;
+use crate::provider::agent_event::{AgentEventSender, AgentUsageEstimate};
 use crate::provider::events::StopReason;
 use crate::provider::request::{
     AssistantToolCall, Message, MessageRole, ProviderRequest, ToolDefinition,
@@ -606,6 +606,11 @@ async fn run_agent_step_inner(
         if let Some(usage) = preflight.summarization_usage {
             total_usage += usage;
             timeout_state.lock().usage = total_usage.clone();
+        }
+        if let (Some(sender), Some(input_tokens)) = (event_tx, preflight.request_input_estimate) {
+            sender.send_usage_estimate(AgentUsageEstimate {
+                input_tokens: u64::try_from(input_tokens).unwrap_or(u64::MAX),
+            });
         }
         let request_messages = conversation_state.request_messages(&messages);
 
@@ -1955,6 +1960,7 @@ mod tests {
         while let Ok(agent_event) = rx.try_recv() {
             match agent_event.event {
                 AgentEventKind::Provider(event) => received.push(event),
+                AgentEventKind::UsageEstimate(_) => {}
                 AgentEventKind::Subagent(_) | AgentEventKind::Message(_) => {
                     panic!("the loop emits only provider events here")
                 }

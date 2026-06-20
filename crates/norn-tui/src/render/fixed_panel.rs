@@ -3,7 +3,7 @@
 //! The fixed panel occupies the bottom rows of the terminal — below the
 //! DECSTBM scroll region — and holds, from top to bottom: the input-mode
 //! divider, autocomplete/input rows, the session metadata divider, live
-//! status rows, agent/activity rows, and the key-hint row. [`FixedPanel`]
+//! status rows, optional backing-log rows, and the key-hint row. [`FixedPanel`]
 //! tracks which components are active and their row counts, computes the
 //! total panel height, and performs a cursor-addressed redraw confined
 //! strictly to the panel rows (CO8: the fixed panel is the only
@@ -116,10 +116,16 @@ pub struct StatusBar {
     pub model_name: String,
     /// Name of the active session.
     pub session_name: String,
-    /// Cumulative input token count for the session.
+    /// Input tokens for the current root turn shown in the top divider.
     pub input_tokens: u64,
-    /// Cumulative output token count for the session.
+    /// Whether [`Self::input_tokens`] is a live estimate rather than a
+    /// provider-reported value.
+    pub input_tokens_estimated: bool,
+    /// Output tokens for the current root turn shown in the top divider.
     pub output_tokens: u64,
+    /// Whether [`Self::output_tokens`] is a live estimate rather than a
+    /// provider-reported value.
+    pub output_tokens_estimated: bool,
     /// Free-form key-hint text shown alongside the newline-key hint.
     pub key_hints: String,
     /// Active provider service tier, when explicitly set.
@@ -394,15 +400,53 @@ fn live_output_tokens(indicator: &StreamingIndicator, status_bar: &StatusBar) ->
     match indicator {
         StreamingIndicator::Generating {
             est_output_tokens, ..
-        } => *est_output_tokens,
+        } => status_bar.output_tokens.saturating_add(*est_output_tokens),
         StreamingIndicator::Idle | StreamingIndicator::Complete { .. } => status_bar.output_tokens,
     }
 }
 
-fn elapsed_seconds(indicator: &StreamingIndicator) -> Option<u64> {
+fn format_live_token_count(tokens: u64, estimated: bool, arrow: char) -> String {
+    let prefix = if estimated { "~" } else { "" };
+    format!("{prefix}{}{arrow}", format_count(tokens))
+}
+
+fn live_output_is_estimated(indicator: &StreamingIndicator, status_bar: &StatusBar) -> bool {
     match indicator {
-        StreamingIndicator::Generating { elapsed, .. } => Some(elapsed.as_secs()),
+        StreamingIndicator::Generating { .. } => true,
+        StreamingIndicator::Idle | StreamingIndicator::Complete { .. } => {
+            status_bar.output_tokens_estimated
+        }
+    }
+}
+
+fn elapsed_duration(indicator: &StreamingIndicator) -> Option<Duration> {
+    match indicator {
+        StreamingIndicator::Generating { elapsed, .. } => Some(*elapsed),
         StreamingIndicator::Idle | StreamingIndicator::Complete { .. } => None,
+    }
+}
+
+fn format_elapsed_compact(elapsed: Duration) -> String {
+    let secs = elapsed.as_secs();
+    if secs < 60 {
+        return format!("{secs}s");
+    }
+    let minutes = secs / 60;
+    let seconds = secs % 60;
+    if minutes < 60 {
+        if seconds == 0 {
+            format!("{minutes}m")
+        } else {
+            format!("{minutes}m{seconds}s")
+        }
+    } else {
+        let hours = minutes / 60;
+        let rem_minutes = minutes % 60;
+        if rem_minutes == 0 {
+            format!("{hours}h")
+        } else {
+            format!("{hours}h{rem_minutes:02}m")
+        }
     }
 }
 
@@ -417,11 +461,8 @@ fn elapsed_seconds(indicator: &StreamingIndicator) -> Option<u64> {
 pub struct FixedPanel {
     /// Number of agent status line rows (NT-006 wires their contents).
     agent_lines: u16,
-    /// Number of activity-log rows. The activity log is the recent
-    /// stream of tool-call initiations rendered between the agent
-    /// status panel and the streaming indicator. Set by the event
-    /// loop's redraw pass from
-    /// [`crate::agents::activity_log::height_from_log`].
+    /// Number of optional backing-log rows. The normal TUI path keeps
+    /// this at zero and folds live work into the agent status tree.
     activity_lines: u16,
     /// Current streaming indicator state.
     streaming_indicator: StreamingIndicator,
@@ -463,7 +504,7 @@ impl FixedPanel {
     /// Total panel height — the sum of every active component's rows.
     ///
     /// The input divider, metadata divider, input area, and help row are
-    /// always present; the agent status lines, activity log, completion
+    /// always present; the agent status lines, optional backing log, completion
     /// row, and autocomplete popup contribute zero rows when inactive.
     pub fn total_height(&self) -> u16 {
         SEPARATOR_ROWS
@@ -509,18 +550,16 @@ impl FixedPanel {
         self.agent_lines = rows;
     }
 
-    /// Set the number of activity-log rows (0..=`MAX_VISIBLE`).
+    /// Set the number of optional backing-log rows (0..=`MAX_VISIBLE`).
     ///
-    /// The event loop in [`crate::app::event_loop`] snapshots the
-    /// log, derives the row count via
-    /// [`crate::agents::activity_log::height_from_log`], and passes
-    /// the result here before [`Self::render`]. The compositor itself
-    /// imposes no cap (CO6).
+    /// The main redraw path currently sets this to zero; the compositor
+    /// itself still supports callers that need to reserve and clear
+    /// backing-log rows.
     pub fn set_activity_lines(&mut self, rows: u16) {
         self.activity_lines = rows;
     }
 
-    /// Zero-based row of the first activity-log line.
+    /// Zero-based row of the first optional backing-log line.
     ///
     /// Sits immediately below the agent status rows. The agent panel's
     /// overflow summary row (when present) is already counted in
@@ -646,13 +685,21 @@ impl FixedPanel {
             let mut top_parts = vec![
                 input_mode.to_string(),
                 format!(
-                    "{}↑ {}↓",
-                    format_count(status_bar.input_tokens),
-                    format_count(live_output)
+                    "{} {}",
+                    format_live_token_count(
+                        status_bar.input_tokens,
+                        status_bar.input_tokens_estimated,
+                        '↑'
+                    ),
+                    format_live_token_count(
+                        live_output,
+                        live_output_is_estimated(indicator, status_bar),
+                        '↓'
+                    )
                 ),
             ];
-            if let Some(secs) = elapsed_seconds(indicator) {
-                top_parts.push(format!("{secs}s"));
+            if let Some(elapsed) = elapsed_duration(indicator) {
+                top_parts.push(format_elapsed_compact(elapsed));
             }
             let input_divider = left_chip_separator(&top_parts.join(" • "), terminal_cols);
             render_separator_line(row, &input_divider, w)?;
@@ -678,9 +725,9 @@ impl FixedPanel {
                 clear_row(row, w)?;
                 row = row.saturating_add(1);
             }
-            // Activity log — cleared placeholders; the event loop's
-            // redraw pass wires the actual contents via
-            // [`crate::agents::activity_log::render_view`].
+            // Optional backing log — cleared placeholders. The main
+            // TUI path keeps this at zero so per-agent rows are the
+            // only live multi-agent surface.
             for _ in 0..activity_lines {
                 clear_row(row, w)?;
                 row = row.saturating_add(1);
@@ -746,14 +793,14 @@ mod tests {
     #[test]
     fn activity_rows_top_sits_immediately_after_agent_lines() {
         let mut panel = FixedPanel::new(StatusBar::default());
-        // No agent panel — activity log sits in the activity area below
+        // No agent panel — optional backing rows sit in the area below
         // input + metadata. Default panel + 2 activity rows: panel top =
         // 18, agent_top = 21, activity_top = 21.
         panel.set_activity_lines(2);
         assert_eq!(panel.activity_rows_top(24), 21);
 
         // Agent panel with 3 rows (visible+overflow already folded in
-        // by height_from_view), activity log with 2 rows.
+        // by height_from_view), optional backing log with 2 rows.
         // total = 1 input divider + 1 input + 1 metadata + 3 agent
         // + 2 activity + 1 help = 9. panel top = 15, activity_top = 21.
         panel.set_agent_lines(3);
@@ -861,12 +908,57 @@ mod tests {
     }
 
     #[test]
+    fn input_divider_generating_adds_live_output_and_compact_elapsed() {
+        let mut panel = FixedPanel::new(StatusBar::default());
+        panel.status_bar_mut().input_tokens = 1_000;
+        panel.status_bar_mut().output_tokens = 2_000;
+        panel.set_streaming_indicator(StreamingIndicator::Generating {
+            elapsed: Duration::from_secs(80),
+            est_output_tokens: 300,
+            in_flight: None,
+        });
+        let caps = TerminalCaps::baseline();
+        let mut buf: Vec<u8> = Vec::new();
+        panel.render(&mut buf, &caps, 24, 80).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(
+            out.contains("🮠 steer • 1,000↑ ~2,300↓ • 1m20s 🮣"),
+            "top chip must show root-turn totals plus live output estimate: {out:?}"
+        );
+    }
+
+    #[test]
+    fn input_divider_marks_estimated_input() {
+        let mut panel = FixedPanel::new(StatusBar::default());
+        panel.status_bar_mut().input_tokens = 12_345;
+        panel.status_bar_mut().input_tokens_estimated = true;
+        let caps = TerminalCaps::baseline();
+        let mut buf: Vec<u8> = Vec::new();
+        panel.render(&mut buf, &caps, 24, 80).unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(
+            out.contains("🮠 steer • ~12,345↑ 0↓ 🮣"),
+            "estimated input must be visibly approximate: {out:?}"
+        );
+    }
+
+    #[test]
+    fn compact_elapsed_formats_minutes_and_hours() {
+        assert_eq!(format_elapsed_compact(Duration::from_secs(59)), "59s");
+        assert_eq!(format_elapsed_compact(Duration::from_mins(1)), "1m");
+        assert_eq!(format_elapsed_compact(Duration::from_secs(80)), "1m20s");
+        assert_eq!(format_elapsed_compact(Duration::from_mins(65)), "1h05m");
+    }
+
+    #[test]
     fn metadata_divider_shows_model_and_session() {
         let bar = StatusBar {
             model_name: "claude-opus".to_string(),
             session_name: "demo".to_string(),
             input_tokens: 12_345,
+            input_tokens_estimated: false,
             output_tokens: 678,
+            output_tokens_estimated: false,
             key_hints: "^C exit".to_string(),
             service_tier: None,
             reasoning_effort: None,
@@ -886,7 +978,9 @@ mod tests {
             model_name: "claude-opus".to_string(),
             session_name: "demo".to_string(),
             input_tokens: 12_345,
+            input_tokens_estimated: false,
             output_tokens: 678,
+            output_tokens_estimated: false,
             key_hints: "^C exit".to_string(),
             service_tier: None,
             reasoning_effort: None,
@@ -907,7 +1001,9 @@ mod tests {
             model_name: "gpt-5.5".to_string(),
             session_name: "demo".to_string(),
             input_tokens: 1,
+            input_tokens_estimated: false,
             output_tokens: 2,
+            output_tokens_estimated: false,
             key_hints: "^C exit".to_string(),
             service_tier: Some("fast".to_string()),
             reasoning_effort: Some("high".to_string()),

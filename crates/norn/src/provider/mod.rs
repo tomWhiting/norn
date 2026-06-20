@@ -2,7 +2,7 @@
 
 pub use self::agent_event::{
     AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AGENT_MESSAGE_SENT_EVENT_TYPE, AgentEvent, AgentEventKind,
-    AgentEventSender, AgentMessageLifecycle, SUBAGENT_COMPLETED_EVENT_TYPE,
+    AgentEventSender, AgentMessageLifecycle, AgentUsageEstimate, SUBAGENT_COMPLETED_EVENT_TYPE,
     SUBAGENT_STARTED_EVENT_TYPE, SharedAgentEventChannel, SubagentDescriptor, SubagentKind,
     SubagentLifecycle,
 };

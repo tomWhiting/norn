@@ -298,8 +298,8 @@ fn run_app_wakes_idle_root_on_inbound_steer() -> Result<(), Box<dyn std::error::
 
     let screen = TerminalScreen::from_output(&run.output, SCREEN_ROWS, SCREEN_COLS);
     assert!(
-        screen.contains("[root] msg delivered"),
-        "root inbound delivery row missing from screen:\n{}",
+        !screen.contains("[root] msg delivered"),
+        "root-only inbound delivery should not render a separate activity row:\n{}",
         screen.debug_text(),
     );
     assert!(

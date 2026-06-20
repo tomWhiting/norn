@@ -162,7 +162,7 @@ fn create_new_session_store(
 }
 
 /// `/new` (also `/clear`) — rotate to a new session, drop conversation
-/// context, clear the viewport, and reset session-cumulative tokens.
+/// context, clear the viewport, and reset visible token counters.
 ///
 /// When persistence is enabled (`runtime.data_dir` and
 /// `runtime.session_id` are `Some`), the new session is created via
@@ -233,11 +233,7 @@ fn handle_new(
         runtime.loop_context.context_edits = Some(ContextEdits::new());
     }
 
-    let root_id = state.tab_state.root_id();
-    state.agent_panel.reset_tokens(root_id);
-    let status = state.fixed_panel.status_bar_mut();
-    status.input_tokens = 0;
-    status.output_tokens = 0;
+    state.clear_usage_totals();
 
     {
         let writer = guard.terminal_mut();

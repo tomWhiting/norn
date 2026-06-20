@@ -148,11 +148,15 @@ pub struct AppState {
     /// Loaded once with syntect's ~100 bundled grammars; shared across
     /// all tool result renders via [`crate::render::content::render_blocks`].
     pub highlighter: SyntaxHighlighter,
-    /// Activity log — ring of recent tool-call initiations rendered in
-    /// the fixed panel between the agent status rows and the streaming
-    /// indicator. Dispatch pushes entries on `ToolCallComplete`; the
-    /// event loop snapshots once per redraw to size and paint.
+    /// Activity log — backing ring of recent tool-call initiations.
+    /// Dispatch still records entries for diagnostics/replay, while the
+    /// fixed panel folds live work into per-agent rows.
     pub activity_log: ActivityLog,
+    /// Usage totals already reflected in per-agent rows, keyed by agent
+    /// id. Provider `Done` events arrive as deltas, while final
+    /// step/lifecycle records carry cumulative totals; this cache lets
+    /// the TUI reconcile the latter without double-counting the former.
+    usage_totals: HashMap<Uuid, (u64, u64)>,
     /// In-flight human input state for active-turn steering and queued
     /// follow-up prompts.
     pub in_flight_input: InFlightInputState,
@@ -193,6 +197,7 @@ impl AppState {
             styled_mid_line: false,
             highlighter: SyntaxHighlighter::new(),
             activity_log: ActivityLog::new(),
+            usage_totals: HashMap::new(),
             in_flight_input: InFlightInputState::default(),
         }
     }
@@ -292,6 +297,75 @@ impl AppState {
     pub fn sync_indicator_into_panel(&mut self) {
         self.fixed_panel
             .set_streaming_indicator(self.streaming_indicator.clone());
+    }
+
+    /// Add one usage delta to the per-agent status row.
+    pub fn record_agent_usage_delta(
+        &mut self,
+        agent_id: Uuid,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
+        if input_tokens == 0 && output_tokens == 0 {
+            return;
+        }
+        let total = self.usage_totals.entry(agent_id).or_insert((0, 0));
+        total.0 = total.0.saturating_add(input_tokens);
+        total.1 = total.1.saturating_add(output_tokens);
+        self.agent_panel
+            .set_tokens(agent_id, input_tokens, output_tokens);
+    }
+
+    /// Show the estimated input size for the root provider request that is
+    /// about to stream.
+    pub fn set_root_input_estimate(&mut self, input_tokens: u64) {
+        let status = self.fixed_panel.status_bar_mut();
+        status.input_tokens = input_tokens;
+        status.input_tokens_estimated = true;
+        status.output_tokens = 0;
+        status.output_tokens_estimated = false;
+    }
+
+    /// Add one root usage delta to the root agent's cumulative row total
+    /// and replace the top-chip counters with that provider request's
+    /// actual usage.
+    pub fn record_root_provider_usage(
+        &mut self,
+        agent_id: Uuid,
+        input_tokens: u64,
+        output_tokens: u64,
+    ) {
+        self.record_agent_usage_delta(agent_id, input_tokens, output_tokens);
+        let status = self.fixed_panel.status_bar_mut();
+        status.input_tokens = input_tokens;
+        status.input_tokens_estimated = false;
+        status.output_tokens = output_tokens;
+        status.output_tokens_estimated = false;
+    }
+
+    /// Reconcile a cumulative usage total for an agent by recording only
+    /// the missing positive delta.
+    pub fn reconcile_usage_total(&mut self, agent_id: Uuid, input_tokens: u64, output_tokens: u64) {
+        let (seen_input, seen_output) = self.usage_totals.get(&agent_id).copied().unwrap_or((0, 0));
+        let delta_input = input_tokens.saturating_sub(seen_input);
+        let delta_output = output_tokens.saturating_sub(seen_output);
+        self.record_agent_usage_delta(agent_id, delta_input, delta_output);
+    }
+
+    /// Reset the top-chip live counters for a new root turn.
+    pub fn reset_live_usage(&mut self) {
+        let status = self.fixed_panel.status_bar_mut();
+        status.input_tokens = 0;
+        status.input_tokens_estimated = false;
+        status.output_tokens = 0;
+        status.output_tokens_estimated = false;
+    }
+
+    /// Clear all usage totals after a session reset.
+    pub fn clear_usage_totals(&mut self) {
+        self.usage_totals.clear();
+        self.agent_panel.reset_all_tokens();
+        self.reset_live_usage();
     }
 }
 
@@ -532,12 +606,71 @@ mod tests {
     }
 
     #[test]
+    fn root_provider_usage_replaces_live_status_totals() {
+        let mut state = fresh_state();
+        let agent_id = state.tab_state.root_id();
+        state.record_root_provider_usage(agent_id, 1_000, 2_000);
+        state.record_root_provider_usage(agent_id, 3_000, 4_000);
+
+        let status = state.fixed_panel.status_bar();
+        assert_eq!(status.input_tokens, 3_000);
+        assert_eq!(status.output_tokens, 4_000);
+        assert!(!status.input_tokens_estimated);
+        assert!(!status.output_tokens_estimated);
+        assert_eq!(
+            state.usage_totals.get(&agent_id).copied(),
+            Some((4_000, 6_000)),
+            "agent-row ledger still accumulates actual provider spend"
+        );
+    }
+
+    #[test]
+    fn root_input_estimate_marks_live_status_as_estimated() {
+        let mut state = fresh_state();
+        state.set_root_input_estimate(12_345);
+
+        let status = state.fixed_panel.status_bar();
+        assert_eq!(status.input_tokens, 12_345);
+        assert!(status.input_tokens_estimated);
+        assert_eq!(status.output_tokens, 0);
+        assert!(!status.output_tokens_estimated);
+    }
+
+    #[test]
+    fn child_usage_delta_does_not_update_live_status_totals() {
+        let mut state = fresh_state();
+        let child_id = Uuid::new_v4();
+        state.record_agent_usage_delta(child_id, 1_000, 2_000);
+
+        let status = state.fixed_panel.status_bar();
+        assert_eq!(status.input_tokens, 0);
+        assert_eq!(status.output_tokens, 0);
+    }
+
+    #[test]
+    fn usage_reconcile_records_only_missing_positive_delta() {
+        let mut state = fresh_state();
+        let agent_id = state.tab_state.root_id();
+        state.record_agent_usage_delta(agent_id, 1_000, 2_000);
+        state.reconcile_usage_total(agent_id, 1_500, 2_500);
+        state.reconcile_usage_total(agent_id, 1_200, 2_100);
+
+        assert_eq!(
+            state.usage_totals.get(&agent_id).copied(),
+            Some((1_500, 2_500))
+        );
+        let status = state.fixed_panel.status_bar();
+        assert_eq!(status.input_tokens, 0);
+        assert_eq!(status.output_tokens, 0);
+    }
+
+    #[test]
     fn sync_indicator_into_panel_mirrors_state() {
         let mut state = fresh_state();
         state.note_event_received(Instant::now());
         state.sync_indicator_into_panel();
-        // The panel's height increases by one when the indicator is
-        // non-idle (StreamingIndicator::height returns 1 for Generating).
-        assert!(state.fixed_panel.total_height() >= 3);
+        // Generating lives in the top chip, so mirroring state should
+        // keep the fixed panel at least at its always-present minimum.
+        assert!(state.fixed_panel.total_height() >= 4);
     }
 }
