@@ -46,8 +46,8 @@ use crate::session::events::{EventBase, EventId, EventUsage, SessionEvent, ToolC
 use crate::session::store::EventStore;
 
 use super::delivery::{
-    drain_and_partition, drain_child_results, flush_inbound_messages, flush_pending_agent_messages,
-    inject_inbound_messages,
+    drain_and_partition, drain_child_results, flush_active_inputs, flush_inbound_messages,
+    flush_pending_agent_messages, inject_inbound_messages,
 };
 use super::helpers::{
     ToolBatchRequest, ToolResultRecord, accept_schema_tool_call, append_and_notify,
@@ -497,6 +497,14 @@ async fn run_agent_step_inner(
         )
         .await?;
 
+        flush_active_inputs(
+            store,
+            &mut messages,
+            loop_context.active_input_rx.as_mut(),
+            loop_context.hooks.as_deref(),
+        )
+        .await?;
+
         // Rules cleared at the top of each iteration so re-firings produce
         // fresh dynamic sections rather than accumulating duplicates.
         loop_context.clear_dynamic_sections();
@@ -931,6 +939,13 @@ async fn run_agent_step_inner(
                     steer,
                     loop_context.hooks.as_deref(),
                     event_tx,
+                )
+                .await?;
+                flush_active_inputs(
+                    store,
+                    &mut messages,
+                    loop_context.active_input_rx.as_mut(),
+                    loop_context.hooks.as_deref(),
                 )
                 .await?;
             }

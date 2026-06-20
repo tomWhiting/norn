@@ -29,9 +29,9 @@ use termina::style::{RgbColor, Underline};
 
 use crate::terminal::caps::TerminalCaps;
 
-use dim::render_dim_preview;
+use dim::{render_dim_preview, render_list_dim_preview};
 use emitter::Emitter;
-use scan::{ScanResult, is_plain_text, scan_pending};
+use scan::{ScanResult, is_plain_text, scan_pending, starts_with_list_marker};
 
 use super::syntax::SyntaxHighlighter;
 
@@ -195,7 +195,11 @@ impl MarkdownRenderer {
         if self.pending.is_empty() || scan.fence_unclosed || scan.table_unclosed {
             return String::new();
         }
-        render_dim_preview(&self.pending, &self.caps)
+        if scan.list_unclosed {
+            render_list_dim_preview(&self.pending, &self.caps)
+        } else {
+            render_dim_preview(&self.pending, &self.caps)
+        }
     }
 
     /// Accept a streamed text chunk and return dim + styled output.
@@ -226,6 +230,8 @@ impl MarkdownRenderer {
         let scan = scan_pending(&self.pending);
         let dim = if scan.fence_unclosed || scan.table_unclosed || self.pending.is_empty() {
             String::new()
+        } else if scan.list_unclosed {
+            render_list_dim_preview(&self.pending, &self.caps)
         } else {
             render_dim_preview(&self.pending, &self.caps)
         };
@@ -370,7 +376,11 @@ impl MarkdownRenderer {
         };
         let mut output = String::new();
         if self.paragraph_pending {
-            output.push_str("\n\n");
+            if starts_with_list_marker(parse_source) {
+                output.push('\n');
+            } else {
+                output.push_str("\n\n");
+            }
             self.paragraph_pending = false;
         }
         let parser = Parser::new_ext(parse_source, MARKDOWN_OPTIONS);
@@ -1043,6 +1053,188 @@ mod tests {
     }
 
     #[test]
+    fn streaming_unordered_list_dims_with_nested_indentation() {
+        let mut r = MarkdownRenderer::new(TerminalCaps::baseline(), 80);
+        let first = r.feed("- Fruits\n");
+        assert!(first.styled.is_empty(), "list stays pending: {first:?}");
+        let first_dim = strip_ansi(&first.dim);
+        assert!(first_dim.contains("\u{2022} Fruits"), "got: {first_dim:?}");
+        assert!(
+            !first_dim.contains("- Fruits"),
+            "raw marker leaked: {first_dim:?}"
+        );
+
+        let second = r.feed("  - Apples\n");
+        assert!(second.styled.is_empty(), "list still pending: {second:?}");
+        assert!(second.replace_dim, "second preview replaces first");
+        let second_dim = strip_ansi(&second.dim);
+        assert!(
+            second_dim.contains("  \u{25E6} Apples"),
+            "nested dim item must be indented: {second_dim:?}",
+        );
+    }
+
+    #[test]
+    fn streaming_unordered_list_renders_final_block_with_nested_indentation() {
+        let mut r = MarkdownRenderer::new(TerminalCaps::baseline(), 80);
+        let mut out = String::new();
+        for chunk in [
+            "Sure:\n\n",
+            "- Fruits\n",
+            "  - Apples\n",
+            "    - Granny Smith\n",
+            "    - Honeycrisp\n",
+            "\n",
+            "Done\n",
+        ] {
+            out.push_str(&r.feed(chunk).styled);
+        }
+        out.push_str(&r.finalize().styled);
+
+        let plain = strip_ansi(&out);
+        assert!(plain.contains("\u{2022} Fruits"), "got: {plain:?}");
+        assert!(
+            plain.contains("  \u{25E6} Apples"),
+            "child item must stay nested: {plain:?}",
+        );
+        assert!(
+            plain.contains("    \u{25AA} Granny Smith"),
+            "grandchild item must not become raw code: {plain:?}",
+        );
+        assert!(
+            !plain.contains("- Granny Smith"),
+            "raw nested marker leaked: {plain:?}",
+        );
+        assert!(
+            plain.contains("Done"),
+            "following text must render: {plain:?}"
+        );
+    }
+
+    #[test]
+    fn paragraph_before_list_in_same_segment_is_tight() {
+        let mut r = MarkdownRenderer::new(TerminalCaps::baseline(), 80);
+        let out = collect_styled(&mut r, "Intro:\n\n- One\n- Two");
+        let plain = strip_ansi(&out);
+
+        assert!(
+            plain.contains("Intro:\n\u{2022} One"),
+            "paragraph-to-list boundary must not add a blank row: {plain:?}",
+        );
+        assert!(
+            !plain.contains("Intro:\n\n\u{2022} One"),
+            "paragraph-to-list boundary should be tight: {plain:?}",
+        );
+    }
+
+    #[test]
+    fn streaming_nested_lists_finalize_correctly_at_end_of_message() {
+        let mut r = MarkdownRenderer::new(TerminalCaps::baseline(), 80);
+        let mut out = String::new();
+        for chunk in [
+            "Here’s an example of nested lists in Markdown:\n\n",
+            "- Fruits\n",
+            "  - Apples\n",
+            "    - Granny Smith\n",
+            "    - Fuji\n",
+            "  - Bananas\n",
+            "  - Oranges\n",
+            "    - Blood orange\n",
+            "    - Navel orange\n",
+            "- Vegetables\n",
+            "  - Leafy greens\n",
+            "    - Spinach\n",
+            "    - Kale\n",
+            "  - Root vegetables\n",
+            "    - Carrots\n",
+            "    - Beets\n",
+            "\n",
+            "And an ordered version:\n",
+            "\n",
+            "1. Plan the trip\n",
+            "   1. Choose destination\n",
+            "   2. Set budget\n",
+            "      1. Flights\n",
+            "      2. Hotels\n",
+            "      3. Food\n",
+            "   3. Pick dates\n",
+            "2. Book everything\n",
+            "   1. Flights\n",
+            "   2. Lodging\n",
+            "3. Pack bags",
+        ] {
+            out.push_str(&r.feed(chunk).styled);
+        }
+        out.push_str(&r.finalize().styled);
+
+        let plain = strip_ansi(&out);
+        assert!(
+            plain.contains("    \u{25AA} Granny Smith"),
+            "deep unordered item must stay nested: {plain:?}",
+        );
+        assert!(
+            plain.contains("    \u{25AA} Beets"),
+            "second unordered section must stay nested: {plain:?}",
+        );
+        assert!(
+            plain.contains("    1. Flights"),
+            "deep ordered item must stay nested: {plain:?}",
+        );
+        assert!(
+            plain.contains("3. Pack bags"),
+            "final ordered item must flush on finalize: {plain:?}",
+        );
+        assert!(
+            !plain.contains("- Granny Smith"),
+            "raw indented marker leaked: {plain:?}",
+        );
+        assert!(
+            plain.contains("    \u{25AA} Fuji\n  \u{25E6} Bananas"),
+            "nested list must not add a blank row after Fuji: {plain:?}",
+        );
+        assert!(
+            plain.contains("    \u{25AA} Navel orange\n\u{2022} Vegetables"),
+            "top-level sibling must not gain a blank row: {plain:?}",
+        );
+        assert!(
+            plain.contains("    \u{25AA} Kale\n  \u{25E6} Root vegetables"),
+            "nested sibling group must not gain a blank row: {plain:?}",
+        );
+        assert!(
+            plain.contains("    3. Food\n  3. Pick dates"),
+            "ordered nested sibling must not gain a blank row: {plain:?}",
+        );
+        assert!(
+            plain.contains("  2. Lodging\n3. Pack bags"),
+            "final ordered sibling must not gain a blank row: {plain:?}",
+        );
+        assert!(
+            plain.contains("Markdown:\n\u{2022} Fruits"),
+            "paragraph-to-unordered-list boundary must not add a blank row: {plain:?}",
+        );
+        assert!(
+            !plain.contains("Markdown:\n\n\u{2022} Fruits"),
+            "paragraph-to-unordered-list boundary should be tight: {plain:?}",
+        );
+        assert!(
+            plain.contains("version:\n1. Plan the trip"),
+            "paragraph-to-ordered-list boundary must not add a blank row: {plain:?}",
+        );
+        assert!(
+            !plain.contains("version:\n\n1. Plan the trip"),
+            "paragraph-to-ordered-list boundary should be tight: {plain:?}",
+        );
+        assert!(
+            plain.contains("    \u{25AA} Beets\nAnd an ordered version"),
+            "list-to-paragraph boundary should remain tight: {plain:?}",
+        );
+        assert!(
+            plain.contains("  3. Pick dates\n2. Book everything"),
+            "ordered top-level sibling must not gain a blank row: {plain:?}",
+        );
+    }
+
+    #[test]
     fn ordered_lists_keep_numbers_at_every_depth() {
         let mut r = MarkdownRenderer::new(TerminalCaps::baseline(), 80);
         let out = collect_styled(&mut r, "1. a\n   1. b\n      1. c\n");
@@ -1052,6 +1244,38 @@ mod tests {
         assert!(
             !out.contains("\u{2022}") && !out.contains("\u{25E6}"),
             "ordered lists must not emit bullet glyphs: {out:?}",
+        );
+    }
+
+    #[test]
+    fn streaming_ordered_list_preserves_nested_numbers() {
+        let mut r = MarkdownRenderer::new(TerminalCaps::baseline(), 80);
+        let mut out = String::new();
+        for chunk in [
+            "1. Plan a trip\n",
+            "   1. Choose destination\n",
+            "      1. Compare weather\n",
+            "      2. Check flight prices\n",
+            "\n",
+            "Done\n",
+        ] {
+            out.push_str(&r.feed(chunk).styled);
+        }
+        out.push_str(&r.finalize().styled);
+
+        let plain = strip_ansi(&out);
+        assert!(plain.contains("1. Plan a trip"), "got: {plain:?}");
+        assert!(
+            plain.contains("  1. Choose destination"),
+            "nested ordered item must be indented: {plain:?}",
+        );
+        assert!(
+            plain.contains("    1. Compare weather"),
+            "grandchild ordered item must be indented: {plain:?}",
+        );
+        assert!(
+            plain.contains("Done"),
+            "following text must render: {plain:?}"
         );
     }
 

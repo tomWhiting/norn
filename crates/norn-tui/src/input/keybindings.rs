@@ -94,6 +94,8 @@ pub enum InputAction {
     /// Toggle thinking visibility and secondary structured-output
     /// fields (Ctrl+E).
     ToggleThinking,
+    /// Toggle in-flight Enter behavior between steer and queue modes (Ctrl+T).
+    ToggleInFlightSubmitMode,
 }
 
 /// Translate a terminal key event into an [`InputAction`].
@@ -133,6 +135,9 @@ pub fn map_key_event(
             }
             KeyCode::Char('e' | 'E') if mods.contains(Modifiers::CONTROL) => {
                 Some(InputAction::ToggleThinking)
+            }
+            KeyCode::Char('t' | 'T') if mods.contains(Modifiers::CONTROL) => {
+                Some(InputAction::ToggleInFlightSubmitMode)
             }
             KeyCode::Char('a' | 'A') if mods.contains(Modifiers::CONTROL) => {
                 Some(InputAction::LineStart)
@@ -559,6 +564,15 @@ mod tests {
         assert_eq!(
             map_key_event(event, &TerminalCaps::baseline(), false),
             Some(InputAction::ToggleThinking)
+        );
+    }
+
+    #[test]
+    fn ctrl_t_maps_to_toggle_in_flight_submit_mode() {
+        let event = KeyEvent::new(KeyCode::Char('t'), Modifiers::CONTROL);
+        assert_eq!(
+            map_key_event(event, &TerminalCaps::baseline(), false),
+            Some(InputAction::ToggleInFlightSubmitMode),
         );
     }
 }

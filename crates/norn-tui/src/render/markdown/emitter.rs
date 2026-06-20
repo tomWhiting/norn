@@ -154,6 +154,14 @@ impl<'a> Emitter<'a> {
         }
     }
 
+    fn resolve_pending_list_boundary(&mut self) {
+        if self.paragraph_pending {
+            self.output.push('\n');
+            self.emit_blockquote_prefix();
+            self.paragraph_pending = false;
+        }
+    }
+
     /// Append one [`BLOCKQUOTE_PREFIX`] per active blockquote level.
     /// No-op outside a quote. Called after every line break that should
     /// continue inside the quote — `Tag::BlockQuote` open, soft/hard
@@ -203,7 +211,11 @@ impl<'a> Emitter<'a> {
     }
 
     fn handle_start(&mut self, tag: Tag<'_>) {
-        self.resolve_pending_paragraph();
+        if matches!(&tag, Tag::List(_)) {
+            self.resolve_pending_list_boundary();
+        } else {
+            self.resolve_pending_paragraph();
+        }
         match tag {
             Tag::Heading { level, .. } => self.start_heading(level),
             Tag::Strong => {
@@ -289,7 +301,9 @@ impl<'a> Emitter<'a> {
                 self.list_stack.pop();
             }
             TagEnd::Item => {
-                self.output.push('\n');
+                if !self.output.ends_with('\n') {
+                    self.output.push('\n');
+                }
                 self.item_bullet_start = None;
             }
             TagEnd::Link => self.end_link(),

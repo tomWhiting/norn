@@ -231,10 +231,8 @@ pub fn replay_events<W: io::Write>(
     terminal_width: u16,
     writer: &mut W,
 ) -> io::Result<()> {
-    let events = store.events();
-    let start = events.len().saturating_sub(count);
-    for event in &events[start..] {
-        let rendered = render_event(event, caps, toggles, terminal_width);
+    for event in store.last_events(count) {
+        let rendered = render_event(&event, caps, toggles, terminal_width);
         write_to_scroll(&rendered, writer)?;
     }
     Ok(())

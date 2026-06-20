@@ -2,6 +2,10 @@
 
 pub use crate::error::SchemaError;
 
+pub use crate::r#loop::active_input::{
+    ActiveInputDelivery, ActiveInputDeliveryReceiver, ActiveInputError, ActiveInputReceiver,
+    ActiveInputSender, active_input_channel,
+};
 pub use crate::r#loop::children_usage::ChildrenUsage;
 pub use crate::r#loop::commands::{
     BuiltinSlashCommand, BuiltinSlashKind, CustomSlashHandler, EffortCommand, PreprocessResult,
@@ -25,6 +29,7 @@ pub use crate::r#loop::retry::{RetryPolicy, RetryableError, retry_with_backoff};
 
 pub use crate::r#loop::tokens::{SimpleTokenEstimator, TokenEstimator, estimate_prompt_tokens};
 
+pub mod active_input;
 pub mod assembly;
 pub mod children_usage;
 mod classify;

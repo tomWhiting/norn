@@ -468,6 +468,18 @@ impl EventStore {
         self.inner.read().events.clone()
     }
 
+    /// Return up to `count` most recent events in insertion order.
+    ///
+    /// This clones only the returned tail window, unlike [`Self::events`],
+    /// so callers that only need recent visible context do not pay to copy
+    /// large session histories.
+    #[must_use]
+    pub fn last_events(&self, count: usize) -> Vec<SessionEvent> {
+        let inner = self.inner.read();
+        let start = inner.events.len().saturating_sub(count);
+        inner.events[start..].to_vec()
+    }
+
     /// Return the number of stored events.
     #[must_use]
     pub fn len(&self) -> usize {
@@ -587,6 +599,47 @@ mod tests {
         for (i, event) in events.iter().enumerate() {
             assert_eq!(event.base().id, ids[i]);
         }
+    }
+
+    #[test]
+    fn last_events_returns_tail_in_insertion_order() {
+        let store = EventStore::new();
+        let mut ids = Vec::new();
+        for i in 0..5 {
+            let id = store.append(user_msg(&format!("msg {i}"))).expect("append");
+            ids.push(id);
+        }
+
+        let events = store.last_events(2);
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].base().id, ids[3]);
+        assert_eq!(events[1].base().id, ids[4]);
+    }
+
+    #[test]
+    fn last_events_count_above_len_returns_all_events() {
+        let store = EventStore::new();
+        store.append(user_msg("first")).expect("append first");
+        store.append(user_msg("second")).expect("append second");
+
+        let events = store.last_events(10);
+        assert_eq!(events.len(), 2);
+        assert!(matches!(
+            &events[0],
+            SessionEvent::UserMessage { content, .. } if content == "first"
+        ));
+        assert!(matches!(
+            &events[1],
+            SessionEvent::UserMessage { content, .. } if content == "second"
+        ));
+    }
+
+    #[test]
+    fn last_events_zero_returns_empty_window() {
+        let store = EventStore::new();
+        store.append(user_msg("first")).expect("append");
+
+        assert!(store.last_events(0).is_empty());
     }
 
     #[test]

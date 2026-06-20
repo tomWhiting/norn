@@ -21,6 +21,10 @@ use crate::terminal::caps::TerminalCaps;
 
 use super::{INLINE_CODE_COLOUR, italic_off};
 
+mod list;
+
+pub(super) use list::render_list_dim_preview;
+
 /// Render `pending` as a markdown-aware dim preview.
 ///
 /// Strips ATX heading markers (`# `, `## `, …) at line start and bolds

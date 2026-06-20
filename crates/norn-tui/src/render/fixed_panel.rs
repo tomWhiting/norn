@@ -225,6 +225,35 @@ impl StreamingIndicator {
         }
     }
 
+    /// Coarse key for deciding whether a render tick should repaint.
+    ///
+    /// This deliberately ignores sub-second elapsed time and token-count
+    /// churn so render ticks avoid repainting the controlled panel on
+    /// every streamed chunk. The next whole-second or tool/completion
+    /// transition will paint the latest token estimate.
+    #[must_use]
+    pub(crate) fn repaint_key(&self, terminal_cols: u16) -> Option<String> {
+        match self {
+            Self::Idle => None,
+            Self::Generating {
+                elapsed, in_flight, ..
+            } => {
+                let tool = in_flight.as_ref().map_or_else(String::new, |tool| {
+                    format!(
+                        "{}\n{}",
+                        tool.tool_name,
+                        tool.description.as_deref().unwrap_or_default()
+                    )
+                });
+                Some(format!(
+                    "generating:{}:{terminal_cols}:{tool}",
+                    elapsed.as_secs()
+                ))
+            }
+            Self::Complete { usage_summary } => Some(usage_summary.clone()),
+        }
+    }
+
     /// Render the indicator at zero-based `row`.
     ///
     /// [`StreamingIndicator::Idle`] writes nothing. `Generating` paints
@@ -342,6 +371,8 @@ pub struct FixedPanel {
     activity_lines: u16,
     /// Current streaming indicator state.
     streaming_indicator: StreamingIndicator,
+    /// Rows reserved for active-turn steer/queue status.
+    active_input_status: u16,
     /// Number of autocomplete popup rows (NT-010 wires their contents).
     autocomplete_popup: u16,
     /// Number of input area rows (NT-004 wires their contents); minimum 1.
@@ -362,6 +393,7 @@ impl FixedPanel {
             agent_lines: 0,
             activity_lines: 0,
             streaming_indicator: StreamingIndicator::Idle,
+            active_input_status: 0,
             autocomplete_popup: 0,
             input_area: 1,
             status_bar,
@@ -382,6 +414,7 @@ impl FixedPanel {
             .saturating_add(self.agent_lines)
             .saturating_add(self.activity_lines)
             .saturating_add(self.streaming_indicator.height())
+            .saturating_add(self.active_input_status)
             .saturating_add(self.autocomplete_popup)
             .saturating_add(self.input_area.max(1))
             .saturating_add(STATUS_BAR_ROWS)
@@ -452,6 +485,25 @@ impl FixedPanel {
         self.autocomplete_popup = rows;
     }
 
+    /// Set active-turn steer/queue status rows.
+    pub fn set_active_input_status(&mut self, rows: u16) {
+        self.active_input_status = rows;
+    }
+
+    /// Current active-input status rows.
+    #[must_use]
+    pub const fn active_input_status_rows(&self) -> u16 {
+        self.active_input_status
+    }
+
+    /// Zero-based row of the active-input status line.
+    #[must_use]
+    pub fn active_input_status_top(&self, terminal_rows: u16) -> u16 {
+        self.activity_rows_top(terminal_rows)
+            .saturating_add(self.activity_lines)
+            .saturating_add(self.streaming_indicator.height())
+    }
+
     /// Current number of autocomplete popup rows.
     #[must_use]
     pub fn autocomplete_popup_rows(&self) -> u16 {
@@ -517,6 +569,7 @@ impl FixedPanel {
 
         let agent_lines = self.agent_lines;
         let activity_lines = self.activity_lines;
+        let active_input_status = self.active_input_status;
         let popup = self.autocomplete_popup;
         let input_area = self.input_area.max(1);
         let indicator = &self.streaming_indicator;
@@ -542,6 +595,11 @@ impl FixedPanel {
             // Streaming indicator — renders its own content.
             if indicator.height() == 1 {
                 indicator.render(row, w, caps, terminal_cols)?;
+                row = row.saturating_add(1);
+            }
+            // Active-input status — cleared placeholder; app/render wires content.
+            for _ in 0..active_input_status {
+                clear_row(row, w)?;
                 row = row.saturating_add(1);
             }
             // Autocomplete popup — cleared placeholders (NT-010 wires data).

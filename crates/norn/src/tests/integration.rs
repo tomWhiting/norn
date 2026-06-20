@@ -37,6 +37,7 @@ use serde_json::Value;
 use tempfile::tempdir;
 
 use crate::integration::hooks::{Hook, HookOutcome, HookRegistry, PreToolHook};
+use crate::r#loop::active_input_channel;
 use crate::r#loop::config::{
     AgentLoopConfig, AgentStepResult, ConversationStateMode, MockToolExecutor, ToolHandler,
 };
@@ -972,6 +973,74 @@ async fn test_schema_enforcement_retry() {
 // ---------------------------------------------------------------------------
 // Test 6: inbound steer message appears in next provider call's messages
 // ---------------------------------------------------------------------------
+
+/// Active human input is surface-authored text, not inter-agent traffic. It
+/// must enter the event store and provider request as an ordinary user message
+/// and only then acknowledge delivery to the surface.
+#[tokio::test]
+async fn test_active_human_input_is_plain_user_message() {
+    let provider = MockProvider::new(vec![vec![
+        text_delta("acknowledged"),
+        done_event(StopReason::EndTurn),
+    ]]);
+    let store = EventStore::new();
+    let executor = MockToolExecutor::empty();
+    let config = AgentLoopConfig::default();
+    let mut loop_ctx = LoopContext::new("system");
+    let (active_tx, active_rx, mut delivery_rx) = active_input_channel();
+    let steer_id = active_tx
+        .send_steer("human mid-turn steer")
+        .expect("active steer should be accepted");
+    loop_ctx.active_input_rx = Some(active_rx);
+
+    let result = run_step_with_ctx(
+        &provider,
+        &executor,
+        &store,
+        &[],
+        None,
+        &config,
+        &mut loop_ctx,
+    )
+    .await;
+    assert_completed(result);
+
+    let requests = provider.requests().expect("requests recorded");
+    let user_messages: Vec<_> = requests[0]
+        .messages
+        .iter()
+        .filter(|message| message.role == crate::provider::request::MessageRole::User)
+        .map(|message| message.content.as_deref())
+        .collect();
+    assert_eq!(
+        user_messages,
+        vec![Some("test prompt"), Some("human mid-turn steer")],
+    );
+
+    let persisted_user_messages: Vec<_> = store
+        .events()
+        .into_iter()
+        .filter_map(|event| match event {
+            SessionEvent::UserMessage { content, .. } => Some(content),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        persisted_user_messages,
+        vec![
+            "test prompt".to_string(),
+            "human mid-turn steer".to_string(),
+        ],
+    );
+
+    assert_eq!(
+        delivery_rx.try_recv(),
+        Some(crate::r#loop::ActiveInputDelivery {
+            id: steer_id,
+            content: "human mid-turn steer".to_string(),
+        }),
+    );
+}
 
 /// A multi-turn step. A Steer message is sent to the inbound channel before
 /// the loop begins. The first provider call triggers a tool batch; after that

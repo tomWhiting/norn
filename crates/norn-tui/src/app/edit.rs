@@ -27,7 +27,7 @@ pub(super) fn apply_edit_action(
     terminal_rows: u16,
 ) {
     match action {
-        InputAction::Submit | InputAction::Exit => {}
+        InputAction::Submit | InputAction::Exit | InputAction::ToggleInFlightSubmitMode => {}
         InputAction::InsertChar(ch) => {
             state.input_editor.insert_char(ch);
             refresh_popup(state);

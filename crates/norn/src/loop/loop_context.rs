@@ -242,6 +242,15 @@ pub struct LoopContext {
     pub child_result_rx:
         Option<tokio::sync::mpsc::Receiver<crate::agent::result_channel::ChildAgentResult>>,
 
+    /// Receiver for human input submitted while this turn is already running.
+    ///
+    /// Unlike [`Self::pending_agent_messages`] and [`Self::child_result_rx`],
+    /// this is not inter-agent traffic and is not harness-framed. The runner
+    /// drains it at safe provider boundaries and persists each entry as an
+    /// ordinary [`SessionEvent::UserMessage`](crate::session::events::SessionEvent::UserMessage)
+    /// before the model can see it.
+    pub active_input_rx: Option<crate::r#loop::active_input::ActiveInputReceiver>,
+
     /// Accumulated `subtree_usage` of every child result delivered into
     /// this loop (W3.6 usage rollup).
     ///
@@ -304,6 +313,7 @@ impl LoopContext {
             environment: None,
             collaboration_mode: CollaborationMode::default(),
             child_result_rx: None,
+            active_input_rx: None,
             children_usage: crate::r#loop::children_usage::ChildrenUsage::default(),
             working_dir: crate::tool::context::SharedWorkingDir::default(),
         }

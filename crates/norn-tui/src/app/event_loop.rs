@@ -38,7 +38,7 @@ use norn::session::store::EventStore;
 use crate::TuiError;
 use crate::input::history::InputHistory;
 use crate::input::keybindings::{InputAction, map_key_event};
-use crate::render::fixed_panel::{StatusBar, StreamingIndicator};
+use crate::render::fixed_panel::StatusBar;
 use crate::terminal::caps::TerminalCaps;
 use crate::terminal::setup::TerminalGuard;
 
@@ -325,7 +325,9 @@ async fn outer_loop(
             }
             event = agent_event_rx.recv() => {
                 if let Ok(agent_ev) = event {
+                    guard.restore_scroll_cursor_clamped()?;
                     handle_agent_event(state, guard, &mut None, agent_ev)?;
+                    guard.save_scroll_cursor()?;
                     redraw_panel(state, guard)?;
                     render_input(state, guard)?;
                 }
@@ -353,8 +355,8 @@ async fn outer_loop(
                     agent_event_rx,
                     &mut child_results,
                 ).await?;
-                state.tick(Instant::now());
-                if !matches!(state.streaming_indicator, StreamingIndicator::Idle) {
+                let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
+                if state.tick_indicator_repaint_needed(Instant::now(), cols) {
                     state.sync_indicator_into_panel();
                     redraw_panel(state, guard)?;
                     render_input(state, guard)?;
@@ -492,6 +494,8 @@ async fn handle_action(
             if text.trim().is_empty() {
                 return Ok(InputOutcome::Continue);
             }
+            sync_input_for_current_geometry(state, guard);
+            redraw_all(state, guard)?;
             // Phase 1 slash dispatch. None = not a recognised slash —
             // fall through to the normal run_turn pipeline. Some =
             // handled here; skip run_turn. Exit short-circuits the
@@ -513,6 +517,9 @@ async fn handle_action(
                     .await?;
                 }
             }
+        }
+        InputAction::ToggleInFlightSubmitMode => {
+            state.in_flight_input.toggle_mode();
         }
         other => {
             let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);

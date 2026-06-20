@@ -69,6 +69,7 @@ pub fn write_user_message(
     let rendered = crate::events::schema_render::render_user_message(text, &state.terminal_caps);
     write_to_scroll(&rendered, guard.terminal_mut())?;
     guard.note_scroll_newlines(&rendered)?;
+    guard.save_scroll_cursor()?;
     guard.terminal_mut().flush()?;
     Ok(())
 }
@@ -104,6 +105,24 @@ pub fn render_input(state: &AppState, guard: &mut TerminalGuard) -> Result<(), T
     Ok(())
 }
 
+/// Move the hardware cursor back to the input editor without repainting it.
+///
+/// Streaming output writes through the scroll region and then restores
+/// the scroll cursor for the next append. When the user has typed during
+/// an active turn we still want the visible terminal cursor to sit in the
+/// composer, but repainting the whole controlled panel for every streamed
+/// chunk causes visible flicker. This helper emits only the final cursor
+/// position.
+pub fn park_input_cursor(state: &AppState, guard: &mut TerminalGuard) -> Result<(), TuiError> {
+    let rows = guard.terminal_rows();
+    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
+    if let Some((row, col)) = input_cursor_position(state, rows, cols) {
+        write!(guard.terminal_mut(), "\x1b[{row};{col}H")?;
+        guard.terminal_mut().flush()?;
+    }
+    Ok(())
+}
+
 fn render_input_frame<W: std::io::Write>(
     state: &AppState,
     rows: u16,
@@ -134,15 +153,35 @@ fn render_input_frame<W: std::io::Write>(
         write!(writer, "\x1b[{row_1b};1H\x1b[2K{clipped}")?;
     }
 
-    let cursor_visual_row = u16::try_from(layout.cursor.visual_row).unwrap_or(u16::MAX);
-    if cursor_visual_row >= viewport_top && cursor_visual_row < viewport_bottom {
-        let cursor_panel_row = cursor_visual_row.saturating_sub(viewport_top);
-        let cursor_row_1b = input_top.saturating_add(cursor_panel_row).saturating_add(1);
-        let display_col = layout.cursor.display_col.min(cols.saturating_sub(1));
-        write!(writer, "\x1b[{cursor_row_1b};{}H", display_col + 1)?;
+    if let Some((row, col)) = input_cursor_position(state, rows, cols) {
+        write!(writer, "\x1b[{row};{col}H")?;
     }
 
     Ok(())
+}
+
+fn input_cursor_position(state: &AppState, rows: u16, cols: u16) -> Option<(u16, u16)> {
+    let input_height = capped_input_height(&state.input_editor, cols, rows);
+    let input_top = rows.saturating_sub(1).saturating_sub(input_height);
+    let viewport_top = state.input_editor.viewport_top();
+    let viewport_bottom = viewport_top.saturating_add(input_height);
+
+    let lines = state.input_editor.lines();
+    let (cursor_row, cursor_col) = state.input_editor.cursor_position();
+    let layout = wrap::layout(lines, cursor_row, cursor_col, cols);
+    let cursor_visual_row = u16::try_from(layout.cursor.visual_row).unwrap_or(u16::MAX);
+    if cursor_visual_row < viewport_top || cursor_visual_row >= viewport_bottom {
+        return None;
+    }
+
+    let cursor_panel_row = cursor_visual_row.saturating_sub(viewport_top);
+    let row = input_top.saturating_add(cursor_panel_row).saturating_add(1);
+    let col = layout
+        .cursor
+        .display_col
+        .min(cols.saturating_sub(1))
+        .saturating_add(1);
+    Some((row, col))
 }
 
 fn char_slice(line: &str, char_start: usize, char_end: usize) -> &str {
@@ -205,6 +244,10 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
     let rows = guard.terminal_rows();
     let activity_snap = state.activity_log.snapshot(now);
     let proposed_activity_rows = height_from_log(&activity_snap);
+    let active_input_status = u16::from(state.in_flight_input.status_line().is_some());
+    state
+        .fixed_panel
+        .set_active_input_status(active_input_status);
     // First-pass floor guard: skip the activity log when it would
     // squeeze the scroll region below the minimum conversation rows.
     // The broader row budget below can shed additional optional
@@ -232,21 +275,24 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
                 write!(writer, "\x1b[{row_1b};1H\x1b[2K")?;
             }
         } else if new_height > old_height {
-            // Grow path: scroll the OLD scroll region up by `claim`
-            // rows so the rows that are about to be reclassified as
-            // panel land in native scrollback instead of being painted
-            // over. Position the cursor at the OLD scroll-region
-            // bottom — the bottom-margin newline scrolls the region
-            // and leaves the cursor parked at the bottom row.
+            // Grow path: when the scroll cursor is close to the rows
+            // about to be claimed by the panel, scroll the OLD scroll
+            // region up by `claim` rows so bottom content lands in
+            // native scrollback instead of being painted over. When
+            // there are enough blank rows below the tracked scroll
+            // cursor, no protective scroll is needed; scrolling then
+            // would incorrectly push recent top content into scrollback.
             let claim = new_height - old_height;
-            let old_scroll_bottom_1b = rows.saturating_sub(old_height);
-            if old_scroll_bottom_1b > 0 {
-                let writer = guard.terminal_mut();
-                write!(writer, "\x1b[{old_scroll_bottom_1b};1H")?;
-                for _ in 0..claim {
-                    writer.write_all(b"\n")?;
+            if guard.scroll_rows_below_cursor() <= claim {
+                let old_scroll_bottom_1b = rows.saturating_sub(old_height);
+                if old_scroll_bottom_1b > 0 {
+                    let writer = guard.terminal_mut();
+                    write!(writer, "\x1b[{old_scroll_bottom_1b};1H")?;
+                    for _ in 0..claim {
+                        writer.write_all(b"\n")?;
+                    }
+                    guard.note_panel_grew(claim);
                 }
-                guard.note_panel_grew(claim);
             }
         }
         guard.reissue_scroll_region(new_height)?;
@@ -255,6 +301,7 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
     let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
     let agent_top = state.fixed_panel.agent_rows_top(rows);
     let activity_top = state.fixed_panel.activity_rows_top(rows);
+    let active_input_top = state.fixed_panel.active_input_status_top(rows);
     state
         .fixed_panel
         .render(guard.terminal_mut(), &caps, rows, cols)?;
@@ -279,7 +326,29 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
             cols,
         )?;
     }
+    if state.fixed_panel.active_input_status_rows() > 0 {
+        render_active_input_status(state, active_input_top, cols, guard)?;
+    }
     guard.terminal_mut().flush()?;
+    Ok(())
+}
+
+fn render_active_input_status(
+    state: &AppState,
+    row: u16,
+    cols: u16,
+    guard: &mut TerminalGuard,
+) -> Result<(), TuiError> {
+    let Some(status) = state.in_flight_input.status_line() else {
+        return Ok(());
+    };
+    let safe = terminal_safe_input_text(&status);
+    let text = truncate_to_width(&safe, cols.saturating_sub(2));
+    let row_1b = row.saturating_add(1);
+    write!(
+        guard.terminal_mut(),
+        "\x1b[{row_1b};1H\x1b[2K\x1b[2m↳ {text}\x1b[22m",
+    )?;
     Ok(())
 }
 
@@ -295,6 +364,12 @@ fn enforce_scroll_region_floor(
     if *activity_rows > 0 {
         state.fixed_panel.set_activity_lines(0);
         *activity_rows = 0;
+        if has_scroll_floor(state, terminal_rows) {
+            return;
+        }
+    }
+    if state.fixed_panel.active_input_status_rows() > 0 {
+        state.fixed_panel.set_active_input_status(0);
         if has_scroll_floor(state, terminal_rows) {
             return;
         }
@@ -336,15 +411,16 @@ pub fn redraw_all(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(),
 
 /// Drive a single mid-turn streaming-tick paint.
 ///
-/// Encapsulates the full atomic frame: state tick + indicator sync,
-/// dim-erase (if the renderer holds dim text on the current line),
-/// scroll-cursor save, panel/popup/input redraws, scroll-cursor
-/// restore, dim repaint (within remaining scroll-region space), and
-/// flush. The save→redraw→restore→repaint sequence is wrapped in
-/// [`sync_with_guard`] so capable terminals see the entire frame land
-/// atomically via DCS 2026, and baseline terminals still get the
-/// cursor hide/show fallback that the inline `\x1b[?25l/h` pair used
-/// to provide.
+/// The tick always refreshes internal elapsed/completion state, but it
+/// only writes to the terminal when the fixed panel's visible indicator
+/// text changed at the current width. This keeps the controlled bottom
+/// region stable between whole-second/token/tool transitions instead of
+/// clearing and repainting it on every 8ms timer wake.
+///
+/// When a repaint is needed, the save→redraw→restore→repaint sequence
+/// is wrapped in [`sync_with_guard`] so capable terminals see the entire
+/// frame land atomically via DCS 2026, and baseline terminals still get
+/// the cursor hide/show fallback.
 ///
 /// `now` is injected to keep the function free of implicit clock
 /// access — the caller passes `Instant::now()` from the tokio tick
@@ -355,9 +431,13 @@ pub fn redraw_streaming_tick(
     renderer: Option<&MarkdownRenderer>,
     now: Instant,
 ) -> Result<(), TuiError> {
-    state.tick(now);
+    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
+    if !state.tick_indicator_repaint_needed(now, cols) {
+        return Ok(());
+    }
     state.sync_indicator_into_panel();
     let dim_was_active = renderer.is_some_and(MarkdownRenderer::is_dim_active);
+    guard.restore_scroll_cursor_clamped()?;
     // Always erase dim before the save/restore cycle.
     // restore_scroll_cursor_clamped may emit \r\n when the panel grew,
     // which scrolls the current line into permanent scrollback — any
@@ -372,11 +452,13 @@ pub fn redraw_streaming_tick(
         guard.save_scroll_cursor()?;
         redraw_panel(state, guard)?;
         render_popup(state, guard)?;
-        render_input(state, guard)?;
         guard.restore_scroll_cursor_clamped()?;
         if dim_was_active {
             repaint_dim(state, guard, renderer)?;
         }
+        guard.save_scroll_cursor()?;
+        let rows = guard.terminal_rows();
+        render_input_frame(state, rows, cols, guard.terminal_mut())?;
         Ok(())
     })?;
     guard.terminal_mut().flush()?;

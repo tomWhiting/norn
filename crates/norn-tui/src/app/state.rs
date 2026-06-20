@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 use norn::agent::registry::AgentRegistry;
 
+use super::active_input::InFlightInputState;
 use crate::agents::activity_log::ActivityLog;
 use crate::agents::status_line::AgentStatusPanel;
 use crate::agents::tabs::TabState;
@@ -152,6 +153,9 @@ pub struct AppState {
     /// indicator. Dispatch pushes entries on `ToolCallComplete`; the
     /// event loop snapshots once per redraw to size and paint.
     pub activity_log: ActivityLog,
+    /// In-flight human input state for active-turn steering and queued
+    /// follow-up prompts.
+    pub in_flight_input: InFlightInputState,
 }
 
 impl AppState {
@@ -189,6 +193,7 @@ impl AppState {
             styled_mid_line: false,
             highlighter: SyntaxHighlighter::new(),
             activity_log: ActivityLog::new(),
+            in_flight_input: InFlightInputState::default(),
         }
     }
 
@@ -252,6 +257,19 @@ impl AppState {
             }
             StreamingIndicator::Idle => {}
         }
+    }
+
+    /// Refresh tick-driven state and report whether the fixed-panel
+    /// indicator should repaint at the current terminal width.
+    ///
+    /// This lets render ticks keep elapsed-time and completion-hold
+    /// bookkeeping current without repainting the fixed panel every few
+    /// milliseconds when only sub-second internal state changed.
+    #[must_use]
+    pub fn tick_indicator_repaint_needed(&mut self, now: Instant, terminal_cols: u16) -> bool {
+        let before = self.streaming_indicator.repaint_key(terminal_cols);
+        self.tick(now);
+        before != self.streaming_indicator.repaint_key(terminal_cols)
     }
 
     /// Transition the indicator to `Complete { usage_summary }` and
@@ -403,6 +421,47 @@ mod tests {
             ),
             "expected Generating with elapsed >= 3s, got {:?}",
             state.streaming_indicator,
+        );
+    }
+
+    #[test]
+    fn tick_repaint_ignores_subsecond_elapsed() {
+        let mut state = fresh_state();
+        let t0 = Instant::now();
+        state.note_event_received(t0);
+
+        assert!(!state.tick_indicator_repaint_needed(t0 + Duration::from_millis(8), 80));
+    }
+
+    #[test]
+    fn tick_repaint_reports_elapsed_second_boundary() {
+        let mut state = fresh_state();
+        let t0 = Instant::now();
+        state.note_event_received(t0);
+
+        assert!(state.tick_indicator_repaint_needed(t0 + Duration::from_secs(1), 80));
+    }
+
+    #[test]
+    fn tick_repaint_ignores_token_estimate_churn() {
+        let mut state = fresh_state();
+        let t0 = Instant::now();
+        state.note_event_received(t0);
+        state.est_output_bytes = 4_000;
+
+        assert!(!state.tick_indicator_repaint_needed(t0 + Duration::from_millis(8), 80));
+    }
+
+    #[test]
+    fn tick_repaint_reports_complete_to_idle_transition() {
+        let mut state = fresh_state();
+        let t0 = Instant::now();
+        state.note_event_received(t0);
+        state.mark_complete("done".to_string(), t0);
+
+        assert!(
+            state.tick_indicator_repaint_needed(t0 + STREAMING_COMPLETE_HOLD, 80),
+            "dropping the visible complete row must repaint the panel"
         );
     }
 

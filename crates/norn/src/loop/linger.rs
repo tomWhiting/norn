@@ -52,7 +52,7 @@ use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::Message;
 use crate::session::store::EventStore;
 
-use super::delivery::{drain_child_results, flush_inbound_messages};
+use super::delivery::{drain_child_results, flush_active_inputs, flush_inbound_messages};
 
 /// Opt-in policy making an agent wait at its would-stop boundaries for
 /// late inbound messages and child results instead of returning
@@ -264,6 +264,17 @@ async fn sweep(
         follow_up_buffer,
         loop_context.hooks.as_deref(),
         event_tx,
+    )
+    .await?
+    .is_empty()
+    {
+        return Ok(true);
+    }
+    if !flush_active_inputs(
+        store,
+        messages,
+        loop_context.active_input_rx.as_mut(),
+        loop_context.hooks.as_deref(),
     )
     .await?
     .is_empty()

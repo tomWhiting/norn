@@ -1,5 +1,6 @@
 //! Application state and event loop.
 
+pub mod active_input;
 pub mod autocomplete;
 pub mod child_results;
 pub mod dispatch;

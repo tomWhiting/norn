@@ -13,6 +13,7 @@ use crate::agent::result_channel::frame_child_result;
 use crate::agent::{PendingAgentMessages, append_pending_message_audit};
 use crate::error::SessionError;
 use crate::integration::hooks::HookRegistry;
+use crate::r#loop::active_input::{ActiveInput, ActiveInputReceiver};
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel, MessageKind, frame_message};
 use crate::provider::agent_event::{
     AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AgentEventSender, AgentMessageLifecycle,
@@ -207,6 +208,60 @@ pub(super) async fn flush_inbound_messages(
     user_event_ids
         .extend(inject_inbound_messages(store, messages, buffered, hooks, event_tx).await?);
     Ok(user_event_ids)
+}
+
+/// Drain human active-turn input and persist it as ordinary user messages.
+///
+/// Active input is trusted operator text, not inter-agent traffic, so it does
+/// not use `<agent_message>` framing. A delivery acknowledgement is emitted only
+/// after the corresponding `UserMessage` event has been appended and the local
+/// conversation has been updated.
+pub(super) async fn flush_active_inputs(
+    store: &EventStore,
+    messages: &mut Vec<Message>,
+    active_input: Option<&mut ActiveInputReceiver>,
+    hooks: Option<&HookRegistry>,
+) -> Result<Vec<EventId>, SessionError> {
+    let Some(active_input) = active_input else {
+        return Ok(Vec::new());
+    };
+    inject_active_inputs(store, messages, active_input.drain(), hooks).await
+}
+
+async fn inject_active_inputs(
+    store: &EventStore,
+    messages: &mut Vec<Message>,
+    inputs: Vec<ActiveInput>,
+    hooks: Option<&HookRegistry>,
+) -> Result<Vec<EventId>, SessionError> {
+    if inputs.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut event_ids = Vec::with_capacity(inputs.len());
+    for input in inputs {
+        let content = input.content().to_string();
+        let event_id = append_and_notify(
+            store,
+            SessionEvent::UserMessage {
+                base: EventBase::new(store.last_event_id()),
+                content: content.clone(),
+            },
+            hooks,
+        )
+        .await?;
+        messages.push(Message {
+            role: MessageRole::User,
+            content: Some(content),
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        });
+        input.mark_delivered();
+        event_ids.push(event_id);
+    }
+    Ok(event_ids)
 }
 
 /// Drain pending child-agent results and inject them into the running

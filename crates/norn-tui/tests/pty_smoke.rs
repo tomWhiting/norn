@@ -38,6 +38,9 @@ const CHILD_ACTIVITY_MARKER: &[u8] = b"read_file";
 const ROOT_INBOUND_MARKER: &[u8] = b"root inbound wake handled";
 const SOFT_WRAP_END_MARKER: &[u8] = b"wrap-omega";
 const RESIZE_MARKER: &[u8] = b"resize harness output";
+const TYPE_DURING_STREAM_MARKER: &[u8] = b"stream-after-input";
+const SUBMIT_CLEAR_PROMPT: &str = "submit clear prompt before provider";
+const SUBMIT_CLEAR_PROVIDER_MARKER: &[u8] = b"submit-clear provider output";
 
 struct PtyRun {
     status: ExitStatus,
@@ -342,6 +345,60 @@ fn run_app_handles_resize_during_streaming_output() -> Result<(), Box<dyn std::e
 }
 
 #[test]
+fn run_app_keeps_streaming_output_out_of_input_panel_after_typing()
+-> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("type-during-stream"),
+        PtyInteraction::WaitForOutputWriteWaitForCleanScreenThenExit {
+            first_marker: b"stream-before-input",
+            bytes: b"draft while running",
+            second_marker: TYPE_DURING_STREAM_MARKER,
+            typed_marker: "draft while running",
+            forbidden: "stream-after-input",
+            boundary_marker: "────────",
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app type-during-stream", &run.status, &run.output).into());
+    }
+
+    let screen = TerminalScreen::from_output(&run.output, SCREEN_ROWS, SCREEN_COLS);
+    assert!(
+        screen.contains("stream-after-input"),
+        "streamed output missing from screen:\n{}",
+        screen.debug_text(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn run_app_clears_input_panel_immediately_after_submit() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("submit-clear-before-stream"),
+        PtyInteraction::WriteWaitForSubmittedPromptThenCancel {
+            bytes: b"submit clear prompt before provider\r",
+            submitted_prompt: SUBMIT_CLEAR_PROMPT,
+            provider_marker: SUBMIT_CLEAR_PROVIDER_MARKER,
+            boundary_marker: "────────",
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app submit-clear", &run.status, &run.output).into());
+    }
+
+    Ok(())
+}
+
+#[test]
 fn run_app_grows_and_shrinks_input_panel_without_artifacts()
 -> Result<(), Box<dyn std::error::Error>> {
     let size = PtySizeSpec { rows: 14, cols: 42 };
@@ -532,6 +589,38 @@ fn scenario_runtime(scenario: &str) -> Result<ScenarioRuntime, Box<dyn std::erro
                 done_event(),
             ]])),
             Some("resize prompt from pty harness".to_string()),
+            LoopContext::default(),
+        )),
+        "type-during-stream" => Ok((
+            Arc::new(DelayedProvider {
+                events: vec![
+                    ProviderEvent::TextDelta {
+                        text: "stream-before-input\n".to_string(),
+                    },
+                    ProviderEvent::TextDelta {
+                        text: "stream-after-input\n".to_string(),
+                    },
+                    ProviderEvent::TextDelta {
+                        text: "stream-tail-after-assertion\n".to_string(),
+                    },
+                    done_event(),
+                ],
+                delay: Duration::from_millis(150),
+            }),
+            Some("type during stream prompt from pty harness".to_string()),
+            LoopContext::default(),
+        )),
+        "submit-clear-before-stream" => Ok((
+            Arc::new(DelayedProvider {
+                events: vec![
+                    ProviderEvent::TextDelta {
+                        text: "submit-clear provider output\n".to_string(),
+                    },
+                    done_event(),
+                ],
+                delay: Duration::from_secs(30),
+            }),
+            None,
             LoopContext::default(),
         )),
         "child-result" => {
@@ -753,6 +842,20 @@ enum PtyInteraction<'a> {
         bytes: &'a [u8],
         marker: &'a [u8],
     },
+    WaitForOutputWriteWaitForCleanScreenThenExit {
+        first_marker: &'a [u8],
+        bytes: &'a [u8],
+        second_marker: &'a [u8],
+        typed_marker: &'a str,
+        forbidden: &'a str,
+        boundary_marker: &'a str,
+    },
+    WriteWaitForSubmittedPromptThenCancel {
+        bytes: &'a [u8],
+        submitted_prompt: &'a str,
+        provider_marker: &'a [u8],
+        boundary_marker: &'a str,
+    },
     WriteWaitForOutputWriteWaitForOutputThenCtrlC {
         first_bytes: &'a [u8],
         first_marker: &'a [u8],
@@ -861,6 +964,67 @@ fn run_child_to_completion(
                 writer.flush()?;
             }
             wait_for_output(&output, marker, Duration::from_secs(5))?;
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+        }
+        PtyInteraction::WaitForOutputWriteWaitForCleanScreenThenExit {
+            first_marker,
+            bytes,
+            second_marker,
+            typed_marker,
+            forbidden,
+            boundary_marker,
+        } => {
+            wait_for_output(&output, first_marker, Duration::from_secs(5))?;
+            let mut writer = pair.master.take_writer()?;
+            writer.write_all(bytes)?;
+            writer.flush()?;
+            wait_for_screen(&output, typed_marker, size, Duration::from_secs(5))?;
+            wait_for_screen(&output, forbidden, size, Duration::from_secs(5))?;
+            let assertion = assert_screen_text_above_boundary(
+                &clone_output(&output)?,
+                size,
+                forbidden,
+                boundary_marker,
+            )
+            .and_then(|()| {
+                assert_screen_line_excludes(&clone_output(&output)?, size, typed_marker, forbidden)
+            })
+            .and_then(|()| wait_for_output(&output, second_marker, Duration::from_secs(5)));
+            writer.write_all(b"\x15")?;
+            writer.write_all(b"\x03\x03\x03\x03")?;
+            writer.flush()?;
+            assertion?;
+        }
+        PtyInteraction::WriteWaitForSubmittedPromptThenCancel {
+            bytes,
+            submitted_prompt,
+            provider_marker,
+            boundary_marker,
+        } => {
+            wait_for_output(&output, b"^C exit", Duration::from_secs(5))?;
+            let mut writer = pair.master.take_writer()?;
+            writer.write_all(bytes)?;
+            writer.flush()?;
+            wait_for_screen(&output, submitted_prompt, size, Duration::from_secs(5))?;
+            let snapshot = clone_output(&output)?;
+            assert_screen_text_above_boundary(&snapshot, size, submitted_prompt, boundary_marker)?;
+            assert_screen_text_not_below_boundary(
+                &snapshot,
+                size,
+                submitted_prompt,
+                boundary_marker,
+            )?;
+            if output_contains(&snapshot, provider_marker) {
+                return Err(io::Error::other(format!(
+                    "provider marker {:?} arrived before submit-clear assertion",
+                    String::from_utf8_lossy(provider_marker),
+                ))
+                .into());
+            }
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+            wait_for_output(&output, b"[cancelled]", Duration::from_secs(5))?;
             writer.write_all(b"\x03")?;
             writer.flush()?;
         }
@@ -979,6 +1143,84 @@ fn wait_for_screen(
         }
         std::thread::sleep(Duration::from_millis(10));
     }
+}
+
+fn assert_screen_line_excludes(
+    output: &[u8],
+    size: PtySizeSpec,
+    row_marker: &str,
+    forbidden: &str,
+) -> io::Result<()> {
+    let screen = TerminalScreen::from_output(output, size.rows, size.cols);
+    let debug = screen.debug_text();
+    let Some(line) = debug.lines().find(|line| line.contains(row_marker)) else {
+        return Err(io::Error::other(format!(
+            "screen row marker {row_marker:?} missing; screen:\n{debug}",
+        )));
+    };
+    if line.contains(forbidden) {
+        return Err(io::Error::other(format!(
+            "screen row {row_marker:?} unexpectedly contains {forbidden:?}; screen:\n{debug}",
+        )));
+    }
+    Ok(())
+}
+
+fn assert_screen_text_above_boundary(
+    output: &[u8],
+    size: PtySizeSpec,
+    text: &str,
+    boundary_marker: &str,
+) -> io::Result<()> {
+    let screen = TerminalScreen::from_output(output, size.rows, size.cols);
+    let debug = screen.debug_text();
+    let lines = debug.lines().collect::<Vec<_>>();
+    let Some(text_row) = lines.iter().position(|line| line.contains(text)) else {
+        return Err(io::Error::other(format!(
+            "screen text {text:?} missing; screen:\n{debug}",
+        )));
+    };
+    let Some(boundary_row) = lines.iter().position(|line| line.contains(boundary_marker)) else {
+        return Err(io::Error::other(format!(
+            "fixed-panel boundary marker {boundary_marker:?} missing; screen:\n{debug}",
+        )));
+    };
+    if text_row >= boundary_row {
+        return Err(io::Error::other(format!(
+            "screen text {text:?} appeared inside fixed panel; screen:\n{debug}",
+        )));
+    }
+    Ok(())
+}
+
+fn assert_screen_text_not_below_boundary(
+    output: &[u8],
+    size: PtySizeSpec,
+    text: &str,
+    boundary_marker: &str,
+) -> io::Result<()> {
+    let screen = TerminalScreen::from_output(output, size.rows, size.cols);
+    let debug = screen.debug_text();
+    let lines = debug.lines().collect::<Vec<_>>();
+    let Some(boundary_row) = lines.iter().position(|line| line.contains(boundary_marker)) else {
+        return Err(io::Error::other(format!(
+            "fixed-panel boundary marker {boundary_marker:?} missing; screen:\n{debug}",
+        )));
+    };
+    if lines
+        .iter()
+        .skip(boundary_row.saturating_add(1))
+        .any(|line| line.contains(text))
+    {
+        return Err(io::Error::other(format!(
+            "screen text {text:?} remained inside fixed panel; screen:\n{debug}",
+        )));
+    }
+    Ok(())
+}
+
+fn output_contains(output: &[u8], marker: &[u8]) -> bool {
+    output.windows(marker.len()).any(|window| window == marker)
 }
 
 fn clone_output(output: &Arc<Mutex<Vec<u8>>>) -> io::Result<Vec<u8>> {

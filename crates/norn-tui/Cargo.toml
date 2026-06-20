@@ -24,6 +24,7 @@ termina = { version = "0.3", features = ["event-stream"] }
 thiserror = { workspace = true }
 tokio = { workspace = true }
 tokio-stream = "0.1"
+tokio-util = { workspace = true }
 tracing = { workspace = true }
 unicode-width = "0.2"
 uuid = { workspace = true }

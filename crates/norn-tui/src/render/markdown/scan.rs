@@ -1,14 +1,19 @@
 //! Pending-buffer scan for the streaming markdown renderer.
 //!
 //! [`scan_pending`] walks a byte stream looking for unclosed code
-//! fences, unclosed inline emphasis markers, and likely in-progress tables,
-//! returning the earliest position at which it is safe to flush content
-//! through pulldown-cmark plus a flag indicating whether the buffer
-//! ends inside an unclosed fence (so
+//! fences, unclosed inline emphasis markers, likely in-progress tables,
+//! and list blocks, returning the earliest position at which it is safe
+//! to flush content through pulldown-cmark plus a flag indicating
+//! whether the buffer ends inside an unclosed fence (so
 //! [`super::MarkdownRenderer::finalize`] can emit the tail verbatim).
 //!
 //! [`is_plain_text`] is the fast-path predicate used by the parent to
 //! short-circuit the markdown parser for unmarked text segments.
+
+mod list;
+
+use list::find_unclosed_list_start;
+pub(super) use list::starts_with_list_marker;
 
 /// Which kind of fence is currently open. Backtick fences can only be
 /// closed by backtick markers; tilde fences only by tilde markers. The
@@ -36,10 +41,18 @@ pub(super) struct ScanResult {
     /// multi-line dim preview can scroll into permanent history before
     /// the line-pop erase path has a chance to replace it.
     pub(super) table_unclosed: bool,
+    /// Whether the buffer currently holds a markdown list block whose
+    /// terminator has not yet arrived.
+    ///
+    /// Lists need block-level buffering for the same reason tables do:
+    /// parsing `  - child` without its already-streamed parent line
+    /// makes pulldown-cmark treat it as a top-level item, or as
+    /// indented code at deeper levels.
+    pub(super) list_unclosed: bool,
 }
 
-/// Scan `s` for unclosed code fences, inline emphasis markers, and
-/// likely in-progress tables.
+/// Scan `s` for unclosed code fences, inline emphasis markers, likely
+/// in-progress tables, and streaming list blocks.
 ///
 /// Walks the input byte-by-byte tracking four pieces of state:
 ///
@@ -59,11 +72,15 @@ pub(super) struct ScanResult {
 ///    pulldown-cmark sees complete tables rather than line-fragments,
 ///    without hiding ordinary prose or shell snippets containing a
 ///    single pipe.
+/// 4. List-marker rows start a list-buffering window that persists until
+///    a blank line is followed by a non-list, non-indented line. This
+///    keeps nested list context intact while the model streams one line
+///    at a time.
 ///
 /// Returns the position of the earliest unclosed marker, the earliest
-/// open fence, or the earliest table header line — whichever comes
-/// first — and a flag indicating whether a fence specifically is the
-/// unclosed marker.
+/// open fence, the earliest table header line, or the earliest open list
+/// line — whichever comes first — and a flag indicating whether a fence
+/// specifically is the unclosed marker.
 pub(super) fn scan_pending(s: &str) -> ScanResult {
     let bytes = s.as_bytes();
     let n = bytes.len();
@@ -74,6 +91,7 @@ pub(super) fn scan_pending(s: &str) -> ScanResult {
     let mut italic_open: Option<usize> = None;
     let mut strike_open: Option<usize> = None;
     let mut table_start: Option<usize> = None;
+    let list_start = find_unclosed_list_start(s);
     let mut line_start: usize = 0;
 
     while i < n {
@@ -189,11 +207,15 @@ pub(super) fn scan_pending(s: &str) -> ScanResult {
     if let Some(p) = table_start {
         earliest = earliest.min(p);
     }
+    if let Some(p) = list_start {
+        earliest = earliest.min(p);
+    }
 
     ScanResult {
         safe_end: earliest,
         fence_unclosed: fence_kind.is_some(),
         table_unclosed: table_start.is_some(),
+        list_unclosed: list_start.is_some(),
     }
 }
 
@@ -412,6 +434,30 @@ mod tests {
         let r = scan_pending(s);
         assert_eq!(r.safe_end, s.len());
         assert!(!r.table_unclosed);
+    }
+
+    #[test]
+    fn scan_pending_list_holds_safe_end_at_list_start() {
+        let s = "intro\n- parent\n  - child\n";
+        let r = scan_pending(s);
+        assert_eq!(r.safe_end, "intro\n".len());
+        assert!(r.list_unclosed);
+    }
+
+    #[test]
+    fn scan_pending_list_closes_after_blank_then_plain_line() {
+        let s = "- parent\n  - child\n\nplain text\n";
+        let r = scan_pending(s);
+        assert_eq!(r.safe_end, s.len());
+        assert!(!r.list_unclosed);
+    }
+
+    #[test]
+    fn scan_pending_ignores_list_markers_inside_fence() {
+        let s = "```\n- not a list\n```\nafter\n";
+        let r = scan_pending(s);
+        assert_eq!(r.safe_end, s.len());
+        assert!(!r.list_unclosed);
     }
 
     #[test]
