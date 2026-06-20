@@ -42,6 +42,7 @@ pub mod openai;
 pub mod openai_compatible;
 pub mod openai_oauth;
 pub mod request;
+pub(crate) mod startup_trace;
 pub mod surface;
 pub mod tools;
 pub mod traits;

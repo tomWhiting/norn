@@ -34,6 +34,7 @@ use norn::provider::traits::Provider;
 use crate::cli::ExitCode;
 use crate::cli::ProviderKind;
 use crate::config::ProviderConfigOverrides;
+use crate::print::provider_trace;
 
 /// Default HTTP request timeout when neither `settings.provider.timeout`
 /// nor `-c request_timeout` supplies a value.
@@ -148,6 +149,7 @@ pub async fn build_provider(
     overrides: &ProviderConfigOverrides,
     model: &str,
 ) -> Result<BuiltProvider, ProviderBuildError> {
+    let provider_build_started = provider_trace::provider_build_start(kind, model);
     match kind {
         ProviderKind::Openai => {
             let auth_source = match overrides.api_key_env.as_deref() {
@@ -159,6 +161,7 @@ pub async fn build_provider(
                 },
                 None => AuthSource::OAuth { codex_home: None },
             };
+            provider_trace::openai_auth_source_resolved(provider_build_started, &auth_source);
             let config = ProviderConfig {
                 auth_source,
                 base_url: overrides.base_url.clone(),
@@ -171,7 +174,12 @@ pub async fn build_provider(
                 retry_backoff: overrides.retry_backoff,
                 retry_after_ceiling: overrides.retry_after_ceiling,
             };
+            provider_trace::openai_provider_new_start(
+                provider_build_started,
+                overrides.base_url.is_some(),
+            );
             let provider = OpenAiProvider::new(config).await?;
+            provider_trace::openai_provider_new_done(provider_build_started);
             Ok(BuiltProvider::OpenAi(Arc::new(provider)))
         }
         ProviderKind::OpenaiCompatible => {
@@ -185,6 +193,10 @@ pub async fn build_provider(
                 .api_key_env
                 .as_deref()
                 .unwrap_or(DEFAULT_OPENAI_COMPAT_API_KEY_ENV);
+            provider_trace::openai_compatible_api_key_env_resolved(
+                provider_build_started,
+                api_key_env,
+            );
             let api_key = read_required_api_key(api_key_env, "--provider openai-compatible")?;
             let config = ProviderConfig {
                 auth_source: AuthSource::ApiKey {
@@ -200,7 +212,9 @@ pub async fn build_provider(
                 retry_backoff: overrides.retry_backoff,
                 retry_after_ceiling: overrides.retry_after_ceiling,
             };
+            provider_trace::openai_compatible_provider_new_start(provider_build_started, true);
             let provider = OpenAiCompatibleProvider::new(config).await?;
+            provider_trace::openai_compatible_provider_new_done(provider_build_started);
             Ok(BuiltProvider::OpenAiCompatible(Arc::new(provider)))
         }
         ProviderKind::ClaudeRunner => {
@@ -216,6 +230,10 @@ pub async fn build_provider(
                 model: model.to_owned(),
                 max_tokens: None,
             };
+            provider_trace::claude_runner_provider_ready(
+                provider_build_started,
+                &config.runner_path,
+            );
             Ok(BuiltProvider::ClaudeRunner(Arc::new(
                 ClaudeRunnerAdapter::new(config),
             )))

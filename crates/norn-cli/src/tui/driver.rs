@@ -30,6 +30,8 @@ use crate::runtime::{
 };
 use crate::session::{CreateSessionOptions, OpenSession, SessionManager};
 
+use super::startup_trace::StartupTrace;
+
 /// Capacity of the agent-event broadcast channel shared by all agents.
 const AGENT_EVENT_CHANNEL_CAPACITY: usize = 4096;
 
@@ -67,6 +69,7 @@ async fn run_async(cli: &Cli) -> ExitCode {
 /// Assemble the runtime, register the root agent, and hand off to
 /// `norn_tui::run_app`.
 async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    let mut startup_trace = StartupTrace::start();
     let mut inputs = RuntimeInputs::default();
     // LD-015 R3: construct ONE shared `LspWorkspace` at TUI startup so
     // the `lsp` tool, the `DiagnosticsPostCheck` LSP path, and the
@@ -80,8 +83,11 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     register_standard_tools(&mut inputs.registry, Some(Arc::clone(&lsp_backend)));
     inputs.lsp_workspace = Some(Arc::clone(&lsp_workspace));
     inputs.lsp_backend = Some(Arc::clone(&lsp_backend));
+    startup_trace.mark("lsp_workspace_ready");
     let mut bundle = build_runtime(cli, inputs)?;
+    startup_trace.mark("runtime_built");
     apply_system_prompt(&mut bundle, norn::system_prompt::ExecutionMode::Interactive);
+    startup_trace.mark("system_prompt_applied");
 
     // The working directory is recorded in the session index entry, so a
     // failed cwd read is a startup error — never silently degraded to an
@@ -93,6 +99,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         .map_err(crate::session::SessionPersistError::from)?
         .to_string_lossy()
         .into_owned();
+    startup_trace.mark("working_dir_resolved");
 
     let TuiSessionHandle {
         store,
@@ -100,7 +107,14 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         persist_data_dir,
         persist_session_id,
     } = open_session(cli, &bundle, working_dir)?;
+    startup_trace.mark_session(
+        "session_opened",
+        &session_id,
+        store.len(),
+        persist_session_id.is_some(),
+    );
     crate::runtime::install_action_log(&bundle.registry, &store, &mut bundle.loop_context);
+    startup_trace.mark_count("action_log_installed", "events", store.len());
     bundle.agent_config.cache_key = Some(session_id.clone());
     if let Some(env) = bundle.loop_context.environment.as_mut() {
         env.session_id = Some(session_id.clone());
@@ -111,6 +125,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let registry = AgentRegistry::shared();
     let root_id = register_root_agent(&registry, &bundle.model)?;
+    startup_trace.mark("root_agent_registered");
     let active_model = bundle.model.clone();
     let built_provider = build_provider(
         bundle.provider_kind,
@@ -118,6 +133,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         &active_model,
     )
     .await?;
+    startup_trace.mark("provider_built");
     // The root agent has a single identity: the same `root_id` is used for
     // the registry entry (above), the `AgentToolInfra.agent_id` (here), and
     // the root `AgentEventSender` (below). Children spawned from the root
@@ -146,6 +162,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         envelope,
     );
     install_pending_agent_messages_for_loop(&bundle.registry, &mut bundle.loop_context);
+    startup_trace.mark_count("agent_tool_infra_installed", "events", store.len());
 
     let (child_tx, child_rx) = tokio::sync::mpsc::channel::<
         norn::agent::result_channel::ChildAgentResult,
@@ -155,11 +172,13 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     bundle.loop_context.child_result_rx = Some(child_rx);
 
     let tools = collect_tool_definitions(&bundle);
+    startup_trace.mark_count("tool_definitions_collected", "tools", tools.len());
     let executor: Arc<dyn ToolExecutor> = Arc::clone(&bundle.registry) as Arc<dyn ToolExecutor>;
     let history = match default_history_path() {
         Some(path) => InputHistory::load_from(path),
         None => InputHistory::in_memory(),
     };
+    startup_trace.mark_count("input_history_loaded", "entries", history.len());
     let status_bar = StatusBar {
         model_name: bundle.model.clone(),
         session_name: session_id.clone(),
@@ -192,6 +211,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         .as_ref()
         .map(std::sync::Arc::clone);
     crate::runtime::wiring::run_session_start(lifecycle_hooks.as_ref(), &session_id).await;
+    startup_trace.mark("session_start_hooks_ran");
 
     let (agent_event_tx, agent_event_rx) =
         tokio::sync::broadcast::channel::<norn::provider::AgentEvent>(AGENT_EVENT_CHANNEL_CAPACITY);
@@ -218,6 +238,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         agent_event_rx,
         root_inbound,
     };
+    startup_trace.mark("handoff_to_tui_app");
 
     let app_result = norn_tui::run_app(tui_inputs).await;
 

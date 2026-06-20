@@ -12,6 +12,7 @@ use super::jwt::parse_jwt_expiration;
 use super::refresh::{RefreshError, refresh_auth};
 use super::storage::{AuthCredentialsStoreMode, load_auth_dot_json, save_auth_dot_json};
 use super::types::CodexAuth;
+use crate::provider::startup_trace;
 
 /// Refresh result classification expected by auth.rs.
 #[derive(Debug, thiserror::Error)]
@@ -83,11 +84,20 @@ impl AuthManager {
         mode: AuthCredentialsStoreMode,
         token_url: String,
     ) -> Arc<Self> {
+        let shared_started = startup_trace::start("oauth_auth_manager_shared_with_token_url_start");
         tokio::task::yield_now().await;
+        startup_trace::elapsed("oauth_auth_manager_initial_yield_done", shared_started);
+
+        let load_started = startup_trace::start("oauth_auth_manager_load_auth_start");
         let auth = load_auth_dot_json(&codex_home, mode)
             .ok()
             .flatten()
             .map(|auth| CodexAuth::ChatGpt(Box::new(auth)));
+        startup_trace::auth_manager_load_done(load_started, auth.is_some());
+        startup_trace::elapsed(
+            "oauth_auth_manager_shared_with_token_url_done",
+            shared_started,
+        );
         Arc::new(Self {
             codex_home: Some(codex_home),
             auth: Mutex::new(auth),

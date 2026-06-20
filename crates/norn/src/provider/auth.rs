@@ -18,6 +18,7 @@ use std::sync::Arc;
 use super::openai_oauth::{
     AuthCredentialsStoreMode, AuthManager, CLIENT_ID, RefreshTokenError, ServerOptions,
 };
+use super::startup_trace;
 use async_trait::async_trait;
 
 use super::request::SecretString;
@@ -113,7 +114,10 @@ impl OAuthAuthProvider {
     /// Returns [`ProviderError::AuthenticationFailed`] if the codex
     /// home directory cannot be resolved.
     pub async fn new(codex_home: Option<PathBuf>) -> Result<Self, ProviderError> {
+        let provider_started = startup_trace::start("oauth_auth_provider_new_start");
         let codex_home = resolve_codex_home(codex_home)?;
+        startup_trace::elapsed("oauth_codex_home_resolved", provider_started);
+        let manager_started = startup_trace::start("oauth_auth_manager_shared_start");
         let manager = AuthManager::shared(
             codex_home,
             /* enable_codex_api_key_env */ false,
@@ -121,6 +125,8 @@ impl OAuthAuthProvider {
             /* chatgpt_base_url */ None,
         )
         .await;
+        startup_trace::elapsed("oauth_auth_manager_shared_done", manager_started);
+        startup_trace::elapsed("oauth_auth_provider_new_done", provider_started);
         Ok(Self { manager })
     }
 
