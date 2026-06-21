@@ -18,17 +18,13 @@ use crate::agent::message_router::MessageRouter;
 use crate::agent::pending_messages::PendingAgentMessages;
 use crate::agent::registry::{AgentEntry, AgentRegistry, AgentTombstone};
 use crate::error::ToolError;
+use crate::r#loop::config::DispatchOutcome;
 use crate::r#loop::runner::ToolExecutor;
 use crate::provider::traits::Provider;
 use crate::session::store::EventStore;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::{RuntimeInputs, ToolEnvelope, split_envelope_fields};
-use crate::tool::lifecycle::{
-    Advisory, PostCheckResult, PostValidateMode, PostValidateOutcome, PreValidateOutcome,
-};
-use crate::tool::registry::{
-    ToolRegistry, append_advisories, append_check_override, resolved_post_validate_mode,
-};
+use crate::tool::registry::{ToolRegistry, dispatch_tool_with_outcome};
 
 /// Shared agent-coordination infrastructure surfaced to tools.
 ///
@@ -270,6 +266,17 @@ impl ToolExecutor for SubAgentExecutor {
         call_id: &str,
         arguments: serde_json::Value,
     ) -> Result<serde_json::Value, ToolError> {
+        self.execute_with_outcome(name, call_id, arguments)
+            .await
+            .map(|outcome| outcome.content)
+    }
+
+    async fn execute_with_outcome(
+        &self,
+        name: &str,
+        call_id: &str,
+        arguments: serde_json::Value,
+    ) -> Result<DispatchOutcome, ToolError> {
         if let Some(allowed) = self.available.as_ref()
             && !allowed.contains(name)
         {
@@ -297,59 +304,7 @@ impl ToolExecutor for SubAgentExecutor {
             metadata: split.metadata,
         };
         let ctx = self.child_context.as_ref();
-
-        if let PreValidateOutcome::Block(decision) = tool.pre_validate(&envelope, ctx).await {
-            return Err(ToolError::from(decision));
-        }
-        for check in &ctx.pre_checks {
-            if let PreValidateOutcome::Block(decision) = check.check(&envelope, ctx).await {
-                return Err(ToolError::from(decision));
-            }
-        }
-
-        // Stamp execution duration exactly like `ToolRegistry`'s dispatch
-        // path: the executor measures so individual tools never time
-        // themselves, and the stamped value is visible to post-validate /
-        // on-success phases below.
-        let dispatch_started = std::time::Instant::now();
-        let mut output = tool.execute(&envelope, ctx).await?;
-        output.duration = dispatch_started.elapsed();
-
-        let mut errors: Vec<String> = Vec::new();
-        let mut advisories: Vec<Advisory> = Vec::new();
-        if let PostValidateOutcome::Fail { errors: errs } = tool.post_validate(&output, ctx).await {
-            errors.extend(errs);
-        }
-        for check in &ctx.post_checks {
-            let PostCheckResult {
-                outcome,
-                advisories: check_advisories,
-            } = check.check(&output, ctx).await;
-            advisories.extend(check_advisories);
-            if let PostValidateOutcome::Fail { errors: errs } = outcome {
-                errors.extend(errs);
-            }
-        }
-
-        let (resolved_mode, override_record) =
-            resolved_post_validate_mode(tool.post_validate_mode(), ctx);
-        if let Some(ref over) = override_record {
-            append_check_override(&mut output.content, over);
-        }
-        append_advisories(&mut output.content, &advisories);
-
-        if !errors.is_empty() && resolved_mode == PostValidateMode::Gate {
-            return Err(ToolError::PostValidationFailed {
-                reason: errors.join("; "),
-                committed_output: Some(output.content.clone()),
-            });
-        }
-
-        tool.on_success(&output, ctx).await;
-        for action in &ctx.on_success_actions {
-            action.run(&output, ctx).await;
-        }
-        Ok(output.content)
+        dispatch_tool_with_outcome(tool, &envelope, ctx).await
     }
 }
 
@@ -368,6 +323,10 @@ mod tests {
 
     use super::*;
     use crate::provider::mock::MockProvider;
+    use crate::tool::lifecycle::{
+        Advisory, AdvisorySeverity, PostCheckResult, PostValidateOutcome, PreValidateOutcome,
+        RuntimePostValidateCheck,
+    };
     use crate::tool::scheduling::ToolEffect;
     use crate::tool::traits::{Tool, ToolOutput};
 
@@ -430,6 +389,22 @@ mod tests {
         })
     }
 
+    struct AdvisoryProbe;
+
+    #[async_trait]
+    impl RuntimePostValidateCheck for AdvisoryProbe {
+        async fn check(&self, _output: &ToolOutput, _ctx: &ToolContext) -> PostCheckResult {
+            PostCheckResult {
+                outcome: PostValidateOutcome::Pass,
+                advisories: vec![Advisory {
+                    severity: AdvisorySeverity::Warning,
+                    message: "child convention finding".to_owned(),
+                    source: "child-check".to_owned(),
+                }],
+            }
+        }
+    }
+
     /// R2: `SubAgentExecutor::execute` replays the full four-phase lifecycle
     /// against the *child's* `ToolContext`. The probe tool's `pre_validate`
     /// must observe the child's `agent_id`, the parent's own context must
@@ -488,6 +463,42 @@ mod tests {
             .get_extension::<AgentToolInfra>()
             .expect("child infra reachable from shared context");
         assert_eq!(shared_infra.agent_id, child_id);
+    }
+
+    #[tokio::test]
+    async fn sub_agent_executor_returns_advisories_and_post_validate_outcome() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(IdentityProbe {
+            seen: Arc::new(Mutex::new(None)),
+        }));
+        let registry = Arc::new(registry);
+
+        let mut child_ctx = ToolContext::empty();
+        child_ctx.post_checks.push(Box::new(AdvisoryProbe));
+        let child_ctx = Arc::new(child_ctx);
+        let executor = SubAgentExecutor::new(Arc::clone(&registry), None, child_ctx);
+
+        let outcome = executor
+            .execute_with_outcome("identity_probe", "test-call", serde_json::json!({}))
+            .await
+            .expect("probe dispatch succeeds");
+        let advisories = outcome.content["advisories"]
+            .as_array()
+            .expect("child output must include advisories");
+        assert_eq!(advisories[0]["message"], "child convention finding");
+        assert_eq!(advisories[0]["required"], true);
+        assert!(
+            outcome
+                .content
+                .get("advisory_policy")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default()
+                .contains("not optional notes"),
+        );
+        assert!(
+            outcome.post_validate_outcome.is_some(),
+            "child dispatch must carry post-validation metadata for action logs",
+        );
     }
 
     /// Stub tool whose `on_success` records the stamped execution

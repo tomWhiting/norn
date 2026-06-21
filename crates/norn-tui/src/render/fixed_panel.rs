@@ -405,18 +405,8 @@ fn live_output_tokens(indicator: &StreamingIndicator, status_bar: &StatusBar) ->
     }
 }
 
-fn format_live_token_count(tokens: u64, estimated: bool, arrow: char) -> String {
-    let prefix = if estimated { "~" } else { "" };
-    format!("{prefix}{}{arrow}", format_count(tokens))
-}
-
-fn live_output_is_estimated(indicator: &StreamingIndicator, status_bar: &StatusBar) -> bool {
-    match indicator {
-        StreamingIndicator::Generating { .. } => true,
-        StreamingIndicator::Idle | StreamingIndicator::Complete { .. } => {
-            status_bar.output_tokens_estimated
-        }
-    }
+fn format_live_token_count(tokens: u64, arrow: char) -> String {
+    format!("{}{arrow}", format_count(tokens))
 }
 
 fn elapsed_duration(indicator: &StreamingIndicator) -> Option<Duration> {
@@ -686,16 +676,8 @@ impl FixedPanel {
                 input_mode.to_string(),
                 format!(
                     "{} {}",
-                    format_live_token_count(
-                        status_bar.input_tokens,
-                        status_bar.input_tokens_estimated,
-                        '↑'
-                    ),
-                    format_live_token_count(
-                        live_output,
-                        live_output_is_estimated(indicator, status_bar),
-                        '↓'
-                    )
+                    format_live_token_count(status_bar.input_tokens, '↑'),
+                    format_live_token_count(live_output, '↓')
                 ),
             ];
             if let Some(elapsed) = elapsed_duration(indicator) {
@@ -922,13 +904,13 @@ mod tests {
         panel.render(&mut buf, &caps, 24, 80).unwrap();
         let out = String::from_utf8(buf).unwrap();
         assert!(
-            out.contains("🮠 steer • 1,000↑ ~2,300↓ • 1m20s 🮣"),
+            out.contains("🮠 steer • 1,000↑ 2,300↓ • 1m20s 🮣"),
             "top chip must show root-turn totals plus live output estimate: {out:?}"
         );
     }
 
     #[test]
-    fn input_divider_marks_estimated_input() {
+    fn input_divider_omits_estimate_marker() {
         let mut panel = FixedPanel::new(StatusBar::default());
         panel.status_bar_mut().input_tokens = 12_345;
         panel.status_bar_mut().input_tokens_estimated = true;
@@ -937,8 +919,8 @@ mod tests {
         panel.render(&mut buf, &caps, 24, 80).unwrap();
         let out = String::from_utf8(buf).unwrap();
         assert!(
-            out.contains("🮠 steer • ~12,345↑ 0↓ 🮣"),
-            "estimated input must be visibly approximate: {out:?}"
+            out.contains("🮠 steer • 12,345↑ 0↓ 🮣"),
+            "estimated input must not carry a visual approximation marker: {out:?}"
         );
     }
 

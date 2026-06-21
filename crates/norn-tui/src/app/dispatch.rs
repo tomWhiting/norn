@@ -70,7 +70,7 @@ pub fn handle_agent_event(
         AgentEventKind::Message(lifecycle) => {
             state
                 .agent_panel
-                .set_activity(agent_event.agent_id, message_activity(&lifecycle));
+                .set_transient_activity(agent_event.agent_id, message_activity(&lifecycle));
             state.activity_log.push(message_activity_entry(
                 &agent_event.agent_role,
                 &lifecycle,
@@ -179,9 +179,16 @@ fn handle_subagent_lifecycle(state: &mut AppState, lifecycle: &SubagentLifecycle
             ..
         } => {
             let summary = if *succeeded { "completed" } else { "failed" };
-            state
-                .agent_panel
-                .set_activity(*child_id, AgentActivity::Result(summary.to_string()));
+            if *succeeded {
+                state.agent_panel.set_terminal_activity_if_quiet(
+                    *child_id,
+                    AgentActivity::Result(summary.to_string()),
+                );
+            } else {
+                state
+                    .agent_panel
+                    .set_activity(*child_id, AgentActivity::Result(summary.to_string()));
+            }
             state.reconcile_usage_total(*child_id, usage.input_tokens, usage.output_tokens);
             let description = error
                 .clone()
@@ -212,12 +219,12 @@ fn handle_child_event(
         ProviderEvent::TextDelta { text } if !text.is_empty() => {
             state
                 .agent_panel
-                .set_activity(child_id, AgentActivity::Running("writing".to_string()));
+                .set_transient_activity(child_id, AgentActivity::Running("writing".to_string()));
         }
         ProviderEvent::ThinkingDelta { text } if !text.is_empty() => {
             state
                 .agent_panel
-                .set_activity(child_id, AgentActivity::Running("thinking".to_string()));
+                .set_transient_activity(child_id, AgentActivity::Running("thinking".to_string()));
         }
         ProviderEvent::ToolCallDelta {
             name: Some(name), ..
@@ -245,7 +252,7 @@ fn handle_child_event(
         ProviderEvent::ToolResult { tool_name, .. } => {
             state
                 .agent_panel
-                .set_activity(child_id, AgentActivity::Result(tool_name));
+                .set_terminal_activity_if_quiet(child_id, AgentActivity::Result(tool_name));
         }
         ProviderEvent::Done { usage, .. } => {
             state.agent_panel.mark_idle(child_id);
@@ -320,7 +327,7 @@ pub fn handle_provider_event(
             let root_id = state.tab_state.root_id();
             state
                 .agent_panel
-                .set_activity(root_id, AgentActivity::Result(tool_name.clone()));
+                .set_terminal_activity_if_quiet(root_id, AgentActivity::Result(tool_name.clone()));
             handle_tool_result(
                 state,
                 guard,
@@ -891,6 +898,73 @@ mod tests {
         assert!(
             out.contains("signal_agent: wake the idle worker"),
             "tool intent should live on the agent row: {out:?}"
+        );
+    }
+
+    #[test]
+    fn child_tool_activity_survives_text_done_and_successful_completion() {
+        let (mut state, root_id, child_id) = state_with_one_child();
+        handle_child_event(
+            &mut state,
+            child_id,
+            "spawn/haiku",
+            ProviderEvent::ToolCallComplete {
+                call_id: "tc".to_string(),
+                name: "lsp".to_string(),
+                arguments: serde_json::json!({
+                    "tool_use_description": "inspect definitions",
+                })
+                .to_string(),
+                kind: norn::provider::request::ToolCallKind::Function,
+            },
+        );
+
+        for event in [
+            ProviderEvent::TextDelta {
+                text: "working".to_string(),
+            },
+            ProviderEvent::ThinkingDelta {
+                text: "considering".to_string(),
+            },
+            ProviderEvent::Done {
+                response_id: None,
+                usage: Usage::default(),
+                stop_reason: norn::provider::events::StopReason::EndTurn,
+            },
+        ] {
+            handle_child_event(&mut state, child_id, "spawn/haiku", event);
+            let out = render_agent_panel(&mut state);
+            assert!(
+                out.contains("lsp: inspect definitions"),
+                "transient child event must not overwrite tool activity: {out:?}"
+            );
+        }
+
+        let descriptor = norn::provider::agent_event::SubagentDescriptor {
+            kind: norn::provider::agent_event::SubagentKind::Fork,
+            role: "fork".to_string(),
+            model: "gpt-5.5".to_string(),
+            profile: None,
+        };
+        handle_subagent_lifecycle(
+            &mut state,
+            &SubagentLifecycle::Completed {
+                parent_id: root_id,
+                child_id,
+                descriptor,
+                started_at: chrono::Utc::now(),
+                completed_at: chrono::Utc::now(),
+                usage: Usage::default(),
+                subtree_usage: Usage::default(),
+                succeeded: true,
+                error: None,
+                stop: None,
+            },
+        );
+        let out = render_agent_panel(&mut state);
+        assert!(
+            out.contains("lsp: inspect definitions"),
+            "successful completion must not overwrite last tool activity: {out:?}"
         );
     }
 

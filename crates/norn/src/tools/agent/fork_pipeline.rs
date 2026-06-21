@@ -21,7 +21,7 @@ use uuid::Uuid;
 use super::handle::{AgentHandles, AgentWakeRegistry, SharedSessionTree};
 use super::infra::{AgentCancellation, AgentToolInfra, ParentGrant};
 use super::reclaim::log_terminal_transition_violation;
-use super::spawn_context::wire_child_action_log;
+use super::spawn_context::{forward_diagnostic_infra, wire_child_action_log};
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
 use crate::agent::fork::{ContextFilter, ParentSystemInstruction};
 use crate::agent::output::AgentStopReason;
@@ -141,6 +141,7 @@ pub(super) fn build_fork_context(
     if let Some(diagnostics) = parent_ctx.get_extension::<DiagnosticCollector>() {
         child_ctx.insert_extension(diagnostics);
     }
+    forward_diagnostic_infra(parent_ctx, &mut child_ctx);
     if let Some(sp) = parent_ctx.get_extension::<SharedProvider>() {
         child_ctx.insert_extension(sp);
     }
@@ -518,6 +519,8 @@ mod tests {
     use crate::agent::fork::format_fork_outcome;
     use crate::provider::traits::Provider;
     use crate::tool::registry::ToolRegistry;
+    use crate::tools::diagnostics::{DiagnosticInfra, build_diagnostic_infra};
+    use tempfile::tempdir;
 
     /// Documented-proposal policy used by tests — a deliberate test-caller
     /// choice, never a library default.
@@ -691,6 +694,50 @@ mod tests {
             .ok_or("HookRegistry must be forwarded to the fork context")?;
         if !Arc::ptr_eq(&forwarded, &hooks) {
             return Err("the fork must share the parent's hook registry instance".to_owned());
+        }
+        Ok(())
+    }
+
+    #[test]
+    fn fork_context_forwards_diagnostic_infra_and_post_check() -> Result<(), String> {
+        use crate::agent::message_router::MessageRouter;
+        use crate::provider::mock::MockProvider;
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let infra = AgentToolInfra {
+            registry: AgentRegistry::shared(),
+            router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id: Uuid::new_v4(),
+            parent_id: None,
+            grant: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+        };
+        let dir = tempdir().map_err(|error| format!("temp dir: {error}"))?;
+        let diagnostic_infra = Arc::new(build_diagnostic_infra(dir.path(), None, None));
+        let parent_ctx = ToolContext::empty();
+        parent_ctx.insert_extension(Arc::clone(&diagnostic_infra));
+
+        let child_ctx = build_fork_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+            test_policy(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        let forwarded = child_ctx
+            .get_extension::<DiagnosticInfra>()
+            .ok_or("fork must inherit DiagnosticInfra")?;
+        if !Arc::ptr_eq(&forwarded, &diagnostic_infra) {
+            return Err("fork must share the parent's diagnostic infrastructure".to_owned());
+        }
+        if child_ctx.post_checks.len() != 1 {
+            return Err("fork must install the diagnostics post-check".to_owned());
         }
         Ok(())
     }

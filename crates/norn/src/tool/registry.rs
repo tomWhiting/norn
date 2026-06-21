@@ -25,7 +25,6 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use serde_json::Value;
-use tracing::warn;
 
 use super::context::{ToolContext, ToolFlag};
 use super::envelope::{RuntimeInputs, ToolEnvelope};
@@ -33,6 +32,7 @@ use super::lifecycle::{
     Advisory, CheckOverride, PostCheckResult, PostValidateMode, PostValidateOutcome,
     PreValidateOutcome,
 };
+use super::post_validation_feedback::{append_advisories, append_post_validation_errors};
 use super::scheduling::ToolEffectIndex;
 use super::traits::{Tool, ToolOutput};
 use crate::error::ToolError;
@@ -241,7 +241,12 @@ impl ToolExecutor for ToolRegistry {
     }
 }
 
-async fn dispatch_tool_with_outcome(
+/// Dispatch a resolved tool through the shared lifecycle against `ctx`.
+///
+/// This is the single implementation used by root registry dispatch and
+/// child-agent executors after they have resolved availability and built the
+/// call envelope. Keeping it shared prevents root/spawn/fork lifecycle drift.
+pub(crate) async fn dispatch_tool_with_outcome(
     tool: &(dyn Tool + Send + Sync),
     envelope: &ToolEnvelope,
     ctx: &ToolContext,
@@ -268,6 +273,7 @@ async fn dispatch_tool_with_outcome(
         append_check_override(&mut output.content, over);
     }
     append_advisories(&mut output.content, &post_validate_outcome.advisories);
+    append_post_validation_errors(&mut output.content, &post_validate_outcome.errors);
 
     if !post_validate_outcome.errors.is_empty() && resolved_mode == PostValidateMode::Gate {
         return Err(ToolError::PostValidationFailed {
@@ -425,10 +431,6 @@ pub(crate) fn append_check_override(content: &mut serde_json::Value, over: &Chec
     }
 }
 
-/// Append runtime post-check advisories to the tool's output payload under
-/// the `advisories` key. When the output is not a JSON object, wraps it as
-/// `{"_original": <value>, "advisories": [...]}` so advisories always reach
-/// the model.
 fn append_follow_ups(
     content: &mut serde_json::Value,
     follow_ups: &[super::follow_up::FollowUpAction],
@@ -451,46 +453,6 @@ fn append_follow_ups(
         return;
     };
     map.insert("follow_ups".to_string(), serde_json::Value::Array(entries));
-}
-
-pub(crate) fn append_advisories(content: &mut serde_json::Value, advisories: &[Advisory]) {
-    if advisories.is_empty() {
-        return;
-    }
-
-    let entries: Vec<serde_json::Value> = advisories
-        .iter()
-        .cloned()
-        .filter_map(|advisory| match serde_json::to_value(advisory) {
-            Ok(v) => Some(v),
-            Err(e) => {
-                warn!(error = %e, "failed to serialize advisory — dropping entry");
-                None
-            }
-        })
-        .collect();
-
-    let Some(map) = content.as_object_mut() else {
-        let original = content.clone();
-        *content = serde_json::json!({
-            "_original": original,
-            "advisories": entries,
-        });
-        return;
-    };
-
-    match map.entry("advisories".to_string()) {
-        serde_json::map::Entry::Vacant(vac) => {
-            vac.insert(serde_json::Value::Array(entries));
-        }
-        serde_json::map::Entry::Occupied(mut occ) => {
-            if let serde_json::Value::Array(arr) = occ.get_mut() {
-                arr.extend(entries);
-            } else {
-                occ.insert(serde_json::Value::Array(entries));
-            }
-        }
-    }
 }
 
 #[cfg(test)]
@@ -1149,9 +1111,10 @@ mod tests {
         );
     }
 
-    /// R1 acceptance: post-validate `Report` failure returns the tool's
-    /// output unchanged (which embeds its errors in the payload) and still
-    /// runs on-success — advisory errors must not prevent bookkeeping.
+    /// R1 acceptance: post-validate `Report` failure returns the committed
+    /// tool output with a structured validation error and still runs
+    /// on-success — post-commit validation errors must not prevent
+    /// bookkeeping, but they must be model-visible.
     #[tokio::test]
     async fn post_validate_report_fail_returns_output_and_runs_on_success() {
         let mut tool = StatefulStubTool::new("report");
@@ -1172,6 +1135,22 @@ mod tests {
             .expect("report-mode failure surfaces as Ok with the tool payload");
         assert_eq!(out["committed"], true);
         assert_eq!(out["warnings"][0], "x");
+        assert_eq!(out["error"]["kind"], "validation_failed");
+        assert!(
+            out["error"]["message"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("must be fixed properly"),
+            "validation error must tell the model this is required work",
+        );
+        assert_eq!(out["post_validation_errors"][0], "nonblocking warning");
+        assert!(
+            out["validation_guidance"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not optional notes"),
+            "report-mode guidance must be firm",
+        );
         assert_eq!(
             on_success_count.load(Ordering::SeqCst),
             1,
@@ -1207,6 +1186,21 @@ mod tests {
         assert_eq!(advisories[0]["severity"], "Warning");
         assert_eq!(advisories[0]["message"], "line count is getting high");
         assert_eq!(advisories[0]["source"], "file-length");
+        assert_eq!(advisories[0]["required"], true);
+        assert!(
+            advisories[0]["guidance"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("not optional notes"),
+            "advisory guidance must be explicit that the finding is required work",
+        );
+        assert!(
+            out["advisory_policy"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("Fix the underlying issue properly"),
+            "top-level advisory policy must be visible to the model",
+        );
     }
 
     #[tokio::test]
@@ -1250,6 +1244,11 @@ mod tests {
                 assert_eq!(advisories[0]["severity"], "Info");
                 assert_eq!(advisories[0]["message"], "consider splitting this module");
                 assert_eq!(advisories[0]["source"], "conventions");
+                assert_eq!(advisories[0]["required"], true);
+                assert_eq!(
+                    committed_output["post_validation_errors"][0],
+                    "blocking failure",
+                );
             }
             other => panic!("expected PostValidationFailed, got {other:?}"),
         }

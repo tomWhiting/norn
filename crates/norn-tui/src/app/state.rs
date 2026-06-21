@@ -157,6 +157,13 @@ pub struct AppState {
     /// step/lifecycle records carry cumulative totals; this cache lets
     /// the TUI reconcile the latter without double-counting the former.
     usage_totals: HashMap<Uuid, (u64, u64)>,
+    /// Actual provider usage accumulated during the current root turn.
+    ///
+    /// The top divider displays this turn-scoped total plus any currently
+    /// in-flight input/output estimate. It is deliberately separate from
+    /// [`Self::usage_totals`], which is the session-cumulative ledger used
+    /// for per-agent rows.
+    live_root_usage: (u64, u64),
     /// In-flight human input state for active-turn steering and queued
     /// follow-up prompts.
     pub in_flight_input: InFlightInputState,
@@ -198,6 +205,7 @@ impl AppState {
             highlighter: SyntaxHighlighter::new(),
             activity_log: ActivityLog::new(),
             usage_totals: HashMap::new(),
+            live_root_usage: (0, 0),
             in_flight_input: InFlightInputState::default(),
         }
     }
@@ -320,15 +328,14 @@ impl AppState {
     /// about to stream.
     pub fn set_root_input_estimate(&mut self, input_tokens: u64) {
         let status = self.fixed_panel.status_bar_mut();
-        status.input_tokens = input_tokens;
+        status.input_tokens = self.live_root_usage.0.saturating_add(input_tokens);
         status.input_tokens_estimated = true;
-        status.output_tokens = 0;
+        status.output_tokens = self.live_root_usage.1;
         status.output_tokens_estimated = false;
     }
 
     /// Add one root usage delta to the root agent's cumulative row total
-    /// and replace the top-chip counters with that provider request's
-    /// actual usage.
+    /// and the current root turn's live top-chip total.
     pub fn record_root_provider_usage(
         &mut self,
         agent_id: Uuid,
@@ -336,10 +343,12 @@ impl AppState {
         output_tokens: u64,
     ) {
         self.record_agent_usage_delta(agent_id, input_tokens, output_tokens);
+        self.live_root_usage.0 = self.live_root_usage.0.saturating_add(input_tokens);
+        self.live_root_usage.1 = self.live_root_usage.1.saturating_add(output_tokens);
         let status = self.fixed_panel.status_bar_mut();
-        status.input_tokens = input_tokens;
+        status.input_tokens = self.live_root_usage.0;
         status.input_tokens_estimated = false;
-        status.output_tokens = output_tokens;
+        status.output_tokens = self.live_root_usage.1;
         status.output_tokens_estimated = false;
     }
 
@@ -354,6 +363,7 @@ impl AppState {
 
     /// Reset the top-chip live counters for a new root turn.
     pub fn reset_live_usage(&mut self) {
+        self.live_root_usage = (0, 0);
         let status = self.fixed_panel.status_bar_mut();
         status.input_tokens = 0;
         status.input_tokens_estimated = false;
@@ -606,15 +616,15 @@ mod tests {
     }
 
     #[test]
-    fn root_provider_usage_replaces_live_status_totals() {
+    fn root_provider_usage_accumulates_live_status_totals() {
         let mut state = fresh_state();
         let agent_id = state.tab_state.root_id();
         state.record_root_provider_usage(agent_id, 1_000, 2_000);
         state.record_root_provider_usage(agent_id, 3_000, 4_000);
 
         let status = state.fixed_panel.status_bar();
-        assert_eq!(status.input_tokens, 3_000);
-        assert_eq!(status.output_tokens, 4_000);
+        assert_eq!(status.input_tokens, 4_000);
+        assert_eq!(status.output_tokens, 6_000);
         assert!(!status.input_tokens_estimated);
         assert!(!status.output_tokens_estimated);
         assert_eq!(
@@ -625,14 +635,16 @@ mod tests {
     }
 
     #[test]
-    fn root_input_estimate_marks_live_status_as_estimated() {
+    fn root_input_estimate_preserves_turn_output_so_far() {
         let mut state = fresh_state();
+        let agent_id = state.tab_state.root_id();
+        state.record_root_provider_usage(agent_id, 1_000, 2_000);
         state.set_root_input_estimate(12_345);
 
         let status = state.fixed_panel.status_bar();
-        assert_eq!(status.input_tokens, 12_345);
+        assert_eq!(status.input_tokens, 13_345);
         assert!(status.input_tokens_estimated);
-        assert_eq!(status.output_tokens, 0);
+        assert_eq!(status.output_tokens, 2_000);
         assert!(!status.output_tokens_estimated);
     }
 

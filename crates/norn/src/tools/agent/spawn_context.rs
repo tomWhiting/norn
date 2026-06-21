@@ -23,6 +23,7 @@ use crate::session::store::EventStore;
 use crate::tool::catalog::SharedToolCatalog;
 use crate::tool::context::{SharedWorkingDir, ToolContext};
 use crate::tool::scheduling::ToolEffectIndex;
+use crate::tools::diagnostics::{DiagnosticInfra, DiagnosticsPostCheck};
 use crate::tools::task::SharedTaskStore;
 
 /// Construct the per-child [`ToolContext`].
@@ -134,6 +135,7 @@ pub(super) fn build_child_context(
     if let Some(diagnostics) = parent_ctx.get_extension::<DiagnosticCollector>() {
         child_ctx.insert_extension(diagnostics);
     }
+    forward_diagnostic_infra(parent_ctx, &mut child_ctx);
     if let Some(sp) = parent_ctx.get_extension::<SharedProvider>() {
         child_ctx.insert_extension(sp);
     }
@@ -168,6 +170,18 @@ pub(super) fn build_child_context(
         &child_ctx,
     );
     Arc::new(child_ctx)
+}
+
+/// Forward convention diagnostics into a spawned/forked child context.
+///
+/// [`DiagnosticInfra`] carries the parsed `CONVENTIONS.toml`; the stateless
+/// [`DiagnosticsPostCheck`] is installed alongside it so child mutations run
+/// the same post-validation path as root mutations.
+pub(super) fn forward_diagnostic_infra(parent_ctx: &ToolContext, child_ctx: &mut ToolContext) {
+    if let Some(infra) = parent_ctx.get_extension::<DiagnosticInfra>() {
+        child_ctx.insert_extension(infra);
+        child_ctx.post_checks.push(Box::new(DiagnosticsPostCheck));
+    }
 }
 
 /// Give a spawn/fork child its own per-agent [`ActionLog`] and register it
@@ -228,6 +242,8 @@ mod tests {
     use crate::provider::mock::MockProvider;
     use crate::provider::traits::Provider;
     use crate::tool::registry::ToolRegistry;
+    use crate::tools::diagnostics::build_diagnostic_infra;
+    use tempfile::tempdir;
 
     fn parent_infra(agent_id: Uuid) -> AgentToolInfra {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
@@ -424,6 +440,38 @@ mod tests {
         assert!(
             published.0.is_cancelled(),
             "the published extension must be the same token the launch path uses",
+        );
+    }
+
+    #[test]
+    fn child_context_forwards_diagnostic_infra_and_post_check() {
+        let dir = tempdir().expect("temp dir");
+        let diagnostic_infra = Arc::new(build_diagnostic_infra(dir.path(), None, None));
+        let infra = parent_infra(Uuid::new_v4());
+        let parent_ctx = ToolContext::empty();
+        parent_ctx.insert_extension(Arc::clone(&diagnostic_infra));
+
+        let child_ctx = build_child_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+            test_policy(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        let forwarded = child_ctx
+            .get_extension::<DiagnosticInfra>()
+            .expect("child must inherit DiagnosticInfra");
+        assert!(
+            Arc::ptr_eq(&forwarded, &diagnostic_infra),
+            "spawned agents must share the parent's diagnostic infrastructure",
+        );
+        assert_eq!(
+            child_ctx.post_checks.len(),
+            1,
+            "spawned agents must install the diagnostics post-check",
         );
     }
 }

@@ -230,6 +230,12 @@ fn preserve_identity_fields(output: &Value, capped: &mut Map<String, Value>) {
         "exit_code",
         "timed_out",
         "warnings",
+        "diagnostics",
+        "advisories",
+        "advisory_policy",
+        "post_validation_errors",
+        "validation_guidance",
+        "check_overrides",
     ] {
         if let Some(value) = object.get(key) {
             capped.insert(key.to_owned(), value.clone());
@@ -279,6 +285,30 @@ mod tests {
         assert_eq!(capped["truncated_for_model"], true);
         assert_eq!(capped["error"]["message"], "bad");
         assert_eq!(capped["follow_ups"][0]["action"], "next");
+    }
+
+    #[test]
+    fn cap_model_output_preserves_diagnostic_feedback() {
+        let value = json!({
+            "diagnostics": [{ "message": "syntax error" }],
+            "advisories": [{ "message": "split this file", "required": true }],
+            "advisory_policy": "required",
+            "post_validation_errors": ["lint failed"],
+            "validation_guidance": "fix properly",
+            "check_overrides": [{ "check_name": "post_validate_mode" }],
+            "content": "a".repeat(MODEL_OUTPUT_INLINE_CHAR_LIMIT + 1),
+        });
+        let capped = cap_model_output("write", "call-1", &value);
+        assert_eq!(capped["truncated_for_model"], true);
+        assert_eq!(capped["diagnostics"][0]["message"], "syntax error");
+        assert_eq!(capped["advisories"][0]["message"], "split this file");
+        assert_eq!(capped["advisory_policy"], "required");
+        assert_eq!(capped["post_validation_errors"][0], "lint failed");
+        assert_eq!(capped["validation_guidance"], "fix properly");
+        assert_eq!(
+            capped["check_overrides"][0]["check_name"],
+            "post_validate_mode"
+        );
     }
 
     #[test]

@@ -44,10 +44,6 @@ use super::tree::{self, CandidateEntry, CollapsedView};
 /// before the row is reclaimed.
 pub const HOLD_DURATION: Duration = Duration::from_secs(3);
 
-/// Duration a completed tool/message activity stays readable after the
-/// agent returns to idle.
-pub const ACTIVITY_HOLD_DURATION: Duration = Duration::from_secs(10);
-
 /// Foreground colour for the running / completed icon.
 const GREEN_RUNNING: RgbColor = RgbColor::new(95, 215, 95);
 /// Foreground colour for the failed icon.
@@ -97,34 +93,25 @@ pub enum AgentActivity {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-enum ActivityPhase {
-    Live,
-    HeldUntil(Instant),
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
 struct ActivityEntry {
     activity: AgentActivity,
-    phase: ActivityPhase,
 }
 
 impl ActivityEntry {
     fn live(activity: AgentActivity) -> Self {
-        Self {
-            activity,
-            phase: ActivityPhase::Live,
-        }
+        Self { activity }
     }
+}
 
-    fn held(activity: AgentActivity, now: Instant) -> Self {
-        Self {
-            activity,
-            phase: ActivityPhase::HeldUntil(now + ACTIVITY_HOLD_DURATION),
+fn can_replace_with_transient(activity: Option<&AgentActivity>) -> bool {
+    match activity {
+        None | Some(AgentActivity::Idle) => true,
+        Some(AgentActivity::Running(label)) => {
+            matches!(label.as_str(), "writing" | "thinking") || label.starts_with("msg:")
         }
-    }
-
-    fn expired(&self, now: Instant) -> bool {
-        matches!(self.phase, ActivityPhase::HeldUntil(deadline) if now >= deadline)
+        Some(AgentActivity::Result(label)) => {
+            matches!(label.as_str(), "completed") || label.starts_with("msg delivered")
+        }
     }
 }
 
@@ -255,7 +242,7 @@ fn format_elapsed(spawned_at: DateTime<Utc>, now: DateTime<Utc>) -> String {
 }
 
 /// Activity column text — `"idle"` when no metadata, the running label
-/// when in flight, the result summary when held after completion.
+/// when in flight, or the last result summary until replaced.
 fn activity_text(activity: Option<&AgentActivity>) -> String {
     match activity {
         None | Some(AgentActivity::Idle) => "idle".to_string(),
@@ -352,19 +339,43 @@ impl AgentStatusPanel {
         self.activity.insert(id, ActivityEntry::live(activity));
     }
 
+    /// Record low-priority activity such as child text/thinking or
+    /// inter-agent message status.
+    ///
+    /// These labels are useful while an agent has not started a concrete
+    /// tool, but they must not overwrite the last tool label. Tool labels
+    /// are the stable intent signal in the compact tree and remain until
+    /// another tool or an explicit error replaces them.
+    pub fn set_transient_activity(&mut self, id: Uuid, activity: AgentActivity) {
+        let current = self.activity.get(&id).map(|entry| &entry.activity);
+        if can_replace_with_transient(current) {
+            self.activity.insert(id, ActivityEntry::live(activity));
+        }
+    }
+
+    /// Record a terminal summary only when no tool label is available.
+    ///
+    /// Successful completion should not erase the tool that just ran; a
+    /// failed/error activity can still use [`Self::set_activity`] because
+    /// that is a more important terminal signal than the prior tool.
+    pub fn set_terminal_activity_if_quiet(&mut self, id: Uuid, activity: AgentActivity) {
+        let current = self.activity.get(&id).map(|entry| &entry.activity);
+        if can_replace_with_transient(current) {
+            self.activity.insert(id, ActivityEntry::live(activity));
+        }
+    }
+
     /// Mark an agent as idle while keeping the last non-idle activity
-    /// visible briefly. This prevents short tool calls from flashing in
-    /// the tree and disappearing before a reader can parse them.
+    /// visible until the next activity replaces it. This prevents short
+    /// tool calls from flashing in the tree and disappearing before a
+    /// reader can parse them.
     pub fn mark_idle(&mut self, id: Uuid) {
         self.mark_idle_at(id, Instant::now());
     }
 
-    fn mark_idle_at(&mut self, id: Uuid, now: Instant) {
+    fn mark_idle_at(&mut self, id: Uuid, _now: Instant) {
         match self.activity.get_mut(&id) {
-            Some(entry) if !matches!(entry.activity, AgentActivity::Idle) => {
-                let activity = entry.activity.clone();
-                *entry = ActivityEntry::held(activity, now);
-            }
+            Some(entry) if !matches!(entry.activity, AgentActivity::Idle) => {}
             _ => {
                 self.activity
                     .insert(id, ActivityEntry::live(AgentActivity::Idle));
@@ -400,8 +411,8 @@ impl AgentStatusPanel {
         self.tokens.clear();
     }
 
-    /// Capture the registry, detect transitions, apply hold reclaim,
-    /// and run the collapse heuristic.
+    /// Capture the registry, detect transitions, apply terminal hold
+    /// reclaim, and run the collapse heuristic.
     ///
     /// Idempotent for a fixed `now` — repeated calls do not move the
     /// view as long as the registry and `now` stay constant. NT-011
@@ -411,7 +422,6 @@ impl AgentStatusPanel {
         let entries = self.registry.read().list();
 
         self.absorb_transitions(&entries, now);
-        self.reclaim_expired_activities(now);
         let candidates = self.build_candidates(&entries, now);
         let view = tree::collapse(&candidates, now);
         self.reclaim_expired_holds(now);
@@ -541,10 +551,6 @@ impl AgentStatusPanel {
                 }
             }
         }
-    }
-
-    fn reclaim_expired_activities(&mut self, now: Instant) {
-        self.activity.retain(|_, entry| !entry.expired(now));
     }
 
     fn build_candidates(&self, entries: &[AgentEntry], now: Instant) -> Vec<CandidateEntry> {
@@ -987,7 +993,7 @@ mod tests {
     }
 
     #[test]
-    fn mark_idle_holds_last_activity_then_expires_to_idle() {
+    fn mark_idle_keeps_last_activity_until_replaced() {
         let registry = fresh_registry();
         let root = confirm_root(&registry);
         let child = confirm_child(&registry, "/root/tool-child", root);
@@ -1022,7 +1028,7 @@ mod tests {
             "tool activity should stay readable after idle mark: {out:?}"
         );
 
-        let (view, entries) = panel.snapshot(t0 + Duration::from_secs(12));
+        let (view, entries) = panel.snapshot(t0 + Duration::from_mins(2));
         let mut buf: Vec<u8> = Vec::new();
         panel
             .render_view(
@@ -1036,13 +1042,42 @@ mod tests {
                     terminal_cols: 120,
                 },
             )
-            .expect("render expired activity");
+            .expect("render persisted activity");
         let out = String::from_utf8(buf).expect("utf8");
         assert!(
-            !out.contains("bash: checking status"),
-            "held tool activity should expire: {out:?}"
+            out.contains("bash: checking status"),
+            "tool activity should persist until replaced: {out:?}"
         );
-        assert!(out.contains("idle"), "row falls back to idle: {out:?}");
+
+        panel.set_activity_at(
+            child,
+            AgentActivity::Running("read: next file".to_string()),
+            t0,
+        );
+        let (view, entries) = panel.snapshot(t0 + Duration::from_secs(121));
+        let mut buf: Vec<u8> = Vec::new();
+        panel
+            .render_view(
+                &view,
+                &entries,
+                0,
+                &mut buf,
+                &caps,
+                AgentStatusRenderContext {
+                    now_utc: Utc::now(),
+                    terminal_cols: 120,
+                },
+            )
+            .expect("render replacement activity");
+        let out = String::from_utf8(buf).expect("utf8");
+        assert!(
+            out.contains("read: next file"),
+            "replacement tool activity should appear: {out:?}"
+        );
+        assert!(
+            !out.contains("bash: checking status"),
+            "old tool activity should be replaced: {out:?}"
+        );
     }
 
     /// A depth-2 tree (W3.4 recursion) paints in genealogical preorder
