@@ -39,6 +39,7 @@ use norn::session::store::EventStore;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
+use super::jsonrpc::{self, PreRunOutcome, RunDriver, SharedRunDriver};
 use super::output::{
     JsonEnvelope, UsageOut, drain_diagnostics, emit_stream_completed, extract_output_and_usage,
     render_json, render_text, result_label, spawn_stream_renderer,
@@ -46,7 +47,7 @@ use super::output::{
 use super::provider::build_provider;
 use crate::cli::BuildError;
 use crate::cli::ExitCode;
-use crate::cli::{Cli, OutputFormat};
+use crate::cli::{Cli, OutputFormat, Protocol};
 use crate::commands::slash::{
     DispatchOutcome, apply_clear_request, apply_compact_request, dispatch_input,
 };
@@ -174,7 +175,15 @@ fn report(err: &PrintError) -> ExitCode {
 }
 
 /// Read stdin if it's piped, then dispatch to the orchestrator core.
+///
+/// When `--protocol jsonrpc` is set the driven duplex path is taken instead
+/// (stdin is the JSON-RPC channel, never the prompt); every other format
+/// and the TUI are unreached in that case.
 async fn execute(cli: &Cli) -> Result<ExitCode, PrintError> {
+    if cli.protocol == Some(Protocol::Jsonrpc) {
+        return execute_driven(cli).await;
+    }
+
     let stdin_content = read_stdin_if_piped()?;
     let positional = cli.prompt.join(" ");
     let effective_prompt = compose_prompt(stdin_content.as_deref(), &positional);
@@ -186,7 +195,74 @@ async fn execute(cli: &Cli) -> Result<ExitCode, PrintError> {
     register_standard_tools(&mut inputs.registry, Some(lsp_backend));
     let mut bundle = build_runtime(cli, inputs)?;
     apply_system_prompt(&mut bundle, norn::system_prompt::ExecutionMode::Headless);
-    orchestrate(cli, bundle, effective_prompt, output_schema).await
+    orchestrate(cli, bundle, effective_prompt, output_schema, None).await
+}
+
+/// Driven-mode entry (NOI-1): own the stdin+stdout JSON-RPC 2.0 duplex.
+///
+/// Spawns the single serializing stdout writer, answers the `initialize`
+/// handshake, and waits for one `run/execute` request. The prompt is
+/// sourced from that request's params — stdin is the JSON-RPC channel, so
+/// it is never read as a prompt. The agent then runs with a live `event/*`
+/// notification emitter (in place of the stream renderer), and the final
+/// result is returned as the id-matched `run/execute` response.
+async fn execute_driven(cli: &Cli) -> Result<ExitCode, PrintError> {
+    let (writer, writer_task) = jsonrpc::spawn_writer();
+    let mut reader = jsonrpc::stdin_reader();
+
+    let outcome = jsonrpc::drive_pre_run(&mut reader, &writer)
+        .await
+        .map_err(|err| PrintError::Io(err.to_string()))?;
+
+    let (id, prompt) = match outcome {
+        PreRunOutcome::Run { id, prompt } => (id, prompt),
+        PreRunOutcome::Closed => {
+            // The peer disconnected before requesting a run. Shut the
+            // writer down cleanly and exit success — nothing to do.
+            drop(writer);
+            let _ = writer_task.await;
+            return Ok(ExitCode::Success);
+        }
+    };
+
+    let driver: SharedRunDriver = Arc::new(RunDriver::new(writer, id));
+
+    let output_schema = parse_output_schema(cli.output_schema.as_deref())?;
+
+    let mut inputs = RuntimeInputs::default();
+    let lsp_backend = build_lsp_backend();
+    register_standard_tools(&mut inputs.registry, Some(lsp_backend));
+    let mut bundle = build_runtime(cli, inputs)?;
+    apply_system_prompt(&mut bundle, norn::system_prompt::ExecutionMode::Headless);
+
+    let result = orchestrate(
+        cli,
+        bundle,
+        prompt,
+        output_schema,
+        Some(Arc::clone(&driver)),
+    )
+    .await;
+
+    // On a run-assembly / provider error that never reached the step, the
+    // orchestrator returns Err before emitting a run response. Surface it
+    // as the id-matched error response so the peer is never left hanging,
+    // then still shut the writer down and drain it.
+    if let Err(ref err) = result
+        && let Err(send_err) = driver.finish_with_error(err.to_string())
+    {
+        tracing::warn!("failed to send run/execute error response: {send_err}");
+    }
+
+    // Drop every writer handle so the single serializing writer task drains
+    // its queue and exits; then join it so all frames are flushed to stdout
+    // before the process exits (terminal-response shutdown handshake).
+    drop(driver);
+    if let Err(join_err) = writer_task.await {
+        tracing::warn!("jsonrpc writer task did not exit cleanly: {join_err}");
+    }
+
+    result
 }
 
 /// Read stdin in full when it is not a TTY. Returns [`None`] when stdin
@@ -232,6 +308,7 @@ async fn orchestrate(
     mut bundle: RuntimeBundle,
     prompt: String,
     output_schema: Option<Value>,
+    driven: Option<SharedRunDriver>,
 ) -> Result<ExitCode, PrintError> {
     let session = open_session(cli, &bundle)?;
     crate::runtime::install_action_log(&bundle.registry, &session.store, &mut bundle.loop_context);
@@ -288,7 +365,17 @@ async fn orchestrate(
 
     let effective_prompt = match outcome {
         DispatchOutcome::HandledLocally => {
-            write_handled_locally(cli, format, &bundle, session.id())?;
+            // A run/execute whose prompt resolved to a local slash command
+            // never runs the agent. In driven mode the run response is
+            // still required (a null result), so the peer's request is not
+            // left unanswered; otherwise render the local envelope.
+            if let Some(driver) = driven.as_ref() {
+                driver
+                    .finish_with_result(Value::Null)
+                    .map_err(|err| PrintError::Io(err.to_string()))?;
+            } else {
+                write_handled_locally(cli, format, &bundle, session.id())?;
+            }
             return Ok(ExitCode::Success);
         }
         DispatchOutcome::PassToAgent(text) => text,
@@ -372,10 +459,16 @@ async fn orchestrate(
         let root_sender =
             norn::provider::AgentEventSender::new(tx.clone(), root_id, "root".to_string());
         crate::runtime::install_shared_agent_event_channel(&bundle.registry, tx.clone());
-        let stream_renderer = if matches!(format, OutputFormat::StreamJson) {
-            Some(spawn_stream_renderer(&tx, cli.partial))
+        // Driven mode replaces the stream renderer with the live `event/*`
+        // notification emitter subscribed off the SAME broadcast channel;
+        // otherwise the stream renderer runs exactly as before. The two are
+        // mutually exclusive — driven mode never enters the render path.
+        let (stream_renderer, event_emitter) = if let Some(driver) = driven.as_ref() {
+            (None, Some(driver.attach_emitter(&tx)))
+        } else if matches!(format, OutputFormat::StreamJson) {
+            (Some(spawn_stream_renderer(&tx, cli.partial)), None)
         } else {
-            None
+            (None, None)
         };
 
         let executor: &dyn norn::agent_loop::runner::ToolExecutor = &*bundle.registry;
@@ -414,6 +507,16 @@ async fn orchestrate(
             && let Err(err) = handle.finish().await
         {
             return Err(renderer_failure(&err));
+        }
+        // Drain and stop the driven-mode event emitter before the run
+        // response is sent, so every `event/*` notification is on the wire
+        // ahead of the terminal result. A panic/cancellation means the live
+        // transcript is torn — surfaced on the agent-error path, never a
+        // clean result.
+        if let Some(handle) = event_emitter
+            && let Err(err) = handle.finish().await
+        {
+            return Err(emitter_failure(&err));
         }
 
         let result = match result {
@@ -464,7 +567,19 @@ async fn orchestrate(
             result: label,
             diagnostics: &diagnostics,
         };
-        write_output(cli, format, &step)?;
+        // Driven mode returns the SAME structured result as the `-f json`
+        // envelope, but as the id-matched `run/execute` response — the
+        // single replay-authoritative output — instead of writing it to
+        // stdout. This is the ONLY place the driven result is emitted, and
+        // it is emitted as a Response (never a notification).
+        if let Some(driver) = driven.as_ref() {
+            let result_value = driven_result_value(&step)?;
+            driver
+                .finish_with_result(result_value)
+                .map_err(|err| PrintError::Io(err.to_string()))?;
+        } else {
+            write_output(cli, format, &step)?;
+        }
     }
 
     // NH-006 R8 / C61: SessionLifecycleHook::on_session_end fires on the
@@ -584,6 +699,36 @@ fn renderer_failure(err: &tokio::task::JoinError) -> PrintError {
         "stream renderer task failed ({kind}): {err}; streamed output on stdout is incomplete",
         kind = if err.is_panic() { "panic" } else { "cancelled" },
     ))
+}
+
+/// Map a driven-mode event-emitter [`tokio::task::JoinError`] onto the
+/// agent-error path: a panicked/cancelled emitter means the live `event/*`
+/// transcript is torn, so the run must surface the failure rather than send
+/// a clean terminal result over an incomplete stream.
+fn emitter_failure(err: &tokio::task::JoinError) -> PrintError {
+    PrintError::Agent(format!(
+        "jsonrpc event emitter task failed ({kind}): {err}; the live event stream is incomplete",
+        kind = if err.is_panic() { "panic" } else { "cancelled" },
+    ))
+}
+
+/// Build the `run/execute` response result value from the completed step.
+///
+/// The shape is the SAME structured envelope `-f json` produces
+/// ([`JsonEnvelope`]), serialised to a [`Value`] so it rides the JSON-RPC
+/// response `result` field. This keeps the driven result byte-compatible
+/// with the one-shot capture path (§4.1).
+fn driven_result_value(step: &StepOutput<'_>) -> Result<Value, PrintError> {
+    let envelope = JsonEnvelope {
+        output: step.output,
+        usage: UsageOut::from(step.usage),
+        model: step.model,
+        session_id: step.session_id,
+        events: step.events,
+        result: step.result,
+        diagnostics: step.diagnostics,
+    };
+    serde_json::to_value(&envelope).map_err(|err| PrintError::Agent(err.to_string()))
 }
 
 fn collect_new_events(store: &EventStore, since: usize) -> Vec<SessionEvent> {
