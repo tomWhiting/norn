@@ -1,5 +1,6 @@
 //! Print-mode execution — driving the agent step and rendering output.
 
+pub mod intervene;
 pub mod jsonrpc;
 pub mod orchestrator;
 pub mod output;
