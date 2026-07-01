@@ -117,6 +117,18 @@ pub struct Cli {
     #[arg(short = 'f', long, value_name = "FORMAT", value_enum)]
     pub output_format: Option<OutputFormat>,
 
+    /// Driven-mode transport protocol. When set to `jsonrpc`, Norn runs a
+    /// bidirectional JSON-RPC 2.0 channel over stdin+stdout (stderr stays
+    /// human logs) instead of the one-shot render path: it answers an
+    /// `initialize` handshake, serves a single `run/execute` request whose
+    /// response is the final result, and streams `event/*` notifications
+    /// as the run proceeds. This is a transport flag, deliberately NOT an
+    /// `--output-format` variant, so `-o` redirection and `--partial` do
+    /// not implicitly apply. When absent, every existing render/TUI path is
+    /// byte-for-byte unchanged.
+    #[arg(long, value_name = "PROTOCOL", value_enum)]
+    pub protocol: Option<Protocol>,
+
     /// Write final output to file.
     #[arg(short = 'o', long, value_name = "PATH")]
     pub output: Option<PathBuf>,
@@ -237,6 +249,23 @@ pub enum OutputFormat {
     Json,
     /// NDJSON streaming — one JSON event per line on stdout.
     StreamJson,
+}
+
+/// Driven-mode transport protocols accepted by `--protocol`.
+///
+/// A transport is a distinct concern from an [`OutputFormat`]: it takes
+/// ownership of the full stdin+stdout duplex and speaks a framed wire
+/// protocol, rather than rendering a one-shot result. Modelling it as its
+/// own flag (not a fourth [`OutputFormat`] variant) keeps the render-only
+/// concerns — `-o` redirection and `--partial` — from implicitly applying
+/// to a duplex channel they do not make sense for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+#[value(rename_all = "kebab-case")]
+pub enum Protocol {
+    /// Bidirectional JSON-RPC 2.0 over stdin+stdout: `initialize`
+    /// handshake, one `run/execute` request whose response is the final
+    /// result, and live `event/*` notifications. stderr stays human logs.
+    Jsonrpc,
 }
 
 /// Provider backend choices for `--provider` (NC23).
@@ -671,6 +700,26 @@ mod tests {
     #[test]
     fn output_format_stream_json_parses() {
         let cli = Cli::try_parse_from(["norn", "-f", "stream-json"]).unwrap();
+        assert_eq!(cli.output_format, Some(OutputFormat::StreamJson));
+    }
+
+    #[test]
+    fn protocol_jsonrpc_parses() {
+        let cli = Cli::try_parse_from(["norn", "--protocol", "jsonrpc"]).unwrap();
+        assert_eq!(cli.protocol, Some(Protocol::Jsonrpc));
+    }
+
+    #[test]
+    fn protocol_absent_is_none() {
+        let cli = Cli::try_parse_from(["norn", "-p", "hello"]).unwrap();
+        assert_eq!(cli.protocol, None);
+    }
+
+    #[test]
+    fn protocol_is_independent_of_output_format() {
+        let cli =
+            Cli::try_parse_from(["norn", "--protocol", "jsonrpc", "-f", "stream-json"]).unwrap();
+        assert_eq!(cli.protocol, Some(Protocol::Jsonrpc));
         assert_eq!(cli.output_format, Some(OutputFormat::StreamJson));
     }
 

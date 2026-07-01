@@ -318,30 +318,78 @@ fn agent_event_to_ndjson(
     agent_event: &norn::provider::AgentEvent,
     partial: bool,
 ) -> Option<String> {
+    agent_event_to_value(agent_event, partial).map(|value| value.to_string())
+}
+
+/// Map an [`AgentEvent`] onto the structured NDJSON payload `Value` that
+/// [`agent_event_to_ndjson`] serialises verbatim.
+///
+/// This is the single source of truth for the per-event payload shape:
+/// [`agent_event_to_ndjson`] simply `to_string`s the returned `Value`, so
+/// the stream-json wire form is byte-identical whether it is produced here
+/// or by a downstream consumer (the JSON-RPC `event/*` emitter, NOI-1).
+/// Delta events are filtered when `partial` is `false`, exactly as before.
+///
+/// Returns [`None`] for events with no on-wire representation (filtered
+/// deltas, provider `Error`, serialisation failures).
+#[must_use]
+pub(crate) fn agent_event_to_value(
+    agent_event: &norn::provider::AgentEvent,
+    partial: bool,
+) -> Option<Value> {
     match &agent_event.event {
         norn::provider::AgentEventKind::Provider(event) => {
             if !partial && is_delta_event(event) {
                 return None;
             }
-            provider_event_to_ndjson(event)
+            provider_event_to_value(event)
         }
-        norn::provider::AgentEventKind::Subagent(lifecycle) => subagent_event_to_ndjson(lifecycle),
-        norn::provider::AgentEventKind::Message(lifecycle) => message_event_to_ndjson(lifecycle),
-        norn::provider::AgentEventKind::UsageEstimate(estimate) => Some(
-            json!({
-                "type": "usage_estimate",
-                "input_tokens": estimate.input_tokens,
-            })
-            .to_string(),
-        ),
+        norn::provider::AgentEventKind::Subagent(lifecycle) => subagent_event_to_value(lifecycle),
+        norn::provider::AgentEventKind::Message(lifecycle) => message_event_to_value(lifecycle),
+        norn::provider::AgentEventKind::UsageEstimate(estimate) => Some(json!({
+            "type": "usage_estimate",
+            "input_tokens": estimate.input_tokens,
+        })),
     }
 }
 
-/// Translate a typed [`norn::provider::SubagentLifecycle`] event into an
-/// NDJSON line: the event's stable serde form (`snake_case` `phase` /
-/// `kind` tags) under `"type": "subagent_started"` /
+/// Derive the JSON-RPC `event/*` method name for an [`AgentEvent`] from the
+/// same [`AgentEventKind`] discrimination the payload mapping uses (NOI-1).
+///
+/// The mapping is intentionally coarse — it groups the fine-grained
+/// [`ProviderEvent`] variants into the design's locked `event/*` method set
+/// (`event/message`, `event/toolCall`, `event/toolResult`, `event/progress`,
+/// `event/stop`) plus `event/raw` for anything without a dedicated method —
+/// so the `method` carries the semantic category while the `params` (from
+/// [`agent_event_to_value`]) carry the byte-identical native payload.
+#[must_use]
+pub(crate) fn agent_event_method(agent_event: &norn::provider::AgentEvent) -> &'static str {
+    use norn::provider::AgentEventKind;
+    use norn::provider::events::ProviderEvent;
+    match &agent_event.event {
+        AgentEventKind::Provider(event) => match event {
+            ProviderEvent::TextComplete { .. } | ProviderEvent::ThinkingComplete { .. } => {
+                "event/message"
+            }
+            ProviderEvent::ToolCallComplete { .. } => "event/toolCall",
+            ProviderEvent::ToolResult { .. } => "event/toolResult",
+            ProviderEvent::TextDelta { .. }
+            | ProviderEvent::ThinkingDelta { .. }
+            | ProviderEvent::ToolCallDelta { .. } => "event/progress",
+            ProviderEvent::Done { .. } => "event/stop",
+            ProviderEvent::Compaction { .. } | ProviderEvent::Error { .. } => "event/raw",
+        },
+        AgentEventKind::Message(_) => "event/message",
+        AgentEventKind::UsageEstimate(_) => "event/progress",
+        AgentEventKind::Subagent(_) => "event/raw",
+    }
+}
+
+/// Translate a typed [`norn::provider::SubagentLifecycle`] event into the
+/// NDJSON payload `Value`: the event's stable serde form (`snake_case`
+/// `phase` / `kind` tags) under `"type": "subagent_started"` /
 /// `"subagent_completed"`.
-fn subagent_event_to_ndjson(lifecycle: &norn::provider::SubagentLifecycle) -> Option<String> {
+fn subagent_event_to_value(lifecycle: &norn::provider::SubagentLifecycle) -> Option<Value> {
     let type_label = match lifecycle {
         norn::provider::SubagentLifecycle::Started { .. } => "subagent_started",
         norn::provider::SubagentLifecycle::Completed { .. } => "subagent_completed",
@@ -357,19 +405,13 @@ fn subagent_event_to_ndjson(lifecycle: &norn::provider::SubagentLifecycle) -> Op
         obj.remove("phase");
         obj.insert("type".to_owned(), json!(type_label));
     }
-    match serde_json::to_string(&value) {
-        Ok(s) => Some(s),
-        Err(err) => {
-            tracing::warn!("failed to serialize subagent lifecycle event to NDJSON: {err}");
-            None
-        }
-    }
+    Some(value)
 }
 
 /// Translate a typed [`norn::provider::AgentMessageLifecycle`] event
-/// into an NDJSON line: the event's stable serde form under
+/// into the NDJSON payload `Value`: the event's stable serde form under
 /// `"type": "agent_message_sent"` / `"agent_message_delivered"`.
-fn message_event_to_ndjson(lifecycle: &norn::provider::AgentMessageLifecycle) -> Option<String> {
+fn message_event_to_value(lifecycle: &norn::provider::AgentMessageLifecycle) -> Option<Value> {
     let type_label = match lifecycle {
         norn::provider::AgentMessageLifecycle::Sent { .. } => "agent_message_sent",
         norn::provider::AgentMessageLifecycle::Delivered { .. } => "agent_message_delivered",
@@ -385,13 +427,7 @@ fn message_event_to_ndjson(lifecycle: &norn::provider::AgentMessageLifecycle) ->
         obj.remove("phase");
         obj.insert("type".to_owned(), json!(type_label));
     }
-    match serde_json::to_string(&value) {
-        Ok(s) => Some(s),
-        Err(err) => {
-            tracing::warn!("failed to serialize agent message event to NDJSON: {err}");
-            None
-        }
-    }
+    Some(value)
 }
 
 /// Drain and render the events already buffered on `rx` after a
@@ -435,10 +471,10 @@ fn stop_reason_label(reason: &norn::provider::events::StopReason) -> &'static st
     }
 }
 
-/// Translate a single [`ProviderEvent`] into the NDJSON line documented
-/// in NC18. Returns [`None`] for variants that are not surfaced on the
-/// wire (e.g. `Error` is reported via the agent-error exit path).
-fn provider_event_to_ndjson(event: &ProviderEvent) -> Option<String> {
+/// Translate a single [`ProviderEvent`] into the NDJSON payload `Value`
+/// documented in NC18. Returns [`None`] for variants that are not surfaced
+/// on the wire (e.g. `Error` is reported via the agent-error exit path).
+fn provider_event_to_value(event: &ProviderEvent) -> Option<Value> {
     let value = match event {
         ProviderEvent::TextDelta { text } => json!({
             "type": "text_delta",
@@ -529,13 +565,7 @@ fn provider_event_to_ndjson(event: &ProviderEvent) -> Option<String> {
         }
         ProviderEvent::Error { .. } => return None,
     };
-    match serde_json::to_string(&value) {
-        Ok(s) => Some(s),
-        Err(err) => {
-            tracing::warn!("failed to serialize provider event to NDJSON: {err}");
-            None
-        }
-    }
+    Some(value)
 }
 
 /// Emit the `completed` NDJSON line plus any collected diagnostics.
@@ -600,6 +630,12 @@ mod tests {
     use super::*;
     use norn::integration::DiagnosticSeverity;
     use serde_json::json;
+
+    /// Test-only shim preserving the pre-refactor `String`-returning shape
+    /// over [`provider_event_to_value`]: the wire form is `Value::to_string`.
+    fn provider_event_to_ndjson(event: &ProviderEvent) -> Option<String> {
+        provider_event_to_value(event).map(|value| value.to_string())
+    }
 
     /// REVIEW C1 regression: the renderer must terminate via the
     /// explicit shutdown handle even while an outstanding `Sender`
