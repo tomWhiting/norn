@@ -39,7 +39,8 @@ use norn::session::store::EventStore;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
-use super::jsonrpc::{self, PreRunOutcome, RunDriver, SharedRunDriver};
+use super::intervene::NornInterventionHandler;
+use super::jsonrpc::{self, DrivenRun, PreRunOutcome, RunDriver, SharedRunDriver};
 use super::output::{
     JsonEnvelope, UsageOut, drain_diagnostics, emit_stream_completed, extract_output_and_usage,
     render_json, render_text, result_label, spawn_stream_renderer,
@@ -235,14 +236,14 @@ async fn execute_driven(cli: &Cli) -> Result<ExitCode, PrintError> {
     let mut bundle = build_runtime(cli, inputs)?;
     apply_system_prompt(&mut bundle, norn::system_prompt::ExecutionMode::Headless);
 
-    let result = orchestrate(
-        cli,
-        bundle,
-        prompt,
-        output_schema,
-        Some(Arc::clone(&driver)),
-    )
-    .await;
+    // The stdin reader that carried initialize/run/execute keeps being read
+    // during the run so mid-run intervene/* requests reach the agent (NOI-2).
+    let driven_run = DrivenRun {
+        driver: Arc::clone(&driver),
+        reader,
+    };
+
+    let result = orchestrate(cli, bundle, prompt, output_schema, Some(driven_run)).await;
 
     // On a run-assembly / provider error that never reached the step, the
     // orchestrator returns Err before emitting a run response. Surface it
@@ -308,8 +309,16 @@ async fn orchestrate(
     mut bundle: RuntimeBundle,
     prompt: String,
     output_schema: Option<Value>,
-    driven: Option<SharedRunDriver>,
+    driven_run: Option<DrivenRun>,
 ) -> Result<ExitCode, PrintError> {
+    // Split the driven-mode context into the shared driver (result + events,
+    // consulted throughout) and the stdin reader (consumed once, by the
+    // mid-run intervene loop at step time). Keeping them apart lets the many
+    // existing `driven.as_ref()` sites stay a cheap Option<&SharedRunDriver>.
+    let (driven, driven_reader): (Option<SharedRunDriver>, Option<_>) = match driven_run {
+        Some(DrivenRun { driver, reader }) => (Some(driver), Some(reader)),
+        None => (None, None),
+    };
     let session = open_session(cli, &bundle)?;
     crate::runtime::install_action_log(&bundle.registry, &session.store, &mut bundle.loop_context);
     let session_id = session.id().map(str::to_owned);
@@ -471,6 +480,15 @@ async fn orchestrate(
             (None, None)
         };
 
+        // Driven-mode WRITE direction (NOI-2): while the run is in flight,
+        // concurrently read in-band `intervene/*` requests off the same
+        // stdin reader and map them onto Norn's control channel — inject via
+        // the harness router to the root, cancel via a token threaded into
+        // the step below. The reader task is spawned only in driven mode; a
+        // plain CLI run has `cancel: None` and no reader, unchanged.
+        let (cancel_token, intervene_task, intervene_stop) =
+            spawn_intervene_loop(driven.as_ref(), driven_reader, &bundle.registry, root_id);
+
         let executor: &dyn norn::agent_loop::runner::ToolExecutor = &*bundle.registry;
         let result =
             norn::agent_loop::runner::run_agent_step(norn::agent_loop::runner::AgentStepRequest {
@@ -488,9 +506,16 @@ async fn orchestrate(
                 // through the framed <agent_message> injection path.
                 inbound: root_inbound.as_mut(),
                 loop_context: &mut bundle.loop_context,
-                cancel: None,
+                cancel: cancel_token,
             })
             .await;
+
+        // The run has ended (completed, cancelled, or errored). Signal the
+        // intervene reader to stop and join it, so no reader task outlives
+        // the run and every ack it emitted is accounted for before the
+        // terminal result is sent. A reader already stopped (EOF or a cancel
+        // it applied) makes the stop-send a no-op; join still completes.
+        finish_intervene_loop(intervene_task, intervene_stop).await;
 
         drop(root_sender);
         drop(tx);
@@ -594,6 +619,93 @@ async fn orchestrate(
 
     drop(built_provider);
     Ok(final_exit_code)
+}
+
+/// The join handle + stop signal for the mid-run intervene reader task.
+type InterveneTask = tokio::task::JoinHandle<Result<(), jsonrpc::TransportError>>;
+
+/// Spawn the driven-mode `intervene/*` reader loop for the duration of the
+/// run (NOI-2).
+///
+/// Returns the [`CancellationToken`] to thread into the step's `cancel`
+/// (so an `intervene/cancel` stops the run), the reader task's join handle,
+/// and the `stop` sender used to wind it down when the run finishes on its
+/// own. In non-driven mode all three are `None`: the step runs with
+/// `cancel: None` and no reader task, exactly as before.
+///
+/// The reader is fed the Norn control adapter ([`NornInterventionHandler`])
+/// built from the harness [`MessageRouter`] (looked up on the shared tool
+/// context installed by `install_agent_tool_infra`) and the fresh token, so
+/// injects reach the root agent and a cancel trips the same token the step
+/// observes. If the router cannot be resolved — an assembly invariant that
+/// should never fail on the driven path — the loop is not spawned and the
+/// run proceeds without interventions rather than panicking; the condition
+/// is error-logged, never silently dropped.
+fn spawn_intervene_loop(
+    run_driver: Option<&SharedRunDriver>,
+    reader: Option<jsonrpc::StdinReader>,
+    registry: &Arc<norn::tool::registry::ToolRegistry>,
+    root_id: Uuid,
+) -> (
+    Option<tokio_util::sync::CancellationToken>,
+    Option<InterveneTask>,
+    Option<tokio::sync::oneshot::Sender<()>>,
+) {
+    let (Some(run_driver), Some(mut reader)) = (run_driver, reader) else {
+        return (None, None, None);
+    };
+    let Some(router) = resolve_router(registry) else {
+        tracing::error!(
+            "driven mode: the harness MessageRouter is unavailable; \
+             intervene/* requests will not be served this run",
+        );
+        return (None, None, None);
+    };
+    let token = tokio_util::sync::CancellationToken::new();
+    let handler = NornInterventionHandler::new(router, root_id, token.clone());
+    let writer = run_driver.writer();
+    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
+    let task = tokio::spawn(async move {
+        jsonrpc::drive_interventions(&mut reader, &writer, &handler, stop_rx).await
+    });
+    (Some(token), Some(task), Some(stop_tx))
+}
+
+/// Look up the harness [`MessageRouter`] on the registry's shared tool
+/// context (published by `install_agent_tool_infra` as the
+/// `AgentToolInfra` extension). `None` only when the shared context or the
+/// infra extension is absent — never on the assembled driven path.
+fn resolve_router(
+    registry: &Arc<norn::tool::registry::ToolRegistry>,
+) -> Option<Arc<norn::agent::message_router::MessageRouter>> {
+    use norn::agent_loop::runner::ToolExecutor;
+    let shared = registry.shared_context()?;
+    let infra = shared.get_extension::<norn::tools::agent::AgentToolInfra>()?;
+    Some(Arc::clone(&infra.router))
+}
+
+/// Wind down the intervene reader after the run: signal `stop` and join the
+/// task, logging (never swallowing) a join panic or a transport error it
+/// surfaced. A `None` task (non-driven mode) is a no-op.
+async fn finish_intervene_loop(
+    task: Option<InterveneTask>,
+    stop: Option<tokio::sync::oneshot::Sender<()>>,
+) {
+    if let Some(stop) = stop {
+        // A failed send means the reader already returned (EOF or an applied
+        // cancel) — not an error; the join below still completes.
+        let _ = stop.send(());
+    }
+    let Some(task) = task else { return };
+    match task.await {
+        Ok(Ok(())) => {}
+        Ok(Err(err)) => {
+            tracing::warn!("driven-mode intervene reader ended with a transport error: {err}");
+        }
+        Err(join_err) => {
+            tracing::warn!("driven-mode intervene reader task did not exit cleanly: {join_err}");
+        }
+    }
 }
 
 /// Render the "no agent call" output for a dispatch that was handled
