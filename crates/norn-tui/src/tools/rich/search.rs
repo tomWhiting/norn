@@ -14,7 +14,7 @@ use serde_json::Value;
 use termina::escape::csi::{Csi, Sgr};
 
 use crate::terminal::caps::TerminalCaps;
-use crate::tools::helpers::{SPINNER, bold, dim, format_duration_ms, partial_field, reset};
+use crate::tools::helpers::{bold, dim, format_duration_ms, partial_field, reset, SPINNER};
 use crate::tools::renderer::ToolRenderer;
 
 /// Renders `search` tool calls: a `? {query}` header with a result
@@ -131,7 +131,7 @@ impl ToolRenderer for SearchRenderer {
             }
             let mut out = String::new();
             for p in paths.iter().filter_map(Value::as_str) {
-                let _ = writeln!(out, "  • {p}");
+                let _ = writeln!(out, "  • {}{p}{}", bold(), reset());
             }
             return Some(out);
         }
@@ -145,7 +145,14 @@ impl ToolRenderer for SearchRenderer {
             for m in matches {
                 let path = m.get("path").and_then(Value::as_str).unwrap_or("");
                 let score = m.get("score").and_then(Value::as_u64).unwrap_or(0);
-                let _ = writeln!(out, "  {path}  score={score}");
+                let _ = writeln!(
+                    out,
+                    "  {}{path}{}  {}score={score}{}",
+                    bold(),
+                    reset(),
+                    dim(),
+                    reset(),
+                );
             }
             Some(out)
         } else {
@@ -156,7 +163,14 @@ impl ToolRenderer for SearchRenderer {
                 let line = m.get("line").and_then(Value::as_u64).unwrap_or(0);
                 let column = m.get("column").and_then(Value::as_u64).unwrap_or(0);
                 let text = m.get("text").and_then(Value::as_str).unwrap_or("");
-                let _ = writeln!(out, "  {path}:{line}:{column} → {text}");
+                let _ = writeln!(
+                    out,
+                    "  {}{path}{}{}:{line}:{column}{} → {text}",
+                    bold(),
+                    reset(),
+                    dim(),
+                    reset(),
+                );
             }
             Some(out)
         }
@@ -236,6 +250,10 @@ mod tests {
             .unwrap();
         assert!(body.contains("src/a.rs"));
         assert!(body.contains("src/b.rs"));
+        assert!(
+            body.contains("\u{1b}[1m") && body.contains("\u{1b}[m"),
+            "file paths should preserve styled tool output: {body:?}",
+        );
     }
 
     #[test]
@@ -262,6 +280,10 @@ mod tests {
             .unwrap();
         assert!(body.contains("src/a.rs"));
         assert!(body.contains("score=100"));
+        assert!(
+            body.contains("\u{1b}[1m") && body.contains("\u{1b}[2m"),
+            "fuzzy path and score should be styled: {body:?}",
+        );
     }
 
     #[test]
@@ -274,7 +296,12 @@ mod tests {
         let body = SearchRenderer
             .body(&json!({ "pattern": "foo" }), &result, &caps())
             .unwrap();
-        assert!(body.contains("src/a.rs:10:5"));
+        assert!(body.contains("src/a.rs"));
+        assert!(body.contains(":10:5"));
         assert!(body.contains("fn foo()"));
+        assert!(
+            body.contains("\u{1b}[1m") && body.contains("\u{1b}[2m"),
+            "AST path and location should be styled: {body:?}",
+        );
     }
 }

@@ -2,7 +2,8 @@
 //!
 //! Minimal renderers serve agent-coordination tools that produce little
 //! or no visible output: [`SpawnAgentRenderer`],
-//! [`ForkRenderer`], [`SignalAgentRenderer`], and [`CloseAgentRenderer`].
+//! [`ForkRenderer`], [`SignalAgentRenderer`], [`WakeAgentRenderer`], and
+//! [`CloseAgentRenderer`].
 
 use serde_json::Value;
 
@@ -19,14 +20,17 @@ fn short_id(value: &Value, key: &str) -> Option<String> {
 
 fn optional_field(args: &Value, result: &Value, key: &str) -> Option<String> {
     let value = string_field(args, result, key);
-    if value.is_empty() { None } else { Some(value) }
+    if value.is_empty() {
+        None
+    } else {
+        Some(value)
+    }
 }
 
 fn push_part(parts: &mut Vec<String>, value: Option<String>) {
-    if let Some(value) = value
-        && !value.is_empty()
-    {
-        parts.push(value);
+    match value {
+        Some(value) if !value.is_empty() => parts.push(value),
+        _ => {}
     }
 }
 
@@ -148,12 +152,12 @@ impl ToolRenderer for SignalAgentRenderer {
     }
 }
 
-/// Silent renderer for `wait_agent` — the wait is invisible to the
-/// user per D7. Empty header + `None` body hits the discard guard in
-/// `write_tool_result`.
-pub struct WaitAgentRenderer;
+/// Silent renderer for `wake_agent` — the wake is an operational
+/// follow-up affordance, not transcript content. Empty header + `None`
+/// body hits the discard guard in `write_tool_result`.
+pub struct WakeAgentRenderer;
 
-impl ToolRenderer for WaitAgentRenderer {
+impl ToolRenderer for WakeAgentRenderer {
     fn header_line(
         &self,
         _args: &Value,
@@ -336,18 +340,16 @@ mod tests {
     }
 
     #[test]
-    fn wait_agent_is_completely_silent() {
-        let result = json!({ "status": "completed", "output": "done" });
-        let header = WaitAgentRenderer.header_line(&json!({}), &result, 500, &caps());
+    fn wake_agent_is_completely_silent() {
+        let result = json!({ "woken": true, "queued_messages": 1 });
+        let header = WakeAgentRenderer.header_line(&json!({}), &result, 500, &caps());
         assert!(
             header.is_empty(),
-            "wait_agent must be invisible: {header:?}"
+            "wake_agent must be invisible: {header:?}"
         );
-        assert!(
-            WaitAgentRenderer
-                .body(&json!({}), &result, &caps())
-                .is_none()
-        );
+        assert!(WakeAgentRenderer
+            .body(&json!({}), &result, &caps())
+            .is_none());
     }
 
     #[test]
@@ -356,7 +358,7 @@ mod tests {
         assert!(SpawnAgentRenderer.body(&empty, &empty, &caps()).is_none());
         assert!(ForkRenderer.body(&empty, &empty, &caps()).is_none());
         assert!(SignalAgentRenderer.body(&empty, &empty, &caps()).is_none());
-        assert!(WaitAgentRenderer.body(&empty, &empty, &caps()).is_none());
+        assert!(WakeAgentRenderer.body(&empty, &empty, &caps()).is_none());
         assert!(CloseAgentRenderer.body(&empty, &empty, &caps()).is_none());
     }
 }

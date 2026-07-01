@@ -18,7 +18,7 @@ use super::compact::{
     WebSearchRenderer, WriteRenderer,
 };
 use super::minimal::{
-    CloseAgentRenderer, ForkRenderer, SignalAgentRenderer, SpawnAgentRenderer, WaitAgentRenderer,
+    CloseAgentRenderer, ForkRenderer, SignalAgentRenderer, SpawnAgentRenderer, WakeAgentRenderer,
 };
 use super::rich::{ApplyPatchRenderer, BashRenderer, EditRenderer, ReadRenderer, SearchRenderer};
 use super::status::{ActionLogRenderer, AgentsRenderer};
@@ -104,7 +104,7 @@ pub fn renderer_for(tool_name: &str) -> Option<Box<dyn ToolRenderer>> {
         "spawn_agent" => Some(Box::new(SpawnAgentRenderer)),
         "fork" => Some(Box::new(ForkRenderer)),
         "signal_agent" => Some(Box::new(SignalAgentRenderer)),
-        "wait_agent" => Some(Box::new(WaitAgentRenderer)),
+        "wake_agent" => Some(Box::new(WakeAgentRenderer)),
         "close_agent" => Some(Box::new(CloseAgentRenderer)),
         _ => None,
     }
@@ -135,7 +135,7 @@ mod tests {
             "spawn_agent",
             "fork",
             "signal_agent",
-            "wait_agent",
+            "wake_agent",
             "close_agent",
         ];
         for name in all {
@@ -144,6 +144,25 @@ mod tests {
                 "expected a renderer for `{name}`",
             );
         }
+    }
+
+    #[test]
+    fn standard_norn_tools_have_tui_renderer_coverage() {
+        let mut registry = norn::tool::registry::ToolRegistry::new();
+        norn::tools::register_standard_tools(&mut registry, None);
+
+        let mut missing = registry
+            .names()
+            .filter(|name| renderer_for(name).is_none())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        missing.sort();
+
+        assert!(
+            missing.is_empty(),
+            "standard tools without TUI renderers: {}",
+            missing.join(", "),
+        );
     }
 
     #[test]
