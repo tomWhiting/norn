@@ -41,6 +41,8 @@ const RESIZE_MARKER: &[u8] = b"resize harness output";
 const TYPE_DURING_STREAM_MARKER: &[u8] = b"stream-after-input";
 const SUBMIT_CLEAR_PROMPT: &str = "submit clear prompt before provider";
 const SUBMIT_CLEAR_PROVIDER_MARKER: &[u8] = b"submit-clear provider output";
+const EFFORT_CONFIRMATION: &str = "Reasoning effort: high";
+const TOOLS_EMPTY_MARKER: &str = "No tools available.";
 
 struct PtyRun {
     status: ExitStatus,
@@ -399,6 +401,56 @@ fn run_app_clears_input_panel_immediately_after_submit() -> Result<(), Box<dyn s
 }
 
 #[test]
+fn run_app_renders_effort_confirmation_above_input_panel() -> Result<(), Box<dyn std::error::Error>>
+{
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("idle"),
+        PtyInteraction::WriteWaitForSlashOutputThenCtrlC {
+            bytes: b"/effort high\r",
+            marker: EFFORT_CONFIRMATION,
+            boundary_marker: "────────",
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app effort-confirmation", &run.status, &run.output).into());
+    }
+
+    let screen = TerminalScreen::from_output(&run.output, SCREEN_ROWS, SCREEN_COLS);
+    assert!(
+        screen.contains("effort:high"),
+        "effort status badge missing after slash command:\n{}",
+        screen.debug_text(),
+    );
+
+    Ok(())
+}
+
+#[test]
+fn run_app_renders_tools_block_above_input_panel() -> Result<(), Box<dyn std::error::Error>> {
+    let run = run_child_to_completion(
+        "run_app_child_entrypoint",
+        PTY_APP_CHILD_ENV,
+        Some("idle"),
+        PtyInteraction::WriteWaitForSlashOutputThenCtrlC {
+            bytes: b"/tools\r\r",
+            marker: TOOLS_EMPTY_MARKER,
+            boundary_marker: "────────",
+        },
+        PtySizeSpec::default(),
+    )?;
+
+    if !run.status.success() {
+        return Err(child_failure("run_app tools-block", &run.status, &run.output).into());
+    }
+
+    Ok(())
+}
+
+#[test]
 fn run_app_grows_and_shrinks_input_panel_without_artifacts()
 -> Result<(), Box<dyn std::error::Error>> {
     let size = PtySizeSpec { rows: 14, cols: 42 };
@@ -733,7 +785,8 @@ impl Provider for DelayedProvider {
         ProviderCapabilities::default()
     }
 
-    fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+    fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        drop(request);
         let events = self.events.clone();
         let delay = self.delay;
         let stream = stream::unfold(events.into_iter(), move |mut iter| async move {
@@ -854,6 +907,11 @@ enum PtyInteraction<'a> {
         bytes: &'a [u8],
         submitted_prompt: &'a str,
         provider_marker: &'a [u8],
+        boundary_marker: &'a str,
+    },
+    WriteWaitForSlashOutputThenCtrlC {
+        bytes: &'a [u8],
+        marker: &'a str,
         boundary_marker: &'a str,
     },
     WriteWaitForOutputWriteWaitForOutputThenCtrlC {
@@ -1025,6 +1083,24 @@ fn run_child_to_completion(
             writer.write_all(b"\x03")?;
             writer.flush()?;
             wait_for_output(&output, b"[cancelled]", Duration::from_secs(5))?;
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
+        }
+        PtyInteraction::WriteWaitForSlashOutputThenCtrlC {
+            bytes,
+            marker,
+            boundary_marker,
+        } => {
+            wait_for_output(&output, b"^C exit", Duration::from_secs(5))?;
+            let mut writer = pair.master.take_writer()?;
+            writer.write_all(bytes)?;
+            writer.flush()?;
+            wait_for_screen(&output, marker, size, Duration::from_secs(5))?;
+            let snapshot = clone_output(&output)?;
+            assert_screen_text_above_boundary(&snapshot, size, marker, boundary_marker)?;
+            assert_screen_text_not_below_boundary(&snapshot, size, marker, boundary_marker)?;
+            writer.write_all(b"\x03")?;
+            writer.flush()?;
             writer.write_all(b"\x03")?;
             writer.flush()?;
         }
@@ -1463,8 +1539,8 @@ impl Perform for TerminalScreen {
         }
     }
 
-    fn csi_dispatch(&mut self, params: &Params, _intermediates: &[u8], ignore: bool, action: char) {
-        if ignore {
+    fn csi_dispatch(&mut self, params: &Params, intermediates: &[u8], ignore: bool, action: char) {
+        if ignore || !intermediates.is_empty() {
             return;
         }
         match action {
@@ -1494,8 +1570,8 @@ impl Perform for TerminalScreen {
         }
     }
 
-    fn esc_dispatch(&mut self, _intermediates: &[u8], ignore: bool, byte: u8) {
-        if ignore {
+    fn esc_dispatch(&mut self, intermediates: &[u8], ignore: bool, byte: u8) {
+        if ignore || !intermediates.is_empty() {
             return;
         }
         match byte {

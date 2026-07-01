@@ -86,6 +86,43 @@ pub fn write_cancelled_line(guard: &mut TerminalGuard) -> Result<(), TuiError> {
     Ok(())
 }
 
+/// Run a top-level scroll-region write operation at the saved transcript cursor.
+///
+/// The fixed panel and input renderer park the hardware cursor inside the
+/// controlled bottom rows. Any subsequent transcript/scrollback operation must
+/// first restore the saved scroll-region cursor, perform all append-only writes,
+/// and then save the new cursor before another panel redraw moves it again.
+///
+/// Lower-level helpers such as [`write_to_scroll`] intentionally do not restore
+/// the cursor themselves: many operations perform several scroll writes in one
+/// logical batch, and restoring before each individual write would rewind the
+/// cursor and corrupt ordering. Use this wrapper at operation boundaries (slash
+/// dispatch, finalization, cancellation, etc.).
+pub(super) fn with_scroll_region_cursor<T, F>(
+    guard: &mut TerminalGuard,
+    body: F,
+) -> Result<T, TuiError>
+where
+    F: FnOnce(&mut TerminalGuard) -> Result<T, TuiError>,
+{
+    guard.restore_scroll_cursor_clamped()?;
+    let result = body(guard);
+    let save_result = guard.save_scroll_cursor();
+
+    match (result, save_result) {
+        (Ok(value), Ok(())) => Ok(value),
+        (Ok(_), Err(err)) => Err(TuiError::from(err)),
+        (Err(body_err), Ok(())) => Err(body_err),
+        (Err(body_err), Err(save_err)) => {
+            tracing::warn!(
+                error = %save_err,
+                "failed to save scroll cursor after scroll-region write failure",
+            );
+            Err(body_err)
+        }
+    }
+}
+
 /// Render the input editor into the fixed panel's input area.
 ///
 /// Visual rows from [`wrap::layout`] are written with absolute cursor
@@ -241,7 +278,7 @@ pub fn redraw_panel(state: &mut AppState, guard: &mut TerminalGuard) -> Result<(
     state.fixed_panel.set_agent_lines(agent_rows);
 
     let rows = guard.terminal_rows();
-    let _activity_snap = state.activity_log.snapshot(now);
+    drop(state.activity_log.snapshot(now));
     state
         .fixed_panel
         .set_input_mode_label(state.in_flight_input.mode().label());

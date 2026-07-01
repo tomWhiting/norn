@@ -37,8 +37,8 @@ use super::event_loop::{
 };
 use super::helpers::{checkpoint_session, flush_markdown, flush_pending};
 use super::render::{
-    park_input_cursor, redraw_panel, redraw_streaming_tick, render_input, write_cancelled_line,
-    write_user_message,
+    park_input_cursor, redraw_panel, redraw_streaming_tick, render_input,
+    with_scroll_region_cursor, write_cancelled_line, write_user_message,
 };
 use super::state::AppState;
 use super::streaming::finish_thinking_block;
@@ -355,19 +355,21 @@ async fn run_turn(
     if cancel_requested {
         norn::agent_loop::ensure_tool_results_complete(runtime.store.as_ref()).await;
     }
-    finish_thinking_block(state, guard, &mut renderer)?;
-    flush_pending(state, guard, &mut renderer)?;
-    finalise_turn(state, guard, step_result, &mut renderer)?;
-    if cancel_requested {
-        write_cancelled_line(guard)?;
-        state.streaming_indicator = StreamingIndicator::Idle;
-        state.complete_at = None;
-        state.sync_indicator_into_panel();
-    }
-    if let Some(message) = checkpoint_session(runtime.store.as_ref()) {
-        write_error_line(state, guard, &message)?;
-    }
-    guard.save_scroll_cursor()?;
+    with_scroll_region_cursor(guard, |guard| {
+        finish_thinking_block(state, guard, &mut renderer)?;
+        flush_pending(state, guard, &mut renderer)?;
+        finalise_turn(state, guard, step_result, &mut renderer)?;
+        if cancel_requested {
+            write_cancelled_line(guard)?;
+            state.streaming_indicator = StreamingIndicator::Idle;
+            state.complete_at = None;
+            state.sync_indicator_into_panel();
+        }
+        if let Some(message) = checkpoint_session(runtime.store.as_ref()) {
+            write_error_line(state, guard, &message)?;
+        }
+        Ok(())
+    })?;
     redraw_panel(state, guard)?;
     Ok(TurnOutcome { interrupt_prompt })
 }

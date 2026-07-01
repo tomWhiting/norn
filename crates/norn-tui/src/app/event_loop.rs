@@ -46,7 +46,10 @@ use super::autocomplete::{PopupKeyOutcome, dismiss as dismiss_autocomplete, hand
 use super::child_results::{ChildResultRx, PendingChildPrompts, drain_ready_child_results};
 use super::dispatch::handle_agent_event;
 use super::edit::apply_edit_action;
-use super::render::{redraw_all, redraw_panel, render_input, sync_input_area, write_user_message};
+use super::render::{
+    redraw_all, redraw_panel, render_input, sync_input_area, with_scroll_region_cursor,
+    write_user_message,
+};
 use super::session_replay::replay_visible_session_history;
 use super::slash::{SlashOutcome, try_dispatch_slash};
 use super::state::AppState;
@@ -500,7 +503,10 @@ async fn handle_action(
             // fall through to the normal run_turn pipeline. Some =
             // handled here; skip run_turn. Exit short-circuits the
             // outer loop directly.
-            match try_dispatch_slash(&text, state, runtime, guard)? {
+            let slash = with_scroll_region_cursor(guard, |guard| {
+                try_dispatch_slash(&text, state, runtime, guard)
+            })?;
+            match slash {
                 Some(SlashOutcome::Exit) => return Ok(InputOutcome::Exit),
                 Some(SlashOutcome::Continue) => {}
                 None => {
