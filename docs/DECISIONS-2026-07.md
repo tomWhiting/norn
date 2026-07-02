@@ -33,14 +33,30 @@ implemented something reasonable but explicitly asked for sign-off or flagged an
 The three below are the highest-priority calls — the first is a genuine design fork, the other
 two are behaviors an agent explicitly wrote "needs sign-off" against. Full detail in §3.
 
-1. **`step_timeout` graceful-timeout redesign** (§3). Today's hard-cut semantics are documented
-   as-is; a graceful grace-period redesign was **proposed but not implemented** because the
-   grace value would be an invented default. Needs an owner decision to proceed. — **Discuss**
-2. **`WalkBuilder::require_git(false)`** in the search/file tools (§2, §3). `.gitignore`/`.ignore`
-   apply even outside a git repo. Agent wrote "needs sign-off." — **Discuss**
+1. **`step_timeout` graceful-timeout redesign** (§3). — **DECIDED 2026-07-02 (owner)**: agents
+   may run for hours; there is **no timeout by default** (the existing `step_timeout: None`
+   default is confirmed correct and must stay). For callers that opt in via `--timeout` /
+   `AgentLoopConfig::step_timeout`, today's documented hard-cut semantics stand; the graceful
+   grace-period redesign is **dropped** (it would invent a grace default for a knob the owner
+   considers niche).
+2. **`WalkBuilder::require_git(false)`** in the search/file tools (§2, §3). — **DECIDED
+   2026-07-02 (owner)**: ratified. Outside a git repo there is normally no `.gitignore`, so the
+   behavior is moot there; where ignore files do exist, applying them deterministically is
+   right. The escape hatch the owner asked for already exists: the per-call `include_ignored`
+   parameter (default `false`) walks ignored files on request.
 3. **Binary / non-UTF-8 `InvalidData` silent-skip carve-out** in content/AST search (§2, §3).
    Non-text files are skipped silently rather than reported in `skipped`. Agent wrote "needs
    sign-off on the InvalidData carve-out." — **Discuss**
+
+4. **Zero-tool agents are supported** — **DECIDED 2026-07-02 (owner-driven fix)**: the former
+   `AgentBuilder::build` rejection ("no tools available after exclusions; an agent needs at
+   least one tool") is removed. A zero-tool agent (`--allowed-tools ""`, or a profile with
+   `tools = []`) is a legitimate pure text-transform configuration (e.g. the owner's TTS
+   rewrite pipeline): the system prompt omits its `# Tools` section and provider requests
+   carry no tool definitions. The invariant predated the campaign but only reached the CLI
+   when R1 unified assembly onto `build()` — it broke a previously-working invocation.
+   Regression tests: `zero_tool_agent_builds_for_transform_only_use` (library),
+   `empty_allowed_tools_builds_zero_tool_transform_agent` (CLI fence).
 
 Beyond these, §5.1 (R1 D1-D7) were **applied autonomously while the owner was away** and are all
 reversible on `hardening/final-state` before merge — the owner may override any of them.

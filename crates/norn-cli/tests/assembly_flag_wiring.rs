@@ -132,6 +132,41 @@ fn workspace_root_flag_confines_shared_tool_context() {
     });
 }
 
+/// An explicitly empty `--allowed-tools ""` builds a ZERO-tool agent —
+/// a pure text-transform step (e.g. a TTS rewrite pipeline piping stdin
+/// through the model with no tools at all). Regression for the former
+/// "at least one tool" build rejection that the R1 unification surfaced
+/// on the CLI path (owner decision 2026-07-02).
+#[test]
+#[serial_test::serial]
+fn empty_allowed_tools_builds_zero_tool_transform_agent() {
+    with_isolated_env(|| {
+        let cli = Cli::parse_from([
+            "norn",
+            "-m",
+            "gpt-5.5",
+            "--no-session",
+            "--allowed-tools",
+            "",
+        ]);
+        let parts = build_parts(&cli);
+        assert_eq!(
+            parts.registry.names().count(),
+            0,
+            "--allowed-tools \"\" must gate out every tool",
+        );
+        let prompt = parts
+            .loop_context
+            .system_sections
+            .first()
+            .expect("system prompt section assembled");
+        assert!(
+            !prompt.contains("# Tools"),
+            "zero-tool system prompt must omit the # Tools section",
+        );
+    });
+}
+
 /// Without the flag, path resolution stays unconfined.
 #[test]
 #[serial_test::serial]

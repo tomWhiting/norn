@@ -992,7 +992,7 @@ checksum = "abd57806937c9cc163efc8ea3910e00a62e2aeb0b8119f1793a978088f8f6b04"
 [[package]]
 name = "diagnostics"
 version = "0.1.0"
-source = "git+https://github.com/tomWhiting/chiron#ab3e1bf4f5720b7b45cdc2f55015f4819c9a97c4"
+source = "git+https://github.com/tomWhiting/chiron#1bb6fc828b2fe9d4efe5908fb9f6787f26a40de8"
 dependencies = [
  "cargo_metadata",
  "chrono",
@@ -3354,7 +3354,7 @@ checksum = "112b39cec0b298b6c1999fee3e31427f74f676e4cb9879ed1a121b43661a4154"
 [[package]]
 name = "lsp"
 version = "0.1.0"
-source = "git+https://github.com/tomWhiting/chiron#ab3e1bf4f5720b7b45cdc2f55015f4819c9a97c4"
+source = "git+https://github.com/tomWhiting/chiron#1bb6fc828b2fe9d4efe5908fb9f6787f26a40de8"
 dependencies = [
  "async-trait",
  "lsp-types",
@@ -5372,7 +5372,7 @@ dependencies = [
 [[package]]
 name = "syntax"
 version = "0.1.0"
-source = "git+https://github.com/tomWhiting/chiron#ab3e1bf4f5720b7b45cdc2f55015f4819c9a97c4"
+source = "git+https://github.com/tomWhiting/chiron#1bb6fc828b2fe9d4efe5908fb9f6787f26a40de8"
 dependencies = [
  "cc",
  "thiserror 2.0.18",

@@ -398,12 +398,12 @@ impl AgentBuilder {
         // allow-list names it (mirrors `build_runtime`'s `set_disallowed`).
         registry.set_disallowed(std::mem::take(&mut self.disallowed_tools));
 
-        if registry.is_empty() {
-            return Err(NornError::Config(ConfigError::InvalidConfig {
-                reason: "no tools available after exclusions; an agent needs at least one tool"
-                    .to_string(),
-            }));
-        }
+        // A zero-tool agent is a legitimate configuration (a pure text
+        // transform step: `--allowed-tools ""`, or a profile with
+        // `tools = []`): the system prompt omits its `# Tools` section and
+        // the provider request carries no tool definitions. Owner decision
+        // 2026-07-02 (docs/DECISIONS-2026-07.md) removed the former
+        // ≥1-tool build rejection here.
         if self.bash_drain_grace.is_some() && registry.get("bash").is_none() {
             return Err(NornError::Config(ConfigError::InvalidConfig {
                 reason: "bash_drain_grace is set but the bash tool is not in the final \
@@ -719,6 +719,36 @@ mod tests {
         ]]
     }
 
+    /// A zero-tool agent (empty allow-list) is a supported configuration —
+    /// a pure text-transform step. Build must succeed, the gated registry
+    /// must expose no tools, and the assembled system prompt must omit the
+    /// `# Tools` section entirely. Regression for the former ≥1-tool build
+    /// rejection (owner decision 2026-07-02).
+    #[test]
+    fn zero_tool_agent_builds_for_transform_only_use() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .allowed_tools(&[])
+            .build()
+            .expect("a zero-tool agent must build");
+        assert_eq!(
+            agent.registry.names().count(),
+            0,
+            "empty allow-list must gate out every tool",
+        );
+        let parts = agent.into_parts();
+        let prompt = parts
+            .loop_context
+            .system_sections
+            .first()
+            .expect("system prompt section assembled");
+        assert!(
+            !prompt.contains("# Tools"),
+            "zero-tool system prompt must omit the # Tools section, got:\n{prompt}",
+        );
+    }
+
     #[test]
     fn build_includes_all_standard_tools_by_default() {
         let agent = AgentBuilder::new(provider_with(vec![]))
@@ -1010,9 +1040,12 @@ mod tests {
     }
 
     #[test]
-    fn build_errors_when_all_tools_excluded() {
-        // Exclude the entire standard set; build must reject an agent with no
-        // tools rather than launch one that can do nothing.
+    fn build_succeeds_when_all_tools_excluded() {
+        // Excluding the entire standard set is a supported zero-tool
+        // configuration (pure text transform) — build must succeed with an
+        // empty gated registry rather than reject it. Owner decision
+        // 2026-07-02 (docs/DECISIONS-2026-07.md) removing the former
+        // ≥1-tool rejection.
         let names = [
             "read",
             "write",
@@ -1033,12 +1066,17 @@ mod tests {
             "close_agent",
             "agents",
         ];
-        let result = AgentBuilder::new(provider_with(vec![]))
+        let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
             .working_dir(std::env::temp_dir())
             .without_tools(&names)
-            .build();
-        assert!(result.is_err(), "build must reject an empty tool set");
+            .build()
+            .expect("a fully-excluded tool set must still build");
+        assert_eq!(
+            agent.registry.names().count(),
+            0,
+            "every standard tool must be gated out",
+        );
     }
 
     #[test]
