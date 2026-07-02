@@ -4,149 +4,541 @@
     {
       "name": "Crate Setup",
       "items": [
-        {"id": "C1", "text": "norn crate exists as a workspace member with edition 2021", "done": false},
-        {"id": "C2", "text": "Cargo.toml declares unsafe_code = deny and pedantic clippy lints", "done": false},
-        {"id": "C3", "text": "src/lib.rs declares public modules: provider, loop, tool, tools, rules, agent, session, integration, error", "done": false},
-        {"id": "C4", "text": "error.rs defines NornError with thiserror, no anyhow in library code", "done": false}
+        {
+          "id": "C1",
+          "text": "norn crate exists as a workspace member with edition 2021",
+          "done": false
+        },
+        {
+          "id": "C2",
+          "text": "Cargo.toml declares unsafe_code = deny and pedantic clippy lints",
+          "done": false
+        },
+        {
+          "id": "C3",
+          "text": "src/lib.rs declares public modules: provider, loop, tool, tools, rules, agent, session, integration, error",
+          "done": false
+        },
+        {
+          "id": "C4",
+          "text": "error.rs defines NornError with thiserror, no anyhow in library code",
+          "done": false
+        }
       ]
     },
     {
       "name": "Provider Core",
       "items": [
-        {"id": "C5", "text": "Provider trait defined with stream method returning typed ProviderEvent stream", "done": false},
-        {"id": "C6", "text": "ProviderEvent enum covers text_delta, thinking_delta, tool_call_delta, done, error", "done": false},
-        {"id": "C7", "text": "Usage struct tracks input tokens, output tokens, cache hits, and cost", "done": false},
-        {"id": "C8", "text": "OpenAI Responses API provider implements the Provider trait", "done": false},
-        {"id": "C9", "text": "OpenAI provider supports streaming via SSE", "done": false},
-        {"id": "C10", "text": "OpenAI provider supports tool calling with function definitions", "done": false},
-        {"id": "C11", "text": "OpenAI provider supports response_format with JSON schema for structured output", "done": false},
-        {"id": "C12", "text": "OpenAI provider supports reasoning effort control", "done": false},
-        {"id": "C13", "text": "OpenAI provider supports server-side web search via ToolSpec::WebSearch", "done": false},
-        {"id": "C14", "text": "OpenAI provider supports model selection across GPT-5.x family", "done": false}
+        {
+          "id": "C5",
+          "text": "Provider trait defined with stream method returning typed ProviderEvent stream",
+          "done": false
+        },
+        {
+          "id": "C6",
+          "text": "ProviderEvent enum covers text_delta, thinking_delta, tool_call_delta, done, error",
+          "done": false
+        },
+        {
+          "id": "C7",
+          "text": "Usage struct tracks input tokens, output tokens, cache hits, and cost",
+          "done": false
+        },
+        {
+          "id": "C8",
+          "text": "OpenAI Responses API provider implements the Provider trait",
+          "done": false
+        },
+        {
+          "id": "C9",
+          "text": "OpenAI provider supports streaming via SSE",
+          "done": false
+        },
+        {
+          "id": "C10",
+          "text": "OpenAI provider supports tool calling with function definitions",
+          "done": false
+        },
+        {
+          "id": "C11",
+          "text": "OpenAI provider supports response_format with JSON schema for structured output",
+          "done": false
+        },
+        {
+          "id": "C12",
+          "text": "OpenAI provider supports reasoning effort control",
+          "done": false
+        },
+        {
+          "id": "C13",
+          "text": "OpenAI provider supports server-side web search via ToolSpec::WebSearch",
+          "done": false
+        },
+        {
+          "id": "C14",
+          "text": "OpenAI provider supports model selection across GPT-5.x family",
+          "done": false
+        }
       ]
     },
     {
       "name": "Agent Loop",
       "items": [
-        {"id": "C15", "text": "Agent loop accepts provider, tools, context, instruction, and output schema", "done": false},
-        {"id": "C16", "text": "Agent loop executes prompt-tool cycle until model stops or schema-valid output is produced", "done": false},
-        {"id": "C17", "text": "Output schema validation rejects non-conforming output and feeds error back to model", "done": false},
-        {"id": "C18", "text": "Token-by-token streaming events emitted during LLM response", "done": false},
-        {"id": "C19", "text": "Per-event output schemas configurable for assistant message, spoken response, tool call envelope, stop output, question, handoff, review, progress", "done": false},
-        {"id": "C20", "text": "Inbound channels deliver messages at controlled tool boundaries without interrupting", "done": false},
-        {"id": "C21", "text": "Steer delivery mode injects after current tool batch before next LLM call", "done": false},
-        {"id": "C22", "text": "Follow-up delivery mode injects only when agent would otherwise stop", "done": false},
-        {"id": "C23", "text": "Token threshold detection warns when context approaches window limit", "done": false},
-        {"id": "C24", "text": "Soft handoff injects wrap-up guidance at configurable threshold", "done": false},
-        {"id": "C25", "text": "Repeated failure detection identifies looping on same error", "done": false},
-        {"id": "C26", "text": "Semantic quality signals detect hedging language and premature completion", "done": false}
+        {
+          "id": "C15",
+          "text": "Agent loop accepts provider, tools, context, instruction, and output schema",
+          "done": false
+        },
+        {
+          "id": "C16",
+          "text": "Agent loop executes prompt-tool cycle until model stops or schema-valid output is produced",
+          "done": false
+        },
+        {
+          "id": "C17",
+          "text": "Output schema validation rejects non-conforming output and feeds error back to model",
+          "done": false
+        },
+        {
+          "id": "C18",
+          "text": "Token-by-token streaming events emitted during LLM response",
+          "done": false
+        },
+        {
+          "id": "C19",
+          "text": "Per-event output schemas configurable for assistant message, spoken response, tool call envelope, stop output, question, handoff, review, progress",
+          "done": false
+        },
+        {
+          "id": "C20",
+          "text": "Inbound channels deliver messages at controlled tool boundaries without interrupting",
+          "done": false
+        },
+        {
+          "id": "C21",
+          "text": "Steer delivery mode injects after current tool batch before next LLM call",
+          "done": false
+        },
+        {
+          "id": "C22",
+          "text": "Follow-up delivery mode injects only when agent would otherwise stop",
+          "done": false
+        },
+        {
+          "id": "C23",
+          "text": "Token threshold detection warns when context approaches window limit",
+          "done": false
+        },
+        {
+          "id": "C24",
+          "text": "Soft handoff injects wrap-up guidance at configurable threshold",
+          "done": false
+        },
+        {
+          "id": "C25",
+          "text": "Repeated failure detection identifies looping on same error",
+          "done": false
+        },
+        {
+          "id": "C26",
+          "text": "Semantic quality signals detect hedging language and premature completion",
+          "done": false
+        }
       ]
     },
     {
       "name": "Tool Framework",
       "items": [
-        {"id": "C27", "text": "Tool trait defines name, description, input_schema, pre_validate, execute, post_validate, on_success", "done": false},
-        {"id": "C28", "text": "Pre-validate phase supports both compile-time (baked-in) and runtime (profile-configured) checks", "done": false},
-        {"id": "C29", "text": "Post-validate phase supports both compile-time and runtime checks", "done": false},
-        {"id": "C30", "text": "On-success phase supports both compile-time and runtime follow-ups", "done": false},
-        {"id": "C31", "text": "Tool call envelope carries model-supplied args, runtime-supplied inputs, and open metadata field", "done": false},
-        {"id": "C32", "text": "Runtime-supplied tool arguments injected from profile/policy before execution", "done": false},
-        {"id": "C33", "text": "Effect-based parallel scheduling runs read-only tools concurrently, serializes write tools", "done": false},
-        {"id": "C34", "text": "Bash risk classification categorizes commands into five runtime-evaluated tiers", "done": false},
-        {"id": "C35", "text": "Dynamic tool availability changes available tools based on profile, workflow stage, or task state", "done": false},
-        {"id": "C36", "text": "ToolRegistry supports adding, removing, and querying tools at runtime", "done": false}
+        {
+          "id": "C27",
+          "text": "Tool trait defines name, description, input_schema, pre_validate, execute, post_validate, on_success",
+          "done": false
+        },
+        {
+          "id": "C28",
+          "text": "Pre-validate phase supports both compile-time (baked-in) and runtime (profile-configured) checks",
+          "done": false
+        },
+        {
+          "id": "C29",
+          "text": "Post-validate phase supports both compile-time and runtime checks",
+          "done": false
+        },
+        {
+          "id": "C30",
+          "text": "On-success phase supports both compile-time and runtime follow-ups",
+          "done": false
+        },
+        {
+          "id": "C31",
+          "text": "Tool call envelope carries model-supplied args, runtime-supplied inputs, and open metadata field",
+          "done": false
+        },
+        {
+          "id": "C32",
+          "text": "Runtime-supplied tool arguments injected from profile/policy before execution",
+          "done": false
+        },
+        {
+          "id": "C33",
+          "text": "Effect-based parallel scheduling runs read-only tools concurrently, serializes write tools",
+          "done": false
+        },
+        {
+          "id": "C34",
+          "text": "Bash risk classification categorizes commands into five runtime-evaluated tiers",
+          "done": false
+        },
+        {
+          "id": "C35",
+          "text": "Dynamic tool availability changes available tools based on profile, workflow stage, or task state",
+          "done": false
+        },
+        {
+          "id": "C36",
+          "text": "ToolRegistry supports adding, removing, and querying tools at runtime",
+          "done": false
+        }
       ]
     },
     {
       "name": "Core Tools",
       "items": [
-        {"id": "C37", "text": "Read tool reads files with line numbers, image support, and binary detection", "done": false},
-        {"id": "C38", "text": "Write tool enforces read-before-overwrite for existing files", "done": false},
-        {"id": "C39", "text": "Write tool validates AST via tree-sitter after writing", "done": false},
-        {"id": "C40", "text": "Write tool enforces configurable file length limits with path-specific overrides", "done": false},
-        {"id": "C41", "text": "Edit tool enforces read-before-edit", "done": false},
-        {"id": "C42", "text": "Edit tool validates AST via tree-sitter after editing", "done": false},
-        {"id": "C43", "text": "Edit tool reports diff output and blast radius via LSP", "done": false},
-        {"id": "C44", "text": "Search tool combines ripgrep, nucleo fuzzy search, glob filtering, and AST search", "done": false},
-        {"id": "C45", "text": "Bash tool streams output with progress detection", "done": false},
-        {"id": "C46", "text": "WebSearch tool delegates to OpenAI server-side search for Codex models", "done": false},
-        {"id": "C47", "text": "WebFetch tool fetches URLs and converts HTML to markdown", "done": false},
-        {"id": "C48", "text": "LSP tool provides hover, go-to-definition, find references, document symbols, and diagnostics", "done": false},
-        {"id": "C49", "text": "SpawnAgent tool creates a sub-agent with task, model, role, and optional forked context", "done": false},
-        {"id": "C50", "text": "Fork tool forks the current agent onto a different model and returns structured audit result", "done": false},
-        {"id": "C51", "text": "SendMessage, WaitAgent, and CloseAgent tools implement inter-agent coordination", "done": false},
-        {"id": "C52", "text": "Task tool supports create, list, update, and complete operations", "done": false},
-        {"id": "C53", "text": "Skill tool loads a SKILL.md prompt template into context", "done": false},
-        {"id": "C54", "text": "RunScript tool executes inline Rhai scripts with sandboxed host functions", "done": false},
-        {"id": "C55", "text": "ToolSearch tool performs BM25 search over the tool catalog", "done": false}
+        {
+          "id": "C37",
+          "text": "Read tool reads files with line numbers, image support, and binary detection",
+          "done": false
+        },
+        {
+          "id": "C38",
+          "text": "Write tool enforces read-before-overwrite for existing files",
+          "done": false
+        },
+        {
+          "id": "C39",
+          "text": "Write tool validates AST via tree-sitter after writing",
+          "done": false
+        },
+        {
+          "id": "C40",
+          "text": "Write tool enforces configurable file length limits with path-specific overrides",
+          "done": false
+        },
+        {
+          "id": "C41",
+          "text": "Edit tool enforces read-before-edit",
+          "done": false
+        },
+        {
+          "id": "C42",
+          "text": "Edit tool validates AST via tree-sitter after editing",
+          "done": false
+        },
+        {
+          "id": "C43",
+          "text": "Edit tool reports diff output and blast radius via LSP",
+          "done": false
+        },
+        {
+          "id": "C44",
+          "text": "Search tool combines ripgrep, nucleo fuzzy search, glob filtering, and AST search",
+          "done": false
+        },
+        {
+          "id": "C45",
+          "text": "Bash tool streams output with progress detection",
+          "done": false
+        },
+        {
+          "id": "C46",
+          "text": "WebSearch tool delegates to OpenAI server-side search for Codex models",
+          "done": false
+        },
+        {
+          "id": "C47",
+          "text": "WebFetch tool fetches URLs and converts HTML to markdown",
+          "done": false
+        },
+        {
+          "id": "C48",
+          "text": "LSP tool provides hover, go-to-definition, find references, document symbols, and diagnostics",
+          "done": false
+        },
+        {
+          "id": "C49",
+          "text": "SpawnAgent tool creates a sub-agent with task, model, role, and optional forked context",
+          "done": false
+        },
+        {
+          "id": "C50",
+          "text": "Fork tool forks the current agent onto a different model and returns structured audit result",
+          "done": false
+        },
+        {
+          "id": "C51",
+          "text": "SendMessage, WaitAgent, and CloseAgent tools implement inter-agent coordination",
+          "done": false
+        },
+        {
+          "id": "C52",
+          "text": "Task tool supports create, list, update, and complete operations",
+          "done": false
+        },
+        {
+          "id": "C53",
+          "text": "Skill tool loads a SKILL.md prompt template into context",
+          "done": false
+        },
+        {
+          "id": "C54",
+          "text": "RunScript tool executes inline Rhai scripts with sandboxed host functions",
+          "done": false
+        },
+        {
+          "id": "C55",
+          "text": "ToolSearch tool performs BM25 search over the tool catalog",
+          "done": false
+        }
       ]
     },
     {
       "name": "Rules Engine",
       "items": [
-        {"id": "C56", "text": "Rules parsed from files with YAML front matter specifying trigger conditions", "done": false},
-        {"id": "C57", "text": "Path glob triggers fire on file read/write matching configured patterns", "done": false},
-        {"id": "C58", "text": "Bash/tool command triggers fire on command/tool invocation matching configured patterns", "done": false},
-        {"id": "C59", "text": "Triggers configurable as before or after the matched action", "done": false},
-        {"id": "C60", "text": "System context append delivery mode adds rule to system prompt for the session", "done": false},
-        {"id": "C61", "text": "Context injection delivery mode delivers rule at next input boundary", "done": false},
-        {"id": "C62", "text": "Message delivery mode sends rule as a conversation message", "done": false},
-        {"id": "C63", "text": "Lifecycle tracking detects when a rule has been edited out of context and re-injects on next trigger", "done": false},
-        {"id": "C64", "text": "Rules with shell execution generate dynamic content at injection time", "done": false}
+        {
+          "id": "C56",
+          "text": "Rules parsed from files with YAML front matter specifying trigger conditions",
+          "done": false
+        },
+        {
+          "id": "C57",
+          "text": "Path glob triggers fire on file read/write matching configured patterns",
+          "done": false
+        },
+        {
+          "id": "C58",
+          "text": "Bash/tool command triggers fire on command/tool invocation matching configured patterns",
+          "done": false
+        },
+        {
+          "id": "C59",
+          "text": "Triggers configurable as before or after the matched action",
+          "done": false
+        },
+        {
+          "id": "C60",
+          "text": "System context append delivery mode adds rule to system prompt for the session",
+          "done": false
+        },
+        {
+          "id": "C61",
+          "text": "Context injection delivery mode delivers rule at next input boundary",
+          "done": false
+        },
+        {
+          "id": "C62",
+          "text": "Message delivery mode sends rule as a conversation message",
+          "done": false
+        },
+        {
+          "id": "C63",
+          "text": "Lifecycle tracking detects when a rule has been edited out of context and re-injects on next trigger",
+          "done": false
+        },
+        {
+          "id": "C64",
+          "text": "Rules with shell execution generate dynamic content at injection time",
+          "done": false
+        }
       ]
     },
     {
       "name": "Multi-Agent",
       "items": [
-        {"id": "C65", "text": "Agent registry tracks active agents with hierarchical paths and statuses", "done": false},
-        {"id": "C66", "text": "No hardcoded concurrency limits on agent count", "done": false},
-        {"id": "C67", "text": "Two-phase spawn reservation with RAII cleanup on failure", "done": false},
-        {"id": "C68", "text": "Mailbox messaging supports trigger_turn flag for immediate vs deferred delivery", "done": false},
-        {"id": "C69", "text": "Sequence numbers on mailboxes enable efficient wait-for-any without polling", "done": false},
-        {"id": "C70", "text": "Fork inherits filtered parent context and returns structured audit result", "done": false},
-        {"id": "C71", "text": "RunMonitored tool delegates monitoring to a lightweight model and returns handle for queries", "done": false},
-        {"id": "C72", "text": "Goal tracking supports objectives, token budgets, time budgets, and continuation policies", "done": false},
-        {"id": "C73", "text": "Scheduling supports session-dispatched cron that re-launches sessions without keeping them alive", "done": false}
+        {
+          "id": "C65",
+          "text": "Agent registry tracks active agents with hierarchical paths and statuses",
+          "done": false
+        },
+        {
+          "id": "C66",
+          "text": "No hardcoded concurrency limits on agent count",
+          "done": false
+        },
+        {
+          "id": "C67",
+          "text": "Two-phase spawn reservation with RAII cleanup on failure",
+          "done": false
+        },
+        {
+          "id": "C68",
+          "text": "Mailbox messaging supports trigger_turn flag for immediate vs deferred delivery",
+          "done": false
+        },
+        {
+          "id": "C69",
+          "text": "Sequence numbers on mailboxes enable efficient wait-for-any without polling",
+          "done": false
+        },
+        {
+          "id": "C70",
+          "text": "Fork inherits filtered parent context and returns structured audit result",
+          "done": false
+        },
+        {
+          "id": "C71",
+          "text": "RunMonitored tool delegates monitoring to a lightweight model and returns handle for queries — SUPERSEDED 2026-07-03 (owner ruling): scaffolding deleted, do not build; watcher internal-agent design in docs/design/norn/INTERNAL-AGENTS.md (docs/DECISIONS-2026-07.md §4)",
+          "done": false
+        },
+        {
+          "id": "C72",
+          "text": "Goal tracking supports objectives, token budgets, time budgets, and continuation policies",
+          "done": false
+        },
+        {
+          "id": "C73",
+          "text": "Scheduling supports session-dispatched cron that re-launches sessions without keeping them alive",
+          "done": false
+        }
       ]
     },
     {
       "name": "Session and Context",
       "items": [
-        {"id": "C74", "text": "Session events are append-only with IDs and parent IDs forming a tree", "done": false},
-        {"id": "C75", "text": "Suppress operation excludes events from prompt construction without deleting them", "done": false},
-        {"id": "C76", "text": "Summarize operation replaces event sequences with structured summaries", "done": false},
-        {"id": "C77", "text": "Inject operation adds external context into the event stream", "done": false},
-        {"id": "C78", "text": "Compact operation summarizes everything before a cut point", "done": false},
-        {"id": "C79", "text": "Prompt construction is a view over events, not a mutation", "done": false}
+        {
+          "id": "C74",
+          "text": "Session events are append-only with IDs and parent IDs forming a tree",
+          "done": false
+        },
+        {
+          "id": "C75",
+          "text": "Suppress operation excludes events from prompt construction without deleting them",
+          "done": false
+        },
+        {
+          "id": "C76",
+          "text": "Summarize operation replaces event sequences with structured summaries",
+          "done": false
+        },
+        {
+          "id": "C77",
+          "text": "Inject operation adds external context into the event stream",
+          "done": false
+        },
+        {
+          "id": "C78",
+          "text": "Compact operation summarizes everything before a cut point",
+          "done": false
+        },
+        {
+          "id": "C79",
+          "text": "Prompt construction is a view over events, not a mutation",
+          "done": false
+        }
       ]
     },
     {
       "name": "Integration",
       "items": [
-        {"id": "C80", "text": "Claude Runner integration routes steps via profile configuration and produces StepOutcome", "done": false},
-        {"id": "C81", "text": "Norn-wrapped Claude Code mode strips native tools and provides Norn tools via MCP", "done": false},
-        {"id": "C82", "text": "MCP client connects to external tool servers and registers tools dynamically", "done": false},
-        {"id": "C83", "text": "MCP server mode exposes all Norn tools via standard MCP protocol", "done": false},
-        {"id": "C84", "text": "Rhai builtins expose run_agent, spawn_agent, send_message, wait_agent, close_agent, fork_agent", "done": false},
-        {"id": "C85", "text": "Extension system integrates with Meridian extension protocol for shared out-of-process extensions", "done": false},
-        {"id": "C86", "text": "Diagnostics integration reports tool failures, schema violations, and policy violations at compiler grade", "done": false},
-        {"id": "C87", "text": "Session variables are declarative and scriptable with shell execution at prompt construction time", "done": false},
-        {"id": "C88", "text": "Lifecycle hooks support pre/post tool call, pre/post LLM call, and session events", "done": false}
+        {
+          "id": "C80",
+          "text": "Claude Runner integration routes steps via profile configuration and produces StepOutcome",
+          "done": false
+        },
+        {
+          "id": "C81",
+          "text": "Norn-wrapped Claude Code mode strips native tools and provides Norn tools via MCP",
+          "done": false
+        },
+        {
+          "id": "C82",
+          "text": "MCP client connects to external tool servers and registers tools dynamically",
+          "done": false
+        },
+        {
+          "id": "C83",
+          "text": "MCP server mode exposes all Norn tools via standard MCP protocol",
+          "done": false
+        },
+        {
+          "id": "C84",
+          "text": "Rhai builtins expose run_agent, spawn_agent, send_message, wait_agent, close_agent, fork_agent",
+          "done": false
+        },
+        {
+          "id": "C85",
+          "text": "Extension system integrates with Meridian extension protocol for shared out-of-process extensions",
+          "done": false
+        },
+        {
+          "id": "C86",
+          "text": "Diagnostics integration reports tool failures, schema violations, and policy violations at compiler grade",
+          "done": false
+        },
+        {
+          "id": "C87",
+          "text": "Session variables are declarative and scriptable with shell execution at prompt construction time",
+          "done": false
+        },
+        {
+          "id": "C88",
+          "text": "Lifecycle hooks support pre/post tool call, pre/post LLM call, and session events",
+          "done": false
+        }
       ]
     },
     {
       "name": "Diagnostics Wiring",
       "items": [
-        {"id": "C89", "text": "LoopContext has an optional DiagnosticCollector field (Option<Arc<DiagnosticCollector>>)", "done": false},
-        {"id": "C90", "text": "Runner pushes NornDiagnostic into LoopContext::diagnostics on schema validation failure", "done": false},
-        {"id": "C91", "text": "Runner pushes NornDiagnostic into LoopContext::diagnostics on pre-validate block", "done": false},
-        {"id": "C92", "text": "Runner pushes NornDiagnostic into LoopContext::diagnostics on post-validate failure", "done": false},
-        {"id": "C93", "text": "File-modification tools count code lines via tokei (not naive non-blank line counting)", "done": false},
-        {"id": "C94", "text": "File length threshold is caller-configured with no hardcoded default — omitted threshold means no check", "done": false},
-        {"id": "C95", "text": "LengthLimit.default is Option<usize> where None disables the length check", "done": false},
-        {"id": "C96", "text": "PostValidateMode is configurable at runtime via ToolContext flags, not fixed per tool", "done": false},
-        {"id": "C97", "text": "Tool validation results include structured diagnostic JSON (code, line, severity, message, fix, do_not)", "done": false},
-        {"id": "C98", "text": "DiagnosticCollector is published on ToolContext typed infrastructure so RuntimePostValidateCheck implementations can push", "done": false}
+        {
+          "id": "C89",
+          "text": "LoopContext has an optional DiagnosticCollector field (Option<Arc<DiagnosticCollector>>)",
+          "done": false
+        },
+        {
+          "id": "C90",
+          "text": "Runner pushes NornDiagnostic into LoopContext::diagnostics on schema validation failure",
+          "done": false
+        },
+        {
+          "id": "C91",
+          "text": "Runner pushes NornDiagnostic into LoopContext::diagnostics on pre-validate block",
+          "done": false
+        },
+        {
+          "id": "C92",
+          "text": "Runner pushes NornDiagnostic into LoopContext::diagnostics on post-validate failure",
+          "done": false
+        },
+        {
+          "id": "C93",
+          "text": "File-modification tools count code lines via tokei (not naive non-blank line counting)",
+          "done": false
+        },
+        {
+          "id": "C94",
+          "text": "File length threshold is caller-configured with no hardcoded default — omitted threshold means no check",
+          "done": false
+        },
+        {
+          "id": "C95",
+          "text": "LengthLimit.default is Option<usize> where None disables the length check",
+          "done": false
+        },
+        {
+          "id": "C96",
+          "text": "PostValidateMode is configurable at runtime via ToolContext flags, not fixed per tool",
+          "done": false
+        },
+        {
+          "id": "C97",
+          "text": "Tool validation results include structured diagnostic JSON (code, line, severity, message, fix, do_not)",
+          "done": false
+        },
+        {
+          "id": "C98",
+          "text": "DiagnosticCollector is published on ToolContext typed infrastructure so RuntimePostValidateCheck implementations can push",
+          "done": false
+        }
       ]
     }
   ]

@@ -172,7 +172,6 @@ crates/norn/
       registry.rs             -- AgentRegistry (paths, statuses, spawn reservation)
       mailbox.rs              -- inter-agent messaging (sender, receiver, sequence numbers)
       fork.rs                 -- forking logic (context filtering, model switching, audit)
-      monitor.rs              -- AI-monitored background tasks (RunMonitored)
       goals.rs                -- goal tracking (objectives, budgets, continuation)
     session/
       mod.rs                  -- session event model

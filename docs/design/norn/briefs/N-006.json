@@ -2,10 +2,26 @@
   "id": "N-006",
   "cluster": "norn",
   "title": "Define Tool trait and lifecycle framework",
-  "depends_on": ["N-001"],
+  "depends_on": [
+    "N-001"
+  ],
   "blocked_by": [],
-  "checklist": ["C27", "C28", "C29", "C30", "C31", "C32", "C33", "C34"],
-  "stories": ["S5", "S6", "S7", "S22"],
+  "checklist": [
+    "C27",
+    "C28",
+    "C29",
+    "C30",
+    "C31",
+    "C32",
+    "C33",
+    "C34"
+  ],
+  "stories": [
+    "S5",
+    "S6",
+    "S7",
+    "S22"
+  ],
   "purpose": "Define the tool abstraction layer that every tool in Norn implements. The Tool trait and its four lifecycle phases (pre-validate, execute, post-validate, on-success) are the mechanisms behind AST-aware editing, read-before-overwrite enforcement, and post-edit diagnostics. The framework also defines side-effect declarations for parallel scheduling, bash risk classification, orchestrator context flags for overriding tool behavior, and a registry for managing available tools. This is the foundation that all 19 core tool implementations (C37-C55, C89) build on.",
   "task": "Define the Tool trait in the tool module with four async lifecycle methods and sync accessors. Define ToolOutput for execution results. Define ToolEnvelope for wrapping tool calls with model-supplied arguments, runtime-supplied inputs, and open metadata. Define ToolContext for orchestrator context flags and runtime-supplied arguments. Define lifecycle phase types: PreValidateOutcome, PostValidateOutcome, PostValidateMode (gate vs report semantics), and runtime check traits for each phase. Define ToolEffect for side-effect declarations and scheduling plan types. Define BashRiskTier with five tiers and a classification function. Define ToolRegistry for storing and looking up tools by name. Define CheckOverride to audit when context flags override compile-time checks. Reference: crates/norn/reference/codex-rs/tool-registry.rs (ToolHandler trait pattern), crates/norn/reference/codex-rs/tool-context.rs (ToolInvocation, ToolOutput patterns), DESIGN.md D5 (lifecycle, gate vs report, context flags) and D6 (envelopes). Testing layer: unit tests (Layer 1) — all types testable in isolation.",
   "requirements": [
@@ -38,8 +54,13 @@
           "crates/norn/Cargo.toml"
         ]
       },
-      "checklist": ["C27"],
-      "stories": ["S5", "S6"]
+      "checklist": [
+        "C27"
+      ],
+      "stories": [
+        "S5",
+        "S6"
+      ]
     },
     {
       "id": "R2",
@@ -61,8 +82,12 @@
           "crates/norn/src/tool/mod.rs"
         ]
       },
-      "checklist": ["C28"],
-      "stories": ["S6"]
+      "checklist": [
+        "C28"
+      ],
+      "stories": [
+        "S6"
+      ]
     },
     {
       "id": "R3",
@@ -85,8 +110,13 @@
           "crates/norn/src/tool/lifecycle.rs"
         ]
       },
-      "checklist": ["C29"],
-      "stories": ["S5", "S7"]
+      "checklist": [
+        "C29"
+      ],
+      "stories": [
+        "S5",
+        "S7"
+      ]
     },
     {
       "id": "R4",
@@ -104,13 +134,17 @@
           "crates/norn/src/tool/lifecycle.rs"
         ]
       },
-      "checklist": ["C30"],
-      "stories": ["S7"]
+      "checklist": [
+        "C30"
+      ],
+      "stories": [
+        "S7"
+      ]
     },
     {
       "id": "R5",
       "title": "Define ToolEnvelope with three sections",
-      "spec": "WHEN a tool call is invoked, THE SYSTEM SHALL wrap it in a ToolEnvelope carrying the tool call identity, model-supplied arguments, runtime-supplied inputs accumulated since the last tool boundary, and an open metadata field the model can populate.",
+      "spec": "WHEN a tool call is invoked, THE SYSTEM SHALL wrap it in a ToolEnvelope carrying the tool call identity, model-supplied arguments, runtime-supplied inputs accumulated since the last tool boundary, and an open metadata field the model can populate. — PARTIALLY SUPERSEDED 2026-07-03 (owner ruling): the runtime_inputs section (RuntimeInputs, InboundMessage, DiagnosticReport, FileChange, FileChangeType) was deleted; boundary signals ride the message-injection path, never the envelope. The envelope carries tool_call_id, tool_name, model_args, metadata. Do not rebuild the deleted types (docs/DECISIONS-2026-07.md §4).",
       "acceptance": [
         "ToolEnvelope struct defined in crates/norn/src/tool/envelope.rs",
         "ToolEnvelope has field tool_call_id of type String (model-assigned call identifier)",
@@ -132,13 +166,15 @@
           "crates/norn/src/tool/mod.rs"
         ]
       },
-      "checklist": ["C31"],
+      "checklist": [
+        "C31"
+      ],
       "stories": []
     },
     {
       "id": "R6",
       "title": "Define ToolContext and ToolFlag",
-      "spec": "THE SYSTEM SHALL define a ToolContext carrying orchestrator context flags, runtime-supplied tool arguments, and runtime-configured lifecycle checks. ToolFlag SHALL be a closed Rust enum set only by orchestrator code (Rhai scripts, workflow definitions), never by the model. Adding a new flag SHALL require a code change with review.",
+      "spec": "THE SYSTEM SHALL define a ToolContext carrying orchestrator context flags, runtime-supplied tool arguments, and runtime-configured lifecycle checks. ToolFlag SHALL be a closed Rust enum set only by orchestrator code (Rhai scripts, workflow definitions), never by the model. Adding a new flag SHALL require a code change with review. — AMENDED 2026-07-03 (owner ruling): the runtime_args field was deleted; runtime-supplied policy inputs are typed surfaces (workspace_root confinement, ToolOutputBudget, pre/post checks, permission policy). Do not rebuild runtime_args (docs/DECISIONS-2026-07.md §4).",
       "acceptance": [
         "ToolContext struct defined in crates/norn/src/tool/context.rs",
         "ToolContext has field flags of type Vec<FlagEntry>",
@@ -163,8 +199,12 @@
           "crates/norn/src/tool/mod.rs"
         ]
       },
-      "checklist": ["C32"],
-      "stories": ["S22"]
+      "checklist": [
+        "C32"
+      ],
+      "stories": [
+        "S22"
+      ]
     },
     {
       "id": "R7",
@@ -187,7 +227,9 @@
           "crates/norn/src/tool/mod.rs"
         ]
       },
-      "checklist": ["C33"],
+      "checklist": [
+        "C33"
+      ],
       "stories": []
     },
     {
@@ -214,7 +256,9 @@
           "crates/norn/src/tool/mod.rs"
         ]
       },
-      "checklist": ["C34"],
+      "checklist": [
+        "C34"
+      ],
       "stories": []
     },
     {
@@ -238,7 +282,9 @@
           "crates/norn/src/tool/mod.rs"
         ]
       },
-      "checklist": ["C27"],
+      "checklist": [
+        "C27"
+      ],
       "stories": []
     }
   ],

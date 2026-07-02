@@ -157,13 +157,11 @@ impl ProcessEnv {
 
 /// Context provided by the orchestrator for a tool invocation.
 ///
-/// Carries flags, runtime-supplied arguments, and runtime-configured
-/// lifecycle checks. Not part of any tool's input schema.
+/// Carries flags and runtime-configured lifecycle checks. Not part of any
+/// tool's input schema.
 pub struct ToolContext {
     /// Orchestrator context flags with source attribution.
     pub flags: Vec<FlagEntry>,
-    /// Policy-injected arguments not part of the model's tool call.
-    pub runtime_args: serde_json::Value,
     /// Runtime pre-validate checks configured by profile/policy.
     pub pre_checks: Vec<Box<dyn RuntimePreValidateCheck>>,
     /// Runtime post-validate checks configured by profile/policy.
@@ -201,7 +199,7 @@ pub struct ToolContext {
 }
 
 impl ToolContext {
-    /// Creates an empty context with no flags, no runtime args, and no checks.
+    /// Creates an empty context with no flags and no checks.
     ///
     /// The working directory defaults to [`std::env::current_dir`] at
     /// construction time, falling back to `.` if the process CWD is
@@ -210,7 +208,6 @@ impl ToolContext {
     pub fn empty() -> Self {
         Self {
             flags: Vec::new(),
-            runtime_args: serde_json::Value::Null,
             pre_checks: Vec::new(),
             post_checks: Vec::new(),
             on_success_actions: Vec::new(),
@@ -229,7 +226,6 @@ impl ToolContext {
     pub fn with_working_dir(working_dir: SharedWorkingDir) -> Self {
         Self {
             flags: Vec::new(),
-            runtime_args: serde_json::Value::Null,
             pre_checks: Vec::new(),
             post_checks: Vec::new(),
             on_success_actions: Vec::new(),

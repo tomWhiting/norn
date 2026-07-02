@@ -158,13 +158,15 @@ Tools do not merely perform actions and rely on external hooks. Validation and d
 
 ### Runtime-Supplied Tool Arguments
 
-> **Status (2026-07-02): held, not wired.** The `ToolContext.runtime_args` carrier
-> exists but has no writer and no reader; it is deliberately not wired pending a
-> design decision (see `docs/HOLD-FOR-DISCUSSION.md`). Policy that today *is*
-> enforced — path/workspace confinement, file-length limits, the permission
-> policy, per-tool config — reaches tools through the tool context and permission
-> layer, not through this envelope field. The section below describes the intended
-> design, not current behaviour.
+> **Status (2026-07-03): resolved — realized as typed surfaces; the untyped
+> carrier is deleted.** The owner ruled that every policy input this section
+> describes is (and must be) a typed, enforced surface: path/workspace
+> confinement (`workspace_root`), output limits (`ToolOutputBudget`), lifecycle
+> checks (`pre_checks`/`post_checks`/`on_success_actions`), per-tool config, and
+> the permission policy. The former `ToolContext.runtime_args` JSON blob (no
+> writer, no reader) is deleted (`docs/DECISIONS-2026-07.md` §4). The section
+> below stands as the *principle* — runtime-set inputs never come from the
+> model — which current behaviour honours through those typed surfaces.
 
 Some tool inputs should not be set by the model. They are set by the runtime based on workflow policy, profile configuration, or workspace rules. Examples:
 
@@ -178,23 +180,20 @@ These arguments are part of the tool context, not the model's tool call. The mod
 
 ### Tool Call Envelopes
 
-> **Status (2026-07-02): partially held.** The `ToolEnvelope` type carries the
-> open `metadata` field (part 1) and the model-supplied arguments (part 2). The
-> third part — `runtime_inputs` (`RuntimeInputs`: inbound messages, diagnostics,
-> filesystem changes accumulated since the last tool boundary) — is scaffolded but
-> has zero readers and is deliberately not wired: whether boundary signals ride the
-> envelope or the now-existing message-injection / rules-engine paths is an open
-> architectural decision (see `docs/HOLD-FOR-DISCUSSION.md`). In current behaviour
-> those signals reach the model through the inbound channels and message router
-> described under "Input Channels and Steering," not through the envelope.
+> **Status (2026-07-03): resolved — the fork is ruled.** Boundary signals ride
+> the durable message-injection path (inbound channels + message router + rules
+> engine, described under "Input Channels and Steering"), **never** the tool
+> envelope: injected messages are persisted as session events (resume-safe),
+> they deliver on turns with zero tool calls, and the envelope flows to the
+> *tool*, not the model. The formerly scaffolded third section
+> (`runtime_inputs`) is deleted (`docs/DECISIONS-2026-07.md` §4). Future
+> diagnostics/filesystem-change feeds are producers into the injection path —
+> see `docs/design/norn/INTERNAL-AGENTS.md`.
 
-Tool calls are wrapped in a runtime envelope with three parts:
+Tool calls are wrapped in a runtime envelope with two parts:
 
 1. **Metadata**: an open, schemaless field that the model can populate with whatever is useful. Tags, task references, plan linkage, descriptions, categories. The framework itself does not enforce or consume the metadata — it makes it available for downstream consumers (orchestrators, session graphs, audit systems, extensions). Profiles can optionally provide a metadata schema that the model should conform to, but this is configuration, not framework enforcement.
 2. **Model-supplied arguments**: the actual tool parameters as defined by the input schema.
-3. **Runtime-supplied inputs**: inbound messages, diagnostics, filesystem changes, working tree notifications, pending communications, or other signals accumulated since the last tool boundary.
-
-The envelope gives the model rich context at each tool call without requiring explicit injection into the conversation. The runtime fills in the runtime-supplied section at each tool boundary.
 
 ### Effect-Based Parallel Scheduling
 
@@ -466,14 +465,15 @@ For data-processing workloads, the runtime supports fan-out patterns:
 
 ### AI-Monitored Background Tasks
 
-> **Status (2026-07-02): held, not wired.** `RunMonitored` (`agent/monitor.rs`) is
-> scaffolding only — zero production callers, an unused provider parameter, a
-> static-string heartbeat. It is deliberately not wired and not deleted, pending a
-> design decision on whether a monitored task should be a bespoke monitor type or is
-> now better expressed as a persistent child agent plus watch rules (the wake/linger,
-> `signal_agent`, and delegation-budget machinery landed after this scaffolding was
-> written). See `docs/HOLD-FOR-DISCUSSION.md`. The section below is the intended
-> design, not a working feature.
+> **Status (2026-07-03): superseded — scaffolding deleted, design expanded.**
+> The `RunMonitored` scaffolding (`agent/monitor.rs`) is deleted
+> (`docs/DECISIONS-2026-07.md` §4); it monitored an in-process Rust future with
+> a static-string heartbeat and contributed nothing to the actual intent. The
+> owner's full design — watchers as one of a taxonomy of *internal agents*
+> (processors / watchers / assistant / speaker) built on a managed
+> background-process manager, with alerts riding message injection — lives in
+> `docs/design/norn/INTERNAL-AGENTS.md`. The section below is retained as the
+> original problem statement; the internal-agents doc is the forward design.
 
 Long-running commands and sub-agents can be monitored by a lightweight model instead of consuming the parent agent's context:
 
@@ -489,7 +489,7 @@ The monitor pattern applies to:
 - Sub-agents performing research, documentation, or analysis.
 - Any long-running operation where the parent needs structured updates without raw output.
 
-The tool shape is `RunMonitored`: takes a command or agent task, a monitoring model (default to cheap/fast), and monitoring instructions (what to watch for). Returns a handle for queries, alerts, and completion summaries.
+The realized shape (per `docs/design/norn/INTERNAL-AGENTS.md`): a command runs under the managed background-process manager, a watcher agent (explicitly configured role — model, tools, prompt) consumes its spooled output incrementally with a watch brief, and alerts/completion reach the parent as injected messages.
 
 ### Scheduling and Wake-ups
 
@@ -764,7 +764,7 @@ Agent coordination, forking, messaging, and background task management.
 - Forking as a first-class primitive (context filtering, model switching, audit trail reintegration).
 - Command wrappers (fork for output analysis).
 - Mailbox messaging (trigger_turn flag, sequence numbers, efficient wait-for-any).
-- AI-monitored background tasks (RunMonitored with lightweight monitoring model).
+- AI-monitored background tasks (watcher internal agents over managed background processes — see `docs/design/norn/INTERNAL-AGENTS.md`).
 - Batch processing (CSV/structured fan-out).
 - Goals and budgets (objective, token/time budgets, continuation policies).
 - Scheduling and wake-ups (session-active cron, session-dispatched cron).

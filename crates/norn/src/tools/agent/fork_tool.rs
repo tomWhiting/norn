@@ -594,7 +594,6 @@ mod tests {
     use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
     use crate::session::store::EventStore;
     use crate::session::tree::{SessionMetadata, SessionStatus, SessionTree};
-    use crate::tool::envelope::RuntimeInputs;
     use crate::tool::registry::ToolRegistry;
     use crate::tool::traits::{Tool as TestTool, ToolOutput as TestToolOutput};
 
@@ -603,7 +602,6 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             tool_name: "fork".to_string(),
             model_args: args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: serde_json::Value::Null,
         }
     }
@@ -2112,7 +2110,6 @@ mod tests {
                     tool_call_id: "close-1".to_string(),
                     tool_name: "close_agent".to_string(),
                     model_args: json!({"agent_id": fork_id.to_string()}),
-                    runtime_inputs: RuntimeInputs::default(),
                     metadata: serde_json::Value::Null,
                 },
                 &closer_ctx,
@@ -2231,7 +2228,6 @@ mod tests {
             tool_call_id: "close-1".to_string(),
             tool_name: "close_agent".to_string(),
             model_args: json!({"agent_id": fork_id.to_string(), "reason": "wrap up"}),
-            runtime_inputs: RuntimeInputs::default(),
             metadata: serde_json::Value::Null,
         };
         let close_fut = close_tool.execute(&close_envelope, &ctx);
@@ -2340,7 +2336,6 @@ mod tests {
                         "agent_id": fork_id.to_string(),
                         "reason": "stand down",
                     }),
-                    runtime_inputs: RuntimeInputs::default(),
                     metadata: serde_json::Value::Null,
                 },
                 &ctx,
@@ -2499,7 +2494,6 @@ mod tests {
                     tool_call_id: "parent-query".to_string(),
                     tool_name: "action_log".to_string(),
                     model_args: json!({ "query": "list", "scope": "all" }),
-                    runtime_inputs: RuntimeInputs::default(),
                     metadata: serde_json::Value::Null,
                 },
                 &ctx,

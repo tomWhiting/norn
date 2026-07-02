@@ -686,7 +686,6 @@ mod tests {
     use crate::provider::usage::Usage;
     use crate::session::events::SessionEvent;
     use crate::session::tree::SessionTree;
-    use crate::tool::envelope::RuntimeInputs;
     use crate::tool::traits::{Tool as TestTool, ToolOutput as TestToolOutput};
 
     fn envelope_for(args: serde_json::Value) -> ToolEnvelope {
@@ -694,7 +693,6 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             tool_name: "spawn_agent".to_string(),
             model_args: args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: serde_json::Value::Null,
         }
     }
@@ -1281,7 +1279,6 @@ mod tests {
                         "kind": "steer",
                         "content": "queued instruction from parent",
                     }),
-                    runtime_inputs: RuntimeInputs::default(),
                     metadata: serde_json::Value::Null,
                 },
                 &ctx,
@@ -1308,7 +1305,6 @@ mod tests {
                     tool_call_id: "wake-idle".to_owned(),
                     tool_name: "wake_agent".to_owned(),
                     model_args: json!({ "agent_id": child_id.to_string() }),
-                    runtime_inputs: RuntimeInputs::default(),
                     metadata: serde_json::Value::Null,
                 },
                 &ctx,
@@ -3071,7 +3067,6 @@ mod tests {
                         "agent_id": child_id.to_string(),
                         "reason": "stand down",
                     }),
-                    runtime_inputs: RuntimeInputs::default(),
                     metadata: serde_json::Value::Null,
                 },
                 &ctx,
@@ -3223,7 +3218,6 @@ mod tests {
                     tool_call_id: "parent-query".to_string(),
                     tool_name: "action_log".to_string(),
                     model_args: json!({ "query": "list", "scope": "all" }),
-                    runtime_inputs: RuntimeInputs::default(),
                     metadata: serde_json::Value::Null,
                 },
                 &ctx,
@@ -4732,7 +4726,6 @@ mod tests {
                         "agent_id": tree.child_id.to_string(),
                         "reason": "stand down",
                     }),
-                    runtime_inputs: RuntimeInputs::default(),
                     metadata: serde_json::Value::Null,
                 },
                 &tree.ctx,

@@ -1,6 +1,5 @@
-//! Tool call envelope with model args, runtime inputs, and open metadata.
+//! Tool call envelope with model args and open metadata.
 
-use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
 /// Wraps a tool call with its full execution context.
@@ -12,65 +11,8 @@ pub struct ToolEnvelope {
     pub tool_name: String,
     /// Model-supplied parameters matching the tool's input schema.
     pub model_args: serde_json::Value,
-    /// Runtime-supplied inputs accumulated since the last tool boundary.
-    pub runtime_inputs: RuntimeInputs,
     /// Open, schemaless metadata field the model can populate.
     pub metadata: serde_json::Value,
-}
-
-/// Inputs accumulated by the runtime between tool boundaries.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
-pub struct RuntimeInputs {
-    /// Messages received from users, other agents, or the orchestrator.
-    pub inbound_messages: Vec<InboundMessage>,
-    /// Diagnostic reports from background processes.
-    pub diagnostics: Vec<DiagnosticReport>,
-    /// Filesystem changes detected since the last tool boundary.
-    pub filesystem_changes: Vec<FileChange>,
-}
-
-/// A message received during the agent loop.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct InboundMessage {
-    /// Who sent the message.
-    pub author: String,
-    /// Message content.
-    pub content: String,
-    /// When the message was sent.
-    pub timestamp: DateTime<Utc>,
-}
-
-/// A diagnostic report from a background process.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct DiagnosticReport {
-    /// Source of the diagnostic (e.g. "clippy", "cargo check").
-    pub source: String,
-    /// Severity level (e.g. "error", "warning").
-    pub severity: String,
-    /// Diagnostic message.
-    pub message: String,
-    /// File path the diagnostic applies to, if any.
-    pub file_path: Option<String>,
-}
-
-/// A detected filesystem change.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-pub struct FileChange {
-    /// Path of the changed file.
-    pub path: String,
-    /// What kind of change occurred.
-    pub change_type: FileChangeType,
-}
-
-/// Type of filesystem change.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub enum FileChangeType {
-    /// A new file was created.
-    Created,
-    /// An existing file was modified.
-    Modified,
-    /// A file was deleted.
-    Deleted,
 }
 
 /// JSON property name for the model-supplied description of its intent

@@ -593,7 +593,6 @@ impl PostToolFailureHook for ShellCommandHook {
 )]
 mod tests {
     use super::*;
-    use crate::tool::envelope::RuntimeInputs;
     use std::time::Instant;
 
     fn ctx() -> HookContext {
@@ -610,7 +609,6 @@ mod tests {
             tool_call_id: "tc_1".to_owned(),
             tool_name: name.to_owned(),
             model_args: serde_json::json!({"k": "v"}),
-            runtime_inputs: RuntimeInputs::default(),
             metadata: serde_json::Value::Null,
         }
     }

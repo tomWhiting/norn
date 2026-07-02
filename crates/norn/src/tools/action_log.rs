@@ -570,7 +570,6 @@ mod tests {
     use super::*;
     use crate::session::action_log::{CompletionRecord, Outcome};
     use crate::session::store::EventStore;
-    use crate::tool::envelope::RuntimeInputs;
     use crate::tool::follow_up::{
         BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction,
     };
@@ -601,7 +600,6 @@ mod tests {
             tool_call_id: "self-call".to_string(),
             tool_name: "action_log".to_string(),
             model_args: args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: Value::Null,
         }
     }

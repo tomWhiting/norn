@@ -24,7 +24,7 @@
 )]
 use super::*;
 use crate::tool::context::ToolContext;
-use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+use crate::tool::envelope::ToolEnvelope;
 use crate::tool::follow_up::{Confidence, ExpiryCondition};
 use crate::tool::traits::{Tool, ToolOutput};
 use serde_json::{Value, json};
@@ -34,7 +34,6 @@ fn envelope(args: Value) -> ToolEnvelope {
         tool_call_id: "call-bash".to_owned(),
         tool_name: "bash".to_owned(),
         model_args: args,
-        runtime_inputs: RuntimeInputs::default(),
         metadata: Value::Null,
     }
 }

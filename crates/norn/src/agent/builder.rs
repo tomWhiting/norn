@@ -992,7 +992,6 @@ mod tests {
             tool_call_id: "self-call".to_string(),
             tool_name: "action_log".to_string(),
             model_args: serde_json::json!({ "query": "list" }),
-            runtime_inputs: crate::tool::envelope::RuntimeInputs::default(),
             metadata: Value::Null,
         };
         let out = tool
@@ -1945,7 +1944,7 @@ mod tests {
     /// callers, so the control could never be switched on.
     #[tokio::test]
     async fn workspace_root_confines_file_tools_through_built_context() {
-        use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+        use crate::tool::envelope::ToolEnvelope;
 
         let outer = tempfile::tempdir().expect("tempdir");
         let root = outer.path().join("ws");
@@ -1971,7 +1970,6 @@ mod tests {
             tool_call_id: "tc-confine".to_owned(),
             tool_name: "read".to_owned(),
             model_args: serde_json::json!({ "path": path.display().to_string() }),
-            runtime_inputs: RuntimeInputs::default(),
             metadata: Value::Null,
         };
 
@@ -2003,7 +2001,7 @@ mod tests {
     /// stays unconfined — the historical embedder behaviour.
     #[tokio::test]
     async fn builder_without_workspace_root_stays_unconfined() {
-        use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+        use crate::tool::envelope::ToolEnvelope;
 
         let outer = tempfile::tempdir().expect("tempdir");
         let root = outer.path().join("ws");
@@ -2033,7 +2031,6 @@ mod tests {
                     model_args: serde_json::json!({
                         "path": elsewhere.display().to_string(),
                     }),
-                    runtime_inputs: RuntimeInputs::default(),
                     metadata: Value::Null,
                 },
                 ctx.as_ref(),
@@ -2683,7 +2680,7 @@ mod tests {
     /// Read the catalog description `tool_search` reports for `web_search`
     /// through the built agent's live tool context.
     async fn catalog_web_search_description(agent: &Agent) -> String {
-        use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+        use crate::tool::envelope::ToolEnvelope;
 
         let ctx = agent
             .registry
@@ -2697,7 +2694,6 @@ mod tests {
             tool_call_id: "surface-test".to_string(),
             tool_name: "tool_search".to_string(),
             model_args: serde_json::json!({"query": "", "max_results": 500}),
-            runtime_inputs: RuntimeInputs::default(),
             metadata: Value::Null,
         };
         let out = tool

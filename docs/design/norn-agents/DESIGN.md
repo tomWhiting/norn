@@ -191,7 +191,7 @@ architect, bash-guy, code-reviewer, codebase-explorer, convention-reviewer, coor
 | AgentRegistry | `agent/registry.rs` | Complete |
 | Mailbox | `agent/mailbox.rs` | Complete — watch channels, sequence numbers |
 | Fork | `agent/fork.rs` | Complete |
-| Monitor | `agent/monitor.rs` | Complete |
+| Monitor | ~~`agent/monitor.rs`~~ | Deleted by owner ruling 2026-07-03 (DECISIONS-2026-07 §4); forward design: `docs/design/norn/INTERNAL-AGENTS.md` |
 | Goals | `agent/goals.rs` | Complete |
 | SpawnAgentTool | `tools/agent/spawn.rs` | Broken — bare LoopContext, no tools, synchronous |
 | Coordination tools | `tools/agent/coord.rs` | Exists — WaitAgent polls, CloseAgent not recursive |

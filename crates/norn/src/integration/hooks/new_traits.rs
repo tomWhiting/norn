@@ -113,7 +113,7 @@ mod tests {
 
     use super::*;
     use crate::integration::hooks::traits::{Hook, HookRegistry};
-    use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+    use crate::tool::envelope::ToolEnvelope;
     use crate::tool::traits::ToolOutput;
 
     fn make_envelope(name: &str) -> ToolEnvelope {
@@ -121,7 +121,6 @@ mod tests {
             tool_call_id: "tc_1".to_owned(),
             tool_name: name.to_owned(),
             model_args: serde_json::json!({}),
-            runtime_inputs: RuntimeInputs::default(),
             metadata: serde_json::Value::Null,
         }
     }

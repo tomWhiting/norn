@@ -421,7 +421,7 @@ mod tests {
     use tempfile::tempdir;
 
     use super::*;
-    use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+    use crate::tool::envelope::ToolEnvelope;
     use crate::tools::patch_entity::ExtractedEntity;
     use crate::tools::patch_parse::{PatchBlockKind, extract_headers};
 
@@ -442,7 +442,6 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             tool_name: "apply_patch".to_string(),
             model_args: args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: serde_json::Value::Null,
         }
     }

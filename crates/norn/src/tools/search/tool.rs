@@ -307,7 +307,7 @@ fn build_plan(args: &SearchArgs) -> Result<SearchPlan, ToolError> {
 mod tests {
     use super::*;
     use crate::tool::context::{SharedWorkingDir, ToolContext};
-    use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+    use crate::tool::envelope::ToolEnvelope;
     use serde_json::json;
     use std::path::Path;
     use tempfile::tempdir;
@@ -317,7 +317,6 @@ mod tests {
             tool_call_id: "call-1".to_owned(),
             tool_name: "search".to_owned(),
             model_args: args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: Value::Null,
         }
     }

@@ -5,8 +5,9 @@ Verified against the source tree on branch `hardening/final-state` (Waves 1–4 
 final-state hardening campaign, HEAD `3c84682`). Every entry below was checked against the
 code that exists now, not against git history or prior status docs.
 
-Two items are deliberately **held, not wired** (see `docs/HOLD-FOR-DISCUSSION.md`) and are
-listed in their own section; they must not be read as working features.
+The two formerly held items were resolved 2026-07-03 (owner-ruled deleted — see
+`docs/DECISIONS-2026-07.md` §4 and their own section below); neither was ever a working
+feature.
 
 ## Cross-cutting hardening (Waves 1–4)
 
@@ -48,7 +49,7 @@ Features where the code matches what the doc describes.
 
 | # | Feature | Key Files | Notes |
 |---|---------|-----------|-------|
-| 1 | Tool-Embedded Validation | `tools/write.rs`, `tools/edit.rs`, `tools/ast.rs`, `tools/validation.rs`, `tool/lifecycle.rs` | AST validation (tree-sitter `check_syntax`), file-length checks with glob overrides, read-before-overwrite gate. `RuntimePostValidateCheck` / `RuntimeOnSuccessAction` traits exist for external checks. Line counting is tokei-backed (`count_code_lines`, language-aware). **Caveat:** `ToolContext.runtime_args` (runtime-supplied tool arguments) is **held, not wired** — see Held section. |
+| 1 | Tool-Embedded Validation | `tools/write.rs`, `tools/edit.rs`, `tools/ast.rs`, `tools/validation.rs`, `tool/lifecycle.rs` | AST validation (tree-sitter `check_syntax`), file-length checks with glob overrides, read-before-overwrite gate. `RuntimePostValidateCheck` / `RuntimeOnSuccessAction` traits exist for external checks. Line counting is tokei-backed (`count_code_lines`, language-aware). Runtime-supplied policy inputs are typed surfaces (`workspace_root`, `ToolOutputBudget`, pre/post checks, permission policy); the former untyped `ToolContext.runtime_args` carrier was deleted by owner ruling 2026-07-03. |
 | 2 | Headless, Scriptable Runtime | `lib.rs`, `agent/builder.rs`, `loop/runner/` | The `norn` crate is a library; `AgentBuilder` is the single assembler and one agent step is a function-driven state machine. Interactive front-ends (`norn-cli`, `norn-tui`, JSON-RPC driven mode) are thin drivers over the same builder. Example binaries (`examples/chat.rs`, `smoke.rs`, `login.rs`). |
 | 3 | Schema-Enforced Structured Output | `loop/schema.rs`, `loop/runner/dispatch.rs`, `loop/runner/setup.rs` | `validate_against_schema()` via `jsonschema`. Dynamic `build_schema_tool()`. Validation feedback fed back to the model; retry budget configurable (`schema_attempt_budget`). |
 | 7 | Input Channels / Steering | `loop/inbound.rs` | `InboundChannel` over `tokio::sync::mpsc`, `drain()` / `drain_if_steer_ready()` at tool boundaries. **Naming caveat:** the message enum is `MessageKind::{Steer, Update}` — there is no `FollowUp` variant here (`DeliveryMode` is the unrelated *rules* delivery enum). |
@@ -96,8 +97,9 @@ has no registered surface to emit a spoken response.
 ### #6 — Tool Call Envelopes
 
 `ToolEnvelope` (`tool/envelope.rs`) carries the open `metadata` field and `model_args`, and
-these are live. **The third section — `runtime_inputs` (`RuntimeInputs`) — is held, not
-wired** (always constructed `default()`, zero readers). See the Held section.
+these are live. The formerly scaffolded third section (`runtime_inputs`) was **deleted by
+owner ruling 2026-07-03** — boundary signals ride the message-injection path instead
+(`docs/DECISIONS-2026-07.md` §4; forward design `docs/design/norn/INTERNAL-AGENTS.md`).
 
 ### #8 — Dynamic Tool Availability
 
@@ -172,18 +174,17 @@ Also not yet built (subsets of partial features): semantic tool search (#9), vec
 search and mode composition (#10), the `spoken_response` tool (#5), the `RunScriptTool` and the
 wider Rhai builtin surface (#31), and task↔requirement linkage (#45).
 
-## Held for owner discussion — NOT working features
+## Formerly held items — RESOLVED (deleted, 2026-07-03)
 
-Both are scaffolding, deliberately not wired and not deleted, pending a design decision. See
-`docs/HOLD-FOR-DISCUSSION.md`. Do not describe either as functioning.
+Both held scaffolding items were owner-ruled **deleted** after a design discussion
+(`docs/DECISIONS-2026-07.md` §4). The forward design for what they gestured at — internal
+agents (processors/watchers/assistant/speaker), a managed background-process manager,
+signals riding message injection — is `docs/design/norn/INTERNAL-AGENTS.md`.
 
-- **`RunMonitored` (AI-monitored background tasks)** — `agent/monitor.rs`. `run_monitored`
-  exists but is called only from its own test module; zero production callers; unused provider
-  parameter; static-string heartbeat. (The live loop "iteration monitor" in `loop/iteration.rs`
-  is a separate, unrelated mechanism.)
-- **`ToolEnvelope.runtime_inputs` + `ToolContext.runtime_args`** — `tool/envelope.rs`,
-  `tool/context.rs`. `RuntimeInputs` is always constructed `default()` with zero readers;
-  `runtime_args` is only ever written `Value::Null` with zero readers.
+- **`RunMonitored`** (`agent/monitor.rs`) — deleted. (The live loop "iteration monitor" in
+  `loop/iteration.rs` is a separate, unrelated mechanism and remains.)
+- **`ToolEnvelope.runtime_inputs` + `ToolContext.runtime_args`** — deleted; the envelope
+  keeps `model_args`/`tool_use_description`/`metadata`.
 
 ## Deviations
 

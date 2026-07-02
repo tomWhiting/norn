@@ -90,7 +90,7 @@
 - [ ] **C68** — Mailbox messaging supports trigger_turn flag for immediate vs deferred delivery
 - [ ] **C69** — Sequence numbers on mailboxes enable efficient wait-for-any without polling
 - [ ] **C70** — Fork inherits filtered parent context and returns structured audit result
-- [ ] **C71** — RunMonitored tool delegates monitoring to a lightweight model and returns handle for queries
+- [ ] **C71** — RunMonitored tool delegates monitoring to a lightweight model and returns handle for queries — SUPERSEDED 2026-07-03 (owner ruling): scaffolding deleted, do not build; watcher internal-agent design in docs/design/norn/INTERNAL-AGENTS.md (docs/DECISIONS-2026-07.md §4)
 - [ ] **C72** — Goal tracking supports objectives, token budgets, time budgets, and continuation policies
 - [ ] **C73** — Scheduling supports session-dispatched cron that re-launches sessions without keeping them alive
 

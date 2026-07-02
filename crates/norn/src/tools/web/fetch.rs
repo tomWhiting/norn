@@ -583,14 +583,13 @@ fn prepend_line_numbers(content: &str) -> String {
 mod tests {
     use super::*;
     use crate::tool::context::ToolContext;
-    use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+    use crate::tool::envelope::ToolEnvelope;
 
     fn envelope(args: Value) -> ToolEnvelope {
         ToolEnvelope {
             tool_call_id: "call-1".to_owned(),
             tool_name: "web_fetch".to_owned(),
             model_args: args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: Value::Null,
         }
     }

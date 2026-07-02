@@ -36,8 +36,8 @@ impl AgentHandle {
 ///
 /// Holds the agent registry, message router, provider, calling-agent id,
 /// a Tokio runtime handle so synchronous Rhai code can bridge into async
-/// work, the parent event store (used by `fork_agent`), and the shared
-/// tool registry handed to spawned and forked sub-agents.
+/// work, the parent event store (`signal_agent`'s message-lifecycle audit
+/// trail), and the shared tool registry handed to spawned sub-agents.
 #[derive(Clone)]
 pub struct NornRhaiContext {
     /// Agent registry (write-locked when spawning).
@@ -58,12 +58,12 @@ pub struct NornRhaiContext {
     pub agent_id: Uuid,
     /// Tokio runtime handle to bridge sync Rhai into async work.
     pub runtime: tokio::runtime::Handle,
-    /// Parent event store snapshot — read by `fork_agent` when applying its
-    /// context filter.
+    /// Parent event store — `signal_agent` appends message-lifecycle
+    /// audit events here.
     pub event_store: Arc<EventStore>,
-    /// Optional shared tool registry handed to spawned and forked
-    /// sub-agents. When `None`, both spawn and fork report a clear runtime
-    /// error rather than silently launching a sub-agent with no tools.
+    /// Optional shared tool registry handed to spawned sub-agents. When
+    /// `None`, `spawn_agent` reports a clear runtime error rather than
+    /// silently launching a sub-agent with no tools.
     pub tool_registry: Option<Arc<ToolRegistry>>,
     /// Shared working directory used by `run_cmd` to set the child
     /// process's CWD. Cloning this field yields a handle that shares the
@@ -115,10 +115,9 @@ pub(super) fn json_to_dynamic(value: serde_json::Value) -> Result<Dynamic, Box<E
 /// - `parse_json(s) -> Dynamic`
 /// - `to_json(value) -> String`
 ///
-/// **Handle-returning**
+/// **Agent operations**
 /// - `spawn_agent(config: Map) -> AgentHandle`
-/// - `signal_agent(to: AgentHandle | String, content: Dynamic) -> ()`
-/// - `fork_agent(config: Map) -> Dynamic`
+/// - `signal_agent(to: AgentHandle | String, content: Dynamic, [kind: String]) -> int` (delivery sequence)
 pub fn register_norn_builtins(engine: &mut Engine, context: &NornRhaiContext) {
     super::blocking::register_blocking(engine, context.working_dir.clone());
     super::agent_ops::register_handle_returning(engine, context);

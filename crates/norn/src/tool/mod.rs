@@ -9,9 +9,8 @@ pub use self::catalog::{
 pub use self::composite::{CompositeTool, assert_conservative_effect_covers_all_commands};
 pub use self::context::{FlagEntry, ToolContext, ToolFlag};
 pub use self::envelope::{
-    DiagnosticReport, ENVELOPE_DESCRIPTION_KEY, ENVELOPE_METADATA_KEY, EnvelopeSplit, FileChange,
-    FileChangeType, InboundMessage, RuntimeInputs, ToolEnvelope, split_envelope_fields,
-    wrap_schema_with_envelope,
+    ENVELOPE_DESCRIPTION_KEY, ENVELOPE_METADATA_KEY, EnvelopeSplit, ToolEnvelope,
+    split_envelope_fields, wrap_schema_with_envelope,
 };
 pub use self::failure::{ToolErrorKind, ToolErrorPayload};
 pub use self::follow_up::{

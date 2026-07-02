@@ -567,7 +567,6 @@ mod tests {
             tool_call_id: "tc_1".to_owned(),
             tool_name: "echo".to_owned(),
             model_args: serde_json::json!({"text": "hello"}),
-            runtime_inputs: crate::tool::envelope::RuntimeInputs::default(),
             metadata: serde_json::Value::Null,
         };
         let ctx = ToolContext::empty();

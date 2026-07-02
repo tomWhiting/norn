@@ -9,7 +9,8 @@ today.
 Companion docs: `docs/design/norn-cli/DRIVEN-PROTOCOL.md` (the normative
 protocol contract), `MERIDIAN-HANDOFF.md` §9 (embedder-facing changes),
 `docs/DECISIONS-2026-07.md` (every decision made, sign-off pending),
-`docs/HOLD-FOR-DISCUSSION.md` (deliberately unwired scaffolding).
+`docs/design/norn/INTERNAL-AGENTS.md` (forward design for the formerly
+held scaffolding, resolved 2026-07-03).
 
 ---
 
@@ -152,8 +153,10 @@ claim in the docs verified against the code.
 **Not in this campaign** (deferred, tracked): meridian-side adoption PR
 (deleting its session-store copy, adopting `.open_session`); a builder
 setter accepting a prebuilt runtime base (identified as the missing piece
-for per-execution runtime-base caching); the two HELD scaffolding items
-(`RunMonitored`, envelope `runtime_inputs`) pending owner discussion.
+for per-execution runtime-base caching). The two formerly HELD scaffolding
+items (`RunMonitored`, envelope `runtime_inputs`, `runtime_args`) were
+resolved post-campaign (2026-07-03): owner-ruled **deleted**, with the
+forward design captured in `docs/design/norn/INTERNAL-AGENTS.md`.
 
 ## 5. Needs owner sign-off (none block the merge)
 

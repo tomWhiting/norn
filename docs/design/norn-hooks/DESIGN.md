@@ -294,6 +294,10 @@ crates/norn-cli/src/runtime/wiring.rs       — session lifecycle hooks at start
 
 ### Existing Hook Infrastructure
 
+> Pre-implementation survey (design-time snapshot). `integration/hooks.rs`
+> has since been promoted to the `integration/hooks/` module per D1, and
+> line references have drifted; consult the code for current locations.
+
 | Component | File | Status |
 |:----------|:-----|:-------|
 | PreToolHook trait | `integration/hooks.rs` | Complete — dispatched in `tool_dispatch.rs:98` |
@@ -307,7 +311,7 @@ crates/norn-cli/src/runtime/wiring.rs       — session lifecycle hooks at start
 | HookType (error) | `error.rs` | PreLlm variant only |
 | LoopContext.hooks | `loop/loop_context.rs:76` | `Option<HookRegistry>` |
 | LlmCallSummary | `integration/hooks.rs` | stop_reason, usage, event_count, error |
-| ToolEnvelope | `tool/envelope.rs` | tool_call_id, tool_name, model_args, runtime_inputs, metadata |
+| ToolEnvelope | `tool/envelope.rs` | tool_call_id, tool_name, model_args, metadata (`runtime_inputs` deleted by owner ruling 2026-07-03 — DECISIONS-2026-07 §4) |
 | ToolOutput | `tool/traits.rs` | content, is_error, duration |
 
 ### Existing Shell Execution Patterns

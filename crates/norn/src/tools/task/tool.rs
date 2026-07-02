@@ -391,7 +391,7 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+    use crate::tool::envelope::ToolEnvelope;
     use crate::tool::traits::Tool;
     use crate::tools::task::TaskStatus;
 
@@ -400,7 +400,6 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             tool_name: "task".to_string(),
             model_args: args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: Value::Null,
         }
     }

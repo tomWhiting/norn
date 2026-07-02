@@ -2,10 +2,25 @@
   "id": "N-015",
   "cluster": "norn",
   "title": "Agent tools — SpawnAgent, Fork, Task, Skill, RunScript, ToolSearch, ApplyPatch",
-  "depends_on": ["N-006", "N-014"],
+  "depends_on": [
+    "N-006",
+    "N-014"
+  ],
   "blocked_by": [],
-  "checklist": ["C49", "C50", "C51", "C52", "C53", "C54", "C55"],
-  "stories": ["S15", "S20", "S21"],
+  "checklist": [
+    "C49",
+    "C50",
+    "C51",
+    "C52",
+    "C53",
+    "C54",
+    "C55"
+  ],
+  "stories": [
+    "S15",
+    "S20",
+    "S21"
+  ],
   "purpose": "Implement the tools that agents use to coordinate with other agents, manage tasks, activate skills, run scripts, search the tool catalog, and apply patches. Agent coordination tools (SpawnAgent, Fork, SendMessage/WaitAgent/CloseAgent) wrap the infrastructure from N-014. Standalone tools (Task, Skill, RunScript, ToolSearch, ApplyPatch) are self-contained and only depend on the Tool trait from N-006.",
   "task": "Implement 8 tools across 6 files in tools/: agent.rs (SpawnAgent, Fork, SendMessage, WaitAgent, CloseAgent — 5 tools wrapping N-014 infrastructure), task.rs (Task tool with CRUD ops), skill.rs (Skill tool loading prompt templates), script.rs (RunScript executing inline Rhai), tool_search.rs (ToolSearch with BM25), patch.rs (ApplyPatch applying unified diffs). All implement the Tool trait from N-006. Testing: Layer 1 unit tests.",
   "requirements": [
@@ -16,15 +31,24 @@
       "acceptance": [
         "SpawnAgentTool implements Tool with name 'spawn_agent', effect Process",
         "Input schema: { task: String, model: String, role: String, tools: Option<Vec<String>>, path: Option<String> }",
-        "Tool accesses AgentRegistry via Arc from ToolContext runtime_args",
+        "Tool accesses AgentRegistry via Arc from the typed ToolContext extensions map [amended 2026-07-03: ToolContext.runtime_args was deleted by owner ruling — docs/DECISIONS-2026-07.md §4]",
         "Calls registry.reserve(), spawns agent loop via tokio::spawn, returns SpawnGuard handle",
         "Output includes agent_id, result (sub-agent's structured output), usage",
         "Error when registry is not available in context",
         "Test with MockProvider: spawn sub-agent, verify registry entry created and cleaned up"
       ],
-      "files": { "modify": ["crates/norn/src/tools/agent.rs", "crates/norn/src/tools/mod.rs"] },
-      "checklist": ["C49"],
-      "stories": ["S15"]
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/agent.rs",
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C49"
+      ],
+      "stories": [
+        "S15"
+      ]
     },
     {
       "id": "R2",
@@ -37,8 +61,14 @@
         "Returns ForkAudit fields as structured JSON output",
         "Test: fork with mock provider, verify ForkAudit returned with correct model"
       ],
-      "files": { "modify": ["crates/norn/src/tools/agent.rs"] },
-      "checklist": ["C50"],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/agent.rs"
+        ]
+      },
+      "checklist": [
+        "C50"
+      ],
       "stories": []
     },
     {
@@ -57,8 +87,14 @@
         "CloseAgent sets target agent status to Completing",
         "Test: send message, verify it arrives in target mailbox"
       ],
-      "files": { "modify": ["crates/norn/src/tools/agent.rs"] },
-      "checklist": ["C51"],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/agent.rs"
+        ]
+      },
+      "checklist": [
+        "C51"
+      ],
       "stories": []
     },
     {
@@ -75,9 +111,18 @@
         "List action supports filtering by status",
         "Test: create 3 tasks, list all, update one, complete one, verify states"
       ],
-      "files": { "modify": ["crates/norn/src/tools/task.rs", "crates/norn/src/tools/mod.rs"] },
-      "checklist": ["C52"],
-      "stories": ["S20"]
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/task.rs",
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C52"
+      ],
+      "stories": [
+        "S20"
+      ]
     },
     {
       "id": "R5",
@@ -91,8 +136,15 @@
         "Returns clear error when skill not found, listing available skills",
         "Test: create temp dir with a skill file, load by name, verify content returned"
       ],
-      "files": { "modify": ["crates/norn/src/tools/skill.rs", "crates/norn/src/tools/mod.rs"] },
-      "checklist": ["C53"],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/skill.rs",
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C53"
+      ],
       "stories": []
     },
     {
@@ -110,9 +162,19 @@
         "Cargo.toml adds rhai crate dependency",
         "Test: run script that reads a temp file, verify output matches file content"
       ],
-      "files": { "modify": ["crates/norn/src/tools/script.rs", "crates/norn/src/tools/mod.rs", "crates/norn/Cargo.toml"] },
-      "checklist": ["C54"],
-      "stories": ["S21"]
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/script.rs",
+          "crates/norn/src/tools/mod.rs",
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": [
+        "C54"
+      ],
+      "stories": [
+        "S21"
+      ]
     },
     {
       "id": "R7",
@@ -127,8 +189,15 @@
         "Empty query returns all tools sorted alphabetically",
         "Test: register 5 tools with varied descriptions, search for keyword, verify top result is most relevant"
       ],
-      "files": { "modify": ["crates/norn/src/tools/tool_search.rs", "crates/norn/src/tools/mod.rs"] },
-      "checklist": ["C55"],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/tool_search.rs",
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C55"
+      ],
       "stories": []
     },
     {
@@ -147,8 +216,15 @@
         "Test: create a file, apply a valid patch, verify file content changed correctly",
         "Test: apply a patch with bad context lines, verify error returned"
       ],
-      "files": { "modify": ["crates/norn/src/tools/patch.rs", "crates/norn/src/tools/mod.rs"] },
-      "checklist": ["C89"],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs",
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C89"
+      ],
       "stories": []
     }
   ],

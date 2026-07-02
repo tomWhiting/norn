@@ -58,7 +58,7 @@ use crate::provider::request::{Message, MessageRole};
 use crate::session::action_log::CompletionRecord;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::EventStore;
-use crate::tool::envelope::{RuntimeInputs, ToolEnvelope, split_envelope_fields};
+use crate::tool::envelope::{ToolEnvelope, split_envelope_fields};
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::FollowUpAction;
 use crate::tool::output_budget::{
@@ -199,7 +199,6 @@ fn build_envelope(tc: &AssembledToolCall) -> (ToolEnvelope, String) {
         tool_call_id: tc.call_id.clone(),
         tool_name: tc.name.clone(),
         model_args: split.tool_args,
-        runtime_inputs: RuntimeInputs::default(),
         metadata: split.metadata,
     };
     (envelope, split.description.unwrap_or_default())

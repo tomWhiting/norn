@@ -409,11 +409,12 @@ crates/norn-cli/
       paths.rs                    -- XDG directory resolution (CO2)
 
     runtime/
-      mod.rs                      -- re-exports build_runtime
-      builder.rs                  -- build_runtime orchestrator (chains all config)
-      bundle.rs                   -- RuntimeBundle, RuntimeInputs types
-      wiring.rs                   -- DiagnosticCollector, WriteTool, IterationMonitor,
-                                     SlashState construction
+      mod.rs                      -- re-exports
+      from_cli.rs                 -- builder_from_cli (assembly via norn AgentBuilder;
+                                     the former builder.rs/bundle.rs parallel assembly
+                                     stack was deleted by the R1 unification)
+      resolve.rs                  -- CLI flag/config resolution
+      wiring.rs                   -- ToolExecutor/SlashState wiring off AgentParts
 
     print/
       mod.rs                      -- re-exports run()

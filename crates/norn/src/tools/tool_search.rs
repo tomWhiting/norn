@@ -238,7 +238,7 @@ mod tests {
 
     use super::*;
     use crate::tool::catalog::ToolFieldHint;
-    use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+    use crate::tool::envelope::ToolEnvelope;
 
     fn entries() -> Vec<ToolCatalogEntry> {
         vec![
@@ -270,7 +270,6 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             tool_name: "tool_search".to_string(),
             model_args: args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: serde_json::Value::Null,
         }
     }

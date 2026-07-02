@@ -569,7 +569,6 @@ mod tests {
     use serde_json::json;
 
     use super::*;
-    use crate::tool::envelope::RuntimeInputs;
 
     /// Nested settings payload for the `configure` command; serde
     /// silently ignores unknown nested fields here (no
@@ -715,7 +714,6 @@ mod tests {
             tool_call_id: "call-1".to_string(),
             tool_name: "counter".to_string(),
             model_args: args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: Value::Null,
         }
     }

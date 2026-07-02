@@ -23,7 +23,7 @@ use crate::r#loop::runner::ToolExecutor;
 use crate::provider::traits::Provider;
 use crate::session::store::EventStore;
 use crate::tool::context::ToolContext;
-use crate::tool::envelope::{RuntimeInputs, ToolEnvelope, split_envelope_fields};
+use crate::tool::envelope::{ToolEnvelope, split_envelope_fields};
 use crate::tool::registry::{ToolRegistry, dispatch_tool_with_outcome};
 
 /// Shared agent-coordination infrastructure surfaced to tools.
@@ -300,7 +300,6 @@ impl ToolExecutor for SubAgentExecutor {
             tool_call_id: call_id.to_owned(),
             tool_name: name.to_string(),
             model_args: split.tool_args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: split.metadata,
         };
         let ctx = self.child_context.as_ref();

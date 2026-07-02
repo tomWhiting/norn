@@ -27,7 +27,7 @@ use async_trait::async_trait;
 use serde_json::Value;
 
 use super::context::{ToolContext, ToolFlag};
-use super::envelope::{RuntimeInputs, ToolEnvelope};
+use super::envelope::ToolEnvelope;
 use super::lifecycle::{
     Advisory, CheckOverride, PostCheckResult, PostValidateMode, PostValidateOutcome,
     PreValidateOutcome,
@@ -227,7 +227,6 @@ impl ToolRegistry {
             tool_call_id: call_id.to_owned(),
             tool_name: name.to_string(),
             model_args: split.tool_args,
-            runtime_inputs: RuntimeInputs::default(),
             metadata: split.metadata,
         };
         Ok((tool, envelope, self.context.as_ref()))

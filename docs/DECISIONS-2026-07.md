@@ -232,30 +232,34 @@ because a design fork exists that the agent didn't feel authorized to resolve al
 
 ---
 
-## 4. Held items (from `docs/HOLD-FOR-DISCUSSION.md`)
+## 4. Held items (formerly `docs/HOLD-FOR-DISCUSSION.md`) — RESOLVED
 
-These two items were deliberately **not** wired and **not** deleted anywhere in the campaign;
-nothing in Wave 1 or Wave 2 touched them (confirmed above — the I3 seam explicitly skipped the
-one remaining rustdoc warning in `monitor.rs` to honor the hold).
+Both items were held untouched through the campaign, then talked through with the owner on
+2026-07-03 and **DECIDED: deleted**. The hold doc is retired; the forward design record is
+`docs/design/norn/INTERNAL-AGENTS.md`.
 
-1. **`RunMonitored` — AI-monitored background tasks** (`crates/norn/src/agent/monitor.rs`).
-   Exported scaffolding, zero production callers, unused `_provider` parameter, static-string
-   heartbeat. Vision intent: long-running commands/sub-agents watched by a cheap model instead
-   of consuming the parent's context. Three options on the table: wire it properly (model/config
-   from the builder, real heartbeat, query interface, alert routing via `MessageRouter`), delete
-   until scheduled (reviewer's recommendation), or redesign first (the wake/linger +
-   `signal_agent` + delegation-budget machinery that landed since may supersede a bespoke
-   monitor type). — **Discuss** (owner design decision required)
+1. **`RunMonitored` — AI-monitored background tasks** — **DECIDED 2026-07-03 (owner):
+   deleted.** The scaffolding (`agent/monitor.rs`: zero production callers, unused `_provider`,
+   static-string heartbeat around an in-process Rust future) implemented none of the actual
+   intent, which the discussion surfaced as much larger: a taxonomy of *internal agents*
+   (processors / watchers / assistant / speaker) built on a managed background-process manager,
+   with watcher alerts riding message injection. None of the deleted code contributes to that
+   design. See `docs/design/norn/INTERNAL-AGENTS.md` §5 (watchers) and §3 (process manager).
 
-2. **`ToolEnvelope.runtime_inputs` + `ToolContext.runtime_args`**
-   (`crates/norn/src/tool/envelope.rs`, `crates/norn/src/tool/context.rs`). `RuntimeInputs`
-   always default, zero readers; `runtime_args` has no writer and no reader. Vision intent: a
-   third envelope section (inbound messages, diagnostics, filesystem/working-tree changes since
-   the last tool boundary) delivered to the model without explicit conversation injection, plus
-   runtime-injected policy arguments. Held because the inbound-channel + `MessageRouter` +
-   rules-engine work that landed since the vision was written overlaps heavily with this design
-   — a real architectural fork (envelope vs. existing message-injection paths) that needs a
-   decision, not a default. — **Discuss** (owner design decision required)
+2. **`ToolEnvelope.runtime_inputs` + `ToolContext.runtime_args`** — **DECIDED 2026-07-03
+   (owner): deleted; the architectural fork is ruled — boundary signals ride the durable
+   message-injection path (`MessageRouter` + pending store + rules engine), never the tool
+   envelope.** Rationale: injected messages are persisted as session events (resume-safe where
+   envelope-ridden signals would silently vanish), they deliver on turns with zero tool calls
+   (exactly when an interrupt matters most), and the envelope flows *to the tool* — splicing
+   signals toward the model through it would pollute tool-result semantics and attribution.
+   `runtime_args` separately: every policy input it was designed to carry became a typed,
+   enforced surface (`workspace_root` confinement, `ToolOutputBudget`, pre/post checks,
+   `extensions`, the permission policy); an untyped JSON blob beside those is a regression.
+   Deleted: the `runtime_inputs` field, `RuntimeInputs`, `InboundMessage`, `DiagnosticReport`,
+   `FileChange`, `FileChangeType`, and `ToolContext.runtime_args`. The envelope keeps its live
+   parts (`model_args`, `tool_use_description`, `metadata`). Future diagnostics/filesystem
+   feeds are producers into the injection path, per INTERNAL-AGENTS.md.
 
 ---
 
@@ -369,9 +373,10 @@ Decisions recorded in the Wave 3–4 commit record, verified against HEAD.
   (`step_timeout` graceful redesign) to two explicit "needs sign-off" search-tool behaviors. The
   CLAUDE.md 500-LOC compliance gap (`loop/runner.rs`) is now **Resolved** at Wave 4 (R2 runner
   state machine, `loop/runner/`), leaving 7 open owner items in this section.
-- **Section 4 (held):** 2 items (`RunMonitored`, `ToolEnvelope.runtime_inputs` /
-  `ToolContext.runtime_args`), untouched, still present and unwired at HEAD — held for owner
-  design decisions, NOT available features.
+- **Section 4 (held):** RESOLVED 2026-07-03 — both items (`RunMonitored`,
+  `ToolEnvelope.runtime_inputs` / `ToolContext.runtime_args`) owner-ruled **deleted**;
+  boundary signals ride message injection. Forward design:
+  `docs/design/norn/INTERNAL-AGENTS.md`.
 - **Section 5 (R1 D1-D7 + Wave 3-4):** 7 R1 decisions applied autonomously (owner-overridable, 5
   Discuss / 2 Keep) plus 7 Wave 3-4 load-bearing decisions (mostly Keep). The three items in §0
   remain the highest-priority owner calls.

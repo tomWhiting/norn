@@ -23,7 +23,7 @@ use crate::r#loop::inbound::{InboundChannel, inbound_channel};
 use crate::provider::mock::MockProvider;
 use crate::provider::traits::Provider;
 use crate::session::store::EventStore;
-use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+use crate::tool::envelope::ToolEnvelope;
 use crate::tools::agent::handle::AgentHandle;
 use crate::tools::agent::infra::AgentToolInfra;
 
@@ -33,7 +33,6 @@ pub(crate) fn envelope_for(tool: &str, args: serde_json::Value) -> ToolEnvelope 
         tool_call_id: "call-1".to_string(),
         tool_name: tool.to_string(),
         model_args: args,
-        runtime_inputs: RuntimeInputs::default(),
         metadata: serde_json::Value::Null,
     }
 }

@@ -2,10 +2,29 @@
   "id": "N-014",
   "cluster": "norn",
   "title": "Multi-agent infrastructure — registry, mailbox, fork, monitor, goals",
-  "depends_on": ["N-003", "N-005", "N-006"],
+  "depends_on": [
+    "N-003",
+    "N-005",
+    "N-006"
+  ],
   "blocked_by": [],
-  "checklist": ["C65", "C66", "C67", "C68", "C69", "C70", "C71", "C72", "C73"],
-  "stories": ["S13", "S14", "S16", "S17"],
+  "checklist": [
+    "C65",
+    "C66",
+    "C67",
+    "C68",
+    "C69",
+    "C70",
+    "C71",
+    "C72",
+    "C73"
+  ],
+  "stories": [
+    "S13",
+    "S14",
+    "S16",
+    "S17"
+  ],
   "purpose": "Build the multi-agent infrastructure that all agent coordination depends on. AgentRegistry tracks active agents with hierarchical paths and no concurrency limits. Mailbox provides inter-agent messaging with sequence numbers. Fork logic inherits filtered context and returns structured audit results. RunMonitored delegates background task watching to a lightweight model. Goal tracking manages objectives, budgets, and continuation policies. This is infrastructure — the tools that wrap it (SpawnAgent, Fork tool, etc.) are in N-015.",
   "task": "Implement the five agent/ modules: registry.rs (AgentRegistry with two-phase spawn, RAII cleanup, hierarchical paths, no concurrency cap), mailbox.rs (Mailbox with trigger_turn flag and sequence numbers for wait-for-any), fork.rs (fork logic with filtered context inheritance, model switching, structured ForkAudit result), monitor.rs (RunMonitored with lightweight model delegation and query handle), goals.rs (GoalTracker with objectives, token/time budgets, continuation policies). Testing: Layer 1 unit tests for each module.",
   "requirements": [
@@ -24,8 +43,16 @@
         "No field or constant caps agent count (C66)",
         "Test: register 100 agents, verify all accessible"
       ],
-      "files": { "modify": ["crates/norn/src/agent/registry.rs", "crates/norn/src/agent/mod.rs"] },
-      "checklist": ["C65", "C66"],
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/registry.rs",
+          "crates/norn/src/agent/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C65",
+        "C66"
+      ],
       "stories": []
     },
     {
@@ -41,9 +68,17 @@
         "Test: reserve without confirm — verify entry cleaned up on drop",
         "Test: reserve then confirm — verify entry persists with Active status"
       ],
-      "files": { "modify": ["crates/norn/src/agent/registry.rs"] },
-      "checklist": ["C67"],
-      "stories": ["S13"]
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/registry.rs"
+        ]
+      },
+      "checklist": [
+        "C67"
+      ],
+      "stories": [
+        "S13"
+      ]
     },
     {
       "id": "R3",
@@ -59,9 +94,19 @@
         "Test: send 3 messages, recv drains all 3, second recv returns empty",
         "Test: wait_for_any wakes when message arrives"
       ],
-      "files": { "modify": ["crates/norn/src/agent/mailbox.rs", "crates/norn/src/agent/mod.rs"] },
-      "checklist": ["C68", "C69"],
-      "stories": ["S17"]
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/mailbox.rs",
+          "crates/norn/src/agent/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C68",
+        "C69"
+      ],
+      "stories": [
+        "S17"
+      ]
     },
     {
       "id": "R4",
@@ -76,14 +121,23 @@
         "Fork entry cleaned up (Completed/Failed) when fork returns",
         "Test: fork with context filter that excludes tool calls, verify filtered events"
       ],
-      "files": { "modify": ["crates/norn/src/agent/fork.rs", "crates/norn/src/agent/mod.rs"] },
-      "checklist": ["C70"],
-      "stories": ["S14"]
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/fork.rs",
+          "crates/norn/src/agent/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C70"
+      ],
+      "stories": [
+        "S14"
+      ]
     },
     {
       "id": "R5",
       "title": "RunMonitored with lightweight model delegation",
-      "spec": "RunMonitored SHALL delegate monitoring of a long-running task to a lightweight model. The parent receives a MonitorHandle for querying progress without consuming full output.",
+      "spec": "RunMonitored SHALL delegate monitoring of a long-running task to a lightweight model. The parent receives a MonitorHandle for querying progress without consuming full output. — SUPERSEDED 2026-07-03 (owner ruling): the RunMonitored scaffolding this requirement produced was deleted (agent/monitor.rs no longer exists); do NOT re-dispatch this requirement. Forward design: watcher internal agents over the managed background-process manager, docs/design/norn/INTERNAL-AGENTS.md (see docs/DECISIONS-2026-07.md §4).",
       "acceptance": [
         "MonitorConfig struct: task_description (String), monitor_model (String), poll_interval (Duration)",
         "MonitorHandle struct wraps a tokio::sync::watch::Receiver<MonitorStatus>",
@@ -93,9 +147,18 @@
         "run_monitored(config, task_future, provider) returns (JoinHandle<TaskResult>, MonitorHandle)",
         "Test: run_monitored on a mock task, verify MonitorHandle returns status updates"
       ],
-      "files": { "modify": ["crates/norn/src/agent/monitor.rs", "crates/norn/src/agent/mod.rs"] },
-      "checklist": ["C71"],
-      "stories": ["S16"]
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/monitor.rs",
+          "crates/norn/src/agent/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C71"
+      ],
+      "stories": [
+        "S16"
+      ]
     },
     {
       "id": "R6",
@@ -111,8 +174,15 @@
         "Test: set token budget 1000, report 800 used, verify BudgetWarning",
         "Test: set token budget 1000, report 1100 used, verify BudgetExceeded with correct policy"
       ],
-      "files": { "modify": ["crates/norn/src/agent/goals.rs", "crates/norn/src/agent/mod.rs"] },
-      "checklist": ["C72"],
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/goals.rs",
+          "crates/norn/src/agent/mod.rs"
+        ]
+      },
+      "checklist": [
+        "C72"
+      ],
       "stories": []
     },
     {
@@ -129,8 +199,15 @@
         "Cargo.toml adds cron crate for expression parsing",
         "Test: add entry with '*/5 * * * *', verify due_entries fires at correct interval"
       ],
-      "files": { "modify": ["crates/norn/src/agent/goals.rs", "crates/norn/Cargo.toml"] },
-      "checklist": ["C73"],
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/goals.rs",
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": [
+        "C73"
+      ],
       "stories": []
     }
   ],

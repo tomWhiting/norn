@@ -12,7 +12,6 @@ pub mod goals;
 pub mod handle;
 pub mod instance;
 pub mod message_router;
-pub mod monitor;
 pub mod output;
 pub mod pending_messages;
 pub(crate) mod prompt_install;
@@ -38,7 +37,6 @@ pub use goals::{ContinuationPolicy, Goal, GoalSignal, GoalTracker, ScheduleEntry
 pub use handle::{AgentHandle, ResolvedAgentInfo};
 pub use instance::{Agent, AgentParts};
 pub use message_router::{MessageRouter, RouteError};
-pub use monitor::{MonitorConfig, MonitorHandle, MonitorStatus, run_monitored};
 pub use output::{AgentOutput, AgentStopReason, RunOutcome};
 pub use pending_messages::{
     AGENT_MESSAGE_DEQUEUED_EVENT_TYPE, AGENT_MESSAGE_QUEUED_EVENT_TYPE, PendingAgentMessage,

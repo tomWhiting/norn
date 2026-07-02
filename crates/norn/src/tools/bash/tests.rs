@@ -27,7 +27,7 @@ use super::tool::BashArgs;
 use super::*;
 use crate::error::ToolError;
 use crate::tool::context::{SessionId, ToolContext};
-use crate::tool::envelope::{RuntimeInputs, ToolEnvelope};
+use crate::tool::envelope::ToolEnvelope;
 use crate::tool::lifecycle::PreValidateOutcome;
 use crate::tool::risk::{BashRiskTier, classify_risk};
 use crate::tool::scheduling::ToolEffect;
@@ -41,7 +41,6 @@ fn envelope(args: Value) -> ToolEnvelope {
         tool_call_id: "call-bash".to_owned(),
         tool_name: "bash".to_owned(),
         model_args: args,
-        runtime_inputs: RuntimeInputs::default(),
         metadata: Value::Null,
     }
 }
