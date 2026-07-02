@@ -15,6 +15,7 @@ pub mod emitter;
 pub mod frames;
 pub mod interventions;
 pub mod run;
+pub mod stdin;
 pub mod writer;
 
 pub use capabilities::{DRIVEN_PROTOCOL_VERSION, initialize_capabilities};
@@ -29,4 +30,5 @@ pub use run::{
     DrivenRun, PreRunOutcome, RunDriver, SharedRunDriver, drive_pre_run, prompt_from_params,
     send_run_error, send_run_result,
 };
-pub use writer::{OutboundWriter, StdinReader, spawn_writer, stdin_reader};
+pub use stdin::{StdinReader, stdin_reader};
+pub use writer::{OutboundWriter, spawn_writer};

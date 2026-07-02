@@ -1,5 +1,6 @@
-//! The single serializing stdout writer and the stdin reader half of the
-//! driven duplex (`DRIVEN-PROTOCOL.md` "Transport and framing").
+//! The single serializing stdout writer half of the driven duplex
+//! (`DRIVEN-PROTOCOL.md` "Transport and framing"). The stdin reader half
+//! lives in [`super::stdin`].
 //!
 //! A duplex channel carrying interleaved notifications and a run response
 //! MUST NOT let two producers interleave-corrupt a frame. Exactly ONE task
@@ -7,7 +8,7 @@
 //! `mpsc` channel and written by that task, one complete line at a time.
 //! The [`OutboundWriter`] handle is cloneable and is the only way to emit.
 
-use tokio::io::{AsyncWriteExt, BufReader};
+use tokio::io::AsyncWriteExt;
 use tokio::sync::mpsc;
 
 use super::frames::{JsonRpcNotification, JsonRpcResponse, TransportError};
@@ -74,19 +75,6 @@ pub fn spawn_writer() -> (OutboundWriter, tokio::task::JoinHandle<()>) {
         }
     });
     (OutboundWriter { tx }, task)
-}
-
-/// The buffered stdin reader type owning the inbound JSON-RPC half. Aliased
-/// so the pre-run loop and the mid-run intervene loop name the same type.
-pub type StdinReader = BufReader<tokio::io::Stdin>;
-
-/// Build a [`BufReader`] over the process stdin for the inbound half.
-///
-/// Isolated behind a function so the driven loop takes ownership of stdin
-/// exactly once, mirroring how the writer task takes stdout.
-#[must_use]
-pub fn stdin_reader() -> StdinReader {
-    BufReader::new(tokio::io::stdin())
 }
 
 #[cfg(test)]

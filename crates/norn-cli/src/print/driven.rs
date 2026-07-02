@@ -267,7 +267,7 @@ mod tests {
     async fn intervene_loop_absent_outside_driven_mode() {
         let registry = Arc::new(norn::tool::registry::ToolRegistry::new());
         let root_cancel = CancellationToken::new();
-        let (task, stop) = spawn_intervene_loop::<tokio::io::BufReader<tokio::io::Stdin>>(
+        let (task, stop) = spawn_intervene_loop::<super::jsonrpc::StdinReader>(
             None,
             None,
             &registry,

@@ -14,7 +14,8 @@ use super::frames::{
     CODE_INTERNAL_ERROR, CODE_INVALID_REQUEST, CODE_METHOD_NOT_FOUND, JsonRpcResponse,
     METHOD_INITIALIZE, METHOD_RUN_EXECUTE, TransportError, read_request,
 };
-use super::writer::{OutboundWriter, StdinReader};
+use super::stdin::StdinReader;
+use super::writer::OutboundWriter;
 
 /// Extract the prompt from `run/execute` params.
 ///
