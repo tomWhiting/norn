@@ -16,9 +16,9 @@ use crate::error::ProviderError;
 
 /// A test provider that returns pre-configured event sequences.
 ///
-/// Each call to `stream()` pops the next sequence from the list.
-/// Panics with a descriptive message if called more times than
-/// sequences were provided.
+/// Each call to `stream()` pops the next sequence from the list. When
+/// called more times than sequences were provided, `stream()` returns a
+/// [`ProviderError::StreamError`] describing the exhaustion.
 pub struct MockProvider {
     responses: Mutex<Vec<Vec<ProviderEvent>>>,
     requests: Mutex<Vec<ProviderRequest>>,
@@ -65,6 +65,7 @@ impl MockProvider {
             .map(|requests| requests.clone())
             .map_err(|e| ProviderError::StreamError {
                 reason: format!("mock provider request lock poisoned: {e}"),
+                transient: None,
             })
     }
 }
@@ -76,6 +77,7 @@ impl Provider for MockProvider {
             .lock()
             .map_err(|e| ProviderError::StreamError {
                 reason: format!("mock provider request lock poisoned: {e}"),
+                transient: None,
             })?
             .push(request);
 
@@ -84,6 +86,7 @@ impl Provider for MockProvider {
             .lock()
             .map_err(|e| ProviderError::StreamError {
                 reason: format!("mock provider lock poisoned: {e}"),
+                transient: None,
             })?;
 
         if responses.is_empty() {
@@ -92,6 +95,7 @@ impl Provider for MockProvider {
                     "MockProvider: stream() called {} times but no more response sequences available",
                     self.call_count()
                 ),
+                transient: None,
             });
         }
 

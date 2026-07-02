@@ -109,9 +109,21 @@ pub fn split_envelope_fields(mut raw: serde_json::Value) -> EnvelopeSplit {
         };
     };
 
-    let description = map
-        .remove(ENVELOPE_DESCRIPTION_KEY)
-        .and_then(|v| v.as_str().map(str::to_owned));
+    let description = match map.remove(ENVELOPE_DESCRIPTION_KEY) {
+        None | Some(serde_json::Value::Null) => None,
+        Some(serde_json::Value::String(s)) => Some(s),
+        // A model occasionally sends a non-string description (a number,
+        // an object). The content must not vanish: keep it as its JSON
+        // rendering and log the coercion.
+        Some(other) => {
+            let rendered = other.to_string();
+            tracing::warn!(
+                value = %rendered,
+                "non-string {ENVELOPE_DESCRIPTION_KEY} coerced to its JSON rendering",
+            );
+            Some(rendered)
+        }
+    };
 
     let metadata = map
         .remove(ENVELOPE_METADATA_KEY)
@@ -129,7 +141,12 @@ pub fn split_envelope_fields(mut raw: serde_json::Value) -> EnvelopeSplit {
 ///
 /// The envelope fields are added as optional properties alongside the
 /// tool's own parameters. `additionalProperties` is left as the tool
-/// declared it.
+/// declared it. Composite (tagged-enum) schemas — a root `oneOf` of
+/// object variants, the shape the `ToolArgs` derive emits — receive the
+/// injection in **every variant**: the fields must be declared inside
+/// each variant because the variants carry `additionalProperties: false`,
+/// which would otherwise reject the very fields the model is instructed
+/// to send on every call.
 ///
 /// The envelope key names are **reserved** at the top level of every
 /// schema this touches: a same-named property declared by the schema
@@ -139,17 +156,37 @@ pub fn split_envelope_fields(mut raw: serde_json::Value) -> EnvelopeSplit {
 /// key (`check_reserved_envelope_keys` in `loop::schema`); registry tool
 /// parameters are in-repo or embedder-authored code, where a collision
 /// is a naming bug — do not name tool parameters after the envelope
-/// keys. Schemas without a top-level `properties` object (map-shaped
-/// outputs) cannot declare the keys, but the top-level names remain
-/// claimed: a data entry under a reserved name is stripped before
-/// validation.
+/// keys. Schemas without a top-level `properties` object or `oneOf`
+/// composition (map-shaped outputs) cannot declare the keys, but the
+/// top-level names remain claimed: a data entry under a reserved name is
+/// stripped before validation.
 pub fn wrap_schema_with_envelope(mut schema: serde_json::Value) -> serde_json::Value {
+    if let Some(variants) = schema
+        .as_object_mut()
+        .and_then(|m| m.get_mut("oneOf"))
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for variant in variants {
+            inject_envelope_fields(variant);
+        }
+        return schema;
+    }
+    inject_envelope_fields(&mut schema);
+    schema
+}
+
+/// Add the envelope properties to one object schema and require the
+/// description field. A schema without a `properties` object passes
+/// through untouched; a schema without a `required` array does not gain
+/// one (its author declared nothing required, and the envelope fields
+/// remain accepted via the injected properties).
+fn inject_envelope_fields(schema: &mut serde_json::Value) {
     let Some(props) = schema
         .as_object_mut()
         .and_then(|m| m.get_mut("properties"))
         .and_then(serde_json::Value::as_object_mut)
     else {
-        return schema;
+        return;
     };
 
     props.insert(
@@ -177,12 +214,10 @@ pub fn wrap_schema_with_envelope(mut schema: serde_json::Value) -> serde_json::V
             required.push(desc_key);
         }
     }
-
-    schema
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
     use serde_json::json;
@@ -247,5 +282,143 @@ mod tests {
         let schema = json!("not an object schema");
         let wrapped = wrap_schema_with_envelope(schema.clone());
         assert_eq!(wrapped, schema);
+    }
+
+    #[test]
+    fn split_coerces_non_string_description_to_json_rendering() {
+        let raw = json!({
+            "tool_use_description": { "intent": "read config" },
+            "path": "/etc/config.toml"
+        });
+        let split = split_envelope_fields(raw);
+        assert_eq!(
+            split.description.as_deref(),
+            Some(r#"{"intent":"read config"}"#),
+            "non-string description content must survive as its JSON rendering",
+        );
+        assert_eq!(split.tool_args, json!({"path": "/etc/config.toml"}));
+    }
+
+    #[test]
+    fn split_treats_null_description_as_absent() {
+        let raw = json!({ "tool_use_description": null, "path": "/foo" });
+        let split = split_envelope_fields(raw);
+        assert!(split.description.is_none());
+        assert_eq!(split.tool_args, json!({"path": "/foo"}));
+    }
+
+    /// Composite (root-`oneOf`) schemas get the envelope fields injected
+    /// into every variant, and each variant requires the description —
+    /// mirroring the flat-object behaviour.
+    #[test]
+    fn wrap_schema_injects_envelope_into_every_one_of_variant() {
+        let schema = json!({
+            "type": "object",
+            "oneOf": [
+                {
+                    "type": "object",
+                    "properties": {
+                        "action": { "const": "create" },
+                        "title": { "type": "string" }
+                    },
+                    "required": ["action", "title"],
+                    "additionalProperties": false
+                },
+                {
+                    "type": "object",
+                    "properties": {
+                        "action": { "const": "list" }
+                    },
+                    "required": ["action"],
+                    "additionalProperties": false
+                }
+            ]
+        });
+        let wrapped = wrap_schema_with_envelope(schema);
+        let variants = wrapped["oneOf"].as_array().expect("oneOf preserved");
+        assert_eq!(variants.len(), 2);
+        for variant in variants {
+            let props = variant["properties"].as_object().expect("props");
+            assert!(props.contains_key("tool_use_description"));
+            assert!(props.contains_key("tool_use_metadata"));
+            let required = variant["required"].as_array().expect("required");
+            assert!(required.contains(&json!("tool_use_description")));
+        }
+    }
+
+    /// The original defect: every variant of a composite schema declares
+    /// `additionalProperties: false`, so a call carrying the envelope
+    /// fields the model is *instructed* to send failed schema validation.
+    /// After wrapping, such a call must validate.
+    #[test]
+    fn wrapped_composite_variant_accepts_envelope_fields() {
+        let schema = json!({
+            "type": "object",
+            "oneOf": [{
+                "type": "object",
+                "properties": {
+                    "action": { "const": "list" }
+                },
+                "required": ["action"],
+                "additionalProperties": false
+            }]
+        });
+        let wrapped = wrap_schema_with_envelope(schema);
+        let validator = jsonschema::validator_for(&wrapped).expect("schema compiles");
+        let call = json!({
+            "action": "list",
+            "tool_use_description": "listing tasks",
+            "tool_use_metadata": { "task": "T-1" }
+        });
+        assert!(
+            validator.validate(&call).is_ok(),
+            "envelope fields must be permitted by every wrapped variant",
+        );
+    }
+
+    /// The real in-repo composite tools (`task`, `agents`) emit
+    /// root-`oneOf` schemas; wrapping must reach every one of their
+    /// variants instead of silently skipping the schema.
+    #[test]
+    fn real_composite_tool_schemas_are_wrapped_per_variant() {
+        use crate::tool::traits::Tool as _;
+        use crate::tools::agents::AgentsTool;
+        use crate::tools::task::TaskTool;
+
+        let composite_schemas = [
+            ("task", TaskTool::new().input_schema()),
+            ("agents", AgentsTool::new().input_schema()),
+        ];
+        for (name, schema) in composite_schemas {
+            let variant_count = schema["oneOf"]
+                .as_array()
+                .unwrap_or_else(|| panic!("{name} schema must be a root oneOf composite"))
+                .len();
+            assert!(variant_count > 0, "{name} composite has variants");
+
+            let wrapped = wrap_schema_with_envelope(schema);
+            let variants = wrapped["oneOf"].as_array().expect("oneOf preserved");
+            assert_eq!(variants.len(), variant_count);
+            for (i, variant) in variants.iter().enumerate() {
+                let props = variant["properties"]
+                    .as_object()
+                    .unwrap_or_else(|| panic!("{name} variant {i} has properties"));
+                assert!(
+                    props.contains_key("tool_use_description"),
+                    "{name} variant {i} missing envelope description",
+                );
+                assert!(
+                    props.contains_key("tool_use_metadata"),
+                    "{name} variant {i} missing envelope metadata",
+                );
+                let required = variant["required"]
+                    .as_array()
+                    .unwrap_or_else(|| panic!("{name} variant {i} has required"));
+                assert!(
+                    required.contains(&json!("tool_use_description")),
+                    "{name} variant {i} must require the description",
+                );
+            }
+        }
     }
 }

@@ -7,7 +7,7 @@
 //!
 //! Mutual exclusion for [`TaskStore::claim`] uses POSIX
 //! `O_CREAT|O_EXCL` lock files: a successful `create_new` open is the
-//! cross-process atomic primitive. A [`LockGuard`] RAII type cleans the
+//! cross-process atomic primitive. A `LockGuard` RAII type cleans the
 //! lock file up on every exit path, including early returns and panics.
 //!
 //! The store is filesystem-only — no database, no in-memory caching —

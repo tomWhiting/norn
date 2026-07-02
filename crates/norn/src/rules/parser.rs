@@ -8,10 +8,10 @@
 //! Two frontmatter formats are recognised, dispatched by key presence:
 //!
 //! - **Norn native** — frontmatter contains a `triggers:` key. Parsed via
-//!   [`parse_norn_format`]; supports all three trigger types and all three
+//!   `parse_norn_format`; supports all three trigger types and all three
 //!   delivery modes.
 //! - **Claude Code compatibility** — frontmatter contains `globs:` and/or
-//!   `paths:` (and no `triggers:`). Parsed via [`parse_claude_code_format`];
+//!   `paths:` (and no `triggers:`). Parsed via `parse_claude_code_format`;
 //!   each glob maps to one [`TriggerCondition::PathGlob`], delivery
 //!   defaults to [`DeliveryMode::SystemContextAppend`], timing defaults to
 //!   [`TriggerTiming::After`].
@@ -132,11 +132,13 @@ fn parse_claude_code_format(
     let mut triggers: Vec<TriggerCondition> = Vec::new();
     if let Some(globs) = raw.globs {
         for pattern in globs.into_vec() {
+            validate_glob(&pattern)?;
             triggers.push(TriggerCondition::PathGlob { pattern });
         }
     }
     if let Some(paths) = raw.paths {
         for pattern in paths.into_vec() {
+            validate_glob(&pattern)?;
             triggers.push(TriggerCondition::PathGlob { pattern });
         }
     }
@@ -209,11 +211,27 @@ impl StringOrArray {
     }
 }
 
+/// Reject glob patterns the `glob` crate cannot compile.
+///
+/// Without this check a typo'd pattern would parse cleanly and then fail
+/// compilation at every trigger evaluation — indistinguishable from
+/// "no match", leaving the rule permanently, silently inert.
+fn validate_glob(pattern: &str) -> Result<(), RulesError> {
+    glob::Pattern::new(pattern)
+        .map(|_| ())
+        .map_err(|e| RulesError::ParseFailed {
+            reason: format!("invalid glob pattern '{pattern}': {e}"),
+        })
+}
+
 fn convert_trigger(raw: RawTrigger) -> Result<TriggerCondition, RulesError> {
     match raw.trigger_type.as_str() {
-        "path_glob" => Ok(TriggerCondition::PathGlob {
-            pattern: raw.pattern,
-        }),
+        "path_glob" => {
+            validate_glob(&raw.pattern)?;
+            Ok(TriggerCondition::PathGlob {
+                pattern: raw.pattern,
+            })
+        }
         "bash_command" => Ok(TriggerCondition::BashCommand {
             pattern: raw.pattern,
         }),
@@ -550,5 +568,64 @@ Body.";
 
         let result = parse_rule_file(RuleId::from("empty"), content);
         assert!(result.is_err());
+    }
+
+    // -- Glob validation ---------------------------------------------------
+
+    /// A typo'd glob previously parsed cleanly and then failed
+    /// compilation at every event — permanently, silently inert. It is
+    /// now a typed parse error naming the bad pattern.
+    #[test]
+    fn parse_norn_invalid_glob_rejected_with_pattern_named() {
+        let content = r#"---
+triggers:
+  - type: path_glob
+    pattern: "src/[bad"
+delivery: message
+---
+Body."#;
+
+        let err = parse_rule_file(RuleId::from("bad-glob"), content).expect_err("must error");
+        match err {
+            RulesError::ParseFailed { reason } => {
+                assert!(
+                    reason.contains("src/[bad"),
+                    "must name the pattern: {reason}"
+                );
+                assert!(reason.contains("glob"), "must name the defect: {reason}");
+            }
+            other => panic!("expected ParseFailed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn parse_claude_code_invalid_glob_rejected_in_globs_and_paths() {
+        for content in [
+            "---\nglobs: \"***bad[\"\n---\nBody.",
+            "---\npaths: \"***bad[\"\n---\nBody.",
+        ] {
+            let err = parse_rule_file(RuleId::from("bad"), content).expect_err("must error");
+            match err {
+                RulesError::ParseFailed { reason } => {
+                    assert!(
+                        reason.contains("***bad["),
+                        "must name the pattern: {reason}"
+                    );
+                }
+                other => panic!("expected ParseFailed, got {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_valid_globs_still_accepted() {
+        let content = r#"---
+triggers:
+  - type: path_glob
+    pattern: "**/*.rs"
+delivery: message
+---
+Body."#;
+        parse_rule_file(RuleId::from("good"), content).expect("valid glob parses");
     }
 }

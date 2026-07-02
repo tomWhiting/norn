@@ -2,12 +2,12 @@
 //!
 //! Splits the streaming protocol surface across two files:
 //!
-//! * `sse.rs` (this file) — the raw byte-stream parser
-//!   ([`parse_sse_bytes`], [`SseParser`]) and the SSE-to-`ProviderEvent`
-//!   dispatcher ([`map_sse_event`]). All control flow lives here.
-//! * [`super::sse_types`] — typed deserialization targets for
+//! * `sse.rs` (this file) — the raw byte-stream parser ([`SseParser`])
+//!   and the SSE-to-`ProviderEvent` dispatcher ([`map_sse_event`]). All
+//!   control flow lives here.
+//! * `super::sse_types` — typed deserialization targets for
 //!   `output_item.done` / `response.failed` / `response.incomplete`
-//!   payloads, plus the [`classify_failed_error`] error-code classifier
+//!   payloads, plus the `classify_failed_error` error-code classifier
 //!   and the `Retry-After` regex parser.
 //!
 //! The split keeps this file under the project's 500-LOC-per-file
@@ -21,6 +21,7 @@ use super::sse_types::{
 };
 use crate::error::ProviderError;
 use crate::provider::events::{ProviderEvent, StopReason};
+use crate::provider::reasoning::ReasoningItem;
 use crate::provider::request::ToolCallKind;
 use crate::provider::usage::Usage;
 
@@ -33,56 +34,17 @@ pub struct SseEvent {
     pub data: serde_json::Value,
 }
 
-/// Parses a raw SSE byte stream into a sequence of `SseEvent` values.
+/// Parses a complete SSE transcript into a sequence of `SseEvent` values.
 ///
-/// SSE frames are delimited by double newlines. Each frame contains
-/// `event:` and `data:` lines. Comment lines (starting with `:`) and
-/// empty data lines are skipped.
-pub fn parse_sse_bytes(raw: &str) -> Vec<SseEvent> {
-    let mut events = Vec::new();
-    let mut current_event_type = String::new();
-    let mut current_data = String::new();
-
-    for line in raw.lines() {
-        if line.starts_with(':') {
-            continue;
-        }
-
-        if let Some(event_value) = line
-            .strip_prefix("event: ")
-            .or_else(|| line.strip_prefix("event:"))
-        {
-            current_event_type = event_value.trim().to_string();
-        } else if let Some(data_value) = line
-            .strip_prefix("data: ")
-            .or_else(|| line.strip_prefix("data:"))
-        {
-            current_data = data_value.to_string();
-        } else if line.is_empty() {
-            if !current_event_type.is_empty()
-                && !current_data.is_empty()
-                && let Ok(data) = serde_json::from_str::<serde_json::Value>(&current_data)
-            {
-                events.push(SseEvent {
-                    event_type: current_event_type.clone(),
-                    data,
-                });
-            }
-            current_event_type.clear();
-            current_data.clear();
-        }
-    }
-
-    if !current_event_type.is_empty()
-        && !current_data.is_empty()
-        && let Ok(data) = serde_json::from_str::<serde_json::Value>(&current_data)
-    {
-        events.push(SseEvent {
-            event_type: current_event_type,
-            data,
-        });
-    }
-
+/// Test-support convenience over [`SseParser`] (a single `feed` followed by
+/// the tail [`SseParser::finish`] flush) — the production streaming path
+/// never has the whole transcript in hand, so this exists only for tests
+/// that replay recorded transcripts through the real parser.
+#[cfg(test)]
+pub(crate) fn parse_sse_bytes(raw: &str) -> Vec<SseEvent> {
+    let mut parser = SseParser::new();
+    let mut events = parser.feed(raw.as_bytes());
+    events.extend(parser.finish());
     events
 }
 
@@ -96,7 +58,7 @@ pub fn parse_sse_bytes(raw: &str) -> Vec<SseEvent> {
 ///
 /// After the underlying byte stream completes, callers SHOULD invoke
 /// [`SseParser::finish`] to flush any trailing frame that lacks a terminating
-/// blank line, mirroring the tail-flush behaviour of [`parse_sse_bytes`].
+/// blank line.
 ///
 /// The parser holds a byte buffer (`Vec<u8>`) rather than a `String` so that
 /// multi-byte UTF-8 codepoints split across chunks are preserved. Newline
@@ -145,8 +107,7 @@ impl SseParser {
     ///
     /// Callers MUST invoke this once the underlying byte stream has ended
     /// (otherwise a final frame that lacks a terminating blank line will be
-    /// lost). Mirrors the tail-flush behaviour at the end of
-    /// [`parse_sse_bytes`].
+    /// lost).
     pub fn finish(&mut self) -> Vec<SseEvent> {
         let mut events = Vec::new();
         if !self.buffer.is_empty() {
@@ -159,16 +120,7 @@ impl SseParser {
             let line = String::from_utf8_lossy(trimmed).into_owned();
             self.process_line(&line, &mut events);
         }
-        if !self.current_data.is_empty()
-            && let Ok(data) = serde_json::from_str::<serde_json::Value>(&self.current_data)
-        {
-            events.push(SseEvent {
-                event_type: std::mem::take(&mut self.current_event_type),
-                data,
-            });
-        }
-        self.current_event_type.clear();
-        self.current_data.clear();
+        self.dispatch_frame(&mut events);
         events
     }
 
@@ -186,19 +138,55 @@ impl SseParser {
             .strip_prefix("data: ")
             .or_else(|| line.strip_prefix("data:"))
         {
-            self.current_data = data_value.to_string();
+            // Per the SSE specification, successive `data:` lines within one
+            // frame accumulate joined by a newline; replacing would silently
+            // truncate multi-line payloads to their final line.
+            if !self.current_data.is_empty() {
+                self.current_data.push('\n');
+            }
+            self.current_data.push_str(data_value);
         } else if line.is_empty() {
-            if !self.current_data.is_empty()
-                && let Ok(data) = serde_json::from_str::<serde_json::Value>(&self.current_data)
-            {
-                events.push(SseEvent {
+            self.dispatch_frame(events);
+        }
+    }
+
+    /// Emits the buffered frame if its data parses as JSON, then resets
+    /// frame state.
+    ///
+    /// Frames whose data is not valid JSON are dropped by design — the
+    /// Chat Completions `[DONE]` sentinel is exactly such a frame and
+    /// marks a normal end of stream — but never silently: the sentinel is
+    /// logged at debug level and anything else (a corrupt or truncated
+    /// payload) at warn, with the event type and a bounded snippet so the
+    /// wire fault is diagnosable.
+    fn dispatch_frame(&mut self, events: &mut Vec<SseEvent>) {
+        if !self.current_data.is_empty() {
+            match serde_json::from_str::<serde_json::Value>(&self.current_data) {
+                Ok(data) => events.push(SseEvent {
                     event_type: self.current_event_type.clone(),
                     data,
-                });
+                }),
+                Err(parse_err) => {
+                    if self.current_data == "[DONE]" {
+                        tracing::debug!(
+                            event_type = self.current_event_type.as_str(),
+                            "dropping SSE [DONE] sentinel frame"
+                        );
+                    } else {
+                        let snippet: String = self.current_data.chars().take(256).collect();
+                        tracing::warn!(
+                            event_type = self.current_event_type.as_str(),
+                            data_len = self.current_data.len(),
+                            data_snippet = snippet.as_str(),
+                            error = %parse_err,
+                            "dropping SSE frame with unparseable JSON data"
+                        );
+                    }
+                }
             }
-            self.current_event_type.clear();
-            self.current_data.clear();
         }
+        self.current_event_type.clear();
+        self.current_data.clear();
     }
 }
 
@@ -331,6 +319,30 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
                         }
                     }
                 }
+                "reasoning" => {
+                    // The full structured item — summary parts, optional
+                    // content parts, and (when the request asked for it)
+                    // `encrypted_content` — is captured so assembly can
+                    // attach it to the assistant message and the request
+                    // serializer can replay it on stateless backends. A
+                    // malformed item is dropped with a warning: the display
+                    // text already flowed through the
+                    // `reasoning_*_text.delta` events, so nothing
+                    // user-visible is lost, and fabricating a partial item
+                    // would corrupt replay.
+                    match ReasoningItem::deserialize(item) {
+                        Ok(reasoning_item) => Some(Ok(ProviderEvent::ReasoningItemDone {
+                            item: reasoning_item,
+                        })),
+                        Err(err) => {
+                            tracing::warn!(
+                                error = %err,
+                                "reasoning output_item.done failed to deserialize, skipping",
+                            );
+                            None
+                        }
+                    }
+                }
                 "compaction" | "compaction_summary" | "context_compaction" => {
                     Some(Ok(ProviderEvent::Compaction {
                         item_type: item_type.to_string(),
@@ -367,6 +379,7 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
                 Some(detail) => classify_failed_error(&detail),
                 None => ProviderError::StreamError {
                     reason: "response.failed".to_string(),
+                    transient: None,
                 },
             };
             Some(Err(err))
@@ -532,6 +545,8 @@ mod tests {
     use std::time::Duration;
 
     use super::*;
+    use crate::error::TransientKind;
+    use crate::provider::reasoning::{ReasoningContentPart, ReasoningSummaryPart};
 
     #[test]
     fn parse_multi_frame_sse() {
@@ -708,6 +723,75 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
+    fn output_item_done_reasoning_captures_full_item() {
+        // Encrypted-reasoning seam: a `reasoning` output_item.done carries
+        // the structured item — id, summary parts, content parts, and the
+        // encrypted_content blob — through to a ReasoningItemDone event so
+        // assembly can attach it to the assistant message for stateless
+        // replay.
+        let done = SseEvent {
+            event_type: "response.output_item.done".to_string(),
+            data: serde_json::json!({
+                "item": {
+                    "type": "reasoning",
+                    "id": "rs_abc",
+                    "summary": [{"type": "summary_text", "text": "I considered the options"}],
+                    "content": [{"type": "reasoning_text", "text": "raw chain of thought"}],
+                    "encrypted_content": "gAAAAB-opaque-blob",
+                }
+            }),
+        };
+        match map_sse_event(&done) {
+            Some(Ok(ProviderEvent::ReasoningItemDone { item })) => {
+                assert_eq!(item.id, "rs_abc");
+                assert_eq!(
+                    item.summary,
+                    vec![ReasoningSummaryPart::SummaryText {
+                        text: "I considered the options".to_owned(),
+                    }],
+                );
+                assert_eq!(
+                    item.content,
+                    Some(vec![ReasoningContentPart::ReasoningText {
+                        text: "raw chain of thought".to_owned(),
+                    }]),
+                );
+                assert_eq!(
+                    item.encrypted_content.as_deref(),
+                    Some("gAAAAB-opaque-blob"),
+                );
+            }
+            other => panic!("expected ReasoningItemDone, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn output_item_done_reasoning_without_encrypted_content_still_captured() {
+        // store: true requests receive reasoning items without
+        // encrypted_content — they are still captured (for observability
+        // and assembly); the request serializer decides not to replay them.
+        let done = SseEvent {
+            event_type: "response.output_item.done".to_string(),
+            data: serde_json::json!({
+                "item": {
+                    "type": "reasoning",
+                    "id": "rs_plain",
+                    "summary": [],
+                }
+            }),
+        };
+        match map_sse_event(&done) {
+            Some(Ok(ProviderEvent::ReasoningItemDone { item })) => {
+                assert_eq!(item.id, "rs_plain");
+                assert!(item.summary.is_empty());
+                assert!(item.content.is_none());
+                assert!(item.encrypted_content.is_none());
+            }
+            other => panic!("expected ReasoningItemDone, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn output_item_done_compaction_emits_opaque_event() {
         let done = SseEvent {
             event_type: "response.output_item.done".to_string(),
@@ -865,13 +949,14 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     #[test]
     fn failed_event_mapping() {
         // #20: existing test updated to the correctly nested structure. With
-        // no error code the classifier degrades to StreamError carrying the
-        // message — proving the message is read from `response.error`, not the
-        // top level.
+        // no error code the classifier degrades to a terminal StreamError
+        // carrying the message — proving the message is read from
+        // `response.error`, not the top level.
         let event = failed_event(None, Some("rate limit exceeded"));
         match map_sse_event(&event) {
-            Some(Err(ProviderError::StreamError { reason })) => {
+            Some(Err(ProviderError::StreamError { reason, transient })) => {
                 assert_eq!(reason, "rate limit exceeded");
+                assert_eq!(transient, None);
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
@@ -880,13 +965,13 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     #[test]
     fn failed_reads_code_and_message_from_nested_response() {
         // #1: both code and message are extracted from the nested location.
-        // `server_is_overloaded` now gets the retry-eligible HTTP 503 prefix
-        // (see F1+F2 in the work-order pack), so the assertion verifies both
-        // the prefix and the original message body survive.
+        // `server_is_overloaded` carries the retry-eligible structured
+        // 503 server-error kind and the provider's message verbatim.
         let event = failed_event(Some("server_is_overloaded"), Some("overloaded; retry"));
         match map_sse_event(&event) {
-            Some(Err(ProviderError::StreamError { reason })) => {
-                assert_eq!(reason, "HTTP 503: overloaded; retry");
+            Some(Err(ProviderError::StreamError { reason, transient })) => {
+                assert_eq!(reason, "overloaded; retry");
+                assert_eq!(transient, Some(TransientKind::ServerError { status: 503 }));
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
@@ -952,14 +1037,21 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn failed_server_overloaded_encoded_as_http_503_for_retry() {
-        // #7: server_is_overloaded is transient back-pressure. It must surface
-        // with an `HTTP 503:` prefix so the loop-level retry classifier
-        // recognises it as `RetryableError::ServerError`.
+    fn failed_server_overloaded_is_structurally_retryable_server_error() {
+        // #7: server_is_overloaded is transient back-pressure. It must carry
+        // the structured 503 server-error kind so the public taxonomy (and
+        // the loop-level retry policy derived from it) classifies it as a
+        // retryable `RetryableError::ServerError`.
         let event = failed_event(Some("server_is_overloaded"), Some("busy"));
         match map_sse_event(&event) {
-            Some(Err(ProviderError::StreamError { reason })) => {
-                assert_eq!(reason, "HTTP 503: busy");
+            Some(Err(err @ ProviderError::StreamError { .. })) => {
+                assert_eq!(
+                    err.class(),
+                    crate::error::ErrorClass::Retryable {
+                        kind: TransientKind::ServerError { status: 503 },
+                    },
+                );
+                assert!(err.to_string().contains("busy"));
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
@@ -967,24 +1059,27 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
 
     #[test]
     fn failed_server_overloaded_empty_message_uses_fallback() {
-        // Missing/blank message still produces the retry-eligible prefix.
+        // Missing/blank message still yields a descriptive reason and the
+        // retry-eligible structured kind.
         let event = failed_event(Some("server_is_overloaded"), None);
         match map_sse_event(&event) {
-            Some(Err(ProviderError::StreamError { reason })) => {
-                assert_eq!(reason, "HTTP 503: server is overloaded");
+            Some(Err(ProviderError::StreamError { reason, transient })) => {
+                assert_eq!(reason, "server is overloaded");
+                assert_eq!(transient, Some(TransientKind::ServerError { status: 503 }));
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
     }
 
     #[test]
-    fn failed_slow_down_encoded_as_http_503_for_retry() {
-        // #7b: slow_down is also transient back-pressure. Same encoding so the
-        // retry classifier picks it up identically.
+    fn failed_slow_down_is_structurally_retryable_server_error() {
+        // #7b: slow_down is also transient back-pressure — same structured
+        // classification so the retry policy picks it up identically.
         let event = failed_event(Some("slow_down"), Some("rate"));
         match map_sse_event(&event) {
-            Some(Err(ProviderError::StreamError { reason })) => {
-                assert_eq!(reason, "HTTP 503: rate");
+            Some(Err(ProviderError::StreamError { reason, transient })) => {
+                assert_eq!(reason, "rate");
+                assert_eq!(transient, Some(TransientKind::ServerError { status: 503 }));
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
@@ -994,21 +1089,23 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     fn failed_slow_down_empty_message_uses_fallback() {
         let event = failed_event(Some("slow_down"), None);
         match map_sse_event(&event) {
-            Some(Err(ProviderError::StreamError { reason })) => {
-                assert_eq!(reason, "HTTP 503: slow down");
+            Some(Err(ProviderError::StreamError { reason, transient })) => {
+                assert_eq!(reason, "slow down");
+                assert_eq!(transient, Some(TransientKind::ServerError { status: 503 }));
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
     }
 
     #[test]
-    fn failed_unknown_code_preserves_message() {
-        // #8: unknown codes do NOT get the HTTP 503 prefix — opting an unknown
-        // error into automatic retry would silently amplify novel failure modes.
+    fn failed_unknown_code_preserves_message_and_stays_terminal() {
+        // #8: unknown codes never set `transient` — opting an unknown error
+        // into automatic retry would silently amplify novel failure modes.
         let event = failed_event(Some("some_future_error"), Some("weird failure"));
         match map_sse_event(&event) {
-            Some(Err(ProviderError::StreamError { reason })) => {
-                assert_eq!(reason, "weird failure");
+            Some(Err(err @ ProviderError::StreamError { .. })) => {
+                assert!(err.to_string().contains("weird failure"));
+                assert!(!err.is_retryable(), "unknown codes must stay terminal");
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
@@ -1129,8 +1226,9 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     #[test]
     fn failed_malformed_payload_falls_back_without_panic() {
         // #10: a payload that does not match the expected shape degrades to a
-        // generic stream error rather than panicking or yielding an empty
-        // string. Exercise both a wrong-typed payload and a missing nesting.
+        // terminal generic stream error rather than panicking or yielding an
+        // empty string. Exercise both a wrong-typed payload and a missing
+        // nesting.
         for data in [
             serde_json::json!("just a string"),
             serde_json::json!({"unexpected": true}),
@@ -1141,8 +1239,9 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 data,
             };
             match map_sse_event(&event) {
-                Some(Err(ProviderError::StreamError { reason })) => {
+                Some(Err(ProviderError::StreamError { reason, transient })) => {
                     assert_eq!(reason, "response.failed");
+                    assert_eq!(transient, None);
                 }
                 other => panic!("expected generic StreamError fallback, got {other:?}"),
             }
@@ -1282,6 +1381,134 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         let mut parser = SseParser::new();
         let events = parser.feed(b"");
         assert!(events.is_empty());
+    }
+
+    /// Regression test (final-state hardening, T1 item 8): per the SSE
+    /// specification, successive `data:` lines within a frame concatenate
+    /// joined by `\n`. The previous implementation replaced the buffer, so
+    /// a multi-line payload was silently truncated to its final line.
+    #[test]
+    fn successive_data_lines_concatenate_with_newline() {
+        let mut parser = SseParser::new();
+        let events = parser.feed(b"event: e\ndata: {\ndata: \"a\": 1}\n\n");
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].event_type, "e");
+        assert_eq!(
+            events[0].data,
+            serde_json::json!({"a": 1}),
+            "the two data lines must be joined by a newline and parsed as one payload"
+        );
+    }
+
+    /// The tail-flush path must apply the same concatenation rule.
+    #[test]
+    fn successive_data_lines_concatenate_across_finish() {
+        let mut parser = SseParser::new();
+        let events = parser.feed(b"event: e\ndata: {\ndata: \"b\": 2}\n");
+        assert!(events.is_empty());
+        let tail = parser.finish();
+        assert_eq!(tail.len(), 1);
+        assert_eq!(tail[0].data, serde_json::json!({"b": 2}));
+    }
+
+    /// Regression test (final-state hardening, T1 item 8): a frame whose
+    /// data fails JSON parsing is dropped (load-bearing for the
+    /// Chat Completions `[DONE]` sentinel) but the parser recovers and the
+    /// surrounding frames still parse — corruption never poisons the
+    /// stream.
+    #[test]
+    fn corrupt_frame_dropped_without_poisoning_subsequent_frames() {
+        let mut parser = SseParser::new();
+        let events = parser.feed(
+            b"event: a\ndata: {\"ok\": 1}\n\n\
+              event: corrupt\ndata: {\"truncated\": \n\n\
+              event: b\ndata: {\"ok\": 2}\n\n",
+        );
+        assert_eq!(events.len(), 2, "corrupt frame must be dropped: {events:?}");
+        assert_eq!(events[0].event_type, "a");
+        assert_eq!(events[1].event_type, "b");
+    }
+
+    #[test]
+    fn done_sentinel_frame_is_dropped() {
+        let mut parser = SseParser::new();
+        let events = parser.feed(b"data: [DONE]\n\n");
+        assert!(events.is_empty(), "[DONE] must not surface as an event");
+    }
+
+    #[test]
+    fn corrupt_trailing_frame_dropped_on_finish() {
+        let mut parser = SseParser::new();
+        let events = parser.feed(b"event: tail\ndata: {\"broken\":");
+        assert!(events.is_empty());
+        assert!(parser.finish().is_empty());
+    }
+
+    /// Pins the drop-logging contract: corrupt frames warn (they are wire
+    /// faults an operator must be able to diagnose), while the expected
+    /// `[DONE]` sentinel only logs at debug.
+    #[test]
+    fn frame_drops_log_warn_for_corruption_and_debug_for_done_sentinel() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for SharedBuf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("buffer lock").write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for SharedBuf {
+            type Writer = SharedBuf;
+            fn make_writer(&'writer self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = SharedBuf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::TRACE)
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+
+        tracing::subscriber::with_default(subscriber, || {
+            let mut parser = SseParser::new();
+            let _done = parser.feed(b"data: [DONE]\n\n");
+            let _corrupt = parser.feed(b"event: broken\ndata: {\"x\": \n\n");
+        });
+
+        let output = String::from_utf8(buf.0.lock().expect("buffer lock").clone())
+            .expect("log output is UTF-8");
+        assert!(
+            output.contains("dropping SSE [DONE] sentinel frame"),
+            "expected the [DONE] debug line, got: {output}"
+        );
+        assert!(
+            output.contains("dropping SSE frame with unparseable JSON data"),
+            "expected the corrupt-frame warn line, got: {output}"
+        );
+        let done_line = output
+            .lines()
+            .find(|line| line.contains("[DONE] sentinel"))
+            .expect("[DONE] line present");
+        assert!(
+            done_line.contains("DEBUG"),
+            "the [DONE] sentinel must log at debug, not warn: {done_line}"
+        );
+        let corrupt_line = output
+            .lines()
+            .find(|line| line.contains("unparseable JSON data"))
+            .expect("corrupt-frame line present");
+        assert!(
+            corrupt_line.contains("WARN"),
+            "corrupt frames must log at warn: {corrupt_line}"
+        );
     }
 
     #[test]

@@ -5,8 +5,9 @@
 //! The fork lifecycle (registry reservation, [`tokio::spawn`], status watch
 //! channel, status notification, [`SessionEvent::ForkComplete`] append) lives
 //! on [`crate::tools::agent::fork_tool::ForkTool`]. This module owns the
-//! reusable data types — [`ContextFilter`], [`ForkConfig`], [`ForkAudit`],
-//! [`ForkRequirement`] — together with the pure helpers the tool composes:
+//! reusable data types — [`ContextFilter`], [`ForkRequirement`],
+//! [`ParentSystemInstruction`] — together with the pure helpers the tool
+//! composes:
 //!
 //! - [`build_fork_output_schema`] derives the child's structured-output JSON
 //!   schema from an optional task list (R7).
@@ -131,7 +132,7 @@ pub struct ForkRequirement {
 /// Verbatim preamble prepended to the child's base system instruction.
 ///
 /// Kept as a `pub const` so tests can assert byte-for-byte that the child's
-/// [`LoopContext::base_system_instruction`](crate::r#loop::loop_context::LoopContext::base_system_instruction)
+/// [`LoopContext::base_system_instruction`](crate::agent_loop::loop_context::LoopContext::base_system_instruction)
 /// carries it (R5 acceptance).
 pub const FORK_SYSTEM_PREAMBLE: &str = "You are a fork of the parent agent's session, split at this point in time. Complete the requirements in the task and return your structured output. Stay focused on the assigned task — do not pursue work outside the requirements.";
 

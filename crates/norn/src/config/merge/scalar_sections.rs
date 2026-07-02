@@ -1,14 +1,14 @@
 //! Sub-struct sections merged field-by-field with scalar precedence:
 //! provider, agent, retry, session, and tools (including the deep-merged
-//! `tools.write` block).
+//! `tools.write` and `tools.skill` blocks).
 //!
 //! Each merger returns [`None`] only when every layer is [`None`]; when
 //! any layer contributes, the result is `Some(merged_sub)` with each inner
 //! [`Option`] field resolved by [`pick_scalar`].
 
 use crate::config::types::{
-    AgentSettings, ProviderSettings, RetrySettings, SessionSettings, ToolSettings,
-    WriteToolSettings,
+    AgentSettings, ProviderSettings, RetrySettings, SessionSettings, SkillToolSettings,
+    ToolSettings, WriteToolSettings,
 };
 
 use super::primitives::pick_scalar;
@@ -254,8 +254,9 @@ pub(super) fn merge_session(
     })
 }
 
-/// Merge the `tools` section: `write` deep-merges field-by-field while the
-/// opaque `bash` / `edit` values follow scalar precedence.
+/// Merge the `tools` section: `write` and `skill` deep-merge
+/// field-by-field while the opaque `bash` / `edit` values follow scalar
+/// precedence.
 pub(super) fn merge_tools(
     usr: &mut Option<ToolSettings>,
     prj: &mut Option<ToolSettings>,
@@ -275,6 +276,12 @@ pub(super) fn merge_tools(
             &mut prj.write,
             &mut lcl.write,
             &mut ovr.write,
+        ),
+        skill: merge_skill(
+            &mut usr.skill,
+            &mut prj.skill,
+            &mut lcl.skill,
+            &mut ovr.skill,
         ),
         // Opaque values: scalar precedence (highest-non-None wins). The
         // schema for `bash`/`edit` is not yet stable, so we do not attempt
@@ -313,6 +320,32 @@ fn merge_write(
             &mut prj.length_overrides,
             &mut lcl.length_overrides,
             &mut ovr.length_overrides,
+        ),
+    })
+}
+
+/// Deep-merge the `tools.skill` block field-by-field across the four
+/// layers, mirroring [`merge_write`]: a layer that omits
+/// `shell_execution` inherits it from the lower-precedence layer.
+fn merge_skill(
+    usr: &mut Option<SkillToolSettings>,
+    prj: &mut Option<SkillToolSettings>,
+    lcl: &mut Option<SkillToolSettings>,
+    ovr: &mut Option<SkillToolSettings>,
+) -> Option<SkillToolSettings> {
+    if usr.is_none() && prj.is_none() && lcl.is_none() && ovr.is_none() {
+        return None;
+    }
+    let mut usr = usr.take().unwrap_or_default();
+    let mut prj = prj.take().unwrap_or_default();
+    let mut lcl = lcl.take().unwrap_or_default();
+    let mut ovr = ovr.take().unwrap_or_default();
+    Some(SkillToolSettings {
+        shell_execution: pick_scalar(
+            &mut usr.shell_execution,
+            &mut prj.shell_execution,
+            &mut lcl.shell_execution,
+            &mut ovr.shell_execution,
         ),
     })
 }

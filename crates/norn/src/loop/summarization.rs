@@ -165,6 +165,7 @@ fn text_message(role: MessageRole, content: String) -> Message {
         role,
         content: Some(content),
         thinking: String::new(),
+        reasoning: Vec::new(),
         tool_calls: Vec::new(),
         tool_call_id: None,
         tool_name: None,

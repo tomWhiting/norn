@@ -219,7 +219,10 @@ async fn run_turn(
     let tools = runtime.tools.clone();
 
     runtime.loop_context.clear_dynamic_sections();
-    runtime.loop_context.evaluate_prompt_commands().await;
+    runtime
+        .loop_context
+        .evaluate_prompt_commands(agent_config.prompt_command_timeout)
+        .await;
 
     let mut seed = seed;
     let mut tick = tokio::time::interval(RENDER_TICK);
@@ -355,6 +358,11 @@ async fn run_turn(
     if cancel_requested {
         norn::agent_loop::ensure_tool_results_complete(runtime.store.as_ref()).await;
     }
+    // Checkpoint before the final render pass: every event of the turn is
+    // already appended, and the off-executor await cannot run inside the
+    // synchronous scroll-region closure below. A failure message is
+    // carried into the closure and written in the error style there.
+    let checkpoint_failure = checkpoint_session(&runtime.store).await;
     with_scroll_region_cursor(guard, |guard| {
         finish_thinking_block(state, guard, &mut renderer)?;
         flush_pending(state, guard, &mut renderer)?;
@@ -365,8 +373,8 @@ async fn run_turn(
             state.complete_at = None;
             state.sync_indicator_into_panel();
         }
-        if let Some(message) = checkpoint_session(runtime.store.as_ref()) {
-            write_error_line(state, guard, &message)?;
+        if let Some(message) = &checkpoint_failure {
+            write_error_line(state, guard, message)?;
         }
         Ok(())
     })?;
@@ -455,6 +463,8 @@ fn agent_event_needs_panel_redraw(state: &AppState, agent_ev: &AgentEvent) -> bo
         AgentEventKind::Subagent(_)
         | AgentEventKind::Message(_)
         | AgentEventKind::UsageEstimate(_) => true,
+        // Consumed as a deliberate no-op in `handle_agent_event`.
+        AgentEventKind::StreamRetry(_) => false,
     }
 }
 

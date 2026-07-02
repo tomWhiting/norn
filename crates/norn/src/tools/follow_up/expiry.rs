@@ -1,7 +1,7 @@
 //! Expiry evaluation for follow-up actions.
 //!
 //! A registered follow-up carries an
-//! [`ExpiryCondition`](crate::tool::follow_up::ExpiryCondition) that
+//! [`ExpiryCondition`] that
 //! invalidates it once the world it was registered against has moved on. The
 //! `follow_up` tool checks expiry at execution time — never on a timer — so a
 //! deferred action that referenced a file's prior contents (or a turn that has

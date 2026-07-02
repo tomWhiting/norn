@@ -31,7 +31,7 @@ use std::time::Duration;
 use regex::Regex;
 use serde::Deserialize;
 
-use crate::error::ProviderError;
+use crate::error::{ProviderError, TransientKind};
 use crate::provider::events::StopReason;
 
 /// Typed deserialization target for the `item` payload of a
@@ -115,13 +115,15 @@ pub(super) struct IncompleteDetail {
 /// `reference/codex-rs/sse-responses.rs:346-391`). The three terminal client
 /// faults — context window, quota, and invalid request — map to dedicated
 /// non-retryable variants. `server_is_overloaded` and `slow_down` are
-/// transient server-side back-pressure: they encode as
-/// `StreamError { reason: "HTTP 503: <message>" }` so the loop-level retry
-/// classifier in [`crate::r#loop::retry`] picks them up as
-/// [`RetryableError::ServerError`](crate::r#loop::retry::RetryableError::ServerError)
-/// and retries with exponential backoff. Any unrecognized code degrades to a
-/// generic [`ProviderError::StreamError`] without the `HTTP 5xx` prefix —
-/// unknown failure modes do not opt in to automatic retry.
+/// transient server-side back-pressure: they carry an explicit
+/// `transient: Some(ServerError { status: 503 })` (the HTTP-equivalent
+/// condition — the SSE frame itself carries no status) so the public
+/// taxonomy classifies them retryable and the loop-level retry policy in
+/// [`crate::agent_loop::retry`] matches them as
+/// [`RetryableError::ServerError`](crate::agent_loop::retry::RetryableError::ServerError)
+/// with exponential backoff. Any unrecognized code degrades to a terminal
+/// [`ProviderError::StreamError`] (`transient: None`) — unknown failure
+/// modes do not opt in to automatic retry.
 pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
     match detail.code.as_deref().unwrap_or_default() {
         "rate_limit_exceeded" => ProviderError::RateLimited {
@@ -138,28 +140,22 @@ pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
                 "This request has been flagged for possible cybersecurity risk.",
             ),
         },
-        // Transient server-side back-pressure. Encoded with an `HTTP 503:`
-        // prefix so `classify_provider_error` in the loop's retry module
-        // matches them as `RetryableError::ServerError` and the policy's
-        // exponential backoff kicks in.
+        // Transient server-side back-pressure: retryable with the
+        // HTTP-equivalent 503 server-error kind, set structurally.
         "server_is_overloaded" => ProviderError::StreamError {
-            reason: format!(
-                "HTTP 503: {}",
-                message_or(detail.message.as_deref(), "server is overloaded"),
-            ),
+            reason: message_or(detail.message.as_deref(), "server is overloaded"),
+            transient: Some(TransientKind::ServerError { status: 503 }),
         },
         "slow_down" => ProviderError::StreamError {
-            reason: format!(
-                "HTTP 503: {}",
-                message_or(detail.message.as_deref(), "slow down"),
-            ),
+            reason: message_or(detail.message.as_deref(), "slow down"),
+            transient: Some(TransientKind::ServerError { status: 503 }),
         },
-        // Any unknown code surfaces as a stream error carrying the provider's
-        // message verbatim. No `HTTP 5xx` prefix is added — opting an unknown
-        // error into automatic retry would silently amplify novel failure
-        // modes.
+        // Any unknown code surfaces as a terminal stream error carrying the
+        // provider's message verbatim — opting an unknown error into
+        // automatic retry would silently amplify novel failure modes.
         _ => ProviderError::StreamError {
             reason: message_or(detail.message.as_deref(), "response.failed"),
+            transient: None,
         },
     }
 }
@@ -266,13 +262,16 @@ mod tests {
     }
 
     #[test]
-    fn classify_unknown_code_does_not_get_http_prefix() {
+    fn classify_unknown_code_stays_terminal() {
         let detail = ApiErrorDetail {
             code: Some("future_error".to_string()),
             message: Some("weird".to_string()),
         };
         match classify_failed_error(&detail) {
-            ProviderError::StreamError { reason } => assert_eq!(reason, "weird"),
+            ProviderError::StreamError { reason, transient } => {
+                assert_eq!(reason, "weird");
+                assert_eq!(transient, None, "unknown codes must not opt into retry");
+            }
             other => panic!("expected StreamError, got {other:?}"),
         }
     }

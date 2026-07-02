@@ -1,8 +1,8 @@
-//! The Norn side of the driven-mode `intervene/*` control channel (NOI-2).
+//! The Norn side of the driven-mode `intervene/*` control channel.
 //!
-//! This is the single §3.4 adapter point where the neutral intervention
-//! primitives the JSON-RPC transport parses ([`super::jsonrpc`]) are mapped
-//! onto Norn's native control channel:
+//! This is the single adapter point (`DRIVEN-PROTOCOL.md` "Interventions")
+//! where the neutral intervention primitives the JSON-RPC transport parses
+//! ([`super::jsonrpc`]) are mapped onto Norn's native control channel:
 //!
 //! - `intervene/injectMessage` → a [`ChannelMessage`] delivered to the root
 //!   agent through the harness [`MessageRouter`] — `Interrupt` priority as a
@@ -18,7 +18,8 @@
 //!   `AgentStepResult::Cancelled`.
 //!
 //! Nothing above this file (the transport, the wire, a future server) names
-//! a Norn type: `jsonrpc.rs` calls the neutral [`InterventionHandler`] trait
+//! a Norn type: the [`super::jsonrpc`] transport calls the neutral
+//! [`InterventionHandler`] trait
 //! and this struct is the Norn implementation of it.
 
 use std::sync::Arc;

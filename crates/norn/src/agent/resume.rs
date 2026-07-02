@@ -3,7 +3,8 @@
 //! The `action_log` tool documents a session-lifetime contract: every tool
 //! call of the session is queryable at Level 1 (and Level 2/3 where data
 //! exists). When an [`AgentBuilder`](crate::agent::builder::AgentBuilder)
-//! resumes a prior session from an [`EventStore`], the in-memory
+//! resumes a prior session from an
+//! [`EventStore`](crate::session::store::EventStore), the in-memory
 //! [`ActionLog`] (and its derived
 //! [`MutationLedger`](crate::session::mutation_ledger::MutationLedger))
 //! start empty — [`rebuild_action_log`] replays the persisted events to
@@ -42,71 +43,91 @@ const BLOCKED_BY_HOOK_PREFIX: &str = "blocked by hook";
 /// `Outcome::Blocked` (see `loop/tool_dispatch/gating.rs::prepare_tool_call`).
 const BLOCKED_BY_PERMISSIONS_PREFIX: &str = "blocked by permissions";
 
-/// Replay `events` into `action_log`, restoring Level 1/2 entries and the
-/// mutation ledger for every persisted tool call of the resumed session.
+/// Replay `events` into `action_log` in a **single traversal**,
+/// restoring Level 1/2 entries and the mutation ledger for every
+/// persisted tool call of the resumed session.
 ///
 /// Arguments and the model-supplied `tool_use_description` are recovered
-/// from the matching [`SessionEvent::AssistantMessage`] tool call; the
-/// coarse outcome is derived from the persisted output's `error` key via
-/// the typed [`ToolErrorPayload`] machinery — covering the object form
-/// the dispatch path persists today, the legacy string form in event
-/// files written by earlier norn versions, and the consent-boundary
-/// block strings — see [`outcome_from_output`].
+/// from the matching [`SessionEvent::AssistantMessage`] tool call,
+/// indexed on the fly as the pass encounters it — an append-ordered
+/// history always records the assistant tool call before its
+/// `ToolResult`, so no second walk is needed. (A result whose call is
+/// missing or, in a hand-mangled file, appears *after* it rebuilds with
+/// `Null` args and an empty description — the documented degradation
+/// for absent metadata.) The coarse outcome is derived from the
+/// persisted output's `error` key via the typed [`ToolErrorPayload`]
+/// machinery — covering the object form the dispatch path persists
+/// today, the legacy string form in event files written by earlier norn
+/// versions, and the consent-boundary block strings — see
+/// `outcome_from_output` below.
 ///
 /// [`AgentBuilder`](crate::agent::builder::AgentBuilder) calls this
 /// automatically when resuming from an
 /// [`EventStore`](crate::session::store::EventStore); embedding consumers
 /// that construct an [`ActionLog`] around a restored event history
 /// themselves (e.g. a CLI rebuilding the action ledger on `--resume`)
-/// call it directly with [`EventStore::events`](crate::session::store::EventStore::events).
-/// See the module docs for the reconstruction limits — data the event log
-/// does not carry (follow-ups, original timestamps, post-validate
+/// call it directly with
+/// [`EventStore::events`](crate::session::store::EventStore::events) or
+/// with the events member of the
+/// [`ReplayArtifacts`](crate::session::ReplayArtifacts) a
+/// [`SessionManager`](crate::session::SessionManager) open produced.
+/// See the module docs for the reconstruction limits — data the event
+/// log does not carry (follow-ups, original timestamps, post-validate
 /// outcomes) is not restored.
 pub fn rebuild_action_log(action_log: &ActionLog, events: &[SessionEvent]) {
-    // call_id → (clean tool args, tool_use_description)
+    // call_id → (clean tool args, tool_use_description), filled as the
+    // single pass encounters each assistant tool call.
     let mut call_meta: HashMap<&str, (serde_json::Value, String)> = HashMap::new();
     for event in events {
-        if let SessionEvent::AssistantMessage { tool_calls, .. } = event {
-            for tc in tool_calls {
-                let split = split_envelope_fields(tc.arguments.clone());
-                call_meta.insert(
-                    tc.call_id.as_str(),
-                    (split.tool_args, split.description.unwrap_or_default()),
-                );
+        match event {
+            SessionEvent::AssistantMessage { tool_calls, .. } => {
+                for tc in tool_calls {
+                    let split = split_envelope_fields(tc.arguments.clone());
+                    call_meta.insert(
+                        tc.call_id.as_str(),
+                        (split.tool_args, split.description.unwrap_or_default()),
+                    );
+                }
             }
+            SessionEvent::ToolResult {
+                tool_call_id,
+                tool_name,
+                output,
+                duration_ms,
+                ..
+            } => {
+                let (args, description) = call_meta
+                    .remove(tool_call_id.as_str())
+                    .unwrap_or((serde_json::Value::Null, String::new()));
+                let outcome = outcome_from_output(output);
+                action_log.record_completion(CompletionRecord {
+                    tool_name,
+                    tool_call_id,
+                    tool_use_description: &description,
+                    outcome,
+                    output,
+                    args,
+                    duration_ms: *duration_ms,
+                    follow_ups: Vec::new(),
+                    post_validate_outcome: None,
+                    // Mirror the live dispatch path: the action_log tool's
+                    // own historical dispatches stay Level-1-only so the
+                    // rebuilt log is not bloated with old query results.
+                    level_1_only: tool_name == "action_log",
+                });
+            }
+            // Only assistant tool calls and tool results participate in
+            // the rebuild; every other variant carries no action-log
+            // data.
+            SessionEvent::UserMessage { .. }
+            | SessionEvent::ModelChange { .. }
+            | SessionEvent::Fork { .. }
+            | SessionEvent::ForkComplete { .. }
+            | SessionEvent::Label { .. }
+            | SessionEvent::Custom { .. }
+            | SessionEvent::SpokenResponse { .. }
+            | SessionEvent::Compaction { .. } => {}
         }
-    }
-
-    for event in events {
-        let SessionEvent::ToolResult {
-            tool_call_id,
-            tool_name,
-            output,
-            duration_ms,
-            ..
-        } = event
-        else {
-            continue;
-        };
-        let (args, description) = call_meta
-            .remove(tool_call_id.as_str())
-            .unwrap_or((serde_json::Value::Null, String::new()));
-        let outcome = outcome_from_output(output);
-        action_log.record_completion(CompletionRecord {
-            tool_name,
-            tool_call_id,
-            tool_use_description: &description,
-            outcome,
-            output,
-            args,
-            duration_ms: *duration_ms,
-            follow_ups: Vec::new(),
-            post_validate_outcome: None,
-            // Mirror the live dispatch path: the action_log tool's own
-            // historical dispatches stay Level-1-only so the rebuilt log is
-            // not bloated with old query results.
-            level_1_only: tool_name == "action_log",
-        });
     }
 }
 

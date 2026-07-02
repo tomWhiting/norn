@@ -151,7 +151,7 @@ pub fn frame_message(msg: &ChannelMessage) -> String {
 ///
 /// Owned by the agent loop. The loop calls [`InboundChannel::drain`] at each
 /// tool boundary to pull all currently-buffered messages without awaiting.
-/// A lingering loop ([`LingerPolicy`](crate::r#loop::linger::LingerPolicy))
+/// A lingering loop ([`LingerPolicy`](crate::agent_loop::linger::LingerPolicy))
 /// additionally awaits [`InboundChannel::steer_ready`] so a
 /// [`MessageKind::Steer`] wakes it immediately while
 /// [`MessageKind::Update`]s keep buffering (DECISION M2).
@@ -200,6 +200,35 @@ impl InboundChannel {
         }
         self.peeked = drained;
         None
+    }
+
+    /// Receive the next buffered message, awaiting arrival when the
+    /// buffer is empty.
+    ///
+    /// Messages come back in the order [`Self::drain`] would return
+    /// them: anything buffered by an earlier [`Self::steer_ready`] await
+    /// first, then channel arrivals. Returns `None` once every sender
+    /// has been dropped and the buffer is exhausted.
+    ///
+    /// This is the idle-park primitive for controller tasks that hold a
+    /// parked agent's channel (the spawn launch wrapper's Idle `select!`):
+    /// it wakes on *any* arrival — steer and update alike — so a message
+    /// pushed through a parent-held [`InboundSender`] while the agent is
+    /// parked can be routed into the agent's durable pending store
+    /// instead of sitting undrainable in the buffer. [`Self::steer_ready`]
+    /// is deliberately unsuitable there: its update-suppressing wake
+    /// (DECISION M2) protects a *running or lingering* loop from FYI
+    /// interruptions, but a parked agent has no loop to interrupt and
+    /// parking must not strand acknowledged messages.
+    ///
+    /// Cancel-safe: the inner `recv` is cancel-safe and a received
+    /// message is returned immediately (never held across an await), so
+    /// a caller dropping this future loses nothing.
+    pub async fn recv(&mut self) -> Option<ChannelMessage> {
+        if !self.peeked.is_empty() {
+            return Some(self.peeked.remove(0));
+        }
+        self.rx.recv().await
     }
 
     /// Await until a [`MessageKind::Steer`] message is available, moving
@@ -458,6 +487,77 @@ mod tests {
 
         let drained = rx.drain();
         assert_eq!(drained.len(), 2);
+    }
+
+    // --- recv: the idle-park wake primitive ---
+
+    /// `recv` returns previously peeked messages before channel arrivals,
+    /// in the exact order `drain` would — a `steer_ready` await that
+    /// buffered messages must not reorder or hide them from `recv`.
+    #[tokio::test]
+    async fn recv_returns_peeked_messages_first_in_order() {
+        let (tx, mut rx) = inbound_channel(8);
+        tx.send(make_message("/a", "fyi", MessageKind::Update))
+            .await
+            .expect("send");
+        tx.send(make_message("/b", "act", MessageKind::Steer))
+            .await
+            .expect("send");
+        // Peek both via the steer-wake path, then a later channel send.
+        assert!(rx.steer_ready().await);
+        tx.send(make_message("/c", "late", MessageKind::Update))
+            .await
+            .expect("send");
+
+        let first = rx.recv().await.expect("peeked update");
+        assert_eq!(first.content, "fyi");
+        let second = rx.recv().await.expect("peeked steer");
+        assert_eq!(second.content, "act");
+        let third = rx.recv().await.expect("channel arrival");
+        assert_eq!(third.content, "late");
+    }
+
+    /// `recv` wakes on ANY kind — an Update pushed to a parked agent must
+    /// resolve the await (unlike `steer_ready`, whose update suppression
+    /// protects only a running/lingering loop).
+    #[tokio::test]
+    async fn recv_wakes_on_update_arrival() {
+        let (tx, mut rx) = inbound_channel(4);
+        let send = tokio::spawn(async move {
+            tx.send(make_message(
+                "/parent",
+                "fyi while parked",
+                MessageKind::Update,
+            ))
+            .await
+            .expect("send");
+        });
+        let msg = tokio::time::timeout(std::time::Duration::from_secs(5), rx.recv())
+            .await
+            .expect("an update arrival must wake recv")
+            .expect("message received");
+        assert_eq!(msg.content, "fyi while parked");
+        assert_eq!(msg.kind, MessageKind::Update);
+        send.await.expect("sender task");
+    }
+
+    /// A closed, exhausted channel reports `None` so park loops can
+    /// disable the arm instead of spinning.
+    #[tokio::test]
+    async fn recv_returns_none_when_closed_and_exhausted() {
+        let (tx, mut rx) = inbound_channel(4);
+        tx.send(make_message("/a", "last", MessageKind::Steer))
+            .await
+            .expect("send");
+        drop(tx);
+        assert_eq!(
+            rx.recv()
+                .await
+                .expect("buffered message survives close")
+                .content,
+            "last"
+        );
+        assert!(rx.recv().await.is_none(), "exhausted closed channel");
     }
 
     // --- steer_ready: the linger wake primitive ---

@@ -5352,4 +5352,149 @@ mod tests {
             "inherit-with-decrement from an envelope without loop_config grants None",
         );
     }
+
+    /// Seam I2-3 (idle-park drain): a message pushed through the
+    /// parent-held [`AgentHandle::inbound_tx`] while the child is parked
+    /// Idle must become durable (pending store + `agent_message.queued`
+    /// audit) and wake-eligible — `wake_agent`'s pending-store gate
+    /// accepts it and the woken step delivers it into the child's
+    /// conversation. This is the router guarantee ("a message some loop
+    /// will drain") extended across the park window.
+    #[tokio::test]
+    async fn message_to_parked_child_becomes_durable_and_wake_delivers_it() {
+        use crate::r#loop::inbound::{ChannelMessage, MessageKind};
+        use crate::tools::agent::coord::WakeAgentTool;
+
+        // Response 1 completes the initial task (child parks Idle);
+        // response 2 answers the wake step that drains the mailbox.
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "initial done".to_string(),
+                },
+                done_event(),
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "drained mailbox".to_string(),
+                },
+                done_event(),
+            ],
+        ]));
+        let parent = Uuid::new_v4();
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            parent,
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        let infra = ctx
+            .get_extension::<AgentToolInfra>()
+            .expect("infra installed");
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "wait for mail", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+        assert_eq!(
+            agent_registry.read().get(child_id).expect("entry").status,
+            AgentStatus::Idle,
+        );
+
+        // Take the parent-held handle: its inbound sender feeds the parked
+        // child's channel directly (bypassing the router, which is
+        // deregistered while parked), and its event store is the child's.
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .expect("handles installed")
+            .remove(child_id)
+            .expect("child handle stored");
+
+        let message = ChannelMessage {
+            id: Uuid::new_v4(),
+            sender_id: parent,
+            from: "root".to_owned(),
+            role: None,
+            to_id: child_id,
+            content: "note for the parked child".to_owned(),
+            kind: MessageKind::Update,
+            seq: None,
+            timestamp: Utc::now(),
+        };
+        handle
+            .inbound_tx
+            .send(message)
+            .await
+            .expect("parked child's channel accepts the send");
+
+        // The park arm must route the acknowledged message into the
+        // durable pending store.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            while infra.pending_messages.pending_for(child_id) != 1 {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("parked message must become durable in the pending store");
+        let queued_audit_present = handle.event_store.events().iter().any(|e| {
+            matches!(
+                e,
+                SessionEvent::Custom { event_type, .. }
+                    if event_type == crate::agent::AGENT_MESSAGE_QUEUED_EVENT_TYPE
+            )
+        });
+        assert!(
+            queued_audit_present,
+            "the idle-park re-queue must persist an agent_message.queued audit",
+        );
+
+        // The pending-store wake gate is now authoritative: the stranded
+        // message makes the parked child wakeable.
+        let wake_out = WakeAgentTool::new()
+            .execute(
+                &envelope_for(json!({ "agent_id": child_id.to_string() })),
+                &ctx,
+            )
+            .await
+            .expect("wake executes");
+        assert!(!wake_out.is_error(), "{:?}", wake_out.content);
+        assert_eq!(wake_out.content["woken"], true);
+        assert_eq!(wake_out.content["queued_messages"], 1);
+
+        // The woken step drains the pending store and injects the framed
+        // message into the child's conversation, then parks Idle again.
+        tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                let delivered = handle.event_store.events().iter().any(|e| {
+                    matches!(
+                        e,
+                        SessionEvent::UserMessage { content, .. }
+                            if content.contains("<agent_message")
+                                && content.contains("note for the parked child")
+                    )
+                });
+                if delivered && infra.pending_messages.pending_for(child_id) == 0 {
+                    break;
+                }
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the wake step must deliver the stranded message");
+
+        let mut status_rx = handle.status_rx.clone();
+        tokio::time::timeout(Duration::from_secs(5), async {
+            status_rx
+                .wait_for(|status| *status == AgentStatus::Idle)
+                .await
+        })
+        .await
+        .expect("child re-parks after the wake step")
+        .expect("status watch open");
+    }
 }

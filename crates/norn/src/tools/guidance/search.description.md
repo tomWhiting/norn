@@ -1,1 +1,1 @@
-Search across files using four modes: content (regex line search), files (glob matching), fuzzy (nucleo-scored path ranking), or ast (tree-sitter S-expression queries over parsed syntax trees).
+Search across files using four modes: content (regex line search), files (glob matching), fuzzy (nucleo-scored path ranking), or ast (tree-sitter S-expression queries over parsed syntax trees). Walks skip gitignored and hidden entries by default (set include_ignored to search them) and report unreadable entries in a skipped array instead of dropping them silently.

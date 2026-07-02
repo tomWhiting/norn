@@ -94,7 +94,7 @@ pub(super) struct ForkLaunch {
     /// [`ChildPolicy::loop_config`](crate::agent::child_policy::ChildPolicy::loop_config)
     /// (R5 closure). Resolved via [`ChildLoopConfig::resolve`]: `None` →
     /// the fork runs
-    /// [`AgentLoopConfig::default()`](crate::r#loop::runner::AgentLoopConfig)
+    /// [`AgentLoopConfig::default()`](crate::agent_loop::runner::AgentLoopConfig)
     /// exactly as before R5; `Some` applies the granted subset
     /// (`max_iterations`, `step_timeout`, `linger`) onto that default.
     /// Mirrors the spawn launch.

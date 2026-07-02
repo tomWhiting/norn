@@ -6,6 +6,8 @@ use serde::Deserialize;
 
 use crate::error::ProviderError;
 use crate::provider::events::{ProviderEvent, StopReason};
+use crate::provider::exec::SseEventMapper;
+use crate::provider::openai::sse::SseEvent;
 use crate::provider::request::ToolCallKind;
 use crate::provider::usage::Usage;
 
@@ -17,12 +19,9 @@ pub(super) struct ChatCompletionsMapper {
     emitted_output: bool,
 }
 
-impl ChatCompletionsMapper {
+impl SseEventMapper for ChatCompletionsMapper {
     /// Maps a parsed SSE event into zero or more provider events.
-    pub(super) fn map_event(
-        &mut self,
-        event: &crate::provider::openai::sse::SseEvent,
-    ) -> Vec<Result<ProviderEvent, ProviderError>> {
+    fn map_event(&mut self, event: &SseEvent) -> Vec<Result<ProviderEvent, ProviderError>> {
         if let Some(message) = stream_error_message(&event.data) {
             return vec![Err(stream_error_from_message(message))];
         }
@@ -44,6 +43,32 @@ impl ChatCompletionsMapper {
         out
     }
 
+    /// Builds a terminal event for local-compatible backends that close a
+    /// text stream cleanly without emitting a final `finish_reason`.
+    fn finish_on_clean_close(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
+        if !self.tool_calls.is_empty() {
+            return Err(ProviderError::ResponseParseError {
+                reason:
+                    "chat completions stream ended with incomplete tool calls before finish_reason"
+                        .to_string(),
+            });
+        }
+        if !self.emitted_output {
+            return Ok(None);
+        }
+        Ok(Some(ProviderEvent::Done {
+            stop_reason: StopReason::EndTurn,
+            usage: self.latest_usage.clone(),
+            response_id: None,
+        }))
+    }
+
+    fn dump_label<'event>(&self, _event: &'event SseEvent) -> &'event str {
+        "chat.completion.chunk"
+    }
+}
+
+impl ChatCompletionsMapper {
     fn map_choice(
         &mut self,
         choice: ChatChoice,
@@ -206,26 +231,6 @@ impl ChatCompletionsMapper {
         }
         all_complete
     }
-
-    /// Builds a terminal event for local-compatible backends that close a text
-    /// stream cleanly without emitting a final `finish_reason`.
-    pub(super) fn finish_on_clean_close(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
-        if !self.tool_calls.is_empty() {
-            return Err(ProviderError::ResponseParseError {
-                reason:
-                    "chat completions stream ended with incomplete tool calls before finish_reason"
-                        .to_string(),
-            });
-        }
-        if !self.emitted_output {
-            return Ok(None);
-        }
-        Ok(Some(ProviderEvent::Done {
-            stop_reason: StopReason::EndTurn,
-            usage: self.latest_usage.clone(),
-            response_id: None,
-        }))
-    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -324,8 +329,11 @@ fn stream_error_from_message(message: String) -> ProviderError {
     {
         return ProviderError::InvalidRequest { message };
     }
+    // In-band chat error objects carry no transport semantics the client
+    // can verify, so they never opt into retry (`transient: None`).
     ProviderError::StreamError {
         reason: format!("provider stream error: {message}"),
+        transient: None,
     }
 }
 
@@ -339,7 +347,6 @@ fn stream_error_from_message(message: String) -> ProviderError {
 )]
 mod tests {
     use super::*;
-    use crate::provider::openai::sse::SseEvent;
 
     fn event(data: serde_json::Value) -> SseEvent {
         SseEvent {

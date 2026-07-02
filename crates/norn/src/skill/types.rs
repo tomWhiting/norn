@@ -176,7 +176,7 @@ impl From<SkillEffort> for ReasoningEffort {
 /// Execution context selector for a skill.
 ///
 /// `Fork` requests that the skill run in a forked subagent's
-/// [`crate::r#loop::loop_context::LoopContext`] rather than the parent's.
+/// [`crate::agent_loop::loop_context::LoopContext`] rather than the parent's.
 /// Wiring of the actual fork happens in NS-006 / norn-agents Group 3.
 ///
 /// Fork-mode contract: when `context: fork` is paired with an

@@ -939,6 +939,377 @@ fn derive_coexists_with_deserialize_round_trip() {
     assert_eq!(defaulted.retry_count, 0);
 }
 
+// ---------------------------------------------------------------------------
+// Container-level #[serde(default)]
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, Default, ToolArgs, Debug, PartialEq)]
+#[serde(default)]
+struct ContainerDefault {
+    /// Destination path.
+    path: String,
+    /// Retry budget.
+    count: u32,
+}
+
+#[test]
+fn container_default_removes_all_fields_from_required() {
+    let schema = ContainerDefault::json_schema();
+    assert_eq!(schema["required"], serde_json::json!([]));
+    assert_eq!(schema["properties"]["path"]["type"], "string");
+    assert_eq!(schema["properties"]["count"]["type"], "integer");
+
+    // serde accepts the fully-empty object the schema now permits.
+    let value: ContainerDefault = serde_json::from_value(serde_json::json!({})).unwrap();
+    assert_eq!(value, ContainerDefault::default());
+}
+
+fn container_defaults() -> ContainerDefaultFn {
+    ContainerDefaultFn {
+        label: "fallback".to_string(),
+        count: 7,
+    }
+}
+
+#[derive(Deserialize, ToolArgs, Debug)]
+#[serde(default = "container_defaults")]
+struct ContainerDefaultFn {
+    /// Display label.
+    label: String,
+    /// Retry budget.
+    count: u32,
+}
+
+#[test]
+fn container_default_fn_removes_all_fields_from_required() {
+    let schema = ContainerDefaultFn::json_schema();
+    assert_eq!(schema["required"], serde_json::json!([]));
+
+    let value: ContainerDefaultFn =
+        serde_json::from_value(serde_json::json!({ "count": 1 })).unwrap();
+    assert_eq!(value.label, "fallback");
+    assert_eq!(value.count, 1);
+}
+
+#[derive(Deserialize, Default, ToolArgs)]
+#[serde(default)]
+struct ContainerDefaultForced {
+    /// Optional note.
+    note: String,
+    /// Forced back into required despite the container default.
+    #[tool_args(required)]
+    key: String,
+}
+
+#[test]
+fn tool_args_required_overrides_container_default() {
+    let schema = ContainerDefaultForced::json_schema();
+    assert_eq!(schema["required"], serde_json::json!(["key"]));
+}
+
+#[derive(Deserialize, Default, ToolArgs)]
+struct DefaultedInner {
+    /// Inner token that serde still requires from the flattened map.
+    token: String,
+}
+
+#[derive(Deserialize, Default, ToolArgs)]
+#[serde(default)]
+struct ContainerDefaultFlatten {
+    /// Search filter.
+    filter: String,
+    /// Merged inner parameters.
+    #[serde(flatten)]
+    inner: DefaultedInner,
+}
+
+#[test]
+fn container_default_does_not_relax_flattened_inner_required() {
+    let schema = ContainerDefaultFlatten::json_schema();
+    // serde fills omitted plain fields from the container default but still
+    // demands the flattened struct's fields, so only those stay required.
+    assert_eq!(schema["required"], serde_json::json!(["token"]));
+
+    let ok: Result<ContainerDefaultFlatten, _> =
+        serde_json::from_value(serde_json::json!({ "token": "t" }));
+    assert!(ok.is_ok());
+    let missing: Result<ContainerDefaultFlatten, _> = serde_json::from_value(serde_json::json!({}));
+    assert!(missing.is_err(), "flattened inner field must stay required");
+}
+
+// ---------------------------------------------------------------------------
+// Per-variant rename_all and container rename_all_fields
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, ToolArgs, Debug)]
+#[serde(tag = "type")]
+enum VariantRenameAll {
+    /// Create a record.
+    #[serde(rename_all = "camelCase")]
+    Create {
+        /// Owning user.
+        user_id: String,
+        /// Explicit rename wins over the variant rule.
+        #[serde(rename = "explicit")]
+        record_name: String,
+    },
+}
+
+#[test]
+fn variant_rename_all_transforms_field_names() {
+    let schema = VariantRenameAll::json_schema();
+    let variant = &schema["oneOf"][0];
+    assert_eq!(variant["properties"]["userId"]["type"], "string");
+    assert_eq!(variant["properties"]["explicit"]["type"], "string");
+    assert!(variant["properties"].get("user_id").is_none());
+    assert!(variant["properties"].get("recordName").is_none());
+    assert_eq!(
+        variant["required"],
+        serde_json::json!(["type", "userId", "explicit"])
+    );
+
+    // serde accepts exactly the names the schema advertises.
+    let value: VariantRenameAll = serde_json::from_value(serde_json::json!({
+        "type": "Create",
+        "userId": "u1",
+        "explicit": "r1"
+    }))
+    .unwrap();
+    let VariantRenameAll::Create {
+        user_id,
+        record_name,
+    } = value;
+    assert_eq!(user_id, "u1");
+    assert_eq!(record_name, "r1");
+}
+
+#[derive(Deserialize, ToolArgs, Debug)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
+enum RenameAllFields {
+    /// Follows the container-wide field rule.
+    One {
+        /// Renamed by `rename_all_fields`.
+        my_field: String,
+    },
+    /// Overrides the container-wide field rule.
+    #[serde(rename_all = "kebab-case")]
+    Two {
+        /// Renamed by the variant's own `rename_all`.
+        other_field: String,
+    },
+}
+
+#[test]
+fn rename_all_fields_applies_and_variant_rename_all_overrides_it() {
+    let schema = RenameAllFields::json_schema();
+    let one = &schema["oneOf"][0];
+    let two = &schema["oneOf"][1];
+    assert_eq!(one["properties"]["myField"]["type"], "string");
+    assert!(one["properties"].get("my_field").is_none());
+    assert_eq!(one["required"], serde_json::json!(["type", "myField"]));
+    assert_eq!(two["properties"]["other-field"]["type"], "string");
+    assert!(two["properties"].get("otherField").is_none());
+    assert_eq!(two["required"], serde_json::json!(["type", "other-field"]));
+
+    // serde resolves the same precedence the schema advertises.
+    let one: RenameAllFields = serde_json::from_value(serde_json::json!({
+        "type": "One",
+        "myField": "x"
+    }))
+    .unwrap();
+    assert!(matches!(one, RenameAllFields::One { .. }));
+    let two: RenameAllFields = serde_json::from_value(serde_json::json!({
+        "type": "Two",
+        "other-field": "y"
+    }))
+    .unwrap();
+    assert!(matches!(two, RenameAllFields::Two { .. }));
+    let stale: Result<RenameAllFields, _> = serde_json::from_value(serde_json::json!({
+        "type": "Two",
+        "otherField": "y"
+    }));
+    assert!(
+        stale.is_err(),
+        "variant rename_all must override rename_all_fields"
+    );
+}
+
+#[derive(Deserialize, ToolArgs, Debug)]
+#[serde(tag = "t", content = "c", rename_all_fields = "camelCase")]
+enum AdjacentRenamedFields {
+    /// Data-bearing command.
+    Run {
+        /// Renamed content field.
+        max_steps: u32,
+    },
+}
+
+#[test]
+fn rename_all_fields_reaches_adjacent_content_schema() {
+    let schema = AdjacentRenamedFields::json_schema();
+    let content = &schema["oneOf"][0]["properties"]["c"];
+    assert_eq!(content["properties"]["maxSteps"]["type"], "integer");
+    assert!(content["properties"].get("max_steps").is_none());
+    assert_eq!(content["required"], serde_json::json!(["maxSteps"]));
+
+    let value: AdjacentRenamedFields = serde_json::from_value(serde_json::json!({
+        "t": "Run",
+        "c": { "maxSteps": 3 }
+    }))
+    .unwrap();
+    let AdjacentRenamedFields::Run { max_steps } = value;
+    assert_eq!(max_steps, 3);
+}
+
+#[derive(Deserialize, ToolArgs, Debug)]
+#[serde(untagged, rename_all_fields = "camelCase")]
+enum UntaggedRenamedFields {
+    /// Object form.
+    Data {
+        /// Renamed field.
+        item_count: u64,
+    },
+}
+
+#[test]
+fn rename_all_fields_reaches_untagged_variant_schema() {
+    let schema = UntaggedRenamedFields::json_schema();
+    let variant = &schema["oneOf"][0];
+    assert_eq!(variant["properties"]["itemCount"]["type"], "integer");
+    assert!(variant["properties"].get("item_count").is_none());
+
+    let value: UntaggedRenamedFields =
+        serde_json::from_value(serde_json::json!({ "itemCount": 2 })).unwrap();
+    let UntaggedRenamedFields::Data { item_count } = value;
+    assert_eq!(item_count, 2);
+}
+
+// ---------------------------------------------------------------------------
+// Untagged unit variants deserialize only from null
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, ToolArgs, Debug, PartialEq)]
+#[serde(untagged)]
+enum MaybeValue {
+    /// Explicit numeric value.
+    Number {
+        /// The value.
+        value: i64,
+    },
+    /// No value supplied.
+    Nothing,
+}
+
+#[test]
+fn untagged_unit_variant_is_a_null_schema() {
+    let schema = MaybeValue::json_schema();
+    assert_eq!(
+        schema["oneOf"][1],
+        serde_json::json!({
+            "type": "null",
+            "description": "No value supplied."
+        })
+    );
+
+    // serde accepts exactly what the schema advertises: null, not the
+    // variant's name as a string.
+    let unit: MaybeValue = serde_json::from_value(serde_json::json!(null)).unwrap();
+    assert_eq!(unit, MaybeValue::Nothing);
+    let named: Result<MaybeValue, _> = serde_json::from_value(serde_json::json!("Nothing"));
+    assert!(
+        named.is_err(),
+        "the variant name must not be advertised as a valid input"
+    );
+    let data: MaybeValue = serde_json::from_value(serde_json::json!({ "value": 4 })).unwrap();
+    assert_eq!(data, MaybeValue::Number { value: 4 });
+}
+
+#[derive(Deserialize, ToolArgs, Debug, PartialEq)]
+#[serde(untagged)]
+enum UndocumentedNull {
+    /// Object form.
+    Data {
+        /// The value.
+        value: i64,
+    },
+    None,
+}
+
+#[test]
+fn untagged_unit_variant_without_doc_has_bare_null_schema() {
+    let schema = UndocumentedNull::json_schema();
+    assert_eq!(schema["oneOf"][1], serde_json::json!({ "type": "null" }));
+}
+
+// ---------------------------------------------------------------------------
+// Split (serialize = ..., deserialize = ...) rename forms
+// ---------------------------------------------------------------------------
+
+#[derive(Deserialize, ToolArgs, Debug)]
+#[serde(rename_all(serialize = "SCREAMING_SNAKE_CASE", deserialize = "camelCase"))]
+struct SplitRenameAll {
+    /// Renamed on the deserialize side only.
+    my_field: String,
+}
+
+#[test]
+fn split_rename_all_uses_deserialize_side() {
+    let schema = SplitRenameAll::json_schema();
+    assert_eq!(schema["properties"]["myField"]["type"], "string");
+    assert!(schema["properties"].get("MY_FIELD").is_none());
+    assert_eq!(schema["required"], serde_json::json!(["myField"]));
+
+    let value: SplitRenameAll =
+        serde_json::from_value(serde_json::json!({ "myField": "x" })).unwrap();
+    assert_eq!(value.my_field, "x");
+}
+
+#[derive(Deserialize, ToolArgs, Debug)]
+struct SplitFieldRename {
+    /// Serialize-only rename: the input name stays the raw ident.
+    #[serde(rename(serialize = "outName"))]
+    plain: String,
+    /// Deserialize-side rename lands in the schema.
+    #[serde(rename(deserialize = "inName"))]
+    other: String,
+}
+
+#[test]
+fn split_field_rename_uses_deserialize_side() {
+    let schema = SplitFieldRename::json_schema();
+    assert_eq!(schema["properties"]["plain"]["type"], "string");
+    assert!(schema["properties"].get("outName").is_none());
+    assert_eq!(schema["properties"]["inName"]["type"], "string");
+    assert!(schema["properties"].get("other").is_none());
+    assert_eq!(schema["required"], serde_json::json!(["plain", "inName"]));
+
+    let value: SplitFieldRename =
+        serde_json::from_value(serde_json::json!({ "plain": "a", "inName": "b" })).unwrap();
+    assert_eq!(value.plain, "a");
+    assert_eq!(value.other, "b");
+}
+
+#[derive(Deserialize, ToolArgs, Debug)]
+#[serde(rename_all(deserialize = "snake_case"))]
+enum SplitEnumRenameAll {
+    /// Full-text mode.
+    FullText,
+    /// Structural mode.
+    Structural,
+}
+
+#[test]
+fn split_rename_all_on_enum_renames_variants() {
+    let schema = SplitEnumRenameAll::json_schema();
+    assert_eq!(
+        schema["enum"],
+        serde_json::json!(["full_text", "structural"])
+    );
+
+    let value: SplitEnumRenameAll = serde_json::from_value(serde_json::json!("full_text")).unwrap();
+    assert!(matches!(value, SplitEnumRenameAll::FullText));
+}
+
 #[derive(ToolArgs)]
 struct ToolArgsOnly {
     /// A field on a struct that does not derive Deserialize.

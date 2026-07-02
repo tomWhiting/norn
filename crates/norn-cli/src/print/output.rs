@@ -34,16 +34,91 @@ use tokio::sync::broadcast::error::RecvError;
 /// orchestrator can report them.
 type IoResult = std::io::Result<()>;
 
-/// Map an [`AgentStepResult`] onto its NC18 result-string label.
-#[must_use]
-pub fn result_label(result: &AgentStepResult) -> &'static str {
-    match result {
-        AgentStepResult::Completed { .. } => "completed",
-        AgentStepResult::SchemaUnreachable { .. } => "schema_unreachable",
-        AgentStepResult::MaxIterationsReached { .. } => "max_iterations",
-        AgentStepResult::TimedOut { .. } => "timed_out",
-        AgentStepResult::Cancelled { .. } => "cancelled",
-        AgentStepResult::Truncated { .. } => "truncated",
+/// The machine-stable contract version of the print / driven output
+/// envelope ([`JsonEnvelope`] and the stream-json `completed` event).
+/// Bumped when the envelope shape changes incompatibly, so subprocess
+/// consumers can gate on it (`DRIVEN-PROTOCOL.md` "Stop envelope").
+pub const ENVELOPE_VERSION: u32 = 1;
+
+/// The typed stop information of a finished agent step: the serde-stable
+/// projection of [`AgentStepResult`] that rides the output envelope.
+///
+/// Serialised internally tagged on `reason` (`snake_case`), so consumers
+/// branch on `stop.reason` and read the variant's detail fields directly:
+/// `{"reason":"timed_out","elapsed_ms":...,"iterations":...}`.
+///
+/// Deliberately carries NO `retryable` field: whether a stop is worth
+/// retrying is the caller's judgment (budget, policy, partial usefulness),
+/// not a property Norn can decide for it (`DRIVEN-PROTOCOL.md` "Stop
+/// envelope").
+#[derive(Debug, Clone, Serialize)]
+#[serde(tag = "reason", rename_all = "snake_case")]
+pub enum StopInfo {
+    /// The model produced valid structured output (or text in no-schema
+    /// mode). The envelope's `output` holds the final value.
+    Completed,
+    /// The schema enforcement budget was exhausted without valid output.
+    /// The envelope's `output` holds the best attempt, if any.
+    SchemaUnreachable {
+        /// Total schema-budget-consuming attempts made.
+        attempts: u32,
+        /// Validation errors from the final attempt.
+        validation_errors: Vec<String>,
+    },
+    /// The optional max-iterations cap was reached.
+    MaxIterations,
+    /// The configured step timeout elapsed before the loop completed. The
+    /// envelope's `output` holds the partial output, if any.
+    TimedOut {
+        /// Wall-clock milliseconds the loop ran before being cancelled.
+        elapsed_ms: u128,
+        /// Completed provider iterations at the moment of the timeout.
+        iterations: usize,
+    },
+    /// The run was cancelled (operator-initiated abort).
+    Cancelled,
+    /// The model stopped deterministically before completing its output.
+    /// The envelope's `output` holds the partial text, if any.
+    Truncated {
+        /// Which deterministic stop cut the response off
+        /// (`max_tokens` / `content_filter`).
+        truncation: &'static str,
+        /// Completed provider iterations, including the truncated one.
+        iterations: u32,
+    },
+}
+
+impl StopInfo {
+    /// Project an [`AgentStepResult`] onto its typed stop information.
+    #[must_use]
+    pub fn from_result(result: &AgentStepResult) -> Self {
+        match result {
+            AgentStepResult::Completed { .. } => Self::Completed,
+            AgentStepResult::SchemaUnreachable {
+                attempts,
+                validation_errors,
+                ..
+            } => Self::SchemaUnreachable {
+                attempts: *attempts,
+                validation_errors: validation_errors.clone(),
+            },
+            AgentStepResult::MaxIterationsReached { .. } => Self::MaxIterations,
+            AgentStepResult::TimedOut {
+                elapsed,
+                iterations,
+                ..
+            } => Self::TimedOut {
+                elapsed_ms: elapsed.as_millis(),
+                iterations: *iterations,
+            },
+            AgentStepResult::Cancelled { .. } => Self::Cancelled,
+            AgentStepResult::Truncated {
+                kind, iterations, ..
+            } => Self::Truncated {
+                truncation: kind.as_str(),
+                iterations: *iterations,
+            },
+        }
     }
 }
 
@@ -171,10 +246,19 @@ impl From<&Usage> for UsageOut {
     }
 }
 
-/// JSON envelope written by [`render_json`].
+/// JSON envelope written by [`render_json`] (and returned as the driven
+/// `run/execute` result). The machine-stable contract is
+/// `envelope_version` + the typed `stop` — see `DRIVEN-PROTOCOL.md`
+/// "Stop envelope".
 #[derive(Debug, Serialize)]
 pub struct JsonEnvelope<'a> {
-    /// Final model output value (may be `null` for non-completed results).
+    /// Contract version of this envelope shape ([`ENVELOPE_VERSION`]).
+    pub envelope_version: u32,
+    /// Typed stop information: `stop.reason` plus per-variant detail.
+    pub stop: &'a StopInfo,
+    /// Model output value: the final output for a completed stop, the
+    /// partial output (best attempt / partial text) for a non-completion
+    /// stop that produced one, `null` otherwise.
     pub output: Option<&'a Value>,
     /// Token usage subset (input + output only).
     pub usage: UsageOut,
@@ -184,8 +268,6 @@ pub struct JsonEnvelope<'a> {
     pub session_id: Option<&'a str>,
     /// Session events emitted during this step.
     pub events: &'a [SessionEvent],
-    /// Result label: `completed` / `schema_unreachable` / `max_iterations` / `timed_out`.
-    pub result: &'static str,
     /// Diagnostics collected during the step.
     pub diagnostics: &'a [NornDiagnostic],
 }
@@ -327,8 +409,9 @@ fn agent_event_to_ndjson(
 /// This is the single source of truth for the per-event payload shape:
 /// [`agent_event_to_ndjson`] simply `to_string`s the returned `Value`, so
 /// the stream-json wire form is byte-identical whether it is produced here
-/// or by a downstream consumer (the JSON-RPC `event/*` emitter, NOI-1).
-/// Delta events are filtered when `partial` is `false`, exactly as before.
+/// or by a downstream consumer (the JSON-RPC `event/*` emitter,
+/// `DRIVEN-PROTOCOL.md` "Event notifications"). Delta events are filtered
+/// when `partial` is `false`, exactly as before.
 ///
 /// Returns [`None`] for events with no on-wire representation (filtered
 /// deltas, provider `Error`, serialisation failures).
@@ -350,11 +433,16 @@ pub(crate) fn agent_event_to_value(
             "type": "usage_estimate",
             "input_tokens": estimate.input_tokens,
         })),
+        norn::provider::AgentEventKind::StreamRetry(retry) => Some(json!({
+            "type": "stream_retry",
+            "attempt": retry.attempt,
+        })),
     }
 }
 
 /// Derive the JSON-RPC `event/*` method name for an [`AgentEvent`] from the
-/// same [`AgentEventKind`] discrimination the payload mapping uses (NOI-1).
+/// same [`AgentEventKind`] discrimination the payload mapping uses
+/// (`DRIVEN-PROTOCOL.md` "Event notifications").
 ///
 /// The mapping is intentionally coarse — it groups the fine-grained
 /// [`ProviderEvent`] variants into the design's locked `event/*` method set
@@ -377,10 +465,12 @@ pub(crate) fn agent_event_method(agent_event: &norn::provider::AgentEvent) -> &'
             | ProviderEvent::ThinkingDelta { .. }
             | ProviderEvent::ToolCallDelta { .. } => "event/progress",
             ProviderEvent::Done { .. } => "event/stop",
-            ProviderEvent::Compaction { .. } | ProviderEvent::Error { .. } => "event/raw",
+            ProviderEvent::Compaction { .. }
+            | ProviderEvent::ReasoningItemDone { .. }
+            | ProviderEvent::Error { .. } => "event/raw",
         },
         AgentEventKind::Message(_) => "event/message",
-        AgentEventKind::UsageEstimate(_) => "event/progress",
+        AgentEventKind::UsageEstimate(_) | AgentEventKind::StreamRetry(_) => "event/progress",
         AgentEventKind::Subagent(_) => "event/raw",
     }
 }
@@ -540,6 +630,12 @@ fn provider_event_to_value(event: &ProviderEvent) -> Option<Value> {
             "item_type": item_type,
             "encrypted_content": encrypted_content,
         }),
+        // Structured reasoning items exist for provider-side replay; the
+        // display text is already surfaced through the thinking events.
+        ProviderEvent::ReasoningItemDone { item } => json!({
+            "type": "reasoning_item",
+            "item": item,
+        }),
         ProviderEvent::Done {
             stop_reason,
             usage,
@@ -571,7 +667,9 @@ fn provider_event_to_value(event: &ProviderEvent) -> Option<Value> {
 /// Emit the `completed` NDJSON line plus any collected diagnostics.
 ///
 /// Per NC-003 R8: diagnostics are emitted as `{"type":"diagnostic",...}`
-/// events BEFORE the final `completed` event.
+/// events BEFORE the final `completed` event. The `completed` line carries
+/// the same `envelope_version` + typed `stop` contract as [`JsonEnvelope`]
+/// (`DRIVEN-PROTOCOL.md` "Stop envelope").
 ///
 /// # Errors
 ///
@@ -580,7 +678,7 @@ pub fn emit_stream_completed<W: Write>(
     stdout: &mut W,
     output: Option<&Value>,
     usage: &Usage,
-    result_label: &'static str,
+    stop: &StopInfo,
     diagnostics: &[NornDiagnostic],
 ) -> IoResult {
     for diag in diagnostics {
@@ -599,9 +697,11 @@ pub fn emit_stream_completed<W: Write>(
         stdout.write_all(b"\n")?;
     }
 
+    let stop_value = serde_json::to_value(stop).map_err(std::io::Error::other)?;
     let completed = json!({
         "type": "completed",
-        "result": result_label,
+        "envelope_version": ENVELOPE_VERSION,
+        "stop": stop_value,
         "output": output,
         "usage": {
             "input_tokens": usage.input_tokens,
@@ -783,12 +883,13 @@ mod tests {
         };
         let output = json!({"answer": 42});
         let envelope = JsonEnvelope {
+            envelope_version: ENVELOPE_VERSION,
+            stop: &StopInfo::Completed,
             output: Some(&output),
             usage: UsageOut::from(&usage),
             model: "gpt-5",
             session_id: Some("abc"),
             events: &[],
-            result: "completed",
             diagnostics: &[],
         };
         let mut stdout = Vec::new();
@@ -801,9 +902,10 @@ mod tests {
         assert!(object.contains_key("model"));
         assert!(object.contains_key("session_id"));
         assert!(object.contains_key("events"));
-        assert!(object.contains_key("result"));
+        assert!(object.contains_key("stop"));
         assert!(object.contains_key("diagnostics"));
-        assert_eq!(object["result"].as_str(), Some("completed"));
+        assert_eq!(object["envelope_version"].as_u64(), Some(1));
+        assert_eq!(object["stop"]["reason"].as_str(), Some("completed"));
         assert_eq!(object["usage"]["input_tokens"].as_u64(), Some(42));
         assert_eq!(object["usage"]["output_tokens"].as_u64(), Some(17));
         assert_eq!(object["session_id"].as_str(), Some("abc"));
@@ -813,12 +915,13 @@ mod tests {
     fn json_envelope_no_session_serialises_session_id_as_null() {
         let usage = Usage::default();
         let envelope = JsonEnvelope {
+            envelope_version: ENVELOPE_VERSION,
+            stop: &StopInfo::Completed,
             output: None,
             usage: UsageOut::from(&usage),
             model: "gpt-5",
             session_id: None,
             events: &[],
-            result: "completed",
             diagnostics: &[],
         };
         let mut stdout = Vec::new();
@@ -826,6 +929,51 @@ mod tests {
         let parsed: Value =
             serde_json::from_str(String::from_utf8(stdout).unwrap().trim_end()).unwrap();
         assert!(parsed["session_id"].is_null());
+    }
+
+    /// A non-completion stop rides the envelope as the TYPED `stop` object
+    /// with its detail fields and the partial output under `output` — the
+    /// machine-stable contract a subprocess consumer branches on. Pre-fix,
+    /// the envelope carried only a lossy `result` string label.
+    #[test]
+    fn json_envelope_carries_typed_stop_with_partial_for_non_completion() {
+        let usage = Usage {
+            input_tokens: 9,
+            output_tokens: 5,
+            ..Usage::default()
+        };
+        let result = AgentStepResult::TimedOut {
+            elapsed: std::time::Duration::from_millis(2500),
+            iterations: 3,
+            partial_output: Some(json!("half done")),
+            usage,
+            children_usage: Usage::default(),
+        };
+        let stop = StopInfo::from_result(&result);
+        let (output, usage) = extract_output_and_usage(&result);
+        let envelope = JsonEnvelope {
+            envelope_version: ENVELOPE_VERSION,
+            stop: &stop,
+            output: output.as_ref(),
+            usage: UsageOut::from(&usage),
+            model: "gpt-5",
+            session_id: None,
+            events: &[],
+            diagnostics: &[],
+        };
+        let mut stdout = Vec::new();
+        render_json(&mut stdout, &envelope).unwrap();
+        let parsed: Value =
+            serde_json::from_str(String::from_utf8(stdout).unwrap().trim_end()).unwrap();
+        assert_eq!(parsed["stop"]["reason"].as_str(), Some("timed_out"));
+        assert_eq!(parsed["stop"]["elapsed_ms"].as_u64(), Some(2500));
+        assert_eq!(parsed["stop"]["iterations"].as_u64(), Some(3));
+        assert_eq!(parsed["output"].as_str(), Some("half done"));
+        assert_eq!(parsed["usage"]["input_tokens"].as_u64(), Some(9));
+        assert!(
+            parsed["stop"].get("retryable").is_none(),
+            "retryability is the caller's judgment — never encoded"
+        );
     }
 
     #[test]
@@ -841,7 +989,7 @@ mod tests {
             &mut stdout,
             Some(&output),
             &usage,
-            "completed",
+            &StopInfo::Completed,
             &[diag_warning()],
         )
         .unwrap();
@@ -852,7 +1000,35 @@ mod tests {
         assert_eq!(first["type"].as_str(), Some("diagnostic"));
         let second: Value = serde_json::from_str(lines[1]).unwrap();
         assert_eq!(second["type"].as_str(), Some("completed"));
-        assert_eq!(second["result"].as_str(), Some("completed"));
+        assert_eq!(second["envelope_version"].as_u64(), Some(1));
+        assert_eq!(second["stop"]["reason"].as_str(), Some("completed"));
+    }
+
+    /// The stream-json `completed` line carries the SAME typed stop
+    /// contract as the JSON envelope — applied consistently across both
+    /// output surfaces.
+    #[test]
+    fn emit_stream_completed_carries_typed_stop_for_truncation() {
+        let mut stdout = Vec::new();
+        let result = AgentStepResult::Truncated {
+            kind: norn::agent_loop::config::TruncationKind::ContentFilter,
+            partial_text: Some("cut".to_owned()),
+            iterations: 2,
+            usage: Usage::default(),
+            children_usage: Usage::default(),
+        };
+        let stop = StopInfo::from_result(&result);
+        let (output, usage) = extract_output_and_usage(&result);
+        emit_stream_completed(&mut stdout, output.as_ref(), &usage, &stop, &[]).unwrap();
+        let text = String::from_utf8(stdout).unwrap();
+        let parsed: Value = serde_json::from_str(text.trim_end()).unwrap();
+        assert_eq!(parsed["stop"]["reason"].as_str(), Some("truncated"));
+        assert_eq!(
+            parsed["stop"]["truncation"].as_str(),
+            Some("content_filter")
+        );
+        assert_eq!(parsed["stop"]["iterations"].as_u64(), Some(2));
+        assert_eq!(parsed["output"].as_str(), Some("cut"));
     }
 
     #[test]
@@ -909,60 +1085,65 @@ mod tests {
         assert_eq!(parsed["input_tokens"].as_u64(), Some(12_345));
     }
 
+    /// Every [`AgentStepResult`] variant maps onto its typed stop with the
+    /// stable `snake_case` `reason` tag and the variant's detail fields.
     #[test]
-    fn result_label_maps_each_variant() {
-        assert_eq!(
-            result_label(&AgentStepResult::Completed {
-                output: json!(null),
-                usage: Usage::default(),
-                children_usage: Usage::default(),
-            }),
-            "completed"
-        );
-        assert_eq!(
-            result_label(&AgentStepResult::SchemaUnreachable {
-                best_attempt: None,
-                validation_errors: vec![],
-                attempts: 0,
-                usage: Usage::default(),
-                children_usage: Usage::default(),
-            }),
-            "schema_unreachable"
-        );
-        assert_eq!(
-            result_label(&AgentStepResult::MaxIterationsReached {
-                usage: Usage::default(),
-                children_usage: Usage::default(),
-            }),
-            "max_iterations"
-        );
-        assert_eq!(
-            result_label(&AgentStepResult::TimedOut {
-                elapsed: std::time::Duration::ZERO,
-                iterations: 0,
-                partial_output: None,
-                usage: Usage::default(),
-                children_usage: Usage::default(),
-            }),
-            "timed_out"
-        );
-        assert_eq!(
-            result_label(&AgentStepResult::Cancelled {
-                usage: Usage::default(),
-                children_usage: Usage::default(),
-            }),
-            "cancelled"
-        );
-        assert_eq!(
-            result_label(&AgentStepResult::Truncated {
-                kind: norn::agent_loop::config::TruncationKind::MaxTokens,
-                partial_text: None,
-                iterations: 0,
-                usage: Usage::default(),
-                children_usage: Usage::default(),
-            }),
-            "truncated"
-        );
+    fn stop_info_maps_each_variant_with_detail() {
+        fn stop_json(result: &AgentStepResult) -> Value {
+            serde_json::to_value(StopInfo::from_result(result)).unwrap()
+        }
+
+        let completed = stop_json(&AgentStepResult::Completed {
+            output: json!(null),
+            usage: Usage::default(),
+            children_usage: Usage::default(),
+        });
+        assert_eq!(completed, json!({"reason": "completed"}));
+
+        let schema = stop_json(&AgentStepResult::SchemaUnreachable {
+            best_attempt: None,
+            validation_errors: vec!["missing field `name`".to_owned()],
+            attempts: 4,
+            usage: Usage::default(),
+            children_usage: Usage::default(),
+        });
+        assert_eq!(schema["reason"], json!("schema_unreachable"));
+        assert_eq!(schema["attempts"], json!(4));
+        assert_eq!(schema["validation_errors"], json!(["missing field `name`"]));
+
+        let max_iter = stop_json(&AgentStepResult::MaxIterationsReached {
+            usage: Usage::default(),
+            children_usage: Usage::default(),
+        });
+        assert_eq!(max_iter, json!({"reason": "max_iterations"}));
+
+        let timed_out = stop_json(&AgentStepResult::TimedOut {
+            elapsed: std::time::Duration::from_secs(2),
+            iterations: 7,
+            partial_output: None,
+            usage: Usage::default(),
+            children_usage: Usage::default(),
+        });
+        assert_eq!(timed_out["reason"], json!("timed_out"));
+        assert_eq!(timed_out["elapsed_ms"], json!(2000));
+        assert_eq!(timed_out["iterations"], json!(7));
+
+        let cancelled = stop_json(&AgentStepResult::Cancelled {
+            usage: Usage::default(),
+            children_usage: Usage::default(),
+        });
+        assert_eq!(cancelled, json!({"reason": "cancelled"}));
+
+        let truncated = stop_json(&AgentStepResult::Truncated {
+            kind: norn::agent_loop::config::TruncationKind::MaxTokens,
+            partial_text: None,
+            iterations: 1,
+            usage: Usage::default(),
+            children_usage: Usage::default(),
+        });
+        assert_eq!(truncated["reason"], json!("truncated"));
+        assert_eq!(truncated["truncation"], json!("max_tokens"));
+        assert_eq!(truncated["iterations"], json!(1));
     }
 
     /// `TimedOut` and `Truncated` carry real usage and partial output on

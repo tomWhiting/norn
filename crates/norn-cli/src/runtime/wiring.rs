@@ -52,6 +52,7 @@ use norn::session::store::EventStore;
 use norn::skill::SkillCatalog;
 use norn::tool::registry::ToolRegistry;
 use norn::tools::agent::AgentToolInfra;
+use norn::tools::skill::SkillToolConfig;
 use norn::tools::write::{LengthLimit, WriteTool};
 use serde::Deserialize;
 use serde_json::Value;
@@ -404,6 +405,27 @@ pub fn build_skill_search_paths(settings: &NornSettings, cwd: &Path) -> Vec<Path
 #[must_use]
 pub fn build_skill_catalog(paths: &[PathBuf]) -> Arc<SkillCatalog> {
     Arc::new(SkillCatalog::scan(paths))
+}
+
+/// Resolve the [`SkillToolConfig`] from the merged settings'
+/// `tools.skill` section.
+///
+/// An absent section — or an absent `shell_execution` key — defers to
+/// the tool's own documented default (shell execution **enabled**, per
+/// [`SkillToolConfig::default`]); `false` disables skill-authored shell
+/// expansion, replacing every shell placeholder with the
+/// policy-disabled marker.
+#[must_use]
+pub fn skill_tool_config_from_settings(settings: &NornSettings) -> SkillToolConfig {
+    let shell_execution = settings
+        .tools
+        .as_ref()
+        .and_then(|tools| tools.skill.as_ref())
+        .and_then(|skill| skill.shell_execution);
+    match shell_execution {
+        Some(shell_execution) => SkillToolConfig { shell_execution },
+        None => SkillToolConfig::default(),
+    }
 }
 
 /// Resolve a settings-supplied path string against the working

@@ -1,7 +1,7 @@
 //! [`SessionSpec`] — how
 //! [`AgentBuilder::open_session`](crate::agent::builder::AgentBuilder::open_session)
 //! brings a persisted session to life through a
-//! [`SessionManager`](crate::session::SessionManager).
+//! [`SessionManager`].
 //!
 //! The spec is deliberately metadata-light: the index entry's `model`
 //! and `working_dir` are filled in at build time from the *resolved*

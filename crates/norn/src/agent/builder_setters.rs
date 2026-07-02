@@ -283,7 +283,8 @@ impl AgentBuilder {
     ///   and is surfaced on
     ///   [`ResolvedAgentInfo::session_id`](crate::agent::ResolvedAgentInfo::session_id),
     /// - the index entry and replay summary are surfaced via
-    ///   [`Agent::session_entry`] / [`Agent::session_replay`]; tolerant-reader
+    ///   [`Agent::session_entry`](crate::agent::Agent::session_entry) /
+    ///   [`Agent::session_replay`](crate::agent::Agent::session_replay); tolerant-reader
     ///   skips are additionally logged at warn level.
     ///
     /// The new index entry records the *resolved* model and working
@@ -313,9 +314,11 @@ impl AgentBuilder {
     /// Create the agent's event broadcast channel with this capacity.
     ///
     /// The builder constructs the channel and the root
-    /// [`AgentEventSender`] (tagged with the agent's id and the `root`
+    /// [`AgentEventSender`](crate::provider::agent_event::AgentEventSender)
+    /// (tagged with the agent's id and the `root`
     /// role) itself, publishes the raw channel on the tool context as
-    /// [`SharedAgentEventChannel`] so fork/spawn children stream through
+    /// [`SharedAgentEventChannel`](crate::provider::agent_event::SharedAgentEventChannel)
+    /// so fork/spawn children stream through
     /// the same channel, and exposes subscriptions via
     /// [`AgentHandle::subscribe`](crate::agent::AgentHandle::subscribe).
     ///
@@ -357,7 +360,8 @@ impl AgentBuilder {
     /// The capacity is explicit rather than defaulted; producers awaiting
     /// `send` block when the buffer is full. Zero fails the build.
     /// Without this call the root step has no mid-session injection path
-    /// — only the initial [`Agent::run`] prompt enters the conversation.
+    /// — only the initial [`Agent::run`](crate::agent::Agent::run) prompt
+    /// enters the conversation.
     #[must_use]
     pub fn inbound_capacity(mut self, capacity: usize) -> Self {
         self.inbound_capacity = Some(capacity);

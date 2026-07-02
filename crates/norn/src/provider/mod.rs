@@ -2,9 +2,9 @@
 
 pub use self::agent_event::{
     AGENT_MESSAGE_DELIVERED_EVENT_TYPE, AGENT_MESSAGE_SENT_EVENT_TYPE, AgentEvent, AgentEventKind,
-    AgentEventSender, AgentMessageLifecycle, AgentUsageEstimate, SUBAGENT_COMPLETED_EVENT_TYPE,
-    SUBAGENT_STARTED_EVENT_TYPE, SharedAgentEventChannel, SubagentDescriptor, SubagentKind,
-    SubagentLifecycle,
+    AgentEventSender, AgentMessageLifecycle, AgentStreamRetry, AgentUsageEstimate,
+    SUBAGENT_COMPLETED_EVENT_TYPE, SUBAGENT_STARTED_EVENT_TYPE, SharedAgentEventChannel,
+    SubagentDescriptor, SubagentKind, SubagentLifecycle,
 };
 pub use self::api_shape::{
     ApiShape, ApiShapeParseError, ProviderProfileId, ProviderProfileIdError,
@@ -14,6 +14,7 @@ pub use self::auth::{
     build_from_auth_source, login, logout,
 };
 pub use self::events::{ProviderEvent, StopReason};
+pub use self::reasoning::{ReasoningContentPart, ReasoningItem, ReasoningSummaryPart};
 pub use self::request::{
     AssistantToolCall, Message, MessageRole, ProviderConfig, ProviderOptions, ProviderRequest,
     ReasoningEffort, ReasoningSummary, SecretString, ServiceTier, ToolDefinition,
@@ -37,10 +38,12 @@ pub mod api_shape;
 pub mod auth;
 pub mod debug;
 pub mod events;
+pub(crate) mod exec;
 pub mod mock;
 pub mod openai;
 pub mod openai_compatible;
 pub mod openai_oauth;
+pub mod reasoning;
 pub mod request;
 pub(crate) mod startup_trace;
 pub mod surface;

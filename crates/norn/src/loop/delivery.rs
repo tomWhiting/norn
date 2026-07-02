@@ -10,7 +10,7 @@
 use std::fmt::Write as _;
 
 use crate::agent::result_channel::frame_child_result;
-use crate::agent::{PendingAgentMessages, append_pending_message_audit};
+use crate::agent::{PendingAgentMessage, PendingAgentMessages, append_pending_message_audit};
 use crate::error::SessionError;
 use crate::integration::hooks::HookRegistry;
 use crate::r#loop::active_input::{ActiveInput, ActiveInputReceiver};
@@ -130,6 +130,7 @@ pub(super) async fn inject_inbound_messages(
             role: MessageRole::User,
             content: Some(formatted),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             tool_name: None,
@@ -184,6 +185,34 @@ pub(super) async fn flush_pending_agent_messages(
     Ok(injected)
 }
 
+/// Drain the inbound channel immediately after a completed tool batch:
+/// steer messages inject now (the inbound contract's "immediately after
+/// the current tool batch, before the next provider request"), updates
+/// buffer until a would-stop boundary. Returns `true` when at least one
+/// steer was injected.
+///
+/// Callers must invoke this only once every tool call in the batch has
+/// received its result (including schema-feedback and rejected
+/// post-schema results): providers require tool results to directly
+/// follow the assistant tool-call turn, so a user-role injection between
+/// them would produce a malformed conversation.
+pub(super) async fn drain_post_batch_inbound(
+    store: &EventStore,
+    messages: &mut Vec<Message>,
+    inbound: Option<&mut InboundChannel>,
+    follow_up_buffer: &mut Vec<ChannelMessage>,
+    hooks: Option<&HookRegistry>,
+    event_tx: Option<&AgentEventSender>,
+) -> Result<bool, SessionError> {
+    let (steer, follow_up) = drain_and_partition(inbound);
+    follow_up_buffer.extend(follow_up);
+    if steer.is_empty() {
+        return Ok(false);
+    }
+    inject_inbound_messages(store, messages, steer, hooks, event_tx).await?;
+    Ok(true)
+}
+
 /// Drain the inbound channel, then inject steer messages and any buffered
 /// updates into the conversation. Returns `true` if any messages were
 /// injected (indicating the loop should continue rather than return).
@@ -208,6 +237,116 @@ pub(super) async fn flush_inbound_messages(
     user_event_ids
         .extend(inject_inbound_messages(store, messages, buffered, hooks, event_tx).await?);
     Ok(user_event_ids)
+}
+
+/// The delivery window in which an accepted inbound message was left
+/// undelivered, recorded on the re-queue log trail so operators can tell
+/// *where* a message fell out of live delivery.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum UndeliveredWindow {
+    /// The step ended (any exit path) with the message still buffered or
+    /// undrained in the step's inbound channel.
+    StepExit,
+    /// The child's controller deregistered its router route and swept the
+    /// channel of messages the router had already accepted.
+    Deregistration,
+    /// The message arrived on a parked (Idle) child's channel, which has
+    /// no live loop to drain it.
+    IdlePark,
+}
+
+impl UndeliveredWindow {
+    /// Stable label used in log records.
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::StepExit => "step_exit",
+            Self::Deregistration => "deregistration",
+            Self::IdlePark => "idle_park",
+        }
+    }
+}
+
+/// Re-queue inbound messages a step accepted but never delivered, so an
+/// acknowledged message is never silently dropped.
+///
+/// This is the single re-queue path for every window in which a live
+/// loop stops being the consumer of an accepted message
+/// ([`UndeliveredWindow`] names them). The step wrapper calls it on
+/// every exit: Update messages buffer until a would-stop boundary, so a
+/// step that ends anywhere else (max-iterations, schema-unreachable,
+/// truncation, cancellation, timeout, or a hard error) leaves them in
+/// the buffer, and messages of either kind still sitting undrained in
+/// the step's inbound channel at exit — accepted (and acknowledged to
+/// their sender) after the loop's final drain — are swept into the same
+/// buffer by the wrapper. The spawn controller calls it for its
+/// post-deregistration channel sweeps and for messages received while
+/// the child is parked Idle. Whatever arrives here goes into the
+/// durable pending store keyed to `agent_id` — the same store the next
+/// step's [`flush_pending_agent_messages`] drains and `wake_agent`
+/// eligibility reads — with an `agent_message.queued` audit event per
+/// message. Without an agent identity or pending store (loops assembled
+/// outside agent coordination) the loss is logged per message at error
+/// level rather than passing silently.
+pub(crate) fn requeue_undelivered_inbound(
+    store: &EventStore,
+    agent_id: Option<uuid::Uuid>,
+    pending: Option<&PendingAgentMessages>,
+    follow_up_buffer: &mut Vec<ChannelMessage>,
+    window: UndeliveredWindow,
+) {
+    if follow_up_buffer.is_empty() {
+        return;
+    }
+    let undelivered = std::mem::take(follow_up_buffer);
+    let (Some(agent_id), Some(pending)) = (agent_id, pending) else {
+        for msg in &undelivered {
+            tracing::error!(
+                message_id = %msg.id,
+                sender = %msg.from,
+                kind = msg.kind.as_str(),
+                window = window.as_str(),
+                "undelivered inbound message with no durable pending store \
+                 on the loop context; the acknowledged message is lost",
+            );
+        }
+        return;
+    };
+    for mut msg in undelivered {
+        // Redelivery targets this loop's agent regardless of how the
+        // original send addressed the channel (router sends stamp the
+        // recipient; direct handle sends may not).
+        msg.to_id = agent_id;
+        let message_id = msg.id;
+        let kind = msg.kind;
+        let pending_record =
+            PendingAgentMessage::new(msg, agent_id.to_string(), chrono::Utc::now());
+        let Some(queued_event) = pending.queue(pending_record) else {
+            // Already pending under the same id (a redelivered copy the
+            // step drained but did not consume) — the durable record is
+            // intact, nothing to add.
+            tracing::debug!(
+                message_id = %message_id,
+                "undelivered inbound message already pending; skipping duplicate re-queue",
+            );
+            continue;
+        };
+        tracing::warn!(
+            message_id = %message_id,
+            recipient = %agent_id,
+            kind = kind.as_str(),
+            window = window.as_str(),
+            "accepted inbound message left live delivery; \
+             re-queued into the durable pending store",
+        );
+        if let Err(error) = append_pending_message_audit(store, &queued_event) {
+            tracing::error!(
+                message_id = %message_id,
+                %error,
+                "failed to persist the queued audit event for a re-queued \
+                 inbound message; the in-memory pending record is still held",
+            );
+        }
+    }
 }
 
 /// Drain human active-turn input and persist it as ordinary user messages.
@@ -253,6 +392,7 @@ async fn inject_active_inputs(
             role: MessageRole::User,
             content: Some(content),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             tool_name: None,
@@ -285,7 +425,7 @@ async fn inject_active_inputs(
 /// W3.6 usage rollup: every drained result's
 /// [`subtree_usage`](crate::agent::result_channel::ChildAgentResult::subtree_usage)
 /// — seed included — is folded into `children_usage`
-/// ([`LoopContext::children_usage`](crate::r#loop::loop_context::LoopContext)).
+/// ([`LoopContext::children_usage`](crate::agent_loop::loop_context::LoopContext)).
 /// Because this function is the single consumer of the bounded result
 /// channel **while the receiver is installed on the loop**, and every
 /// result it consumes passes through it exactly once, each child
@@ -338,6 +478,7 @@ pub(super) async fn drain_child_results(
         role: MessageRole::User,
         content: Some(formatted),
         thinking: String::new(),
+        reasoning: Vec::new(),
         tool_calls: Vec::new(),
         tool_call_id: None,
         tool_name: None,

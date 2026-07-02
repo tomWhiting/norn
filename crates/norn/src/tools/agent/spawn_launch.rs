@@ -24,16 +24,18 @@ use super::reclaim::{ReclaimHandshake, reclaim_delivered_child};
 use super::spawn_outcome::{
     extract_outcome_summary, mark_terminal_in_registry, panic_outcome_summary,
 };
+use crate::agent::PendingAgentMessages;
 use crate::agent::child_policy::ChildLoopConfig;
 use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
-use crate::r#loop::inbound::inbound_channel;
+use crate::r#loop::inbound::{InboundChannel, inbound_channel};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::runner::{
     AgentMessageStepRequest, AgentStepRequest, run_agent_step, run_agent_step_from_messages,
 };
+use crate::r#loop::{UndeliveredWindow, requeue_undelivered_inbound};
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
@@ -113,7 +115,7 @@ pub(super) struct ChildLaunch {
     /// [`ChildPolicy::loop_config`](crate::agent::child_policy::ChildPolicy::loop_config)
     /// (R5 closure). The wrapper resolves it via
     /// [`ChildLoopConfig::resolve`]: `None` → the child runs
-    /// [`AgentLoopConfig::default()`](crate::r#loop::runner::AgentLoopConfig)
+    /// [`AgentLoopConfig::default()`](crate::agent_loop::runner::AgentLoopConfig)
     /// exactly as before R5; `Some` applies the granted subset
     /// (`max_iterations`, `step_timeout`, `linger`) onto that default —
     /// a granted linger lets this child wait at its stop boundaries for
@@ -147,6 +149,33 @@ fn panic_payload_message(payload: &(dyn Any + Send)) -> String {
         return message.clone();
     }
     "non-string panic payload".to_owned()
+}
+
+/// Sweep every message still buffered in the child's inbound channel into
+/// the child's durable pending store, with one `agent_message.queued`
+/// audit per message.
+///
+/// The router's acceptance contract — "a message the router accepts is a
+/// message some loop will drain" — is what this protects. The step
+/// wrapper's own exit sweep covers messages accepted *during* a step, but
+/// two windows sit outside any step: messages the router enqueued between
+/// the step's exit sweep and [`MessageRouter::deregister`], and messages a
+/// parent-held [`AgentHandle`] pushed while the child was parked Idle
+/// (`recv` park arm). Both land here; the pending store is exactly what
+/// the next wake step's pending drain reads, so nothing acknowledged is
+/// ever stranded in a channel no loop owns.
+pub(crate) fn requeue_stranded_inbound(
+    store: &EventStore,
+    child_id: Uuid,
+    pending: Option<&PendingAgentMessages>,
+    inbound_rx: &mut InboundChannel,
+    window: UndeliveredWindow,
+) {
+    let mut stranded = inbound_rx.drain();
+    if stranded.is_empty() {
+        return;
+    }
+    requeue_undelivered_inbound(store, Some(child_id), pending, &mut stranded, window);
 }
 
 fn mark_idle_in_registry(registry: &RwLock<AgentRegistry>, child_id: Uuid) {
@@ -282,6 +311,11 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let join_handle = tokio::spawn(async move {
         let child_config = ChildLoopConfig::resolve(loop_config);
         let delivered_children = loop_ctx.children_usage.clone();
+        // Cheap handle to the child's durable pending store, captured
+        // before `loop_ctx` is mutably lent to the step requests: the
+        // deregistration and idle-park sweeps below queue stranded
+        // channel messages here.
+        let pending_messages = loop_ctx.pending_agent_messages.clone();
         let result_sender = result_sender;
         let mut reclaim = reclaim;
         let mut initial = Some(task);
@@ -324,6 +358,16 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
             };
 
             router.deregister(child_id);
+            // Messages the router accepted between the step's exit sweep
+            // and the deregister above have no loop left to drain them —
+            // queue them durably now.
+            requeue_stranded_inbound(
+                store.as_ref(),
+                child_id,
+                pending_messages.as_deref(),
+                &mut inbound_rx,
+                UndeliveredWindow::Deregistration,
+            );
 
             let stop_blocked = if let Some(hooks_arc) = hooks.as_ref() {
                 matches!(
@@ -397,28 +441,72 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
             mark_idle_in_registry(&agent_registry, child_id);
             let _ = status_tx.send_replace(AgentStatus::Idle);
 
-            tokio::select! {
-                biased;
-                () = run_cancel.cancelled() => {
-                    mark_closed_in_registry(&agent_registry, child_id);
-                    let _ = status_tx.send_replace(AgentStatus::Closed);
-                    break;
-                }
-                wake = wake_rx.recv() => {
-                    if wake.is_none() {
-                        mark_closed_in_registry(&agent_registry, child_id);
-                        let _ = status_tx.send_replace(AgentStatus::Closed);
-                        break;
+            // Park until a wake or cancellation. The inbound arm keeps the
+            // park honest: a message pushed through the parent-held
+            // `AgentHandle::inbound_tx` while the child is parked has no
+            // loop to drain it, so it is routed straight into the durable
+            // pending store — making it wake-eligible (`wake_agent` reads
+            // that store) instead of sitting invisibly in the channel.
+            // The arm never wakes the child by itself; it re-parks.
+            //
+            // `inbound_open` disables the arm once every sender is
+            // dropped (`recv` returning `None` would otherwise resolve
+            // instantly forever). Unreachable while this task holds
+            // `inbound_tx_for_task`, but a select arm must not rely on
+            // that invariant to terminate.
+            let mut inbound_open = true;
+            let closed = loop {
+                tokio::select! {
+                    biased;
+                    () = run_cancel.cancelled() => break true,
+                    wake = wake_rx.recv() => {
+                        if wake.is_none() {
+                            break true;
+                        }
+                        mark_active_in_registry(&agent_registry, child_id);
+                        let _ = status_tx.send_replace(AgentStatus::Active);
+                        wake_pending_for_task.store(false, Ordering::SeqCst);
+                        router.register(child_id, inbound_tx_for_task.clone());
+                        break false;
                     }
-                    mark_active_in_registry(&agent_registry, child_id);
-                    let _ = status_tx.send_replace(AgentStatus::Active);
-                    wake_pending_for_task.store(false, Ordering::SeqCst);
-                    router.register(child_id, inbound_tx_for_task.clone());
+                    received = inbound_rx.recv(), if inbound_open => {
+                        match received {
+                            Some(message) => {
+                                let mut stranded = vec![message];
+                                stranded.extend(inbound_rx.drain());
+                                requeue_undelivered_inbound(
+                                    store.as_ref(),
+                                    Some(child_id),
+                                    pending_messages.as_deref(),
+                                    &mut stranded,
+                                    UndeliveredWindow::IdlePark,
+                                );
+                            }
+                            None => inbound_open = false,
+                        }
+                    }
                 }
+            };
+            if closed {
+                mark_closed_in_registry(&agent_registry, child_id);
+                let _ = status_tx.send_replace(AgentStatus::Closed);
+                break;
             }
         }
 
         router.deregister(child_id);
+        // Terminal-exit sweep: whatever still sits in the channel after
+        // the controller's last deregister (cancellation during park,
+        // non-persistent completion, hard failure) is queued durably so
+        // the acknowledged send leaves an audit trail instead of dying
+        // with the channel.
+        requeue_stranded_inbound(
+            store.as_ref(),
+            child_id,
+            pending_messages.as_deref(),
+            &mut inbound_rx,
+            UndeliveredWindow::Deregistration,
+        );
         if let Some(registry) = wake_registry {
             registry.remove(child_id);
         }
@@ -434,5 +522,101 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         join_handle,
         event_store: handle_store,
         branch_metadata,
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use chrono::Utc;
+
+    use super::*;
+    use crate::agent::{AGENT_MESSAGE_QUEUED_EVENT_TYPE, PendingAgentMessages};
+    use crate::r#loop::inbound::{ChannelMessage, MessageKind};
+    use crate::session::events::SessionEvent;
+
+    fn message(to_id: Uuid, content: &str, kind: MessageKind) -> ChannelMessage {
+        ChannelMessage {
+            id: Uuid::new_v4(),
+            sender_id: Uuid::new_v4(),
+            from: "/root/parent".to_owned(),
+            role: None,
+            to_id,
+            content: content.to_owned(),
+            kind,
+            seq: None,
+            timestamp: Utc::now(),
+        }
+    }
+
+    /// The deregistration sweep drains everything the channel holds into
+    /// the durable pending store, in order, with one queued audit per
+    /// message — steer and update alike (a stranded message has no live
+    /// loop, so the kinds' delivery-timing distinction does not apply).
+    #[tokio::test]
+    async fn requeue_stranded_inbound_queues_all_kinds_with_audits() {
+        let child_id = Uuid::new_v4();
+        let store = EventStore::new();
+        let pending = PendingAgentMessages::new();
+        let (tx, mut rx) = inbound_channel(8);
+        tx.send(message(child_id, "steer me", MessageKind::Steer))
+            .await
+            .expect("send steer");
+        tx.send(message(child_id, "fyi", MessageKind::Update))
+            .await
+            .expect("send update");
+
+        requeue_stranded_inbound(
+            &store,
+            child_id,
+            Some(&pending),
+            &mut rx,
+            UndeliveredWindow::Deregistration,
+        );
+
+        assert_eq!(pending.pending_for(child_id), 2);
+        let (drained, _) = pending.drain_for(child_id);
+        assert_eq!(
+            drained
+                .iter()
+                .map(|m| m.content.as_str())
+                .collect::<Vec<_>>(),
+            vec!["steer me", "fyi"],
+            "FIFO order must survive the sweep",
+        );
+        let audits = store
+            .events()
+            .iter()
+            .filter(|e| {
+                matches!(
+                    e,
+                    SessionEvent::Custom { event_type, .. }
+                        if event_type == AGENT_MESSAGE_QUEUED_EVENT_TYPE
+                )
+            })
+            .count();
+        assert_eq!(audits, 2, "one agent_message.queued audit per message");
+        assert!(rx.drain().is_empty(), "the channel is left empty");
+    }
+
+    /// An empty channel sweeps to nothing: no pending records, no audit
+    /// events — the hot path stays silent when there is nothing stranded.
+    #[tokio::test]
+    async fn requeue_stranded_inbound_is_a_no_op_on_an_empty_channel() {
+        let child_id = Uuid::new_v4();
+        let store = EventStore::new();
+        let pending = PendingAgentMessages::new();
+        let (_tx, mut rx) = inbound_channel(4);
+
+        requeue_stranded_inbound(
+            &store,
+            child_id,
+            Some(&pending),
+            &mut rx,
+            UndeliveredWindow::Deregistration,
+        );
+
+        assert!(pending.is_empty());
+        assert!(store.is_empty());
     }
 }

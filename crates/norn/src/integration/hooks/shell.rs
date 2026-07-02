@@ -78,7 +78,7 @@ pub struct HookContext {
 
 /// Config-driven hook bridge that implements every hook trait via shell.
 ///
-/// One instance per parsed [`crate::config::types::HookCommandConfig`]. The
+/// One instance per parsed [`crate::config::types::HookEntry`]. The
 /// stored [`HookEventType`] selects which trait method is the active one —
 /// the other ten implementations are effectively no-ops because the hook is
 /// only registered under the variant that matches `event_type`.

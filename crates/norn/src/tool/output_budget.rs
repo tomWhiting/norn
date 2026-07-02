@@ -12,14 +12,8 @@ use serde_json::{Map, Value, json};
 pub const MODEL_OUTPUT_INLINE_CHAR_LIMIT: usize = 64_000;
 
 /// Number of leading and trailing characters retained when a structured value
-/// exceeds [`MODEL_OUTPUT_INLINE_CHAR_LIMIT`].
+/// exceeds the effective inline limit passed to [`cap_model_output`].
 const MODEL_OUTPUT_PREVIEW_CHARS: usize = 4_000;
-
-/// Maximum characters retained from a single regex search matching line.
-pub const SEARCH_MATCH_LINE_CHAR_LIMIT: usize = 500;
-
-/// Hard cap on search matches/paths even when the model asks for more.
-pub const SEARCH_HARD_MAX_RESULTS: u32 = 100;
 
 /// Default number of lines returned by `read` when no limit is supplied.
 pub const READ_DEFAULT_LINE_LIMIT: u64 = 200;
@@ -45,9 +39,6 @@ const READ_CONTEXT_WINDOW_DIVISOR: u64 = 8;
 
 /// Maximum characters retained for one physical line rendered by `read`.
 pub const READ_LINE_CHAR_LIMIT: usize = 1_000;
-
-/// Maximum text characters retained for one AST-search capture.
-pub const AST_CAPTURE_TEXT_CHAR_LIMIT: usize = 1_000;
 
 /// Runtime budget for text a tool may return into model-facing context.
 ///
@@ -100,13 +91,13 @@ impl Default for ToolOutputBudget {
     }
 }
 
-/// Return the serialized character count used by the model-facing budget.
-#[must_use]
-pub fn serialized_char_count(value: &Value) -> usize {
-    model_content_string(value).chars().count()
-}
-
-/// Return a provider-message-safe representation of `output`.
+/// Return a provider-message-safe representation of `output`, bounded to
+/// `inline_char_limit` serialized characters.
+///
+/// `inline_char_limit` comes from the installed
+/// [`ToolOutputBudget::model_output_inline_char_limit`]; call sites
+/// without an installed budget pass the documented default
+/// [`MODEL_OUTPUT_INLINE_CHAR_LIMIT`].
 ///
 /// Small values are cloned unchanged. Oversized values become a compact JSON
 /// object with size metadata and head/tail previews. This is intentionally a
@@ -114,10 +105,15 @@ pub fn serialized_char_count(value: &Value) -> usize {
 /// side files. Event stores and action logs can still keep the full value while
 /// provider messages receive this bounded projection.
 #[must_use]
-pub fn cap_model_output(tool_name: &str, tool_call_id: &str, output: &Value) -> Value {
+pub fn cap_model_output(
+    tool_name: &str,
+    tool_call_id: &str,
+    output: &Value,
+    inline_char_limit: usize,
+) -> Value {
     let serialized = model_content_string(output);
     let original_chars = serialized.chars().count();
-    if original_chars <= MODEL_OUTPUT_INLINE_CHAR_LIMIT {
+    if original_chars <= inline_char_limit {
         return output.clone();
     }
 
@@ -127,10 +123,7 @@ pub fn cap_model_output(tool_name: &str, tool_call_id: &str, output: &Value) -> 
     capped.insert("tool_name".to_owned(), json!(tool_name));
     capped.insert("tool_call_id".to_owned(), json!(tool_call_id));
     capped.insert("original_chars".to_owned(), json!(original_chars));
-    capped.insert(
-        "inline_char_limit".to_owned(),
-        json!(MODEL_OUTPUT_INLINE_CHAR_LIMIT),
-    );
+    capped.insert("inline_char_limit".to_owned(), json!(inline_char_limit));
     capped.insert(
         "message".to_owned(),
         json!(
@@ -149,54 +142,6 @@ pub fn cap_model_output(tool_name: &str, tool_call_id: &str, output: &Value) -> 
         json!(tail_chars(&serialized, MODEL_OUTPUT_PREVIEW_CHARS)),
     );
     Value::Object(capped)
-}
-
-/// Build a bounded preview wrapper for action-log detail/context queries.
-///
-/// Unlike [`cap_model_output`], this helper names the field being capped so the
-/// caller can embed it in a larger response while making the cap explicit.
-#[must_use]
-pub fn cap_embedded_value(field_name: &str, value: &Value, limit: usize) -> Value {
-    let serialized = model_content_string(value);
-    let original_chars = serialized.chars().count();
-    if original_chars <= limit {
-        return value.clone();
-    }
-
-    json!({
-        "truncated": true,
-        "field": field_name,
-        "original_chars": original_chars,
-        "inline_char_limit": limit,
-        "head": take_chars(&serialized, MODEL_OUTPUT_PREVIEW_CHARS.min(limit)),
-        "tail": tail_chars(&serialized, MODEL_OUTPUT_PREVIEW_CHARS.min(limit)),
-    })
-}
-
-/// Truncate `text` to `limit` characters and report whether truncation occurred.
-#[must_use]
-pub fn truncate_text(text: &str, limit: usize) -> (String, bool, usize) {
-    let original_chars = text.chars().count();
-    if original_chars <= limit {
-        return (text.to_owned(), false, original_chars);
-    }
-    (take_chars(text, limit), true, original_chars)
-}
-
-/// Insert truncation metadata into an object if truncation occurred.
-pub fn insert_truncation_metadata(
-    object: &mut Map<String, Value>,
-    prefix: &str,
-    truncated: bool,
-    original_chars: usize,
-    limit: usize,
-) {
-    if !truncated {
-        return;
-    }
-    object.insert(format!("{prefix}_truncated"), Value::Bool(true));
-    object.insert(format!("{prefix}_original_chars"), json!(original_chars));
-    object.insert(format!("{prefix}_char_limit"), json!(limit));
 }
 
 fn model_content_string(value: &Value) -> String {
@@ -250,16 +195,39 @@ mod tests {
     #[test]
     fn cap_model_output_leaves_small_values_unchanged() {
         let value = json!({ "ok": true });
-        assert_eq!(cap_model_output("x", "call", &value), value);
+        assert_eq!(
+            cap_model_output("x", "call", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT),
+            value
+        );
     }
 
     #[test]
     fn cap_model_output_replaces_large_values_with_preview() {
         let value = Value::String("a".repeat(MODEL_OUTPUT_INLINE_CHAR_LIMIT + 1));
-        let capped = cap_model_output("read", "call-1", &value);
+        let capped = cap_model_output("read", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT);
         assert_eq!(capped["truncated_for_model"], true);
         assert_eq!(capped["tool_name"], "read");
         assert_eq!(capped["tool_call_id"], "call-1");
+        assert_eq!(capped["inline_char_limit"], MODEL_OUTPUT_INLINE_CHAR_LIMIT);
+    }
+
+    /// An embedder-installed budget with a smaller inline limit actually
+    /// caps at that limit — the documented default is not hardcoded into
+    /// the cap itself.
+    #[test]
+    fn cap_model_output_honors_a_smaller_installed_limit() {
+        let small_limit = 100;
+        let value = Value::String("a".repeat(small_limit + 1));
+        let capped = cap_model_output("read", "call-1", &value, small_limit);
+        assert_eq!(capped["truncated_for_model"], true);
+        assert_eq!(capped["inline_char_limit"], small_limit);
+        assert_eq!(capped["original_chars"], small_limit + 1);
+
+        // The same value passes untouched under the documented default.
+        assert_eq!(
+            cap_model_output("read", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT),
+            value,
+        );
     }
 
     #[test]
@@ -281,7 +249,7 @@ mod tests {
             "follow_ups": [{ "action": "next" }],
             "content": "a".repeat(MODEL_OUTPUT_INLINE_CHAR_LIMIT + 1),
         });
-        let capped = cap_model_output("read", "call-1", &value);
+        let capped = cap_model_output("read", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT);
         assert_eq!(capped["truncated_for_model"], true);
         assert_eq!(capped["error"]["message"], "bad");
         assert_eq!(capped["follow_ups"][0]["action"], "next");
@@ -298,7 +266,7 @@ mod tests {
             "check_overrides": [{ "check_name": "post_validate_mode" }],
             "content": "a".repeat(MODEL_OUTPUT_INLINE_CHAR_LIMIT + 1),
         });
-        let capped = cap_model_output("write", "call-1", &value);
+        let capped = cap_model_output("write", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT);
         assert_eq!(capped["truncated_for_model"], true);
         assert_eq!(capped["diagnostics"][0]["message"], "syntax error");
         assert_eq!(capped["advisories"][0]["message"], "split this file");
@@ -309,13 +277,5 @@ mod tests {
             capped["check_overrides"][0]["check_name"],
             "post_validate_mode"
         );
-    }
-
-    #[test]
-    fn truncate_text_reports_original_size() {
-        let (text, truncated, original) = truncate_text("abcdef", 3);
-        assert_eq!(text, "abc");
-        assert!(truncated);
-        assert_eq!(original, 6);
     }
 }

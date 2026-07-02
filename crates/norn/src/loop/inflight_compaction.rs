@@ -81,6 +81,9 @@ pub(super) struct PreflightArgs<'a> {
     pub(super) compaction_state: &'a mut CompactionState,
     /// Positional layout of the live conversation.
     pub(super) layout: InFlightPromptLayout,
+    /// The step's cooperative cancellation token, raced against the
+    /// compaction-summarization provider call.
+    pub(super) cancel: Option<&'a tokio_util::sync::CancellationToken>,
 }
 
 /// What the preflight did, reported back to the runner.
@@ -160,6 +163,7 @@ pub(super) async fn run_context_preflight(
         threshold_pct: args.config.auto_compact_threshold_pct,
         keep_recent_turns: args.config.auto_compact_keep_recent_turns,
         hooks: hooks.as_deref(),
+        cancel: args.cancel,
     })
     .await?;
     let Some(run) = run else {
@@ -362,6 +366,7 @@ mod tests {
             role,
             content: Some(content.to_string()),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             tool_name: None,

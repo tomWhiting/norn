@@ -42,12 +42,13 @@ mod conversation_state;
 mod delivery;
 mod dev_context;
 pub mod event_schemas;
-pub mod events;
 
 pub mod expansion;
 mod failure_tracking;
 mod helpers;
 mod inflight_compaction;
+pub(crate) use delivery::{UndeliveredWindow, requeue_undelivered_inbound};
+pub(crate) use helpers::append_off_executor;
 pub use helpers::ensure_tool_results_complete;
 pub mod inbound;
 pub mod iteration;

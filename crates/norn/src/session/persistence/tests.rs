@@ -154,7 +154,7 @@ fn index_only_entry(dir: &Path) -> SessionIndexEntry {
         total_output_tokens: 0,
         total_cache_read_tokens: 0,
     };
-    append_index_entry(dir, &entry).unwrap();
+    append_index_entry(dir, &entry, None).unwrap();
     entry
 }
 
@@ -811,7 +811,7 @@ fn update_session_index_adds_count_and_tokens() {
         cache_read_tokens: 5,
         ..Usage::default()
     };
-    update_session_index(tmp.path(), &entry.id, 3, &usage).unwrap();
+    update_session_index(tmp.path(), &entry.id, 3, &usage, None).unwrap();
 
     let index = read_index(tmp.path()).unwrap();
     assert_eq!(index.len(), 1);
@@ -825,7 +825,7 @@ fn update_session_index_adds_count_and_tokens() {
 fn update_session_index_does_not_write_session_jsonl() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = index_only_entry(tmp.path());
-    update_session_index(tmp.path(), &entry.id, 4, &Usage::default()).unwrap();
+    update_session_index(tmp.path(), &entry.id, 4, &Usage::default(), None).unwrap();
     // The index-only path must never create or touch the session JSONL.
     assert!(!session_file_path(tmp.path(), &entry.id).exists());
 }
@@ -834,8 +834,8 @@ fn update_session_index_does_not_write_session_jsonl() {
 fn update_session_index_accumulates_across_calls() {
     let tmp = tempfile::tempdir().unwrap();
     let entry = fresh_session(tmp.path());
-    update_session_index(tmp.path(), &entry.id, 2, &assistant_usage(7, 3, 1)).unwrap();
-    update_session_index(tmp.path(), &entry.id, 5, &assistant_usage(4, 6, 2)).unwrap();
+    update_session_index(tmp.path(), &entry.id, 2, &assistant_usage(7, 3, 1), None).unwrap();
+    update_session_index(tmp.path(), &entry.id, 5, &assistant_usage(4, 6, 2), None).unwrap();
 
     let index = read_index(tmp.path()).unwrap();
     assert_eq!(index[0].event_count, 7);
@@ -850,7 +850,7 @@ fn update_session_index_zero_count_and_usage_is_noop() {
     let entry = fresh_session(tmp.path());
     let created_updated_at = read_index(tmp.path()).unwrap()[0].updated_at;
     // No events, no tokens -> must not touch the index at all.
-    update_session_index(tmp.path(), &entry.id, 0, &Usage::default()).unwrap();
+    update_session_index(tmp.path(), &entry.id, 0, &Usage::default(), None).unwrap();
     let index = read_index(tmp.path()).unwrap();
     assert_eq!(index[0].event_count, 0);
     assert_eq!(index[0].updated_at, created_updated_at);
@@ -860,7 +860,8 @@ fn update_session_index_zero_count_and_usage_is_noop() {
 fn update_session_index_unknown_session_is_not_found() {
     let tmp = tempfile::tempdir().unwrap();
     let _ = fresh_session(tmp.path());
-    let err = update_session_index(tmp.path(), "ghost", 1, &assistant_usage(1, 0, 0)).unwrap_err();
+    let err =
+        update_session_index(tmp.path(), "ghost", 1, &assistant_usage(1, 0, 0), None).unwrap_err();
     assert!(matches!(err, SessionPersistError::NotFound { .. }));
 }
 
@@ -1286,7 +1287,7 @@ fn resume_repairs_stale_index_entry() {
     append_events(tmp.path(), &entry.id, &events, false).unwrap();
 
     // Simulate crash staleness: zero the entry behind persistence's back.
-    update_index_entry(tmp.path(), &entry.id, |e| {
+    update_index_entry(tmp.path(), &entry.id, None, |e| {
         e.event_count = 0;
         e.total_input_tokens = 0;
         e.total_output_tokens = 0;
@@ -1331,7 +1332,7 @@ fn concurrent_creates_and_updates_drop_no_index_entries() {
         let id = seed.id.clone();
         std::thread::spawn(move || {
             for _ in 0..40 {
-                update_session_index(&dir, &id, 1, &Usage::default()).unwrap();
+                update_session_index(&dir, &id, 1, &Usage::default(), None).unwrap();
             }
         })
     };
@@ -1449,12 +1450,12 @@ fn reserved_ids_rejected_at_every_persistence_boundary() {
     };
 
     // Index insertion: a reserved id must never enter the index.
-    let err = append_index_entry(tmp.path(), &smuggled).unwrap_err();
+    let err = append_index_entry(tmp.path(), &smuggled, None).unwrap_err();
     assert!(
         matches!(err, SessionPersistError::InvalidSessionId { .. }),
         "append_index_entry must reject reserved ids, got {err:?}",
     );
-    let err = insert_index_entry_if_absent(tmp.path(), &smuggled).unwrap_err();
+    let err = insert_index_entry_if_absent(tmp.path(), &smuggled, None).unwrap_err();
     assert!(
         matches!(err, SessionPersistError::InvalidSessionId { .. }),
         "insert_index_entry_if_absent must reject reserved ids, got {err:?}",
@@ -1475,7 +1476,7 @@ fn reserved_ids_rejected_at_every_persistence_boundary() {
     );
 
     // Sink open: must never attach an event sink to index.jsonl.
-    match JsonlSink::open_registered(tmp.path(), "index", DurabilityPolicy::Flush) {
+    match JsonlSink::open_registered(tmp.path(), "index", DurabilityPolicy::Flush, None) {
         Err(SessionPersistError::InvalidSessionId { .. }) => {}
         Err(other) => panic!("JsonlSink::open_registered wrong error: {other:?}"),
         Ok(_) => panic!("JsonlSink::open_registered must reject reserved ids"),
@@ -1515,4 +1516,341 @@ fn reserved_id_rule_covers_stem_family_only() {
             "{free:?} must stay claimable",
         );
     }
+}
+
+// ----- Single-pass replay (ReplayArtifacts) --------------------------------
+
+/// `Read` wrapper counting every byte served to the tolerant reader.
+struct CountingReader<R> {
+    inner: R,
+    bytes_served: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl<R: std::io::Read> std::io::Read for CountingReader<R> {
+    fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        let n = self.inner.read(buf)?;
+        self.bytes_served
+            .fetch_add(n, std::sync::atomic::Ordering::Relaxed);
+        Ok(n)
+    }
+}
+
+/// A representative session history: header, a user message, an
+/// assistant message carrying usage and an envelope-bearing tool call,
+/// the matching tool result, a compaction superseding the user message,
+/// and one torn (corrupt) trailing line.
+fn replay_fixture() -> (Vec<u8>, EventId) {
+    let user = user_msg("hello");
+    let superseded_id = user.base().id.clone();
+    let assistant = SessionEvent::AssistantMessage {
+        base: EventBase::new(None),
+        content: String::new(),
+        thinking: String::new(),
+        tool_calls: vec![ToolCallEvent {
+            call_id: "call_replay_1".to_owned(),
+            name: "read".to_owned(),
+            arguments: serde_json::json!({
+                "path": "src/a.rs",
+                "tool_use_description": "inspect module a",
+            }),
+            kind: crate::provider::request::ToolCallKind::Function,
+        }],
+        usage: EventUsage {
+            input_tokens: 11,
+            output_tokens: 7,
+            cache_read_tokens: 3,
+            cache_write_tokens: 0,
+            cost_usd: None,
+        },
+        stop_reason: "tool_use".to_owned(),
+        response_id: None,
+    };
+    let result = SessionEvent::ToolResult {
+        base: EventBase::new(None),
+        tool_call_id: "call_replay_1".to_owned(),
+        tool_name: "read".to_owned(),
+        output: serde_json::json!({"lines": 3}),
+        duration_ms: 5,
+    };
+    let compaction = SessionEvent::Compaction {
+        base: EventBase::new(None),
+        summary: "compacted".to_owned(),
+        replaced_event_ids: vec![superseded_id.clone()],
+    };
+
+    let mut data = Vec::new();
+    let header = serde_json::to_string(&SessionFileHeader {
+        version: SESSION_FORMAT_VERSION,
+    })
+    .unwrap();
+    data.extend_from_slice(header.as_bytes());
+    data.push(b'\n');
+    for event in [&user, &assistant, &result, &compaction] {
+        data.extend_from_slice(serde_json::to_string(event).unwrap().as_bytes());
+        data.push(b'\n');
+    }
+    data.extend_from_slice(br#"{"type":"user_message","content":"tor"#);
+    data.push(b'\n');
+    (data, superseded_id)
+}
+
+/// The core R1 guarantee: ONE traversal of the byte stream yields every
+/// resume artifact — the events, the usage rollup, the compaction
+/// supersession marks, the action-log rebuild inputs, and the
+/// skipped-line summary. The instrumented reader proves each byte of the
+/// history was served exactly once.
+#[test]
+fn single_pass_reader_yields_every_artifact_from_one_traversal() {
+    let (data, superseded_id) = replay_fixture();
+    let bytes_served = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let reader = std::io::BufReader::new(CountingReader {
+        inner: std::io::Cursor::new(data.clone()),
+        bytes_served: std::sync::Arc::clone(&bytes_served),
+    });
+
+    let artifacts = io::read_session_events_from(reader, "single-pass").unwrap();
+
+    assert_eq!(
+        bytes_served.load(std::sync::atomic::Ordering::Relaxed),
+        data.len(),
+        "every byte of the history must be served exactly once — a \
+         second traversal would double the count",
+    );
+
+    // Events + skip summary.
+    assert_eq!(artifacts.events.len(), 4);
+    assert_eq!(artifacts.skipped_lines, 1, "the torn line is counted");
+    assert_eq!(artifacts.format_version, Some(SESSION_FORMAT_VERSION));
+
+    // Usage rollup matches the reference summation over the same events.
+    let reference = sum_usage_from_events(&artifacts.events);
+    assert_eq!(artifacts.usage.input_tokens, reference.input_tokens);
+    assert_eq!(artifacts.usage.output_tokens, reference.output_tokens);
+    assert_eq!(
+        artifacts.usage.cache_read_tokens,
+        reference.cache_read_tokens
+    );
+    assert_eq!(artifacts.usage.input_tokens, 11);
+    assert_eq!(artifacts.usage.output_tokens, 7);
+    assert_eq!(artifacts.usage.cache_read_tokens, 3);
+
+    // Compaction supersession marks.
+    assert!(artifacts.superseded_event_ids.contains(&superseded_id));
+    assert_eq!(artifacts.superseded_event_ids.len(), 1);
+
+    // Action-log rebuild inputs: the recovered events themselves carry
+    // the envelope-bearing tool-call arguments the (single-pass) rebuild
+    // consumes.
+    let has_call = artifacts.events.iter().any(|event| {
+        matches!(
+            event,
+            SessionEvent::AssistantMessage { tool_calls, .. }
+                if tool_calls.iter().any(|tc| tc.call_id == "call_replay_1")
+        )
+    });
+    assert!(has_call, "assistant tool call recovered for the rebuild");
+}
+
+/// `ReplayArtifacts::from_events` (the in-memory path used when
+/// restoring from a live `EventStore`) derives exactly what the file
+/// reader derives for the same history.
+#[test]
+fn from_events_matches_file_reader_derivations() {
+    let (data, superseded_id) = replay_fixture();
+    let from_file =
+        io::read_session_events_from(std::io::BufReader::new(std::io::Cursor::new(data)), "s")
+            .unwrap();
+    let from_events = ReplayArtifacts::from_events(from_file.events.clone());
+
+    assert_eq!(from_events.events.len(), from_file.events.len());
+    assert_eq!(from_events.usage.input_tokens, from_file.usage.input_tokens);
+    assert_eq!(
+        from_events.usage.output_tokens,
+        from_file.usage.output_tokens
+    );
+    assert_eq!(
+        from_events.usage.cache_read_tokens,
+        from_file.usage.cache_read_tokens
+    );
+    assert_eq!(
+        from_events.superseded_event_ids,
+        from_file.superseded_event_ids
+    );
+    assert!(from_events.superseded_event_ids.contains(&superseded_id));
+    // File-recovery fields do not apply to the in-memory path.
+    assert_eq!(from_events.skipped_lines, 0);
+    assert_eq!(from_events.format_version, None);
+}
+
+// ----- Index lock acquisition deadline (R2) --------------------------------
+
+/// Holding the lock elsewhere: a deadline-bound acquisition must fail
+/// with the typed timeout, and an indefinite (None) acquisition must
+/// still be the default behaviour once the lock is free.
+#[test]
+fn index_lock_deadline_times_out_typed_while_lock_is_held() {
+    let tmp = tempfile::tempdir().unwrap();
+    let held = super::lock::lock_index(tmp.path(), None).unwrap();
+
+    let deadline = std::time::Duration::from_millis(50);
+    let err = super::lock::lock_index(tmp.path(), Some(deadline)).unwrap_err();
+    match err {
+        SessionPersistError::IndexLockTimeout { path, waited } => {
+            assert_eq!(waited, deadline);
+            assert!(
+                path.ends_with("index.lock"),
+                "timeout must name the lock file, got {}",
+                path.display(),
+            );
+        }
+        other => panic!("expected IndexLockTimeout, got {other:?}"),
+    }
+
+    drop(held);
+    // Released: a deadline-bound acquisition now succeeds.
+    let _reacquired =
+        super::lock::lock_index(tmp.path(), Some(std::time::Duration::from_secs(30))).unwrap();
+}
+
+/// The deadline threads through the public read-modify-rewrite path: an
+/// `update_index_entry` behind a held lock fails typed with the index
+/// untouched, and succeeds after release.
+#[test]
+fn update_index_entry_respects_lock_deadline_and_leaves_index_untouched() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+
+    let held = super::lock::lock_index(tmp.path(), None).unwrap();
+    let err = update_index_entry(
+        tmp.path(),
+        &entry.id,
+        Some(std::time::Duration::from_millis(50)),
+        |e| e.event_count = 99,
+    )
+    .unwrap_err();
+    assert!(
+        matches!(err, SessionPersistError::IndexLockTimeout { .. }),
+        "expected IndexLockTimeout, got {err:?}",
+    );
+    drop(held);
+
+    let index = read_index(tmp.path()).unwrap();
+    assert_eq!(index[0].event_count, 0, "timed-out update wrote nothing");
+
+    update_index_entry(
+        tmp.path(),
+        &entry.id,
+        Some(std::time::Duration::from_secs(30)),
+        |e| e.event_count = 7,
+    )
+    .unwrap();
+    assert_eq!(read_index(tmp.path()).unwrap()[0].event_count, 7);
+}
+
+/// The manager applies its configured deadline to every index mutation
+/// it performs; `None` (the constructor default) preserves the
+/// indefinite wait.
+#[test]
+fn manager_index_lock_deadline_bounds_create() {
+    let tmp = tempfile::tempdir().unwrap();
+    let manager = SessionManager::new(tmp.path())
+        .with_index_lock_deadline(Some(std::time::Duration::from_millis(50)));
+
+    let held = super::lock::lock_index(tmp.path(), None).unwrap();
+    let err = manager
+        .create(
+            CreateSessionOptions {
+                model: "gpt".to_owned(),
+                working_dir: "/w".to_owned(),
+                name: None,
+            },
+            DurabilityPolicy::Flush,
+        )
+        .unwrap_err();
+    assert!(
+        matches!(err, SessionPersistError::IndexLockTimeout { .. }),
+        "expected IndexLockTimeout, got {err:?}",
+    );
+    drop(held);
+
+    manager
+        .create(
+            CreateSessionOptions {
+                model: "gpt".to_owned(),
+                working_dir: "/w".to_owned(),
+                name: None,
+            },
+            DurabilityPolicy::Flush,
+        )
+        .expect("creates normally once the lock is free");
+    assert_eq!(read_index(tmp.path()).unwrap().len(), 1);
+}
+
+// ----- Concurrent-create header exclusivity (R3) ---------------------------
+
+/// Regression: the first open used check-then-write ("len == 0 → write
+/// header"), so two processes racing the first open could BOTH stamp a
+/// header line; the tolerant reader then counted the second one as a
+/// corrupt skipped line forever. Creation is now `O_EXCL`-style: exactly
+/// one opener creates the file and stamps exactly one header.
+#[test]
+fn concurrent_first_opens_stamp_exactly_one_header() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = session_file_path(tmp.path(), "race-header");
+
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(8));
+    let handles: Vec<_> = (0..8)
+        .map(|_| {
+            let path = path.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                io::open_session_append(&path).map(|_| ())
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap().unwrap();
+    }
+
+    let content = fs::read_to_string(&path).unwrap();
+    let header_lines = content
+        .lines()
+        .filter(|line| serde_json::from_str::<SessionFileHeader>(line).is_ok())
+        .count();
+    assert_eq!(header_lines, 1, "exactly one header line: {content:?}");
+    assert_eq!(content.lines().count(), 1, "nothing but the header");
+
+    let artifacts = io::read_session_events(tmp.path(), "race-header").unwrap();
+    assert_eq!(artifacts.skipped_lines, 0, "no corrupt duplicate header");
+    assert_eq!(artifacts.format_version, Some(SESSION_FORMAT_VERSION));
+}
+
+/// A pre-existing EMPTY session file (creator crashed before the header
+/// landed, or external truncation) is never retro-stamped — writing a
+/// header on "observed empty" would reopen the check-then-write race.
+/// The file simply loads as pre-versioning format.
+#[test]
+fn preexisting_empty_file_is_not_retro_stamped_with_header() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = session_file_path(tmp.path(), "empty-pre");
+    fs::create_dir_all(tmp.path()).unwrap();
+    fs::File::create(&path).unwrap();
+
+    let mut sink = JsonlSink::open(&path).unwrap();
+    assert_eq!(
+        fs::metadata(&path).unwrap().len(),
+        0,
+        "open must not stamp a header into a pre-existing empty file",
+    );
+    sink.persist(&user_msg("first")).unwrap();
+    drop(sink);
+
+    let artifacts = io::read_session_events(tmp.path(), "empty-pre").unwrap();
+    assert_eq!(artifacts.events.len(), 1);
+    assert_eq!(artifacts.skipped_lines, 0);
+    assert_eq!(
+        artifacts.format_version, None,
+        "a headerless file reads as pre-versioning format",
+    );
 }

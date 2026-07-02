@@ -2,9 +2,9 @@
 //! schema builder (`schema.rs`) and the enum schema builder
 //! (`enum_schema.rs`).
 
-/// The eight serde `rename_all` rules. Unknown rule names silently fall back to
-/// the raw ident — serde would itself error at deserialize time if the rule
-/// name were misspelled, so we do not duplicate that diagnostic here.
+/// The eight serde `rename_all` rules. [`RenameRule::from_str`] returns `None`
+/// for unknown rule names; the attribute parser turns that into a spanned
+/// compile error so a misspelled rule never silently degrades to raw idents.
 #[derive(Clone, Copy)]
 pub(super) enum RenameRule {
     Lower,

@@ -1,0 +1,5 @@
+error: ToolArgs does not support generic types — json_schema() describes exactly one concrete schema; derive ToolArgs on a concrete type instead
+ --> tests/ui/generic_struct.rs:6:15
+  |
+6 | struct Wrapper<T> {
+  |               ^^^

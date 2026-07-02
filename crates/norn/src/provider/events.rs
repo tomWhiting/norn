@@ -1,5 +1,6 @@
 //! Streaming event types emitted by providers.
 
+use super::reasoning::ReasoningItem;
 use super::request::ToolCallKind;
 use super::usage::Usage;
 use crate::error::ProviderError;
@@ -44,9 +45,9 @@ pub enum ProviderEvent {
         /// Tool name (present in the first delta for this call).
         name: Option<String>,
         /// Incremental arguments fragment. For
-        /// [`ToolCallKind::Function`](crate::provider::request::ToolCallKind::Function)
+        /// [`ToolCallKind::Function`]
         /// deltas this is partial JSON; for
-        /// [`ToolCallKind::Custom`](crate::provider::request::ToolCallKind::Custom)
+        /// [`ToolCallKind::Custom`]
         /// deltas this is a freeform `input` fragment.
         arguments_delta: String,
         /// Which surface kind this delta belongs to. Derived from the SSE
@@ -65,6 +66,20 @@ pub enum ProviderEvent {
     ThinkingComplete {
         /// The full accumulated reasoning text.
         text: String,
+    },
+
+    /// A complete reasoning output item from a `response.output_item.done`
+    /// SSE event (`item.type == "reasoning"`).
+    ///
+    /// Distinct from [`ThinkingDelta`](Self::ThinkingDelta) /
+    /// [`ThinkingComplete`](Self::ThinkingComplete), which carry only the
+    /// display text: this event carries the full structured item —
+    /// including `encrypted_content` — that response assembly attaches to
+    /// the assistant [`Message`](crate::provider::request::Message) so the
+    /// Responses API serializer can replay it on stateless backends.
+    ReasoningItemDone {
+        /// The captured reasoning item.
+        item: ReasoningItem,
     },
 
     /// A fully assembled tool call from an `output_item.done` SSE event.

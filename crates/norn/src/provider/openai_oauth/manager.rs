@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 
 use super::TOKEN_URL;
 use super::jwt::parse_jwt_expiration;
+use super::options::OAuthHttpOptions;
 use super::refresh::{RefreshError, refresh_auth};
 use super::storage::{AuthCredentialsStoreMode, load_auth_dot_json, save_auth_dot_json};
 use super::types::CodexAuth;
@@ -23,6 +24,17 @@ pub enum RefreshTokenError {
     /// Network/server issue; caller may retry later.
     #[error("{0}")]
     Transient(String),
+}
+
+/// Failure to construct an [`AuthManager`]'s shared HTTP client.
+///
+/// Deterministic (TLS backend or client-configuration initialisation
+/// failed); retrying the identical construction cannot succeed.
+#[derive(Debug, thiserror::Error)]
+#[error("failed to build OAuth HTTP client: {reason}")]
+pub struct AuthManagerBuildError {
+    /// Description of the client-construction failure.
+    reason: String,
 }
 
 /// Small credential manager compatible with norn's OAuth auth-provider use.
@@ -51,39 +63,65 @@ pub struct AuthManager {
     /// vector. Tests inject a mock server URL through the test-gated
     /// constructors instead.
     token_url: String,
+    /// Shared HTTP client every refresh exchange through this manager
+    /// reuses (connection pool plus the configured
+    /// [`OAuthHttpOptions::request_timeout`]), built once at
+    /// construction instead of per refresh call.
+    client: reqwest::Client,
+}
+
+/// Builds the manager's shared HTTP client with the configured
+/// whole-request deadline.
+fn build_client(http: OAuthHttpOptions) -> Result<reqwest::Client, AuthManagerBuildError> {
+    reqwest::Client::builder()
+        .timeout(http.request_timeout)
+        .build()
+        .map_err(|err| AuthManagerBuildError {
+            reason: err.to_string(),
+        })
 }
 
 impl AuthManager {
     /// Creates a shared manager and loads cached credentials from disk.
-    #[must_use]
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthManagerBuildError`] when the shared HTTP client
+    /// cannot be constructed.
     pub async fn shared(
         codex_home: PathBuf,
-        _enable_codex_api_key_env: bool,
         mode: AuthCredentialsStoreMode,
-        _chatgpt_base_url: Option<String>,
-    ) -> Arc<Self> {
-        Self::shared_with_token_url(codex_home, mode, TOKEN_URL.to_string()).await
+        http: OAuthHttpOptions,
+    ) -> Result<Arc<Self>, AuthManagerBuildError> {
+        Self::shared_with_token_url(codex_home, mode, TOKEN_URL.to_string(), http).await
     }
 
-    /// [`Self::shared`] with an injected token-endpoint URL.
+    /// [`Self::shared`] with an injected token-endpoint URL and the
+    /// documented default [`OAuthHttpOptions`].
     ///
     /// Test-gated so production builds physically cannot redirect the
     /// refresh exchange away from the compiled authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthManagerBuildError`] when the shared HTTP client
+    /// cannot be constructed.
     #[cfg(any(test, feature = "test-utils"))]
-    #[must_use]
     pub async fn shared_for_tests(
         codex_home: PathBuf,
         mode: AuthCredentialsStoreMode,
         token_url: String,
-    ) -> Arc<Self> {
-        Self::shared_with_token_url(codex_home, mode, token_url).await
+    ) -> Result<Arc<Self>, AuthManagerBuildError> {
+        Self::shared_with_token_url(codex_home, mode, token_url, OAuthHttpOptions::default()).await
     }
 
     async fn shared_with_token_url(
         codex_home: PathBuf,
         mode: AuthCredentialsStoreMode,
         token_url: String,
-    ) -> Arc<Self> {
+        http: OAuthHttpOptions,
+    ) -> Result<Arc<Self>, AuthManagerBuildError> {
+        let client = build_client(http)?;
         let shared_started = startup_trace::start("oauth_auth_manager_shared_with_token_url_start");
         tokio::task::yield_now().await;
         startup_trace::elapsed("oauth_auth_manager_initial_yield_done", shared_started);
@@ -98,13 +136,14 @@ impl AuthManager {
             "oauth_auth_manager_shared_with_token_url_done",
             shared_started,
         );
-        Arc::new(Self {
+        Ok(Arc::new(Self {
             codex_home: Some(codex_home),
             auth: Mutex::new(auth),
             refresh_gate: Mutex::new(()),
             refresh_epoch: AtomicU64::new(0),
             token_url,
-        })
+            client,
+        }))
     }
 
     /// Creates a shared manager seeded with an in-memory credential.
@@ -114,29 +153,50 @@ impl AuthManager {
     /// at startup) instead of loading them from `$CODEX_HOME/auth.json`.
     /// The manager has no backing store: refreshed tokens are kept in
     /// memory only and nothing is persisted to disk.
-    #[must_use]
-    pub fn from_static_auth(auth: CodexAuth) -> Arc<Self> {
-        Self::static_auth_with_token_url(auth, TOKEN_URL.to_string())
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthManagerBuildError`] when the shared HTTP client
+    /// cannot be constructed.
+    pub fn from_static_auth(
+        auth: CodexAuth,
+        http: OAuthHttpOptions,
+    ) -> Result<Arc<Self>, AuthManagerBuildError> {
+        Self::static_auth_with_token_url(auth, TOKEN_URL.to_string(), http)
     }
 
-    /// [`Self::from_static_auth`] with an injected token-endpoint URL.
+    /// [`Self::from_static_auth`] with an injected token-endpoint URL and
+    /// the documented default [`OAuthHttpOptions`].
     ///
     /// Test-gated so production builds physically cannot redirect the
     /// refresh exchange away from the compiled authority.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AuthManagerBuildError`] when the shared HTTP client
+    /// cannot be constructed.
     #[cfg(any(test, feature = "test-utils"))]
-    #[must_use]
-    pub fn from_static_auth_with_token_url(auth: CodexAuth, token_url: String) -> Arc<Self> {
-        Self::static_auth_with_token_url(auth, token_url)
+    pub fn from_static_auth_with_token_url(
+        auth: CodexAuth,
+        token_url: String,
+    ) -> Result<Arc<Self>, AuthManagerBuildError> {
+        Self::static_auth_with_token_url(auth, token_url, OAuthHttpOptions::default())
     }
 
-    fn static_auth_with_token_url(auth: CodexAuth, token_url: String) -> Arc<Self> {
-        Arc::new(Self {
+    fn static_auth_with_token_url(
+        auth: CodexAuth,
+        token_url: String,
+        http: OAuthHttpOptions,
+    ) -> Result<Arc<Self>, AuthManagerBuildError> {
+        let client = build_client(http)?;
+        Ok(Arc::new(Self {
             codex_home: None,
             auth: Mutex::new(Some(auth)),
             refresh_gate: Mutex::new(()),
             refresh_epoch: AtomicU64::new(0),
             token_url,
-        })
+            client,
+        }))
     }
 
     /// Returns cached credentials, proactively refreshing expired `ChatGPT`
@@ -179,7 +239,7 @@ impl AuthManager {
                 "no refreshable OAuth credential".to_string(),
             ));
         };
-        let refreshed = refresh_auth(&auth, &self.token_url)
+        let refreshed = refresh_auth(&auth, &self.token_url, &self.client)
             .await
             .map_err(map_refresh_error)?;
 
@@ -244,6 +304,7 @@ mod tests {
             CodexAuth::ChatGpt(Box::new(seed_auth("seed-refresh"))),
             server.uri(),
         )
+        .expect("manager construction")
     }
 
     fn seed_auth(refresh_token: &str) -> AuthDotJson {
@@ -392,7 +453,8 @@ mod tests {
             AuthCredentialsStoreMode::File,
             server.uri(),
         )
-        .await;
+        .await
+        .expect("manager construction");
 
         // Make the directory unwritable so persistence fails.
         std::fs::set_permissions(&codex_home, std::fs::Permissions::from_mode(0o500))
@@ -437,7 +499,11 @@ mod tests {
     /// and reports refresh as permanently unavailable.
     #[tokio::test]
     async fn static_auth_api_key_has_no_refresh_path() {
-        let manager = AuthManager::from_static_auth(CodexAuth::from_api_key("vm-injected-key"));
+        let manager = AuthManager::from_static_auth(
+            CodexAuth::from_api_key("vm-injected-key"),
+            OAuthHttpOptions::default(),
+        )
+        .expect("manager construction");
         assert_eq!(access_token(&manager).await, "vm-injected-key");
 
         let result = manager.refresh_token_from_authority().await;

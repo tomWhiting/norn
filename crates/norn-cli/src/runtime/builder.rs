@@ -52,7 +52,7 @@ use norn::tools::DiskTaskStore;
 use super::bundle::{RuntimeBundle, RuntimeInputs};
 use super::wiring::{
     build_diagnostic_collector, build_skill_catalog, build_skill_search_paths, build_write_tool,
-    iteration_monitor_from_profile,
+    iteration_monitor_from_profile, skill_tool_config_from_settings,
 };
 use crate::cli::BuildError;
 use crate::cli::Cli;
@@ -161,9 +161,15 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
     let skill_paths = build_skill_search_paths(&merged_settings, &cwd);
     let skill_catalog = build_skill_catalog(&skill_paths);
     if !skill_catalog.is_empty() {
+        // The `tools.skill` settings section governs whether
+        // skill-authored shell commands execute during template
+        // expansion; absent settings defer to the tool's documented
+        // default (enabled).
         inputs
             .registry
-            .register(Box::new(norn::tools::skill::SkillTool::new()));
+            .register(Box::new(norn::tools::skill::SkillTool::with_config(
+                skill_tool_config_from_settings(&merged_settings),
+            )));
     }
 
     // Snapshot the full (pre-gating) tool name set: `from_profile` and
@@ -185,7 +191,7 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
     // both the [`LoopContext`] and the shared [`ToolContext`] extension
     // table. When no settings files exist and no programmatic hooks were
     // supplied, `hooks` stays `None`.
-    let hook_settings = load_hooks_from_settings(&cwd)?;
+    let hook_settings = load_hooks_from_settings(&merged_settings);
     let hooks =
         norn::runtime_init::assemble_hook_registry(inputs.hooks, &hook_settings, &profile, &cwd)
             .map_err(|err| BuildError::Argument(err.to_string()))?;
@@ -2622,6 +2628,103 @@ system_instructions = []
         assert!(
             base.contains("- notes: User-level skill."),
             "user-tier skill must appear in listing, got: {base}",
+        );
+    }
+
+    /// End-to-end `tools.skill.shell_execution = false`: the settings
+    /// key must reach the registered [`norn::tools::skill::SkillTool`]
+    /// via `SkillTool::with_config`, so activation replaces skill
+    /// shell placeholders with the policy-disabled marker instead of
+    /// executing them, and the tool schedules as read-only.
+    #[test]
+    #[serial_test::serial]
+    fn settings_disable_skill_shell_execution_end_to_end() {
+        use norn::tool::envelope::{RuntimeInputs as EnvelopeInputs, ToolEnvelope};
+        use norn::tool::scheduling::ToolEffect;
+
+        let isolate = IsolatedHome::new();
+        std::fs::write(
+            isolate.norn_home_path().join("settings.json"),
+            r#"{"tools":{"skill":{"shell_execution":false}}}"#,
+        )
+        .unwrap();
+
+        let original = std::env::current_dir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join(".norn").join("skills").join("probe");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: Probe.\n---\nvalue: !`echo leaked`\n",
+        )
+        .unwrap();
+
+        let cli = cli_from(&["norn", "-C", dir.path().to_str().unwrap()]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        std::env::set_current_dir(&original).unwrap();
+
+        let tool = bundle
+            .registry
+            .get("skill")
+            .expect("SkillTool registered for the discovered skill");
+        assert_eq!(
+            tool.effect(),
+            ToolEffect::ReadOnly,
+            "shell-disabled skill activation must schedule as read-only",
+        );
+
+        let shared = bundle
+            .registry
+            .shared_context()
+            .expect("shared context present");
+        let envelope = ToolEnvelope {
+            tool_call_id: "call-skill-1".to_owned(),
+            tool_name: "skill".to_owned(),
+            model_args: serde_json::json!({ "name": "probe" }),
+            runtime_inputs: EnvelopeInputs::default(),
+            metadata: serde_json::Value::Null,
+        };
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .unwrap();
+        let out = runtime
+            .block_on(tool.execute(&envelope, &shared))
+            .expect("skill activation succeeds with shell disabled");
+        let content = out.content["content"].as_str().unwrap();
+        assert!(
+            !content.contains("leaked"),
+            "no shell output may appear when settings disable execution: {content}",
+        );
+        assert!(
+            content.contains("disabled by policy"),
+            "the policy-disabled marker must be visible: {content}",
+        );
+    }
+
+    /// Without a `tools.skill` section the registered tool keeps the
+    /// documented default: shell execution enabled, `Process` effect.
+    #[test]
+    #[serial_test::serial]
+    fn skill_tool_defaults_to_shell_enabled_without_settings() {
+        use norn::tool::scheduling::ToolEffect;
+
+        let _isolate = IsolatedHome::new();
+        let original = std::env::current_dir().unwrap();
+        let dir = tempfile::tempdir().unwrap();
+        write_skill_in_project(dir.path(), "probe", "Probe.");
+        let cli = cli_from(&["norn", "-C", dir.path().to_str().unwrap()]);
+        let bundle = build_runtime(&cli, RuntimeInputs::default()).unwrap();
+        std::env::set_current_dir(&original).unwrap();
+
+        let tool = bundle
+            .registry
+            .get("skill")
+            .expect("SkillTool registered for the discovered skill");
+        assert_eq!(
+            tool.effect(),
+            ToolEffect::Process,
+            "default (no settings) keeps skill shell execution enabled",
         );
     }
 

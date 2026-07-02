@@ -496,6 +496,7 @@ mod tests {
     fn make_request() -> ProviderRequest {
         ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some("hi".to_owned()),
                 thinking: String::new(),

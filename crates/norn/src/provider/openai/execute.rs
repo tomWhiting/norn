@@ -1,319 +1,76 @@
-//! Request execution: retry loop, status handling, and SSE consumption.
+//! Responses API request execution: payload build plus the shared core.
+//!
+//! All transport behaviour (401 refresh, 429 backoff, error-status
+//! handling, SSE consumption) lives in
+//! [`StreamExecutor`](crate::provider::exec::StreamExecutor); this module
+//! contributes only the Responses-specific payload construction and the
+//! [`SseEventMapper`] adapter over [`map_sse_event`].
 
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-
-use futures_util::StreamExt;
-
-use super::rate_limiter::RateLimiter;
 use super::request::build_payload;
-use super::retry_after::parse_retry_after;
-use super::sse::{SseParser, map_sse_event};
+use super::sse::{SseEvent, map_sse_event};
 use crate::error::ProviderError;
-use crate::provider::auth::AuthProvider;
-use crate::provider::debug::DebugDumper;
 use crate::provider::events::ProviderEvent;
+use crate::provider::exec::{SseEventMapper, StreamExecutor};
 use crate::provider::request::ProviderRequest;
 
-/// Deliberate, owner-approved default (2026-06-11) used when
-/// [`ProviderConfig::retry_backoff`] is `None`: the wait applied to a
-/// `429` response that carries no parseable `Retry-After` header.
-///
-/// [`ProviderConfig::retry_backoff`]: crate::provider::request::ProviderConfig::retry_backoff
-pub(super) const DEFAULT_RETRY_BACKOFF: Duration = Duration::from_secs(1);
-
-/// Internal helper that owns cloned provider state for the spawned
-/// per-request task.
+/// Per-request sender state cloned out of the provider.
 pub(super) struct SenderProvider {
-    pub(super) client: reqwest::Client,
-    pub(super) endpoint: String,
-    /// Stall deadline from [`ProviderConfig::timeout`]: bounds the wait
-    /// for response headers and the gap between SSE chunks. Not a
-    /// whole-request deadline — streams are legitimately long-lived.
-    ///
-    /// [`ProviderConfig::timeout`]: crate::provider::request::ProviderConfig::timeout
-    pub(super) timeout: Duration,
-    pub(super) max_retries: u32,
-    /// Wait applied to a `429` without a parseable `Retry-After`
-    /// header. Resolved from [`ProviderConfig::retry_backoff`], falling
-    /// back to [`DEFAULT_RETRY_BACKOFF`].
-    ///
-    /// [`ProviderConfig::retry_backoff`]: crate::provider::request::ProviderConfig::retry_backoff
-    pub(super) retry_backoff: Duration,
-    /// Optional ceiling on accepted server-supplied `Retry-After`
-    /// waits, from [`ProviderConfig::retry_after_ceiling`]. `None`
-    /// honors the header as-is.
-    ///
-    /// [`ProviderConfig::retry_after_ceiling`]: crate::provider::request::ProviderConfig::retry_after_ceiling
-    pub(super) retry_after_ceiling: Option<Duration>,
-    pub(super) rate_limiter: Arc<RateLimiter>,
-    pub(super) auth_provider: Arc<dyn AuthProvider>,
-    pub(super) debug_dump_file: Option<PathBuf>,
+    /// Shared transport core.
+    pub(super) executor: StreamExecutor,
+    /// Catalog backend identifier for the connection this provider is
+    /// actually using (Codex subscription vs. direct Responses API);
+    /// governs service-tier resolution in [`build_payload`].
+    pub(super) catalog_backend: &'static str,
 }
 
 impl SenderProvider {
+    /// Executes one streaming Responses API request.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError`] for serialization, auth, connection, HTTP,
+    /// stream, or response-shape failures.
     pub(super) async fn execute(
         &self,
         request: ProviderRequest,
         tx: tokio::sync::mpsc::Sender<Result<ProviderEvent, ProviderError>>,
     ) -> Result<(), ProviderError> {
-        let payload = build_payload(&request)?;
-        let body =
-            serde_json::to_string(&payload).map_err(|e| ProviderError::ResponseParseError {
-                reason: format!("failed to serialize request: {e}"),
-            })?;
-
-        let dumper = self.debug_dump_file.as_deref().and_then(DebugDumper::new);
-        if let Some(ref d) = dumper {
-            d.write_request(&self.endpoint, &body);
-        }
-
-        let request_start = std::time::Instant::now();
-        let msg_count = request.messages.len();
+        let payload = build_payload(&request, self.catalog_backend)?;
+        let body = serde_json::to_string(&payload).map_err(|e| {
+            ProviderError::RequestSerializationFailed {
+                reason: format!("failed to serialize responses request: {e}"),
+            }
+        })?;
         tracing::debug!(
-            endpoint = %self.endpoint,
-            message_count = msg_count,
-            "provider request starting"
+            endpoint = %self.executor.endpoint,
+            message_count = request.messages.len(),
+            "responses request starting"
         );
+        let mut mapper = ResponsesMapper;
+        self.executor.execute(body, &mut mapper, &tx).await
+    }
+}
 
-        let mut attempts = 0u32;
-        let mut auth_retried = false;
-        let response = loop {
-            self.rate_limiter.acquire().await;
+/// Stateless [`SseEventMapper`] over the Responses API dispatcher.
+struct ResponsesMapper;
 
-            let send_start = std::time::Instant::now();
-            let mut builder = self
-                .client
-                .post(&self.endpoint)
-                .header("Content-Type", "application/json")
-                .header("Accept", "text/event-stream")
-                .body(body.clone());
-            builder = self.auth_provider.apply_auth(builder).await?;
+impl SseEventMapper for ResponsesMapper {
+    fn map_event(&mut self, event: &SseEvent) -> Vec<Result<ProviderEvent, ProviderError>> {
+        map_sse_event(event).into_iter().collect()
+    }
 
-            let result = match tokio::time::timeout(self.timeout, builder.send()).await {
-                Ok(result) => result,
-                Err(_elapsed) => {
-                    tracing::warn!(
-                        elapsed_s = send_start.elapsed().as_secs_f64(),
-                        timeout_s = self.timeout.as_secs_f64(),
-                        "provider request timed out waiting for response headers"
-                    );
-                    return Err(ProviderError::ConnectionFailed {
-                        reason: format!(
-                            "connection timed out: no response headers within {:.1}s",
-                            self.timeout.as_secs_f64()
-                        ),
-                    });
-                }
-            };
+    /// The Responses API always terminates a stream with a
+    /// `response.completed`, `response.failed`, or `response.incomplete`
+    /// event (each of which maps to a terminal `Done`/`Err`). A byte
+    /// stream that ends without one is a transport cutoff, so nothing is
+    /// synthesized and the executor surfaces a retryable
+    /// [`ProviderError::StreamInterrupted`] with chunk/event diagnostics.
+    fn finish_on_clean_close(&mut self) -> Result<Option<ProviderEvent>, ProviderError> {
+        Ok(None)
+    }
 
-            let response = match result {
-                Ok(resp) => {
-                    let send_elapsed = send_start.elapsed();
-                    tracing::debug!(
-                        elapsed_s = send_elapsed.as_secs_f64(),
-                        status = resp.status().as_u16(),
-                        "provider response headers received"
-                    );
-                    resp
-                }
-                Err(e) => {
-                    let send_elapsed = send_start.elapsed();
-                    tracing::warn!(
-                        elapsed_s = send_elapsed.as_secs_f64(),
-                        is_timeout = e.is_timeout(),
-                        is_connect = e.is_connect(),
-                        error = %e,
-                        "provider request failed"
-                    );
-                    if e.is_timeout() {
-                        return Err(ProviderError::ConnectionFailed {
-                            reason: format!("connection timed out: {e}"),
-                        });
-                    }
-                    return Err(ProviderError::ConnectionFailed {
-                        reason: format!("request failed: {e}"),
-                    });
-                }
-            };
-
-            let status = response.status();
-
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                if auth_retried {
-                    return Err(ProviderError::AuthenticationFailed {
-                        reason: "HTTP 401 Unauthorized after token refresh".to_string(),
-                    });
-                }
-                auth_retried = true;
-                match self.auth_provider.on_unauthorized().await {
-                    Ok(true) => continue,
-                    Ok(false) => {
-                        return Err(ProviderError::AuthenticationFailed {
-                            reason: "HTTP 401 Unauthorized and no refresh available".to_string(),
-                        });
-                    }
-                    Err(e) => return Err(e),
-                }
-            }
-
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                let parsed_retry_after = response
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|v| v.to_str().ok())
-                    .and_then(parse_retry_after);
-                // Clamp the server-supplied wait to the configured
-                // ceiling, when one is set. The clamped value is the
-                // *accepted* value: it is what gets slept on, imposed
-                // on the shared limiter, and surfaced in `RateLimited`,
-                // so a hostile header can never push an absurd wait
-                // anywhere. With no ceiling the header is honored
-                // as-is; everything downstream uses saturating
-                // arithmetic, so such a value can stall requests
-                // against this provider but can never panic.
-                let retry_after = match (parsed_retry_after, self.retry_after_ceiling) {
-                    (Some(wait), Some(ceiling)) => Some(wait.min(ceiling)),
-                    (parsed, _) => parsed,
-                };
-                let wait = retry_after.unwrap_or(self.retry_backoff);
-
-                // Impose back-pressure on every caller sharing this
-                // limiter for the server-requested window; the gate
-                // expires on its own so throughput decays back to the
-                // configured baseline. Applied even when this request
-                // is out of retries: the server's signal still governs
-                // every other in-flight caller.
-                self.rate_limiter.impose_cooldown(wait).await;
-
-                attempts += 1;
-                if attempts > self.max_retries {
-                    return Err(ProviderError::RateLimited { retry_after });
-                }
-
-                tokio::time::sleep(wait).await;
-                continue;
-            }
-
-            if status.is_server_error() {
-                let body_text = response.text().await.unwrap_or_default();
-                return Err(ProviderError::StreamError {
-                    reason: format!("HTTP {status}: {body_text}"),
-                });
-            }
-
-            if !status.is_success() {
-                let body_text = response.text().await.unwrap_or_default();
-                return Err(ProviderError::StreamError {
-                    reason: format!("HTTP {status}: {body_text}"),
-                });
-            }
-
-            break response;
-        };
-
-        if let Some(ref d) = dumper {
-            let status = response.status().as_u16();
-            let headers: Vec<(String, String)> = response
-                .headers()
-                .iter()
-                .map(|(k, v)| (k.to_string(), v.to_str().unwrap_or("<binary>").to_owned()))
-                .collect();
-            d.write_response_meta(status, &headers);
-        }
-
-        let stream_start = std::time::Instant::now();
-        let mut chunk_count: u64 = 0;
-        let mut event_count: u64 = 0;
-        let mut last_chunk = std::time::Instant::now();
-
-        let mut parser = SseParser::new();
-        let mut stream = response.bytes_stream();
-        loop {
-            let Ok(next) = tokio::time::timeout(self.timeout, stream.next()).await else {
-                tracing::warn!(
-                    stream_elapsed_s = stream_start.elapsed().as_secs_f64(),
-                    since_last_chunk_s = last_chunk.elapsed().as_secs_f64(),
-                    chunks_received = chunk_count,
-                    events_parsed = event_count,
-                    timeout_s = self.timeout.as_secs_f64(),
-                    "SSE stream inactivity deadline expired"
-                );
-                return Err(ProviderError::StreamError {
-                    reason: format!(
-                        "SSE stream timed out: no data received for {:.1}s",
-                        self.timeout.as_secs_f64()
-                    ),
-                });
-            };
-            let Some(chunk_result) = next else {
-                break;
-            };
-            let chunk = chunk_result.map_err(|e| {
-                let stream_elapsed = stream_start.elapsed();
-                let since_last = last_chunk.elapsed();
-                tracing::warn!(
-                    stream_elapsed_s = stream_elapsed.as_secs_f64(),
-                    since_last_chunk_s = since_last.as_secs_f64(),
-                    chunks_received = chunk_count,
-                    events_parsed = event_count,
-                    error = %e,
-                    "SSE stream interrupted"
-                );
-                ProviderError::StreamInterrupted {
-                    reason: format!("connection lost mid-stream: {e}"),
-                }
-            })?;
-            chunk_count += 1;
-            last_chunk = std::time::Instant::now();
-            for sse_event in parser.feed(chunk.as_ref()) {
-                event_count += 1;
-                if let Some(ref d) = dumper {
-                    d.write_sse_event(&sse_event.event_type, &sse_event.data);
-                }
-                if let Some(provider_event) = map_sse_event(&sse_event) {
-                    let is_done = matches!(provider_event, Ok(ProviderEvent::Done { .. }));
-                    if tx.send(provider_event).await.is_err() {
-                        return Ok(());
-                    }
-                    if is_done {
-                        let total_elapsed = request_start.elapsed();
-                        tracing::debug!(
-                            total_s = total_elapsed.as_secs_f64(),
-                            stream_s = stream_start.elapsed().as_secs_f64(),
-                            chunks = chunk_count,
-                            events = event_count,
-                            "provider request complete"
-                        );
-                        return Ok(());
-                    }
-                }
-            }
-        }
-
-        for sse_event in parser.finish() {
-            event_count += 1;
-            if let Some(ref d) = dumper {
-                d.write_sse_event(&sse_event.event_type, &sse_event.data);
-            }
-            if let Some(provider_event) = map_sse_event(&sse_event)
-                && tx.send(provider_event).await.is_err()
-            {
-                return Ok(());
-            }
-        }
-
-        let total_elapsed = request_start.elapsed();
-        tracing::debug!(
-            total_s = total_elapsed.as_secs_f64(),
-            stream_s = stream_start.elapsed().as_secs_f64(),
-            chunks = chunk_count,
-            events = event_count,
-            "provider request complete"
-        );
-
-        Ok(())
+    fn dump_label<'event>(&self, event: &'event SseEvent) -> &'event str {
+        &event.event_type
     }
 }
 
@@ -350,6 +107,9 @@ impl SenderProvider {
     clippy::needless_continue
 )]
 mod streaming_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
     use super::*;
     use crate::r#loop::retry::RetryPolicy;
     use crate::provider::auth::{AuthProvider, AuthSource, MockAuthProvider};
@@ -365,6 +125,7 @@ mod streaming_tests {
     fn build_request() -> ProviderRequest {
         ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some("hello".to_string()),
                 thinking: String::new(),
@@ -1123,10 +884,15 @@ mod streaming_tests {
             panic!("expected a timeout error within 5s, got {outcome:?}");
         };
         match &err {
-            ProviderError::ConnectionFailed { reason } => {
+            ProviderError::ConnectionFailed { reason, kind } => {
                 assert!(
                     reason.contains("timed out"),
                     "reason should mention the timeout: {reason}"
+                );
+                assert_eq!(
+                    *kind,
+                    crate::error::TransientKind::Timeout,
+                    "the structured kind must mark this a timeout"
                 );
             }
             other => panic!("expected ConnectionFailed, got {other:?}"),
@@ -1134,6 +900,119 @@ mod streaming_tests {
         assert!(
             RetryPolicy::default().classifies_as_retryable(&err),
             "header-wait timeout must classify as retryable"
+        );
+    }
+
+    /// Regression test (final-state hardening, T1 item 1): a server that
+    /// returns 5xx headers and then stalls the error body forever must
+    /// trip the configured stall deadline as a retryable network timeout
+    /// instead of hanging the turn inside `response.text()`.
+    #[tokio::test]
+    async fn stalled_5xx_error_body_times_out_as_retryable_network_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            drain_request(&mut socket).await;
+            // Promise a large body, send a fragment, then stall without
+            // closing the socket.
+            socket
+                .write_all(
+                    b"HTTP/1.1 503 Service Unavailable\r\n\
+                      Content-Type: text/plain\r\n\
+                      Content-Length: 100000\r\n\r\noverl",
+                )
+                .await
+                .unwrap();
+            socket.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(socket);
+        });
+
+        let provider = build_provider_with_timeout(
+            format!("http://127.0.0.1:{port}"),
+            0,
+            Duration::from_millis(300),
+        );
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let outcome = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
+        server_task.abort();
+
+        let Ok(Some(Err(err))) = outcome else {
+            panic!("expected a timeout error within 5s, got {outcome:?}");
+        };
+        match &err {
+            ProviderError::StreamError { reason, transient } => {
+                assert!(
+                    reason.contains("timed out"),
+                    "reason should mention the timeout: {reason}"
+                );
+                assert!(
+                    reason.contains("503"),
+                    "reason should surface the HTTP status: {reason}"
+                );
+                assert_eq!(*transient, Some(crate::error::TransientKind::Timeout));
+            }
+            other => panic!("expected StreamError, got {other:?}"),
+        }
+        assert_eq!(
+            err.class(),
+            crate::error::ErrorClass::Retryable {
+                kind: crate::error::TransientKind::Timeout
+            },
+            "stalled error-body read must classify as a retryable network timeout"
+        );
+        assert!(
+            RetryPolicy::default().classifies_as_retryable(&err),
+            "stalled error-body read must be retryable under the default policy"
+        );
+    }
+
+    /// The 4xx counterpart: a stalled error body on a client-error status
+    /// is still a transport stall, not a deterministic fault — it must
+    /// classify as a retryable network timeout too.
+    #[tokio::test]
+    async fn stalled_4xx_error_body_times_out_as_retryable_network_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            drain_request(&mut socket).await;
+            socket
+                .write_all(
+                    b"HTTP/1.1 400 Bad Request\r\n\
+                      Content-Type: text/plain\r\n\
+                      Content-Length: 100000\r\n\r\nbad",
+                )
+                .await
+                .unwrap();
+            socket.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(socket);
+        });
+
+        let provider = build_provider_with_timeout(
+            format!("http://127.0.0.1:{port}"),
+            0,
+            Duration::from_millis(300),
+        );
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let outcome = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
+        server_task.abort();
+
+        let Ok(Some(Err(err))) = outcome else {
+            panic!("expected a timeout error within 5s, got {outcome:?}");
+        };
+        assert_eq!(
+            err.class(),
+            crate::error::ErrorClass::Retryable {
+                kind: crate::error::TransientKind::Timeout
+            },
+            "stalled 4xx error-body read must classify as a retryable network timeout: {err:?}"
         );
     }
 
@@ -1200,11 +1079,12 @@ mod streaming_tests {
             panic!("expected the stream to end with an error, got {events:?}");
         };
         match err {
-            ProviderError::StreamError { reason } => {
+            ProviderError::StreamError { reason, transient } => {
                 assert!(
                     reason.contains("timed out"),
                     "reason should mention the timeout: {reason}"
                 );
+                assert_eq!(*transient, Some(crate::error::TransientKind::Timeout));
             }
             other => panic!("expected StreamError timeout, got {other:?}"),
         }
@@ -1266,6 +1146,80 @@ mod streaming_tests {
         assert!(
             got_interrupted,
             "expected ProviderError::StreamInterrupted after socket drop"
+        );
+    }
+
+    /// Regression test (final-state hardening, T1 item 2): a Responses
+    /// stream that closes *cleanly* (proper chunked terminator) without a
+    /// terminal `response.completed`/`failed`/`incomplete` event previously
+    /// ended in silence — the provider task returned `Ok(())`, no `Done`
+    /// event was emitted, and the loop's fallback classified the condition
+    /// as Terminal. The same physical condition on the Chat Completions
+    /// path already surfaced as a retryable `StreamInterrupted`. The
+    /// Responses provider must now emit its own typed retryable error
+    /// carrying chunk/event diagnostics.
+    #[tokio::test]
+    async fn clean_close_without_terminal_event_yields_retryable_stream_interrupted() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let frame = "event: response.output_text.delta\ndata: {\"delta\":\"partial\"}\n\n";
+
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            drain_request(&mut socket).await;
+            socket
+                .write_all(
+                    b"HTTP/1.1 200 OK\r\n\
+                      Content-Type: text/event-stream\r\n\
+                      Transfer-Encoding: chunked\r\n\r\n",
+                )
+                .await
+                .unwrap();
+            let chunk = format!("{:X}\r\n{}\r\n", frame.len(), frame);
+            socket.write_all(chunk.as_bytes()).await.unwrap();
+            // Clean chunked-encoding terminator: the HTTP body ends
+            // without any transport error and without a terminal event.
+            socket.write_all(b"0\r\n\r\n").await.unwrap();
+            socket.flush().await.unwrap();
+        });
+
+        let provider = build_provider(format!("http://127.0.0.1:{port}"), 0);
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let mut got_delta = false;
+        let mut terminal: Option<Result<ProviderEvent, ProviderError>> = None;
+        while let Some(evt) = stream.next().await {
+            match evt {
+                Ok(ProviderEvent::TextDelta { text }) => {
+                    assert_eq!(text, "partial");
+                    got_delta = true;
+                }
+                other => terminal = Some(other),
+            }
+        }
+        server_task.await.unwrap();
+
+        assert!(got_delta, "expected the pre-close TextDelta to arrive");
+        let Some(Err(err)) = terminal else {
+            panic!("stream must end with a typed error, got {terminal:?}");
+        };
+        match &err {
+            ProviderError::StreamInterrupted { reason } => {
+                assert!(
+                    reason.contains("terminal event"),
+                    "reason must name the missing terminal event: {reason}"
+                );
+                assert!(
+                    reason.contains("chunks=") && reason.contains("events="),
+                    "reason must carry chunk/event diagnostics: {reason}"
+                );
+            }
+            other => panic!("expected StreamInterrupted, got {other:?}"),
+        }
+        assert!(
+            RetryPolicy::default().classifies_as_retryable(&err),
+            "a stream cut before its terminal event must be retryable"
         );
     }
 

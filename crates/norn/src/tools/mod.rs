@@ -33,6 +33,7 @@ mod patch_stage;
 
 mod patch_parse;
 pub mod read;
+mod read_stream;
 pub mod registry_builder;
 pub mod search;
 pub mod skill;
@@ -72,7 +73,7 @@ pub use self::patch_entity::{EntityExtractor, ExtractedEntity};
 pub use self::registry_builder::register_standard_tools;
 pub use self::search::SearchTool;
 
-pub use self::skill::{SkillSearchPaths, SkillTool};
+pub use self::skill::{SkillSearchPaths, SkillTool, SkillToolConfig};
 pub use self::task::{
     DiskTaskStore, InMemoryTaskStore, SharedTaskStore, TaskEntry, TaskStatus, TaskStore, TaskTool,
 };

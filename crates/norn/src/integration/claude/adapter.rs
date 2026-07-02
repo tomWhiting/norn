@@ -130,6 +130,7 @@ impl Provider for ClaudeRunnerAdapter {
                 Err(e) => {
                     let _ = tx.blocking_send(Err(ProviderError::ConnectionFailed {
                         reason: format!("failed to spawn Claude runner: {e}"),
+                        kind: crate::error::TransientKind::ConnectionReset,
                     }));
                     return;
                 }
@@ -161,6 +162,7 @@ impl Provider for ClaudeRunnerAdapter {
                     Err(e) => {
                         let _ = tx.blocking_send(Err(ProviderError::StreamError {
                             reason: format!("read failed: {e}"),
+                            transient: None,
                         }));
                         return;
                     }
@@ -387,6 +389,7 @@ fn map_claude_event(
                 emitted.push(ProviderEvent::Error {
                     error: ProviderError::StreamError {
                         reason: err.unwrap_or_else(|| "Claude runner reported error".to_owned()),
+                        transient: None,
                     },
                 });
             }
@@ -489,6 +492,7 @@ mod tests {
     fn user_request(prompt: &str) -> ProviderRequest {
         ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some(prompt.to_owned()),
                 thinking: String::new(),

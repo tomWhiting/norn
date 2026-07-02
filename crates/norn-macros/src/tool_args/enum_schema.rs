@@ -13,7 +13,13 @@
 //!   `c`.
 //! * **Untagged** — `#[serde(untagged)]`. Emits `oneOf` of the per-variant
 //!   data schemas with no discriminator and no root `type` (variants may be
-//!   non-objects).
+//!   non-objects). A unit variant deserializes only from JSON `null` — its
+//!   name never appears on the wire — so it is emitted as `{"type": "null"}`,
+//!   and a second unit variant is rejected because it would be unreachable.
+//!
+//! Field wire names inside struct variants honour, in precedence order,
+//! field-level `#[serde(rename)]`, the variant's `#[serde(rename_all)]`, and
+//! the container's `#[serde(rename_all_fields)]` — mirroring serde.
 //!
 //! Tagged representations declare `type: "object"` at the root because
 //! providers (`OpenAI` in particular) reject function-parameter schemas
@@ -117,7 +123,9 @@ fn build_internally_tagged(parsed: &ParsedEnum, tag: &str) -> syn::Result<TokenS
         let wire = wire_name(variant, parsed.rename_all);
         let (prop_names, prop_schemas, mut required) = match &variant.fields {
             VariantFields::Unit => (Vec::new(), Vec::new(), Vec::new()),
-            VariantFields::Named(fields) => build_field_props(fields)?,
+            VariantFields::Named(fields) => {
+                build_field_props(fields, variant_field_rule(parsed, variant))?
+            }
         };
         // Tag is always present and always required, in addition to whatever
         // the variant's named fields require.
@@ -161,7 +169,7 @@ fn build_adjacent(parsed: &ParsedEnum, tag: &str, content: &str) -> syn::Result<
                 })
             },
             VariantFields::Named(fields) => {
-                let inner = variant_named_object(fields, "")?;
+                let inner = variant_named_object(fields, variant_field_rule(parsed, variant), "")?;
                 quote! {
                     ::serde_json::json!({
                         "type": "object",
@@ -184,16 +192,39 @@ fn build_adjacent(parsed: &ParsedEnum, tag: &str, content: &str) -> syn::Result<
 /// Builds the body for an untagged enum. Each variant emits its data schema
 /// directly into the `oneOf` array with no discriminator; the variant's doc
 /// comment rides the data schema itself.
+///
+/// serde deserializes an untagged unit variant only from JSON `null` — the
+/// variant's name never appears on the wire — so a unit variant is emitted as
+/// `{"type": "null"}`. Because every unit variant would match the same input,
+/// any unit variant after the first is unreachable and rejected outright.
 fn build_untagged(parsed: &ParsedEnum) -> syn::Result<TokenStream> {
     let mut variant_schemas = Vec::with_capacity(parsed.variants.len());
+    let mut first_unit: Option<&syn::Ident> = None;
     for variant in &parsed.variants {
-        let wire = wire_name(variant, parsed.rename_all);
         let description = variant_description_tokens(&variant.description);
         let schema = match &variant.fields {
-            VariantFields::Unit => quote! {
-                ::serde_json::json!({ "type": "string", "const": #wire #description })
-            },
-            VariantFields::Named(fields) => variant_named_object(fields, &variant.description)?,
+            VariantFields::Unit => {
+                if let Some(first) = first_unit {
+                    return Err(Error::new_spanned(
+                        &variant.ident,
+                        format!(
+                            "ToolArgs: untagged unit variants all deserialize from null, so \
+                             `{}` is unreachable after `{first}` — remove one of them or use \
+                             a tagged representation",
+                            variant.ident
+                        ),
+                    ));
+                }
+                first_unit = Some(&variant.ident);
+                quote! {
+                    ::serde_json::json!({ "type": "null" #description })
+                }
+            }
+            VariantFields::Named(fields) => variant_named_object(
+                fields,
+                variant_field_rule(parsed, variant),
+                &variant.description,
+            )?,
         };
         variant_schemas.push(schema);
     }
@@ -202,12 +233,14 @@ fn build_untagged(parsed: &ParsedEnum) -> syn::Result<TokenStream> {
 
 /// Builds an object schema for a named-field variant payload: `type: object`
 /// plus the field properties, `required` list, `additionalProperties:
-/// false`, and the supplied description when non-empty.
+/// false`, and the supplied description when non-empty. Field names honour
+/// the effective per-variant `rename_all` rule.
 fn variant_named_object(
     fields: &[super::parse::ParsedField],
+    rename_all: Option<RenameRule>,
     description: &str,
 ) -> syn::Result<TokenStream> {
-    let (prop_names, prop_schemas, required) = build_field_props(fields)?;
+    let (prop_names, prop_schemas, required) = build_field_props(fields, rename_all)?;
     let description = variant_description_tokens(description);
     Ok(quote! {
         ::serde_json::json!({
@@ -273,6 +306,14 @@ fn wrap_one_of(
             })
         }
     }
+}
+
+/// Resolves the rename rule for a variant's *field* names. Precedence mirrors
+/// serde: the variant's own `#[serde(rename_all = "...")]` wins over the
+/// container's `#[serde(rename_all_fields = "...")]`; field-level
+/// `#[serde(rename = "...")]` beats both inside `build_field_props`.
+fn variant_field_rule(parsed: &ParsedEnum, variant: &ParsedVariant) -> Option<RenameRule> {
+    variant.rename_all.or(parsed.rename_all_fields)
 }
 
 /// Resolves a variant's wire name. Precedence: per-variant `#[serde(rename =

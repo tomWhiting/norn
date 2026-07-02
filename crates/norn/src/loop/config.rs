@@ -99,12 +99,63 @@ pub trait ToolExecutor: Send + Sync {
     fn shared_context(&self) -> Option<Arc<ToolContext>> {
         None
     }
+
+    /// Returns an owned, reference-counted handle to this executor, when
+    /// one is available.
+    ///
+    /// Concurrent batch steps spawn each batch member onto its own tokio
+    /// task so `ReadOnly`/`Network` calls genuinely run in parallel
+    /// across runtime workers — which requires a `'static` executor
+    /// handle to move into each task. Executors driven through an
+    /// [`Arc`] return `Some` via the blanket `ToolExecutor` impl for
+    /// `Arc<dyn ToolExecutor>`. The default `None` makes concurrent
+    /// steps fall back to single-task `join_all` concurrency: members
+    /// still overlap at await points but share one runtime worker.
+    fn owned_handle(&self) -> Option<Arc<dyn ToolExecutor>> {
+        None
+    }
+}
+
+/// Delegating executor impl for owned handles: dispatch forwards to the
+/// inner executor, and [`ToolExecutor::owned_handle`] hands out clones of
+/// the `Arc` so concurrent batch steps can spawn each member on its own
+/// task. Callers that hold their executor in an `Arc` pass
+/// `&Arc<dyn ToolExecutor>` (instead of `&*arc`) to opt in.
+#[async_trait::async_trait]
+impl ToolExecutor for Arc<dyn ToolExecutor> {
+    async fn execute(
+        &self,
+        name: &str,
+        call_id: &str,
+        arguments: Value,
+    ) -> Result<Value, ToolError> {
+        self.as_ref().execute(name, call_id, arguments).await
+    }
+
+    async fn execute_with_outcome(
+        &self,
+        name: &str,
+        call_id: &str,
+        arguments: Value,
+    ) -> Result<DispatchOutcome, ToolError> {
+        self.as_ref()
+            .execute_with_outcome(name, call_id, arguments)
+            .await
+    }
+
+    fn shared_context(&self) -> Option<Arc<ToolContext>> {
+        self.as_ref().shared_context()
+    }
+
+    fn owned_handle(&self) -> Option<Arc<dyn ToolExecutor>> {
+        Some(Arc::clone(self))
+    }
 }
 
 /// Configuration for a single agent loop step.
 ///
 /// Iteration-monitor configuration moved off this struct in N-017 and now
-/// lives on [`LoopContext::iteration_monitor`], so it can be assembled by
+/// lives on [`LoopContext::iteration_monitor`](crate::agent_loop::loop_context::LoopContext::iteration_monitor), so it can be assembled by
 /// the same caller that wires the rules engine and hook registry.
 ///
 /// Serializable end to end (durations serialize as `{secs, nanos}`), so
@@ -130,11 +181,23 @@ pub struct AgentLoopConfig {
     /// When set, the loop body is wrapped in [`tokio::time::timeout`] and
     /// elapsing the duration produces [`AgentStepResult::TimedOut`] with
     /// whatever partial output the model produced.
+    ///
+    /// **Semantics differ from cancellation.** Cooperative cancellation
+    /// (the step's `CancellationToken`) lets an in-flight tool batch
+    /// finish in full before the loop returns `Cancelled`. Elapsing this
+    /// budget instead **drops the step future wherever it is suspended**
+    /// — including mid-tool-batch — so in-flight tools are aborted, not
+    /// completed. The event store is repaired afterwards (tool calls left
+    /// without results receive synthesized aborted-result records via
+    /// `ensure_tool_results_complete`), but external side effects a
+    /// dropped tool had already begun are not undone. Choose this field
+    /// for a hard wall-clock guarantee; trigger the cancellation token
+    /// for a graceful stop.
     pub step_timeout: Option<Duration>,
 
     /// Optional client-side context-window budget used by the token
     /// estimator. When set together with
-    /// [`LoopContext::token_estimator`](crate::r#loop::loop_context::LoopContext)
+    /// [`LoopContext::token_estimator`](crate::agent_loop::loop_context::LoopContext)
     /// the loop emits a `loop.token_warning` custom session event whenever
     /// the estimated prompt tokens exceed this limit. Advisory only — the
     /// provider call still runs.
@@ -182,6 +245,20 @@ pub struct AgentLoopConfig {
     /// [`ResolvedAgentInfo::output_schema`](crate::agent::ResolvedAgentInfo).
     pub output_schema: Option<Value>,
 
+    /// Wall-clock budget for each profile-supplied
+    /// [`PromptCommand`](crate::profile::PromptCommand) evaluated at the
+    /// start of every iteration.
+    ///
+    /// `None` defers to the documented default,
+    /// [`DEFAULT_PROMPT_COMMAND_TIMEOUT`](crate::agent_loop::loop_context::DEFAULT_PROMPT_COMMAND_TIMEOUT)
+    /// (5 seconds, mirroring the shell-variable timeout in
+    /// `integration::variables`). Commands in one iteration run
+    /// concurrently, so the slowest command — bounded by this budget —
+    /// is the iteration's total prompt-command wall-clock cost.
+    /// Serde-compatible by absence: configs persisted before this field
+    /// existed deserialize with `prompt_command_timeout: None`.
+    pub prompt_command_timeout: Option<Duration>,
+
     /// Opt-in linger-await at the loop's would-stop boundaries (Wave 3,
     /// DECISION M3).
     ///
@@ -190,7 +267,7 @@ pub struct AgentLoopConfig {
     /// result arriving afterwards is sent into a dropped channel. `Some`
     /// makes each would-stop boundary await late inbound messages and
     /// child-agent results — and the cancellation token — for up to
-    /// [`LingerPolicy::deadline`](crate::r#loop::linger::LingerPolicy::deadline)
+    /// [`LingerPolicy::deadline`](crate::agent_loop::linger::LingerPolicy::deadline)
     /// before stopping; whatever arrives is
     /// injected through the same flush/drain path as a mid-run delivery
     /// and the loop continues.
@@ -227,6 +304,7 @@ impl Default for AgentLoopConfig {
             conversation_state: ConversationStateMode::Auto,
             server_compaction_threshold_tokens: None,
             output_schema: None,
+            prompt_command_timeout: None,
             linger: None,
         }
     }
@@ -443,6 +521,59 @@ mod tests {
         );
         let back: LingerPolicy = serde_json::from_value(value).unwrap();
         assert_eq!(back, policy);
+    }
+
+    /// Serde-compatibility pin: configs persisted before the
+    /// `prompt_command_timeout` field existed deserialize with `None` —
+    /// absent = None = the documented 5-second default at evaluation time.
+    #[test]
+    fn config_without_prompt_command_timeout_deserializes_to_none() {
+        let empty: AgentLoopConfig = serde_json::from_str("{}").unwrap();
+        assert!(empty.prompt_command_timeout.is_none());
+
+        let cfg = AgentLoopConfig {
+            prompt_command_timeout: Some(Duration::from_millis(750)),
+            ..AgentLoopConfig::default()
+        };
+        let json = serde_json::to_string(&cfg).unwrap();
+        let back: AgentLoopConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(
+            back.prompt_command_timeout,
+            Some(Duration::from_millis(750))
+        );
+    }
+
+    /// Owned-handle contract: borrows expose no handle (concurrent batch
+    /// steps fall back to single-task concurrency), while an
+    /// `Arc<dyn ToolExecutor>` hands out clones of itself and delegates
+    /// dispatch to the inner executor.
+    #[tokio::test]
+    async fn arc_executor_exposes_owned_handle_and_delegates() {
+        let mut handlers: std::collections::HashMap<String, ToolHandler> =
+            std::collections::HashMap::new();
+        handlers.insert(
+            "echo".to_owned(),
+            Box::new(|args| Ok(serde_json::json!({ "echoed": args }))),
+        );
+        let mock = MockToolExecutor::new(handlers);
+        assert!(
+            mock.owned_handle().is_none(),
+            "a plain executor exposes no owned handle",
+        );
+
+        let shared: Arc<dyn ToolExecutor> = Arc::new(mock);
+        let handle = shared
+            .owned_handle()
+            .expect("an Arc'd executor hands out an owned handle");
+        let result = handle
+            .execute("echo", "call-1", serde_json::json!({ "x": 1 }))
+            .await
+            .expect("delegated dispatch succeeds");
+        assert_eq!(result["echoed"]["x"], 1);
+        assert!(
+            handle.owned_handle().is_some(),
+            "the handle itself stays spawnable",
+        );
     }
 
     #[test]

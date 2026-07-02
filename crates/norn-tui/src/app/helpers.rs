@@ -6,6 +6,7 @@
 //! argument extraction.
 
 use std::io::Write as _;
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -306,8 +307,15 @@ pub(crate) fn extract_tool_use_description(arguments: &str) -> Option<String> {
 /// JSONL event file is write-through — so the failure is logged via
 /// `tracing::warn!` and returned as a message for the caller to write
 /// in the red error-line style.
-pub(crate) fn checkpoint_session(store: &norn::session::store::EventStore) -> Option<String> {
-    match store.checkpoint() {
+///
+/// Awaits [`norn::session::store::EventStore::checkpoint_off_executor`]:
+/// the blocking critical section (inter-process index lock + full index
+/// rewrite + fsync) runs on Tokio's blocking pool, never on the
+/// executor thread driving the TUI event loop.
+pub(crate) async fn checkpoint_session(
+    store: &Arc<norn::session::store::EventStore>,
+) -> Option<String> {
+    match Arc::clone(store).checkpoint_off_executor().await {
         Ok(()) => None,
         Err(err) => {
             tracing::warn!(
@@ -369,10 +377,11 @@ mod tests {
     /// so without an explicit checkpoint the entry only updates at drop
     /// (clean shutdown) — an abort loses it. `checkpoint_session` must
     /// land the delta while the store stays live across turns.
-    #[test]
-    fn checkpoint_session_flushes_index_delta_without_drop() {
+    #[tokio::test]
+    async fn checkpoint_session_flushes_index_delta_without_drop() {
         let tmp = tempfile::tempdir().unwrap();
         let (id, store) = session_with_registered_sink(tmp.path());
+        let store = Arc::new(store);
         store
             .append(SessionEvent::UserMessage {
                 base: EventBase::new(None),
@@ -388,7 +397,7 @@ mod tests {
         );
 
         assert_eq!(
-            checkpoint_session(&store),
+            checkpoint_session(&store).await,
             None,
             "successful checkpoint reports no error",
         );
@@ -405,20 +414,21 @@ mod tests {
     }
 
     /// A sink-less store (`--no-session`) checkpoints as a no-op.
-    #[test]
-    fn checkpoint_session_sinkless_store_is_noop() {
-        let store = EventStore::new();
-        assert_eq!(checkpoint_session(&store), None);
+    #[tokio::test]
+    async fn checkpoint_session_sinkless_store_is_noop() {
+        let store = Arc::new(EventStore::new());
+        assert_eq!(checkpoint_session(&store).await, None);
     }
 
     /// Checkpoint failure surfaces a message (for the red error-line
     /// style) instead of panicking or aborting — the turn must survive.
-    #[test]
-    fn checkpoint_session_failure_returns_message() {
+    #[tokio::test]
+    async fn checkpoint_session_failure_returns_message() {
         let tmp = tempfile::tempdir().unwrap();
         let data_dir = tmp.path().join("sessions");
         std::fs::create_dir_all(&data_dir).unwrap();
         let (_id, store) = session_with_registered_sink(&data_dir);
+        let store = Arc::new(store);
         store
             .append(SessionEvent::UserMessage {
                 base: EventBase::new(None),
@@ -430,6 +440,7 @@ mod tests {
         std::fs::remove_dir_all(&data_dir).unwrap();
 
         let message = checkpoint_session(&store)
+            .await
             .expect("checkpoint against a destroyed data dir must surface a failure");
         assert!(
             message.contains("session checkpoint failed"),

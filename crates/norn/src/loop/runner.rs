@@ -17,7 +17,9 @@ use tokio_util::sync::CancellationToken;
 use crate::error::{ConfigError, HookType, NornError, ProviderError, SchemaError};
 use crate::integration::diagnostics::NornDiagnostic;
 use crate::integration::hooks::{HookOutcome, LlmCallSummary};
-use crate::r#loop::classify::{ResponseClass, call_provider, classify_response, record_truncation};
+use crate::r#loop::classify::{
+    ResponseClass, call_provider_with_retry, classify_response, record_truncation,
+};
 use crate::r#loop::compaction::CompactionState;
 use crate::r#loop::conversation_state::ConversationRequestState;
 use crate::r#loop::dev_context::ManagedDevMessage;
@@ -29,7 +31,6 @@ use crate::r#loop::inflight_compaction::{
 };
 use crate::r#loop::iteration::{IterationMonitorState, evaluate_iteration};
 use crate::r#loop::loop_context::LoopContext;
-use crate::r#loop::retry::retry_with_backoff;
 use crate::r#loop::schema::{
     build_schema_tool, check_reserved_envelope_keys, format_nudge, format_validation_feedback,
 };
@@ -46,14 +47,15 @@ use crate::session::events::{EventBase, EventId, EventUsage, SessionEvent, ToolC
 use crate::session::store::EventStore;
 
 use super::delivery::{
-    drain_and_partition, drain_child_results, flush_active_inputs, flush_inbound_messages,
-    flush_pending_agent_messages, inject_inbound_messages,
+    UndeliveredWindow, drain_child_results, drain_post_batch_inbound, flush_active_inputs,
+    flush_inbound_messages, flush_pending_agent_messages, inject_inbound_messages,
+    requeue_undelivered_inbound,
 };
 use super::helpers::{
     ToolBatchRequest, ToolResultRecord, accept_schema_tool_call, append_and_notify,
     append_tool_result, apply_rule_injections, build_initial_messages,
     ensure_tool_results_complete, execute_tool_batch, handle_iteration_signals,
-    inject_post_tool_batch_notifications, reject_post_schema_tools,
+    inject_post_tool_batch_notifications, installed_inline_char_limit, reject_post_schema_tools,
 };
 use super::linger::{BoundaryOutcome, StopBoundary, resolve_stop_boundary};
 
@@ -95,6 +97,7 @@ async fn inject_stop_block(
         role: MessageRole::User,
         content: Some(reason),
         thinking: String::new(),
+        reasoning: Vec::new(),
         tool_calls: Vec::new(),
         tool_call_id: None,
         tool_name: None,
@@ -105,35 +108,9 @@ async fn inject_stop_block(
 #[cfg(any(test, feature = "test-utils"))]
 pub use crate::r#loop::config::{MockToolExecutor, ToolHandler};
 
-/// Runs one complete agent loop step.
-///
-/// Sends the system instruction (assembled from `loop_context.system_sections`)
-/// and user prompt to the provider, executes tool calls, enforces the output
-/// schema (if provided), and returns the final result. Events are appended
-/// to the store and optionally broadcast for real-time streaming.
-///
-/// Rules and hooks live on `loop_context` and fire at their respective
-/// points: pre/post tool around each tool execution, pre/post LLM around
-/// every provider call, and session-event hooks on every store append.
-///
-/// When `config.step_timeout` is set, the entire loop body is wrapped in
-/// [`tokio::time::timeout`] and elapsing the budget produces
-/// [`AgentStepResult::TimedOut`] with whatever partial output the model
-/// produced before cancellation.
-///
-/// When `cancel` is `Some`, the loop participates in cooperative
-/// cancellation: it is checked at the top of each iteration and raced
-/// against the in-flight provider call. On cancellation the loop
-/// returns [`AgentStepResult::Cancelled`] with usage accumulated so far;
-/// any tool already executing finishes in full before this is returned
-/// (cancellation is at the loop level, not inside tools). When `cancel`
-/// is `None` the loop has no cancellation overhead.
-///
-/// # Errors
-///
-/// Returns [`NornError`] on provider failures, event store failures,
-/// `PreLlmHook` blocks ([`NornError::HookBlocked`]), or unrecoverable tool
-/// errors.
+/// Inputs for [`run_agent_step`] — one complete agent loop step opened
+/// by an operator/user prompt. The behavioral contract lives on
+/// [`run_agent_step`] itself.
 pub struct AgentStepRequest<'a> {
     /// The model provider that issues completion requests for this step.
     pub provider: &'a dyn Provider,
@@ -215,16 +192,60 @@ struct AgentStepRunRequest<'a> {
     cancel: Option<CancellationToken>,
 }
 
-/// Drive a single agent step to completion.
+/// Runs one complete agent loop step.
 ///
-/// Runs [`run_agent_step_inner`] under the configured step timeout (if any),
-/// returning [`AgentStepResult::TimedOut`] with the partial progress captured
-/// in the shared timeout state when the budget is exceeded. With no timeout
-/// configured the inner loop runs directly.
+/// Sends the system instruction (assembled from `loop_context.system_sections`)
+/// and user prompt to the provider, executes tool calls, enforces the output
+/// schema (if provided), and returns the final result. Events are appended
+/// to the store and optionally broadcast for real-time streaming.
+///
+/// Rules and hooks live on `loop_context` and fire at their respective
+/// points: pre/post tool around each tool execution, pre/post LLM around
+/// every provider call, and session-event hooks on every store append.
+///
+/// # Timeout vs cancellation
+///
+/// When `config.step_timeout` is set, the entire loop body is wrapped in
+/// [`tokio::time::timeout`] and elapsing the budget produces
+/// [`AgentStepResult::TimedOut`] with whatever partial output the model
+/// produced. Elapsing is a **hard cut**: the inner future is dropped
+/// wherever it is suspended, including mid-tool-batch — in-flight tools
+/// do *not* finish. Tool calls left without results are repaired in the
+/// event store afterwards
+/// ([`ensure_tool_results_complete`](super::ensure_tool_results_complete)
+/// synthesizes aborted-result records), but any external side effect a
+/// dropped tool had already started is not undone. See
+/// [`AgentLoopConfig::step_timeout`] for the config-side statement of
+/// this contract.
+///
+/// When `cancel` is `Some`, the loop participates in *cooperative*
+/// cancellation: the token is checked at the top of each iteration and
+/// raced against the in-flight provider call. On cancellation the loop
+/// returns [`AgentStepResult::Cancelled`] with usage accumulated so far;
+/// any tool already executing finishes in full before this is returned
+/// (cancellation is at the loop level, not inside tools). When `cancel`
+/// is `None` the loop has no cancellation overhead.
+///
+/// # Undelivered inbound messages
+///
+/// [`MessageKind::Update`](super::inbound::MessageKind) messages drained
+/// mid-step buffer until a would-stop boundary. If the step ends without
+/// passing through such a boundary (max-iterations, schema-unreachable,
+/// truncation, cancellation, timeout, or a hard error), the buffered
+/// messages are re-queued into the loop's durable pending store
+/// ([`LoopContext::pending_agent_messages`]) with `agent_message.queued`
+/// audit events so an acknowledged delivery is never silently dropped.
+/// The same re-queue captures messages still sitting undrained in the
+/// step's inbound channel when the step ends — sends the router accepted
+/// (and acknowledged) after the loop's final drain — so the durable
+/// pending store, which wake eligibility reads, sees every accepted
+/// message.
 ///
 /// # Errors
 ///
-/// Propagates any [`NornError`] surfaced by the inner step loop. A
+/// Propagates any [`NornError`] surfaced by the inner step loop —
+/// provider failures, event store failures, `PreLlmHook` blocks
+/// ([`NornError::HookBlocked`]), or unrecoverable tool errors. A
 /// no-schema response truncated by the provider
 /// (`MaxTokens`/`ContentFilter` with no tool calls) is **not** an error:
 /// it returns [`AgentStepResult::Truncated`] carrying the partial text and
@@ -281,7 +302,7 @@ pub async fn run_agent_step_from_messages(
 }
 
 async fn run_agent_step_common(
-    request: AgentStepRunRequest<'_>,
+    mut request: AgentStepRunRequest<'_>,
 ) -> Result<AgentStepResult, NornError> {
     let timeout_state = crate::r#loop::compaction::shared_timeout_state();
     let started = std::time::Instant::now();
@@ -297,8 +318,29 @@ async fn run_agent_step_common(
     // (interactive surfaces run many steps over one context) would
     // otherwise leak turn 1's children into every later snapshot.
     children_usage.reset();
+    // The follow-up buffer lives out here — not inside the inner future —
+    // so buffered Update messages survive every exit path (including the
+    // timeout branch dropping the inner future) and can be re-queued
+    // durably below. The recipient identity and pending store are cheap
+    // handles captured before `request` moves into the inner future.
+    let requeue_agent_id = request.loop_context.agent_id;
+    let requeue_pending = request.loop_context.pending_agent_messages.clone();
+    // The inbound channel is hoisted out of the request for the same
+    // reason: the loop's final drain runs *inside* the inner future, so a
+    // message the channel accepted (and its sender was told was
+    // delivered) after that drain — or before a timeout cut — would sit
+    // undrained when the step ends. Holding the channel out here lets the
+    // exit path below sweep it into the durable pending store on every
+    // exit, including the timeout branch dropping the inner future.
+    let mut inbound = request.inbound.take();
+    let mut follow_up_buffer: Vec<ChannelMessage> = Vec::new();
     let result = if let Some(budget) = request.config.step_timeout {
-        let inner = run_agent_step_inner(request, Arc::clone(&timeout_state));
+        let inner = run_agent_step_inner(
+            request,
+            Arc::clone(&timeout_state),
+            inbound.as_deref_mut(),
+            &mut follow_up_buffer,
+        );
         if let Ok(result) = tokio::time::timeout(budget, inner).await {
             result
         } else {
@@ -312,16 +354,42 @@ async fn run_agent_step_common(
             })
         }
     } else {
-        run_agent_step_inner(request, timeout_state).await
+        run_agent_step_inner(
+            request,
+            timeout_state,
+            inbound.as_deref_mut(),
+            &mut follow_up_buffer,
+        )
+        .await
     };
 
     ensure_tool_results_complete(store).await;
+    // Update messages the sender was told were delivered buffer until a
+    // would-stop boundary; a step ending anywhere else (max-iterations,
+    // schema-unreachable, truncation, cancellation, timeout, or an error
+    // return) would otherwise drop them on the floor. The channel sweep
+    // additionally captures messages accepted after the loop's final
+    // drain, which no exit path ever saw. Re-queue whatever is left into
+    // the durable pending store so the next step delivers them and wake
+    // eligibility (which reads that store) can see them.
+    if let Some(channel) = inbound {
+        follow_up_buffer.extend(channel.drain());
+    }
+    requeue_undelivered_inbound(
+        store,
+        requeue_agent_id,
+        requeue_pending.as_deref(),
+        &mut follow_up_buffer,
+        UndeliveredWindow::StepExit,
+    );
     result
 }
 
 async fn run_agent_step_inner(
     request: AgentStepRunRequest<'_>,
     timeout_state: crate::r#loop::compaction::SharedTimeoutState,
+    mut inbound: Option<&mut InboundChannel>,
+    follow_up_buffer: &mut Vec<ChannelMessage>,
 ) -> Result<AgentStepResult, NornError> {
     let provider = request.provider;
     let executor = request.executor;
@@ -334,9 +402,12 @@ async fn run_agent_step_inner(
     let model = request.model;
     let config = request.config;
     let event_tx = request.event_tx;
-    let mut inbound = request.inbound;
     let loop_context = request.loop_context;
     let cancel = request.cancel;
+    // The embedder-installed ToolOutputBudget governs the model-facing
+    // inline size of every tool result this step persists; resolved once
+    // because the executor's shared context is fixed for the step.
+    let inline_char_limit = installed_inline_char_limit(executor);
     let mut all_tools: Vec<ToolDefinition> = tools.to_vec();
     if let Some(schema) = output_schema {
         // Backstop for every schema source (embedder config, fork, rhai;
@@ -363,13 +434,23 @@ async fn run_agent_step_inner(
         }
     }
 
+    // Persisted compaction marks load once per loop context, not once per
+    // step: a driver that resumes a session with a fresh ContextEdits gets
+    // its marks from this single walk, and every compaction appended after
+    // it marks supersession at append time on the tracker itself (via
+    // ContextEdits::summarize / compact / commit_compaction_plan). A
+    // per-step re-walk here would be quadratic over a long-running loop
+    // context while adding no information.
+    if !loop_context.compaction_marks_loaded
+        && let Some(edits) = loop_context.context_edits.as_mut()
+    {
+        edits.apply_persisted_compactions(store);
+        loop_context.compaction_marks_loaded = true;
+    }
+
     // Build the initial conversation, splicing in any slash-command
     // expansion in place of the literal user input. The raw user input is
     // still recorded as a UserMessage session event for audit (CO7).
-    if let Some(edits) = loop_context.context_edits.as_mut() {
-        edits.apply_persisted_compactions(store);
-    }
-
     let initial_messages = build_initial_messages(user_prompt, loop_context, store)?;
     let mut messages = initial_messages.messages;
     let mut conversation_state = ConversationRequestState::new(
@@ -398,8 +479,6 @@ async fn run_agent_step_inner(
         EventId::new()
     };
 
-    let mut follow_up_buffer: Vec<ChannelMessage> = Vec::new();
-
     let mut injected_event_ids =
         flush_pending_agent_messages(store, &mut messages, loop_context, event_tx).await?;
 
@@ -419,7 +498,7 @@ async fn run_agent_step_inner(
             store,
             &mut messages,
             inbound.as_deref_mut(),
-            &mut follow_up_buffer,
+            follow_up_buffer,
             loop_context.hooks.as_deref(),
             event_tx,
         )
@@ -537,7 +616,9 @@ async fn run_agent_step_inner(
         // rule injections so their stdout becomes part of the dynamic
         // section stack the rest of this iteration builds on. Failures are
         // logged inside the helper and produce no section.
-        loop_context.evaluate_prompt_commands().await;
+        loop_context
+            .evaluate_prompt_commands(config.prompt_command_timeout)
+            .await;
 
         // Apply any Before-timing injections accumulated by the previous
         // iteration's tool batch. These must hit the prompt before the next
@@ -599,6 +680,7 @@ async fn run_agent_step_inner(
                 prompt_event_id: prompt_event_id.clone(),
                 prompt_message_len: new_input_len,
             },
+            cancel: cancel.as_ref(),
         })
         .await?;
         // Summarization tokens are real provider spend: account them
@@ -646,13 +728,8 @@ async fn run_agent_step_inner(
         // is `None` the call falls through to a direct await with no
         // select overhead (R3 acceptance).
         let response = {
-            let policy = &loop_context.retry_policy;
-            let request_template = request.clone();
-            let tx_ref = event_tx;
-            let provider_fut = retry_with_backoff(policy, || {
-                let req = request_template.clone();
-                async move { call_provider(provider, req, tx_ref).await }
-            });
+            let provider_fut =
+                call_provider_with_retry(&loop_context.retry_policy, provider, request, event_tx);
             match cancel.as_ref() {
                 Some(token) => tokio::select! {
                     biased;
@@ -751,6 +828,10 @@ async fn run_agent_step_inner(
             role: MessageRole::Assistant,
             content: message_content,
             thinking,
+            // Structured reasoning items ride on the local replay message so
+            // stateless backends (`response_threading: false`) can replay
+            // encrypted reasoning across tool-call iterations.
+            reasoning: response.reasoning.clone(),
             tool_calls: assistant_tool_calls,
             tool_call_id: None,
             tool_name: None,
@@ -790,6 +871,7 @@ async fn run_agent_step_inner(
                     &config.schema_tool_name,
                     loop_context.hooks.as_deref(),
                     event_tx,
+                    inline_char_limit,
                 )
                 .await?;
 
@@ -797,7 +879,7 @@ async fn run_agent_step_inner(
                     store,
                     messages: &mut messages,
                     inbound: inbound.as_deref_mut(),
-                    follow_up_buffer: &mut follow_up_buffer,
+                    follow_up_buffer: &mut *follow_up_buffer,
                     loop_context: &mut *loop_context,
                     linger: config.linger,
                     cancel: cancel.as_ref(),
@@ -880,6 +962,7 @@ async fn run_agent_step_inner(
                 let schema = output_schema.ok_or_else(|| {
                     NornError::Provider(ProviderError::StreamError {
                         reason: "schema unexpectedly missing".to_string(),
+                        transient: None,
                     })
                 })?;
                 let feedback = format_validation_feedback(schema, &output, &errors);
@@ -893,6 +976,7 @@ async fn run_agent_step_inner(
                         kind: schema_tc.kind,
                         output: &Value::String(feedback),
                         duration_ms: 0,
+                        inline_char_limit,
                     },
                     loop_context.hooks.as_deref(),
                     event_tx,
@@ -909,6 +993,21 @@ async fn run_agent_step_inner(
                     &mut messages,
                     &response,
                     &config.schema_tool_name,
+                    loop_context.hooks.as_deref(),
+                    event_tx,
+                    inline_char_limit,
+                )
+                .await?;
+
+                // Steers inject immediately after the batch (inbound
+                // contract), once every call has its result — the retry
+                // iteration this arm continues into must already see
+                // them, exactly as the ToolsOnly arm does.
+                drain_post_batch_inbound(
+                    store,
+                    &mut messages,
+                    inbound.as_deref_mut(),
+                    follow_up_buffer,
                     loop_context.hooks.as_deref(),
                     event_tx,
                 )
@@ -936,12 +1035,11 @@ async fn run_agent_step_inner(
 
                 inject_post_tool_batch_notifications(executor, false).await;
 
-                let (steer, follow_up) = drain_and_partition(inbound.as_deref_mut());
-                follow_up_buffer.extend(follow_up);
-                inject_inbound_messages(
+                drain_post_batch_inbound(
                     store,
                     &mut messages,
-                    steer,
+                    inbound.as_deref_mut(),
+                    follow_up_buffer,
                     loop_context.hooks.as_deref(),
                     event_tx,
                 )
@@ -961,7 +1059,7 @@ async fn run_agent_step_inner(
                         store,
                         messages: &mut messages,
                         inbound: inbound.as_deref_mut(),
-                        follow_up_buffer: &mut follow_up_buffer,
+                        follow_up_buffer: &mut *follow_up_buffer,
                         loop_context: &mut *loop_context,
                         linger: config.linger,
                         cancel: cancel.as_ref(),
@@ -1010,6 +1108,7 @@ async fn run_agent_step_inner(
                 let schema = output_schema.ok_or_else(|| {
                     NornError::Provider(ProviderError::StreamError {
                         reason: "schema unexpectedly missing during nudge".to_string(),
+                        transient: None,
                     })
                 })?;
                 let nudge_text = format_nudge(&config.schema_tool_name, schema);
@@ -1028,6 +1127,7 @@ async fn run_agent_step_inner(
                     role: MessageRole::User,
                     content: Some(nudge_text),
                     thinking: String::new(),
+                    reasoning: Vec::new(),
                     tool_calls: Vec::new(),
                     tool_call_id: None,
                     tool_name: None,
@@ -1091,6 +1191,7 @@ async fn run_agent_step_inner(
                     &config.schema_tool_name,
                     loop_context.hooks.as_deref(),
                     event_tx,
+                    inline_char_limit,
                 )
                 .await?;
 
@@ -1101,14 +1202,33 @@ async fn run_agent_step_inner(
                     &config.schema_tool_name,
                     loop_context.hooks.as_deref(),
                     event_tx,
+                    inline_char_limit,
                 )
                 .await?;
+
+                // Steers inject immediately after the batch (inbound
+                // contract), once every call has its result. An injected
+                // steer must reach the model, so the loop continues
+                // instead of resolving the stop boundary — mirroring the
+                // boundary's own Continue on injected work.
+                if drain_post_batch_inbound(
+                    store,
+                    &mut messages,
+                    inbound.as_deref_mut(),
+                    follow_up_buffer,
+                    loop_context.hooks.as_deref(),
+                    event_tx,
+                )
+                .await?
+                {
+                    continue;
+                }
 
                 match resolve_stop_boundary(StopBoundary {
                     store,
                     messages: &mut messages,
                     inbound: inbound.as_deref_mut(),
-                    follow_up_buffer: &mut follow_up_buffer,
+                    follow_up_buffer: &mut *follow_up_buffer,
                     loop_context: &mut *loop_context,
                     linger: config.linger,
                     cancel: cancel.as_ref(),
@@ -1180,10 +1300,12 @@ mod tests {
                     .lock()
                     .map_err(|error| ProviderError::StreamError {
                         reason: format!("delayed provider lock poisoned: {error}"),
+                        transient: None,
                     })?;
             if responses.is_empty() {
                 return Err(ProviderError::StreamError {
                     reason: "delayed provider exhausted".to_owned(),
+                    transient: None,
                 });
             }
             let events = responses.remove(0);
@@ -1423,6 +1545,75 @@ mod tests {
         assert_eq!(output["answer"], "42");
         assert!(usage.input_tokens > 0);
         assert!(store.len() >= 4);
+    }
+
+    // -- Encrypted reasoning threads into the next iteration's request --
+
+    #[tokio::test]
+    async fn reasoning_items_threaded_into_next_request_messages() {
+        // Seam regression: a reasoning output item captured on a tool-call
+        // turn must ride the in-memory assistant Message so the next
+        // provider request can replay it (stateless threading). The mock
+        // provider records every request it receives; the second request's
+        // assistant message must carry the captured item.
+        let reasoning_item = crate::provider::reasoning::ReasoningItem {
+            id: "rs_1".to_owned(),
+            summary: vec![
+                crate::provider::reasoning::ReasoningSummaryPart::SummaryText {
+                    text: "planning the tool call".to_owned(),
+                },
+            ],
+            content: None,
+            encrypted_content: Some("opaque-blob".to_owned()),
+        };
+        let turn1 = vec![
+            ProviderEvent::ReasoningItemDone {
+                item: reasoning_item.clone(),
+            },
+            tool_call_delta("tc1", Some("read_file"), r#"{"path":"foo.rs"}"#),
+            done_event(StopReason::ToolUse),
+        ];
+        let turn2 = vec![
+            tool_call_delta("tc2", Some("structured_output"), r#"{"answer":"42"}"#),
+            done_event(StopReason::ToolUse),
+        ];
+
+        let provider = MockProvider::new(vec![turn1, turn2]);
+        let store = EventStore::new();
+        let mut handlers: std::collections::HashMap<String, ToolHandler> =
+            std::collections::HashMap::new();
+        handlers.insert(
+            "read_file".to_string(),
+            Box::new(|_| Ok(serde_json::json!({"content": "hello"}))),
+        );
+        let executor = MockToolExecutor::new(handlers);
+        let schema = simple_schema();
+
+        let result = run_step(
+            &provider,
+            &executor,
+            &store,
+            &[],
+            Some(&schema),
+            &default_config(),
+            None,
+        )
+        .await;
+        let (output, _) = assert_completed(result);
+        assert_eq!(output["answer"], "42");
+
+        let requests = provider.requests().expect("recorded requests");
+        assert_eq!(requests.len(), 2, "two provider turns expected");
+        let assistant = requests[1]
+            .messages
+            .iter()
+            .find(|m| m.role == MessageRole::Assistant)
+            .expect("second request replays the assistant turn");
+        assert_eq!(
+            assistant.reasoning,
+            vec![reasoning_item],
+            "captured reasoning must thread into the next request's messages",
+        );
     }
 
     // -- Thinking is threaded from AssembledResponse into SessionEvent --
@@ -1961,7 +2152,9 @@ mod tests {
             match agent_event.event {
                 AgentEventKind::Provider(event) => received.push(event),
                 AgentEventKind::UsageEstimate(_) => {}
-                AgentEventKind::Subagent(_) | AgentEventKind::Message(_) => {
+                AgentEventKind::Subagent(_)
+                | AgentEventKind::Message(_)
+                | AgentEventKind::StreamRetry(_) => {
                     panic!("the loop emits only provider events here")
                 }
             }
@@ -4506,6 +4699,254 @@ mod tests {
         );
     }
 
+    /// Seam I2-1 (quadratic compaction re-walk): persisted compaction
+    /// marks load exactly once per loop context. Step 1 of a resumed
+    /// session (fresh `ContextEdits`, compaction already in the store)
+    /// walks the store and hides superseded history; step 2 must NOT
+    /// re-walk — proven by appending a raw compaction event between the
+    /// steps that only a re-walk could observe and asserting its
+    /// replaced event stays visible — while the step-1 marks survive.
+    #[tokio::test]
+    async fn persisted_compaction_marks_load_once_per_loop_context() {
+        let store = EventStore::new();
+        let old_question = store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(None),
+                content: "old question".to_string(),
+            })
+            .expect("seed user");
+        let old_answer = store
+            .append(SessionEvent::AssistantMessage {
+                base: EventBase::new(None),
+                content: "old answer".to_string(),
+                thinking: String::new(),
+                tool_calls: Vec::new(),
+                usage: EventUsage::default(),
+                stop_reason: "end_turn".to_string(),
+                response_id: None,
+            })
+            .expect("seed assistant");
+        // Persist a compaction the way a *previous run* would have — on a
+        // tracker this loop context never sees.
+        let mut prior_run_edits = crate::session::context_edit::ContextEdits::new();
+        prior_run_edits
+            .summarize(
+                &store,
+                vec![old_question, old_answer],
+                "seeded summary".to_string(),
+            )
+            .expect("seed compaction");
+
+        let provider = MockProvider::new(vec![
+            vec![text_delta("first"), done_event(StopReason::EndTurn)],
+            vec![text_delta("second"), done_event(StopReason::EndTurn)],
+        ]);
+        let executor = MockToolExecutor::empty();
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
+        assert!(!loop_ctx.compaction_marks_loaded);
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        assert_completed(result);
+        assert!(
+            loop_ctx.compaction_marks_loaded,
+            "the first step must record the one-time load",
+        );
+
+        // Between the steps, append a compaction event directly to the
+        // store, superseding step 1's assistant turn. Nothing marks it on
+        // the loop's tracker — only a per-step store re-walk could pick
+        // it up, and the re-walk no longer exists.
+        let first_answer_id = store
+            .events()
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::AssistantMessage { base, content, .. } if content == "first" => {
+                    Some(base.id.clone())
+                }
+                _ => None,
+            })
+            .expect("step-1 assistant event persisted");
+        store
+            .append(SessionEvent::Compaction {
+                base: EventBase::new(store.last_event_id()),
+                summary: "rogue walk detector".to_string(),
+                replaced_event_ids: vec![first_answer_id],
+            })
+            .expect("append rogue compaction");
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        assert_completed(result);
+
+        let requests = provider.requests().expect("requests recorded");
+        assert_eq!(requests.len(), 2);
+        let contains = |req: &crate::provider::request::ProviderRequest, needle: &str| {
+            req.messages
+                .iter()
+                .any(|m| m.content.as_deref().is_some_and(|c| c.contains(needle)))
+        };
+
+        // Step 1: resume load hid the superseded history, summary present.
+        assert!(
+            !contains(&requests[0], "old answer"),
+            "step 1 must hide history superseded before resume: {:?}",
+            requests[0].messages,
+        );
+        assert!(contains(&requests[0], "seeded summary"));
+
+        // Step 2: marks from the one-time load still hold...
+        assert!(
+            !contains(&requests[1], "old answer"),
+            "step 2 must keep the resume-loaded marks: {:?}",
+            requests[1].messages,
+        );
+        // ...and the raw between-steps compaction was NOT re-walked in:
+        // its replaced event is still visible.
+        assert!(
+            contains(&requests[1], "first"),
+            "a per-step store re-walk crept back in — step 2 hid an event \
+             that only apply_persisted_compactions could have marked: {:?}",
+            requests[1].messages,
+        );
+    }
+
+    /// Seam I2-1, mid-session half: a compaction that fires *during* a
+    /// step marks supersession at commit time on the loop's own tracker,
+    /// so the following step of the same loop context still sees the
+    /// compacted view — with no per-step re-walk to fall back on.
+    #[tokio::test]
+    async fn mid_session_compaction_marks_survive_into_the_next_step() {
+        let store = EventStore::new();
+        for i in 0..6 {
+            store
+                .append(SessionEvent::UserMessage {
+                    base: EventBase::new(None),
+                    content: format!("seed question {i} {}", "x".repeat(200)),
+                })
+                .expect("seed user");
+            store
+                .append(SessionEvent::AssistantMessage {
+                    base: EventBase::new(None),
+                    content: format!("seed answer {i} {}", "y".repeat(200)),
+                    thinking: String::new(),
+                    tool_calls: Vec::new(),
+                    usage: EventUsage::default(),
+                    stop_reason: "end_turn".to_string(),
+                    response_id: None,
+                })
+                .expect("seed assistant");
+        }
+
+        // Step 1 fires auto-compaction (summarization call + main call);
+        // step 2 runs with generous limits so no second trigger fires.
+        let provider = MockProvider::new(vec![
+            vec![
+                text_delta("LLM summary of the seed turns"),
+                done_event(StopReason::EndTurn),
+            ],
+            vec![text_delta("done"), done_event(StopReason::EndTurn)],
+            vec![text_delta("later"), done_event(StopReason::EndTurn)],
+        ]);
+        let executor = MockToolExecutor::empty();
+
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
+        loop_ctx.token_estimator = Some(std::sync::Arc::new(crate::r#loop::SimpleTokenEstimator));
+
+        let compacting_config = AgentLoopConfig {
+            context_window_limit: Some(100),
+            auto_compact_threshold_pct: Some(0.5),
+            auto_compact_keep_recent_turns: 1,
+            ..AgentLoopConfig::default()
+        };
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &compacting_config,
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        assert_completed(result);
+
+        let relaxed_config = AgentLoopConfig {
+            context_window_limit: Some(1_000_000),
+            auto_compact_threshold_pct: Some(0.99),
+            auto_compact_keep_recent_turns: 1,
+            ..AgentLoopConfig::default()
+        };
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[],
+                schema: None,
+                config: &relaxed_config,
+                event_tx: None,
+                inbound: None,
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        assert_completed(result);
+
+        let requests = provider.requests().expect("requests recorded");
+        assert_eq!(requests.len(), 3, "summarization + step 1 + step 2");
+        let step_two = &requests[2];
+        assert!(
+            !step_two.messages.iter().any(|m| {
+                m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("seed question 0"))
+            }),
+            "the step-1 compaction's marks must persist into step 2 without \
+             any store re-walk: {:?}",
+            step_two.messages,
+        );
+        assert!(
+            step_two.messages.iter().any(|m| {
+                matches!(m.role, MessageRole::Developer)
+                    && m.content
+                        .as_deref()
+                        .is_some_and(|c| c.contains("LLM summary of the seed turns"))
+            }),
+            "the compaction summary must ride into step 2",
+        );
+    }
+
     /// Resume with a compaction summary in history while dynamic context
     /// appears mid-step (environment section): pre-fix, the `(Some, Some)`
     /// arm overwrote the summary with the dynamic context. Post-fix the
@@ -5590,5 +6031,488 @@ mod tests {
              step 1's child leaked across the reset boundary",
         );
         assert_eq!(children_usage.output_tokens, 6);
+    }
+
+    // -- Post-batch steer drains in the schema arms ------------------------
+
+    /// Handlers that deliver an inbound message *while the tool batch is
+    /// executing*, so the drain under test is the post-batch one (the
+    /// step-start flush has already run by then).
+    fn handlers_sending_inbound(
+        tx: crate::r#loop::inbound::InboundSender,
+        content: &'static str,
+        kind: crate::r#loop::inbound::MessageKind,
+    ) -> std::collections::HashMap<String, ToolHandler> {
+        let mut handlers: std::collections::HashMap<String, ToolHandler> =
+            std::collections::HashMap::new();
+        handlers.insert(
+            "read_file".to_string(),
+            Box::new(move |_| {
+                tx.try_send(make_channel_message("mid-batch-sender", content, kind, 0))
+                    .expect("mid-batch send fits the buffer");
+                Ok(serde_json::json!({"content": "file data"}))
+            }),
+        );
+        handlers
+    }
+
+    fn request_carries_frame(request: &ProviderRequest, needle: &str) -> bool {
+        request.messages.iter().any(|m| {
+            m.content
+                .as_deref()
+                .is_some_and(|c| c.contains("<agent_message") && c.contains(needle))
+        })
+    }
+
+    /// Regression (steer drain missing from the `SchemaInvalid` arm): a
+    /// steer arriving during the pre-schema tool batch of a failed
+    /// validation attempt must be injected before the retry's provider
+    /// request — "immediately after the current tool batch" — not parked
+    /// until some later boundary.
+    #[tokio::test]
+    async fn steer_during_schema_invalid_batch_reaches_the_retry_request() {
+        let turn1 = vec![
+            tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
+            tool_call_delta("tc_schema", Some("structured_output"), r#"{"wrong":1}"#),
+            done_event(StopReason::ToolUse),
+        ];
+        let turn2 = vec![
+            tool_call_delta(
+                "tc_schema2",
+                Some("structured_output"),
+                r#"{"answer":"done"}"#,
+            ),
+            done_event(StopReason::ToolUse),
+        ];
+        let provider = MockProvider::new(vec![turn1, turn2]);
+        let store = EventStore::new();
+        let schema = simple_schema();
+        let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
+        let executor = MockToolExecutor::new(handlers_sending_inbound(
+            tx,
+            "steer during invalid batch",
+            crate::r#loop::inbound::MessageKind::Steer,
+        ));
+
+        let result = run_step_full(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[read_file_tool_def()],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
+            None,
+        )
+        .await;
+        let (output, _) = assert_completed(result);
+        assert_eq!(output["answer"], "done");
+
+        let requests = provider.requests().expect("requests recorded");
+        assert_eq!(requests.len(), 2);
+        assert!(
+            request_carries_frame(&requests[1], "steer during invalid batch"),
+            "the schema-retry request must already carry the framed steer",
+        );
+    }
+
+    /// Contract pin for the `ToolsAndSchemaValid` arm: a steer arriving
+    /// during the pre-schema batch is injected once every call has its
+    /// result, and the loop continues so the next provider request sees
+    /// it (the model must never stop past an undelivered steer).
+    #[tokio::test]
+    async fn steer_during_tools_and_schema_valid_batch_reaches_the_model() {
+        let turn1 = vec![
+            tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
+            tool_call_delta(
+                "tc_schema",
+                Some("structured_output"),
+                r#"{"answer":"early"}"#,
+            ),
+            done_event(StopReason::ToolUse),
+        ];
+        let turn2 = vec![
+            tool_call_delta(
+                "tc_schema2",
+                Some("structured_output"),
+                r#"{"answer":"final"}"#,
+            ),
+            done_event(StopReason::ToolUse),
+        ];
+        let provider = MockProvider::new(vec![turn1, turn2]);
+        let store = EventStore::new();
+        let schema = simple_schema();
+        let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
+        let executor = MockToolExecutor::new(handlers_sending_inbound(
+            tx,
+            "steer during valid batch",
+            crate::r#loop::inbound::MessageKind::Steer,
+        ));
+
+        let result = run_step_full(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[read_file_tool_def()],
+                schema: Some(&schema),
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
+            None,
+        )
+        .await;
+        let (output, _) = assert_completed(result);
+        assert_eq!(
+            output["answer"], "final",
+            "the loop must continue past the steer instead of returning the pre-steer output",
+        );
+
+        let requests = provider.requests().expect("requests recorded");
+        assert_eq!(requests.len(), 2);
+        assert!(
+            request_carries_frame(&requests[1], "steer during valid batch"),
+            "the continuation request must carry the framed steer",
+        );
+    }
+
+    // -- Undelivered follow-up (Update) re-queue on abnormal exits ---------
+
+    fn requeue_loop_ctx(
+        agent_id: uuid::Uuid,
+    ) -> (
+        LoopContext,
+        std::sync::Arc<crate::agent::PendingAgentMessages>,
+    ) {
+        let pending = std::sync::Arc::new(crate::agent::PendingAgentMessages::new());
+        let mut loop_ctx = LoopContext::new("system");
+        loop_ctx.agent_id = Some(agent_id);
+        loop_ctx.pending_agent_messages = Some(std::sync::Arc::clone(&pending));
+        (loop_ctx, pending)
+    }
+
+    #[track_caller]
+    fn assert_update_requeued(
+        pending: &crate::agent::PendingAgentMessages,
+        agent_id: uuid::Uuid,
+        store: &EventStore,
+        content: &str,
+    ) {
+        let queued = pending.messages_for_delivery(agent_id);
+        assert_eq!(
+            queued.len(),
+            1,
+            "the undelivered Update must be re-queued for this agent",
+        );
+        assert_eq!(queued[0].content, content);
+        let audited = store.events().iter().any(|e| {
+            matches!(
+                e,
+                SessionEvent::Custom { event_type, .. }
+                    if event_type == crate::agent::AGENT_MESSAGE_QUEUED_EVENT_TYPE,
+            )
+        });
+        assert!(
+            audited,
+            "the re-queue must append an agent_message.queued audit event"
+        );
+    }
+
+    /// Regression (follow-up buffer dropped on abnormal exits): an Update
+    /// drained mid-step buffers for the next stop boundary; a
+    /// `MaxIterations` exit never reaches one, so the message must land in
+    /// the durable pending store instead of vanishing.
+    #[tokio::test]
+    async fn max_iterations_exit_requeues_buffered_updates() {
+        let turn1 = vec![
+            tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
+            done_event(StopReason::ToolUse),
+        ];
+        let provider = MockProvider::new(vec![turn1]);
+        let store = EventStore::new();
+        let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
+        let executor = MockToolExecutor::new(handlers_sending_inbound(
+            tx,
+            "fyi from mid-batch",
+            crate::r#loop::inbound::MessageKind::Update,
+        ));
+        let agent_id = uuid::Uuid::new_v4();
+        let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+        let config = AgentLoopConfig {
+            max_iterations: Some(1),
+            ..AgentLoopConfig::default()
+        };
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[read_file_tool_def()],
+                schema: None,
+                config: &config,
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        assert!(matches!(
+            result,
+            AgentStepResult::MaxIterationsReached { .. }
+        ));
+        assert_update_requeued(&pending, agent_id, &store, "fyi from mid-batch");
+    }
+
+    /// Regression: a hard provider error (here an in-band typed Error
+    /// event ending the second turn) propagates as the step's `Err` —
+    /// and the Update buffered during turn 1's batch must still be
+    /// re-queued durably, not dropped with the failed future.
+    #[tokio::test]
+    async fn provider_error_exit_requeues_buffered_updates() {
+        let turn1 = vec![
+            tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
+            done_event(StopReason::ToolUse),
+        ];
+        let turn2 = vec![ProviderEvent::Error {
+            error: ProviderError::QuotaExceeded,
+        }];
+        let provider = MockProvider::new(vec![turn1, turn2]);
+        let store = EventStore::new();
+        let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
+        let executor = MockToolExecutor::new(handlers_sending_inbound(
+            tx,
+            "fyi before the crash",
+            crate::r#loop::inbound::MessageKind::Update,
+        ));
+        let agent_id = uuid::Uuid::new_v4();
+        let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+
+        let err = run_agent_step(AgentStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "prompt",
+            tools: &[read_file_tool_def()],
+            output_schema: None,
+            model: "test-model",
+            config: &default_config(),
+            event_tx: None,
+            inbound: Some(&mut rx),
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+        .expect_err("the typed in-band provider error fails the step");
+        assert!(
+            matches!(err, NornError::Provider(ProviderError::QuotaExceeded)),
+            "the step must surface the provider's typed error, got {err:?}",
+        );
+        assert_update_requeued(&pending, agent_id, &store, "fyi before the crash");
+    }
+
+    /// Regression: a `step_timeout` cut drops the inner future wherever
+    /// it is suspended; the Update buffered before the cut must survive
+    /// into the durable pending store.
+    #[tokio::test(start_paused = true)]
+    async fn step_timeout_exit_requeues_buffered_updates() {
+        let turn1 = vec![
+            tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
+            done_event(StopReason::ToolUse),
+        ];
+        let turn2 = vec![
+            text_delta("never observed"),
+            done_event(StopReason::EndTurn),
+        ];
+        // 100ms before each turn's first event: turn 1 completes inside
+        // the 150ms budget, turn 2 cannot.
+        let provider = DelayedProvider::new(vec![turn1, turn2], Duration::from_millis(100));
+        let store = EventStore::new();
+        let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
+        let executor = MockToolExecutor::new(handlers_sending_inbound(
+            tx,
+            "fyi before the timeout",
+            crate::r#loop::inbound::MessageKind::Update,
+        ));
+        let agent_id = uuid::Uuid::new_v4();
+        let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+        let config = AgentLoopConfig {
+            step_timeout: Some(Duration::from_millis(150)),
+            ..AgentLoopConfig::default()
+        };
+
+        let result = run_agent_step(AgentStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "prompt",
+            tools: &[read_file_tool_def()],
+            output_schema: None,
+            model: "test-model",
+            config: &config,
+            event_tx: None,
+            inbound: Some(&mut rx),
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+        .expect("a timed-out step returns Ok(TimedOut)");
+        assert!(matches!(result, AgentStepResult::TimedOut { .. }));
+        assert_update_requeued(&pending, agent_id, &store, "fyi before the timeout");
+    }
+
+    /// Provider that pushes a message into the recipient's own inbound
+    /// channel the moment it is called, then fails the turn with a typed
+    /// in-band error — modelling a send the channel accepted (and whose
+    /// sender was told `delivered: true`) after the loop's final inbound
+    /// drain: the deregistration message-loss window.
+    struct SendThenFailProvider {
+        tx: crate::r#loop::inbound::InboundSender,
+        content: &'static str,
+        kind: crate::r#loop::inbound::MessageKind,
+    }
+
+    impl Provider for SendThenFailProvider {
+        fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            self.tx
+                .try_send(make_channel_message(
+                    "late-sender",
+                    self.content,
+                    self.kind,
+                    0,
+                ))
+                .expect("test channel has capacity");
+            Ok(Box::pin(stream::iter(vec![Ok(ProviderEvent::Error {
+                error: ProviderError::QuotaExceeded,
+            })])))
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::default()
+        }
+    }
+
+    /// Regression (deregistration message-loss window): a message the
+    /// inbound channel accepted after the loop's final drain — pushed
+    /// here during the failing provider call, so no sweep ever ran after
+    /// it — must be re-queued into the durable pending store at step
+    /// exit, where the next step's flush and `wake_agent` eligibility
+    /// both see it. The message kind survives the round trip.
+    #[tokio::test]
+    async fn exit_sweeps_undrained_channel_messages_into_pending_store() {
+        let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
+        let provider = SendThenFailProvider {
+            tx,
+            content: "steer accepted mid-call",
+            kind: crate::r#loop::inbound::MessageKind::Steer,
+        };
+        let store = EventStore::new();
+        let executor = MockToolExecutor::empty();
+        let agent_id = uuid::Uuid::new_v4();
+        let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+
+        let err = run_agent_step(AgentStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "prompt",
+            tools: &[],
+            output_schema: None,
+            model: "test-model",
+            config: &default_config(),
+            event_tx: None,
+            inbound: Some(&mut rx),
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await
+        .expect_err("the in-band provider error fails the step");
+        assert!(
+            matches!(err, NornError::Provider(ProviderError::QuotaExceeded)),
+            "the step surfaces the typed provider error, got {err:?}",
+        );
+
+        let queued = pending.messages_for_delivery(agent_id);
+        assert_eq!(
+            queued.len(),
+            1,
+            "the undrained channel message must be re-queued durably",
+        );
+        assert_eq!(queued[0].content, "steer accepted mid-call");
+        assert_eq!(queued[0].kind, crate::r#loop::inbound::MessageKind::Steer);
+        assert_eq!(
+            queued[0].to_id, agent_id,
+            "redelivery is re-targeted to this loop's agent",
+        );
+        let audited = store.events().iter().any(|e| {
+            matches!(
+                e,
+                SessionEvent::Custom { event_type, .. }
+                    if event_type == crate::agent::AGENT_MESSAGE_QUEUED_EVENT_TYPE,
+            )
+        });
+        assert!(
+            audited,
+            "the sweep must append an agent_message.queued audit event",
+        );
+    }
+
+    /// A step that ends through a stop boundary has already flushed its
+    /// follow-ups into the conversation; nothing may be re-queued.
+    #[tokio::test]
+    async fn boundary_exit_leaves_nothing_to_requeue() {
+        let turn1 = vec![
+            tool_call_delta("tc_read", Some("read_file"), r#"{"path":"f"}"#),
+            done_event(StopReason::ToolUse),
+        ];
+        // The boundary flush injects the buffered update and continues.
+        let turn2 = vec![text_delta("done"), done_event(StopReason::EndTurn)];
+        let turn3 = vec![text_delta("final"), done_event(StopReason::EndTurn)];
+        let provider = MockProvider::new(vec![turn1, turn2, turn3]);
+        let store = EventStore::new();
+        let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(8);
+        let executor = MockToolExecutor::new(handlers_sending_inbound(
+            tx,
+            "fyi delivered at stop",
+            crate::r#loop::inbound::MessageKind::Update,
+        ));
+        let agent_id = uuid::Uuid::new_v4();
+        let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+
+        let result = run_step_with(
+            StepArgs {
+                provider: &provider,
+                executor: &executor,
+                store: &store,
+                tools: &[read_file_tool_def()],
+                schema: None,
+                config: &default_config(),
+                event_tx: None,
+                inbound: Some(&mut rx),
+            },
+            &mut loop_ctx,
+        )
+        .await;
+        let (output, _) = assert_completed(result);
+        assert_eq!(output, Value::String("final".to_string()));
+        assert!(
+            pending.is_empty(),
+            "a boundary-delivered follow-up must not be re-queued",
+        );
+        let delivered = store.events().iter().any(|e| {
+            matches!(
+                e,
+                SessionEvent::UserMessage { content, .. }
+                    if content.contains("fyi delivered at stop"),
+            )
+        });
+        assert!(
+            delivered,
+            "the boundary flush must have injected the update"
+        );
     }
 }

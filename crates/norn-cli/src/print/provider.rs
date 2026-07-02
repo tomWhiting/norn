@@ -285,6 +285,7 @@ mod tests {
     fn connection_failed_provider_error_converts_to_provider_variant() {
         let err: ProviderBuildError = ProviderError::ConnectionFailed {
             reason: "refused".to_owned(),
+            kind: norn::error::TransientKind::ConnectionReset,
         }
         .into();
         assert!(matches!(err, ProviderBuildError::Provider(_)));

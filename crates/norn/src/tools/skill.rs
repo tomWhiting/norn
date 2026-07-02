@@ -12,7 +12,7 @@
 //! must never read from a global.
 
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -22,6 +22,8 @@ use crate::error::ToolError;
 use crate::skill::{SkillShell, TemplateInputs, expand, load_skill_from_path};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::ToolErrorKind;
+use crate::tool::lifecycle::{BlockDecision, PreValidateOutcome};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
@@ -34,14 +36,48 @@ const MAX_RESOURCE_ENTRIES: usize = 20;
 /// The first directory containing `<name>/SKILL.md` or `<name>.md` wins.
 pub struct SkillSearchPaths(pub Vec<PathBuf>);
 
+/// Behaviour policy for the skill tool, wired through tool construction
+/// (the embedder's `[tool_config.skill]` settings surface).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SkillToolConfig {
+    /// Whether fenced/inline shell commands in skill bodies execute
+    /// during template expansion. When `false`, every shell placeholder
+    /// is replaced with the policy-disabled marker without spawning a
+    /// shell.
+    pub shell_execution: bool,
+}
+
+impl Default for SkillToolConfig {
+    /// Documented default: shell execution **enabled** — skills authored
+    /// against the `agentskills.io` standard rely on `` !`command` ``
+    /// expansion, and this preserves the tool's established behaviour.
+    /// Embedders that must not execute skill-authored shell disable it
+    /// via [`SkillTool::with_config`].
+    fn default() -> Self {
+        Self {
+            shell_execution: true,
+        }
+    }
+}
+
 /// Loads a `SKILL.md` template by name.
-pub struct SkillTool;
+pub struct SkillTool {
+    config: SkillToolConfig,
+}
 
 impl SkillTool {
-    /// Constructs the tool.
+    /// Constructs the tool with the default [`SkillToolConfig`].
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self {
+            config: SkillToolConfig::default(),
+        }
+    }
+
+    /// Constructs the tool with an explicit policy configuration.
+    #[must_use]
+    pub fn with_config(config: SkillToolConfig) -> Self {
+        Self { config }
     }
 }
 
@@ -49,6 +85,36 @@ impl Default for SkillTool {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Validates that a requested skill name is a single, plain path
+/// component. Anything else — empty names, absolute paths, `.`/`..`,
+/// separators, drive prefixes — could escape the configured skill roots
+/// when joined, so it is rejected before any filesystem access.
+fn validate_skill_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("skill name must not be empty".to_owned());
+    }
+    // Both separator styles are rejected regardless of platform: on Unix a
+    // backslash is a legal filename byte, but no skill is ever named with
+    // one and accepting it would traverse on Windows checkouts.
+    if name.contains('/') || name.contains('\\') {
+        return Err(format!(
+            "skill name {name:?} must not contain path separators"
+        ));
+    }
+    let mut components = Path::new(name).components();
+    let is_single_normal = matches!(
+        components.next(),
+        Some(Component::Normal(component)) if component == OsStr::new(name)
+    ) && components.next().is_none();
+    if !is_single_normal {
+        return Err(format!(
+            "skill name {name:?} is not a plain file name: path separators, \
+             absolute paths, and `.`/`..` components are not permitted"
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Deserialize)]
@@ -237,8 +303,44 @@ impl Tool for SkillTool {
         })
     }
 
+    /// Skill activation reads templates from disk, but when shell
+    /// execution is enabled the expansion phase runs skill-authored
+    /// shell commands — an external-process effect that must never be
+    /// scheduled as concurrent read-only work.
     fn effect(&self) -> ToolEffect {
-        ToolEffect::ReadOnly
+        if self.config.shell_execution {
+            ToolEffect::Process
+        } else {
+            ToolEffect::ReadOnly
+        }
+    }
+
+    async fn pre_validate(
+        &self,
+        envelope: &ToolEnvelope,
+        _ctx: &ToolContext,
+    ) -> PreValidateOutcome {
+        let args: SkillArgs = match serde_json::from_value(envelope.model_args.clone()) {
+            Ok(args) => args,
+            Err(e) => {
+                return PreValidateOutcome::Block(
+                    BlockDecision::new(format!("invalid arguments: {e}"))
+                        .with_kind(ToolErrorKind::InvalidArguments),
+                );
+            }
+        };
+        if let Err(reason) = validate_skill_name(&args.name) {
+            return PreValidateOutcome::Block(
+                BlockDecision::new(reason)
+                    .with_kind(ToolErrorKind::InvalidArguments)
+                    .with_guidance(
+                        "Pass the bare skill name as listed by the skill directories, \
+                         without any path syntax.",
+                    )
+                    .with_detail(serde_json::json!({ "name": args.name })),
+            );
+        }
+        PreValidateOutcome::Proceed
     }
 
     async fn execute(
@@ -251,34 +353,35 @@ impl Tool for SkillTool {
                 reason: format!("invalid arguments: {e}"),
             }
         })?;
+        // Re-checked at execute time so a direct invocation cannot bypass
+        // the pre_validate gate and traverse out of the skill roots.
+        if let Err(reason) = validate_skill_name(&args.name) {
+            return Err(ToolError::pre_validation(
+                ToolErrorKind::InvalidArguments,
+                reason,
+            ));
+        }
         let paths: Arc<SkillSearchPaths> = ctx.require_extension::<SkillSearchPaths>()?;
 
         let arguments_raw = args.arguments.unwrap_or_default();
         let positional = parse_shell_args(&arguments_raw);
 
         let working_dir = ctx.working_dir();
+        let activation = ActivationInputs {
+            requested_name: &args.name,
+            arguments_raw: &arguments_raw,
+            positional: &positional,
+            working_dir: &working_dir,
+            shell_execution: self.config.shell_execution,
+        };
         for dir in &paths.0 {
             let candidate = dir.join(&args.name).join("SKILL.md");
             if candidate.is_file() {
-                return activate(
-                    &args.name,
-                    &candidate,
-                    &arguments_raw,
-                    &positional,
-                    &working_dir,
-                )
-                .await;
+                return activate(&activation, &candidate).await;
             }
             let candidate = dir.join(format!("{}.md", args.name));
             if candidate.is_file() {
-                return activate(
-                    &args.name,
-                    &candidate,
-                    &arguments_raw,
-                    &positional,
-                    &working_dir,
-                )
-                .await;
+                return activate(&activation, &candidate).await;
             }
         }
 
@@ -292,17 +395,25 @@ impl Tool for SkillTool {
     }
 }
 
+/// Everything `activate` needs beyond the resolved skill path.
+struct ActivationInputs<'a> {
+    requested_name: &'a str,
+    arguments_raw: &'a str,
+    positional: &'a [String],
+    working_dir: &'a Path,
+    /// From [`SkillToolConfig::shell_execution`]; `false` disables stage 1
+    /// of template expansion.
+    shell_execution: bool,
+}
+
 /// Load, expand, and package a skill into a [`ToolOutput`].
 ///
 /// Auto-appends `\nARGUMENTS: <raw>` when the source body did not mention
 /// `$ARGUMENTS` and a non-empty argument string was supplied
 /// (Claude Code parity, NS-004 R4).
 async fn activate(
-    requested_name: &str,
+    inputs: &ActivationInputs<'_>,
     skill_path: &Path,
-    arguments_raw: &str,
-    positional: &[String],
-    working_dir: &Path,
 ) -> Result<ToolOutput, ToolError> {
     let loaded = load_skill_from_path(skill_path).map_err(|diags| {
         let reason = diags.first().map_or_else(
@@ -319,35 +430,35 @@ async fn activate(
             .as_slice()
             .iter()
             .any(|name| loaded.body.contains(&format!("${name}")));
-    let auto_append_arguments = !body_uses_args && !arguments_raw.is_empty();
+    let auto_append_arguments = !body_uses_args && !inputs.arguments_raw.is_empty();
 
     let skill_dir = skill_path.parent().unwrap_or(skill_path);
 
-    let inputs = TemplateInputs {
+    let template_inputs = TemplateInputs {
         body: &loaded.body,
         shell: loaded.metadata.shell.unwrap_or(SkillShell::Bash),
-        cwd: working_dir,
+        cwd: inputs.working_dir,
         skill_dir,
-        disable_shell: false,
-        arguments_raw,
-        arguments_positional: positional,
+        disable_shell: !inputs.shell_execution,
+        arguments_raw: inputs.arguments_raw,
+        arguments_positional: inputs.positional,
         argument_names: loaded.metadata.arguments.as_slice(),
         session_id: "",
         effort: "",
         variables: None,
     };
-    let mut expanded = expand(&inputs).await;
+    let mut expanded = expand(&template_inputs).await;
 
     if auto_append_arguments {
         expanded.push('\n');
         expanded.push_str("ARGUMENTS: ");
-        expanded.push_str(arguments_raw);
+        expanded.push_str(inputs.arguments_raw);
     }
 
     let resources = list_resources(skill_dir, skill_path);
 
     let payload = serde_json::json!({
-        "name": requested_name,
+        "name": inputs.requested_name,
         "path": skill_path.display().to_string(),
         "content": expanded,
         "skill_dir": skill_dir.display().to_string(),
@@ -508,6 +619,165 @@ mod tests {
             Path::new("/nonexistent/SKILL.md"),
         );
         assert!(names.is_empty());
+    }
+
+    // ---------------- name validation / traversal ----------------
+
+    #[test]
+    fn validate_skill_name_rejects_escapes() {
+        for bad in [
+            "",
+            ".",
+            "..",
+            "../etc",
+            "../../secrets",
+            "a/b",
+            "a\\b",
+            "/etc/passwd",
+            "..\\windows",
+            "nested/../../up",
+        ] {
+            assert!(
+                validate_skill_name(bad).is_err(),
+                "name {bad:?} must be rejected",
+            );
+        }
+        for good in ["deploy", "my-skill", "skill_2", "review.notes"] {
+            assert!(
+                validate_skill_name(good).is_ok(),
+                "name {good:?} must be accepted",
+            );
+        }
+    }
+
+    #[tokio::test]
+    async fn pre_validate_blocks_traversal_names() {
+        let tool = SkillTool::new();
+        let ctx = ToolContext::empty();
+        for bad in ["../../../etc/passwd", "..", "a/b", "/abs"] {
+            match tool
+                .pre_validate(&envelope_for(json!({"name": bad})), &ctx)
+                .await
+            {
+                PreValidateOutcome::Block(decision) => {
+                    assert_eq!(
+                        decision.kind,
+                        crate::tool::failure::ToolErrorKind::InvalidArguments,
+                        "typed block for {bad:?}",
+                    );
+                }
+                PreValidateOutcome::Proceed => panic!("name {bad:?} must be blocked"),
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn pre_validate_proceeds_for_plain_names() {
+        let tool = SkillTool::new();
+        let ctx = ToolContext::empty();
+        assert!(matches!(
+            tool.pre_validate(&envelope_for(json!({"name": "deploy"})), &ctx)
+                .await,
+            PreValidateOutcome::Proceed
+        ));
+    }
+
+    /// Direct `execute` (bypassing pre_validate) must independently refuse
+    /// a traversal name before any filesystem access — even when a file
+    /// actually exists at the escaped location.
+    #[tokio::test]
+    async fn execute_refuses_traversal_even_when_target_exists() {
+        let outer = tempdir().unwrap();
+        let skills = outer.path().join("skills");
+        std::fs::create_dir(&skills).unwrap();
+        // A skill-shaped file OUTSIDE the configured root.
+        std::fs::write(
+            outer.path().join("secret.md"),
+            "---\ndescription: s\n---\nstolen",
+        )
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![skills])));
+        let tool = SkillTool::new();
+        let err = tool
+            .execute(&envelope_for(json!({"name": "../secret"})), &ctx)
+            .await
+            .expect_err("traversal must be refused");
+        assert!(
+            err.to_string().contains("separators"),
+            "refusal must name the violation: {err}",
+        );
+    }
+
+    // ---------------- shell execution policy ----------------
+
+    #[tokio::test]
+    async fn shell_disabled_config_suppresses_shell_expansion() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("sh-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: s\n---\nvalue: !`echo leaked`",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::with_config(SkillToolConfig {
+            shell_execution: false,
+        });
+        let out = tool
+            .execute(&envelope_for(json!({"name": "sh-skill"})), &ctx)
+            .await
+            .unwrap();
+        let content = out.content["content"].as_str().unwrap();
+        assert!(
+            !content.contains("leaked"),
+            "no shell output may appear when execution is disabled: {content}",
+        );
+        assert!(
+            content.contains("disabled by policy"),
+            "the disabled marker must be visible: {content}",
+        );
+    }
+
+    #[tokio::test]
+    async fn shell_enabled_default_expands_shell_and_reports_process_effect() {
+        let dir = tempdir().unwrap();
+        let skill_dir = dir.path().join("sh-skill");
+        std::fs::create_dir(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: s\n---\nvalue: !`echo expanded`",
+        )
+        .await
+        .unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![dir.path().to_path_buf()])));
+        let tool = SkillTool::new();
+        assert_eq!(
+            tool.effect(),
+            ToolEffect::Process,
+            "shell-enabled skill activation must not schedule as read-only",
+        );
+        let out = tool
+            .execute(&envelope_for(json!({"name": "sh-skill"})), &ctx)
+            .await
+            .unwrap();
+        let content = out.content["content"].as_str().unwrap();
+        assert!(content.contains("expanded"), "{content}");
+    }
+
+    #[test]
+    fn shell_disabled_config_reports_read_only_effect() {
+        let tool = SkillTool::with_config(SkillToolConfig {
+            shell_execution: false,
+        });
+        assert_eq!(tool.effect(), ToolEffect::ReadOnly);
     }
 
     // ---------------- existing behaviour, fixtures with frontmatter ----------------

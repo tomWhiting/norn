@@ -18,11 +18,16 @@
 //!    by the attached `JsonlSink` (write-through). The sink is
 //!    index-registered: it accumulates the matching `index.jsonl` delta
 //!    (event count, token totals, `updated_at`) per persisted event and
-//!    flushes it at `EventStore::checkpoint` — which the orchestrator
-//!    calls after the turn and after `/compact` — so the orchestrator
-//!    never hand-reconciles the index.
+//!    flushes it at `EventStore::checkpoint_off_executor` — which the
+//!    orchestrator awaits after the turn and after `/compact` — so the
+//!    orchestrator never hand-reconciles the index and never blocks an
+//!    executor thread on the index lock.
 //! 6. **Output dispatch**: text / json / stream-json (per
-//!    [`crate::cli::OutputFormat`]).
+//!    [`crate::cli::OutputFormat`]), via [`super::step_output`].
+//!
+//! The driven duplex path (`--protocol jsonrpc`) is owned by
+//! [`super::driven`] and specified in
+//! `docs/design/norn-cli/DRIVEN-PROTOCOL.md`.
 //!
 //! The result of every path is an [`crate::exit::ExitCode`] which the
 //! binary converts into the OS process exit code.
@@ -33,19 +38,16 @@ use std::sync::atomic::Ordering;
 
 use norn::agent_loop::config::AgentStepResult;
 use norn::error::{NornError, ProviderError};
-use norn::provider::usage::Usage;
 use norn::session::events::SessionEvent;
 use norn::session::store::EventStore;
 use serde_json::Value;
 use tokio::sync::broadcast;
 
-use super::intervene::NornInterventionHandler;
-use super::jsonrpc::{self, DrivenRun, PreRunOutcome, RunDriver, SharedRunDriver};
-use super::output::{
-    JsonEnvelope, UsageOut, drain_diagnostics, emit_stream_completed, extract_output_and_usage,
-    render_json, render_text, result_label, spawn_stream_renderer,
-};
+use super::driven::{execute_driven, finish_intervene_loop, spawn_intervene_loop};
+use super::jsonrpc::{DrivenRun, SharedRunDriver};
+use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage, spawn_stream_renderer};
 use super::provider::build_provider;
+use super::step_output::{StepOutput, driven_result_value, write_handled_locally, write_output};
 use crate::cli::BuildError;
 use crate::cli::ExitCode;
 use crate::cli::{Cli, OutputFormat, Protocol};
@@ -199,73 +201,6 @@ async fn execute(cli: &Cli) -> Result<ExitCode, PrintError> {
     orchestrate(cli, bundle, effective_prompt, output_schema, None).await
 }
 
-/// Driven-mode entry (NOI-1): own the stdin+stdout JSON-RPC 2.0 duplex.
-///
-/// Spawns the single serializing stdout writer, answers the `initialize`
-/// handshake, and waits for one `run/execute` request. The prompt is
-/// sourced from that request's params — stdin is the JSON-RPC channel, so
-/// it is never read as a prompt. The agent then runs with a live `event/*`
-/// notification emitter (in place of the stream renderer), and the final
-/// result is returned as the id-matched `run/execute` response.
-async fn execute_driven(cli: &Cli) -> Result<ExitCode, PrintError> {
-    let (writer, writer_task) = jsonrpc::spawn_writer();
-    let mut reader = jsonrpc::stdin_reader();
-
-    let outcome = jsonrpc::drive_pre_run(&mut reader, &writer)
-        .await
-        .map_err(|err| PrintError::Io(err.to_string()))?;
-
-    let (id, prompt) = match outcome {
-        PreRunOutcome::Run { id, prompt } => (id, prompt),
-        PreRunOutcome::Closed => {
-            // The peer disconnected before requesting a run. Shut the
-            // writer down cleanly and exit success — nothing to do.
-            drop(writer);
-            let _ = writer_task.await;
-            return Ok(ExitCode::Success);
-        }
-    };
-
-    let driver: SharedRunDriver = Arc::new(RunDriver::new(writer, id));
-
-    let output_schema = parse_output_schema(cli.output_schema.as_deref())?;
-
-    let mut inputs = RuntimeInputs::default();
-    let lsp_backend = build_lsp_backend();
-    register_standard_tools(&mut inputs.registry, Some(lsp_backend));
-    let mut bundle = build_runtime(cli, inputs)?;
-    apply_system_prompt(&mut bundle, norn::system_prompt::ExecutionMode::Headless);
-
-    // The stdin reader that carried initialize/run/execute keeps being read
-    // during the run so mid-run intervene/* requests reach the agent (NOI-2).
-    let driven_run = DrivenRun {
-        driver: Arc::clone(&driver),
-        reader,
-    };
-
-    let result = orchestrate(cli, bundle, prompt, output_schema, Some(driven_run)).await;
-
-    // On a run-assembly / provider error that never reached the step, the
-    // orchestrator returns Err before emitting a run response. Surface it
-    // as the id-matched error response so the peer is never left hanging,
-    // then still shut the writer down and drain it.
-    if let Err(ref err) = result
-        && let Err(send_err) = driver.finish_with_error(err.to_string())
-    {
-        tracing::warn!("failed to send run/execute error response: {send_err}");
-    }
-
-    // Drop every writer handle so the single serializing writer task drains
-    // its queue and exits; then join it so all frames are flushed to stdout
-    // before the process exits (terminal-response shutdown handshake).
-    drop(driver);
-    if let Err(join_err) = writer_task.await {
-        tracing::warn!("jsonrpc writer task did not exit cleanly: {join_err}");
-    }
-
-    result
-}
-
 /// Read stdin in full when it is not a TTY. Returns [`None`] when stdin
 /// is a TTY (print mode invoked from a terminal with `-p`).
 fn read_stdin_if_piped() -> Result<Option<String>, PrintError> {
@@ -298,13 +233,13 @@ pub fn compose_prompt(stdin: Option<&str>, positional: &str) -> String {
 
 /// Parse `-s` / `--output-schema` if provided. Failures are mapped to
 /// [`PrintError::Argument`] so they surface as exit code 2.
-fn parse_output_schema(raw: Option<&str>) -> Result<Option<Value>, PrintError> {
+pub(super) fn parse_output_schema(raw: Option<&str>) -> Result<Option<Value>, PrintError> {
     let Some(value) = raw else { return Ok(None) };
     let parsed = parse_inline_or_file(value)?;
     Ok(Some(parsed))
 }
 
-async fn orchestrate(
+pub(super) async fn orchestrate(
     cli: &Cli,
     mut bundle: RuntimeBundle,
     prompt: String,
@@ -360,7 +295,7 @@ async fn orchestrate(
         // Flush the sink's pending index delta so the Compaction event is
         // reflected in index.jsonl even when this invocation returns
         // before the post-turn checkpoint (e.g. a bare `/compact` prompt).
-        checkpoint_session(&session.store)?;
+        checkpoint_session(&session.store).await?;
     }
     if apply_clear_request(&slash_state) {
         tracing::debug!("conversation cleared via /clear in print mode");
@@ -480,7 +415,7 @@ async fn orchestrate(
             (None, None)
         };
 
-        // Driven-mode WRITE direction (NOI-2): while the run is in flight,
+        // Driven-mode WRITE direction: while the run is in flight,
         // concurrently read in-band `intervene/*` requests off the same
         // stdin reader and map them onto Norn's control channel — inject via
         // the harness router to the root, cancel via a token threaded into
@@ -541,7 +476,7 @@ async fn orchestrate(
         if let Some(handle) = event_emitter
             && let Err(err) = handle.finish().await
         {
-            return Err(emitter_failure(&err));
+            return Err(super::driven::emitter_failure(&err));
         }
 
         let result = match result {
@@ -562,11 +497,11 @@ async fn orchestrate(
         // store so the sink flushes its own pending delta now rather
         // than at drop. The slice is collected only for the output
         // envelope.
-        checkpoint_session(&session.store)?;
+        checkpoint_session(&session.store).await?;
         let new_events = collect_new_events(&session.store, pre_event_count);
 
         let (output, usage) = extract_output_and_usage(&result);
-        let label = result_label(&result);
+        let stop_info = StopInfo::from_result(&result);
         slash_state.add_usage(usage.clone());
 
         final_exit_code = match &result {
@@ -589,14 +524,15 @@ async fn orchestrate(
             model: &active_model,
             session_id: session.id(),
             events: &new_events,
-            result: label,
+            stop: &stop_info,
             diagnostics: &diagnostics,
         };
         // Driven mode returns the SAME structured result as the `-f json`
         // envelope, but as the id-matched `run/execute` response — the
         // single replay-authoritative output — instead of writing it to
         // stdout. This is the ONLY place the driven result is emitted, and
-        // it is emitted as a Response (never a notification).
+        // it is emitted as a Response (never a notification)
+        // (`DRIVEN-PROTOCOL.md` "One-shot run lifecycle").
         if let Some(driver) = driven.as_ref() {
             let result_value = driven_result_value(&step)?;
             driver
@@ -621,139 +557,6 @@ async fn orchestrate(
     Ok(final_exit_code)
 }
 
-/// The join handle + stop signal for the mid-run intervene reader task.
-type InterveneTask = tokio::task::JoinHandle<Result<(), jsonrpc::TransportError>>;
-
-/// Spawn the driven-mode `intervene/*` reader loop for the duration of the
-/// run (NOI-2).
-///
-/// Returns the [`CancellationToken`] to thread into the step's `cancel`
-/// (so an `intervene/cancel` stops the run), the reader task's join handle,
-/// and the `stop` sender used to wind it down when the run finishes on its
-/// own. In non-driven mode all three are `None`: the step runs with
-/// `cancel: None` and no reader task, exactly as before.
-///
-/// The reader is fed the Norn control adapter ([`NornInterventionHandler`])
-/// built from the harness [`MessageRouter`] (looked up on the shared tool
-/// context installed by `install_agent_tool_infra`) and the fresh token, so
-/// injects reach the root agent and a cancel trips the same token the step
-/// observes. If the router cannot be resolved — an assembly invariant that
-/// should never fail on the driven path — the loop is not spawned and the
-/// run proceeds without interventions rather than panicking; the condition
-/// is error-logged, never silently dropped.
-fn spawn_intervene_loop(
-    run_driver: Option<&SharedRunDriver>,
-    reader: Option<jsonrpc::StdinReader>,
-    registry: &Arc<norn::tool::registry::ToolRegistry>,
-    root_id: Uuid,
-) -> (
-    Option<tokio_util::sync::CancellationToken>,
-    Option<InterveneTask>,
-    Option<tokio::sync::oneshot::Sender<()>>,
-) {
-    let (Some(run_driver), Some(mut reader)) = (run_driver, reader) else {
-        return (None, None, None);
-    };
-    let Some(router) = resolve_router(registry) else {
-        tracing::error!(
-            "driven mode: the harness MessageRouter is unavailable; \
-             intervene/* requests will not be served this run",
-        );
-        return (None, None, None);
-    };
-    let token = tokio_util::sync::CancellationToken::new();
-    let handler = NornInterventionHandler::new(router, root_id, token.clone());
-    let writer = run_driver.writer();
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let task = tokio::spawn(async move {
-        jsonrpc::drive_interventions(&mut reader, &writer, &handler, stop_rx).await
-    });
-    (Some(token), Some(task), Some(stop_tx))
-}
-
-/// Look up the harness [`MessageRouter`] on the registry's shared tool
-/// context (published by `install_agent_tool_infra` as the
-/// `AgentToolInfra` extension). `None` only when the shared context or the
-/// infra extension is absent — never on the assembled driven path.
-fn resolve_router(
-    registry: &Arc<norn::tool::registry::ToolRegistry>,
-) -> Option<Arc<norn::agent::message_router::MessageRouter>> {
-    use norn::agent_loop::runner::ToolExecutor;
-    let shared = registry.shared_context()?;
-    let infra = shared.get_extension::<norn::tools::agent::AgentToolInfra>()?;
-    Some(Arc::clone(&infra.router))
-}
-
-/// Wind down the intervene reader after the run: signal `stop` and join the
-/// task, logging (never swallowing) a join panic or a transport error it
-/// surfaced. A `None` task (non-driven mode) is a no-op.
-async fn finish_intervene_loop(
-    task: Option<InterveneTask>,
-    stop: Option<tokio::sync::oneshot::Sender<()>>,
-) {
-    if let Some(stop) = stop {
-        // A failed send means the reader already returned (EOF or an applied
-        // cancel) — not an error; the join below still completes.
-        let _ = stop.send(());
-    }
-    let Some(task) = task else { return };
-    match task.await {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => {
-            tracing::warn!("driven-mode intervene reader ended with a transport error: {err}");
-        }
-        Err(join_err) => {
-            tracing::warn!("driven-mode intervene reader task did not exit cleanly: {join_err}");
-        }
-    }
-}
-
-/// Render the "no agent call" output for a dispatch that was handled
-/// locally. For `text` mode this is a no-op (the closure already wrote
-/// to stderr); for `json` it produces a minimal envelope with no model
-/// output; for `stream-json` it emits a single `completed` event.
-fn write_handled_locally(
-    cli: &Cli,
-    format: OutputFormat,
-    bundle: &RuntimeBundle,
-    session_id: Option<&str>,
-) -> Result<(), PrintError> {
-    let usage = Usage::default();
-    let diagnostics: Vec<norn::integration::NornDiagnostic> = Vec::new();
-    match format {
-        OutputFormat::Text => Ok(()),
-        OutputFormat::Json => {
-            let envelope = JsonEnvelope {
-                output: None,
-                usage: UsageOut::from(&usage),
-                model: &bundle.model,
-                session_id,
-                events: &[],
-                result: "completed",
-                diagnostics: &diagnostics,
-            };
-            if let Some(path) = cli.output.as_ref() {
-                let mut file = std::fs::File::create(path)?;
-                render_json(&mut file, &envelope)?;
-            } else {
-                let mut stdout = std::io::stdout().lock();
-                render_json(&mut stdout, &envelope)?;
-            }
-            Ok(())
-        }
-        OutputFormat::StreamJson => {
-            if let Some(path) = cli.output.as_ref() {
-                let mut file = std::fs::File::create(path)?;
-                emit_stream_completed(&mut file, None, &usage, "completed", &diagnostics)?;
-            } else {
-                let mut stdout = std::io::stdout().lock();
-                emit_stream_completed(&mut stdout, None, &usage, "completed", &diagnostics)?;
-            }
-            Ok(())
-        }
-    }
-}
-
 /// Register a depth-0 root agent in the shared [`AgentRegistry`], mirroring
 /// the TUI driver, so headless runs expose the same agent hierarchy (a
 /// known root for spawned children to parent against). Returns the
@@ -763,6 +566,8 @@ fn write_handled_locally(
 ///
 /// Returns [`PrintError::Agent`] when the registry rejects the reservation
 /// or confirmation (e.g. a duplicate root path within the process).
+///
+/// [`AgentRegistry`]: norn::agent::registry::AgentRegistry
 fn register_root_agent(
     registry: &Arc<parking_lot::RwLock<norn::agent::registry::AgentRegistry>>,
     model: &str,
@@ -796,9 +601,15 @@ fn collect_tool_definitions(
 /// Flush the store's persistence sink: pending durability work and the
 /// sink's accumulated index delta land now instead of at drop. A no-op
 /// for sink-less stores (`--no-session`).
-fn checkpoint_session(store: &EventStore) -> Result<(), PrintError> {
-    store
-        .checkpoint()
+///
+/// Runs [`EventStore::checkpoint_off_executor`] — the blocking critical
+/// section (inter-process index lock + full index rewrite + fsync)
+/// belongs on Tokio's blocking pool, never on the executor thread the
+/// orchestrator's async path runs on.
+async fn checkpoint_session(store: &Arc<EventStore>) -> Result<(), PrintError> {
+    Arc::clone(store)
+        .checkpoint_off_executor()
+        .await
         .map_err(|err| PrintError::Session(err.to_string()))
 }
 
@@ -813,119 +624,12 @@ fn renderer_failure(err: &tokio::task::JoinError) -> PrintError {
     ))
 }
 
-/// Map a driven-mode event-emitter [`tokio::task::JoinError`] onto the
-/// agent-error path: a panicked/cancelled emitter means the live `event/*`
-/// transcript is torn, so the run must surface the failure rather than send
-/// a clean terminal result over an incomplete stream.
-fn emitter_failure(err: &tokio::task::JoinError) -> PrintError {
-    PrintError::Agent(format!(
-        "jsonrpc event emitter task failed ({kind}): {err}; the live event stream is incomplete",
-        kind = if err.is_panic() { "panic" } else { "cancelled" },
-    ))
-}
-
-/// Build the `run/execute` response result value from the completed step.
-///
-/// The shape is the SAME structured envelope `-f json` produces
-/// ([`JsonEnvelope`]), serialised to a [`Value`] so it rides the JSON-RPC
-/// response `result` field. This keeps the driven result byte-compatible
-/// with the one-shot capture path (§4.1).
-fn driven_result_value(step: &StepOutput<'_>) -> Result<Value, PrintError> {
-    let envelope = JsonEnvelope {
-        output: step.output,
-        usage: UsageOut::from(step.usage),
-        model: step.model,
-        session_id: step.session_id,
-        events: step.events,
-        result: step.result,
-        diagnostics: step.diagnostics,
-    };
-    serde_json::to_value(&envelope).map_err(|err| PrintError::Agent(err.to_string()))
-}
-
 fn collect_new_events(store: &EventStore, since: usize) -> Vec<SessionEvent> {
     let all = store.events();
     if since >= all.len() {
         return Vec::new();
     }
     all[since..].to_vec()
-}
-
-/// Post-step output data bundled for the output writers. Eliminates
-/// the `too_many_arguments` lint without sacrificing the named-field
-/// clarity that the orchestrator needs.
-struct StepOutput<'a> {
-    output: Option<&'a Value>,
-    usage: &'a norn::provider::usage::Usage,
-    model: &'a str,
-    session_id: Option<&'a str>,
-    events: &'a [SessionEvent],
-    result: &'static str,
-    diagnostics: &'a [norn::integration::NornDiagnostic],
-}
-
-fn write_output(cli: &Cli, format: OutputFormat, step: &StepOutput<'_>) -> Result<(), PrintError> {
-    match format {
-        OutputFormat::Text => write_text(cli, step.output, step.diagnostics),
-        OutputFormat::Json => write_json(cli, step),
-        OutputFormat::StreamJson => {
-            write_stream_completed(cli, step.output, step.usage, step.result, step.diagnostics)
-        }
-    }
-}
-
-fn write_text(
-    cli: &Cli,
-    output: Option<&Value>,
-    diagnostics: &[norn::integration::NornDiagnostic],
-) -> Result<(), PrintError> {
-    if let Some(path) = cli.output.as_ref() {
-        let mut file = std::fs::File::create(path)?;
-        let mut stderr = std::io::stderr().lock();
-        render_text(&mut file, &mut stderr, output, diagnostics, cli.quiet)?;
-        return Ok(());
-    }
-    let mut stdout = std::io::stdout().lock();
-    let mut stderr = std::io::stderr().lock();
-    render_text(&mut stdout, &mut stderr, output, diagnostics, cli.quiet)?;
-    Ok(())
-}
-
-fn write_json(cli: &Cli, step: &StepOutput<'_>) -> Result<(), PrintError> {
-    let envelope = JsonEnvelope {
-        output: step.output,
-        usage: UsageOut::from(step.usage),
-        model: step.model,
-        session_id: step.session_id,
-        events: step.events,
-        result: step.result,
-        diagnostics: step.diagnostics,
-    };
-    if let Some(path) = cli.output.as_ref() {
-        let mut file = std::fs::File::create(path)?;
-        render_json(&mut file, &envelope)?;
-        return Ok(());
-    }
-    let mut stdout = std::io::stdout().lock();
-    render_json(&mut stdout, &envelope)?;
-    Ok(())
-}
-
-fn write_stream_completed(
-    cli: &Cli,
-    output: Option<&Value>,
-    usage: &norn::provider::usage::Usage,
-    result: &'static str,
-    diagnostics: &[norn::integration::NornDiagnostic],
-) -> Result<(), PrintError> {
-    if let Some(path) = cli.output.as_ref() {
-        let mut file = std::fs::File::create(path)?;
-        emit_stream_completed(&mut file, output, usage, result, diagnostics)?;
-        return Ok(());
-    }
-    let mut stdout = std::io::stdout().lock();
-    emit_stream_completed(&mut stdout, output, usage, result, diagnostics)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1164,6 +868,7 @@ mod tests {
     fn norn_error_connection_failed_maps_to_agent() {
         let err: PrintError = NornError::Provider(ProviderError::ConnectionFailed {
             reason: "refused".to_owned(),
+            kind: norn::error::TransientKind::ConnectionReset,
         })
         .into();
         assert!(matches!(err, PrintError::Agent(_)));

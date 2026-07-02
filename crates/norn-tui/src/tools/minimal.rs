@@ -20,11 +20,7 @@ fn short_id(value: &Value, key: &str) -> Option<String> {
 
 fn optional_field(args: &Value, result: &Value, key: &str) -> Option<String> {
     let value = string_field(args, result, key);
-    if value.is_empty() {
-        None
-    } else {
-        Some(value)
-    }
+    if value.is_empty() { None } else { Some(value) }
 }
 
 fn push_part(parts: &mut Vec<String>, value: Option<String>) {
@@ -347,9 +343,11 @@ mod tests {
             header.is_empty(),
             "wake_agent must be invisible: {header:?}"
         );
-        assert!(WakeAgentRenderer
-            .body(&json!({}), &result, &caps())
-            .is_none());
+        assert!(
+            WakeAgentRenderer
+                .body(&json!({}), &result, &caps())
+                .is_none()
+        );
     }
 
     #[test]

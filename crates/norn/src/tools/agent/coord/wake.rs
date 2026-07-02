@@ -392,6 +392,67 @@ mod tests {
         assert_eq!(out.content["woken"], false);
     }
 
+    /// Seam I2-3 (deregistration drain): a message the router accepted
+    /// but the child's controller swept out of the channel at
+    /// deregistration lands in the durable pending store — and the
+    /// pending-store-only wake gate, now authoritative, accepts the wake.
+    #[tokio::test]
+    async fn wake_agent_succeeds_for_message_stranded_at_deregistration() {
+        let sender = Uuid::new_v4();
+        let (infra, registry, _router) = build_infra(sender);
+        let child = register_agent(&registry, "/root/child", Some(sender));
+        registry.write().mark_idle(child).expect("mark idle");
+
+        // A message sits undrained in the child's inbound channel — the
+        // deregistration window. The controller's sweep queues it durably.
+        let (inbound_tx, mut inbound_rx) = inbound_channel(8);
+        inbound_tx
+            .send(ChannelMessage {
+                id: Uuid::new_v4(),
+                sender_id: sender,
+                from: "root".to_owned(),
+                role: None,
+                to_id: child,
+                content: "stranded at deregistration".to_owned(),
+                kind: MessageKind::Steer,
+                seq: Some(1),
+                timestamp: Utc::now(),
+            })
+            .await
+            .expect("send");
+        let store = crate::session::store::EventStore::new();
+        crate::tools::agent::spawn_launch::requeue_stranded_inbound(
+            &store,
+            child,
+            Some(&infra.pending_messages),
+            &mut inbound_rx,
+            crate::r#loop::UndeliveredWindow::Deregistration,
+        );
+        assert_eq!(infra.pending_messages.pending_for(child), 1);
+        assert_eq!(
+            store.len(),
+            1,
+            "the sweep must persist one agent_message.queued audit",
+        );
+
+        let wake_registry = Arc::new(AgentWakeRegistry::new());
+        let mut wake_rx = register_wake_handle(&wake_registry, child, AgentStatus::Idle);
+        let ctx = ctx_with(Arc::clone(&infra), wake_registry);
+
+        let out = WakeAgentTool::new()
+            .execute(
+                &envelope_for(WAKE_AGENT_TOOL_NAME, json!({ "agent_id": "/root/child" })),
+                &ctx,
+            )
+            .await
+            .expect("wake executes");
+
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["woken"], true);
+        assert_eq!(out.content["queued_messages"], 1);
+        assert!(wake_rx.recv().await.is_some(), "wake signal delivered");
+    }
+
     #[tokio::test]
     async fn wake_agent_sends_single_wake_for_queued_mailbox() {
         let sender = Uuid::new_v4();

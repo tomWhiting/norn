@@ -296,7 +296,7 @@ impl Tool for BashTool {
     /// expire — a command can always be run again.
     ///
     /// The override targets the live `timeout` field (seconds) used by
-    /// [`BashArgs`] and the input schema; the brief's `timeout_ms` naming
+    /// `BashArgs` and the input schema; the brief's `timeout_ms` naming
     /// predates the seconds-based schema, and overriding a field that does not
     /// exist would be inert.
     async fn register_follow_ups(

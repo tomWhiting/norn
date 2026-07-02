@@ -58,7 +58,7 @@ use crate::tools::task::SharedTaskStore;
 /// The parent's shared [`HookRegistry`] extension is forwarded so the
 /// child's own spawn/fork sites (grandchildren) observe the same operator
 /// hooks; the caller separately installs the registry on the child's
-/// [`LoopContext`](crate::r#loop::loop_context::LoopContext) so
+/// [`LoopContext`](crate::agent_loop::loop_context::LoopContext) so
 /// pre/post-tool hooks fire for the child's own calls.
 ///
 /// When `child_tree` is `Some` — i.e. an orchestrator published a

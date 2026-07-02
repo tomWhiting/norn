@@ -13,6 +13,10 @@ use crate::profile::Profile;
 
 use super::base::invalid_config;
 
+/// Constructor mapping a [`ShellCommandHook`] into its [`Hook`] variant —
+/// one entry per event slot in [`assemble_hook_registry`]'s table.
+type WrapFn = fn(ShellCommandHook) -> Hook;
+
 /// Merge programmatic hooks with the settings-declared shell hooks into a
 /// single registry.
 ///
@@ -30,14 +34,46 @@ use super::base::invalid_config;
 /// # Errors
 ///
 /// Returns [`NornError::Config`] for an invalid hook matcher regex or a
-/// settings hook entry missing its required timeout.
+/// settings hook entry with an empty command.
 pub fn assemble_hook_registry(
     programmatic: Option<Arc<HookRegistry>>,
     settings: &HookSettings,
     profile: &Profile,
     cwd: &Path,
 ) -> Result<Option<Arc<HookRegistry>>, NornError> {
-    let shell_total = settings_total_entries(settings);
+    // Exhaustive destructuring: adding a HookSettings event slot without
+    // wiring it here is a compile error, never a silently dropped hook
+    // class (the H13 failure mode via schema evolution).
+    let HookSettings {
+        pre_tool,
+        post_tool,
+        post_tool_failure,
+        pre_llm,
+        post_llm,
+        session_event,
+        user_prompt,
+        stop,
+        subagent_start,
+        subagent_stop,
+        session_start,
+        session_end,
+        pre_compaction,
+    } = settings;
+
+    let slot_len = |slot: &Option<Vec<crate::config::HookEntry>>| slot.as_ref().map_or(0, Vec::len);
+    let shell_total = slot_len(pre_tool)
+        + slot_len(post_tool)
+        + slot_len(post_tool_failure)
+        + slot_len(pre_llm)
+        + slot_len(post_llm)
+        + slot_len(session_event)
+        + slot_len(user_prompt)
+        + slot_len(stop)
+        + slot_len(subagent_start)
+        + slot_len(subagent_stop)
+        + slot_len(session_start)
+        + slot_len(session_end)
+        + slot_len(pre_compaction);
     if programmatic.is_none() && shell_total == 0 {
         return Ok(None);
     }
@@ -67,97 +103,55 @@ pub fn assemble_hook_registry(
         profile_name: profile.name.clone(),
     };
 
-    register_shell_hooks(
-        &mut registry,
-        settings.pre_tool.as_ref(),
-        HookEventType::PreTool,
-        &context,
-        |h| Hook::PreTool(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.post_tool.as_ref(),
-        HookEventType::PostTool,
-        &context,
-        |h| Hook::PostTool(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.post_tool_failure.as_ref(),
-        HookEventType::PostToolFailure,
-        &context,
-        |h| Hook::PostToolFailure(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.pre_llm.as_ref(),
-        HookEventType::PreLlm,
-        &context,
-        |h| Hook::PreLlm(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.post_llm.as_ref(),
-        HookEventType::PostLlm,
-        &context,
-        |h| Hook::PostLlm(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.session_event.as_ref(),
-        HookEventType::SessionEvent,
-        &context,
-        |h| Hook::SessionEvent(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.user_prompt.as_ref(),
-        HookEventType::UserPrompt,
-        &context,
-        |h| Hook::UserPrompt(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.stop.as_ref(),
-        HookEventType::Stop,
-        &context,
-        |h| Hook::Stop(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.subagent_start.as_ref(),
-        HookEventType::SubagentStart,
-        &context,
-        |h| Hook::Subagent(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.subagent_stop.as_ref(),
-        HookEventType::SubagentStop,
-        &context,
-        |h| Hook::Subagent(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.session_start.as_ref(),
-        HookEventType::SessionStart,
-        &context,
-        |h| Hook::SessionLifecycle(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.session_end.as_ref(),
-        HookEventType::SessionEnd,
-        &context,
-        |h| Hook::SessionLifecycle(Box::new(h)),
-    )?;
-    register_shell_hooks(
-        &mut registry,
-        settings.pre_compaction.as_ref(),
-        HookEventType::PreCompaction,
-        &context,
-        |h| Hook::Compaction(Box::new(h)),
-    )?;
+    // One (slot, event type, wrapper) row per destructured field: the
+    // compiler enforces every slot appears above, and this table is the
+    // single place a slot's registration is defined.
+    let slots: &[(
+        &Option<Vec<crate::config::HookEntry>>,
+        HookEventType,
+        WrapFn,
+    )] = &[
+        (pre_tool, HookEventType::PreTool, |h| {
+            Hook::PreTool(Box::new(h))
+        }),
+        (post_tool, HookEventType::PostTool, |h| {
+            Hook::PostTool(Box::new(h))
+        }),
+        (post_tool_failure, HookEventType::PostToolFailure, |h| {
+            Hook::PostToolFailure(Box::new(h))
+        }),
+        (pre_llm, HookEventType::PreLlm, |h| {
+            Hook::PreLlm(Box::new(h))
+        }),
+        (post_llm, HookEventType::PostLlm, |h| {
+            Hook::PostLlm(Box::new(h))
+        }),
+        (session_event, HookEventType::SessionEvent, |h| {
+            Hook::SessionEvent(Box::new(h))
+        }),
+        (user_prompt, HookEventType::UserPrompt, |h| {
+            Hook::UserPrompt(Box::new(h))
+        }),
+        (stop, HookEventType::Stop, |h| Hook::Stop(Box::new(h))),
+        (subagent_start, HookEventType::SubagentStart, |h| {
+            Hook::Subagent(Box::new(h))
+        }),
+        (subagent_stop, HookEventType::SubagentStop, |h| {
+            Hook::Subagent(Box::new(h))
+        }),
+        (session_start, HookEventType::SessionStart, |h| {
+            Hook::SessionLifecycle(Box::new(h))
+        }),
+        (session_end, HookEventType::SessionEnd, |h| {
+            Hook::SessionLifecycle(Box::new(h))
+        }),
+        (pre_compaction, HookEventType::PreCompaction, |h| {
+            Hook::Compaction(Box::new(h))
+        }),
+    ];
+    for (entries, event_type, wrap) in slots {
+        register_shell_hooks(&mut registry, entries.as_ref(), *event_type, &context, wrap)?;
+    }
 
     Ok(Some(Arc::new(registry)))
 }
@@ -176,13 +170,16 @@ where
         return Ok(());
     };
     for entry in entries {
-        let timeout_ms = entry.timeout.ok_or_else(|| {
-            invalid_config(format!(
-                "hook {:?} command '{}' is missing required timeout",
-                event_type, entry.command
-            ))
-        })?;
-        let timeout = Duration::from_millis(timeout_ms);
+        // Backstop for programmatically-built HookSettings that bypassed
+        // config validation: a commandless hook has no behaviour and must
+        // not be silently registered.
+        if entry.command.trim().is_empty() {
+            return Err(invalid_config(format!(
+                "hook {event_type:?} has an empty command; a hook without a command has no \
+                 behaviour",
+            )));
+        }
+        let timeout = Duration::from_millis(entry.timeout);
         let matcher = HookMatcher::new(entry.matcher.as_deref())?;
         registry.register(wrap(ShellCommandHook::new(
             entry.command.clone(),
@@ -193,22 +190,6 @@ where
         )));
     }
     Ok(())
-}
-
-fn settings_total_entries(settings: &HookSettings) -> usize {
-    settings.pre_tool.as_ref().map_or(0, Vec::len)
-        + settings.post_tool.as_ref().map_or(0, Vec::len)
-        + settings.post_tool_failure.as_ref().map_or(0, Vec::len)
-        + settings.pre_llm.as_ref().map_or(0, Vec::len)
-        + settings.post_llm.as_ref().map_or(0, Vec::len)
-        + settings.session_event.as_ref().map_or(0, Vec::len)
-        + settings.user_prompt.as_ref().map_or(0, Vec::len)
-        + settings.stop.as_ref().map_or(0, Vec::len)
-        + settings.subagent_start.as_ref().map_or(0, Vec::len)
-        + settings.subagent_stop.as_ref().map_or(0, Vec::len)
-        + settings.session_start.as_ref().map_or(0, Vec::len)
-        + settings.session_end.as_ref().map_or(0, Vec::len)
-        + settings.pre_compaction.as_ref().map_or(0, Vec::len)
 }
 
 #[cfg(test)]
@@ -239,9 +220,30 @@ mod tests {
             pre_tool: Some(vec![HookEntry {
                 matcher: None,
                 command: "true".to_owned(),
-                timeout: Some(1_000),
+                timeout: 1_000,
             }]),
             ..HookSettings::default()
+        }
+    }
+
+    /// Backstop regression: a programmatically-built [`HookSettings`] entry
+    /// with an empty command must be a typed error, not a silently
+    /// registered no-op hook.
+    #[test]
+    fn assemble_rejects_empty_command_entries() -> Result<(), String> {
+        let profile = Profile::default();
+        let settings = HookSettings {
+            stop: Some(vec![HookEntry {
+                matcher: None,
+                command: "   ".to_owned(),
+                timeout: 5,
+            }]),
+            ..HookSettings::default()
+        };
+        match assemble_hook_registry(None, &settings, &profile, Path::new("/tmp")) {
+            Err(err) if err.to_string().contains("empty command") => Ok(()),
+            Err(err) => Err(format!("error must name the defect, got: {err}")),
+            Ok(_) => Err("empty command must be rejected".to_owned()),
         }
     }
 

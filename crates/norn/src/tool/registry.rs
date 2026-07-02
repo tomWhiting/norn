@@ -180,6 +180,18 @@ impl ToolRegistry {
         })?;
 
         let split = super::envelope::split_envelope_fields(arguments);
+        if let Some(description) = split.description {
+            // Bare-registry dispatch has no action log to attach the
+            // model's stated intent to (the agent loop records it on its
+            // own dispatch path); surface it in the trace stream so the
+            // intent is never silently discarded.
+            tracing::debug!(
+                tool = name,
+                call_id,
+                %description,
+                "tool_use_description on direct registry dispatch",
+            );
+        }
         let envelope = ToolEnvelope {
             tool_call_id: call_id.to_owned(),
             tool_name: name.to_string(),
@@ -276,6 +288,12 @@ pub(crate) async fn dispatch_tool_with_outcome(
     append_post_validation_errors(&mut output.content, &post_validate_outcome.errors);
 
     if !post_validate_outcome.errors.is_empty() && resolved_mode == PostValidateMode::Gate {
+        // Per the `Tool::register_follow_ups` contract the hook also runs
+        // after a gate-mode post-validation failure, so recovery actions
+        // (undo, retry variants) travel with the committed output the
+        // model sees; on-success bookkeeping still must not run.
+        let follow_ups = tool.register_follow_ups(&output, ctx).await;
+        append_follow_ups(&mut output.content, &follow_ups);
         return Err(ToolError::PostValidationFailed {
             reason: post_validate_outcome.errors.join("; "),
             committed_output: Some(output.content.clone()),
@@ -1574,6 +1592,56 @@ mod tests {
         assert!(
             out.get("follow_ups").is_none(),
             "no follow_ups key when the vector is empty",
+        );
+    }
+
+    /// `Tool::register_follow_ups` contract: the hook runs after a
+    /// gate-mode post-validation failure, and the registered actions are
+    /// attached to the committed output carried by the
+    /// `PostValidationFailed` error — while on-success bookkeeping still
+    /// does not run.
+    #[tokio::test]
+    async fn gate_failure_attaches_registered_follow_ups() {
+        let mut tool = StatefulStubTool::new("gate-follow-ups");
+        tool.post_mode = PostValidateMode::Gate;
+        tool.post_outcome = PostValidateOutcome::Fail {
+            errors: vec!["broken".to_string()],
+        };
+        tool.output_payload = serde_json::json!({"committed": true});
+        tool.follow_ups_to_return = vec![sample_follow_up("undo")];
+        let register_count = tool.register_follow_ups_count.clone();
+        let on_success_count = tool.on_success_count.clone();
+
+        let mut reg = ToolRegistry::new();
+        reg.register(Box::new(tool));
+        let executor: &dyn ToolExecutor = &reg;
+
+        let err = executor
+            .execute("gate-follow-ups", "test-call", serde_json::json!({}))
+            .await
+            .expect_err("gate failure surfaces as error");
+        match err {
+            ToolError::PostValidationFailed {
+                committed_output, ..
+            } => {
+                let committed = committed_output.expect("committed output present");
+                let follow_ups = committed["follow_ups"]
+                    .as_array()
+                    .expect("follow_ups attached to committed output");
+                assert_eq!(follow_ups.len(), 1);
+                assert_eq!(follow_ups[0]["action"], "undo");
+            }
+            other => panic!("expected PostValidationFailed, got {other:?}"),
+        }
+        assert_eq!(
+            register_count.load(Ordering::SeqCst),
+            1,
+            "register_follow_ups must run on the gate-failure path",
+        );
+        assert_eq!(
+            on_success_count.load(Ordering::SeqCst),
+            0,
+            "on_success must still not run on gate failure",
         );
     }
 

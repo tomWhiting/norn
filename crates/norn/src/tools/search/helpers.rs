@@ -1,14 +1,11 @@
 //! Shared filesystem-walk and glob helpers for the search sub-modules.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 
-use regex::Regex;
+use serde::Serialize;
 
 use crate::error::ToolError;
 use crate::tool::failure::ToolErrorKind;
-
-use super::SearchMatch;
 
 /// A compiled glob filter that may contain multiple alternatives (from
 /// brace expansion like `**/*.{rs,md,toml}`).
@@ -18,7 +15,7 @@ pub(super) struct GlobFilter {
 }
 
 impl GlobFilter {
-    fn matches(&self, path: &Path) -> bool {
+    pub(super) fn matches(&self, path: &Path) -> bool {
         let opts = glob_match_options();
         let check_path = if self.filename_only {
             path.file_name().map_or(path, Path::new)
@@ -89,7 +86,7 @@ pub(super) fn expand_braces(pattern: &str) -> Vec<String> {
 }
 
 /// Match options for glob patterns.
-fn glob_match_options() -> glob::MatchOptions {
+pub(super) fn glob_match_options() -> glob::MatchOptions {
     glob::MatchOptions {
         case_sensitive: true,
         require_literal_separator: false,
@@ -97,162 +94,118 @@ fn glob_match_options() -> glob::MatchOptions {
     }
 }
 
-/// Search `root` for regex matches in file content.
+/// A filesystem entry the walk could not process, reported to the model so
+/// an empty result set is never mistaken for a verified "no matches".
+#[derive(Debug, Serialize)]
+pub(super) struct SkippedEntry {
+    /// Path of the entry (or its closest known ancestor) that was skipped.
+    pub(super) path: String,
+    /// Human-readable reason the entry was skipped.
+    pub(super) reason: String,
+}
+
+/// One entry discovered by [`walk_tree`].
+pub(super) struct WalkedEntry {
+    /// Absolute (root-relative-joined) path of the entry.
+    pub(super) path: PathBuf,
+    /// Whether the entry is a regular file (symlinks are not followed).
+    pub(super) is_file: bool,
+}
+
+/// The outcome of walking a search root.
+pub(super) struct WalkedTree {
+    /// All entries below the root (files, directories, symlinks), sorted by
+    /// path for deterministic output. The root itself is not included.
+    pub(super) entries: Vec<WalkedEntry>,
+    /// Entries the walk failed to traverse, with reasons.
+    pub(super) skipped: Vec<SkippedEntry>,
+}
+
+/// Walk `root`, honouring gitignore/hidden-file rules unless
+/// `include_ignored` is set.
 ///
-/// When `root` is a regular file (not a directory), searches that single
-/// file directly. When `root` is a directory, walks it recursively.
-pub(super) fn walk_for_content(
-    root: &Path,
-    regex: &Regex,
-    glob_filter: Option<&GlobFilter>,
-    max_results: u32,
-    out: &mut Vec<SearchMatch>,
-    truncated: &mut bool,
-) {
+/// Ignore rules are applied even outside git repositories
+/// (`require_git(false)`) so a `.gitignore` in a plain directory tree
+/// behaves identically to one in a checked-out repository. Traversal
+/// failures (unreadable directories, unresolvable entries) are collected
+/// into `skipped` rather than silently dropping subtrees.
+///
+/// When `root` is a regular file (not a directory) it is returned as the
+/// single entry, bypassing ignore rules — an explicitly named file is
+/// always searched.
+pub(super) fn walk_tree(root: &Path, include_ignored: bool) -> WalkedTree {
+    let mut entries: Vec<WalkedEntry> = Vec::new();
+    let mut skipped: Vec<SkippedEntry> = Vec::new();
+
     if root.is_file() {
-        search_single_file(root, regex, glob_filter, max_results, out, truncated);
-        return;
+        entries.push(WalkedEntry {
+            path: root.to_path_buf(),
+            is_file: true,
+        });
+        return WalkedTree { entries, skipped };
     }
-    walk_dir_for_content(root, regex, glob_filter, max_results, out, truncated);
-}
 
-fn search_single_file(
-    path: &Path,
-    regex: &Regex,
-    glob_filter: Option<&GlobFilter>,
-    max_results: u32,
-    out: &mut Vec<SearchMatch>,
-    truncated: &mut bool,
-) {
-    if let Some(filter) = glob_filter
-        && !filter.matches(path)
-    {
-        return;
+    let mut builder = ignore::WalkBuilder::new(root);
+    if include_ignored {
+        builder.standard_filters(false);
+    } else {
+        builder.require_git(false);
     }
-    // Binary / non-UTF-8 / unreadable files are skipped — content search
-    // is best-effort across heterogeneous trees.
-    let Ok(contents) = fs::read_to_string(path) else {
-        return;
-    };
-    let cap = max_results as usize;
-    for (idx, line) in contents.lines().enumerate() {
-        if regex.is_match(line) {
-            if out.len() >= cap {
-                *truncated = true;
-                return;
-            }
-            let line_number = u32::try_from(idx + 1).unwrap_or(u32::MAX);
-            out.push(SearchMatch {
-                path: path.to_string_lossy().into_owned(),
-                line: line_number,
-                content: line.to_owned(),
-            });
-        }
-    }
-}
 
-fn walk_dir_for_content(
-    dir: &Path,
-    regex: &Regex,
-    glob_filter: Option<&GlobFilter>,
-    max_results: u32,
-    out: &mut Vec<SearchMatch>,
-    truncated: &mut bool,
-) {
-    if *truncated {
-        return;
-    }
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    let cap = max_results as usize;
-
-    for entry in entries.flatten() {
-        if *truncated {
-            return;
-        }
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            walk_dir_for_content(&path, regex, glob_filter, max_results, out, truncated);
-            continue;
-        }
-        if !file_type.is_file() {
-            continue;
-        }
-
-        if let Some(filter) = glob_filter
-            && !filter.matches(&path)
-        {
-            continue;
-        }
-
-        // Binary / non-UTF-8 / unreadable files skipped — best-effort.
-        let Ok(contents) = fs::read_to_string(&path) else {
-            continue;
-        };
-
-        for (idx, line) in contents.lines().enumerate() {
-            if regex.is_match(line) {
-                if out.len() >= cap {
-                    *truncated = true;
-                    return;
+    for result in builder.build() {
+        match result {
+            Ok(entry) => {
+                if entry.depth() == 0 {
+                    continue;
                 }
-                let line_number = u32::try_from(idx + 1).unwrap_or(u32::MAX);
-                out.push(SearchMatch {
-                    path: path.to_string_lossy().into_owned(),
-                    line: line_number,
-                    content: line.to_owned(),
-                });
+                match entry.file_type() {
+                    Some(file_type) => {
+                        let is_file = file_type.is_file();
+                        entries.push(WalkedEntry {
+                            path: entry.into_path(),
+                            is_file,
+                        });
+                    }
+                    None => skipped.push(SkippedEntry {
+                        path: entry.path().to_string_lossy().into_owned(),
+                        reason: "entry has no resolvable file type".to_owned(),
+                    }),
+                }
             }
+            Err(e) => skipped.push(skipped_from_walk_error(&e, root)),
         }
+    }
+
+    entries.sort_by(|a, b| a.path.cmp(&b.path));
+    skipped.sort_by(|a, b| a.path.cmp(&b.path));
+    WalkedTree { entries, skipped }
+}
+
+/// Convert a walker error into a [`SkippedEntry`], attributing it to the
+/// most specific path the error carries (falling back to the walk root).
+fn skipped_from_walk_error(err: &ignore::Error, root: &Path) -> SkippedEntry {
+    let path = walk_error_path(err)
+        .unwrap_or(root)
+        .to_string_lossy()
+        .into_owned();
+    SkippedEntry {
+        path,
+        reason: err.to_string(),
     }
 }
 
-/// Collect file paths under `root`, filtered by an optional glob.
-///
-/// When `root` is a regular file (not a directory), returns that single
-/// file if it passes the filter.
-pub(super) fn walk_collect_paths(
-    root: &Path,
-    glob_filter: Option<&GlobFilter>,
-    out: &mut Vec<PathBuf>,
-) {
-    if root.is_file() {
-        if let Some(filter) = glob_filter
-            && !filter.matches(root)
-        {
-            return;
+/// Extract the most specific path carried by a walker error, if any.
+fn walk_error_path(err: &ignore::Error) -> Option<&Path> {
+    match err {
+        ignore::Error::WithPath { path, .. } => Some(path),
+        ignore::Error::WithLineNumber { err, .. } | ignore::Error::WithDepth { err, .. } => {
+            walk_error_path(err)
         }
-        out.push(root.to_path_buf());
-        return;
-    }
-    walk_dir_collect_paths(root, glob_filter, out);
-}
-
-fn walk_dir_collect_paths(dir: &Path, glob_filter: Option<&GlobFilter>, out: &mut Vec<PathBuf>) {
-    let Ok(entries) = fs::read_dir(dir) else {
-        return;
-    };
-    for entry in entries.flatten() {
-        let path = entry.path();
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if file_type.is_dir() {
-            walk_dir_collect_paths(&path, glob_filter, out);
-            continue;
-        }
-        if !file_type.is_file() {
-            continue;
-        }
-        if let Some(filter) = glob_filter
-            && !filter.matches(&path)
-        {
-            continue;
-        }
-        out.push(path);
+        ignore::Error::Partial(errs) => errs.iter().find_map(walk_error_path),
+        ignore::Error::Loop { child, .. } => Some(child),
+        ignore::Error::Io(_)
+        | ignore::Error::Glob { .. }
+        | ignore::Error::UnrecognizedFileType(_)
+        | ignore::Error::InvalidDefinition => None,
     }
 }

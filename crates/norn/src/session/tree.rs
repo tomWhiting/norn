@@ -180,8 +180,11 @@ impl SessionTree {
     /// # Errors
     ///
     /// Returns [`SessionError::InvalidEventId`] if `parent_id` is not in the
-    /// tree, or [`SessionError::EventAppendFailed`] propagated from
-    /// [`EventStore::append`] (e.g. on a duplicate event id while seeding).
+    /// tree, or an error propagated from [`EventStore::append`]
+    /// ([`SessionError::EventAppendFailed`] on a duplicate event id while
+    /// seeding, [`SessionError::StorageError`] from a failing write-through
+    /// sink on the parent store). On any error the tree is unchanged: no
+    /// child node exists and no link was added.
     pub fn branch(
         &self,
         parent_id: SessionId,
@@ -192,9 +195,8 @@ impl SessionTree {
             metadata,
         } = config;
 
-        let mut inner = self.inner.write();
-
         let parent_store = {
+            let inner = self.inner.read();
             let parent =
                 inner
                     .nodes
@@ -205,29 +207,17 @@ impl SessionTree {
             Arc::clone(&parent.store)
         };
 
+        // Seed the child store before anything observable mutates: the
+        // store is private until the node is inserted, so a seeding
+        // failure (duplicate event id) aborts with no side effects.
         let parent_events = parent_store.events();
         let filtered = context_filter.apply(&parent_events);
-
         let child_store = Arc::new(EventStore::new());
         for event in &filtered {
             child_store.append(event.clone())?;
         }
 
         let child_id: SessionId = Uuid::new_v4();
-        let child = SessionNode {
-            id: child_id,
-            store: Arc::clone(&child_store),
-            parent: Some(parent_id),
-            children: Vec::new(),
-            metadata,
-        };
-
-        // Tie the child to the parent before releasing the lock so a
-        // concurrent reader never observes a half-inserted edge.
-        if let Some(parent_mut) = inner.nodes.get_mut(&parent_id) {
-            parent_mut.children.push(child_id);
-        }
-        inner.nodes.insert(child_id, child);
 
         // The fork event records where in the parent's timeline the branch
         // happened. We compute the source id from the snapshot we already
@@ -238,15 +228,41 @@ impl SessionTree {
             .last()
             .map_or_else(EventId::new, |e| e.base().id.clone());
 
-        drop(inner);
-
-        // EventStore::append takes &self and uses its own internal lock, so
-        // it is safe to call after releasing the tree's write lock.
+        // Append the Fork marker BEFORE the child becomes reachable in
+        // the tree: an append failure (e.g. a persistence sink on the
+        // parent store) must return Err with no live child, not leave a
+        // linked child whose branch point was never recorded. The
+        // append runs outside the tree lock (EventStore has its own
+        // locking), so the only transient a concurrent reader can see
+        // is a Fork event whose child node lands a moment later —
+        // never a half-linked node.
         parent_store.append(SessionEvent::Fork {
             base: EventBase::new(None),
             source_event_id,
             forked_session_id: child_id.to_string(),
         })?;
+
+        let child = SessionNode {
+            id: child_id,
+            store: child_store,
+            parent: Some(parent_id),
+            children: Vec::new(),
+            metadata,
+        };
+
+        let mut inner = self.inner.write();
+        // Nodes are never removed from the tree, so the parent looked up
+        // above must still exist; a miss here is internal corruption and
+        // must not silently produce an unlinked child.
+        let parent_mut =
+            inner
+                .nodes
+                .get_mut(&parent_id)
+                .ok_or_else(|| SessionError::StorageError {
+                    reason: format!("parent session {parent_id} vanished from tree during branch"),
+                })?;
+        parent_mut.children.push(child_id);
+        inner.nodes.insert(child_id, child);
 
         Ok(child_id)
     }
@@ -497,6 +513,76 @@ mod tests {
             }
             other => panic!("expected Fork event, got {other:?}"),
         }
+    }
+
+    /// A sink that persists the first `succeed_first` events, then fails
+    /// every later persist — lets a test seed a store successfully and
+    /// force the next append (the branch Fork marker) to fail.
+    struct FailAfterSink {
+        succeed_first: u32,
+        seen: u32,
+    }
+
+    impl crate::session::store::PersistenceSink for FailAfterSink {
+        fn persist(
+            &mut self,
+            _event: &SessionEvent,
+        ) -> Result<(), crate::session::persistence::SessionPersistError> {
+            self.seen += 1;
+            if self.seen > self.succeed_first {
+                return Err(crate::session::persistence::SessionPersistError::Io(
+                    std::io::Error::other("simulated persist failure"),
+                ));
+            }
+            Ok(())
+        }
+    }
+
+    /// Regression: `branch` used to insert and link the child BEFORE
+    /// appending the parent's Fork marker, so an append failure returned
+    /// `Err` with the child already live in the tree (linked under the
+    /// parent, counted, reachable). On error the tree must be unchanged.
+    #[test]
+    fn branch_fork_append_failure_leaves_no_live_child() {
+        let tree = SessionTree::new(meta("root"));
+        let root_id = tree.root();
+
+        // Give the root a store whose sink accepts the two seed events
+        // and fails the third append — the Fork marker.
+        {
+            let mut inner = tree.inner.write();
+            let root = inner.nodes.get_mut(&root_id).expect("root present");
+            root.store = Arc::new(EventStore::with_sink(Box::new(FailAfterSink {
+                succeed_first: 2,
+                seen: 0,
+            })));
+        }
+        let root_store = tree.get_store(root_id).expect("root store");
+        root_store.append(user_msg("one")).expect("seed one");
+        root_store.append(user_msg("two")).expect("seed two");
+
+        let err = tree
+            .branch(root_id, branch_cfg("child"))
+            .expect_err("Fork append must fail through the failing sink");
+        assert!(
+            matches!(err, SessionError::StorageError { .. }),
+            "expected StorageError from the failed write-through, got {err:?}",
+        );
+
+        // The failed branch must leave the tree exactly as it was.
+        assert_eq!(tree.session_count(), 1, "no child node may exist");
+        let root = tree.get(root_id).expect("root");
+        assert!(root.children.is_empty(), "no child link may exist");
+        assert_eq!(
+            tree.active_sessions(),
+            vec![root_id],
+            "only the root is live",
+        );
+        assert_eq!(
+            root_store.len(),
+            2,
+            "the failed Fork marker is not in the parent store",
+        );
     }
 
     #[test]

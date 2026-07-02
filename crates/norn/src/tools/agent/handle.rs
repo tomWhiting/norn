@@ -94,7 +94,7 @@ pub struct AgentHandle {
     pub wake_pending: Arc<AtomicBool>,
     /// Cooperative cancellation trigger for the child's *run*. A clone of
     /// this token is passed as `cancel` into the child's
-    /// [`run_agent_step`](crate::r#loop::runner::run_agent_step) request,
+    /// [`run_agent_step`](crate::agent_loop::runner::run_agent_step) request,
     /// so cancelling it terminates the inner agent loop at its next
     /// cancellation boundary (top of iteration, or immediately for an
     /// in-flight provider call via the loop's biased select). The
@@ -104,7 +104,7 @@ pub struct AgentHandle {
     /// this — never `JoinHandle::abort`, which would detach the inner run
     /// and leave it executing unobserved.
     ///
-    /// [`AgentStepResult::Cancelled`]: crate::r#loop::runner::AgentStepResult::Cancelled
+    /// [`AgentStepResult::Cancelled`]: crate::agent_loop::runner::AgentStepResult::Cancelled
     /// [`AgentStopReason::Cancelled`]: crate::agent::output::AgentStopReason::Cancelled
     pub cancel: CancellationToken,
     /// Join handle for the child's `tokio::spawn` task.

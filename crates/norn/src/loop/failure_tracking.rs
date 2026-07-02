@@ -1,7 +1,7 @@
 //! Per-iteration failure harvesting for the repeated-failure monitor
 //! (REVIEW item 4).
 //!
-//! The iteration monitor's [`RepeatedFailure`](crate::r#loop::iteration::IterationSignal::RepeatedFailure)
+//! The iteration monitor's [`RepeatedFailure`](crate::agent_loop::iteration::IterationSignal::RepeatedFailure)
 //! signal compares normalized error signatures across iterations, but it can
 //! only fire if the runner actually feeds it the failures each iteration
 //! produced. This module extracts those failures from the session event

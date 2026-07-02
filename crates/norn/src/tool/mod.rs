@@ -28,7 +28,6 @@ pub use self::scheduling::{ExecutionStep, SchedulingPlan, ToolEffect};
 pub use self::traits::{Tool, ToolCategory, ToolOutput};
 pub use crate::error::ToolError;
 
-pub mod availability;
 pub mod catalog;
 pub mod composite;
 pub mod context;

@@ -14,7 +14,7 @@ use uuid::Uuid;
 use crate::agent::assembly::snapshot_store;
 use crate::agent::handle::{AgentHandle, ResolvedAgentInfo};
 use crate::agent::output::RunOutcome;
-use crate::agent_loop::config::AgentLoopConfig;
+use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::agent_loop::inbound::{InboundChannel, InboundSender};
 use crate::agent_loop::loop_context::LoopContext;
 use crate::agent_loop::runner::{AgentStepRequest, run_agent_step};
@@ -130,9 +130,14 @@ impl Agent {
                     .to_string(),
             }));
         }
+        // Passed as `&Arc<dyn ToolExecutor>` (not `&*registry`) so the
+        // loop's concurrent batch steps get an owned handle
+        // (`ToolExecutor::owned_handle`) and can spawn each batch member
+        // on its own task for true parallelism.
+        let executor: Arc<dyn ToolExecutor> = Arc::clone(&self.registry) as Arc<dyn ToolExecutor>;
         let result = run_agent_step(AgentStepRequest {
             provider: self.provider.as_ref(),
-            executor: self.registry.as_ref(),
+            executor: &executor,
             store: self.event_store.as_ref(),
             user_prompt: &prompt,
             tools: &self.tool_defs,
@@ -146,12 +151,14 @@ impl Agent {
         })
         .await?;
 
-        // Drop the registry first so that, in the no-fork/spawn case, its tool
-        // context (and any extension) releases its references and the event
-        // store can be handed back owned. When fork/spawn infra is installed
-        // the registry participates in an Arc cycle (registry -> context ->
-        // infra -> registry) inherited from `AgentToolInfra`, so `try_unwrap`
-        // falls back to a content snapshot.
+        // Drop the registry (and the executor handle cloned from it) first
+        // so that, in the no-fork/spawn case, its tool context (and any
+        // extension) releases its references and the event store can be
+        // handed back owned. When fork/spawn infra is installed the
+        // registry participates in an Arc cycle (registry -> context ->
+        // infra -> registry) inherited from `AgentToolInfra`, so
+        // `try_unwrap` falls back to a content snapshot.
+        drop(executor);
         drop(self.registry);
         // Release the loop's `Arc<ActionLog>` too: it holds the same
         // `Arc<EventStore>`, so leaving it set would keep a second strong

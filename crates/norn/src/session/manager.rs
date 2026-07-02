@@ -37,21 +37,24 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use chrono::Utc;
 use uuid::Uuid;
 
+use crate::provider::usage::Usage;
 use crate::session::events::{EventBase, SessionEvent};
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
 
 use super::persistence::index::{
     append_index_entry, insert_index_entry_for_new_session, insert_index_entry_if_absent,
     read_index, remove_index_entry, resolve_latest_session_in_working_dir, resolve_session,
-    sum_usage_from_events, update_index_entry,
+    update_index_entry,
 };
 use super::persistence::io::{append_events, read_session_events, session_file_path};
+use super::persistence::replay::ReplayArtifacts;
 use super::persistence::types::{
-    SESSION_FORMAT_VERSION, SessionFileRead, SessionIndexEntry, SessionPersistError, SessionStatus,
+    SESSION_FORMAT_VERSION, SessionIndexEntry, SessionPersistError, SessionStatus,
 };
 
 /// Caller-supplied metadata recorded in the index entry of a newly
@@ -114,18 +117,63 @@ pub struct OpenSession {
 /// `norn::config::paths::session_data_dir()` if you want the standard
 /// one). Cheap to clone; holds no open handles itself (each
 /// [`OpenSession`]'s sink owns its own file handle).
+///
+/// # Keep sessions open across steps
+///
+/// Every open replays the session's **entire** event history from disk
+/// (one single-pass traversal producing [`ReplayArtifacts`]). An
+/// embedder that re-opens the same session once per workflow step
+/// therefore pays O(history) per step — quadratic over the workflow's
+/// life. The intended shape is: open once ([`Self::resume`] /
+/// [`Self::open_or_resume`]), hold the returned [`OpenSession`] (its
+/// [`EventStore`] appends write-through), call
+/// [`EventStore::checkpoint`] at step boundaries to flush deferred
+/// index deltas, and drop the store only when the workflow is done.
+/// Re-opening is for a new process (or after a crash), not for the next
+/// step of a live one.
+///
+/// # Blocking I/O and async executors
+///
+/// Every method on this type performs blocking file I/O, and the
+/// mutating ones additionally take the inter-process session-index
+/// lock and hold it across a full index read+rewrite+fsync (an
+/// unbounded wait unless [`Self::with_index_lock_deadline`] set a
+/// deadline). Callers on an async executor wrap these calls in
+/// [`tokio::task::spawn_blocking`] — an open runs once per workflow,
+/// so the offload costs nothing recurring — and use
+/// [`EventStore::checkpoint_off_executor`] for the per-step index
+/// flush, which performs the same offload internally.
 #[derive(Clone, Debug)]
 pub struct SessionManager {
     data_dir: PathBuf,
+    index_lock_deadline: Option<Duration>,
 }
 
 impl SessionManager {
     /// Create a manager over `data_dir`. The directory (and the index
-    /// inside it) is created lazily on first write.
+    /// inside it) is created lazily on first write. Index-lock waits
+    /// are unbounded until [`Self::with_index_lock_deadline`] sets a
+    /// deadline.
     pub fn new(data_dir: impl Into<PathBuf>) -> Self {
         Self {
             data_dir: data_dir.into(),
+            index_lock_deadline: None,
         }
+    }
+
+    /// Set the acquisition deadline this manager (and every sink it
+    /// opens) applies when taking the inter-process session-index lock.
+    ///
+    /// `None` — the constructor's value — waits indefinitely, exactly
+    /// the OS lock primitive's own behaviour. `Some(deadline)` bounds
+    /// the wait: an operation that cannot take the lock within the
+    /// deadline fails with [`SessionPersistError::IndexLockTimeout`]
+    /// instead of stalling behind a wedged lock holder, with the index
+    /// untouched.
+    #[must_use]
+    pub fn with_index_lock_deadline(mut self, deadline: Option<Duration>) -> Self {
+        self.index_lock_deadline = deadline;
+        self
     }
 
     /// The data directory this manager owns.
@@ -152,7 +200,7 @@ impl SessionManager {
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
         let entry = new_index_entry(Uuid::now_v7().to_string(), options);
-        append_index_entry(&self.data_dir, &entry)?;
+        append_index_entry(&self.data_dir, &entry, self.index_lock_deadline)?;
         self.open_fresh(entry, durability)
     }
 
@@ -187,7 +235,7 @@ impl SessionManager {
     ) -> Result<OpenSession, SessionPersistError> {
         validate_explicit_session_id(id)?;
         let candidate = new_index_entry(id.to_owned(), options);
-        insert_index_entry_for_new_session(&self.data_dir, &candidate)?;
+        insert_index_entry_for_new_session(&self.data_dir, &candidate, self.index_lock_deadline)?;
         self.open_fresh(candidate, durability)
     }
 
@@ -296,8 +344,8 @@ impl SessionManager {
         options: CreateSessionOptions,
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
-        let read = read_session_events(&self.data_dir, &source_entry.id)?;
-        let last_event_id = read
+        let artifacts = read_session_events(&self.data_dir, &source_entry.id)?;
+        let last_event_id = artifacts
             .events
             .last()
             .ok_or_else(|| SessionPersistError::EmptySource {
@@ -308,24 +356,29 @@ impl SessionManager {
             .clone();
 
         let new_entry = new_index_entry(Uuid::now_v7().to_string(), options);
-        append_index_entry(&self.data_dir, &new_entry)?;
+        append_index_entry(&self.data_dir, &new_entry, self.index_lock_deadline)?;
 
         let fork_event = SessionEvent::Fork {
             base: EventBase::new(Some(last_event_id.clone())),
             source_event_id: last_event_id,
             forked_session_id: new_entry.id.clone(),
         };
-        let mut events = read.events;
+        let mut events = artifacts.events;
         events.push(fork_event);
         append_events(&self.data_dir, &new_entry.id, &events, false)?;
 
         // Re-resolve so the returned entry carries the event count and
         // usage totals the batch append just recorded.
         let entry = resolve_session(&self.data_dir, &new_entry.id)?;
-        let sink = JsonlSink::open_registered(&self.data_dir, &entry.id, durability)?;
+        let sink = JsonlSink::open_registered(
+            &self.data_dir,
+            &entry.id,
+            durability,
+            self.index_lock_deadline,
+        )?;
         let replay = ReplaySummary {
             replayed_events: events.len(),
-            skipped_lines: read.skipped_lines,
+            skipped_lines: artifacts.skipped_lines,
         };
         Ok(OpenSession {
             store: EventStore::with_sink_and_events(Box::new(sink), events),
@@ -373,7 +426,7 @@ impl SessionManager {
     ) -> Result<OpenSession, SessionPersistError> {
         validate_explicit_session_id(id)?;
         let candidate = new_index_entry(id.to_owned(), options);
-        match insert_index_entry_if_absent(&self.data_dir, &candidate)? {
+        match insert_index_entry_if_absent(&self.data_dir, &candidate, self.index_lock_deadline)? {
             Some(existing) => self.resume_entry(existing, durability),
             None => self.open_fresh(candidate, durability),
         }
@@ -404,9 +457,10 @@ impl SessionManager {
 
     /// Read a session's events without opening it for appending (the
     /// export / inspection path): resolve `id_or_name`, then tolerantly
-    /// read the event file. Returns the resolved entry alongside the
-    /// [`SessionFileRead`] so callers can render metadata and surface
-    /// [`SessionFileRead::skipped_lines`].
+    /// read the event file in a single pass. Returns the resolved entry
+    /// alongside the [`ReplayArtifacts`] so callers can render
+    /// metadata, surface [`ReplayArtifacts::skipped_lines`], and reuse
+    /// the derived rollups without re-walking the history.
     ///
     /// # Errors
     ///
@@ -415,10 +469,10 @@ impl SessionManager {
     pub fn read_events(
         &self,
         id_or_name: &str,
-    ) -> Result<(SessionIndexEntry, SessionFileRead), SessionPersistError> {
+    ) -> Result<(SessionIndexEntry, ReplayArtifacts), SessionPersistError> {
         let entry = resolve_session(&self.data_dir, id_or_name)?;
-        let read = read_session_events(&self.data_dir, &entry.id)?;
-        Ok((entry, read))
+        let artifacts = read_session_events(&self.data_dir, &entry.id)?;
+        Ok((entry, artifacts))
     }
 
     /// Rename a session: resolve `id_or_name`, then set (or clear with
@@ -435,7 +489,14 @@ impl SessionManager {
     ) -> Result<SessionIndexEntry, SessionPersistError> {
         let mut entry = resolve_session(&self.data_dir, id_or_name)?;
         let applied = name.clone();
-        update_index_entry(&self.data_dir, &entry.id, move |e| e.name = name)?;
+        update_index_entry(
+            &self.data_dir,
+            &entry.id,
+            self.index_lock_deadline,
+            move |e| {
+                e.name = name;
+            },
+        )?;
         entry.name = applied;
         Ok(entry)
     }
@@ -461,7 +522,7 @@ impl SessionManager {
                 format!("failed to delete session file {}: {error}", path.display()),
             )));
         }
-        remove_index_entry(&self.data_dir, &entry.id)?;
+        remove_index_entry(&self.data_dir, &entry.id, self.index_lock_deadline)?;
         Ok(entry)
     }
 
@@ -472,7 +533,12 @@ impl SessionManager {
         entry: SessionIndexEntry,
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
-        let sink = JsonlSink::open_registered(&self.data_dir, &entry.id, durability)?;
+        let sink = JsonlSink::open_registered(
+            &self.data_dir,
+            &entry.id,
+            durability,
+            self.index_lock_deadline,
+        )?;
         Ok(OpenSession {
             store: EventStore::with_sink(Box::new(sink)),
             entry,
@@ -481,21 +547,35 @@ impl SessionManager {
     }
 
     /// Replay an already-resolved entry's event file into a
-    /// sink-equipped store, self-healing the index entry on drift.
+    /// sink-equipped store, self-healing the index entry on drift. The
+    /// single-pass [`ReplayArtifacts`] usage rollup feeds the
+    /// self-heal — the history is never re-walked to re-sum usage.
     fn resume_entry(
         &self,
         entry: SessionIndexEntry,
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
-        let read = read_session_events(&self.data_dir, &entry.id)?;
-        let entry = reconcile_index_entry(&self.data_dir, entry, &read.events);
-        let sink = JsonlSink::open_registered(&self.data_dir, &entry.id, durability)?;
+        let artifacts = read_session_events(&self.data_dir, &entry.id)?;
+        let actual_count = u64::try_from(artifacts.events.len()).unwrap_or(u64::MAX);
+        let entry = reconcile_index_entry(
+            &self.data_dir,
+            entry,
+            actual_count,
+            &artifacts.usage,
+            self.index_lock_deadline,
+        );
+        let sink = JsonlSink::open_registered(
+            &self.data_dir,
+            &entry.id,
+            durability,
+            self.index_lock_deadline,
+        )?;
         let replay = ReplaySummary {
-            replayed_events: read.events.len(),
-            skipped_lines: read.skipped_lines,
+            replayed_events: artifacts.events.len(),
+            skipped_lines: artifacts.skipped_lines,
         };
         Ok(OpenSession {
-            store: EventStore::with_sink_and_events(Box::new(sink), read.events),
+            store: EventStore::with_sink_and_events(Box::new(sink), artifacts.events),
             entry,
             replay,
         })
@@ -551,20 +631,20 @@ fn validate_explicit_session_id(id: &str) -> Result<(), SessionPersistError> {
     super::persistence::io::ensure_session_id_not_reserved(id)
 }
 
-/// Compare `entry`'s `event_count` and usage totals against the events
-/// actually recovered from the session file and repair the index entry
-/// when they drifted (the crash-staleness window the batched index
-/// maintenance accepts by design). Returns the entry with the
-/// recomputed values; a failed repair write is logged at error level
-/// and the recomputed (in-memory) values are still returned so the
-/// caller never sees stale numbers.
+/// Compare `entry`'s `event_count` and usage totals against the count
+/// and usage rollup the single-pass replay recovered from the session
+/// file and repair the index entry when they drifted (the
+/// crash-staleness window the batched index maintenance accepts by
+/// design). Returns the entry with the recomputed values; a failed
+/// repair write is logged at error level and the recomputed (in-memory)
+/// values are still returned so the caller never sees stale numbers.
 fn reconcile_index_entry(
     data_dir: &Path,
     entry: SessionIndexEntry,
-    events: &[SessionEvent],
+    actual_count: u64,
+    actual_usage: &Usage,
+    lock_deadline: Option<Duration>,
 ) -> SessionIndexEntry {
-    let actual_count = u64::try_from(events.len()).unwrap_or(u64::MAX);
-    let actual_usage = sum_usage_from_events(events);
     if entry.event_count == actual_count
         && entry.total_input_tokens == actual_usage.input_tokens
         && entry.total_output_tokens == actual_usage.output_tokens
@@ -585,7 +665,7 @@ fn reconcile_index_entry(
     repaired.total_input_tokens = actual_usage.input_tokens;
     repaired.total_output_tokens = actual_usage.output_tokens;
     repaired.total_cache_read_tokens = actual_usage.cache_read_tokens;
-    if let Err(error) = update_index_entry(data_dir, &repaired.id, |e| {
+    if let Err(error) = update_index_entry(data_dir, &repaired.id, lock_deadline, |e| {
         e.event_count = actual_count;
         e.total_input_tokens = actual_usage.input_tokens;
         e.total_output_tokens = actual_usage.output_tokens;
@@ -907,7 +987,7 @@ mod tests {
 
         // Simulate crash staleness: zero the entry behind the manager's
         // back.
-        update_index_entry(tmp.path(), &id, |e| {
+        update_index_entry(tmp.path(), &id, None, |e| {
             e.event_count = 0;
             e.total_input_tokens = 0;
             e.total_output_tokens = 0;
@@ -1036,7 +1116,7 @@ mod tests {
         // Insert the index entry directly — the "crashed before the sink
         // opened" state.
         let entry = new_index_entry("wf-crash".to_owned(), options("gpt"));
-        append_index_entry(tmp.path(), &entry).unwrap();
+        append_index_entry(tmp.path(), &entry, None).unwrap();
         assert!(!session_file_path(tmp.path(), "wf-crash").exists());
 
         let opened = manager
@@ -1318,7 +1398,7 @@ mod tests {
         let manager = SessionManager::new(tmp.path());
         // Index entry with no file (never appended, file removed by hand).
         let entry = new_index_entry("ghost-file".to_owned(), options("gpt"));
-        append_index_entry(tmp.path(), &entry).unwrap();
+        append_index_entry(tmp.path(), &entry, None).unwrap();
         let removed = manager.delete("ghost-file").unwrap();
         assert_eq!(removed.id, "ghost-file");
         assert!(manager.list().unwrap().is_empty());

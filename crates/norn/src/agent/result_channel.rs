@@ -65,7 +65,7 @@ pub struct ChildAgentResult {
 /// Build the harness-framed injection text for a child-agent result.
 ///
 /// There is exactly one result formatter, mirroring
-/// [`frame_message`](crate::r#loop::inbound::frame_message)'s security
+/// [`frame_message`](crate::agent_loop::inbound::frame_message)'s security
 /// contract for inter-agent messages: the `from`/`from_id`/`succeeded`
 /// attributes are harness-resolved (the spawn/fork wrapper builds the
 /// [`ChildAgentResult`], never the child model), and the result text —

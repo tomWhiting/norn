@@ -1,7 +1,6 @@
 //! Domain types for session persistence (NC-002).
 
 use crate::session::SessionError;
-use crate::session::events::SessionEvent;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
@@ -23,7 +22,8 @@ pub const SESSION_FORMAT_VERSION: u32 = 1;
 ///
 /// Serialised as `{"norn_session_format":N}`. The key is deliberately not
 /// `type` so a header line can never be confused with a
-/// [`SessionEvent`] (which is internally tagged on `type`), and vice
+/// [`SessionEvent`](crate::session::events::SessionEvent) (which is
+/// internally tagged on `type`), and vice
 /// versa. The header is optional on read: files created before versioning
 /// (format `0`) start directly with an event line and still load.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,29 +31,6 @@ pub struct SessionFileHeader {
     /// Schema version of the writer that created the file.
     #[serde(rename = "norn_session_format")]
     pub version: u32,
-}
-
-/// Result of tolerantly reading a session JSONL file.
-///
-/// Produced by [`read_session_events`](super::io::read_session_events):
-/// structurally corrupt lines (torn writes, invalid JSON),
-/// unknown-variant lines (events from a newer writer), and duplicate
-/// `EventId` lines (crash-retry artifacts; first occurrence kept) are
-/// skipped with a `tracing::warn!` and counted in
-/// [`Self::skipped_lines`] instead of failing the whole session.
-#[derive(Debug)]
-pub struct SessionFileRead {
-    /// Every event that parsed successfully, in file order, with later
-    /// duplicate-`EventId` occurrences removed.
-    pub events: Vec<SessionEvent>,
-    /// Number of non-empty lines that were skipped: unparseable as a
-    /// [`SessionEvent`] (torn write, invalid JSON, unknown variant) or
-    /// carrying an `EventId` already seen earlier in the file. `0` for
-    /// a healthy file.
-    pub skipped_lines: u64,
-    /// Schema version from the file's header line, or `None` for a
-    /// pre-versioning (format `0`) file with no header.
-    pub format_version: Option<u32>,
 }
 
 /// Errors produced by the session persistence layer (NC-002).
@@ -66,6 +43,23 @@ pub enum SessionPersistError {
     /// JSON (de)serialization failed.
     #[error("session persistence serde error: {0}")]
     Serde(#[from] serde_json::Error),
+
+    /// Waiting for the inter-process session-index lock exceeded the
+    /// caller-configured acquisition deadline (see
+    /// [`SessionManager::with_index_lock_deadline`](crate::session::SessionManager::with_index_lock_deadline)).
+    /// The index was not read or modified. Without a configured
+    /// deadline the wait is indefinite and this variant is never
+    /// produced.
+    #[error(
+        "timed out after {waited:?} waiting for the session index lock at {}",
+        path.display()
+    )]
+    IndexLockTimeout {
+        /// Path of the lock file that could not be acquired in time.
+        path: std::path::PathBuf,
+        /// The configured deadline that elapsed.
+        waited: std::time::Duration,
+    },
 
     /// Session ID could not be resolved against the index.
     #[error("no session matches identifier '{input}'")]

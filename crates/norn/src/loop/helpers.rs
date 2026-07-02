@@ -30,6 +30,7 @@ use crate::session::store::EventStore;
 // Re-export tool-dispatch functions so runner.rs imports stay unchanged.
 pub(super) use super::tool_dispatch::{
     PlannedBatchRequest, ToolResultRecord, append_tool_result, execute_planned_tool_batch,
+    installed_inline_char_limit,
 };
 
 pub(super) use crate::r#loop::rule_wiring::{
@@ -106,6 +107,7 @@ pub(super) fn build_initial_messages(
         role: MessageRole::System,
         content: Some(loop_context.base_system_instruction()),
         thinking: String::new(),
+        reasoning: Vec::new(),
         tool_calls: Vec::new(),
         tool_call_id: None,
         tool_name: None,
@@ -118,6 +120,7 @@ pub(super) fn build_initial_messages(
             role: MessageRole::Developer,
             content: Some(dynamic),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             tool_name: None,
@@ -145,6 +148,7 @@ pub(super) fn build_initial_messages(
             role: MessageRole::User,
             content: Some(prompt.to_string()),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             tool_name: None,
@@ -162,8 +166,42 @@ pub(super) fn build_initial_messages(
     })
 }
 
+/// Append a session event without stalling other tasks on the executor
+/// thread.
+///
+/// [`EventStore::append`] performs file I/O under the sink mutex — and
+/// under `DurabilityPolicy::FsyncPerEvent` an fsync plus the index
+/// critical section — so on a multi-thread runtime the append runs
+/// inside [`tokio::task::block_in_place`]: the worker hands its task
+/// queue back to the runtime before blocking, so no other task waits
+/// behind the write. The calling task itself still waits, which is the
+/// point — appends stay strictly ordered per session, and the `Result`
+/// surfaces exactly as an inline append would. `spawn_blocking` (the
+/// [`EventStore::checkpoint_off_executor`] shape) is not usable here
+/// because the step API hands the loop `&EventStore`, not an owned
+/// handle; `block_in_place` is the borrowed-data form of the same
+/// offload.
+///
+/// On a current-thread runtime — where `block_in_place` panics by
+/// contract and there are no sibling workers to protect — the append
+/// runs inline, exactly the semantics that runtime already had.
+pub(crate) fn append_off_executor(
+    store: &EventStore,
+    event: SessionEvent,
+) -> Result<EventId, SessionError> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| store.append(event))
+        }
+        _ => store.append(event),
+    }
+}
+
 /// Append a session event and (if hooks are registered) fire all
 /// session-event hooks.
+///
+/// The append itself goes through [`append_off_executor`] so sink I/O
+/// never stalls unrelated tasks on the executor thread.
 ///
 /// Returns the new event ID. Hook failures cannot be surfaced because
 /// `SessionEventHook::on_event` returns no result; hooks observing the
@@ -173,7 +211,7 @@ pub(super) async fn append_and_notify(
     event: SessionEvent,
     hooks: Option<&HookRegistry>,
 ) -> Result<EventId, SessionError> {
-    let id = store.append(event.clone())?;
+    let id = append_off_executor(store, event.clone())?;
     if let Some(reg) = hooks {
         reg.run_on_event(&event).await;
     }
@@ -183,6 +221,11 @@ pub(super) async fn append_and_notify(
 /// Append an "accepted" tool result for the schema tool call so the
 /// conversation remains well-formed when the loop continues past a stop
 /// point.
+///
+/// `inline_char_limit` is the step's resolved model-facing inline limit
+/// ([`installed_inline_char_limit`]); the constant acceptance string never
+/// approaches it, but every persisted tool result carries the same
+/// effective budget.
 pub(super) async fn accept_schema_tool_call(
     store: &EventStore,
     messages: &mut Vec<Message>,
@@ -190,6 +233,7 @@ pub(super) async fn accept_schema_tool_call(
     schema_tool_name: &str,
     hooks: Option<&HookRegistry>,
     event_tx: Option<&crate::provider::agent_event::AgentEventSender>,
+    inline_char_limit: usize,
 ) -> Result<(), SessionError> {
     if let Some(idx) = response
         .tool_calls
@@ -206,6 +250,7 @@ pub(super) async fn accept_schema_tool_call(
                 kind: schema_tc.kind,
                 output: &Value::String("accepted".to_string()),
                 duration_ms: 0,
+                inline_char_limit,
             },
             hooks,
             event_tx,
@@ -232,6 +277,7 @@ pub(super) async fn reject_post_schema_tools(
     schema_tool_name: &str,
     hooks: Option<&HookRegistry>,
     event_tx: Option<&crate::provider::agent_event::AgentEventSender>,
+    inline_char_limit: usize,
 ) -> Result<(), SessionError> {
     let schema_idx = response
         .tool_calls
@@ -255,6 +301,7 @@ pub(super) async fn reject_post_schema_tools(
                     kind: tc.kind,
                     output: &rejection,
                     duration_ms: 0,
+                    inline_char_limit,
                 },
                 hooks,
                 event_tx,
@@ -308,6 +355,7 @@ pub(super) async fn handle_iteration_signals(
                     role: MessageRole::User,
                     content: Some(text),
                     thinking: String::new(),
+                    reasoning: Vec::new(),
                     tool_calls: Vec::new(),
                     tool_call_id: None,
                     tool_name: None,
@@ -463,7 +511,7 @@ pub async fn ensure_tool_results_complete(store: &EventStore) {
                 }),
                 duration_ms: 0,
             };
-            if let Err(e) = store.append(event) {
+            if let Err(e) = append_off_executor(store, event) {
                 tracing::error!(
                     tool_call_id = %tc.call_id,
                     error = %e,
@@ -471,5 +519,114 @@ pub async fn ensure_tool_results_complete(store: &EventStore) {
                 );
             }
         }
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+mod tests {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Duration;
+
+    use super::*;
+    use crate::session::persistence::SessionPersistError;
+    use crate::session::store::PersistenceSink;
+
+    fn user_event(content: &str) -> SessionEvent {
+        SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: content.to_owned(),
+        }
+    }
+
+    /// A sink whose `persist` blocks until a handshake task — which can
+    /// only run if the executor stays live while the write blocks —
+    /// releases it.
+    struct HandshakeSink {
+        entered: Arc<AtomicBool>,
+        release_rx: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl PersistenceSink for HandshakeSink {
+        fn persist(&mut self, _event: &SessionEvent) -> Result<(), SessionPersistError> {
+            self.entered.store(true, Ordering::SeqCst);
+            self.release_rx
+                .recv_timeout(Duration::from_secs(10))
+                .map_err(|e| {
+                    SessionPersistError::Io(std::io::Error::other(format!(
+                        "executor stalled: no task released the blocking persist: {e}"
+                    )))
+                })?;
+            Ok(())
+        }
+    }
+
+    /// The off-executor guarantee: with exactly one worker thread, a
+    /// blocking sink write inside `append_and_notify` must not stall the
+    /// runtime. The sink blocks until a *separately spawned task* releases
+    /// it — with an inline append on the single worker that task could
+    /// never run and the handshake would time out; `block_in_place`
+    /// hands the worker's queue back to the runtime, so the release task
+    /// proceeds while the write blocks.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn append_and_notify_does_not_stall_other_tasks_on_the_worker() {
+        let entered = Arc::new(AtomicBool::new(false));
+        let (release_tx, release_rx) = std::sync::mpsc::channel();
+        let store = EventStore::with_sink(Box::new(HandshakeSink {
+            entered: Arc::clone(&entered),
+            release_rx,
+        }));
+
+        let entered_for_task = Arc::clone(&entered);
+        let releaser = tokio::spawn(async move {
+            while !entered_for_task.load(Ordering::SeqCst) {
+                tokio::time::sleep(Duration::from_millis(1)).await;
+            }
+            release_tx.send(()).expect("sink is waiting on the channel");
+        });
+
+        let id = append_and_notify(&store, user_event("hello"), None)
+            .await
+            .expect("append must succeed once the release task runs");
+        assert_eq!(store.len(), 1);
+        assert_eq!(store.last_event_id(), Some(id));
+        releaser.await.expect("release task completes");
+    }
+
+    /// Error-surfacing parity: a failing sink persist comes back as the
+    /// same typed `StorageError` the inline append produced, and the
+    /// event is not in the in-memory store.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 1)]
+    async fn append_and_notify_surfaces_sink_errors_unchanged() {
+        struct FailingSink;
+        impl PersistenceSink for FailingSink {
+            fn persist(&mut self, _event: &SessionEvent) -> Result<(), SessionPersistError> {
+                Err(SessionPersistError::Io(std::io::Error::other("disk full")))
+            }
+        }
+        let store = EventStore::with_sink(Box::new(FailingSink));
+
+        let err = append_and_notify(&store, user_event("lost"), None)
+            .await
+            .expect_err("sink failure must surface");
+        assert!(
+            matches!(err, SessionError::StorageError { .. }),
+            "expected StorageError, got {err:?}",
+        );
+        assert!(store.is_empty(), "failed append must not reach memory");
+    }
+
+    /// The flavor gate: on a current-thread runtime `block_in_place`
+    /// panics by contract, so the append must take the inline arm. A
+    /// plain `#[tokio::test]` runs on the current-thread flavor — this
+    /// test passing at all proves the gate.
+    #[tokio::test]
+    async fn append_and_notify_runs_inline_on_current_thread_runtime() {
+        let store = EventStore::new();
+        append_and_notify(&store, user_event("inline"), None)
+            .await
+            .expect("inline append on current-thread runtime");
+        assert_eq!(store.len(), 1);
     }
 }

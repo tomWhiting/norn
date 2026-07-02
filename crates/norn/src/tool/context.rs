@@ -49,7 +49,7 @@ pub struct FlagEntry {
 /// Shared per-agent working directory.
 ///
 /// Wraps a [`PathBuf`] in `Arc<Mutex<…>>` so that [`ToolContext`] and
-/// [`crate::r#loop::loop_context::LoopContext`] can clone the handle and
+/// [`crate::agent_loop::loop_context::LoopContext`] can clone the handle and
 /// share a single source of truth for the agent's current directory.
 /// Bash's `cd` parsing updates this through `set`; subsequent tool calls
 /// and loop-level command executions read it through `get`.
@@ -184,7 +184,7 @@ pub struct ToolContext {
     extensions: Mutex<HashMap<TypeId, Arc<dyn Any + Send + Sync>>>,
     /// Per-agent working directory used to resolve relative paths.
     ///
-    /// Shared (cloned `Arc`) with [`crate::r#loop::loop_context::LoopContext`]
+    /// Shared (cloned `Arc`) with [`crate::agent_loop::loop_context::LoopContext`]
     /// so that bash's `cd` parsing and the loop's prompt commands / hooks /
     /// rules all see the same value.
     working_dir: SharedWorkingDir,
@@ -262,7 +262,7 @@ impl ToolContext {
     /// Returns a clone of the shared working-dir handle.
     ///
     /// Use this to share the same underlying value with another component
-    /// (e.g. [`crate::r#loop::loop_context::LoopContext`]) so updates from
+    /// (e.g. [`crate::agent_loop::loop_context::LoopContext`]) so updates from
     /// one site are visible at the other.
     #[must_use]
     pub fn shared_working_dir(&self) -> SharedWorkingDir {
@@ -278,7 +278,7 @@ impl ToolContext {
     /// Updates the working directory.
     ///
     /// Visible immediately to every holder of the shared handle (including
-    /// any [`crate::r#loop::loop_context::LoopContext`] cloned from this
+    /// any [`crate::agent_loop::loop_context::LoopContext`] cloned from this
     /// context).
     pub fn set_working_dir(&self, dir: PathBuf) {
         self.working_dir.set(dir);

@@ -235,8 +235,13 @@ mod regexes {
     pub fn result_snippet() -> Option<&'static Regex> {
         static RE: OnceLock<Option<Regex>> = OnceLock::new();
         RE.get_or_init(|| {
+            // Lazy body match: the capture must stop at the snippet
+            // element's own closing tag. A greedy inner-tag matcher
+            // (`(?:<[^>]*>[^<]*)*`) swallows `</a>` itself and runs on to
+            // the *last* closing tag in the document, folding every
+            // subsequent result into the first snippet.
             compile(
-                r#"<a[^>]*class="result__snippet"[^>]*>([^<]*(?:<[^>]*>[^<]*)*)</a>"#,
+                r#"(?s)<a[^>]*class="result__snippet"[^>]*>(.*?)</a>"#,
                 "result_snippet",
             )
         })
@@ -276,8 +281,22 @@ fn parse_ddg_results(html: &str, max_results: usize) -> Vec<SearchResult> {
             continue;
         }
 
+        // Structural association: a snippet belongs to this link only if
+        // it appears between this link and the next one in the document.
+        // Parallel-array indexing would misattribute every snippet after
+        // the first result that lacks one.
+        let link_end = link_cap.get(0).map(|m| m.end()).unwrap_or_default();
+        let next_link_start = links
+            .get(i + 1)
+            .and_then(|c| c.get(0))
+            .map_or(html.len(), |m| m.start());
         let snippet = snippets
-            .get(i)
+            .iter()
+            .find(|c| {
+                c.get(0).is_some_and(|whole| {
+                    whole.start() >= link_end && whole.start() < next_link_start
+                })
+            })
             .and_then(|c| c.get(1))
             .map(|m| html_decode(&strip_tags(tag_re, m.as_str())))
             .unwrap_or_default();
@@ -448,6 +467,55 @@ mod tests {
         let results = parse_ddg_results(html, 5);
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].url, "https://example.com/");
+    }
+
+    /// Regression: snippets were zipped to links by parallel-array index,
+    /// so one result without a snippet shifted every later snippet onto
+    /// the wrong result. Association is structural (document position):
+    /// the middle result here has no snippet and must stay empty while
+    /// its neighbours keep their own text.
+    #[test]
+    fn missing_snippet_does_not_shift_attribution() {
+        let html = r#"
+            <div class="result">
+              <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Ffirst.example%2F">First</a>
+              <a class="result__snippet">first snippet</a>
+            </div>
+            <div class="result">
+              <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fsecond.example%2F">Second (no snippet)</a>
+            </div>
+            <div class="result">
+              <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fthird.example%2F">Third</a>
+              <a class="result__snippet">third snippet</a>
+            </div>
+        "#;
+        let results = parse_ddg_results(html, 5);
+        assert_eq!(results.len(), 3);
+        assert_eq!(results[0].url, "https://first.example/");
+        assert_eq!(results[0].snippet, "first snippet");
+        assert_eq!(results[1].url, "https://second.example/");
+        assert_eq!(
+            results[1].snippet, "",
+            "a result without a snippet must not steal the next one",
+        );
+        assert_eq!(results[2].url, "https://third.example/");
+        assert_eq!(results[2].snippet, "third snippet");
+    }
+
+    /// Filtered-out links (DDG-internal) must not consume the snippet
+    /// window of the results around them.
+    #[test]
+    fn filtered_internal_link_does_not_misattribute_snippets() {
+        let html = r#"
+            <a class="result__a" href="https://duckduckgo.com/about">About DDG</a>
+            <a class="result__snippet">internal snippet</a>
+            <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fkept.example%2F">Kept</a>
+            <a class="result__snippet">kept snippet</a>
+        "#;
+        let results = parse_ddg_results(html, 5);
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].url, "https://kept.example/");
+        assert_eq!(results[0].snippet, "kept snippet");
     }
 
     #[test]

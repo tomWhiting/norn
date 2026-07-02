@@ -16,7 +16,7 @@ mod lifecycle;
 pub mod reclaim;
 pub mod spawn;
 mod spawn_context;
-mod spawn_launch;
+pub(crate) mod spawn_launch;
 mod spawn_outcome;
 
 pub use self::coord::{

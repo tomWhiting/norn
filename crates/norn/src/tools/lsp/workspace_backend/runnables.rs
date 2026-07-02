@@ -1,8 +1,9 @@
 //! Parsing and fallback discovery for [`TestRunnable`] values.
 //!
-//! Houses the pure JSON parser for `rust-analyzer/relatedTests` responses
-//! and the references-plus-call-hierarchy fallback used when the server
-//! does not implement the experimental method (C77).
+//! Houses the pure JSON parsers for `rust-analyzer/relatedTests` and
+//! `experimental/runnables` responses, and the references-plus-call-hierarchy
+//! fallback used when the server does not implement the experimental
+//! method (C77).
 
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -85,6 +86,85 @@ pub(super) fn parse_related_tests_response(val: &serde_json::Value) -> Vec<TestR
         out.push(TestRunnable {
             label: label.to_owned(),
             kind: TestRunnableKind::Test,
+            location,
+            cargo_args,
+            executable_args,
+            cwd,
+            workspace_root,
+        });
+    }
+    out
+}
+
+/// Classify a rust-analyzer runnable by its label and cargo arguments,
+/// returning `None` for non-test runnables (`run`, `check`, `bench`, …).
+///
+/// rust-analyzer labels test runnables `test <path>`, module runnables
+/// `test-mod <path>`, doc tests `doctest <path>`, and the package-level
+/// runner `cargo test -p <pkg> …`. The package-level runner maps to
+/// [`TestRunnableKind::TestModule`] because the `Package` test scope
+/// filters on that kind (see `diagnostics_check::lsp_tests`).
+fn classify_test_runnable(label: &str, cargo_args: &[String]) -> Option<TestRunnableKind> {
+    if label.starts_with("doctest ") || cargo_args.iter().any(|a| a == "--doc") {
+        return Some(TestRunnableKind::DocTest);
+    }
+    if label.starts_with("test-mod ") {
+        return Some(TestRunnableKind::TestModule);
+    }
+    if label.starts_with("test ") {
+        return Some(TestRunnableKind::Test);
+    }
+    if label.starts_with("cargo test") && cargo_args.first().is_some_and(|a| a == "test") {
+        return Some(TestRunnableKind::TestModule);
+    }
+    None
+}
+
+/// Parse the JSON response of `experimental/runnables` into
+/// [`TestRunnable`]s, keeping only test-flavoured runnables.
+///
+/// The response shape is `Vec<Runnable>` where each `Runnable` carries
+/// `label`, optional `location` (a `LocationLink`), `kind` and `args`.
+/// Non-test runnables (`run`, `check`, `bench`) and elements that fail to
+/// parse are skipped — a malformed entry does not fail the whole request.
+pub(super) fn parse_experimental_runnables_response(val: &serde_json::Value) -> Vec<TestRunnable> {
+    let Some(items) = val.as_array() else {
+        return Vec::new();
+    };
+    let mut out = Vec::with_capacity(items.len());
+    for item in items {
+        let Some(label) = item.get("label").and_then(serde_json::Value::as_str) else {
+            continue;
+        };
+        let location = item.get("location").and_then(parse_location_link_value);
+        let kind_tag = item
+            .get("kind")
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("");
+        let mut cargo_args = Vec::new();
+        let mut executable_args = Vec::new();
+        let mut cwd = None;
+        let mut workspace_root = None;
+        if kind_tag == "cargo"
+            && let Some(args) = item.get("args")
+        {
+            cargo_args = string_array(args.get("cargoArgs"));
+            executable_args = string_array(args.get("executableArgs"));
+            cwd = args
+                .get("cwd")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+            workspace_root = args
+                .get("workspaceRoot")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned);
+        }
+        let Some(kind) = classify_test_runnable(label, &cargo_args) else {
+            continue;
+        };
+        out.push(TestRunnable {
+            label: label.to_owned(),
+            kind,
             location,
             cargo_args,
             executable_args,
@@ -281,5 +361,116 @@ mod tests {
     fn parse_location_link_value_missing_fields_returns_none() {
         let raw = serde_json::json!({ "targetUri": "file:///tmp/x.rs" });
         assert!(parse_location_link_value(&raw).is_none());
+    }
+
+    #[test]
+    fn experimental_runnables_maps_test_module_doctest_and_package_kinds() {
+        let raw = serde_json::json!([
+            {
+                "label": "test foo::bar",
+                "kind": "cargo",
+                "location": {
+                    "targetUri": "file:///tmp/x.rs",
+                    "targetSelectionRange": {
+                        "start": { "line": 9, "character": 4 },
+                        "end": { "line": 9, "character": 7 }
+                    }
+                },
+                "args": {
+                    "workspaceRoot": "/tmp",
+                    "cwd": "/tmp",
+                    "cargoArgs": ["test", "--package", "x"],
+                    "executableArgs": ["foo::bar", "--exact"]
+                }
+            },
+            {
+                "label": "test-mod foo::tests",
+                "kind": "cargo",
+                "args": { "cargoArgs": ["test", "--package", "x"], "executableArgs": ["foo::tests"] }
+            },
+            {
+                "label": "doctest foo::documented",
+                "kind": "cargo",
+                "args": { "cargoArgs": ["test", "--doc", "--package", "x"], "executableArgs": [] }
+            },
+            {
+                "label": "cargo test -p x --all-targets",
+                "kind": "cargo",
+                "args": { "cargoArgs": ["test", "--package", "x", "--all-targets"], "executableArgs": [] }
+            }
+        ]);
+        let out = parse_experimental_runnables_response(&raw);
+        assert_eq!(out.len(), 4);
+
+        assert_eq!(out[0].kind, TestRunnableKind::Test);
+        assert_eq!(out[0].cargo_args, vec!["test", "--package", "x"]);
+        assert_eq!(out[0].executable_args, vec!["foo::bar", "--exact"]);
+        assert_eq!(out[0].cwd.as_deref(), Some("/tmp"));
+        assert_eq!(out[0].workspace_root.as_deref(), Some("/tmp"));
+        let loc = out[0].location.as_ref().expect("location present");
+        assert_eq!((loc.line, loc.column), (10, 5), "one-based conversion");
+
+        assert_eq!(out[1].kind, TestRunnableKind::TestModule);
+        assert_eq!(out[2].kind, TestRunnableKind::DocTest);
+        assert_eq!(
+            out[3].kind,
+            TestRunnableKind::TestModule,
+            "package-level runner maps to TestModule for the Package scope filter"
+        );
+    }
+
+    #[test]
+    fn experimental_runnables_skips_non_test_runnables() {
+        let raw = serde_json::json!([
+            {
+                "label": "run x",
+                "kind": "cargo",
+                "args": { "cargoArgs": ["run", "--package", "x"], "executableArgs": [] }
+            },
+            {
+                "label": "check x",
+                "kind": "cargo",
+                "args": { "cargoArgs": ["check", "--package", "x"], "executableArgs": [] }
+            },
+            {
+                "label": "bench foo::bench_it",
+                "kind": "cargo",
+                "args": { "cargoArgs": ["bench", "--package", "x"], "executableArgs": [] }
+            },
+            {
+                "label": "test foo::kept",
+                "kind": "cargo",
+                "args": { "cargoArgs": ["test", "--package", "x"], "executableArgs": [] }
+            }
+        ]);
+        let out = parse_experimental_runnables_response(&raw);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].label, "test foo::kept");
+    }
+
+    #[test]
+    fn experimental_runnables_skips_malformed_entries() {
+        let raw = serde_json::json!([
+            { "kind": "cargo" },
+            { "label": "test ok", "kind": "cargo", "args": { "cargoArgs": ["test"] } }
+        ]);
+        let out = parse_experimental_runnables_response(&raw);
+        assert_eq!(out.len(), 1);
+        assert_eq!(out[0].label, "test ok");
+    }
+
+    #[test]
+    fn experimental_runnables_non_array_is_empty() {
+        let raw = serde_json::json!({ "not": "an array" });
+        assert!(parse_experimental_runnables_response(&raw).is_empty());
+    }
+
+    #[test]
+    fn classify_doctest_by_cargo_args_without_label_prefix() {
+        let args = vec!["test".to_owned(), "--doc".to_owned()];
+        assert_eq!(
+            classify_test_runnable("weird label", &args),
+            Some(TestRunnableKind::DocTest)
+        );
     }
 }

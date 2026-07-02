@@ -13,8 +13,8 @@ use std::collections::BTreeMap;
 use super::merge_settings;
 use crate::config::types::{
     HookEntry, HookSettings, LengthOverrideEntry, McpServerSettings, ModelAliasSettings,
-    NornSettings, PermissionSettings, ProviderProfileSettings, ProviderSettings, ToolSettings,
-    WriteToolSettings,
+    NornSettings, PermissionSettings, ProviderProfileSettings, ProviderSettings, SkillToolSettings,
+    ToolSettings, WriteToolSettings,
 };
 
 fn ns_model(model: &str) -> NornSettings {
@@ -177,7 +177,7 @@ fn hooks_extend_within_event_slot() {
             pre_tool: Some(vec![HookEntry {
                 matcher: Some("write".to_owned()),
                 command: "user-hook.sh".to_owned(),
-                timeout: None,
+                timeout: 5,
             }]),
             ..HookSettings::default()
         }),
@@ -188,7 +188,7 @@ fn hooks_extend_within_event_slot() {
             pre_tool: Some(vec![HookEntry {
                 matcher: Some("edit".to_owned()),
                 command: "project-hook.sh".to_owned(),
-                timeout: None,
+                timeout: 10,
             }]),
             ..HookSettings::default()
         }),
@@ -272,6 +272,7 @@ fn tools_write_deep_merge_preserves_sibling_keys() {
                 max_code_lines: Some(500),
                 length_overrides: None,
             }),
+            skill: None,
             bash: None,
             edit: None,
         }),
@@ -286,6 +287,7 @@ fn tools_write_deep_merge_preserves_sibling_keys() {
                     limit: 2000,
                 }]),
             }),
+            skill: None,
             bash: None,
             edit: None,
         }),
@@ -309,6 +311,7 @@ fn tools_write_same_key_higher_overrides_lower() {
                 max_code_lines: Some(500),
                 length_overrides: None,
             }),
+            skill: None,
             bash: None,
             edit: None,
         }),
@@ -320,6 +323,7 @@ fn tools_write_same_key_higher_overrides_lower() {
                 max_code_lines: Some(800),
                 length_overrides: None,
             }),
+            skill: None,
             bash: None,
             edit: None,
         }),
@@ -330,6 +334,102 @@ fn tools_write_same_key_higher_overrides_lower() {
     let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
     let write = merged.tools.unwrap().write.unwrap();
     assert_eq!(write.max_code_lines, Some(800));
+}
+
+#[test]
+fn tools_skill_deep_merge_higher_layer_wins() {
+    // `tools.skill.shell_execution` follows the same four-layer scalar
+    // precedence as `tools.write` fields: the highest layer that sets
+    // the key wins.
+    let mut user = NornSettings {
+        tools: Some(ToolSettings {
+            write: None,
+            skill: Some(SkillToolSettings {
+                shell_execution: Some(true),
+            }),
+            bash: None,
+            edit: None,
+        }),
+        ..NornSettings::default()
+    };
+    let mut project = NornSettings {
+        tools: Some(ToolSettings {
+            write: None,
+            skill: Some(SkillToolSettings {
+                shell_execution: Some(false),
+            }),
+            bash: None,
+            edit: None,
+        }),
+        ..NornSettings::default()
+    };
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    let skill = merged.tools.unwrap().skill.unwrap();
+    assert_eq!(skill.shell_execution, Some(false));
+}
+
+#[test]
+fn tools_skill_sibling_write_keys_survive_skill_only_layers() {
+    // A project layer contributing only `tools.skill` must not clobber
+    // the user layer's `tools.write` block — the deep merge preserves
+    // sibling sub-sections contributed at different layers.
+    let mut user = NornSettings {
+        tools: Some(ToolSettings {
+            write: Some(WriteToolSettings {
+                max_code_lines: Some(100),
+                length_overrides: None,
+            }),
+            skill: None,
+            bash: None,
+            edit: None,
+        }),
+        ..NornSettings::default()
+    };
+    let mut project = NornSettings {
+        tools: Some(ToolSettings {
+            write: None,
+            skill: Some(SkillToolSettings {
+                shell_execution: Some(false),
+            }),
+            bash: None,
+            edit: None,
+        }),
+        ..NornSettings::default()
+    };
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    let tools = merged.tools.unwrap();
+    assert_eq!(tools.write.unwrap().max_code_lines, Some(100));
+    assert_eq!(tools.skill.unwrap().shell_execution, Some(false));
+}
+
+#[test]
+fn tools_skill_absent_everywhere_stays_none() {
+    // No layer configures `tools.skill` — the merged slot must stay
+    // `None` so the runtime defers to the tool's documented default
+    // (shell execution enabled).
+    let mut user = NornSettings {
+        tools: Some(ToolSettings {
+            write: Some(WriteToolSettings {
+                max_code_lines: Some(100),
+                length_overrides: None,
+            }),
+            skill: None,
+            bash: None,
+            edit: None,
+        }),
+        ..NornSettings::default()
+    };
+    let mut project = NornSettings::default();
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    let tools = merged.tools.unwrap();
+    assert!(tools.skill.is_none());
+    assert_eq!(tools.write.unwrap().max_code_lines, Some(100));
 }
 
 #[test]

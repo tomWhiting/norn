@@ -1,0 +1,5 @@
+error: ToolArgs: unsupported type `std::path::PathBuf`. Use #[tool_args(schema = {...})] to provide a manual schema.
+ --> tests/ui/unsupported_type.rs:8:13
+  |
+8 |     output: std::path::PathBuf,
+  |             ^^^^^^^^^^^^^^^^^^

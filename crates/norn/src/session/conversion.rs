@@ -76,6 +76,7 @@ fn event_to_message(
             role: MessageRole::User,
             content: Some(content.clone()),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             tool_name: None,
@@ -95,19 +96,26 @@ fn event_to_message(
                 Some(content.clone())
             },
             thinking: thinking.clone(),
+            // Structured reasoning items are not persisted on
+            // AssistantMessage events: encrypted reasoning replay is a
+            // live-run concern (the blob is only valid within the model
+            // conversation that produced it), so resumed sessions rebuild
+            // with an empty set and the next turn regenerates reasoning.
+            reasoning: Vec::new(),
             tool_calls: tool_calls
                 .iter()
                 .map(|tc| AssistantToolCall {
                     call_id: tc.call_id.clone(),
                     name: tc.name.clone(),
                     arguments: match tc.kind {
-                        ToolCallKind::Custom => tc.arguments.as_str().map_or_else(
-                            || serde_json::to_string(&tc.arguments).unwrap_or_default(),
-                            String::from,
-                        ),
-                        ToolCallKind::Function => {
-                            serde_json::to_string(&tc.arguments).unwrap_or_default()
-                        }
+                        // `Value`'s `Display` renders compact JSON and is
+                        // total — unlike a fallible serializer round-trip,
+                        // it can never silently collapse arguments to "".
+                        ToolCallKind::Custom => tc
+                            .arguments
+                            .as_str()
+                            .map_or_else(|| tc.arguments.to_string(), String::from),
+                        ToolCallKind::Function => tc.arguments.to_string(),
                     },
                     kind: tc.kind,
                 })
@@ -126,6 +134,7 @@ fn event_to_message(
             role: MessageRole::ToolResult,
             content: Some(value_to_content_string(output)),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: Some(tool_call_id.clone()),
             tool_name: Some(tool_name.clone()),
@@ -140,6 +149,7 @@ fn event_to_message(
             role: MessageRole::Developer,
             content: Some(format!("Prior conversation compaction summary:\n{summary}")),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             tool_name: None,
@@ -156,10 +166,14 @@ fn event_to_message(
     }
 }
 
+/// Render a tool output value as message content: strings pass through
+/// verbatim; anything else renders as compact JSON via `Value`'s total
+/// `Display` — a fallible serializer here could silently collapse a tool
+/// result to the empty string.
 fn value_to_content_string(v: &serde_json::Value) -> String {
     match v {
         serde_json::Value::String(s) => s.clone(),
-        other => serde_json::to_string(other).unwrap_or_default(),
+        other => other.to_string(),
     }
 }
 
@@ -387,6 +401,43 @@ mod tests {
                 .as_deref()
                 .is_some_and(|content| content.contains("old work summarized")),
         );
+    }
+
+    /// Non-string arguments on a Custom-kind call (and all Function-kind
+    /// arguments) must render as their full compact JSON — never an
+    /// empty string, which the old fallible-serializer fallback could
+    /// silently produce.
+    #[test]
+    fn non_string_arguments_render_full_json_never_empty() {
+        let args = serde_json::json!({"nested": {"key": "value"}, "n": 7});
+        let events = vec![SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            content: String::new(),
+            thinking: String::new(),
+            tool_calls: vec![
+                ToolCallEvent {
+                    call_id: "call_custom_obj".to_owned(),
+                    name: "apply_patch".to_owned(),
+                    arguments: args.clone(),
+                    kind: crate::provider::request::ToolCallKind::Custom,
+                },
+                ToolCallEvent {
+                    call_id: "call_fn".to_owned(),
+                    name: "read".to_owned(),
+                    arguments: args.clone(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+            ],
+            usage: EventUsage::default(),
+            stop_reason: String::new(),
+            response_id: None,
+        }];
+        let msgs = events_to_messages(&events);
+        for tc in &msgs[0].tool_calls {
+            assert!(!tc.arguments.is_empty(), "arguments must never be empty");
+            let parsed: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap();
+            assert_eq!(parsed, args, "round-trips losslessly for {}", tc.call_id);
+        }
     }
 
     #[test]

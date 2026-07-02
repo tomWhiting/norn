@@ -3,7 +3,7 @@
 //! The `follow_up` tool references a prior call by `tool_call_id` and resolves
 //! the named deferred action from that call's registered follow-ups. This
 //! module owns the read path against the session
-//! [`ActionLog`](crate::session::action_log::ActionLog): fetching the log from
+//! [`ActionLog`]: fetching the log from
 //! the [`ToolContext`], loading the original call's arguments and follow-up
 //! vector, and selecting an action by exact name.
 //!

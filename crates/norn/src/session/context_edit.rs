@@ -85,18 +85,31 @@ impl ContextEdits {
         Self::default()
     }
 
+    /// Restore compaction supersession marks from ids that were already
+    /// derived elsewhere — typically
+    /// [`ReplayArtifacts::superseded_event_ids`](crate::session::ReplayArtifacts::superseded_event_ids)
+    /// from a single-pass session replay. Idempotent.
+    pub fn mark_superseded(&mut self, ids: impl IntoIterator<Item = EventId>) {
+        self.superseded.extend(ids);
+    }
+
     /// Rebuild persisted compaction marks from the append-only store.
     ///
     /// This is idempotent and intentionally only restores compaction
     /// supersession. Suppression and injection marks are live editing state and
     /// are not represented by durable session events.
+    ///
+    /// Callers that already hold a single-pass
+    /// [`ReplayArtifacts`](crate::session::ReplayArtifacts) should pass its
+    /// `superseded_event_ids` to [`Self::mark_superseded`] instead — this
+    /// method walks the whole store again.
     pub fn apply_persisted_compactions(&mut self, store: &EventStore) {
         for event in store.events() {
             if let SessionEvent::Compaction {
                 replaced_event_ids, ..
             } = event
             {
-                self.superseded.extend(replaced_event_ids);
+                self.mark_superseded(replaced_event_ids);
             }
         }
     }

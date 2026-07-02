@@ -7,6 +7,7 @@
 pub mod jwt;
 mod login_server;
 mod manager;
+mod options;
 mod pkce;
 mod refresh;
 mod revoke;
@@ -14,7 +15,8 @@ mod storage;
 mod types;
 
 pub use login_server::{LoginServer, ServerOptions, run_login_server};
-pub use manager::{AuthManager, RefreshTokenError};
+pub use manager::{AuthManager, AuthManagerBuildError, RefreshTokenError};
+pub use options::OAuthHttpOptions;
 pub use revoke::logout_with_revoke;
 pub use storage::{AUTH_JSON_FILE, AuthCredentialsStoreMode, load_auth_dot_json};
 pub use types::{AuthDotJson, ChatGptTokens, CodexAuth, IdTokenInfo};

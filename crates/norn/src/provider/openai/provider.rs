@@ -5,9 +5,11 @@ use std::time::Duration;
 
 use super::execute::SenderProvider;
 use super::rate_limiter::RateLimiter;
+use super::request::{CATALOG_BACKEND_CODEX_SUBSCRIPTION, CATALOG_BACKEND_RESPONSES_API};
 use crate::error::ProviderError;
 use crate::provider::auth::{AuthProvider, AuthSource, build_from_auth_source};
 use crate::provider::events::ProviderEvent;
+use crate::provider::exec::{DEFAULT_RETRY_BACKOFF, StreamExecutor};
 use crate::provider::request::{ProviderConfig, ProviderOptions, ProviderRequest};
 use crate::provider::startup_trace;
 use crate::provider::traits::{Provider, ProviderStream};
@@ -70,7 +72,7 @@ impl OpenAiProvider {
 
     /// Constructs a provider directly from a pre-built
     /// [`AuthProvider`]. Useful for tests using
-    /// [`crate::provider::auth::MockAuthProvider`].
+    /// `crate::provider::auth::MockAuthProvider` (gated behind `test-utils`).
     ///
     /// # Errors
     ///
@@ -112,6 +114,28 @@ impl OpenAiProvider {
     fn endpoint(&self) -> String {
         format!("{}/responses", self.base_url())
     }
+
+    /// Whether this provider instance talks to the `ChatGPT` Codex
+    /// subscription backend: OAuth credentials against the compiled
+    /// `ChatGPT` base URL. Any explicit `base_url` or API-key auth is the
+    /// direct Responses API instead. This single discriminator drives
+    /// both [`Provider::capabilities`] and catalog-backend resolution so
+    /// the two can never disagree.
+    fn is_chatgpt_backend(&self) -> bool {
+        self.config.base_url.is_none()
+            && matches!(self.config.auth_source, AuthSource::OAuth { .. })
+    }
+
+    /// Catalog backend identifier for the connection this provider is
+    /// actually using; governs service-tier resolution during payload
+    /// construction.
+    fn catalog_backend(&self) -> &'static str {
+        if self.is_chatgpt_backend() {
+            CATALOG_BACKEND_CODEX_SUBSCRIPTION
+        } else {
+            CATALOG_BACKEND_RESPONSES_API
+        }
+    }
 }
 
 /// Builds the shared HTTP client.
@@ -132,14 +156,13 @@ fn build_http_client(timeout: Duration) -> Result<reqwest::Client, ProviderError
         .build()
         .map_err(|e| ProviderError::ConnectionFailed {
             reason: format!("failed to build HTTP client: {e}"),
+            kind: crate::error::TransientKind::ConnectionReset,
         })
 }
 
 impl Provider for OpenAiProvider {
     fn capabilities(&self) -> crate::provider::tools::ProviderCapabilities {
-        let is_chatgpt_backend = self.config.base_url.is_none()
-            && matches!(self.config.auth_source, AuthSource::OAuth { .. });
-        if is_chatgpt_backend {
+        if self.is_chatgpt_backend() {
             return crate::provider::tools::ProviderCapabilities {
                 hosted_web_search: true,
                 response_threading: false,
@@ -154,18 +177,19 @@ impl Provider for OpenAiProvider {
             request.config = self.config.provider_options.clone().map(ProviderOptions);
         }
         let sender = SenderProvider {
-            client: self.client.clone(),
-            endpoint: self.endpoint(),
-            timeout: self.config.timeout,
-            max_retries: self.config.max_retries,
-            retry_backoff: self
-                .config
-                .retry_backoff
-                .unwrap_or(super::execute::DEFAULT_RETRY_BACKOFF),
-            retry_after_ceiling: self.config.retry_after_ceiling,
-            rate_limiter: Arc::clone(&self.rate_limiter),
-            auth_provider: Arc::clone(&self.auth_provider),
-            debug_dump_file: self.config.debug_dump_file.clone(),
+            executor: StreamExecutor {
+                client: self.client.clone(),
+                endpoint: self.endpoint(),
+                timeout: self.config.timeout,
+                max_retries: self.config.max_retries,
+                retry_backoff: self.config.retry_backoff.unwrap_or(DEFAULT_RETRY_BACKOFF),
+                retry_after_ceiling: self.config.retry_after_ceiling,
+                rate_limiter: Arc::clone(&self.rate_limiter),
+                auth_provider: Arc::clone(&self.auth_provider),
+                debug_dump_file: self.config.debug_dump_file.clone(),
+                backend_label: "responses",
+            },
+            catalog_backend: self.catalog_backend(),
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<ProviderEvent, ProviderError>>(64);
@@ -302,6 +326,39 @@ mod tests {
         assert_eq!(provider.endpoint(), "http://localhost:9999/v1/responses");
     }
 
+    /// Regression test (final-state hardening, T1 item 9): the catalog
+    /// backend used for service-tier resolution must track the connection
+    /// the provider actually uses, not the catalog default. OAuth against
+    /// the compiled `ChatGPT` base URL is the Codex subscription backend;
+    /// an API key or an explicit base URL is the direct Responses API.
+    #[test]
+    fn catalog_backend_tracks_actual_connection() {
+        let mock: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("k"));
+
+        let mut oauth_config = test_config();
+        oauth_config.auth_source = AuthSource::OAuth { codex_home: None };
+        oauth_config.base_url = None;
+        let oauth_provider =
+            OpenAiProvider::with_auth_provider(oauth_config, Arc::clone(&mock)).expect("create");
+        assert_eq!(oauth_provider.catalog_backend(), "codex_subscription");
+
+        let mut api_key_config = test_config();
+        api_key_config.base_url = None;
+        let api_key_provider =
+            OpenAiProvider::with_auth_provider(api_key_config, Arc::clone(&mock)).expect("create");
+        assert_eq!(api_key_provider.catalog_backend(), "responses_api");
+
+        let mut oauth_custom_url = test_config();
+        oauth_custom_url.auth_source = AuthSource::OAuth { codex_home: None };
+        let custom_provider =
+            OpenAiProvider::with_auth_provider(oauth_custom_url, mock).expect("create");
+        assert_eq!(
+            custom_provider.catalog_backend(),
+            "responses_api",
+            "an explicit base_url is not the ChatGPT subscription backend"
+        );
+    }
+
     #[test]
     fn rate_limit_none_uses_default_permits() {
         let mut config = test_config();
@@ -414,6 +471,7 @@ mod integration_tests {
         let provider = OpenAiProvider::new(config).await.expect("create provider");
         let request = ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some("Say hello in exactly one word.".to_string()),
                 thinking: String::new(),

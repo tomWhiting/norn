@@ -110,6 +110,7 @@ mod tests {
         let est = SimpleTokenEstimator;
         let messages = vec![
             Message {
+                reasoning: Vec::new(),
                 role: MessageRole::System,
                 content: Some("a".repeat(40)),
                 thinking: String::new(),
@@ -119,6 +120,7 @@ mod tests {
                 tool_call_kind: None,
             },
             Message {
+                reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some("b".repeat(20)),
                 thinking: String::new(),
@@ -142,6 +144,7 @@ mod tests {
     fn estimate_includes_tool_call_arguments() {
         let est = SimpleTokenEstimator;
         let msg = Message {
+            reasoning: Vec::new(),
             role: MessageRole::Assistant,
             content: Some(String::new()),
             thinking: String::new(),

@@ -102,7 +102,7 @@ pub enum QualitySignal {
         /// The regex pattern that matched (as supplied in config).
         matched_pattern: String,
         /// Text excerpt centred on the match, up to
-        /// [`EXCERPT_HALF_WINDOW`] characters on each side.
+        /// `EXCERPT_HALF_WINDOW` characters on each side.
         text_excerpt: String,
     },
     /// A short assistant message contained a terminal phrase, suggesting
@@ -357,8 +357,8 @@ pub fn observe_failure_iteration(
 /// [`QualitySignal::Hedging`]. Patterns that fail to compile are logged at
 /// `warn` level and skipped — they never cause this function to fail.
 ///
-/// If the text is shorter than [`PREMATURE_COMPLETION_CHAR_LIMIT`]
-/// characters and contains any of [`TERMINAL_PHRASES`] (case-insensitive),
+/// If the text is shorter than `PREMATURE_COMPLETION_CHAR_LIMIT`
+/// characters and contains any of `TERMINAL_PHRASES` (case-insensitive),
 /// a single [`QualitySignal::PrematureCompletion`] is recorded.
 ///
 /// Returns [`IterationSignal::QualityWarning`] when any signals were
@@ -409,7 +409,7 @@ pub fn check_quality_signals(text: &str, hedging_patterns: &[String]) -> Iterati
 /// Build a char-boundary-safe excerpt of `text` centred on the byte range
 /// `[match_start, match_end)`.
 ///
-/// Pads up to [`EXCERPT_HALF_WINDOW`] characters of context on each side
+/// Pads up to `EXCERPT_HALF_WINDOW` characters of context on each side
 /// while staying within `text` and snapping any boundary that falls in the
 /// middle of a UTF-8 sequence outward to a valid char boundary. This
 /// guarantees the resulting slice is a valid `&str` even when the match

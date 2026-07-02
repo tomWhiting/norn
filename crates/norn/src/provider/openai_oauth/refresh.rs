@@ -1,7 +1,5 @@
 //! OAuth refresh-token exchange.
 
-use std::time::Duration;
-
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
 
@@ -54,7 +52,12 @@ struct ErrorBody {
 /// refresh tokens. Production callers pass the compiled authority
 /// constant; tests inject their mock server URL through the API.
 ///
+/// `client` is the manager's shared HTTP client, built once with the
+/// configured [`OAuthHttpOptions::request_timeout`] and reused across
+/// every refresh instead of constructing a throwaway client per call.
+///
 /// [`AuthManager`]: super::manager::AuthManager
+/// [`OAuthHttpOptions::request_timeout`]: super::options::OAuthHttpOptions::request_timeout
 ///
 /// # Errors
 ///
@@ -63,15 +66,12 @@ struct ErrorBody {
 pub async fn refresh_auth(
     auth: &AuthDotJson,
     token_url: &str,
+    client: &reqwest::Client,
 ) -> Result<AuthDotJson, RefreshError> {
     let tokens = auth
         .tokens
         .as_ref()
         .ok_or_else(|| RefreshError::Permanent("missing OAuth tokens".to_string()))?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-        .map_err(|err| RefreshError::Transient(err.to_string()))?;
     let response = client
         .post(token_url)
         .json(&RefreshRequest {

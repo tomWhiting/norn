@@ -14,7 +14,9 @@
 //! [`from_profile`] takes the resolved values and produces a configured
 //! [`LoopContext`] plus a [`ToolRegistry`] gated to the resolved tools.
 
+use crate::config::permissions::PermissionPolicy;
 use crate::integration::hooks::HookRegistry;
+use crate::r#loop::config::ToolExecutor;
 use crate::r#loop::loop_context::LoopContext;
 use crate::rules::engine::RuleEngine;
 use crate::tool::registry::ToolRegistry;
@@ -100,6 +102,14 @@ impl Profile {
 ///   caller,
 /// - the profile's prompt commands and a fresh cache.
 ///
+/// The profile's resolved disallowed patterns are ENFORCED here (they were
+/// previously collected but never applied): plain tool names are gated out
+/// via [`ToolRegistry::set_disallowed`], and every pattern is folded into
+/// the deny list of the [`PermissionPolicy`] on the registry's shared tool
+/// context (creating one when absent). Callers that replace the registry's
+/// tool context after this call must re-apply the profile deny patterns to
+/// the final context's policy.
+///
 /// `registry` is taken by value and returned with
 /// [`ToolRegistry::set_available`] applied so callers can chain
 /// construction without re-borrowing.
@@ -129,8 +139,66 @@ pub fn from_profile(
     if let Some(tools) = profile.resolved_tools() {
         registry.set_available(tools);
     }
+    apply_disallowed_patterns(profile, &mut registry);
 
     (loop_context, registry)
+}
+
+/// Enforce the profile's resolved disallowed patterns on both restriction
+/// surfaces the profile application reaches.
+///
+/// - Entries that are plain tool names (no `(`, `)`, or `*`) are gated
+///   out of the registry with [`ToolRegistry::set_disallowed`] so the
+///   model never sees the tool.
+/// - Every entry — plain or `name(args)`-shaped — is appended to the deny
+///   list of the [`PermissionPolicy`] on the registry's shared tool
+///   context, so argument-scoped patterns like `bash(rm *)` hard-block at
+///   dispatch. A bare-name deny doubles the registry gate, which is
+///   deliberate: deny is additive and belt-and-braces on a restriction
+///   surface costs nothing.
+///
+/// Matching is verbatim (case-sensitive), identical to the settings
+/// `permissions` grammar.
+fn apply_disallowed_patterns(profile: &Profile, registry: &mut ToolRegistry) {
+    let disallowed = profile.resolved_disallowed();
+    if disallowed.is_empty() {
+        return;
+    }
+
+    let exact_names: Vec<String> = disallowed
+        .iter()
+        .filter(|pattern| !pattern.contains(['(', ')', '*']))
+        .cloned()
+        .collect();
+    if !exact_names.is_empty() {
+        registry.set_disallowed(exact_names);
+    }
+
+    match registry.shared_context() {
+        Some(ctx) => {
+            let base = ctx
+                .get_extension::<PermissionPolicy>()
+                .map(|existing| (*existing).clone())
+                .unwrap_or_default();
+            let merged = base.with_additional_deny(&disallowed);
+            tracing::info!(
+                profile = %profile.name,
+                deny_count = disallowed.len(),
+                "folding profile disallowed patterns into the consent-boundary deny list",
+            );
+            ctx.insert_extension(std::sync::Arc::new(merged));
+        }
+        None => {
+            // Structurally unreachable — ToolRegistry always publishes a
+            // shared context — but a silent skip here would drop a
+            // restriction surface, so it is reported loudly.
+            tracing::error!(
+                profile = %profile.name,
+                "tool registry exposed no shared context; profile disallowed patterns could \
+                 not be folded into the consent boundary",
+            );
+        }
+    }
 }
 
 #[cfg(test)]
@@ -176,6 +244,7 @@ mod tests {
                     disallowed_patterns: vec!["pattern-b".to_owned()],
                 },
             ],
+            capability_names: Vec::new(),
             settings: HashMap::new(),
             prompt_commands: Vec::new(),
         };
@@ -288,6 +357,7 @@ mod tests {
                 system_instructions: vec!["also this".to_owned()],
                 disallowed_patterns: Vec::new(),
             }],
+            capability_names: Vec::new(),
             settings: HashMap::new(),
             prompt_commands: Vec::new(),
         };
@@ -356,6 +426,130 @@ mod tests {
             "all tools must be available when profile has no tool config",
         );
         assert_eq!(registry.len(), 3);
+    }
+
+    /// Regression: `disallowed_patterns` were collected by
+    /// `resolved_disallowed` but never enforced anywhere. Plain tool
+    /// names must now gate the tool out of the registry.
+    #[test]
+    fn from_profile_gates_registry_for_plain_disallowed_names() {
+        let profile = Profile {
+            name: "p".to_owned(),
+            model: "m".to_owned(),
+            capabilities: vec![Capability {
+                name: "restricted".to_owned(),
+                tools: Vec::new(),
+                system_instructions: Vec::new(),
+                disallowed_patterns: vec!["bash".to_owned()],
+            }],
+            ..Profile::default()
+        };
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(StubTool {
+            tool_name: "read".to_owned(),
+        }));
+        registry.register(Box::new(StubTool {
+            tool_name: "bash".to_owned(),
+        }));
+
+        let (_loop_ctx, registry) = from_profile(&profile, registry, None, None);
+        assert!(registry.get("read").is_some(), "read stays available");
+        assert!(
+            registry.get("bash").is_none(),
+            "a plain disallowed name must gate the tool out of the registry",
+        );
+    }
+
+    /// Argument-scoped disallowed patterns fold into the consent
+    /// boundary's deny list on the registry's shared tool context, so
+    /// `bash(rm *)` hard-blocks at dispatch even though the bash tool
+    /// itself stays available.
+    #[test]
+    fn from_profile_folds_patterns_into_permission_deny() {
+        use crate::config::permissions::{PermissionDecision, PermissionPolicy};
+
+        let profile = Profile {
+            name: "p".to_owned(),
+            model: "m".to_owned(),
+            capabilities: vec![Capability {
+                name: "restricted".to_owned(),
+                tools: Vec::new(),
+                system_instructions: Vec::new(),
+                disallowed_patterns: vec!["bash(rm *)".to_owned()],
+            }],
+            ..Profile::default()
+        };
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(StubTool {
+            tool_name: "bash".to_owned(),
+        }));
+
+        let (_loop_ctx, registry) = from_profile(&profile, registry, None, None);
+        assert!(
+            registry.get("bash").is_some(),
+            "a pattern-scoped deny must not remove the whole tool",
+        );
+        let ctx = ToolExecutor::shared_context(&registry).expect("registry publishes a context");
+        let policy = ctx
+            .get_extension::<PermissionPolicy>()
+            .expect("profile deny patterns must install a policy");
+        assert!(matches!(
+            policy.evaluate("bash", &serde_json::json!({"command": "rm -rf /"})),
+            PermissionDecision::Deny { .. }
+        ));
+        assert_eq!(
+            policy.evaluate("bash", &serde_json::json!({"command": "ls"})),
+            PermissionDecision::Allow,
+        );
+    }
+
+    /// Profile deny patterns MERGE with an existing settings policy on
+    /// the shared context — deny is additive, never replacing.
+    #[test]
+    fn from_profile_merges_deny_with_existing_policy() {
+        use crate::config::permissions::{PermissionDecision, PermissionPolicy};
+
+        let profile = Profile {
+            name: "p".to_owned(),
+            model: "m".to_owned(),
+            capabilities: vec![Capability {
+                name: "restricted".to_owned(),
+                tools: Vec::new(),
+                system_instructions: Vec::new(),
+                disallowed_patterns: vec!["bash(rm *)".to_owned()],
+            }],
+            ..Profile::default()
+        };
+
+        let registry = ToolRegistry::new();
+        let ctx = ToolExecutor::shared_context(&registry).expect("registry publishes a context");
+        ctx.insert_extension(std::sync::Arc::new(PermissionPolicy::from_patterns(
+            &["write"],
+            &[],
+            &[],
+        )));
+
+        let (_loop_ctx, registry) = from_profile(&profile, registry, None, None);
+        let ctx = ToolExecutor::shared_context(&registry).expect("context survives");
+        let policy = ctx
+            .get_extension::<PermissionPolicy>()
+            .expect("merged policy present");
+        assert!(
+            matches!(
+                policy.evaluate("write", &serde_json::json!({})),
+                PermissionDecision::Deny { .. }
+            ),
+            "settings deny must survive the merge",
+        );
+        assert!(
+            matches!(
+                policy.evaluate("bash", &serde_json::json!({"command": "rm -rf /"})),
+                PermissionDecision::Deny { .. }
+            ),
+            "profile deny must be added",
+        );
     }
 
     #[test]

@@ -231,6 +231,7 @@ mod tests {
             role,
             content: Some(content.to_string()),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             tool_call_id: None,
             tool_name: None,

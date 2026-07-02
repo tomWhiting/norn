@@ -3,7 +3,7 @@
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::Value;
 
 use super::catalog::ToolCatalogEntry;
@@ -20,7 +20,7 @@ use crate::error::ToolError;
 /// Tools declare a category so the system prompt builder can group related
 /// tools together and generate conditional guidance sections. The category
 /// has no effect on tool execution or scheduling.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize)]
 pub enum ToolCategory {
     /// File read, write, edit, and patch operations.
     FileSystem,
@@ -42,8 +42,11 @@ pub enum ToolCategory {
     Discovery,
     /// Skill template loading.
     Skills,
-    /// Composite Meridian product tools (messaging, source, branch, …).
-    Meridian,
+    /// Embedder-supplied product category. The label is rendered verbatim
+    /// as the system-prompt section heading for the group; tools sharing a
+    /// label group together, and distinct labels form distinct groups
+    /// ordered alphabetically among themselves.
+    Custom(&'static str),
     /// Uncategorised or third-party tools.
     General,
 }
@@ -180,9 +183,9 @@ pub trait Tool: Send + Sync {
     /// commands differ in effect, this is the conservative union of every
     /// command's effect per [`ToolEffect::combine`] — a tool with any
     /// disk-mutating command reports at least
-    /// [`ToolEffect::Write`](super::scheduling::ToolEffect::Write), one
+    /// [`ToolEffect::Write`], one
     /// with any external-system mutation at least
-    /// [`ToolEffect::RemoteMutation`](super::scheduling::ToolEffect::RemoteMutation)
+    /// [`ToolEffect::RemoteMutation`]
     /// — so a caller that cannot inspect the arguments never mis-schedules
     /// a mutation as concurrent. Per-call precision is available through
     /// [`Self::effect_for_args`].

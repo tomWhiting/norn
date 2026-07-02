@@ -7,7 +7,7 @@
 //! [`WriteTool`](crate::tools::write::WriteTool),
 //! [`BashTool`](crate::tools::bash::BashTool),
 //! [`SearchTool`](crate::tools::search::SearchTool)) or
-//! [`MockToolExecutor`](crate::r#loop::config::MockToolExecutor)
+//! [`MockToolExecutor`](crate::agent_loop::config::MockToolExecutor)
 //! → session store → result inspection.
 //!
 //! Tests are intentionally coarse: they prove subsystems work together, not

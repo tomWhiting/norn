@@ -1,6 +1,6 @@
 //! Agent-tagged runtime events for multi-agent observability.
 //!
-//! [`ProviderEvent`](super::events::ProviderEvent) is the provider
+//! [`ProviderEvent`] is the provider
 //! contract — raw SSE stream events with no knowledge of agent identity.
 //! [`AgentEvent`] wraps an [`AgentEventKind`] with the emitting agent's
 //! `id` and `role`, making every event attributable in a multi-agent
@@ -293,6 +293,23 @@ pub struct AgentUsageEstimate {
     pub input_tokens: u64,
 }
 
+/// Marker that the tagged agent's in-flight provider stream failed on a
+/// retryable error and the loop is about to replay the same request.
+///
+/// The failed attempt may already have broadcast partial
+/// [`ProviderEvent`] deltas; the retry attempt re-streams the turn from
+/// the start, so without this marker observers would render the replayed
+/// deltas appended to the failed attempt's partials. Emitted immediately
+/// **before** the retry attempt's first event: observers discard any
+/// partial output accumulated for this agent's current turn (a no-op
+/// when the failed attempt emitted nothing).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct AgentStreamRetry {
+    /// 1-based index of the provider attempt about to start (`2` is the
+    /// first retry).
+    pub attempt: u32,
+}
+
 /// The payload of an [`AgentEvent`]: a raw provider stream event, a
 /// typed subagent lifecycle event, typed usage telemetry, or a typed
 /// inter-agent message event.
@@ -311,6 +328,10 @@ pub enum AgentEventKind {
     /// A live prompt/input estimate for the tagged agent's next provider
     /// request.
     UsageEstimate(AgentUsageEstimate),
+    /// The tagged agent's provider stream failed on a retryable error and
+    /// is about to be replayed; observers reset any partial output from
+    /// the failed attempt.
+    StreamRetry(AgentStreamRetry),
 }
 
 /// An [`AgentEventKind`] tagged with the identity of the agent it
@@ -400,6 +421,18 @@ impl AgentEventSender {
             agent_id: self.agent_id,
             agent_role: Arc::clone(&self.agent_role),
             event: AgentEventKind::UsageEstimate(estimate),
+        });
+    }
+
+    /// Tag and broadcast a stream-retry marker. Emitted by the loop's
+    /// provider-retry wrapper immediately before a retry attempt begins,
+    /// so observers can discard the failed attempt's partial deltas
+    /// before the replay streams in.
+    pub fn send_stream_retry(&self, retry: AgentStreamRetry) {
+        let _ = self.tx.send(AgentEvent {
+            agent_id: self.agent_id,
+            agent_role: Arc::clone(&self.agent_role),
+            event: AgentEventKind::StreamRetry(retry),
         });
     }
 
@@ -543,7 +576,8 @@ mod tests {
             }
             AgentEventKind::Provider(_)
             | AgentEventKind::Message(_)
-            | AgentEventKind::UsageEstimate(_) => {
+            | AgentEventKind::UsageEstimate(_)
+            | AgentEventKind::StreamRetry(_) => {
                 panic!("expected subagent lifecycle event")
             }
         }

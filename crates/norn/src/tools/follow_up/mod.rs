@@ -1,6 +1,6 @@
 //! `follow_up` — execute a deferred action registered by a prior tool call.
 //!
-//! Tools register [`FollowUpAction`](crate::tool::follow_up::FollowUpAction)s
+//! Tools register [`FollowUpAction`]s
 //! at the end of their lifecycle (e.g. `undo`, `apply_structural`). The model
 //! executes one by calling `follow_up` with the original `tool_call_id` and
 //! the action's `action` name. The tool looks the reference up in the session

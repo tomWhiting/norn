@@ -8,7 +8,7 @@
 //! The agent loop accepts a `&mut LoopContext` instead of an exploding list
 //! of optional parameters. Components default to absent so callers that do
 //! not need rules or hooks can simply construct
-//! [`LoopContext::new(system_instruction)`] and pass it through.
+//! [`LoopContext::new`]`(system_instruction)` and pass it through.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -106,7 +106,7 @@ pub struct LoopContext {
     /// [`ProviderRequest`](crate::provider::request::ProviderRequest).
     pub service_tier: Option<ServiceTier>,
     /// Optional registry of slash commands. When present, user input is
-    /// pre-processed through [`crate::r#loop::commands::preprocess_input`]
+    /// pre-processed through [`crate::agent_loop::commands::preprocess_input`]
     /// before reaching the model.
     pub slash_commands: Option<SlashCommandRegistry>,
     /// Profile-supplied shell commands evaluated at the start of every
@@ -145,7 +145,7 @@ pub struct LoopContext {
 
     /// present alongside a token estimator and the
 
-    /// [`AgentLoopConfig::auto_compact_threshold_pct`](crate::r#loop::runner::AgentLoopConfig)
+    /// [`AgentLoopConfig::auto_compact_threshold_pct`](crate::agent_loop::runner::AgentLoopConfig)
 
     /// trigger, the loop appends a
 
@@ -153,6 +153,24 @@ pub struct LoopContext {
 
     /// once estimated usage crosses the configured fraction.
     pub context_edits: Option<ContextEdits>,
+
+    /// Whether persisted compaction supersession marks have been loaded
+    /// into [`Self::context_edits`].
+    ///
+    /// The runner loads persisted marks **once per loop context** — its
+    /// first step walks the store (see `run_agent_step_inner`) — covering
+    /// drivers that resume a session with a fresh [`ContextEdits`]
+    /// without going through the library's resume path. Every compaction
+    /// appended after that point marks supersession at append time on
+    /// the tracker itself ([`ContextEdits::summarize`],
+    /// [`ContextEdits::compact`],
+    /// [`ContextEdits::commit_compaction_plan`]), so no per-step store
+    /// re-walk exists. Drivers that pre-load marks (resume via
+    /// [`ReplayArtifacts`](crate::session::ReplayArtifacts) plus
+    /// [`ContextEdits::mark_superseded`]) may set this to `true` to skip
+    /// the runner's one-time walk; leaving it `false` costs exactly one
+    /// idempotent walk on the first step.
+    pub compaction_marks_loaded: bool,
 
     /// Optional diagnostic collector. When present, the runner pushes a
     /// [`NornDiagnostic`](crate::integration::NornDiagnostic) at three sites
@@ -254,20 +272,20 @@ pub struct LoopContext {
     /// Accumulated `subtree_usage` of every child result delivered into
     /// this loop (W3.6 usage rollup).
     ///
-    /// [`drain_child_results`](crate::r#loop) — the single injection path
+    /// [`drain_child_results`](crate::agent_loop) — the single injection path
     /// for child results, mid-run and lingering alike — folds each
     /// drained result's
     /// [`subtree_usage`](crate::agent::result_channel::ChildAgentResult::subtree_usage)
-    /// in here, and every [`AgentStepResult`](crate::r#loop::config::AgentStepResult)
+    /// in here, and every [`AgentStepResult`](crate::agent_loop::config::AgentStepResult)
     /// arm carries a snapshot alongside its own-calls-only `usage`, so
     /// the spawn/fork completion wrappers can compute
     /// `subtree_usage = total_usage + children_usage` without reaching
     /// into the loop. Deliberately a shared handle, not a plain value:
     /// the wrapper's clone survives a panicking loop task so delivered
-    /// descendant spend is never silently lost (see [`ChildrenUsage`]).
+    /// descendant spend is never silently lost (see [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)).
     pub children_usage: crate::r#loop::children_usage::ChildrenUsage,
 
-    /// Per-agent working directory shared with [`ToolContext`].
+    /// Per-agent working directory shared with [`ToolContext`](crate::tool::context::ToolContext).
     ///
     /// Bash's `cd` parsing updates this; subsequent prompt commands,
     /// shell hooks, rules engine, Rhai `run_cmd`, and shell variable
@@ -303,6 +321,7 @@ impl LoopContext {
             token_estimator: None,
             variables: None,
             context_edits: None,
+            compaction_marks_loaded: false,
             diagnostics: None,
             action_log: None,
             agent_id: None,
@@ -481,27 +500,55 @@ impl LoopContext {
     /// timeout) are logged via `tracing::warn!` and skipped — the loop
     /// continues without that section.
     ///
+    /// Cache misses run **concurrently**, each under `timeout` (`None`
+    /// defers to [`DEFAULT_PROMPT_COMMAND_TIMEOUT`], the documented
+    /// default; the runner passes
+    /// [`AgentLoopConfig::prompt_command_timeout`](crate::agent_loop::config::AgentLoopConfig::prompt_command_timeout)),
+    /// so an iteration's prompt-command wall-clock cost is the slowest
+    /// command, not the sum. Sections append in registration order
+    /// regardless of completion order.
+    ///
     /// Callers must invoke this method at the start of every iteration
     /// after [`Self::clear_dynamic_sections`] so the dynamic sections live
     /// for exactly the next provider call.
-    pub async fn evaluate_prompt_commands(&mut self) {
+    pub async fn evaluate_prompt_commands(&mut self, timeout: Option<Duration>) {
         if self.prompt_commands.is_empty() {
             return;
         }
+        let timeout = timeout.unwrap_or(DEFAULT_PROMPT_COMMAND_TIMEOUT);
         let commands = self.prompt_commands.clone();
-        for cmd in &commands {
-            let now = Instant::now();
-            let cached_value: Option<String> = self
-                .prompt_command_cache
-                .get(&cmd.name)
-                .filter(|entry| entry.expires_at.is_some_and(|deadline| deadline > now))
-                .map(|entry| entry.value.clone());
-            if let Some(value) = cached_value {
-                self.append_system_section(format_section(&cmd.name, &value));
-                continue;
-            }
+        let now = Instant::now();
+        // Resolve cache hits up front; only misses spend a subprocess.
+        let cached: Vec<Option<String>> = commands
+            .iter()
+            .map(|cmd| {
+                self.prompt_command_cache
+                    .get(&cmd.name)
+                    .filter(|entry| entry.expires_at.is_some_and(|deadline| deadline > now))
+                    .map(|entry| entry.value.clone())
+            })
+            .collect();
 
-            match run_prompt_command(&cmd.command, &self.working_dir.get()).await {
+        let working_dir = self.working_dir.get();
+        let misses: Vec<_> = commands
+            .iter()
+            .zip(&cached)
+            .filter(|(_, cached_value)| cached_value.is_none())
+            .map(|(cmd, _)| run_prompt_command(&cmd.command, &working_dir, timeout))
+            .collect();
+        let mut miss_results = futures_util::future::join_all(misses).await.into_iter();
+
+        for (cmd, cached_value) in commands.iter().zip(cached) {
+            let outcome = match cached_value {
+                Some(value) => Ok(value),
+                None => match miss_results.next() {
+                    Some(result) => result,
+                    // Structurally unreachable: one future was created per
+                    // cache miss, in the same order this loop consumes.
+                    None => Err("concurrent evaluation produced no result".to_owned()),
+                },
+            };
+            match outcome {
                 Ok(stdout) => {
                     if let Some(ttl) = cmd.cache_ttl {
                         self.prompt_command_cache.insert(
@@ -537,9 +584,10 @@ fn format_section(name: &str, body: &str) -> String {
 async fn run_prompt_command(
     command: &str,
     working_dir: &std::path::Path,
+    timeout: Duration,
 ) -> Result<String, String> {
     let result = tokio::time::timeout(
-        DEFAULT_PROMPT_COMMAND_TIMEOUT,
+        timeout,
         Command::new("sh")
             .arg("-c")
             .arg(command)
@@ -565,10 +613,7 @@ async fn run_prompt_command(
             Err(format!("prompt command exited {exit}: {stderr}"))
         }
         Ok(Err(e)) => Err(format!("failed to spawn prompt command: {e}")),
-        Err(_) => Err(format!(
-            "prompt command timed out after {}s",
-            DEFAULT_PROMPT_COMMAND_TIMEOUT.as_secs()
-        )),
+        Err(_) => Err(format!("prompt command timed out after {timeout:?}")),
     }
 }
 
@@ -878,7 +923,7 @@ mod tests {
             command: "echo hello".to_owned(),
             cache_ttl: None,
         });
-        ctx.evaluate_prompt_commands().await;
+        ctx.evaluate_prompt_commands(None).await;
         let combined = ctx.system_instruction();
         assert!(
             combined.contains("hello"),
@@ -898,7 +943,7 @@ mod tests {
             command: "exit 7".to_owned(),
             cache_ttl: None,
         });
-        ctx.evaluate_prompt_commands().await;
+        ctx.evaluate_prompt_commands(None).await;
         let combined = ctx.system_instruction();
         assert_eq!(
             combined, "base",
@@ -914,14 +959,73 @@ mod tests {
             command: "date +%N || echo stable".to_owned(),
             cache_ttl: Some(Duration::from_mins(1)),
         });
-        ctx.evaluate_prompt_commands().await;
+        ctx.evaluate_prompt_commands(None).await;
         let first = ctx.system_instruction();
         ctx.clear_dynamic_sections();
-        ctx.evaluate_prompt_commands().await;
+        ctx.evaluate_prompt_commands(None).await;
         let second = ctx.system_instruction();
         assert_eq!(
             first, second,
             "second evaluation within TTL must reuse cache"
+        );
+    }
+
+    /// Two 300ms commands must evaluate concurrently: the iteration's
+    /// prompt-command cost is the slowest command, not the sum. Serial
+    /// evaluation would take at least 600ms.
+    #[tokio::test]
+    async fn evaluate_prompt_commands_runs_misses_concurrently_in_order() {
+        let mut ctx = LoopContext::new("base");
+        ctx.prompt_commands.push(PromptCommand {
+            name: "first".to_owned(),
+            command: "sleep 0.3 && echo one".to_owned(),
+            cache_ttl: None,
+        });
+        ctx.prompt_commands.push(PromptCommand {
+            name: "second".to_owned(),
+            command: "sleep 0.3 && echo two".to_owned(),
+            cache_ttl: None,
+        });
+
+        let started = Instant::now();
+        ctx.evaluate_prompt_commands(None).await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(550),
+            "two 300ms commands must overlap, took {elapsed:?}",
+        );
+        // Sections append in registration order, not completion order.
+        assert_eq!(ctx.system_sections.len(), 3);
+        assert_eq!(ctx.system_sections[1], "# first\none");
+        assert_eq!(ctx.system_sections[2], "# second\ntwo");
+    }
+
+    /// A configured `prompt_command_timeout` overrides the documented
+    /// 5-second default: a command slower than the budget is cut and its
+    /// section skipped, without waiting out the default.
+    #[tokio::test]
+    async fn evaluate_prompt_commands_honors_configured_timeout() {
+        let mut ctx = LoopContext::new("base");
+        ctx.prompt_commands.push(PromptCommand {
+            name: "slowpoke".to_owned(),
+            command: "sleep 2 && echo late".to_owned(),
+            cache_ttl: None,
+        });
+
+        let started = Instant::now();
+        ctx.evaluate_prompt_commands(Some(Duration::from_millis(100)))
+            .await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(900),
+            "the configured budget must cut the command, took {elapsed:?}",
+        );
+        assert_eq!(
+            ctx.system_instruction(),
+            "base",
+            "a timed-out prompt command must not append a section",
         );
     }
 

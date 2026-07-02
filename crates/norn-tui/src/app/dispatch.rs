@@ -82,6 +82,11 @@ pub fn handle_agent_event(
                 state.set_root_input_estimate(estimate.input_tokens);
             }
         }
+        // Provider stream retry: the replay re-streams the whole turn.
+        // The TUI paints deltas append-only into the scroll region, so
+        // there is no buffered partial to reset — the typed marker is
+        // consumed here (deliberate ignore, not an unknown event).
+        AgentEventKind::StreamRetry(_) => {}
     }
     Ok(())
 }
@@ -351,8 +356,11 @@ pub fn handle_provider_event(
                 .set_activity(root_id, AgentActivity::Result("error".to_string()));
             handle_error(state, guard, &error, renderer)
         }
+        // Structured reasoning items exist for provider-side replay; the
+        // display text already arrived via the ThinkingDelta stream.
         ProviderEvent::TextComplete { .. }
         | ProviderEvent::ThinkingComplete { .. }
+        | ProviderEvent::ReasoningItemDone { .. }
         | ProviderEvent::Compaction { .. } => Ok(()),
     }
 }

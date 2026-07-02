@@ -10,18 +10,22 @@ use std::path::Path;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 
-/// A source location (path + zero-based positions).
+/// A source location (path + one-based positions).
+///
+/// Producers convert from the LSP wire protocol's zero-based positions by
+/// adding one, so these fields line up with editor gutters and compiler
+/// diagnostics as-is.
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct LspLocation {
     /// Filesystem path of the location.
     pub path: String,
-    /// Zero-based start line.
+    /// One-based start line.
     pub line: u32,
-    /// Zero-based start column (UTF-16 code units, per LSP).
+    /// One-based start column (UTF-16 code units, per LSP).
     pub column: u32,
-    /// Zero-based end line.
+    /// One-based end line.
     pub end_line: u32,
-    /// Zero-based end column.
+    /// One-based end column.
     pub end_column: u32,
 }
 
@@ -162,19 +166,21 @@ pub enum LspDiagnosticSeverity {
 }
 
 /// A diagnostic entry attached to a file range.
+///
+/// Positions follow the same one-based convention as [`LspLocation`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LspDiagnostic {
     /// Severity classification.
     pub severity: LspDiagnosticSeverity,
     /// Human-readable diagnostic message.
     pub message: String,
-    /// Zero-based start line.
+    /// One-based start line.
     pub line: u32,
-    /// Zero-based start column.
+    /// One-based start column.
     pub column: u32,
-    /// Zero-based end line.
+    /// One-based end line.
     pub end_line: u32,
-    /// Zero-based end column.
+    /// One-based end column.
     pub end_column: u32,
     /// Optional source label (e.g. "rust-analyzer", "tsserver").
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -213,8 +219,9 @@ pub enum LspBackendError {
 /// Async trait for an LSP client backend.
 ///
 /// Implementations supply hover, definition, references, document symbols,
-/// and diagnostics for a single file. Position arguments use the LSP
-/// zero-based line/column convention.
+/// and diagnostics for a single file. Position *arguments* use the LSP
+/// zero-based line/column wire convention; positions in *returned* values
+/// ([`LspLocation`], [`LspDiagnostic`]) are one-based.
 #[async_trait]
 pub trait LspBackend: Send + Sync {
     /// Returns hover information at the given position, or `None` if no
@@ -250,8 +257,10 @@ pub trait LspBackend: Send + Sync {
 
     /// Returns the test runnables defined in `path`.
     ///
-    /// Default implementation returns an empty `Vec` so backends that do
-    /// not support test discovery degrade silently (C75).
+    /// Default implementation returns an empty `Vec` for backends whose
+    /// language server exposes no test-discovery source (C75). The
+    /// production `WorkspaceLspBackend` overrides this with
+    /// rust-analyzer's `experimental/runnables`.
     async fn test_runnables(&self, _path: &Path) -> Result<Vec<TestRunnable>, LspBackendError> {
         Ok(Vec::new())
     }

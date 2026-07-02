@@ -54,7 +54,7 @@ impl RuleEngine {
     }
 
     /// Install the agent's shared working directory. When set, each
-    /// `shell_source` command spawned by [`Self::resolve_shell_content`]
+    /// `shell_source` command spawned by `Self::resolve_shell_content`
     /// runs with the agent's CWD as `.current_dir`. When unset, the child
     /// inherits the process CWD (legacy behaviour for engines constructed
     /// outside an orchestrator).
@@ -79,7 +79,7 @@ impl RuleEngine {
     /// Returns injections only for rules that matched AND are not already
     /// present in the active context (checked via the presence set). For
     /// rules with `shell_source` set, executes the command (subject to
-    /// [`Self::shell_timeout`]) and substitutes its trimmed stdout for the
+    /// `Self::shell_timeout`) and substitutes its trimmed stdout for the
     /// rule body. Timeouts and non-zero exits fall back to `rule.body` and
     /// record a `rule-shell-failure` diagnostic (when a collector is
     /// attached).

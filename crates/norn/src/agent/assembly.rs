@@ -479,9 +479,12 @@ pub(crate) fn populate_loop_context(
 /// action log's Level 2/3 look-ups, so one `Arc` is shared between them.
 /// The action log resolves model-supplied relative paths against the live
 /// agent working dir (not process CWD), so it shares the same
-/// [`SharedWorkingDir`] handle as the tool context. When resuming,
-/// persisted compactions are re-applied and the action ledger is rebuilt
-/// so the session-lifetime queryability contract holds.
+/// [`SharedWorkingDir`] handle as the tool context. When resuming, the
+/// history is snapshotted once into
+/// [`ReplayArtifacts`](crate::session::ReplayArtifacts) — a single
+/// traversal — and that one value restores both the persisted compaction
+/// marks and the action ledger, so the session-lifetime queryability
+/// contract holds without per-consumer re-walks of the event history.
 pub(crate) fn restore_session_state(
     session: Option<EventStore>,
     loop_context: &mut LoopContext,
@@ -489,15 +492,16 @@ pub(crate) fn restore_session_state(
 ) -> (Arc<EventStore>, Arc<ActionLog>) {
     let resuming = session.is_some();
     let event_store = Arc::new(session.unwrap_or_default());
-    if let Some(edits) = loop_context.context_edits.as_mut() {
-        edits.apply_persisted_compactions(&event_store);
-    }
     let action_log = Arc::new(ActionLog::with_working_dir(
         Arc::clone(&event_store),
         shared_wd,
     ));
     if resuming {
-        crate::agent::resume::rebuild_action_log(&action_log, &event_store.events());
+        let artifacts = crate::session::ReplayArtifacts::from_events(event_store.events());
+        if let Some(edits) = loop_context.context_edits.as_mut() {
+            edits.mark_superseded(artifacts.superseded_event_ids.iter().cloned());
+        }
+        crate::agent::resume::rebuild_action_log(&action_log, &artifacts.events);
     }
     (event_store, action_log)
 }
@@ -666,7 +670,7 @@ pub(crate) struct AgentInfraParts {
     /// The root agent's own run-cancellation token — the builder's
     /// `cancel_token` when one was supplied, otherwise the fresh token
     /// the builder resolved; the *same* token `Agent::run` threads into
-    /// the root's [`AgentStepRequest`](crate::r#loop::runner::AgentStepRequest)
+    /// the root's [`AgentStepRequest`](crate::agent_loop::runner::AgentStepRequest)
     /// and `AgentHandle::cancel` triggers. Published as the
     /// [`AgentCancellation`](crate::tools::agent::AgentCancellation)
     /// extension so spawn/fork create child run tokens as children of it
@@ -679,7 +683,7 @@ pub(crate) struct AgentInfraParts {
 /// [`AgentHandles`](crate::tools::agent::AgentHandles) collection
 /// (required by `spawn_agent` / `fork`), a [`ChildResultSender`] whose
 /// receiver must be wired onto
-/// [`LoopContext::child_result_rx`](crate::r#loop::loop_context::LoopContext)
+/// [`LoopContext::child_result_rx`](crate::agent_loop::loop_context::LoopContext)
 /// so the loop drains child results at iteration boundaries, and the
 /// [`ReclaimOnResultDelivery`](crate::tools::agent::ReclaimOnResultDelivery)
 /// marker.

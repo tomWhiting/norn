@@ -13,7 +13,7 @@ use serde_json::json;
 use crate::error::ToolError;
 use crate::tool::traits::ToolOutput;
 
-use super::helpers::{GlobFilter, compile_glob, walk_collect_paths};
+use super::helpers::{GlobFilter, compile_glob, walk_tree};
 
 /// A single fuzzy-match hit.
 #[derive(Debug, Serialize)]
@@ -24,20 +24,27 @@ pub(super) struct FuzzyMatch {
 
 /// Run a fuzzy file-path search under `root`, scoring each candidate path
 /// against `needle` using the nucleo matcher. Returns results ranked
-/// best-first, capped at `max_results`.
+/// best-first, capped at `max_results`, plus skipped-entry metadata.
 pub(super) fn run_fuzzy_search(
     needle: &str,
     root: &Path,
     glob_filter: Option<&str>,
     max_results: u32,
+    include_ignored: bool,
 ) -> Result<ToolOutput, ToolError> {
     let compiled_filter: Option<GlobFilter> = compile_glob(glob_filter)?;
 
-    let mut paths: Vec<std::path::PathBuf> = Vec::new();
-    walk_collect_paths(root, compiled_filter.as_ref(), &mut paths);
-    let path_strings: Vec<String> = paths
-        .into_iter()
-        .map(|p| p.to_string_lossy().into_owned())
+    let walked = walk_tree(root, include_ignored);
+    let path_strings: Vec<String> = walked
+        .entries
+        .iter()
+        .filter(|entry| entry.is_file)
+        .filter(|entry| {
+            compiled_filter
+                .as_ref()
+                .is_none_or(|filter| filter.matches(&entry.path))
+        })
+        .map(|entry| entry.path.to_string_lossy().into_owned())
         .collect();
 
     let mut matcher = NucleoMatcher::new(NucleoConfig::DEFAULT.match_paths());
@@ -58,5 +65,6 @@ pub(super) fn run_fuzzy_search(
     Ok(ToolOutput::success(json!({
         "matches": results,
         "truncated": truncated,
+        "skipped": walked.skipped,
     })))
 }

@@ -14,7 +14,7 @@ use serde_json::Value;
 use termina::escape::csi::{Csi, Sgr};
 
 use crate::terminal::caps::TerminalCaps;
-use crate::tools::helpers::{bold, dim, format_duration_ms, partial_field, reset, SPINNER};
+use crate::tools::helpers::{SPINNER, bold, dim, format_duration_ms, partial_field, reset};
 use crate::tools::renderer::ToolRenderer;
 
 /// Renders `search` tool calls: a `? {query}` header with a result
@@ -85,6 +85,39 @@ fn search_content_body(matches: &[Value], args: &Value) -> String {
     out
 }
 
+/// Appends one dim `⚠ {language} query error: {error}` line per entry in
+/// the result's `query_errors` array (AST mode: per-language compile
+/// failures for a query that still matched in other languages).
+fn append_query_errors(out: &mut String, result: &Value) {
+    let Some(errors) = result.get("query_errors").and_then(Value::as_array) else {
+        return;
+    };
+    for e in errors {
+        let language = e.get("language").and_then(Value::as_str).unwrap_or("");
+        let error = e.get("error").and_then(Value::as_str).unwrap_or("");
+        let _ = writeln!(
+            out,
+            "  {}⚠ {language} query error: {error}{}",
+            dim(),
+            reset(),
+        );
+    }
+}
+
+/// Appends one dim `⚠ skipped {path}: {reason}` line per entry in the
+/// result's `skipped` array (walk errors — permission-denied subtrees,
+/// broken symlinks — that the search surfaced instead of dropping).
+fn append_skipped(out: &mut String, result: &Value) {
+    let Some(skipped) = result.get("skipped").and_then(Value::as_array) else {
+        return;
+    };
+    for s in skipped {
+        let path = s.get("path").and_then(Value::as_str).unwrap_or("");
+        let reason = s.get("reason").and_then(Value::as_str).unwrap_or("");
+        let _ = writeln!(out, "  {}⚠ skipped {path}: {reason}{}", dim(), reset());
+    }
+}
+
 impl ToolRenderer for SearchRenderer {
     fn header_line(
         &self,
@@ -124,56 +157,52 @@ impl ToolRenderer for SearchRenderer {
     }
 
     fn body(&self, args: &Value, result: &Value, _caps: &TerminalCaps) -> Option<String> {
+        let mut out = String::new();
         // Files mode: a flat `paths` array, no line numbers.
         if let Some(paths) = result.get("paths").and_then(Value::as_array) {
-            if paths.is_empty() {
-                return None;
-            }
-            let mut out = String::new();
             for p in paths.iter().filter_map(Value::as_str) {
                 let _ = writeln!(out, "  • {}{p}{}", bold(), reset());
             }
-            return Some(out);
-        }
-        let matches = result.get("matches").and_then(Value::as_array)?;
-        let first = matches.first()?;
-        if first.get("content").is_some() {
-            Some(search_content_body(matches, args))
-        } else if first.get("score").is_some() {
-            // Fuzzy mode.
-            let mut out = String::new();
-            for m in matches {
-                let path = m.get("path").and_then(Value::as_str).unwrap_or("");
-                let score = m.get("score").and_then(Value::as_u64).unwrap_or(0);
-                let _ = writeln!(
-                    out,
-                    "  {}{path}{}  {}score={score}{}",
-                    bold(),
-                    reset(),
-                    dim(),
-                    reset(),
-                );
+        } else if let Some(matches) = result.get("matches").and_then(Value::as_array)
+            && let Some(first) = matches.first()
+        {
+            if first.get("content").is_some() {
+                out.push_str(&search_content_body(matches, args));
+            } else if first.get("score").is_some() {
+                // Fuzzy mode.
+                for m in matches {
+                    let path = m.get("path").and_then(Value::as_str).unwrap_or("");
+                    let score = m.get("score").and_then(Value::as_u64).unwrap_or(0);
+                    let _ = writeln!(
+                        out,
+                        "  {}{path}{}  {}score={score}{}",
+                        bold(),
+                        reset(),
+                        dim(),
+                        reset(),
+                    );
+                }
+            } else {
+                // AST mode.
+                for m in matches {
+                    let path = m.get("path").and_then(Value::as_str).unwrap_or("");
+                    let line = m.get("line").and_then(Value::as_u64).unwrap_or(0);
+                    let column = m.get("column").and_then(Value::as_u64).unwrap_or(0);
+                    let text = m.get("text").and_then(Value::as_str).unwrap_or("");
+                    let _ = writeln!(
+                        out,
+                        "  {}{path}{}{}:{line}:{column}{} → {text}",
+                        bold(),
+                        reset(),
+                        dim(),
+                        reset(),
+                    );
+                }
             }
-            Some(out)
-        } else {
-            // AST mode.
-            let mut out = String::new();
-            for m in matches {
-                let path = m.get("path").and_then(Value::as_str).unwrap_or("");
-                let line = m.get("line").and_then(Value::as_u64).unwrap_or(0);
-                let column = m.get("column").and_then(Value::as_u64).unwrap_or(0);
-                let text = m.get("text").and_then(Value::as_str).unwrap_or("");
-                let _ = writeln!(
-                    out,
-                    "  {}{path}{}{}:{line}:{column}{} → {text}",
-                    bold(),
-                    reset(),
-                    dim(),
-                    reset(),
-                );
-            }
-            Some(out)
         }
+        append_query_errors(&mut out, result);
+        append_skipped(&mut out, result);
+        if out.is_empty() { None } else { Some(out) }
     }
 
     fn streaming_header(&self, _name: &str, partial_args: &str, _caps: &TerminalCaps) -> String {
@@ -187,7 +216,7 @@ impl ToolRenderer for SearchRenderer {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use serde_json::json;
 
@@ -284,6 +313,73 @@ mod tests {
             body.contains("\u{1b}[1m") && body.contains("\u{1b}[2m"),
             "fuzzy path and score should be styled: {body:?}",
         );
+    }
+
+    #[test]
+    fn search_body_renders_skipped_entries() {
+        let result = json!({
+            "matches": [
+                { "path": "a.txt", "line": 1, "content": "needle" },
+            ],
+            "skipped": [
+                { "path": "/repo/locked", "reason": "permission denied" },
+            ],
+            "truncated": false,
+        });
+        let body = SearchRenderer
+            .body(&json!({ "pattern": "needle" }), &result, &caps())
+            .unwrap();
+        assert!(
+            body.contains("skipped /repo/locked: permission denied"),
+            "walk errors must be rendered, not dropped: {body:?}",
+        );
+    }
+
+    #[test]
+    fn search_body_renders_skipped_even_without_matches() {
+        // A walk that produced nothing but errors must still surface
+        // them — the old renderer returned None when `matches` was
+        // empty, silently hiding the skipped array.
+        let result = json!({
+            "matches": [],
+            "skipped": [
+                { "path": "/repo/locked", "reason": "permission denied" },
+            ],
+        });
+        let body = SearchRenderer
+            .body(&json!({ "pattern": "x" }), &result, &caps())
+            .expect("skipped entries alone must produce a body");
+        assert!(body.contains("skipped /repo/locked: permission denied"));
+    }
+
+    #[test]
+    fn search_body_renders_query_errors() {
+        let result = json!({
+            "matches": [
+                { "path": "b.py", "line": 1, "column": 1, "text": "beta" },
+            ],
+            "query_errors": [
+                { "language": "Rust", "error": "query invalid for Rust" },
+            ],
+        });
+        let body = SearchRenderer
+            .body(&json!({ "ast_query": "(x) @x" }), &result, &caps())
+            .unwrap();
+        assert!(
+            body.contains("Rust query error: query invalid for Rust"),
+            "per-language compile failures must be rendered: {body:?}",
+        );
+        assert!(body.contains("beta"), "matches still render: {body:?}");
+    }
+
+    #[test]
+    fn search_files_mode_empty_paths_and_no_extras_is_none() {
+        let body = SearchRenderer.body(
+            &json!({ "glob": "**/*.rs" }),
+            &json!({ "paths": [], "skipped": [], "truncated": false }),
+            &caps(),
+        );
+        assert!(body.is_none(), "nothing to render must stay None");
     }
 
     #[test]

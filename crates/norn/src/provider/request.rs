@@ -153,10 +153,22 @@ pub struct Message {
     /// Text content of the message (may be empty for tool-only messages).
     pub content: Option<String>,
     /// Accumulated reasoning/thinking content for Assistant messages. Empty
-    /// when the model produced no reasoning. Carried so multi-turn
-    /// conversations can echo reasoning back to providers that accept it.
+    /// when the model produced no reasoning. Carried for observability and
+    /// persistence only: no request serializer reads it — replay goes
+    /// through the structured [`reasoning`](Self::reasoning) items, which
+    /// carry the `encrypted_content` this plain-text summary does not.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub thinking: String,
+    /// Structured reasoning output items captured for Assistant messages
+    /// (empty when the model produced none or the provider does not emit
+    /// them). The `OpenAI` Responses serializer replays each item that
+    /// carries `encrypted_content` ahead of this message's content and
+    /// tool calls, so stateless backends (`response_threading: false`)
+    /// keep the model's reasoning across tool-call iterations. The
+    /// Chat Completions serializer never replays reasoning. Persisted
+    /// sessions written before this field existed deserialize to empty.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub reasoning: Vec<crate::provider::reasoning::ReasoningItem>,
     /// Tool calls made by the assistant (only present for Assistant messages).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub tool_calls: Vec<AssistantToolCall>,
@@ -267,7 +279,14 @@ pub struct ProviderConfig {
     /// whole-request deadline — streamed responses are legitimately
     /// long-lived as long as data keeps arriving.
     pub timeout: Duration,
-    /// Maximum number of retries on transient failures.
+    /// Maximum number of in-provider retries applied to HTTP `429`
+    /// rate-limit responses (with `Retry-After` backoff). It governs
+    /// nothing else: other transient failures (timeouts, resets, 5xx)
+    /// surface immediately as typed [`ProviderError`]s and are retried
+    /// one layer up by the agent loop's
+    /// [`RetryPolicy`](crate::agent_loop::retry::RetryPolicy).
+    ///
+    /// [`ProviderError`]: crate::error::ProviderError
     pub max_retries: u32,
     /// Provider-specific construction options.
     pub provider_options: Option<serde_json::Value>,
@@ -353,6 +372,60 @@ mod tests {
     fn secret_string_expose_returns_value() {
         let secret = SecretString::new("my-key");
         assert_eq!(secret.expose(), "my-key");
+    }
+
+    #[test]
+    fn message_without_reasoning_field_deserializes_to_empty() {
+        // Persisted sessions written before the structured reasoning field
+        // existed must keep deserializing; the field defaults to empty.
+        let msg: Message =
+            serde_json::from_str(r#"{"role":"Assistant","content":"hi","thinking":"t"}"#)
+                .expect("legacy message deserializes");
+        assert!(msg.reasoning.is_empty());
+    }
+
+    #[test]
+    fn message_empty_reasoning_skipped_in_serialization() {
+        let msg = Message {
+            role: MessageRole::Assistant,
+            content: Some("hi".to_owned()),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        assert!(
+            !json.contains("\"reasoning\""),
+            "empty reasoning must be skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn message_reasoning_round_trips() {
+        use crate::provider::reasoning::{ReasoningItem, ReasoningSummaryPart};
+        let msg = Message {
+            role: MessageRole::Assistant,
+            content: None,
+            thinking: String::new(),
+            reasoning: vec![ReasoningItem {
+                id: "rs_1".to_owned(),
+                summary: vec![ReasoningSummaryPart::SummaryText {
+                    text: "thought".to_owned(),
+                }],
+                content: None,
+                encrypted_content: Some("blob".to_owned()),
+            }],
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        };
+        let json = serde_json::to_string(&msg).expect("serialize");
+        let back: Message = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.reasoning, msg.reasoning);
     }
 
     #[test]

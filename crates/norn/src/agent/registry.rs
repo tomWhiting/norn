@@ -196,7 +196,7 @@ impl AgentRegistry {
 
     /// Return the entry registered at `path`, if any.
     ///
-    /// Terminal entries free their path immediately (see [`Self::set_status`]),
+    /// Terminal entries free their path immediately (see `Self::set_status`),
     /// so this resolves only *live* (non-terminal) holders. Use
     /// [`Self::get_terminal_by_path`] to find an entry that finished under
     /// `path` but has not been reclaimed yet.
@@ -430,7 +430,17 @@ impl AgentRegistry {
                     if entry.completed_at.is_none() {
                         entry.completed_at = Some(Utc::now());
                     }
-                    self.path_index.remove(&entry.path);
+                    // Free the path only while this entry still owns it.
+                    // Paths are reusable after the first terminal
+                    // transition, so a blessed same-status re-mark (or any
+                    // later terminal no-op) must not sever a *different*
+                    // live agent that has since registered under the same
+                    // path — an unconditional remove here both orphaned
+                    // that agent's path resolution and re-opened the path
+                    // for a duplicate live registration.
+                    if self.path_index.get(&entry.path) == Some(&id) {
+                        self.path_index.remove(&entry.path);
+                    }
                 }
                 Ok(())
             }
@@ -1054,6 +1064,62 @@ mod tests {
         let third = reserve(&registry, "/root/worker", "dev", "haiku", Some(parent_id))
             .expect("a failed agent's path must be reusable");
         drop(third);
+    }
+
+    /// Regression: re-marking an already-terminal entry (a blessed
+    /// same-status no-op) after its path has been reused must not sever
+    /// the live holder from the path index — an unconditional remove both
+    /// orphaned the live agent's path resolution and permitted a duplicate
+    /// live registration under the same path.
+    #[test]
+    fn terminal_remark_after_path_reuse_keeps_live_holder_indexed() {
+        let registry = fresh();
+        let first = reserve(&registry, "/root/worker", "dev", "haiku", None).expect("first");
+        let first_id = first.id();
+        first.confirm().expect("confirm first");
+        registry.write().mark_completed(first_id).expect("complete");
+
+        // Reuse the freed path with a different live agent.
+        let second = reserve(&registry, "/root/worker", "dev", "haiku", None).expect("reuse");
+        let second_id = second.id();
+        second.confirm().expect("confirm second");
+
+        // Blessed no-op re-mark of the finished first holder.
+        registry
+            .write()
+            .mark_completed(first_id)
+            .expect("same-status terminal re-mark is an accepted no-op");
+
+        assert_eq!(
+            registry
+                .read()
+                .get_by_path("/root/worker")
+                .expect("the live holder must stay resolvable by path")
+                .id,
+            second_id,
+        );
+        let err = reserve(&registry, "/root/worker", "dev", "haiku", None)
+            .expect_err("a live path must never accept a duplicate registration");
+        assert!(matches!(err, AgentError::SpawnFailed { .. }));
+
+        // The same protection applies across distinct terminal statuses:
+        // re-marking Closed over Closed while a reused path is live.
+        registry.write().mark_closed(second_id).expect("close");
+        let third = reserve(&registry, "/root/worker", "dev", "haiku", None).expect("reuse again");
+        let third_id = third.id();
+        third.confirm().expect("confirm third");
+        registry
+            .write()
+            .mark_closed(second_id)
+            .expect("closed re-mark is an accepted no-op");
+        assert_eq!(
+            registry
+                .read()
+                .get_by_path("/root/worker")
+                .expect("the third holder must stay resolvable")
+                .id,
+            third_id,
+        );
     }
 
     #[test]

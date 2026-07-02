@@ -1,0 +1,5 @@
+error: ToolArgs: #[serde(flatten)] is only supported on top-level struct fields, not enum-variant fields
+  --> tests/ui/flatten_in_variant.rs:18:17
+   |
+18 |         #[serde(flatten)]
+   |                 ^^^^^^^

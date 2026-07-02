@@ -1,0 +1,5 @@
+error: ToolArgs: unknown #[tool_args(...)] key — expected one of `schema`, `description`, `skip`, `required`, `additional_properties`
+ --> tests/ui/unknown_tool_args_key.rs:8:17
+  |
+8 |     #[tool_args(rename = "nope")]
+  |                 ^^^^^^
