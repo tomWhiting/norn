@@ -228,6 +228,30 @@ impl DrivenChild {
         let _ = self.watchdog_disarm.send(());
         status
     }
+
+    /// Reap the child WITHOUT closing stdin — the write half stays open the
+    /// whole time, exactly like a driven consumer holding the channel for
+    /// possible interventions. Polls up to the test-side `WATCHDOG`
+    /// deadline (the deadline belongs to the TEST; norn itself never
+    /// times a run out), panicking if the process is still alive at it.
+    fn wait_with_stdin_open(mut self) -> std::process::ExitStatus {
+        let deadline = std::time::Instant::now() + WATCHDOG;
+        loop {
+            if let Some(status) = self.child.try_wait().expect("poll norn") {
+                let _ = self.watchdog_disarm.send(());
+                // Only now may the write half drop: the child exited while
+                // it was still open.
+                drop(self.stdin.take());
+                return status;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "norn did not exit after the terminal response while the \
+                 caller held stdin open (driven-shutdown wedge)"
+            );
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    }
 }
 
 #[test]
@@ -446,6 +470,57 @@ fn run_execute_quit_prompt_is_answered_with_null_result() {
 
     let status = child.finish();
     assert!(status.success(), "an answered /quit prompt exits 0");
+}
+
+/// Regression for the driven-shutdown wedge: when the caller correctly
+/// holds stdin open after `run/execute` (the contract keeps the channel
+/// open for mid-run interventions; EOF-before-exit is NOT required), the
+/// terminal id-matched Response must still arrive AND the process must
+/// still exit — "After the terminal response is enqueued … the process
+/// exits with the CLI exit code" (`DRIVEN-PROTOCOL.md` "Shutdown
+/// handshake"). Pre-fix, the intervene reader's blocking stdin read lived
+/// on the runtime's blocking pool; with stdin never closing, that read
+/// never returned and `Runtime::drop` at the end of
+/// `print::orchestrator::run` wedged forever in `BlockingPool::shutdown`
+/// — norn never exited. The read deadline here is the TEST's own bound;
+/// norn itself never times a run out.
+#[test]
+fn run_completes_and_process_exits_while_caller_holds_stdin_open() {
+    let stub = SseStub::spawn(None);
+    let base_url_arg = format!("base_url={}", stub.base_url);
+    let mut child = DrivenChild::spawn(&[
+        "--provider",
+        "openai-compatible",
+        "-c",
+        &base_url_arg,
+        "--no-session",
+    ]);
+    child.initialize();
+
+    child.send(&json!({
+        "jsonrpc": "2.0",
+        "id": "run-open",
+        "method": "run/execute",
+        "params": {"prompt": "Say hello"},
+    }));
+
+    // stdin stays OPEN throughout: the terminal Response must arrive on
+    // its own, before any teardown that could block on the stdin reader.
+    // (`read_response` is bounded by the harness watchdog — a wedge kills
+    // the child and this read fails on EOF instead of hanging the suite.)
+    let (response, _notifications) = child.read_response(&json!("run-open"));
+    assert_eq!(response["result"]["envelope_version"], 1);
+    assert_eq!(response["result"]["stop"]["reason"], "completed");
+    assert_eq!(response["result"]["output"], "hello");
+
+    // And with the write half STILL open, the one-shot lifecycle completes:
+    // the process exits 0 without ever seeing EOF on stdin.
+    let status = child.wait_with_stdin_open();
+    assert!(
+        status.success(),
+        "a completed run exits 0 with stdin held open: {status:?}"
+    );
+    stub.shutdown();
 }
 
 /// Mid-run traffic at the process boundary: while the run is held in
