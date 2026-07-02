@@ -141,10 +141,25 @@ pub(crate) fn build_payload(
         summary: request.reasoning_summary.clone().unwrap_or_default(),
     });
 
-    let include = if request.reasoning_effort.is_some() {
-        vec!["reasoning.encrypted_content".to_string()]
-    } else {
+    // Encrypted-reasoning replay is a property of *stateless* threading, not
+    // of reasoning effort. On the ChatGPT/codex subscription backend
+    // (`response_threading: false` → `store: false`) the server keeps no
+    // conversation state, so the model's chain-of-thought is dropped between
+    // tool-call iterations unless each captured reasoning item is echoed back
+    // with its `encrypted_content` blob (see the module doc on
+    // `serialize_assistant_into` and `provider/reasoning.rs`). The blob only
+    // arrives when the request asked for it via this `include`, so it must be
+    // requested whenever the payload is stateless — the `reasoning` param is
+    // always sent and reasoning models emit items regardless of whether an
+    // explicit effort was configured. Gating on `reasoning_effort` (which
+    // defaults to `None`) would make the entire replay path a silent no-op in
+    // the default configuration. On stateful backends (`store: true`) the
+    // server threads reasoning itself and returns no `encrypted_content`, so
+    // requesting it is not applicable and is omitted.
+    let include = if request.store {
         Vec::new()
+    } else {
+        vec!["reasoning.encrypted_content".to_string()]
     };
 
     let context_management = if let Some(management) = request.context_management.as_ref() {
@@ -743,6 +758,78 @@ mod tests {
         let json = serde_json::to_value(&payload).expect("serialize");
         assert_eq!(json["reasoning"]["summary"], "auto");
         assert!(json["reasoning"].get("effort").is_none());
+    }
+
+    #[test]
+    fn stateless_default_request_includes_encrypted_reasoning() {
+        // Regression (Wave-6 provider finding): encrypted-reasoning replay
+        // must engage in the *default* configuration — a stateless request
+        // (`store: false`, the codex_subscription/Auto default) with no
+        // explicit `reasoning_effort`. The `include` gate is the stateless
+        // precondition, NOT `reasoning_effort`; gating on the effort knob
+        // (which defaults to `None`) made the Wave-1 replay machinery a
+        // silent no-op whenever the user did not set an effort, dropping the
+        // model's chain-of-thought across every tool-call iteration.
+        let req = make_request();
+        assert!(
+            req.reasoning_effort.is_none(),
+            "guard: the default request carries no reasoning effort",
+        );
+        assert!(!req.store, "guard: the default request is stateless");
+
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let include = payload["include"]
+            .as_array()
+            .expect("include must serialize as an array");
+        assert!(
+            include
+                .iter()
+                .any(|value| value == "reasoning.encrypted_content"),
+            "a stateless default request must request encrypted reasoning content: {include:?}",
+        );
+    }
+
+    #[test]
+    fn stateful_request_omits_encrypted_reasoning() {
+        // Negative case: with `store: true` the server threads reasoning
+        // itself and returns no `encrypted_content`, so requesting the blob
+        // is not applicable and must be omitted — the replay feature does not
+        // apply on stateful backends.
+        let mut req = make_request();
+        req.store = true;
+
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let include = payload["include"]
+            .as_array()
+            .expect("include must serialize as an array");
+        assert!(
+            include.is_empty(),
+            "a stateful request must not request encrypted reasoning content: {include:?}",
+        );
+    }
+
+    #[test]
+    fn stateless_request_includes_encrypted_reasoning_even_with_explicit_effort() {
+        // The include is independent of reasoning_effort in both directions:
+        // an explicit effort on a stateless request must still request the
+        // blob (it always did, incidentally, but pin it so a future refactor
+        // cannot re-couple the two knobs).
+        let mut req = make_request();
+        req.reasoning_effort = Some(ReasoningEffort::High);
+
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let include = payload["include"]
+            .as_array()
+            .expect("include must serialize as an array");
+        assert!(
+            include
+                .iter()
+                .any(|value| value == "reasoning.encrypted_content"),
+            "an explicit-effort stateless request must request encrypted reasoning content: {include:?}",
+        );
     }
 
     #[test]

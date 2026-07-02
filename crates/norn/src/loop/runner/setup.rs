@@ -20,6 +20,7 @@ use crate::r#loop::iteration::IterationMonitorState;
 use crate::r#loop::schema::{build_schema_tool, check_reserved_envelope_keys};
 use crate::provider::request::ToolDefinition;
 use crate::provider::usage::Usage;
+use crate::rules::types::RuleInjection;
 use crate::session::events::{EventBase, EventId, SessionEvent};
 
 use super::entry::AgentStepRunRequest;
@@ -40,6 +41,7 @@ impl<'a> StepMachine<'a> {
         timeout_state: SharedTimeoutState,
         mut inbound: Option<&'a mut InboundChannel>,
         follow_up_buffer: &'a mut Vec<ChannelMessage>,
+        pending_before_injections: &'a mut Vec<RuleInjection>,
     ) -> Result<StepMachine<'a>, NornError> {
         let provider = request.provider;
         let executor = request.executor;
@@ -131,16 +133,27 @@ impl<'a> StepMachine<'a> {
         let mut injected_event_ids =
             flush_pending_agent_messages(store, &mut messages, loop_context, event_tx).await?;
 
-        injected_event_ids.extend(
-            inject_inbound_messages(
-                store,
-                &mut messages,
-                seed_messages,
-                loop_context.hooks.as_deref(),
-                event_tx,
-            )
-            .await?,
-        );
+        let mut seed_messages = seed_messages;
+        match inject_inbound_messages(
+            store,
+            &mut messages,
+            &mut seed_messages,
+            loop_context.hooks.as_deref(),
+            event_tx,
+        )
+        .await
+        {
+            Ok(ids) => injected_event_ids.extend(ids),
+            Err(error) => {
+                // Wake-seed messages have no other durable copy here; hand
+                // the un-injected remainder to the step-exit re-queue sweep
+                // (`follow_up_buffer` is hoisted into `run_agent_step_common`
+                // and swept on every exit, including this setup error) so an
+                // acknowledged seed is never silently dropped.
+                follow_up_buffer.extend(seed_messages);
+                return Err(error.into());
+            }
+        }
 
         injected_event_ids.extend(
             flush_inbound_messages(
@@ -203,7 +216,7 @@ impl<'a> StepMachine<'a> {
             budget_consumed: 0,
             iterations: 0,
             best_attempt: None,
-            pending_before_injections: Vec::new(),
+            pending_before_injections,
             compaction_state: CompactionState::new(),
             latest_failures: Vec::new(),
         })

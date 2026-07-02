@@ -19,6 +19,7 @@ use crate::r#loop::config::{AgentLoopConfig, AgentStepResult, ToolExecutor};
 use crate::r#loop::conversation_state::ConversationRequestState;
 use crate::r#loop::delivery::{drain_child_results, flush_active_inputs};
 use crate::r#loop::dev_context::ManagedDevMessage;
+use crate::r#loop::helpers::persist_before_injection_audit;
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel};
 use crate::r#loop::iteration::IterationMonitorState;
 use crate::r#loop::loop_context::LoopContext;
@@ -103,7 +104,14 @@ pub(super) struct StepMachine<'a> {
     pub(super) budget_consumed: u32,
     pub(super) iterations: u32,
     pub(super) best_attempt: Option<Value>,
-    pub(super) pending_before_injections: Vec<RuleInjection>,
+    /// Before-timing rule injections a tool batch fired but that no
+    /// `build_request` has yet consumed. Borrowed from
+    /// [`run_agent_step_common`](super::entry) — not owned — so it survives
+    /// the step-timeout drop path (which drops this machine mid-flight),
+    /// where the outer common frame persists it (F2). On every path where
+    /// [`Self::run`] returns, [`Self::persist_undelivered_before_injections`]
+    /// drains it first, so the common frame then sees it empty.
+    pub(super) pending_before_injections: &'a mut Vec<RuleInjection>,
     pub(super) compaction_state: CompactionState,
     /// Failures produced by each iteration (tool errors and
     /// schema-validation failures), drained into the iteration monitor at
@@ -122,18 +130,91 @@ impl StepMachine<'_> {
     /// tool errors.
     pub(super) async fn run(mut self) -> Result<AgentStepResult, NornError> {
         let mut state = StepState::Gate;
-        loop {
+        let outcome = loop {
             let flow = match state {
-                StepState::Gate => self.gate().await?,
-                StepState::BuildRequest => self.build_request().await?,
-                StepState::CallProvider(request) => self.call_provider(*request).await?,
-                StepState::Dispatch(response) => self.dispatch(*response).await?,
-                StepState::ResolveStop(output) => self.resolve_stop(output).await?,
+                StepState::Gate => self.gate().await,
+                StepState::BuildRequest => self.build_request().await,
+                StepState::CallProvider(request) => self.call_provider(*request).await,
+                StepState::Dispatch(response) => self.dispatch(*response).await,
+                StepState::ResolveStop(output) => self.resolve_stop(output).await,
             };
             match flow {
-                StepFlow::Next(next) => state = next,
-                StepFlow::Done(result) => return Ok(result),
+                Ok(StepFlow::Next(next)) => state = next,
+                Ok(StepFlow::Done(result)) => break Ok(result),
+                Err(error) => break Err(error),
             }
+        };
+        // Persist any Before-timing rule injection a tool batch fired but no
+        // `build_request` will consume — the step terminated first. See
+        // [`Self::persist_undelivered_before_injections`]. A no-op on the
+        // common path (build_request already drained the buffer). This runs
+        // only when `run` RETURNS; the step-timeout branch drops this future
+        // mid-flight, so the buffer is borrowed from `run_agent_step_common`
+        // and that outer frame persists it on the timeout path (F2).
+        self.persist_undelivered_before_injections().await;
+        outcome
+    }
+
+    /// Persist the audit events for Before-timing rule injections that
+    /// fired in a tool batch but were never delivered because the step
+    /// terminated before the next [`build_request`](Self::build_request)
+    /// could consume them (max-iterations or cancellation at the gate, a
+    /// completion/stop boundary reached straight after a batch, or an error
+    /// unwind). The step-timeout drop path does not reach here — it drops
+    /// this future mid-flight — so the identical persist runs in
+    /// [`run_agent_step_common`](super::entry) against the same borrowed
+    /// buffer (F2), through the same
+    /// [`persist_before_injection_audit`] path.
+    ///
+    /// A fired rule already executed its (possibly `shell_source`) side
+    /// effect, and [`session/events.rs`](crate::session::events) requires a
+    /// [`SessionEvent::RuleInjection`](crate::session::events::SessionEvent::RuleInjection)
+    /// "persisted for every fired rule regardless of delivery mode". This
+    /// persists that event exactly as After-timing does at fire time, so a
+    /// fired firing is never discarded without an audit record.
+    ///
+    /// # Presence semantics
+    ///
+    /// The persisted event makes the rule "present" on the next step's
+    /// presence rebuild (presence is keyed on the visible `RuleInjection`
+    /// event, not on delivery — see
+    /// [`LoopContext::rebuild_rule_presence`](crate::r#loop::loop_context::LoopContext::rebuild_rule_presence)).
+    /// That stays coherent because the next step reconstructs the rule's
+    /// delivered content from the *same* event via
+    /// [`session/conversion`](crate::session::conversion): the content the
+    /// live step never delivered re-enters the conversation as reconstructed
+    /// history, so "present" and "in context" agree — identical to
+    /// After-timing. Persisting the audit event alone (not the live-delivery
+    /// message push / system-section append) is sufficient and correct here:
+    /// both of those live effects target buffers discarded on step exit and
+    /// re-materialized from this event next step — see
+    /// [`persist_before_injection_audit`] for the full rationale.
+    ///
+    /// Best-effort on the store-failure path: a persist failure here is
+    /// logged, never silently swallowed, and never rewrites the step's
+    /// already-decided result — matching the exit-time
+    /// [`requeue_undelivered_inbound`](crate::r#loop::delivery::requeue_undelivered_inbound)
+    /// sweep's convention.
+    async fn persist_undelivered_before_injections(&mut self) {
+        if self.pending_before_injections.is_empty() {
+            return;
+        }
+        let injections = std::mem::take(&mut *self.pending_before_injections);
+        let undelivered = injections.len();
+        if let Err(error) = persist_before_injection_audit(
+            self.store,
+            self.loop_context.hooks.as_deref(),
+            &injections,
+        )
+        .await
+        {
+            tracing::error!(
+                %error,
+                undelivered,
+                "failed to persist fired Before-timing rule injection audit \
+                 events on step exit; the firing executed but leaves no \
+                 audit record",
+            );
         }
     }
 

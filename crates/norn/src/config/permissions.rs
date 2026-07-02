@@ -101,6 +101,17 @@ pub enum PermissionPatternError {
     /// The `name(args)` form has an empty argument pattern.
     #[error("has an empty argument pattern between the parentheses")]
     EmptyArgumentPattern,
+    /// The tool-name segment contains interior whitespace — tool names
+    /// never contain whitespace, so `bash (rm *)` (name segment `bash `)
+    /// or `ba sh(rm *)` would compile to a literal that can never match.
+    #[error("has whitespace in the tool-name segment (an inert tool-name literal)")]
+    WhitespaceInToolName,
+    /// The argument pattern has leading or trailing whitespace —
+    /// `bash( rm *)` (arg pattern ` rm *`) would compile to a rule whose
+    /// pattern can never match a candidate value or a trimmed shell
+    /// segment.
+    #[error("has leading or trailing whitespace in the argument pattern (an inert match)")]
+    ArgumentPatternEdgeWhitespace,
 }
 
 /// A permission pattern parsed into its tool-name and optional argument
@@ -124,9 +135,10 @@ pub(crate) struct ParsedPermissionPattern {
 /// # Errors
 ///
 /// Returns [`PermissionPatternError`] for empty patterns, embedded
-/// control characters, leading/trailing whitespace, unbalanced
-/// parentheses, trailing text after the `name(args)` form's closing
-/// parenthesis, and empty name / argument segments.
+/// control characters, leading/trailing whitespace, whitespace inside the
+/// tool-name segment, leading/trailing whitespace inside the argument
+/// pattern, unbalanced parentheses, trailing text after the `name(args)`
+/// form's closing parenthesis, and empty name / argument segments.
 pub(crate) fn parse_permission_pattern(
     raw: &str,
 ) -> Result<ParsedPermissionPattern, PermissionPatternError> {
@@ -155,6 +167,9 @@ pub(crate) fn parse_permission_pattern(
         return Err(PermissionPatternError::UnbalancedParentheses);
     }
     let Some(open) = raw.find('(') else {
+        if raw.contains(char::is_whitespace) {
+            return Err(PermissionPatternError::WhitespaceInToolName);
+        }
         return Ok(ParsedPermissionPattern {
             name_pattern: raw.to_owned(),
             arg_pattern: None,
@@ -166,12 +181,19 @@ pub(crate) fn parse_permission_pattern(
     if open == 0 {
         return Err(PermissionPatternError::EmptyToolName);
     }
+    let name = &raw[..open];
+    if name.contains(char::is_whitespace) {
+        return Err(PermissionPatternError::WhitespaceInToolName);
+    }
     let arg = &raw[open + 1..raw.len() - 1];
     if arg.is_empty() {
         return Err(PermissionPatternError::EmptyArgumentPattern);
     }
+    if arg.trim() != arg {
+        return Err(PermissionPatternError::ArgumentPatternEdgeWhitespace);
+    }
     Ok(ParsedPermissionPattern {
-        name_pattern: raw[..open].to_owned(),
+        name_pattern: name.to_owned(),
         arg_pattern: Some(arg.to_owned()),
     })
 }
@@ -834,6 +856,79 @@ mod tests {
         assert_eq!(
             parse_permission_pattern("bash(rm *) "),
             Err(PermissionPatternError::SurroundingWhitespace),
+        );
+    }
+
+    /// Interior whitespace in the tool-name segment used to validate
+    /// cleanly and then compile to a literal (`"bash "`) that no tool name
+    /// can ever match — the deny/ask rule was silently dead, letting a
+    /// destructive command through. The shared grammar now rejects it in
+    /// both the `name(args)` and bare forms.
+    #[test]
+    fn parse_permission_pattern_rejects_whitespace_in_tool_name() {
+        assert_eq!(
+            parse_permission_pattern("bash (rm *)"),
+            Err(PermissionPatternError::WhitespaceInToolName),
+        );
+        assert_eq!(
+            parse_permission_pattern("ba sh(rm *)"),
+            Err(PermissionPatternError::WhitespaceInToolName),
+        );
+        // Bare form: interior whitespace is rejected here; a trailing space
+        // is caught earlier as surrounding whitespace.
+        assert_eq!(
+            parse_permission_pattern("ba sh"),
+            Err(PermissionPatternError::WhitespaceInToolName),
+        );
+        assert_eq!(
+            parse_permission_pattern("bash "),
+            Err(PermissionPatternError::SurroundingWhitespace),
+        );
+    }
+
+    /// Leading/trailing whitespace *inside* the argument pattern (`" rm *"`)
+    /// used to validate yet never match, since candidate values match whole
+    /// or against trimmed shell segments. It is now a typed rejection so a
+    /// pattern that parses is guaranteed matchable.
+    #[test]
+    fn parse_permission_pattern_rejects_argument_edge_whitespace() {
+        assert_eq!(
+            parse_permission_pattern("bash( rm *)"),
+            Err(PermissionPatternError::ArgumentPatternEdgeWhitespace),
+        );
+        assert_eq!(
+            parse_permission_pattern("bash(rm * )"),
+            Err(PermissionPatternError::ArgumentPatternEdgeWhitespace),
+        );
+        // Interior whitespace inside the argument pattern remains valid —
+        // `rm *` legitimately contains a space.
+        assert_eq!(
+            parse_permission_pattern("bash(rm *)")
+                .unwrap()
+                .arg_pattern
+                .as_deref(),
+            Some("rm *"),
+        );
+    }
+
+    /// End-to-end guard for the reported defect: an interior-whitespace deny
+    /// pattern must be rejected at the validation boundary rather than
+    /// compiling to a silently dead rule that lets `rm -rf /` execute.
+    #[test]
+    fn interior_whitespace_deny_is_rejected_not_silently_dead() {
+        // The parser (shared by validate_settings) rejects it.
+        assert_eq!(
+            parse_permission_pattern("bash (rm *)"),
+            Err(PermissionPatternError::WhitespaceInToolName),
+        );
+        // And had it slipped through to direct compilation, the logged
+        // literal-fallback rule would still not spuriously *allow* the
+        // command — it simply cannot match the real tool name `bash`.
+        let policy = PermissionPolicy::from_patterns(&["bash (rm *)"], &[], &[]);
+        assert_eq!(
+            policy.evaluate("bash", &json!({"command": "rm -rf /"})),
+            PermissionDecision::Allow,
+            "the dead literal must never masquerade as a match",
         );
     }
 

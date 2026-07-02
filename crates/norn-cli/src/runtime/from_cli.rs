@@ -31,8 +31,8 @@ use norn::tool::context::SharedWorkingDir;
 use crate::cli::{BuildError, Cli};
 use crate::config::{
     AppliedOverrides, ConfigOverrides, apply_config_overrides_to_loop, apply_loop_config_overrides,
-    apply_settings_to_agent_config, build_variable_store, default_agent_loop_config,
-    merge_event_schemas, parse_inline_or_file, session_data_dir,
+    apply_settings_to_agent_config, collect_extension_uris, default_agent_loop_config,
+    load_rule_engine, merge_event_schemas, parse_inline_or_file, parse_kv, session_data_dir,
 };
 use crate::runtime::build_write_tool;
 
@@ -64,7 +64,6 @@ pub fn builder_from_cli(
     // mutates the process CWD), so the resolved working directory is the
     // process CWD here.
     let cwd = std::env::current_dir()?;
-    let shared_wd = SharedWorkingDir::new(cwd.clone());
 
     // Merge event schemas and build the length-limited write tool while the
     // resolved profile is still owned here; the profile is then moved into
@@ -78,11 +77,46 @@ pub fn builder_from_cli(
     let config_overrides = ConfigOverrides::parse(&cli.config)?;
     let write_tool = build_write_tool(&profile, &config_overrides)?;
 
+    // Validate `--extension` URIs (an empty / whitespace value is a hard
+    // argument error, matching the brief's non-empty-URI requirement). MCP
+    // wiring does not yet consume the URIs on any driver path, so a
+    // non-empty set is surfaced as an explicit not-yet-wired warning rather
+    // than being silently dropped.
+    let extension_uris = collect_extension_uris(&cli.extension)?;
+    if !extension_uris.is_empty() {
+        tracing::warn!(
+            count = extension_uris.len(),
+            "--extension URIs are validated but not yet wired to an MCP client on \
+             this assembly path; the listed servers will not be connected",
+        );
+    }
+
     let mut builder = AgentBuilder::new(provider)
         .profile(profile)
         .working_dir(cwd.clone())
         .load_runtime_base()
         .tool(Box::new(write_tool));
+
+    // `--workspace-root` confines the file tools to the given root.
+    // `AgentBuilder::build` validates it through the single shared
+    // `validate_workspace_root` (canonicalize; reject a nonexistent /
+    // non-directory root loudly), so a bad root fails assembly instead of
+    // silently confining nothing.
+    if let Some(root) = cli.workspace_root.as_ref() {
+        builder = builder.workspace_root(root.clone());
+    }
+
+    // `--rules <file>` loads an explicit guardrail/injection rule engine.
+    // It is merged ONTO the runtime base's auto-discovered rules by
+    // `AgentBuilder::build` (both sets enforced); wiring the working dir
+    // here covers the case where the base discovered no rules and the
+    // explicit engine stands alone. An unreadable / malformed file is a
+    // hard argument error.
+    if let Some(path) = cli.rules.as_deref() {
+        let shared_wd = SharedWorkingDir::new(cwd.clone());
+        let engine = load_rule_engine(path)?.with_working_dir(shared_wd);
+        builder = builder.rules(engine);
+    }
 
     // The task-store group slug is derived from `--session-name` (replacing
     // `build_shared_task_store`'s slug derivation); unset defers to the
@@ -122,8 +156,16 @@ pub fn builder_from_cli(
     if let Some(schemas) = event_schemas {
         builder = builder.event_schemas(schemas);
     }
-    if let Some(variables) = build_variable_store(&cli.variables, shared_wd)? {
-        builder = builder.variables(variables);
+    // `--variables KEY=VALUE` pairs are handed to the builder as raw
+    // name/value pairs (not a pre-built store): `build` applies them to the
+    // store it mints with the RESOLVED session id, so a persisted-session
+    // run never aborts on a store carrying an independently-minted id.
+    if !cli.variables.is_empty() {
+        let mut pairs = Vec::with_capacity(cli.variables.len());
+        for raw in &cli.variables {
+            pairs.push(parse_kv(raw)?);
+        }
+        builder = builder.variable_pairs(pairs);
     }
 
     // Session front door (D4): `--no-session` maps to a fresh in-memory

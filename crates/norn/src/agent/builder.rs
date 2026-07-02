@@ -49,8 +49,8 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::agent::assembly::{
-    AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay, ToolContextParts,
-    apply_base_to_loop_context, assemble_tool_context, build_base_tool_registry,
+    AgentConfigPresence, AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay,
+    ToolContextParts, apply_base_to_loop_context, assemble_tool_context, build_base_tool_registry,
     collect_tool_definitions, effective_agent_config, install_agent_infra,
     install_runtime_base_extensions, install_tool_catalog, populate_loop_context,
     resolve_base_profile, resolve_runtime_overlay, resolve_working_dir, restore_session_state,
@@ -71,7 +71,7 @@ use crate::agent_loop::retry::RetryPolicy;
 use crate::error::{ConfigError, NornError, SessionError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
-use crate::integration::variables::VariableStore;
+use crate::integration::variables::{SessionVariable, VariableSource, VariableStore};
 use crate::profile::{Capability, Profile, from_profile};
 use crate::provider::request::{ReasoningEffort, ServiceTier};
 use crate::provider::traits::Provider;
@@ -112,6 +112,7 @@ pub struct AgentBuilder {
     pub(super) lsp_workspace: Option<Arc<LspWorkspace>>,
     pub(super) execution_mode: ExecutionMode,
     pub(super) agent_config: AgentLoopConfig,
+    pub(super) agent_config_present: AgentConfigPresence,
     pub(super) retry_policy: Option<RetryPolicy>,
     pub(super) session: Option<EventStore>,
     pub(super) session_request: Option<SessionRequest>,
@@ -134,6 +135,7 @@ pub struct AgentBuilder {
     pub(super) task_group_slug: Option<String>,
     pub(super) event_schemas: Option<EventSchemaSet>,
     pub(super) variables: Option<Arc<VariableStore>>,
+    pub(super) variable_pairs: Vec<(String, String)>,
     pub(super) disallowed_tools: Vec<String>,
     pub(super) terminal_reclamation: bool,
     pub(super) register_root: Option<(String, String)>,
@@ -163,6 +165,7 @@ impl AgentBuilder {
             lsp_workspace: None,
             execution_mode: ExecutionMode::Headless,
             agent_config: AgentLoopConfig::default(),
+            agent_config_present: AgentConfigPresence::default(),
             retry_policy: None,
             session: None,
             session_request: None,
@@ -185,6 +188,7 @@ impl AgentBuilder {
             task_group_slug: None,
             event_schemas: None,
             variables: None,
+            variable_pairs: Vec::new(),
             disallowed_tools: Vec::new(),
             // D3: terminal reclamation defaults on, preserving today's
             // unconditional install for every headless / embedded runtime;
@@ -439,10 +443,31 @@ impl AgentBuilder {
             }
             loop_context.variables = Some(variables);
         }
+        // Raw variable pairs (e.g. norn-cli's `--variables KEY=VALUE`) are
+        // added to the store `build` already minted with the *resolved*
+        // session id — never handed in as a separate store carrying its own
+        // independently-minted id, which the reconciliation above would
+        // reject against an `open_session`-pinned id. The store uses
+        // interior mutability, so the pairs land on whichever store is now
+        // installed (the minted one, or a caller-supplied `.variables`).
+        if !self.variable_pairs.is_empty()
+            && let Some(store) = loop_context.variables.as_ref()
+        {
+            for (name, value) in std::mem::take(&mut self.variable_pairs) {
+                store.set(SessionVariable {
+                    name,
+                    source: VariableSource::Static { value },
+                });
+            }
+        }
         if let Some(base) = runtime_base.as_ref() {
             apply_base_to_loop_context(&mut loop_context, base);
         }
-        let mut config_override = effective_agent_config(runtime_base.as_ref(), self.agent_config);
+        let mut config_override = effective_agent_config(
+            runtime_base.as_ref(),
+            self.agent_config,
+            self.agent_config_present,
+        );
         if let Some((entry, _)) = opened_session.as_ref() {
             // The persisted session's id is the prompt cache key on this
             // path: an explicitly configured cache_key would silently

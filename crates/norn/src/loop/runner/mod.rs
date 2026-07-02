@@ -31,7 +31,9 @@ pub use entry::{
     AgentMessageStepRequest, AgentStepRequest, run_agent_step, run_agent_step_from_messages,
 };
 
-pub use crate::r#loop::config::{AgentLoopConfig, AgentStepResult, ToolExecutor, TruncationKind};
+pub use crate::r#loop::config::{
+    AgentLoopConfig, AgentStepResult, ToolExecutor, TruncationKind, driver_executor,
+};
 
 #[cfg(any(test, feature = "test-utils"))]
 pub use crate::r#loop::config::{MockToolExecutor, ToolHandler};

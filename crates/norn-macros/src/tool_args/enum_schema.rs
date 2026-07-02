@@ -325,7 +325,7 @@ fn wire_name(variant: &ParsedVariant, rename_all: Option<RenameRule>) -> String 
     }
     let raw = variant.ident.to_string();
     match rename_all {
-        Some(rule) => rule.apply(&raw),
+        Some(rule) => rule.apply_to_variant(&raw),
         None => raw,
     }
 }

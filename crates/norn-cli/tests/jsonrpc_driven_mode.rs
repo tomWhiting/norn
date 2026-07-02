@@ -355,6 +355,99 @@ fn assembly_failure_answers_run_execute_with_id_matched_error() {
     assert_eq!(status.code(), Some(2));
 }
 
+/// Regression (protocol): a `run/execute` whose prompt is the local
+/// `/exit` builtin is ANSWERED with an id-matched SUCCESS Response whose
+/// `result` is null, and only then does the process exit — the peer never
+/// observes EOF in place of a Response. Pre-fix, `exit_requested` was
+/// honoured before the `HandledLocally` arm, so the accepted request was
+/// dropped and the process exited 0 with no answer, violating
+/// `DRIVEN-PROTOCOL.md` ("Every accepted run/execute is answered ... a
+/// prompt resolving entirely to a local slash command is answered with a
+/// success Response whose result is null").
+#[test]
+fn run_execute_exit_prompt_is_answered_with_null_result() {
+    // The provider is assembled up front but never called: the `/exit`
+    // builtin short-circuits before any completion request, so the bogus
+    // base_url is never contacted.
+    let mut child = DrivenChild::spawn(&[
+        "--provider",
+        "openai-compatible",
+        "-c",
+        "base_url=http://127.0.0.1:9/v1",
+        "--no-session",
+    ]);
+    child.initialize();
+
+    child.send(&json!({
+        "jsonrpc": "2.0",
+        "id": "run-exit",
+        "method": "run/execute",
+        "params": {"prompt": "/exit"},
+    }));
+    let (response, notifications) = child.read_response(&json!("run-exit"));
+
+    // No agent run started — the prompt resolved entirely to the local
+    // /exit builtin — so no event/* notifications precede the answer.
+    assert!(
+        notifications.is_empty(),
+        "a local /exit prompt never runs the agent: {notifications:?}"
+    );
+    // The accepted request is answered as a SUCCESS Response with a null
+    // result — never an error, never EOF.
+    assert!(
+        response.get("error").is_none(),
+        "a local slash command answers success, not error: {response}"
+    );
+    assert!(
+        response.get("result").is_some(),
+        "the result field is present (and null): {response}"
+    );
+    assert_eq!(
+        response["result"],
+        Value::Null,
+        "a local slash command's result is null: {response}"
+    );
+
+    let status = child.finish();
+    assert!(
+        status.success(),
+        "an answered /exit prompt exits 0 after the response is on the wire"
+    );
+}
+
+/// A `/quit` prompt is the twin of `/exit` and must be answered
+/// identically — both CLI builtins set `exit_requested` and resolve to a
+/// local dispatch, so both are answered with a null-result Response.
+#[test]
+fn run_execute_quit_prompt_is_answered_with_null_result() {
+    let mut child = DrivenChild::spawn(&[
+        "--provider",
+        "openai-compatible",
+        "-c",
+        "base_url=http://127.0.0.1:9/v1",
+        "--no-session",
+    ]);
+    child.initialize();
+
+    child.send(&json!({
+        "jsonrpc": "2.0",
+        "id": "run-quit",
+        "method": "run/execute",
+        "params": {"prompt": "/quit"},
+    }));
+    let (response, notifications) = child.read_response(&json!("run-quit"));
+
+    assert!(notifications.is_empty(), "no run: {notifications:?}");
+    assert!(
+        response.get("error").is_none(),
+        "success, not error: {response}"
+    );
+    assert_eq!(response["result"], Value::Null, "null result: {response}");
+
+    let status = child.finish();
+    assert!(status.success(), "an answered /quit prompt exits 0");
+}
+
 /// Mid-run traffic at the process boundary: while the run is held in
 /// flight by the gated stub, (a) an intervene/injectMessage is acked
 /// id-matched, and (b) a second run/execute gets the typed -32000

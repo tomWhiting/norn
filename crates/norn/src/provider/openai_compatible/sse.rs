@@ -12,11 +12,33 @@ use crate::provider::request::ToolCallKind;
 use crate::provider::usage::Usage;
 
 /// Stateful mapper for Chat Completions streaming chunks.
+///
+/// The terminal [`ProviderEvent::Done`] is deliberately *not* emitted the
+/// moment a `finish_reason` arrives. Under `stream_options.include_usage`
+/// (always requested — see
+/// [`build_payload`](super::request::build_payload)) an OpenAI-conformant
+/// backend streams the token usage in a **separate final chunk** (empty
+/// `choices`, populated `usage`) *after* the chunk that carried
+/// `finish_reason`, immediately before the `[DONE]` sentinel. Emitting `Done`
+/// on `finish_reason` would return the executor before that usage chunk is
+/// read, silently reporting zero-token usage for the whole turn. Instead the
+/// stop reason is recorded in `pending_stop` and the terminal `Done` is
+/// emitted either the moment the usage chunk is observed
+/// ([`Self::maybe_emit_terminal`]) or, for backends that never send one, at
+/// clean stream close ([`Self::finish_on_clean_close`]) — usage absent there
+/// is then legitimate.
 #[derive(Debug, Default)]
 pub(super) struct ChatCompletionsMapper {
     tool_calls: BTreeMap<ToolKey, ToolCallState>,
     latest_usage: Usage,
     emitted_output: bool,
+    /// Stop reason recorded from a `finish_reason` chunk whose terminal
+    /// `Done` is deferred until the trailing usage chunk (or stream close).
+    pending_stop: Option<StopReason>,
+    /// Whether a chunk carrying a populated `usage` object has been seen.
+    /// Distinguishes "no usage reported yet" from a legitimate all-zero
+    /// usage, and gates the deferred terminal emission.
+    usage_seen: bool,
 }
 
 impl SseEventMapper for ChatCompletionsMapper {
@@ -35,11 +57,18 @@ impl SseEventMapper for ChatCompletionsMapper {
         };
         if let Some(usage) = chunk.usage {
             self.latest_usage = usage.into();
+            self.usage_seen = true;
         }
         let mut out = Vec::new();
         for choice in chunk.choices {
             self.map_choice(choice, &mut out);
         }
+        // Emit the deferred terminal event once both the stop reason and the
+        // usage-bearing chunk have been observed. This covers the
+        // spec-conformant split ordering (usage in a trailing empty-choices
+        // chunk) and the bundled ordering (usage on the same chunk as
+        // `finish_reason`) with one rule, without waiting for stream close.
+        self.maybe_emit_terminal(&mut out);
         out
     }
 
@@ -52,6 +81,18 @@ impl SseEventMapper for ChatCompletionsMapper {
                     "chat completions stream ended with incomplete tool calls before finish_reason"
                         .to_string(),
             });
+        }
+        // A `finish_reason` was recorded but no usage chunk ever arrived (a
+        // backend that does not honor `stream_options.include_usage`, or that
+        // closes the stream straight after `finish_reason`). The terminal
+        // event is still owed: emit it with whatever usage was observed —
+        // absent usage is legitimate at a clean close.
+        if let Some(stop_reason) = self.pending_stop.take() {
+            return Ok(Some(ProviderEvent::Done {
+                stop_reason,
+                usage: self.latest_usage.clone(),
+                response_id: None,
+            }));
         }
         if !self.emitted_output {
             return Ok(None);
@@ -168,6 +209,15 @@ impl ChatCompletionsMapper {
         }
     }
 
+    /// Records the terminal stop reason from a `finish_reason` chunk.
+    ///
+    /// The [`ProviderEvent::Done`] is deferred (recorded in `pending_stop`)
+    /// rather than emitted here, so the trailing `include_usage` chunk that a
+    /// conformant backend streams *after* `finish_reason` is still consumed
+    /// and its usage attributed — see the [`ChatCompletionsMapper`] type doc.
+    /// For `tool_calls`/`function_call` the accumulated `ToolCallComplete`
+    /// events are still emitted immediately; only their terminal `Done` is
+    /// deferred, and only when every tool call was well-formed.
     fn map_finish_reason(
         &mut self,
         reason: &str,
@@ -176,31 +226,37 @@ impl ChatCompletionsMapper {
         match reason {
             "tool_calls" | "function_call" => {
                 if self.complete_tool_calls(out) {
-                    out.push(Ok(ProviderEvent::Done {
-                        stop_reason: StopReason::ToolUse,
-                        usage: self.latest_usage.clone(),
-                        response_id: None,
-                    }));
+                    self.pending_stop = Some(StopReason::ToolUse);
                 }
             }
-            "stop" => out.push(Ok(ProviderEvent::Done {
-                stop_reason: StopReason::EndTurn,
-                usage: self.latest_usage.clone(),
-                response_id: None,
-            })),
-            "length" => out.push(Ok(ProviderEvent::Done {
-                stop_reason: StopReason::MaxTokens,
-                usage: self.latest_usage.clone(),
-                response_id: None,
-            })),
-            "content_filter" => out.push(Ok(ProviderEvent::Done {
-                stop_reason: StopReason::ContentFilter,
-                usage: self.latest_usage.clone(),
-                response_id: None,
-            })),
+            "stop" => self.pending_stop = Some(StopReason::EndTurn),
+            "length" => self.pending_stop = Some(StopReason::MaxTokens),
+            "content_filter" => self.pending_stop = Some(StopReason::ContentFilter),
             other => out.push(Err(ProviderError::ResponseParseError {
                 reason: format!("unknown chat completion finish_reason '{other}'"),
             })),
+        }
+    }
+
+    /// Emits the deferred terminal [`ProviderEvent::Done`] once both a stop
+    /// reason has been recorded and a usage-bearing chunk has been observed.
+    ///
+    /// Called at the end of every mapped chunk. When the two coincide (usage
+    /// bundled on the `finish_reason` chunk) the terminal event is emitted on
+    /// that chunk; when they are split (usage in the trailing empty-choices
+    /// chunk) it is emitted on the usage chunk. If no usage chunk ever
+    /// arrives, `pending_stop` remains set and
+    /// [`Self::finish_on_clean_close`] emits the terminal event at stream
+    /// close instead.
+    fn maybe_emit_terminal(&mut self, out: &mut Vec<Result<ProviderEvent, ProviderError>>) {
+        if self.usage_seen
+            && let Some(stop_reason) = self.pending_stop.take()
+        {
+            out.push(Ok(ProviderEvent::Done {
+                stop_reason,
+                usage: self.latest_usage.clone(),
+                response_id: None,
+            }));
         }
     }
 
@@ -381,6 +437,143 @@ mod tests {
                 usage,
                 response_id: None,
             }) if usage.input_tokens == 10 && usage.output_tokens == 3,
+        ));
+    }
+
+    #[test]
+    fn usage_chunk_after_finish_reason_is_attributed() {
+        // Spec-conformant split ordering under stream_options.include_usage:
+        // content chunk, then a finish_reason chunk with NO usage, then a
+        // trailing empty-choices chunk carrying the usage, then [DONE]. The
+        // terminal Done must be deferred to the usage chunk and report the
+        // real token counts — never zero.
+        let mut mapper = ChatCompletionsMapper::default();
+
+        let content = mapper.map_event(&event(serde_json::json!({
+            "choices": [
+                {"index": 0, "delta": {"content": "hello"}, "finish_reason": null}
+            ]
+        })));
+        assert!(matches!(
+            &content[0],
+            Ok(ProviderEvent::TextDelta { text }) if text == "hello",
+        ));
+
+        // finish_reason chunk with no usage — must NOT yet emit Done.
+        let finish = mapper.map_event(&event(serde_json::json!({
+            "choices": [
+                {"index": 0, "delta": {}, "finish_reason": "stop"}
+            ]
+        })));
+        assert!(
+            !finish
+                .iter()
+                .any(|ev| matches!(ev, Ok(ProviderEvent::Done { .. }))),
+            "Done must be deferred until the usage chunk: {finish:?}",
+        );
+
+        // Trailing usage-only chunk (empty choices) — Done emitted here with
+        // the real usage.
+        let usage = mapper.map_event(&event(serde_json::json!({
+            "choices": [],
+            "usage": {"prompt_tokens": 128, "completion_tokens": 64}
+        })));
+        assert!(matches!(
+            usage.as_slice(),
+            [Ok(ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage,
+                response_id: None,
+            })] if usage.input_tokens == 128 && usage.output_tokens == 64,
+        ));
+    }
+
+    #[test]
+    fn finish_reason_without_usage_chunk_defers_to_clean_close() {
+        // A backend that sends finish_reason and then closes the stream
+        // without any usage chunk must still terminate: no Done on the
+        // finish_reason chunk, and finish_on_clean_close synthesizes the
+        // terminal event. Usage absent there is legitimate (all zeros).
+        let mut mapper = ChatCompletionsMapper::default();
+        let _ = mapper.map_event(&event(serde_json::json!({
+            "choices": [
+                {"index": 0, "delta": {"content": "hi"}, "finish_reason": null}
+            ]
+        })));
+        let finish = mapper.map_event(&event(serde_json::json!({
+            "choices": [
+                {"index": 0, "delta": {}, "finish_reason": "stop"}
+            ]
+        })));
+        assert!(
+            !finish
+                .iter()
+                .any(|ev| matches!(ev, Ok(ProviderEvent::Done { .. }))),
+            "no Done until the stream ends when no usage chunk arrives: {finish:?}",
+        );
+
+        let done = mapper
+            .finish_on_clean_close()
+            .expect("clean close must synthesize the deferred terminal event");
+        assert!(matches!(
+            done,
+            Some(ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage,
+                response_id: None,
+            }) if usage.input_tokens == 0 && usage.output_tokens == 0,
+        ));
+    }
+
+    #[test]
+    fn tool_call_usage_chunk_after_finish_is_attributed() {
+        // The same split ordering for a tool-call turn: the ToolCallComplete
+        // events flow on the finish_reason chunk, but the terminal Done is
+        // deferred to the trailing usage chunk.
+        let mut mapper = ChatCompletionsMapper::default();
+        let _ = mapper.map_event(&event(serde_json::json!({
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "tool_calls": [{
+                        "index": 0,
+                        "id": "call_abc",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": "{}"}
+                    }]
+                },
+                "finish_reason": null
+            }]
+        })));
+
+        let finish = mapper.map_event(&event(serde_json::json!({
+            "choices": [{"index": 0, "delta": {}, "finish_reason": "tool_calls"}]
+        })));
+        assert!(
+            finish.iter().any(|ev| matches!(
+                ev,
+                Ok(ProviderEvent::ToolCallComplete { call_id, .. }) if call_id == "call_abc",
+            )),
+            "tool call must complete on the finish_reason chunk: {finish:?}",
+        );
+        assert!(
+            !finish
+                .iter()
+                .any(|ev| matches!(ev, Ok(ProviderEvent::Done { .. }))),
+            "Done must be deferred until the usage chunk: {finish:?}",
+        );
+
+        let usage = mapper.map_event(&event(serde_json::json!({
+            "choices": [],
+            "usage": {"prompt_tokens": 9, "completion_tokens": 11}
+        })));
+        assert!(matches!(
+            usage.as_slice(),
+            [Ok(ProviderEvent::Done {
+                stop_reason: StopReason::ToolUse,
+                usage,
+                response_id: None,
+            })] if usage.input_tokens == 9 && usage.output_tokens == 11,
         ));
     }
 

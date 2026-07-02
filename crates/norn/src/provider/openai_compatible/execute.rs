@@ -199,6 +199,115 @@ mod tests {
         }
     }
 
+    /// Regression (Wave-6 provider finding): under
+    /// `stream_options.include_usage` a conformant backend streams the token
+    /// usage in a SEPARATE final chunk (empty `choices`, populated `usage`)
+    /// AFTER the chunk carrying `finish_reason`, before `[DONE]`. The
+    /// terminal `Done` must be deferred so that trailing usage chunk is
+    /// consumed and attributed — not reported as zero tokens.
+    #[tokio::test]
+    async fn stream_attributes_usage_chunk_after_finish_reason() {
+        let server = MockServer::start().await;
+        let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n\
+                    data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                    data: {\"choices\":[],\"usage\":{\"prompt_tokens\":128,\"completion_tokens\":64}}\n\n\
+                    data: [DONE]\n\n";
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer test-key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(&server.uri());
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let mut text = String::new();
+        let mut done = None;
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(ProviderEvent::TextDelta { text: delta }) => text.push_str(&delta),
+                Ok(event @ ProviderEvent::Done { .. }) => done = Some(event),
+                Ok(_) => {}
+                Err(err) => panic!("unexpected provider error: {err}"),
+            }
+        }
+
+        assert_eq!(text, "hello");
+        match done {
+            Some(ProviderEvent::Done {
+                stop_reason,
+                usage,
+                response_id,
+            }) => {
+                assert_eq!(stop_reason, StopReason::EndTurn);
+                assert_eq!(
+                    usage.input_tokens, 128,
+                    "usage from the trailing chunk must be attributed, not zero",
+                );
+                assert_eq!(usage.output_tokens, 64);
+                assert!(response_id.is_none());
+            }
+            other => panic!("expected terminal Done event, got {other:?}"),
+        }
+    }
+
+    /// The no-usage-chunk server shape (`finish_reason` then `[DONE]`, no
+    /// trailing usage chunk) must still terminate cleanly with an `EndTurn`
+    /// `Done`, never hang or surface `StreamInterrupted`. Absent usage is
+    /// legitimate here.
+    #[tokio::test]
+    async fn stream_terminates_when_no_usage_chunk_follows_finish_reason() {
+        let server = MockServer::start().await;
+        let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n\
+                    data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                    data: [DONE]\n\n";
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer test-key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(&server.uri());
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let mut text = String::new();
+        let mut done = None;
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(ProviderEvent::TextDelta { text: delta }) => text.push_str(&delta),
+                Ok(event @ ProviderEvent::Done { .. }) => done = Some(event),
+                Ok(_) => {}
+                Err(err) => panic!("unexpected provider error: {err}"),
+            }
+        }
+
+        assert_eq!(text, "hello");
+        match done {
+            Some(ProviderEvent::Done {
+                stop_reason, usage, ..
+            }) => {
+                assert_eq!(stop_reason, StopReason::EndTurn);
+                assert_eq!(usage.input_tokens, 0, "no usage chunk means zero is honest");
+                assert_eq!(usage.output_tokens, 0);
+            }
+            other => panic!("expected terminal Done event, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn stream_clean_close_after_text_synthesizes_end_turn() {
         let server = MockServer::start().await;

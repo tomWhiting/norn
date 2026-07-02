@@ -222,9 +222,17 @@ impl AgentBuilder {
 
     /// Replace the whole agent-loop config (schema budget, max iterations,
     /// step timeout, compaction, cache key).
+    ///
+    /// Supplying a complete config marks every non-`Option` field
+    /// explicit: when [`Self::load_runtime_base`] is also set, these fields
+    /// win over the settings-derived base even where they equal the library
+    /// default (an explicit `schema_budget = 3` is honoured, not reverted
+    /// to a settings value). `Option` fields still overlay only when
+    /// `Some`.
     #[must_use]
     pub fn agent_config(mut self, config: AgentLoopConfig) -> Self {
         self.agent_config = config;
+        self.agent_config_present = crate::agent::assembly::AgentConfigPresence::all();
         self
     }
 
@@ -246,6 +254,7 @@ impl AgentBuilder {
     #[must_use]
     pub fn conversation_state(mut self, mode: ConversationStateMode) -> Self {
         self.agent_config.conversation_state = mode;
+        self.agent_config_present.conversation_state = true;
         self
     }
 
@@ -529,6 +538,24 @@ impl AgentBuilder {
     #[must_use]
     pub fn variables(mut self, variables: Arc<VariableStore>) -> Self {
         self.variables = Some(variables);
+        self
+    }
+
+    /// Add raw `name`/`value` static variable pairs to the store
+    /// [`build`](Self::build) mints, instead of handing in a pre-built
+    /// [`VariableStore`] via [`Self::variables`].
+    ///
+    /// This is the identity-safe path for callers (notably `norn-cli`'s
+    /// `--variables KEY=VALUE`) that have no session id of their own: the
+    /// pairs are applied to the store `build` creates with the **resolved**
+    /// session id (the minted id, or the persisted id from
+    /// [`Self::open_session`]), so there is no independently-minted store id
+    /// to disagree with an `open_session`-pinned session and abort the
+    /// build. Additive across calls; may be combined with
+    /// [`Self::variables`] (the pairs then land on the supplied store).
+    #[must_use]
+    pub fn variable_pairs(mut self, pairs: Vec<(String, String)>) -> Self {
+        self.variable_pairs.extend(pairs);
         self
     }
 

@@ -60,17 +60,30 @@ pub(super) fn drain_and_partition(
 /// authoritative order — timestamps from concurrent senders are not
 /// monotonic); unsequenced direct sends follow, ordered by timestamp. Each
 /// router-sequenced message additionally appends an
-/// [`AgentMessageLifecycle::Delivered`] audit event immediately before its
-/// framed `UserMessage` (adjacent events, same parent chain) so the store
-/// records the delivery half of the `agent_message.*` trail, and — when the
-/// step has a live event channel — broadcasts the same `Delivered` via
-/// [`AgentEventSender::send_message`], mirroring the dual-carrier `Sent`
+/// [`AgentMessageLifecycle::Delivered`] audit event immediately **after**
+/// its framed `UserMessage` (adjacent events, same parent chain) so the
+/// store records the delivery half of the `agent_message.*` trail, and —
+/// when the step has a live event channel — broadcasts the same `Delivered`
+/// via [`AgentEventSender::send_message`], mirroring the dual-carrier `Sent`
 /// emission at the send site. Direct sends that bypassed the router (no
-/// `seq`) have no `Sent` record to pair with and emit no `Delivered`.
+/// `seq`) have no `Sent` record to pair with and emit no `Delivered`. The
+/// audit follows (not precedes) the content append so a failure between the
+/// two can never leave a durable record claiming delivery of a message
+/// whose content never landed.
+///
+/// # Partial-failure durability
+///
+/// `msgs` is drained in place: each message is removed only after its
+/// framed `UserMessage` has durably appended. If an append fails
+/// mid-batch, this returns the error with the failing message **and every
+/// message after it still present in `msgs`**, so the caller can preserve
+/// that remainder (channel-drained steers and wake-seed messages have no
+/// other durable copy at this point) for the step-exit re-queue sweep.
+/// The successfully-injected prefix is consumed and never redelivered.
 pub(super) async fn inject_inbound_messages(
     store: &EventStore,
     messages: &mut Vec<Message>,
-    mut msgs: Vec<ChannelMessage>,
+    msgs: &mut Vec<ChannelMessage>,
     hooks: Option<&HookRegistry>,
     event_tx: Option<&AgentEventSender>,
 ) -> Result<Vec<EventId>, SessionError> {
@@ -79,43 +92,12 @@ pub(super) async fn inject_inbound_messages(
     }
     msgs.sort_by_key(|m| (m.seq.is_none(), m.seq.unwrap_or(0), m.timestamp));
     let mut user_event_ids = Vec::with_capacity(msgs.len());
-    for msg in msgs {
-        if let Some(seq) = msg.seq {
-            let delivered = AgentMessageLifecycle::Delivered {
-                message_id: msg.id,
-                from_id: msg.sender_id,
-                to_id: msg.to_id,
-                seq,
-                delivered_at: chrono::Utc::now(),
-            };
-            match serde_json::to_value(&delivered) {
-                Ok(data) => {
-                    append_and_notify(
-                        store,
-                        SessionEvent::Custom {
-                            base: EventBase::new(store.last_event_id()),
-                            event_type: AGENT_MESSAGE_DELIVERED_EVENT_TYPE.to_string(),
-                            data,
-                        },
-                        hooks,
-                    )
-                    .await?;
-                }
-                Err(e) => {
-                    // Unreachable for this plain struct, but a lost audit
-                    // record must never be silent.
-                    tracing::error!(
-                        message_id = %msg.id,
-                        error = %e,
-                        "failed to serialize agent_message.delivered audit event",
-                    );
-                }
-            }
-            if let Some(tx) = event_tx {
-                tx.send_message(delivered);
-            }
-        }
-        let formatted = frame_message(&msg);
+    while let Some(msg) = msgs.first() {
+        let formatted = frame_message(msg);
+        // Content first: only once the framed UserMessage is durable does
+        // this message count as delivered. On failure the message stays at
+        // the front of `msgs` (with the rest of the batch) for the caller
+        // to re-queue — nothing acknowledged is dropped.
         let user_event_id = append_and_notify(
             store,
             SessionEvent::UserMessage {
@@ -125,6 +107,61 @@ pub(super) async fn inject_inbound_messages(
             hooks,
         )
         .await?;
+
+        // The content is durable; from here the message is delivered and
+        // must be consumed even if the secondary audit append fails.
+        let seq = msg.seq;
+        let delivered = seq.map(|seq| AgentMessageLifecycle::Delivered {
+            message_id: msg.id,
+            from_id: msg.sender_id,
+            to_id: msg.to_id,
+            seq,
+            delivered_at: chrono::Utc::now(),
+        });
+        let msg = msgs.remove(0);
+
+        if let Some(delivered) = delivered {
+            match serde_json::to_value(&delivered) {
+                Ok(data) => {
+                    // Best-effort: the message is already delivered, so a
+                    // failed audit append is an observability gap, not a
+                    // lost message — log it rather than re-queueing (which
+                    // would duplicate the delivered content) or dropping it
+                    // silently.
+                    if let Err(error) = append_and_notify(
+                        store,
+                        SessionEvent::Custom {
+                            base: EventBase::new(store.last_event_id()),
+                            event_type: AGENT_MESSAGE_DELIVERED_EVENT_TYPE.to_string(),
+                            data,
+                        },
+                        hooks,
+                    )
+                    .await
+                    {
+                        tracing::error!(
+                            message_id = %msg.id,
+                            %error,
+                            "failed to persist agent_message.delivered audit event \
+                             after its message was already delivered",
+                        );
+                    }
+                }
+                Err(error) => {
+                    // Unreachable for this plain struct, but a lost audit
+                    // record must never be silent.
+                    tracing::error!(
+                        message_id = %msg.id,
+                        %error,
+                        "failed to serialize agent_message.delivered audit event",
+                    );
+                }
+            }
+            if let Some(tx) = event_tx {
+                tx.send_message(delivered);
+            }
+        }
+
         user_event_ids.push(user_event_id);
         messages.push(Message {
             role: MessageRole::User,
@@ -161,7 +198,7 @@ pub(super) async fn flush_pending_agent_messages(
     ) else {
         return Ok(Vec::new());
     };
-    let queued_messages = pending.messages_for_delivery(agent_id);
+    let mut queued_messages = pending.messages_for_delivery(agent_id);
     if queued_messages.is_empty() {
         return Ok(Vec::new());
     }
@@ -170,10 +207,14 @@ pub(super) async fn flush_pending_agent_messages(
         .iter()
         .map(|message| message.id)
         .collect::<Vec<_>>();
+    // The durable pending store is the authoritative copy here: on a
+    // mid-batch append failure the error propagates before `mark_dequeued`,
+    // so every queued message — injected or not — stays pending and is
+    // replayed on the next resume/wake rather than lost.
     let injected = inject_inbound_messages(
         store,
         messages,
-        queued_messages,
+        &mut queued_messages,
         loop_context.hooks.as_deref(),
         event_tx,
     )
@@ -204,12 +245,19 @@ pub(super) async fn drain_post_batch_inbound(
     hooks: Option<&HookRegistry>,
     event_tx: Option<&AgentEventSender>,
 ) -> Result<bool, SessionError> {
-    let (steer, follow_up) = drain_and_partition(inbound);
+    let (mut steer, follow_up) = drain_and_partition(inbound);
     follow_up_buffer.extend(follow_up);
     if steer.is_empty() {
         return Ok(false);
     }
-    inject_inbound_messages(store, messages, steer, hooks, event_tx).await?;
+    if let Err(error) = inject_inbound_messages(store, messages, &mut steer, hooks, event_tx).await
+    {
+        // Preserve the failing message and every steer after it (all
+        // acknowledged to their senders, none with another durable copy)
+        // for the step-exit re-queue sweep.
+        follow_up_buffer.extend(steer);
+        return Err(error);
+    }
     Ok(true)
 }
 
@@ -224,7 +272,7 @@ pub(super) async fn flush_inbound_messages(
     hooks: Option<&HookRegistry>,
     event_tx: Option<&AgentEventSender>,
 ) -> Result<Vec<EventId>, SessionError> {
-    let (steer, update) = drain_and_partition(inbound);
+    let (mut steer, update) = drain_and_partition(inbound);
     follow_up_buffer.extend(update);
 
     if steer.is_empty() && follow_up_buffer.is_empty() {
@@ -232,10 +280,25 @@ pub(super) async fn flush_inbound_messages(
     }
 
     let mut user_event_ids =
-        inject_inbound_messages(store, messages, steer, hooks, event_tx).await?;
-    let buffered = std::mem::take(follow_up_buffer);
-    user_event_ids
-        .extend(inject_inbound_messages(store, messages, buffered, hooks, event_tx).await?);
+        match inject_inbound_messages(store, messages, &mut steer, hooks, event_tx).await {
+            Ok(ids) => ids,
+            Err(error) => {
+                // Steers not yet injected re-join the buffer (which already
+                // holds the drained Updates) for the step-exit re-queue.
+                follow_up_buffer.extend(steer);
+                return Err(error);
+            }
+        };
+    // Move the buffered Updates out to inject them, but restore any that
+    // fail to append so the boundary flush never vaporizes the backlog.
+    let mut buffered = std::mem::take(follow_up_buffer);
+    match inject_inbound_messages(store, messages, &mut buffered, hooks, event_tx).await {
+        Ok(ids) => user_event_ids.extend(ids),
+        Err(error) => {
+            follow_up_buffer.extend(buffered);
+            return Err(error);
+        }
+    }
     Ok(user_event_ids)
 }
 

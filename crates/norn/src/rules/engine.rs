@@ -69,6 +69,44 @@ impl RuleEngine {
         self.rules.push(rule);
     }
 
+    /// Fold every rule from `other` (the explicit `--rules` engine) into
+    /// this engine (the auto-discovered base), preserving this engine's
+    /// working-dir / diagnostics / shell-timeout wiring.
+    ///
+    /// Used at assembly to merge an explicitly-supplied rules engine (e.g.
+    /// a `--rules` file) onto the auto-discovered rules so both sets are
+    /// enforced under one wiring, rather than one silently replacing the
+    /// other. Only the rules move over; `other`'s presence set and wiring
+    /// are dropped.
+    ///
+    /// **Explicit-wins on rule-ID collision.** Both discovered and explicit
+    /// rule IDs derive from the file stem, so `.norn/rules/coding.md` and
+    /// `--rules ./fixed/coding.yaml` both mint the ID `coding`. The explicit
+    /// flag must win — it is the operator's deliberate override — so any
+    /// discovered rule whose ID collides with an explicit one is dropped
+    /// here (and the shadowing logged, never silent), and the explicit rules
+    /// are appended in its place. Without this the discovered copy would win
+    /// at fire time: `process_event` emits injections in rule order and
+    /// `dedup_injections_by_rule` keeps the first per ID, so a trailing
+    /// explicit rule with a colliding ID was silently discarded.
+    pub fn merge_rules_from(&mut self, other: RuleEngine) {
+        let explicit_ids: std::collections::HashSet<_> =
+            other.rules.iter().map(|rule| rule.id.clone()).collect();
+        self.rules.retain(|discovered| {
+            if explicit_ids.contains(&discovered.id) {
+                tracing::warn!(
+                    rule_id = %discovered.id,
+                    "discovered rule shadowed by an explicit --rules rule with the \
+                     same id; the explicit rule's content takes precedence",
+                );
+                false
+            } else {
+                true
+            }
+        });
+        self.rules.extend(other.rules);
+    }
+
     /// Return a mutable reference to the presence set for rebuilding.
     pub fn presence_mut(&mut self) -> &mut RulePresenceSet {
         &mut self.presence
@@ -408,5 +446,80 @@ mod tests {
         let injections = engine.process_event(&rs_event()).await;
         assert_eq!(injections.len(), 1);
         assert_eq!(injections[0].content, "FALLBACK");
+    }
+
+    // -- merge_rules_from: explicit `--rules` precedence ----------------------
+
+    fn coding_rule(body: &str) -> Rule {
+        Rule {
+            id: RuleId::from("coding"),
+            name: "Coding".to_owned(),
+            triggers: vec![TriggerCondition::PathGlob {
+                pattern: "**/*.rs".to_owned(),
+            }],
+            delivery: DeliveryMode::ContextInjection,
+            timing: TriggerTiming::Before,
+            body: body.to_owned(),
+            shell_source: None,
+        }
+    }
+
+    /// F1 regression: a discovered rule (`.norn/rules/coding.md`) and an
+    /// explicit `--rules` rule (`./fixed/coding.yaml`) both mint the ID
+    /// `coding`. Merging the explicit engine onto the discovered base must
+    /// let the explicit content win — the discovered copy is dropped, not
+    /// silently kept ahead of the explicit one. Before the fix the explicit
+    /// rule was appended after the discovered one and `dedup_injections_by_rule`
+    /// (loop/rule_wiring) kept the discovered copy, discarding the flag.
+    #[tokio::test]
+    async fn merge_rules_from_explicit_wins_on_id_collision() {
+        let mut base = RuleEngine::new(vec![coding_rule("DISCOVERED")]);
+        let explicit = RuleEngine::new(vec![coding_rule("EXPLICIT")]);
+
+        base.merge_rules_from(explicit);
+
+        // Exactly one `coding` rule survives — the explicit one.
+        assert_eq!(
+            base.rules.len(),
+            1,
+            "the shadowed discovered rule must be dropped, not retained",
+        );
+        let injections = base.process_event(&rs_event()).await;
+        assert_eq!(injections.len(), 1);
+        assert_eq!(injections[0].rule_id.as_str(), "coding");
+        assert_eq!(
+            injections[0].content, "EXPLICIT",
+            "the explicit --rules content must fire, not the discovered body",
+        );
+    }
+
+    /// A discovered rule whose ID does *not* collide with any explicit rule
+    /// survives the merge intact alongside the explicit rules — the merge
+    /// only drops genuine ID collisions, and both sets stay enforced.
+    #[tokio::test]
+    async fn merge_rules_from_keeps_non_colliding_discovered_rule() {
+        let mut base = RuleEngine::new(vec![rust_conventions_rule(), coding_rule("DISCOVERED")]);
+        let explicit = RuleEngine::new(vec![coding_rule("EXPLICIT")]);
+
+        base.merge_rules_from(explicit);
+
+        // rust-conventions (no collision) + coding (explicit wins) = 2 rules.
+        assert_eq!(base.rules.len(), 2);
+        let ids: std::collections::HashSet<&str> =
+            base.rules.iter().map(|rule| rule.id.as_str()).collect();
+        assert!(
+            ids.contains("rust-conventions"),
+            "non-colliding rule survives"
+        );
+        assert!(ids.contains("coding"), "explicit rule present");
+        let coding = base
+            .rules
+            .iter()
+            .find(|rule| rule.id.as_str() == "coding")
+            .expect("coding rule present");
+        assert_eq!(
+            coding.body, "EXPLICIT",
+            "the explicit body replaced the discovered one"
+        );
     }
 }

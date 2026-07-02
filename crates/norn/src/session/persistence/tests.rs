@@ -1786,6 +1786,65 @@ fn manager_index_lock_deadline_bounds_create() {
     assert_eq!(read_index(tmp.path()).unwrap().len(), 1);
 }
 
+/// Regression: a deadline-bound acquisition must not leak a waiter thread
+/// (or its blocked lock descriptor) per timed-out call. The old
+/// implementation spawned a `norn-index-lock-wait` thread that parked in
+/// the blocking `File::lock` with no cancellation, so it stayed blocked —
+/// holding the moved-in lock FD — until the contending holder released;
+/// a workflow retrying behind a wedged holder accumulated one thread + FD
+/// per timeout without bound. The poll-loop implementation runs entirely
+/// on the caller's thread and drops the handle on timeout, leaving nothing
+/// to reap.
+#[test]
+fn index_lock_deadline_does_not_leak_waiter_threads() {
+    let tmp = tempfile::tempdir().unwrap();
+    // Hold the lock for the whole test so every bounded attempt below
+    // times out — exactly the window in which the old waiter thread would
+    // stay parked in flock.
+    let held = super::lock::lock_index(tmp.path(), None).unwrap();
+
+    let baseline = current_thread_count();
+    let attempts = 32;
+    for _ in 0..attempts {
+        let err = super::lock::lock_index(tmp.path(), Some(std::time::Duration::from_millis(10)))
+            .unwrap_err();
+        assert!(
+            matches!(err, SessionPersistError::IndexLockTimeout { .. }),
+            "expected IndexLockTimeout, got {err:?}",
+        );
+    }
+
+    if let (Some(before), Some(after)) = (baseline, current_thread_count()) {
+        assert!(
+            after < before + attempts,
+            "timed-out acquisitions leaked waiter threads: {before} -> {after} \
+             across {attempts} attempts",
+        );
+    } else {
+        // No /proc/self/task on this platform (e.g. macOS): the poll-loop
+        // implementation spawns no waiter thread by construction, so there
+        // is nothing to leak; the typed-timeout and re-acquisition checks
+        // below still run.
+        tracing::info!(
+            "thread-count assertion skipped: /proc/self/task unavailable on this platform",
+        );
+    }
+
+    drop(held);
+    // Released: a bounded acquisition succeeds again, proving the poll
+    // loop acquires the freed lock rather than merely timing out.
+    let _reacquired =
+        super::lock::lock_index(tmp.path(), Some(std::time::Duration::from_secs(30))).unwrap();
+}
+
+/// Best-effort live-thread count via `/proc/self/task` (Linux). Returns
+/// `None` where that interface is absent, letting the caller skip the
+/// platform-specific assertion at runtime.
+fn current_thread_count() -> Option<usize> {
+    let entries = std::fs::read_dir("/proc/self/task").ok()?;
+    Some(entries.flatten().count())
+}
+
 // ----- Concurrent-create header exclusivity (R3) ---------------------------
 
 /// Regression: the first open used check-then-write ("len == 0 → write
@@ -1824,6 +1883,63 @@ fn concurrent_first_opens_stamp_exactly_one_header() {
     let artifacts = io::read_session_events(tmp.path(), "race-header").unwrap();
     assert_eq!(artifacts.skipped_lines, 0, "no corrupt duplicate header");
     assert_eq!(artifacts.format_version, Some(SESSION_FORMAT_VERSION));
+}
+
+/// Regression: the create winner used to write its header in a second,
+/// non-atomic step after `create_new`, so a winner preempted between the
+/// two let a racing loser append its first event ahead of the header —
+/// leaving the header permanently skipped at line 2 and `format_version`
+/// lost. The header now lands atomically with the file (temp + fsync +
+/// `hard_link`), so the very first content line is always the header even
+/// when every opener writes an event the instant its handle is returned.
+#[test]
+fn concurrent_first_opens_keep_the_header_first() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = session_file_path(tmp.path(), "header-first");
+
+    let openers = 8;
+    let barrier = std::sync::Arc::new(std::sync::Barrier::new(openers));
+    let handles: Vec<_> = (0..openers)
+        .map(|i| {
+            let path = path.clone();
+            let barrier = std::sync::Arc::clone(&barrier);
+            std::thread::spawn(move || {
+                barrier.wait();
+                let mut file = io::open_session_append(&path).unwrap();
+                // Append an event the moment the handle is returned: a
+                // loser's first event must never be able to precede the
+                // winner's header.
+                let mut line = serde_json::to_vec(&user_msg(&format!("event-{i}"))).unwrap();
+                line.push(b'\n');
+                file.write_all(&line).unwrap();
+            })
+        })
+        .collect();
+    for handle in handles {
+        handle.join().unwrap();
+    }
+
+    let content = fs::read_to_string(&path).unwrap();
+    let first = content.lines().next().expect("file has content");
+    assert!(
+        serde_json::from_str::<SessionFileHeader>(first).is_ok(),
+        "the first content line must be the header, got: {first}",
+    );
+    let header_lines = content
+        .lines()
+        .filter(|line| serde_json::from_str::<SessionFileHeader>(line).is_ok())
+        .count();
+    assert_eq!(header_lines, 1, "exactly one header line: {content:?}");
+
+    // The reader stamps the version and recovers every event, with the
+    // header never counted as a corrupt/skipped line.
+    let artifacts = io::read_session_events(tmp.path(), "header-first").unwrap();
+    assert_eq!(artifacts.format_version, Some(SESSION_FORMAT_VERSION));
+    assert_eq!(artifacts.events.len(), openers, "all events recovered");
+    assert_eq!(
+        artifacts.skipped_lines, 0,
+        "the header never becomes a skipped corrupt line",
+    );
 }
 
 /// A pre-existing EMPTY session file (creator crashed before the header

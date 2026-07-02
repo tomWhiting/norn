@@ -70,7 +70,7 @@ impl StepMachine<'_> {
         // iteration's tool batch. These must hit the prompt before the next
         // provider call.
         if !self.pending_before_injections.is_empty() {
-            let injections = std::mem::take(&mut self.pending_before_injections);
+            let injections = std::mem::take(&mut *self.pending_before_injections);
             apply_rule_injections(
                 &mut *self.loop_context,
                 injections,

@@ -11,7 +11,7 @@
 use std::sync::Arc;
 
 use norn::agent::registry::AgentRegistry;
-use norn::agent_loop::runner::ToolExecutor;
+use norn::agent_loop::runner::driver_executor;
 use norn::system_prompt::ExecutionMode;
 use norn::tools::lsp::{LspBackend, LspWorkspace, WorkspaceLspBackend};
 
@@ -221,7 +221,10 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             .into());
     };
 
-    let executor: Arc<dyn ToolExecutor> = Arc::clone(&parts.registry) as Arc<dyn ToolExecutor>;
+    // `driver_executor` coerces the registry to `Arc<dyn ToolExecutor>`; the
+    // TUI event loop hands it to `run_agent_step` by reference so concurrent
+    // tool batches get an owned handle (see `driver_executor` docs).
+    let executor = driver_executor(&parts.registry);
     let tui_inputs = TuiInputs {
         provider: Arc::clone(&parts.provider),
         executor,

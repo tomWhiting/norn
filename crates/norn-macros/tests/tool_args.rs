@@ -692,15 +692,22 @@ fn rename_all_camel_case_transforms_all_names() {
 #[derive(Deserialize, ToolArgs)]
 #[serde(rename_all = "snake_case")]
 struct RenameAllSnake {
-    /// A pascal-cased Rust field.
+    /// A pascal-cased Rust field. serde's `snake_case` *field* rule is the
+    /// identity (it assumes fields are already snake), so the wire name stays
+    /// `MyField` — the old word-splitting `my_field` was a name serde would
+    /// reject on the wire.
     MyField: String,
 }
 
 #[test]
-fn rename_all_snake_case_transforms_pascal_ident() {
+fn rename_all_snake_case_is_identity_for_fields() {
     let schema = RenameAllSnake::json_schema();
-    assert_eq!(schema["properties"]["my_field"]["type"], "string");
-    assert_eq!(schema["required"], serde_json::json!(["my_field"]));
+    assert_eq!(schema["properties"]["MyField"]["type"], "string");
+    assert_eq!(schema["required"], serde_json::json!(["MyField"]));
+    // serde accepts exactly the name the schema advertises.
+    let value: RenameAllSnake =
+        serde_json::from_value(serde_json::json!({ "MyField": "x" })).unwrap();
+    assert_eq!(value.MyField, "x");
 }
 
 #[derive(Deserialize, ToolArgs)]
@@ -1397,4 +1404,417 @@ fn mixed_features_interact_correctly() {
     assert_eq!(value.primary_key, "pk");
     assert_eq!(value.secondary_key, "ek");
     assert_eq!(value.inner.token, "t");
+}
+
+// ---------------------------------------------------------------------------
+// serde `rename_all` parity for acronym idents (consecutive-uppercase).
+//
+// serde's rename_all is a mechanical, per-character transform that differs by
+// surface: variant names are treated as PascalCase, field names as snake_case.
+// These tests pin the exact wire names the generated schema advertises against
+// serde_derive's algorithm AND round-trip every advertised name through
+// serde_json, so a schema can never advertise a name serde would reject
+// (the acronym-divergence bug the earlier heck-style splitter introduced).
+// ---------------------------------------------------------------------------
+
+/// Every variant tag `const` the schema advertises must deserialize.
+fn assert_variant_consts_roundtrip<T>(schema: &serde_json::Value, tag: &str, expected: &[&str])
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let variants = schema["oneOf"].as_array().expect("oneOf array");
+    let consts: Vec<String> = variants
+        .iter()
+        .map(|v| {
+            v["properties"][tag]["const"]
+                .as_str()
+                .expect("tag const is a string")
+                .to_string()
+        })
+        .collect();
+    assert_eq!(
+        consts, expected,
+        "schema-advertised variant names must equal serde's rename_all output",
+    );
+    for name in &consts {
+        serde_json::from_value::<T>(serde_json::json!({ tag: name })).unwrap_or_else(|e| {
+            panic!("serde rejects schema-advertised variant const {name:?}: {e}")
+        });
+    }
+}
+
+/// Every field name the schema advertises must deserialize (all fields are
+/// required `String`s, so a divergent name would surface as a missing-field
+/// or unknown-field error).
+fn assert_field_names_roundtrip<T>(schema: &serde_json::Value, expected: &[&str])
+where
+    T: for<'de> Deserialize<'de>,
+{
+    let props = schema["properties"].as_object().expect("properties object");
+    let names: Vec<String> = props.keys().cloned().collect();
+    assert_eq!(
+        names, expected,
+        "schema-advertised field names must equal serde's rename_all output",
+    );
+    let mut obj = serde_json::Map::new();
+    for name in &names {
+        obj.insert(name.clone(), serde_json::Value::String("x".to_string()));
+    }
+    serde_json::from_value::<T>(serde_json::Value::Object(obj))
+        .unwrap_or_else(|e| panic!("serde rejects schema-advertised field set {names:?}: {e}"));
+}
+
+// --- Variant surface: internally-tagged enums, unit variants -------------
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum VariantSnake {
+    HTTPRequest,
+    IOError,
+    XMLHttpRequest,
+    ReadFile,
+}
+
+#[test]
+fn variant_snake_case_matches_serde_for_acronyms() {
+    assert_variant_consts_roundtrip::<VariantSnake>(
+        &VariantSnake::json_schema(),
+        "type",
+        &[
+            "h_t_t_p_request",
+            "i_o_error",
+            "x_m_l_http_request",
+            "read_file",
+        ],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all = "kebab-case")]
+enum VariantKebab {
+    HTTPRequest,
+    IOError,
+    ReadFile,
+}
+
+#[test]
+fn variant_kebab_case_matches_serde_for_acronyms() {
+    assert_variant_consts_roundtrip::<VariantKebab>(
+        &VariantKebab::json_schema(),
+        "type",
+        &["h-t-t-p-request", "i-o-error", "read-file"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all = "SCREAMING_SNAKE_CASE")]
+enum VariantScreamingSnake {
+    HTTPRequest,
+    IOError,
+    ReadFile,
+}
+
+#[test]
+fn variant_screaming_snake_matches_serde_for_acronyms() {
+    assert_variant_consts_roundtrip::<VariantScreamingSnake>(
+        &VariantScreamingSnake::json_schema(),
+        "type",
+        &["H_T_T_P_REQUEST", "I_O_ERROR", "READ_FILE"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all = "SCREAMING-KEBAB-CASE")]
+enum VariantScreamingKebab {
+    HTTPRequest,
+    IOError,
+}
+
+#[test]
+fn variant_screaming_kebab_matches_serde_for_acronyms() {
+    assert_variant_consts_roundtrip::<VariantScreamingKebab>(
+        &VariantScreamingKebab::json_schema(),
+        "type",
+        &["H-T-T-P-REQUEST", "I-O-ERROR"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all = "camelCase")]
+enum VariantCamel {
+    HTTPRequest,
+    IOError,
+    ReadFile,
+}
+
+#[test]
+fn variant_camel_case_matches_serde_for_acronyms() {
+    // serde's camelCase for variants lowercases only the first character.
+    assert_variant_consts_roundtrip::<VariantCamel>(
+        &VariantCamel::json_schema(),
+        "type",
+        &["hTTPRequest", "iOError", "readFile"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all = "PascalCase")]
+enum VariantPascal {
+    HTTPRequest,
+    IOError,
+}
+
+#[test]
+fn variant_pascal_case_is_identity_for_acronyms() {
+    assert_variant_consts_roundtrip::<VariantPascal>(
+        &VariantPascal::json_schema(),
+        "type",
+        &["HTTPRequest", "IOError"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all = "lowercase")]
+enum VariantLower {
+    HTTPRequest,
+    IOError,
+}
+
+#[test]
+fn variant_lowercase_matches_serde_for_acronyms() {
+    assert_variant_consts_roundtrip::<VariantLower>(
+        &VariantLower::json_schema(),
+        "type",
+        &["httprequest", "ioerror"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all = "UPPERCASE")]
+enum VariantUpper {
+    HttpRequest,
+    IoError,
+}
+
+#[test]
+fn variant_uppercase_matches_serde_for_acronyms() {
+    assert_variant_consts_roundtrip::<VariantUpper>(
+        &VariantUpper::json_schema(),
+        "type",
+        &["HTTPREQUEST", "IOERROR"],
+    );
+}
+
+// --- Field surface: structs with acronym / multi-word idents -------------
+//
+// serde treats field idents as snake_case input, so `snake_case`/`lowercase`
+// are the identity even for a non-snake `userID`, while the earlier heck
+// splitter wrongly dropped underscores (`user_id` -> `userid`) and regrouped
+// acronyms.
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(rename_all = "snake_case", deny_unknown_fields)]
+struct FieldSnake {
+    /// Already snake — identity.
+    user_id: String,
+    /// Non-snake acronym ident stays verbatim under serde's field rule.
+    userID: String,
+    /// Multi-word snake ident.
+    http_status: String,
+}
+
+#[test]
+fn field_snake_case_is_identity_matching_serde() {
+    assert_field_names_roundtrip::<FieldSnake>(
+        &FieldSnake::json_schema(),
+        &["user_id", "userID", "http_status"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(rename_all = "lowercase", deny_unknown_fields)]
+struct FieldLower {
+    /// serde's lowercase for fields is the identity (underscores kept).
+    user_id: String,
+    /// Acronym ident under the lowercase field rule.
+    userID: String,
+}
+
+#[test]
+fn field_lowercase_is_identity_matching_serde() {
+    // The heck splitter used to yield "userid" here (underscore dropped).
+    assert_field_names_roundtrip::<FieldLower>(&FieldLower::json_schema(), &["user_id", "userID"]);
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct FieldCamel {
+    /// Standard snake -> camel.
+    user_id: String,
+    /// serde pascalises then lowercases the first char.
+    userID: String,
+    /// Multi-word field under the camel rule.
+    http_status: String,
+}
+
+#[test]
+fn field_camel_case_matches_serde_for_acronyms() {
+    assert_field_names_roundtrip::<FieldCamel>(
+        &FieldCamel::json_schema(),
+        &["userId", "userID", "httpStatus"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(rename_all = "PascalCase", deny_unknown_fields)]
+struct FieldPascal {
+    /// Standard snake field under the Pascal rule.
+    user_id: String,
+    /// Acronym ident under the Pascal rule.
+    userID: String,
+    /// Multi-word field under the Pascal rule.
+    http_status: String,
+}
+
+#[test]
+fn field_pascal_case_matches_serde_for_acronyms() {
+    assert_field_names_roundtrip::<FieldPascal>(
+        &FieldPascal::json_schema(),
+        &["UserId", "UserID", "HttpStatus"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(rename_all = "SCREAMING_SNAKE_CASE", deny_unknown_fields)]
+struct FieldScreamingSnake {
+    /// Standard snake field under the screaming-snake rule.
+    user_id: String,
+    /// Acronym ident under the screaming-snake rule.
+    userID: String,
+    /// Multi-word field under the screaming-snake rule.
+    http_status: String,
+}
+
+#[test]
+fn field_screaming_snake_matches_serde_for_acronyms() {
+    // serde's field SCREAMING_SNAKE_CASE is a plain ASCII upcase of the ident.
+    assert_field_names_roundtrip::<FieldScreamingSnake>(
+        &FieldScreamingSnake::json_schema(),
+        &["USER_ID", "USERID", "HTTP_STATUS"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(rename_all = "kebab-case", deny_unknown_fields)]
+struct FieldKebab {
+    /// Standard snake field under the kebab rule.
+    user_id: String,
+    /// Acronym ident under the kebab rule.
+    userID: String,
+    /// Multi-word field under the kebab rule.
+    http_status: String,
+}
+
+#[test]
+fn field_kebab_case_matches_serde_for_acronyms() {
+    assert_field_names_roundtrip::<FieldKebab>(
+        &FieldKebab::json_schema(),
+        &["user-id", "userID", "http-status"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(rename_all = "SCREAMING-KEBAB-CASE", deny_unknown_fields)]
+struct FieldScreamingKebab {
+    /// Standard snake field under the screaming-kebab rule.
+    user_id: String,
+    /// Acronym ident under the screaming-kebab rule.
+    userID: String,
+    /// Multi-word field under the screaming-kebab rule.
+    http_status: String,
+}
+
+#[test]
+fn field_screaming_kebab_matches_serde_for_acronyms() {
+    assert_field_names_roundtrip::<FieldScreamingKebab>(
+        &FieldScreamingKebab::json_schema(),
+        &["USER-ID", "USERID", "HTTP-STATUS"],
+    );
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(rename_all = "UPPERCASE", deny_unknown_fields)]
+struct FieldUpper {
+    /// Standard snake field under the UPPERCASE rule.
+    user_id: String,
+    /// Acronym ident under the UPPERCASE rule.
+    userID: String,
+}
+
+#[test]
+fn field_uppercase_matches_serde() {
+    assert_field_names_roundtrip::<FieldUpper>(&FieldUpper::json_schema(), &["USER_ID", "USERID"]);
+}
+
+// --- rename_all_fields and per-variant rename_all surfaces ----------------
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all_fields = "camelCase")]
+enum ContainerFieldRule {
+    /// Fields renamed by the container's `rename_all_fields`.
+    Variant {
+        /// Acronym-ish field name.
+        userID: String,
+        /// Multi-word field name.
+        http_status: String,
+    },
+}
+
+#[test]
+fn rename_all_fields_matches_serde_for_acronyms() {
+    let schema = ContainerFieldRule::json_schema();
+    let variant = &schema["oneOf"][0];
+    // camelCase field rule: userID -> userID, http_status -> httpStatus.
+    assert_eq!(variant["properties"]["userID"]["type"], "string");
+    assert_eq!(variant["properties"]["httpStatus"]["type"], "string");
+    let value: ContainerFieldRule = serde_json::from_value(serde_json::json!({
+        "type": "Variant",
+        "userID": "u",
+        "httpStatus": "s"
+    }))
+    .unwrap();
+    let ContainerFieldRule::Variant {
+        userID,
+        http_status,
+    } = value;
+    assert_eq!(userID, "u");
+    assert_eq!(http_status, "s");
+}
+
+#[derive(Deserialize, ToolArgs)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum PerVariantFieldRule {
+    /// The variant's own `rename_all` governs its fields.
+    #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
+    HTTPRequest {
+        /// Field renamed by the per-variant rule.
+        user_id: String,
+    },
+}
+
+#[test]
+fn per_variant_rename_all_and_tag_match_serde_for_acronyms() {
+    let schema = PerVariantFieldRule::json_schema();
+    let variant = &schema["oneOf"][0];
+    // Variant tag uses the container snake_case rule (per-char).
+    assert_eq!(variant["properties"]["type"]["const"], "h_t_t_p_request");
+    // Field uses the per-variant SCREAMING_SNAKE_CASE rule (ASCII upcase).
+    assert_eq!(variant["properties"]["USER_ID"]["type"], "string");
+    let value: PerVariantFieldRule = serde_json::from_value(serde_json::json!({
+        "type": "h_t_t_p_request",
+        "USER_ID": "u"
+    }))
+    .unwrap();
+    let PerVariantFieldRule::HTTPRequest { user_id } = value;
+    assert_eq!(user_id, "u");
 }

@@ -27,7 +27,7 @@ use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::{Hook, HookRegistry};
 use crate::integration::variables::VariableStore;
 use crate::internal::extraction::SharedProvider;
-use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
+use crate::r#loop::config::AgentLoopConfig;
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::retry::RetryPolicy;
 use crate::r#loop::tokens::SimpleTokenEstimator;
@@ -327,7 +327,24 @@ pub(crate) fn resolve_runtime_overlay(
             .as_ref()
             .map(|base| Arc::clone(&base.diagnostics))
     });
-    let rules = overrides.rules.or(runtime_rules);
+    // An explicit rules engine (e.g. norn-cli's `--rules` file) is merged
+    // ONTO the runtime base's auto-discovered rules rather than replacing
+    // them: both sets are enforced, and the explicit rules inherit the
+    // base engine's working-dir / diagnostics / shell-timeout wiring. On a
+    // rule-ID collision (both IDs derive from the file stem) the explicit
+    // rule wins — `merge_rules_from` drops the shadowed discovered rule and
+    // logs it, so the operator's `--rules` override is never silently
+    // discarded. With no base rules, the explicit engine passes through with
+    // its own wiring; with no explicit engine, the base's discovered rules
+    // stand.
+    let rules = match (overrides.rules, runtime_rules) {
+        (Some(explicit), Some(mut base_rules)) => {
+            base_rules.merge_rules_from(explicit);
+            Some(base_rules)
+        }
+        (Some(explicit), None) => Some(explicit),
+        (None, base_rules) => base_rules,
+    };
     let hook_source = overrides.hooks.or(runtime_hooks);
     let hooks = append_diagnostic_stop_hook(hook_source, diagnostic_infra.as_ref().map(Arc::clone));
     RuntimeOverlay {
@@ -349,6 +366,43 @@ pub(crate) fn apply_base_to_loop_context(loop_context: &mut LoopContext, base: &
         .clone_from(&base.iteration_monitor);
 }
 
+/// Which non-`Option` [`AgentLoopConfig`] fields the caller explicitly set.
+///
+/// `Option` fields carry their own presence (`Some` = explicitly set), but
+/// the four non-`Option` fields below are indistinguishable from an unset
+/// default by value alone. A caller that explicitly restores the library
+/// default (e.g. `-c schema_budget=3` when 3 is the default) must still win
+/// over a settings-derived runtime base, so presence is tracked
+/// structurally here rather than inferred from value inequality — the
+/// latter silently reverted an explicit-to-default override back to the
+/// base value.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct AgentConfigPresence {
+    /// `schema_attempt_budget` was explicitly set.
+    pub(crate) schema_attempt_budget: bool,
+    /// `auto_compact_keep_recent_turns` was explicitly set.
+    pub(crate) auto_compact_keep_recent_turns: bool,
+    /// `schema_tool_name` was explicitly set.
+    pub(crate) schema_tool_name: bool,
+    /// `conversation_state` was explicitly set.
+    pub(crate) conversation_state: bool,
+}
+
+impl AgentConfigPresence {
+    /// Mark every non-`Option` field present — the caller supplied a
+    /// complete [`AgentLoopConfig`] via
+    /// [`AgentBuilder::agent_config`](crate::agent::builder::AgentBuilder::agent_config),
+    /// so all of its fields are explicit.
+    pub(crate) fn all() -> Self {
+        Self {
+            schema_attempt_budget: true,
+            auto_compact_keep_recent_turns: true,
+            schema_tool_name: true,
+            conversation_state: true,
+        }
+    }
+}
+
 /// The effective agent-loop config: the runtime base's config with
 /// explicitly-set builder fields overlaid, or the explicit config alone
 /// when no base was loaded. This single value drives both the loop config
@@ -357,9 +411,10 @@ pub(crate) fn apply_base_to_loop_context(loop_context: &mut LoopContext, base: &
 pub(crate) fn effective_agent_config(
     runtime_base: Option<&LoadedRuntimeBase>,
     explicit: AgentLoopConfig,
+    present: AgentConfigPresence,
 ) -> AgentLoopConfig {
     match runtime_base {
-        Some(base) => merge_agent_config(base.agent_config.clone(), explicit),
+        Some(base) => merge_agent_config(base.agent_config.clone(), explicit, present),
         None => explicit,
     }
 }
@@ -498,9 +553,29 @@ pub(crate) fn assemble_tool_context(parts: ToolContextParts) -> ToolContext {
 }
 
 /// Overlay explicitly-set builder fields onto the runtime-base agent config.
-fn merge_agent_config(mut base: AgentLoopConfig, explicit: AgentLoopConfig) -> AgentLoopConfig {
-    if explicit.schema_attempt_budget != AgentLoopConfig::default().schema_attempt_budget {
+///
+/// Non-`Option` fields overlay when `present` marks them explicit (so an
+/// explicit-to-default value still wins); every `Option` field overlays
+/// when it is `Some`. Every field of [`AgentLoopConfig`] is covered — a
+/// completeness test in this module asserts a fully-explicit config
+/// survives the merge intact, so a future field cannot silently miss the
+/// overlay.
+fn merge_agent_config(
+    mut base: AgentLoopConfig,
+    explicit: AgentLoopConfig,
+    present: AgentConfigPresence,
+) -> AgentLoopConfig {
+    if present.schema_attempt_budget {
         base.schema_attempt_budget = explicit.schema_attempt_budget;
+    }
+    if present.auto_compact_keep_recent_turns {
+        base.auto_compact_keep_recent_turns = explicit.auto_compact_keep_recent_turns;
+    }
+    if present.schema_tool_name {
+        base.schema_tool_name = explicit.schema_tool_name;
+    }
+    if present.conversation_state {
+        base.conversation_state = explicit.conversation_state;
     }
     if explicit.max_iterations.is_some() {
         base.max_iterations = explicit.max_iterations;
@@ -514,25 +589,20 @@ fn merge_agent_config(mut base: AgentLoopConfig, explicit: AgentLoopConfig) -> A
     if explicit.auto_compact_threshold_pct.is_some() {
         base.auto_compact_threshold_pct = explicit.auto_compact_threshold_pct;
     }
-    if explicit.auto_compact_keep_recent_turns
-        != AgentLoopConfig::default().auto_compact_keep_recent_turns
-    {
-        base.auto_compact_keep_recent_turns = explicit.auto_compact_keep_recent_turns;
-    }
-    if explicit.schema_tool_name != AgentLoopConfig::default().schema_tool_name {
-        base.schema_tool_name = explicit.schema_tool_name;
-    }
     if explicit.cache_key.is_some() {
         base.cache_key = explicit.cache_key;
-    }
-    if explicit.conversation_state != ConversationStateMode::default() {
-        base.conversation_state = explicit.conversation_state;
     }
     if explicit.server_compaction_threshold_tokens.is_some() {
         base.server_compaction_threshold_tokens = explicit.server_compaction_threshold_tokens;
     }
     if explicit.output_schema.is_some() {
         base.output_schema = explicit.output_schema;
+    }
+    if explicit.prompt_command_timeout.is_some() {
+        base.prompt_command_timeout = explicit.prompt_command_timeout;
+    }
+    if explicit.linger.is_some() {
+        base.linger = explicit.linger;
     }
     base
 }
@@ -743,8 +813,115 @@ pub(crate) fn install_agent_infra(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
+    use crate::r#loop::config::ConversationStateMode;
+    use crate::r#loop::linger::LingerPolicy;
     use crate::provider::mock::MockProvider;
+
+    /// Finding-4 regression: an explicit non-`Option` value that equals the
+    /// library default must still win over a settings-derived base when its
+    /// presence flag is set. The old value-vs-default sentinel reverted it
+    /// back to the base value, silently discarding the explicit override.
+    #[test]
+    fn explicit_non_option_default_value_wins_when_present() {
+        let base = AgentLoopConfig {
+            schema_attempt_budget: 5,
+            auto_compact_keep_recent_turns: 20,
+            ..AgentLoopConfig::default()
+        };
+        let explicit = AgentLoopConfig {
+            // Both equal the library default (3 / 10) — the exact case the
+            // old sentinel misclassified as "unset".
+            schema_attempt_budget: AgentLoopConfig::default().schema_attempt_budget,
+            auto_compact_keep_recent_turns: AgentLoopConfig::default()
+                .auto_compact_keep_recent_turns,
+            ..AgentLoopConfig::default()
+        };
+        let merged = merge_agent_config(base, explicit, AgentConfigPresence::all());
+        assert_eq!(
+            merged.schema_attempt_budget, 3,
+            "explicit schema_attempt_budget=3 (the default) must win over base=5",
+        );
+        assert_eq!(
+            merged.auto_compact_keep_recent_turns, 10,
+            "explicit auto_compact_keep_recent_turns=10 (the default) must win over base=20",
+        );
+    }
+
+    /// Without a presence flag a non-`Option` field defers to the base —
+    /// the caller never set it, so the settings-derived value stands.
+    #[test]
+    fn unset_non_option_field_defers_to_base() {
+        let base = AgentLoopConfig {
+            schema_attempt_budget: 5,
+            ..AgentLoopConfig::default()
+        };
+        let explicit = AgentLoopConfig::default();
+        let merged = merge_agent_config(base, explicit, AgentConfigPresence::default());
+        assert_eq!(
+            merged.schema_attempt_budget, 5,
+            "no presence flag means the base (settings) value stands",
+        );
+    }
+
+    /// Finding-5 regression + completeness guard: a fully-explicit config
+    /// (every field non-default, all presence flags set) must overlay the
+    /// base in its entirety — including `prompt_command_timeout` and
+    /// `linger`, which the previous overlay omitted. This fails loudly if a
+    /// future `AgentLoopConfig` field is added without a matching overlay.
+    #[test]
+    fn fully_explicit_config_overlays_every_field() {
+        let base = AgentLoopConfig::default();
+        let explicit = AgentLoopConfig {
+            schema_attempt_budget: 9,
+            max_iterations: Some(42),
+            step_timeout: Some(Duration::from_secs(99)),
+            context_window_limit: Some(123_456),
+            auto_compact_threshold_pct: Some(77.0),
+            auto_compact_keep_recent_turns: 33,
+            schema_tool_name: "custom_output".to_owned(),
+            cache_key: Some("ck".to_owned()),
+            conversation_state: ConversationStateMode::ManualReplay,
+            server_compaction_threshold_tokens: Some(7_000),
+            output_schema: Some(serde_json::json!({"type": "object"})),
+            prompt_command_timeout: Some(Duration::from_secs(12)),
+            linger: Some(LingerPolicy {
+                deadline: Duration::from_secs(3),
+            }),
+        };
+        let merged = merge_agent_config(base, explicit.clone(), AgentConfigPresence::all());
+        assert_eq!(merged.schema_attempt_budget, explicit.schema_attempt_budget);
+        assert_eq!(merged.max_iterations, explicit.max_iterations);
+        assert_eq!(merged.step_timeout, explicit.step_timeout);
+        assert_eq!(merged.context_window_limit, explicit.context_window_limit);
+        assert_eq!(
+            merged.auto_compact_threshold_pct,
+            explicit.auto_compact_threshold_pct
+        );
+        assert_eq!(
+            merged.auto_compact_keep_recent_turns,
+            explicit.auto_compact_keep_recent_turns
+        );
+        assert_eq!(merged.schema_tool_name, explicit.schema_tool_name);
+        assert_eq!(merged.cache_key, explicit.cache_key);
+        assert_eq!(merged.conversation_state, explicit.conversation_state);
+        assert_eq!(
+            merged.server_compaction_threshold_tokens,
+            explicit.server_compaction_threshold_tokens
+        );
+        assert_eq!(merged.output_schema, explicit.output_schema);
+        assert_eq!(
+            merged.prompt_command_timeout, explicit.prompt_command_timeout,
+            "prompt_command_timeout must overlay onto the base (finding 5)",
+        );
+        assert_eq!(
+            merged.linger.is_some(),
+            explicit.linger.is_some(),
+            "linger must overlay onto the base (finding 5)",
+        );
+    }
 
     /// `install_agent_infra` anchors the session-wide [`ActionLogTree`]
     /// at the agent and registers the shared context's root [`ActionLog`]

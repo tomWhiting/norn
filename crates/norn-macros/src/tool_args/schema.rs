@@ -163,7 +163,7 @@ fn resolve_wire_name(field: &ParsedField, rename_all: Option<RenameRule>) -> Str
     }
     let raw = field.ident.to_string();
     match rename_all {
-        Some(rule) => rule.apply(&raw),
+        Some(rule) => rule.apply_to_field(&raw),
         None => raw,
     }
 }

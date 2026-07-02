@@ -152,6 +152,29 @@ impl ToolExecutor for Arc<dyn ToolExecutor> {
     }
 }
 
+/// Coerce an `Arc`-held [`ToolRegistry`](crate::tool::registry::ToolRegistry)
+/// into the `Arc<dyn ToolExecutor>` the interactive / print drivers hand to
+/// [`run_agent_step`](crate::agent_loop::runner::run_agent_step).
+///
+/// The drivers pass the *returned* value by reference (`&Arc<dyn
+/// ToolExecutor>`) so the blanket [`ToolExecutor`] impl for
+/// `Arc<dyn ToolExecutor>` supplies [`ToolExecutor::owned_handle`], handing
+/// each concurrent batch member its own spawnable `'static` handle — exactly
+/// as `Agent::run` does. Passing the borrowed `&*registry` instead reaches
+/// [`ToolRegistry`](crate::tool::registry::ToolRegistry)'s own impl, whose
+/// default `owned_handle` is `None`, collapsing every concurrent tool batch
+/// to the single-task `join_all` fallback.
+///
+/// This is the single coercion point every driver routes through, so that
+/// owned-handle distinction cannot silently regress to the borrowed form in
+/// one driver while the others stay correct.
+#[must_use]
+pub fn driver_executor(
+    registry: &Arc<crate::tool::registry::ToolRegistry>,
+) -> Arc<dyn ToolExecutor> {
+    Arc::clone(registry) as Arc<dyn ToolExecutor>
+}
+
 /// Configuration for a single agent loop step.
 ///
 /// Iteration-monitor configuration moved off this struct in N-017 and now

@@ -20,16 +20,35 @@
 //! that would rather fail a step than stall behind a wedged process —
 //! pass an explicit deadline; exceeding it yields the typed
 //! [`SessionPersistError::IndexLockTimeout`].
+//!
+//! A deadline-bound wait polls the non-blocking [`File::try_lock`] and
+//! sleeps [`LOCK_POLL_INTERVAL`] between attempts rather than parking a
+//! thread in the blocking `File::lock`, so a timed-out acquisition leaves
+//! nothing behind — no waiter thread and no open file descriptor blocked
+//! in `flock` until the contending holder happens to release.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File, OpenOptions, TryLockError};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use super::types::SessionPersistError;
 
 /// File name of the index lock inside the session data directory.
 const INDEX_LOCK_FILE: &str = "index.lock";
+
+/// How long a deadline-bound acquisition sleeps between non-blocking
+/// [`File::try_lock`] attempts.
+///
+/// This is an internal mechanism detail of the timeout implementation,
+/// not a configurable knob or an assumed default for the deadline itself
+/// (the deadline is always supplied by the caller). It bounds two things
+/// to a single interval: how quickly a freed lock is noticed after the
+/// holder releases, and how far past the caller's deadline a timeout can
+/// be reported. `5ms` keeps both latencies imperceptible next to the
+/// step-level or human-facing deadlines that motivate the feature while
+/// costing at most ~200 wakeups/second on a single contended waiter —
+/// negligible, and only while the lock is actually contended.
+const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
 /// An exclusive advisory lock over the session index.
 ///
@@ -56,11 +75,11 @@ impl Drop for IndexLock {
 ///
 /// With `deadline = None` the call blocks until the lock is available
 /// (the historical behaviour — the OS advisory lock has no timeout of
-/// its own). With `Some(deadline)`, a wait exceeding the deadline
-/// returns [`SessionPersistError::IndexLockTimeout`] and leaves the
-/// index untouched; a lock acquired by the abandoned waiter after the
-/// timeout is released immediately, so a timed-out call never holds the
-/// lock.
+/// its own). With `Some(deadline)`, the wait polls a non-blocking
+/// [`File::try_lock`] until it succeeds or the deadline elapses; on
+/// expiry the call returns [`SessionPersistError::IndexLockTimeout`] with
+/// the index untouched and no waiter thread or blocked descriptor left
+/// behind.
 pub(crate) fn lock_index(
     data_dir: &Path,
     deadline: Option<Duration>,
@@ -83,66 +102,33 @@ pub(crate) fn lock_index(
 
 /// Bound the indefinite OS lock wait with `deadline`.
 ///
-/// `File::lock` has no timeout, so the blocking wait runs on a
-/// dedicated waiter thread and this caller waits on a channel with the
-/// deadline. On timeout the receiver is dropped; if the abandoned
-/// waiter later acquires the lock, its `send` fails and it releases the
-/// lock immediately (unlock, then handle close), so a timed-out
-/// acquisition can never leak a held lock.
+/// `File::lock` has no timeout, so instead of parking a thread in it this
+/// polls the non-blocking [`File::try_lock`] on the current thread,
+/// sleeping [`LOCK_POLL_INTERVAL`] (clamped so it never overshoots the
+/// deadline) between attempts. On expiry the `file` handle is dropped
+/// with its descriptor — there is no waiter thread and no blocked `flock`
+/// to leak, so a workflow that repeatedly times out behind a wedged
+/// holder accumulates nothing.
 fn lock_with_deadline(
     file: File,
     path: PathBuf,
     deadline: Duration,
 ) -> Result<IndexLock, SessionPersistError> {
-    let (sender, receiver) = mpsc::channel::<std::io::Result<File>>();
-    let waiter_path = path.clone();
-    std::thread::Builder::new()
-        .name("norn-index-lock-wait".to_owned())
-        .spawn(move || {
-            let result = file.lock().map(|()| file);
-            if let Err(mpsc::SendError(unclaimed)) = sender.send(result) {
-                // The waiter timed out and dropped the receiver.
-                match unclaimed {
-                    Ok(locked) => {
-                        if let Err(error) = locked.unlock() {
-                            // Dropping the handle below releases the OS
-                            // lock regardless; log for observability.
-                            tracing::warn!(
-                                path = %waiter_path.display(),
-                                %error,
-                                "failed to unlock session index lock acquired \
-                                 after its waiter timed out; the handle close \
-                                 releases it",
-                            );
-                        }
-                        tracing::debug!(
-                            path = %waiter_path.display(),
-                            "session index lock acquired after its waiter \
-                             timed out; released immediately",
-                        );
-                    }
-                    Err(error) => {
-                        tracing::debug!(
-                            path = %waiter_path.display(),
-                            %error,
-                            "session index lock wait failed after its waiter \
-                             timed out",
-                        );
-                    }
-                }
+    let started = Instant::now();
+    loop {
+        match file.try_lock() {
+            Ok(()) => return Ok(IndexLock { file }),
+            Err(TryLockError::WouldBlock) => {
+                let elapsed = started.elapsed();
+                let Some(remaining) = deadline.checked_sub(elapsed) else {
+                    return Err(SessionPersistError::IndexLockTimeout {
+                        path,
+                        waited: deadline,
+                    });
+                };
+                std::thread::sleep(remaining.min(LOCK_POLL_INTERVAL));
             }
-        })?;
-    match receiver.recv_timeout(deadline) {
-        Ok(Ok(file)) => Ok(IndexLock { file }),
-        Ok(Err(error)) => Err(SessionPersistError::Io(error)),
-        Err(mpsc::RecvTimeoutError::Timeout) => Err(SessionPersistError::IndexLockTimeout {
-            path,
-            waited: deadline,
-        }),
-        // The waiter thread can only exit by sending; a disconnect
-        // without a value means it terminated abnormally.
-        Err(mpsc::RecvTimeoutError::Disconnected) => Err(SessionPersistError::Io(
-            std::io::Error::other("session index lock waiter thread exited without a result"),
-        )),
+            Err(TryLockError::Error(error)) => return Err(SessionPersistError::Io(error)),
+        }
     }
 }

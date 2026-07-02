@@ -233,7 +233,12 @@ async fn run_turn(
                 TurnSeed::UserPrompt(prompt) => {
                     run_agent_step(AgentStepRequest {
                         provider: runtime.provider.as_ref(),
-                        executor: runtime.executor.as_ref(),
+                        // `&Arc<dyn ToolExecutor>` (not `.as_ref()`) so the
+                        // loop's concurrent batch steps get an owned handle
+                        // and spawn each batch member on its own task —
+                        // matching `Agent::run` so the TUI and library paths
+                        // share identical concurrent-batch semantics.
+                        executor: &runtime.executor,
                         store: runtime.store.as_ref(),
                         user_prompt: prompt,
                         tools: &tools,
@@ -251,7 +256,12 @@ async fn run_turn(
                     let initial_messages = std::mem::take(messages);
                     run_agent_step_from_messages(AgentMessageStepRequest {
                         provider: runtime.provider.as_ref(),
-                        executor: runtime.executor.as_ref(),
+                        // `&Arc<dyn ToolExecutor>` (not `.as_ref()`) so the
+                        // loop's concurrent batch steps get an owned handle
+                        // and spawn each batch member on its own task —
+                        // matching `Agent::run` so the TUI and library paths
+                        // share identical concurrent-batch semantics.
+                        executor: &runtime.executor,
                         store: runtime.store.as_ref(),
                         tools: &tools,
                         output_schema: None,

@@ -13,6 +13,7 @@
 use serde_json::Value;
 
 use crate::error::SessionError;
+use crate::integration::hooks::HookRegistry;
 use crate::r#loop::helpers::append_and_notify;
 use crate::r#loop::loop_context::LoopContext;
 use crate::provider::request::{Message, MessageRole};
@@ -166,6 +167,51 @@ pub(super) async fn apply_rule_injections(
                 tool_call_kind: None,
             }),
         }
+    }
+    Ok(())
+}
+
+/// Persist the [`SessionEvent::RuleInjection`] audit event for every fired
+/// Before-timing injection that no `build_request` ever consumed, without
+/// the live-delivery side effects (the message push / system-section append
+/// that [`apply_rule_injections`] also performs).
+///
+/// Those live-delivery effects are meaningless on a step-exit path — the
+/// `messages` vec and the current iteration's `system_sections` are both
+/// discarded when the step ends, and the delivered content re-enters the
+/// next step reconstructed from this very event (see
+/// [`crate::session::conversion`] and
+/// [`LoopContext::materialize_system_context_rules`](crate::r#loop::loop_context::LoopContext::materialize_system_context_rules)).
+/// What must survive is the audit event, whose presence keeps "fired" and
+/// "in context" coherent identically to After-timing.
+///
+/// This is the single persist path shared by the normal step-exit drain
+/// ([`StepMachine::run`](crate::r#loop::runner)) and the step-timeout drop
+/// path ([`run_agent_step_common`](crate::r#loop::runner)); both must leave
+/// an identical record so a fired firing is never discarded without one.
+///
+/// # Errors
+///
+/// Propagates the first event-store append failure. Callers log it and
+/// never let it rewrite an already-decided step result.
+pub(super) async fn persist_before_injection_audit(
+    store: &EventStore,
+    hooks: Option<&HookRegistry>,
+    injections: &[RuleInjection],
+) -> Result<(), SessionError> {
+    for injection in injections {
+        append_and_notify(
+            store,
+            SessionEvent::RuleInjection {
+                base: EventBase::new(store.last_event_id()),
+                rule_id: injection.rule_id.to_string(),
+                delivery: injection.delivery.clone(),
+                timing: injection.timing.clone(),
+                content: injection.content.clone(),
+            },
+            hooks,
+        )
+        .await?;
     }
     Ok(())
 }

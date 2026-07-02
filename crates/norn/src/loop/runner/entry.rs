@@ -16,12 +16,13 @@ use crate::error::NornError;
 use crate::r#loop::compaction::{SharedTimeoutState, shared_timeout_state};
 use crate::r#loop::config::{AgentLoopConfig, AgentStepResult, ToolExecutor};
 use crate::r#loop::delivery::{UndeliveredWindow, requeue_undelivered_inbound};
-use crate::r#loop::helpers::ensure_tool_results_complete;
+use crate::r#loop::helpers::{ensure_tool_results_complete, persist_before_injection_audit};
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel};
 use crate::r#loop::loop_context::LoopContext;
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
+use crate::rules::types::RuleInjection;
 use crate::session::store::EventStore;
 
 use super::machine::StepMachine;
@@ -253,12 +254,22 @@ async fn run_agent_step_common(
     // exit, including the timeout branch dropping the inner future.
     let mut inbound = request.inbound.take();
     let mut follow_up_buffer: Vec<ChannelMessage> = Vec::new();
+    // The fired-Before-injection buffer lives out here for the same reason
+    // the follow-up buffer does: a Before rule fired by a tool batch buffers
+    // for the next `build_request` to persist, and `StepMachine::run` persists
+    // whatever is still buffered when it *returns* — but the step-timeout
+    // branch drops the inner future mid-flight, so that run-exit persist never
+    // fires. Holding the buffer (and a cheap clone of the hooks handle) out
+    // here lets the exit path below persist it durably on the drop path (F2).
+    let mut before_injection_buffer: Vec<RuleInjection> = Vec::new();
+    let before_hooks = request.loop_context.hooks.clone();
     let result = if let Some(budget) = request.config.step_timeout {
         let inner = run_agent_step_inner(
             request,
             Arc::clone(&timeout_state),
             inbound.as_deref_mut(),
             &mut follow_up_buffer,
+            &mut before_injection_buffer,
         );
         if let Ok(result) = tokio::time::timeout(budget, inner).await {
             result
@@ -278,11 +289,35 @@ async fn run_agent_step_common(
             timeout_state,
             inbound.as_deref_mut(),
             &mut follow_up_buffer,
+            &mut before_injection_buffer,
         )
         .await
     };
 
     ensure_tool_results_complete(store).await;
+    // A Before-timing rule injection that fired in a tool batch but that no
+    // `build_request` consumed is persisted by `StepMachine::run` on every
+    // path where the inner future returns — but the step-timeout branch drops
+    // that future, so its run-exit persist never ran and the buffer above
+    // still holds the firing. Persist it here through the identical audit
+    // path. On every non-timeout path the machine already drained the buffer,
+    // so this is a no-op. A persist failure is logged, never masked over the
+    // already-decided step result (mirrors the requeue sweep's convention).
+    if !before_injection_buffer.is_empty() {
+        let undelivered = before_injection_buffer.len();
+        if let Err(error) =
+            persist_before_injection_audit(store, before_hooks.as_deref(), &before_injection_buffer)
+                .await
+        {
+            tracing::error!(
+                %error,
+                undelivered,
+                "failed to persist fired Before-timing rule injection audit \
+                 events on the step-timeout drop path; the firing executed but \
+                 leaves no audit record",
+            );
+        }
+    }
     // Update messages the sender was told were delivered buffer until a
     // would-stop boundary; a step ending anywhere else (max-iterations,
     // schema-unreachable, truncation, cancellation, timeout, or an error
@@ -310,12 +345,19 @@ async fn run_agent_step_inner(
     timeout_state: SharedTimeoutState,
     inbound: Option<&mut InboundChannel>,
     follow_up_buffer: &mut Vec<ChannelMessage>,
+    before_injection_buffer: &mut Vec<RuleInjection>,
 ) -> Result<AgentStepResult, NornError> {
     // Two statements on purpose: chaining `.await?.run().await` keeps the
     // (completed) `initialize` future alive as a temporary for the whole
     // `run().await`, inflating every embedding future's size.
-    let machine =
-        StepMachine::initialize(request, timeout_state, inbound, follow_up_buffer).await?;
+    let machine = StepMachine::initialize(
+        request,
+        timeout_state,
+        inbound,
+        follow_up_buffer,
+        before_injection_buffer,
+    )
+    .await?;
     // The driver future carries the whole per-step state (conversation,
     // request build, tool dispatch); pinning it on the heap keeps every
     // embedder's future — spawned child steps, the TUI event loop, the

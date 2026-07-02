@@ -40,7 +40,7 @@ use std::sync::atomic::Ordering;
 use norn::agent::AgentParts;
 use norn::agent::registry::AgentRegistry;
 use norn::agent_loop::config::AgentStepResult;
-use norn::agent_loop::runner::{AgentStepRequest, ToolExecutor, run_agent_step};
+use norn::agent_loop::runner::{AgentStepRequest, driver_executor, run_agent_step};
 use norn::error::{NornError, ProviderError};
 use norn::session::events::SessionEvent;
 use norn::session::store::EventStore;
@@ -371,12 +371,19 @@ pub(super) async fn orchestrate(
         tracing::debug!("conversation cleared via /clear in print mode");
     }
 
-    if slash_state.exit_requested.swap(false, Ordering::Relaxed) {
-        return Ok(ExitCode::Success);
-    }
-
     let format = cli.output_format.unwrap_or(OutputFormat::Text);
 
+    // A locally-handled prompt is ALWAYS answered before any exit request
+    // is honoured. The `/exit` and `/quit` CLI builtins resolve to
+    // `HandledLocally` AND set `exit_requested` during dispatch; emitting
+    // the local response first guarantees a driven-mode peer receives the
+    // id-matched `run/execute` response (a null result) instead of EOF,
+    // and plain `-f json`/`stream-json` still write the local envelope.
+    // (`DRIVEN-PROTOCOL.md`: "Every accepted run/execute is answered ... a
+    // prompt resolving entirely to a local slash command is answered with a
+    // success Response whose result is null.") The old ordering checked
+    // `exit_requested` first and short-circuited both, violating the
+    // protocol for `/exit`/`/quit` prompts.
     let effective_prompt = match outcome {
         DispatchOutcome::HandledLocally => {
             // A run/execute whose prompt resolved to a local slash command
@@ -394,6 +401,14 @@ pub(super) async fn orchestrate(
         }
         DispatchOutcome::PassToAgent(text) => text,
     };
+
+    // Honour `/exit` / `/quit` for any command that set the flag but did
+    // NOT resolve to a local dispatch. The CLI builtins are `HandledLocally`
+    // and are answered above; this is the defensive terminal path for a
+    // future exit-setting command whose text is passed to the agent.
+    if slash_state.exit_requested.swap(false, Ordering::Relaxed) {
+        return Ok(ExitCode::Success);
+    }
 
     let active_schema = slash_state.output_schema_snapshot();
     let active_model = slash_state.model_snapshot();
@@ -450,10 +465,18 @@ pub(super) async fn orchestrate(
             &parts.cancel,
         );
 
-        let executor: &dyn ToolExecutor = &*parts.registry;
+        // `driver_executor` coerces the registry to `Arc<dyn ToolExecutor>`,
+        // passed below as `&Arc<dyn ToolExecutor>` (not `&*registry`) so the
+        // loop's concurrent batch steps get an owned handle
+        // (`ToolExecutor::owned_handle` via the blanket `Arc<dyn
+        // ToolExecutor>` impl) and can spawn each batch member on its own
+        // task for true parallelism — mirroring `Agent::run`
+        // (`agent/instance.rs`), so the library and CLI drivers share
+        // identical concurrent-batch semantics after assembly unification.
+        let executor = driver_executor(&parts.registry);
         let result = run_agent_step(AgentStepRequest {
             provider: parts.provider.as_ref(),
-            executor,
+            executor: &executor,
             store: &store,
             user_prompt: &current_prompt,
             tools: &parts.tool_defs,

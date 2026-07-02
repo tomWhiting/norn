@@ -35,7 +35,7 @@ pub(super) use super::tool_dispatch::{
 
 pub(super) use crate::r#loop::rule_wiring::{
     apply_rule_injections, build_runtime_events, dedup_injections_by_rule,
-    partition_injections_by_timing,
+    partition_injections_by_timing, persist_before_injection_audit,
 };
 
 /// Initial prompt messages plus the index where the new user input starts.
