@@ -86,6 +86,7 @@ fn event_to_message(
         SessionEvent::AssistantMessage {
             content,
             thinking,
+            reasoning,
             tool_calls,
             ..
         } => Some(Message {
@@ -96,12 +97,12 @@ fn event_to_message(
                 Some(content.clone())
             },
             thinking: thinking.clone(),
-            // Structured reasoning items are not persisted on
-            // AssistantMessage events: encrypted reasoning replay is a
-            // live-run concern (the blob is only valid within the model
-            // conversation that produced it), so resumed sessions rebuild
-            // with an empty set and the next turn regenerates reasoning.
-            reasoning: Vec::new(),
+            // Rebuild the assistant turn's captured reasoning items so a
+            // resumed session keeps the model's reasoning state. No filter
+            // on `encrypted_content` here: capture-everything at persist,
+            // filter-at-replay is the existing division of labour — the
+            // Responses serializer echoes only the items carrying the blob.
+            reasoning: reasoning.clone(),
             tool_calls: tool_calls
                 .iter()
                 .map(|tc| AssistantToolCall {
@@ -216,6 +217,68 @@ mod tests {
         assert!(events_to_messages(&[]).is_empty());
     }
 
+    /// Persisted reasoning items — both encrypted and plain — must rebuild
+    /// onto `Message.reasoning` byte-identical to what was captured, with no
+    /// filtering on `encrypted_content` at conversion time (capture
+    /// everything; the request serializer filters at replay).
+    #[test]
+    fn assistant_message_reasoning_items_rebuilt() {
+        use crate::provider::reasoning::{ReasoningItem, ReasoningSummaryPart};
+
+        let encrypted = ReasoningItem {
+            id: "rs_enc".to_owned(),
+            summary: vec![ReasoningSummaryPart::SummaryText {
+                text: "encrypted thought".to_owned(),
+            }],
+            content: None,
+            encrypted_content: Some("opaque-blob".to_owned()),
+        };
+        let plain = ReasoningItem {
+            id: "rs_plain".to_owned(),
+            summary: vec![ReasoningSummaryPart::SummaryText {
+                text: "plain thought".to_owned(),
+            }],
+            content: None,
+            encrypted_content: None,
+        };
+        let events = vec![SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            content: "answer".to_owned(),
+            thinking: "summary".to_owned(),
+            reasoning: vec![encrypted.clone(), plain.clone()],
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_owned(),
+            response_id: None,
+        }];
+        let msgs = events_to_messages(&events);
+        assert_eq!(msgs.len(), 1);
+        assert_eq!(
+            msgs[0].reasoning,
+            vec![encrypted, plain],
+            "rebuilt reasoning must match captured items, encrypted and plain alike",
+        );
+    }
+
+    /// A legacy `AssistantMessage` event without a `reasoning` field (and
+    /// any event captured before the field existed) rebuilds with an empty
+    /// reasoning set — no panic, no phantom items.
+    #[test]
+    fn assistant_message_without_reasoning_rebuilds_empty() {
+        let events = vec![SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            content: "answer".to_owned(),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: String::new(),
+            response_id: None,
+        }];
+        let msgs = events_to_messages(&events);
+        assert!(msgs[0].reasoning.is_empty());
+    }
+
     #[test]
     fn user_message_converts() {
         let events = vec![SessionEvent::UserMessage {
@@ -234,6 +297,7 @@ mod tests {
             base: EventBase::new(None),
             content: "the answer".to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![ToolCallEvent {
                 call_id: "call_tc1".to_owned(),
                 name: "read".to_owned(),
@@ -261,6 +325,7 @@ mod tests {
             base: EventBase::new(None),
             content: "the answer".to_owned(),
             thinking: "first let me reason".to_owned(),
+            reasoning: Vec::new(),
             tool_calls: vec![],
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -278,6 +343,7 @@ mod tests {
             base: EventBase::new(None),
             content: "hi".to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![],
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -298,6 +364,7 @@ mod tests {
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![],
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -370,6 +437,7 @@ mod tests {
                 base: EventBase::new(None),
                 content: "let me check".to_owned(),
                 thinking: String::new(),
+                reasoning: Vec::new(),
                 tool_calls: vec![ToolCallEvent {
                     call_id: "call_tc1".to_owned(),
                     name: "bash".to_owned(),
@@ -391,6 +459,7 @@ mod tests {
                 base: EventBase::new(None),
                 content: "/home/user".to_owned(),
                 thinking: String::new(),
+                reasoning: Vec::new(),
                 tool_calls: vec![],
                 usage: EventUsage::default(),
                 stop_reason: String::new(),
@@ -437,6 +506,7 @@ mod tests {
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![
                 ToolCallEvent {
                     call_id: "call_custom_obj".to_owned(),
@@ -504,6 +574,7 @@ mod tests {
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![ToolCallEvent {
                 call_id: "call_custom".to_owned(),
                 name: "apply_patch".to_owned(),

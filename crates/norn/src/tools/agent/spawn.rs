@@ -1223,6 +1223,91 @@ mod tests {
         );
     }
 
+    /// Hardening (owner ruling 2026-07-03): a spawned child must run with
+    /// auto-compaction armed exactly like the root — otherwise a
+    /// long-running delegated child dies `ContextWindowExceeded`. The
+    /// spawn launch path calls the shared `arm_auto_compaction`, which
+    /// installs the token estimator and fills the child's context window
+    /// from the catalog for the child's own model. This drives a spawned
+    /// child whose first turn reports an oversized usage (setting the
+    /// context-edit usage floor above the window) and asserts the child's
+    /// next preflight emitted a `loop.token_warning` on the child's store.
+    /// That event is structurally impossible without the estimator and the
+    /// window the shared arming installs (the preflight returns early with
+    /// no estimator, and the warning is gated on a `Some` window), so its
+    /// presence proves the spawn site armed the child.
+    #[tokio::test]
+    async fn spawn_child_arms_auto_compaction_preflight() {
+        let catalog_model = crate::model_catalog::default_selection().model;
+        // Turn 1: a tool call (forces a second provider round-trip so a
+        // second preflight runs) whose reported usage dwarfs any context
+        // window — this becomes the usage floor. Turn 2: end the turn.
+        let oversized_done = ProviderEvent::Done {
+            stop_reason: StopReason::ToolUse,
+            usage: Usage {
+                input_tokens: 100_000_000,
+                output_tokens: 0,
+                ..Usage::default()
+            },
+            response_id: None,
+        };
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc-noop".to_string(),
+                    name: Some("noop".to_string()),
+                    arguments_delta: "{}".to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                oversized_done,
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "done".to_string(),
+                },
+                done_event(),
+            ],
+        ]));
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(EchoStubTool { tool_name: "noop" }));
+        let registry = Arc::new(registry);
+
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            registry,
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "run", "model": catalog_model, "role": "worker"}),
+        )
+        .await;
+
+        let child_store = ctx
+            .get_extension::<AgentHandles>()
+            .expect("AgentHandles installed")
+            .event_store(child_id)
+            .expect("child event store observable");
+        let warned = child_store.events().iter().any(|e| {
+            matches!(
+                e,
+                SessionEvent::Custom { event_type, .. } if event_type == "loop.token_warning"
+            )
+        });
+        assert!(
+            warned,
+            "the spawned child's preflight must emit loop.token_warning, \
+             proving the estimator and catalog window were armed",
+        );
+    }
+
     #[tokio::test]
     async fn signal_to_idle_child_queues_follow_up_and_wake_drains_mailbox() {
         use crate::tools::agent::coord::{SignalAgentTool, WakeAgentTool};

@@ -137,11 +137,11 @@ pub(super) fn merge_agent(
             &mut lcl.context_window,
             &mut ovr.context_window,
         ),
-        compact_threshold: pick_scalar(
-            &mut usr.compact_threshold,
-            &mut prj.compact_threshold,
-            &mut lcl.compact_threshold,
-            &mut ovr.compact_threshold,
+        auto_compact_reserve_tokens: pick_scalar(
+            &mut usr.auto_compact_reserve_tokens,
+            &mut prj.auto_compact_reserve_tokens,
+            &mut lcl.auto_compact_reserve_tokens,
+            &mut ovr.auto_compact_reserve_tokens,
         ),
         compact_keep_turns: pick_scalar(
             &mut usr.compact_keep_turns,

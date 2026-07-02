@@ -138,6 +138,9 @@ impl NornWrappedClaudeCode {
                         base: EventBase::new(None),
                         content,
                         thinking: String::new(),
+                        // Claude passthrough carries no OpenAI Responses
+                        // reasoning items.
+                        reasoning: Vec::new(),
                         tool_calls,
                         usage: crate::session::events::EventUsage::default(),
                         stop_reason: String::new(),

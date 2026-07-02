@@ -96,6 +96,22 @@ impl StepMachine<'_> {
         &mut self,
         response: &AssembledResponse,
     ) -> Result<(), NornError> {
+        // Usage-floor anchor: the provider's reported spend for this call
+        // (input + output) is a truthful lower bound for the next request,
+        // which contains at least this one plus the new turn — content the
+        // client-side character estimate cannot always see (e.g. replayed
+        // encrypted reasoning items on stateless Responses backends). The
+        // next preflight anchors its token warning and auto-compaction
+        // trigger on `max(estimate, floor)`; `ContextEdits` clears the
+        // floor whenever the prompt view shrinks.
+        if let Some(edits) = self.loop_context.context_edits.as_mut() {
+            edits.set_usage_floor(
+                response
+                    .usage
+                    .input_tokens
+                    .saturating_add(response.usage.output_tokens),
+            );
+        }
         let assistant_tool_calls: Vec<AssistantToolCall> = response
             .tool_calls
             .iter()
@@ -133,6 +149,11 @@ impl StepMachine<'_> {
                 base: EventBase::new(self.store.last_event_id()),
                 content,
                 thinking: thinking.clone(),
+                // Persist the captured reasoning items so a resumed session
+                // rebuilds this assistant turn with its reasoning intact
+                // (encrypted-content items are what the Responses serializer
+                // replays across tool iterations on stateless backends).
+                reasoning: response.reasoning.clone(),
                 tool_calls: tool_call_events,
                 usage: EventUsage {
                     input_tokens: response.usage.input_tokens,

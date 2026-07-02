@@ -261,8 +261,10 @@ fn apply_settings_to_agent_config(
     if let Some(window) = agent.context_window {
         config.context_window_limit = Some(window);
     }
-    if let Some(threshold) = agent.compact_threshold {
-        config.auto_compact_threshold_pct = Some(threshold);
+    if let Some(reserve) = agent.auto_compact_reserve_tokens {
+        // `Off` projects to `None` (disabled); a concrete reserve to
+        // `Some(n)`. Either explicit value beats the builder default.
+        config.auto_compact_reserve_tokens = reserve.reserve_tokens();
     }
     if let Some(keep) = agent.compact_keep_turns {
         config.auto_compact_keep_recent_turns = keep;

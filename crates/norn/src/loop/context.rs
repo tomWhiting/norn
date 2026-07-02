@@ -145,6 +145,7 @@ mod tests {
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![],
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -174,6 +175,49 @@ mod tests {
         let view = construct_prompt(&store, &edits);
         assert_eq!(view.events.len(), 2);
         assert_eq!(view.events[0].base().id, id1);
+    }
+
+    #[test]
+    fn suppressed_assistant_reasoning_absent_from_rebuilt_prompt() {
+        // Compaction/suppression of an AssistantMessage must take its
+        // reasoning with it: conversion reads events post-suppression, so a
+        // suppressed turn contributes no reasoning to the rebuilt prompt
+        // view. Without this, resume would re-inject encrypted reasoning for
+        // a turn the model no longer sees.
+        use crate::provider::reasoning::{ReasoningItem, ReasoningSummaryPart};
+        use crate::session::conversion::prompt_events_to_messages;
+
+        let store = EventStore::new();
+        let keep = store.append(user_msg("keep")).expect("append");
+        let suppressed = store
+            .append(SessionEvent::AssistantMessage {
+                base: EventBase::new(Some(keep)),
+                content: "reasoned answer".to_owned(),
+                thinking: String::new(),
+                reasoning: vec![ReasoningItem {
+                    id: "rs_sup".to_owned(),
+                    summary: vec![ReasoningSummaryPart::SummaryText {
+                        text: "to be suppressed".to_owned(),
+                    }],
+                    content: None,
+                    encrypted_content: Some("suppressed-blob".to_owned()),
+                }],
+                tool_calls: Vec::new(),
+                usage: EventUsage::default(),
+                stop_reason: "end_turn".to_owned(),
+                response_id: None,
+            })
+            .expect("append");
+
+        let mut edits = ContextEdits::new();
+        edits.suppress(suppressed);
+
+        let view = construct_prompt(&store, &edits);
+        let msgs = prompt_events_to_messages(&view.events);
+        assert!(
+            msgs.iter().all(|m| m.reasoning.is_empty()),
+            "suppressed turn's reasoning must not survive into the prompt view",
+        );
     }
 
     #[test]

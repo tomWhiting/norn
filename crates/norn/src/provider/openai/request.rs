@@ -1264,6 +1264,47 @@ mod tests {
     }
 
     #[test]
+    fn persisted_session_reasoning_replays_through_conversion() {
+        // End-to-end persistence seam: an AssistantMessage session event
+        // carrying an encrypted reasoning item, rebuilt via
+        // `events_to_messages`, must surface on the resumed message and be
+        // echoed by the stateless serializer — the resume path that a live
+        // 269k conversation depends on to not silently shed reasoning tokens.
+        use crate::session::conversion::events_to_messages;
+        use crate::session::events::{EventBase, EventUsage, SessionEvent};
+
+        let events = vec![SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            content: "calling a tool".to_owned(),
+            thinking: "summary text".to_owned(),
+            reasoning: vec![encrypted_item(
+                "rs_persist",
+                "persisted thought",
+                "resumed-blob",
+            )],
+            tool_calls: Vec::new(),
+            usage: EventUsage::default(),
+            stop_reason: "end_turn".to_owned(),
+            response_id: None,
+        }];
+        let messages = events_to_messages(&events);
+        assert_eq!(messages.len(), 1);
+        assert_eq!(
+            messages[0].reasoning.len(),
+            1,
+            "resume must rebuild the captured reasoning item"
+        );
+
+        let mut req = assistant_request_with_reasoning(Vec::new());
+        req.messages = messages;
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input[0]["type"], "reasoning");
+        assert_eq!(input[0]["encrypted_content"], "resumed-blob");
+    }
+
+    #[test]
     fn encrypted_reasoning_replays_content_parts_when_present() {
         let mut item = encrypted_item("rs_c", "with content", "blob-c");
         item.content = Some(vec![ReasoningContentPart::ReasoningText {

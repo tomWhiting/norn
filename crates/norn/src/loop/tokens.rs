@@ -7,6 +7,7 @@
 //! built-in implementation) so it can be evaluated every iteration
 //! without measurable overhead.
 
+use crate::provider::reasoning::{ReasoningContentPart, ReasoningItem, ReasoningSummaryPart};
 use crate::provider::request::{Message, ToolDefinition};
 
 /// Trait implemented by anything that can produce a token-count
@@ -55,6 +56,30 @@ pub fn estimate_prompt_tokens(
     total
 }
 
+/// Estimate the tokens a single message contributes to a request.
+///
+/// Counts message content, tool-call names and arguments, the tool result
+/// name — and the structured [`reasoning`](Message::reasoning) items. The
+/// reasoning items are re-billed on every request on stateless-replay
+/// backends (their `encrypted_content` blob is echoed ahead of the
+/// assistant turn on `response_threading: false` providers), and they are
+/// persisted and replayed on resume, so a reasoning-blind estimate
+/// under-counts a resumed prompt by exactly the reasoning it can no longer
+/// see — the shape of the original `ContextWindowExceeded` incident.
+///
+/// The estimate over a reasoning item is deliberately conservative: it runs
+/// `chars/4` over the raw `encrypted_content` base64 (plus every summary and
+/// content part), which over-counts the true reasoning-token cost of the
+/// blob. Over-estimation is the safe direction for a compaction trigger — it
+/// fires slightly early rather than sailing past the window — so the bias is
+/// accepted.
+///
+/// [`Message::thinking`] is **not** counted. It is display/observability
+/// state that no request serializer reads (see [`Message`] docs: replay goes
+/// through the structured reasoning items, which carry the
+/// `encrypted_content` the plain-text thinking string does not). Counting it
+/// would over-estimate every live turn by content that never reaches the
+/// wire.
 fn message_tokens(estimator: &dyn TokenEstimator, message: &Message) -> usize {
     let mut total = message
         .content
@@ -66,6 +91,36 @@ fn message_tokens(estimator: &dyn TokenEstimator, message: &Message) -> usize {
     }
     if let Some(name) = message.tool_name.as_deref() {
         total = total.saturating_add(estimator.estimate(name));
+    }
+    for item in &message.reasoning {
+        total = total.saturating_add(reasoning_tokens(estimator, item));
+    }
+    total
+}
+
+/// Estimate the tokens a single reasoning item re-bills on the next request.
+///
+/// Sums the `encrypted_content` blob (when present — the field replayed to
+/// stateless backends), every summary part, and every content part. See
+/// [`message_tokens`] for why the estimate over the encrypted blob is a
+/// deliberate over-count.
+fn reasoning_tokens(estimator: &dyn TokenEstimator, item: &ReasoningItem) -> usize {
+    let mut total = item
+        .encrypted_content
+        .as_deref()
+        .map_or(0, |blob| estimator.estimate(blob));
+    for part in &item.summary {
+        let ReasoningSummaryPart::SummaryText { text } = part;
+        total = total.saturating_add(estimator.estimate(text));
+    }
+    if let Some(parts) = item.content.as_ref() {
+        for part in parts {
+            let text = match part {
+                ReasoningContentPart::ReasoningText { text }
+                | ReasoningContentPart::Text { text } => text,
+            };
+            total = total.saturating_add(estimator.estimate(text));
+        }
     }
     total
 }
@@ -138,6 +193,80 @@ mod tests {
         let total = estimate_prompt_tokens(&est, &messages, &tools);
         // 40/4 + 20/4 + 4/4 + 1 (name "read") + chars/4 of params json.
         assert!(total >= 10 + 5 + 10);
+    }
+
+    /// A resumed assistant message replays its persisted reasoning items;
+    /// the estimate must count them, so it is strictly higher than the same
+    /// message with the reasoning stripped. A reasoning-blind estimate
+    /// under-counts a resumed prompt by exactly the reasoning it cannot see —
+    /// the `ContextWindowExceeded` incident shape.
+    #[test]
+    fn estimate_counts_reasoning_items() {
+        use crate::provider::reasoning::{
+            ReasoningContentPart, ReasoningItem, ReasoningSummaryPart,
+        };
+
+        let est = SimpleTokenEstimator;
+        let reasoning = vec![ReasoningItem {
+            id: "rs_1".to_string(),
+            summary: vec![ReasoningSummaryPart::SummaryText {
+                text: "s".repeat(40),
+            }],
+            content: Some(vec![ReasoningContentPart::ReasoningText {
+                text: "c".repeat(40),
+            }]),
+            encrypted_content: Some("e".repeat(400)),
+        }];
+        let with_reasoning = Message {
+            reasoning,
+            role: MessageRole::Assistant,
+            content: Some("answer".to_string()),
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        };
+        let without_reasoning = Message {
+            reasoning: Vec::new(),
+            ..with_reasoning.clone()
+        };
+
+        let with = estimate_prompt_tokens(&est, std::slice::from_ref(&with_reasoning), &[]);
+        let without = estimate_prompt_tokens(&est, std::slice::from_ref(&without_reasoning), &[]);
+        assert!(
+            with > without,
+            "reasoning items must raise the estimate ({with} !> {without})",
+        );
+        // encrypted (400/4=100) + summary (40/4=10) + content (40/4=10) = 120.
+        assert_eq!(with - without, 120, "the reasoning delta must be counted");
+    }
+
+    /// `thinking` is display-only — no request serializer reads it — so the
+    /// estimate must NOT count it. Counting it would over-estimate every
+    /// live turn by content that never reaches the wire.
+    #[test]
+    fn estimate_ignores_thinking() {
+        let est = SimpleTokenEstimator;
+        let base = Message {
+            reasoning: Vec::new(),
+            role: MessageRole::Assistant,
+            content: Some("answer".to_string()),
+            thinking: String::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        };
+        let with_thinking = Message {
+            thinking: "t".repeat(400),
+            ..base.clone()
+        };
+        assert_eq!(
+            estimate_prompt_tokens(&est, std::slice::from_ref(&with_thinking), &[]),
+            estimate_prompt_tokens(&est, std::slice::from_ref(&base), &[]),
+            "thinking is display-only and must not enter the estimate",
+        );
     }
 
     #[test]

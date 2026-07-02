@@ -61,6 +61,17 @@ Notes:
 
 - **stdin is the channel** — the prompt arrives via `run/execute`, never
   as an argument or piped text.
+- **Auto-compaction is armed by default for catalog models** (2026-07-03) —
+  for the root agent **and every child it spawns or forks** (each child
+  resolves the window against its own model). The context window comes from the
+  model catalog (`assets/models.json`; e.g. gpt-5.5 → 272k) and compaction
+  triggers when `max(client estimate, last provider-reported usage)`
+  exceeds `window − 30_000`. Tune with
+  `-c auto_compact_reserve_tokens=<u64>`, disable with
+  `-c auto_compact_reserve_tokens=off` (for orchestrators that manage
+  context themselves), and supply `-c context_window=<u64>` for models the
+  catalog doesn't know — without a window, compaction stays off and a long
+  run can die with a terminal `context window exceeded` error.
 - `--partial` and `-o` do not apply to the transport; delta events are
   always forwarded on the channel.
 - Gate on the `protocol` field of the `initialize` result

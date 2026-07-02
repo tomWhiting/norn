@@ -20,6 +20,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use norn::agent_loop::config::ConversationStateMode;
+use norn::config::AutoCompactReserve;
 use serde_json::Value;
 
 use crate::cli::BuildError;
@@ -81,8 +82,11 @@ pub struct ConfigOverrides {
     pub schema_budget: Option<u32>,
     /// `-c context_window=<u64>` → [`AgentLoopConfig::context_window_limit`].
     pub context_window: Option<u64>,
-    /// `-c compact_threshold=<f64>` → [`AgentLoopConfig::auto_compact_threshold_pct`].
-    pub compact_threshold: Option<f64>,
+    /// `-c auto_compact_reserve_tokens=<u64|off>` →
+    /// [`AgentLoopConfig::auto_compact_reserve_tokens`]. The case-insensitive
+    /// `off` sentinel disables auto-compaction outright (an explicit `None`
+    /// that beats the builder default); any other value is a reserve size.
+    pub auto_compact_reserve_tokens: Option<AutoCompactReserve>,
     /// `-c compact_keep_turns=<usize>` → [`AgentLoopConfig::auto_compact_keep_recent_turns`].
     pub compact_keep_turns: Option<usize>,
     /// `-c conversation_state=<auto|manual|provider_threaded>` → conversation policy.
@@ -235,8 +239,15 @@ impl ConfigOverrides {
             "context_window" => {
                 self.context_window = Some(parse_typed::<u64>(key, "u64", value)?);
             }
-            "compact_threshold" => {
-                self.compact_threshold = Some(parse_typed::<f64>(key, "f64", value)?);
+            "auto_compact_reserve_tokens" => {
+                // The case-insensitive `off` sentinel disables auto-compaction
+                // (an explicit `None` beating the builder default); any other
+                // value must parse as a `u64` reserve size.
+                self.auto_compact_reserve_tokens = Some(if value.eq_ignore_ascii_case("off") {
+                    AutoCompactReserve::Off
+                } else {
+                    AutoCompactReserve::Tokens(parse_typed::<u64>(key, "u64", value)?)
+                });
             }
             "compact_keep_turns" => {
                 self.compact_keep_turns = Some(parse_typed::<usize>(key, "usize", value)?);
@@ -401,7 +412,7 @@ mod tests {
         assert!(overrides.max_turns.is_none());
         assert!(overrides.schema_budget.is_none());
         assert!(overrides.context_window.is_none());
-        assert!(overrides.compact_threshold.is_none());
+        assert!(overrides.auto_compact_reserve_tokens.is_none());
         assert!(overrides.compact_keep_turns.is_none());
         assert!(overrides.conversation_state.is_none());
         assert!(overrides.server_compaction_threshold_tokens.is_none());
@@ -483,9 +494,44 @@ mod tests {
     }
 
     #[test]
-    fn parse_compact_threshold_sets_value() {
-        let overrides = ConfigOverrides::parse(&["compact_threshold=0.75".to_owned()]).unwrap();
-        assert!((overrides.compact_threshold.unwrap() - 0.75).abs() < f64::EPSILON);
+    fn parse_auto_compact_reserve_tokens_sets_value() {
+        let overrides =
+            ConfigOverrides::parse(&["auto_compact_reserve_tokens=45000".to_owned()]).unwrap();
+        assert_eq!(
+            overrides.auto_compact_reserve_tokens,
+            Some(AutoCompactReserve::Tokens(45_000))
+        );
+    }
+
+    /// The case-insensitive `off` sentinel parses to the explicit disable,
+    /// distinct from unset — the operator's clean off switch.
+    #[test]
+    fn parse_auto_compact_reserve_tokens_off_disables() {
+        for raw in [
+            "auto_compact_reserve_tokens=off",
+            "auto_compact_reserve_tokens=OFF",
+        ] {
+            let overrides = ConfigOverrides::parse(&[raw.to_owned()]).unwrap();
+            assert_eq!(
+                overrides.auto_compact_reserve_tokens,
+                Some(AutoCompactReserve::Off),
+                "`{raw}` must parse to the explicit off sentinel",
+            );
+        }
+    }
+
+    /// A non-integer, non-`off` reserve is a loud parse error.
+    #[test]
+    fn parse_auto_compact_reserve_tokens_rejects_garbage() {
+        let err = ConfigOverrides::parse(&["auto_compact_reserve_tokens=banana".to_owned()])
+            .expect_err("a non-integer, non-off reserve must error");
+        let BuildError::Argument(msg) = err else {
+            panic!("expected an Argument error, got {err:?}");
+        };
+        assert!(
+            msg.contains("auto_compact_reserve_tokens"),
+            "the error must name the key: {msg}",
+        );
     }
 
     #[test]

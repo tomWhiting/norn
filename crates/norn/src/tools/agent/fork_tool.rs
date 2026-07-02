@@ -929,6 +929,7 @@ mod tests {
                 base: EventBase::new(None),
                 content: "running batch".to_string(),
                 thinking: String::new(),
+                reasoning: Vec::new(),
                 tool_calls: vec![
                     ToolCallEvent {
                         call_id: "tc-read".to_string(),
@@ -1502,6 +1503,221 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(5)).await;
         }
+    }
+
+    /// Hardening (owner ruling 2026-07-03): a fork must run with
+    /// auto-compaction armed exactly like the root. The fork launch path
+    /// calls the shared `arm_auto_compaction`, installing the token
+    /// estimator and filling the fork's context window from the catalog
+    /// for the fork's own model. This drives a fork whose first turn
+    /// reports an oversized usage (setting the context-edit usage floor
+    /// above the window) and asserts the fork's next preflight emitted a
+    /// `loop.token_warning` on the fork's store — structurally impossible
+    /// without the estimator and window the shared arming installs.
+    #[tokio::test]
+    async fn fork_child_arms_auto_compaction_preflight() {
+        let catalog_model = crate::model_catalog::default_selection().model;
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(IdentityStubTool {
+            seen_agent: Arc::new(StdMutex::new(None)),
+            seen_parent: Arc::new(StdMutex::new(None)),
+        }));
+        let tool_registry = Arc::new(tool_registry);
+
+        // Turn 1: a tool call (forces a second round-trip so a second
+        // preflight runs) whose reported usage dwarfs any context window —
+        // this becomes the usage floor. Turn 2: structured output so the
+        // fork completes cleanly.
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc-id".to_string(),
+                    name: Some("identity".to_string()),
+                    arguments_delta: "{}".to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                ProviderEvent::Done {
+                    stop_reason: StopReason::ToolUse,
+                    usage: Usage {
+                        input_tokens: 100_000_000,
+                        output_tokens: 0,
+                        ..Usage::default()
+                    },
+                    response_id: None,
+                },
+            ],
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "structured-out".to_string(),
+                    name: Some("structured_output".to_string()),
+                    arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+        ]));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            tool_registry,
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "run", "model": catalog_model, "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        let fork_store = Arc::clone(&handle.event_store);
+        handle.join_handle.await.expect("join");
+
+        let warned = fork_store.events().iter().any(|e| {
+            matches!(
+                e,
+                SessionEvent::Custom { event_type, .. } if event_type == "loop.token_warning"
+            )
+        });
+        assert!(
+            warned,
+            "the fork's preflight must emit loop.token_warning, proving the \
+             estimator and catalog window were armed on the fork",
+        );
+    }
+
+    /// Hardening (owner ruling 2026-07-03), full trigger: a fork that
+    /// inherits a long parent history and then reports an oversized usage
+    /// must actually *compact* mid-run rather than die
+    /// `ContextWindowExceeded`. The parent is seeded with more than
+    /// `auto_compact_keep_recent_turns` (default 10) turns, the fork
+    /// inherits them, and the first turn's oversized usage pushes the
+    /// second preflight past the compaction threshold — proving the shared
+    /// arming makes the trigger genuinely fire for a child, not merely warn.
+    #[tokio::test]
+    async fn fork_runs_auto_compaction_when_history_exceeds_window() {
+        let catalog_model = crate::model_catalog::default_selection().model;
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(IdentityStubTool {
+            seen_agent: Arc::new(StdMutex::new(None)),
+            seen_parent: Arc::new(StdMutex::new(None)),
+        }));
+        let tool_registry = Arc::new(tool_registry);
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            // Turn 1: tool call + oversized usage (sets the floor).
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc-id".to_string(),
+                    name: Some("identity".to_string()),
+                    arguments_delta: "{}".to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                ProviderEvent::Done {
+                    stop_reason: StopReason::ToolUse,
+                    usage: Usage {
+                        input_tokens: 100_000_000,
+                        output_tokens: 0,
+                        ..Usage::default()
+                    },
+                    response_id: None,
+                },
+            ],
+            // The compaction summarization provider call (fired inside the
+            // second preflight, before the second main turn).
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "summary of earlier turns".to_string(),
+                },
+                ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    usage: Usage::default(),
+                    response_id: None,
+                },
+            ],
+            // Turn 2: structured output so the fork completes.
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "structured-out".to_string(),
+                    name: Some("structured_output".to_string()),
+                    arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+        ]));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            tool_registry,
+            Arc::new(MessageRouter::new()),
+        );
+
+        // Seed 12 user/assistant turns so the fork inherits more than the
+        // default keep_recent_turns (10) — giving the compaction plan
+        // something to elide.
+        for i in 0..12 {
+            parent_store
+                .append(SessionEvent::UserMessage {
+                    base: EventBase::new(None),
+                    content: format!("q{i}"),
+                })
+                .expect("seed user");
+            parent_store
+                .append(SessionEvent::AssistantMessage {
+                    base: EventBase::new(None),
+                    content: format!("a{i}"),
+                    thinking: String::new(),
+                    reasoning: Vec::new(),
+                    tool_calls: Vec::new(),
+                    usage: EventUsage::default(),
+                    stop_reason: "end_turn".to_string(),
+                    response_id: None,
+                })
+                .expect("seed assistant");
+        }
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(
+                    json!({"request": "run", "model": catalog_model, "requirements": []}),
+                ),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        let fork_store = Arc::clone(&handle.event_store);
+        handle.join_handle.await.expect("join");
+
+        let compacted = fork_store
+            .events()
+            .iter()
+            .any(|e| matches!(e, SessionEvent::Compaction { .. }));
+        assert!(
+            compacted,
+            "the fork must commit a Compaction event when its inherited \
+             history and oversized usage cross the threshold",
+        );
     }
 
     /// Permission-escape regression (blocker), end to end: a tool denied

@@ -379,6 +379,7 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
             base: EventBase::new(store.last_event_id()),
             content: String::new(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![ToolCallEvent {
                 call_id: "call_read".to_string(),
                 name: "read".to_string(),

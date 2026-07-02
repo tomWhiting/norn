@@ -716,6 +716,7 @@ mod tests {
             base: EventBase::new(None),
             content: "ok".to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             usage: EventUsage {
                 input_tokens: input,

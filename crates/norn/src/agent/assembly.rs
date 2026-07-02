@@ -382,6 +382,11 @@ pub(crate) struct AgentConfigPresence {
     pub(crate) schema_attempt_budget: bool,
     /// `auto_compact_keep_recent_turns` was explicitly set.
     pub(crate) auto_compact_keep_recent_turns: bool,
+    /// `auto_compact_reserve_tokens` was explicitly set. Tracked
+    /// structurally (like the other non-sentinel fields) because its
+    /// default is a meaningful `Some(30_000)`, not `None` — a value-vs-`None`
+    /// heuristic would clobber a base's reserve with the builder default.
+    pub(crate) auto_compact_reserve_tokens: bool,
     /// `schema_tool_name` was explicitly set.
     pub(crate) schema_tool_name: bool,
     /// `conversation_state` was explicitly set.
@@ -397,6 +402,7 @@ impl AgentConfigPresence {
         Self {
             schema_attempt_budget: true,
             auto_compact_keep_recent_turns: true,
+            auto_compact_reserve_tokens: true,
             schema_tool_name: true,
             conversation_state: true,
         }
@@ -419,14 +425,50 @@ pub(crate) fn effective_agent_config(
     }
 }
 
+/// Arm auto-compaction on a loop context and its effective agent-loop
+/// config — the single shared mechanism every agent launch path (root,
+/// spawned child, rhai-spawned child, fork) uses, so the trigger cannot
+/// drift between them.
+///
+/// Installs the token estimator and the [`ContextEdits`] tracker on the
+/// loop context (the preflight needs both: the estimator to size each
+/// request, the tracker for the usage floor and the compaction commit),
+/// and fills an unset `context_window_limit` from the model catalog for
+/// *this agent's* resolved model. An explicit window — from settings, a
+/// `-c` override, or any future child-policy field — always wins because
+/// the fill runs only when the merged value is still `None`. A model
+/// absent from the catalog keeps `None`, which leaves the trigger
+/// disabled (`maybe_auto_compact` returns early on a `None` window),
+/// matching the root behavior exactly. The reserve default
+/// (`AgentLoopConfig::default().auto_compact_reserve_tokens`) already
+/// flows through the config and is not touched here.
+pub(crate) fn arm_auto_compaction(
+    loop_context: &mut LoopContext,
+    config: &mut AgentLoopConfig,
+    model: &str,
+) {
+    loop_context.token_estimator = Some(Arc::new(SimpleTokenEstimator));
+    loop_context.context_edits = Some(ContextEdits::new());
+    if config.context_window_limit.is_none() {
+        config.context_window_limit =
+            crate::model_catalog::smallest_context_window_for_model(model);
+    }
+}
+
 /// Populate the loop context's execution infrastructure: retry policy
-/// (explicit, else the runtime base's, else default), token estimator,
-/// context-edit tracker, diagnostics, working dir, variable store, and
-/// environment config. Returns the session id: `session_id_override`
-/// when given (the persisted session's index-entry id from
-/// `open_session`), otherwise the id minted by the variable store. The
-/// returned id, the `{{session_id}}` variable, and the system prompt
-/// environment always agree.
+/// (explicit, else the runtime base's, else default), diagnostics,
+/// working dir, variable store, and environment config. Returns the
+/// session id: `session_id_override` when given (the persisted session's
+/// index-entry id from `open_session`), otherwise the id minted by the
+/// variable store. The returned id, the `{{session_id}}` variable, and
+/// the system prompt environment always agree.
+///
+/// Auto-compaction (token estimator, context-edit tracker, and the
+/// catalog-derived context window) is armed separately by
+/// [`arm_auto_compaction`], which the caller invokes once the effective
+/// agent-loop config is resolved — the same shared mechanism the child
+/// launch paths use, so the trigger cannot drift between root and
+/// children.
 pub(crate) fn populate_loop_context(
     loop_context: &mut LoopContext,
     retry_policy: Option<RetryPolicy>,
@@ -439,8 +481,6 @@ pub(crate) fn populate_loop_context(
     loop_context.retry_policy = retry_policy.unwrap_or_else(|| {
         runtime_base.map_or_else(RetryPolicy::default, |base| base.retry_policy.clone())
     });
-    loop_context.token_estimator = Some(Arc::new(SimpleTokenEstimator));
-    loop_context.context_edits = Some(ContextEdits::new());
     loop_context.diagnostics = diagnostics.map(Arc::clone);
     loop_context.working_dir = shared_wd.clone();
     let mut variables = VariableStore::with_builtins().with_working_dir(shared_wd.clone());
@@ -554,12 +594,15 @@ pub(crate) fn assemble_tool_context(parts: ToolContextParts) -> ToolContext {
 
 /// Overlay explicitly-set builder fields onto the runtime-base agent config.
 ///
-/// Non-`Option` fields overlay when `present` marks them explicit (so an
-/// explicit-to-default value still wins); every `Option` field overlays
-/// when it is `Some`. Every field of [`AgentLoopConfig`] is covered — a
-/// completeness test in this module asserts a fully-explicit config
-/// survives the merge intact, so a future field cannot silently miss the
-/// overlay.
+/// Fields whose default is a meaningful value rather than `None` — the
+/// non-`Option` fields and `auto_compact_reserve_tokens` — overlay when
+/// `present` marks them explicit (so an explicit-to-default value still
+/// wins, and the builder default never clobbers a base value). The
+/// remaining `Option` fields, whose `None` default already means "unset",
+/// overlay when they are `Some`. Every field of [`AgentLoopConfig`] is
+/// covered — a completeness test in this module asserts a fully-explicit
+/// config survives the merge intact, so a future field cannot silently miss
+/// the overlay.
 fn merge_agent_config(
     mut base: AgentLoopConfig,
     explicit: AgentLoopConfig,
@@ -570,6 +613,9 @@ fn merge_agent_config(
     }
     if present.auto_compact_keep_recent_turns {
         base.auto_compact_keep_recent_turns = explicit.auto_compact_keep_recent_turns;
+    }
+    if present.auto_compact_reserve_tokens {
+        base.auto_compact_reserve_tokens = explicit.auto_compact_reserve_tokens;
     }
     if present.schema_tool_name {
         base.schema_tool_name = explicit.schema_tool_name;
@@ -585,9 +631,6 @@ fn merge_agent_config(
     }
     if explicit.context_window_limit.is_some() {
         base.context_window_limit = explicit.context_window_limit;
-    }
-    if explicit.auto_compact_threshold_pct.is_some() {
-        base.auto_compact_threshold_pct = explicit.auto_compact_threshold_pct;
     }
     if explicit.cache_key.is_some() {
         base.cache_key = explicit.cache_key;
@@ -829,14 +872,16 @@ mod tests {
         let base = AgentLoopConfig {
             schema_attempt_budget: 5,
             auto_compact_keep_recent_turns: 20,
+            auto_compact_reserve_tokens: Some(90_000),
             ..AgentLoopConfig::default()
         };
         let explicit = AgentLoopConfig {
-            // Both equal the library default (3 / 10) — the exact case the
-            // old sentinel misclassified as "unset".
+            // Each equals the library default (3 / 10 / Some(30_000)) — the
+            // exact case the old sentinel misclassified as "unset".
             schema_attempt_budget: AgentLoopConfig::default().schema_attempt_budget,
             auto_compact_keep_recent_turns: AgentLoopConfig::default()
                 .auto_compact_keep_recent_turns,
+            auto_compact_reserve_tokens: AgentLoopConfig::default().auto_compact_reserve_tokens,
             ..AgentLoopConfig::default()
         };
         let merged = merge_agent_config(base, explicit, AgentConfigPresence::all());
@@ -847,6 +892,11 @@ mod tests {
         assert_eq!(
             merged.auto_compact_keep_recent_turns, 10,
             "explicit auto_compact_keep_recent_turns=10 (the default) must win over base=20",
+        );
+        assert_eq!(
+            merged.auto_compact_reserve_tokens,
+            Some(30_000),
+            "explicit reserve=Some(30_000) (the default) must win over base=Some(90_000)",
         );
     }
 
@@ -879,7 +929,7 @@ mod tests {
             max_iterations: Some(42),
             step_timeout: Some(Duration::from_secs(99)),
             context_window_limit: Some(123_456),
-            auto_compact_threshold_pct: Some(77.0),
+            auto_compact_reserve_tokens: Some(45_000),
             auto_compact_keep_recent_turns: 33,
             schema_tool_name: "custom_output".to_owned(),
             cache_key: Some("ck".to_owned()),
@@ -897,8 +947,8 @@ mod tests {
         assert_eq!(merged.step_timeout, explicit.step_timeout);
         assert_eq!(merged.context_window_limit, explicit.context_window_limit);
         assert_eq!(
-            merged.auto_compact_threshold_pct,
-            explicit.auto_compact_threshold_pct
+            merged.auto_compact_reserve_tokens,
+            explicit.auto_compact_reserve_tokens
         );
         assert_eq!(
             merged.auto_compact_keep_recent_turns,
@@ -921,6 +971,90 @@ mod tests {
             explicit.linger.is_some(),
             "linger must overlay onto the base (finding 5)",
         );
+    }
+
+    /// The shared arming installs the estimator and the context-edit
+    /// tracker on the loop context and fills an unset window from the
+    /// catalog for the resolved model, leaving the reserve default
+    /// untouched. This is the exact end state every launch path (root,
+    /// spawn, fork, rhai) must produce — the single mechanism they all
+    /// call, so the auto-compaction trigger cannot drift between them.
+    #[test]
+    fn arm_auto_compaction_installs_estimator_edits_and_catalog_window() {
+        let model = crate::model_catalog::default_selection().model;
+        let catalog_window = crate::model_catalog::smallest_context_window_for_model(model);
+        assert!(
+            catalog_window.is_some(),
+            "test precondition: the default model must be catalogued",
+        );
+
+        let mut loop_context = LoopContext::new("base");
+        let mut config = AgentLoopConfig::default();
+        assert!(loop_context.token_estimator.is_none());
+        assert!(loop_context.context_edits.is_none());
+        assert!(config.context_window_limit.is_none());
+
+        arm_auto_compaction(&mut loop_context, &mut config, model);
+
+        assert!(
+            loop_context.token_estimator.is_some(),
+            "arming installs the token estimator the preflight needs",
+        );
+        assert!(
+            loop_context.context_edits.is_some(),
+            "arming installs the context-edit tracker (floor + compaction commit)",
+        );
+        assert_eq!(
+            config.context_window_limit, catalog_window,
+            "an unset window is filled from the catalog for the resolved model",
+        );
+        assert_eq!(
+            config.auto_compact_reserve_tokens,
+            Some(30_000),
+            "the reserve default flows through untouched by arming",
+        );
+    }
+
+    /// An explicit window (settings / `-c` override / any future
+    /// child-policy field) is authoritative: arming only fills a `None`
+    /// window, so an explicit value survives even for a catalogued model.
+    #[test]
+    fn arm_auto_compaction_explicit_window_beats_catalog() {
+        let model = crate::model_catalog::default_selection().model;
+        let mut loop_context = LoopContext::new("base");
+        let mut config = AgentLoopConfig {
+            context_window_limit: Some(12_345),
+            ..AgentLoopConfig::default()
+        };
+
+        arm_auto_compaction(&mut loop_context, &mut config, model);
+
+        assert_eq!(
+            config.context_window_limit,
+            Some(12_345),
+            "an explicit window must never be overwritten by the catalog value",
+        );
+        assert!(loop_context.token_estimator.is_some());
+        assert!(loop_context.context_edits.is_some());
+    }
+
+    /// A model absent from the catalog keeps a `None` window — the trigger
+    /// stays disabled (`maybe_auto_compact` returns early on `None`),
+    /// matching the root behavior, with no error. The estimator and the
+    /// tracker are still installed (harmless with the trigger off).
+    #[test]
+    fn arm_auto_compaction_non_catalog_model_leaves_window_none() {
+        let mut loop_context = LoopContext::new("base");
+        let mut config = AgentLoopConfig::default();
+
+        arm_auto_compaction(&mut loop_context, &mut config, "not-in-catalog-model-xyz");
+
+        assert_eq!(
+            config.context_window_limit, None,
+            "a non-catalog model leaves the window None, disabling the trigger",
+        );
+        assert!(loop_context.token_estimator.is_some());
+        assert!(loop_context.context_edits.is_some());
     }
 
     /// `install_agent_infra` anchors the session-wide [`ActionLogTree`]

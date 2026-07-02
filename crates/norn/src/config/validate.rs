@@ -129,16 +129,6 @@ fn check_nonzero_duration(field: &str, value: &str) -> Result<(), ConfigError> {
 
 fn validate_numeric_ranges(settings: &NornSettings) -> Result<(), ConfigError> {
     if let Some(agent) = settings.agent.as_ref()
-        && let Some(threshold) = agent.compact_threshold
-        && !(0.0..=1.0).contains(&threshold)
-    {
-        return Err(ConfigError::InvalidConfig {
-            reason: format!(
-                "invalid value for agent.compact_threshold: {threshold} (must be 0.0..=1.0)",
-            ),
-        });
-    }
-    if let Some(agent) = settings.agent.as_ref()
         && let Some(mode) = agent.conversation_state.as_deref()
         && !matches!(
             mode,
@@ -1010,78 +1000,30 @@ mod tests {
         validate_settings(&s).unwrap();
     }
 
+    /// The reserve knob accepts any non-negative reserve, the explicit
+    /// `off` disable, and unset: all validate. A misconfigured reserve (e.g.
+    /// at or above the window) is not a config error — the loop's
+    /// `maybe_auto_compact` handles it at the trigger by warning and
+    /// disabling, so validation must not reject it.
     #[test]
-    fn compact_threshold_in_range_passes() {
-        let s = NornSettings {
-            agent: Some(AgentSettings {
-                compact_threshold: Some(0.95),
-                ..AgentSettings::default()
-            }),
-            ..NornSettings::default()
-        };
-        validate_settings(&s).unwrap();
-    }
-
-    #[test]
-    fn compact_threshold_zero_passes() {
-        let s = NornSettings {
-            agent: Some(AgentSettings {
-                compact_threshold: Some(0.0),
-                ..AgentSettings::default()
-            }),
-            ..NornSettings::default()
-        };
-        validate_settings(&s).unwrap();
-    }
-
-    #[test]
-    fn compact_threshold_one_passes() {
-        let s = NornSettings {
-            agent: Some(AgentSettings {
-                compact_threshold: Some(1.0),
-                ..AgentSettings::default()
-            }),
-            ..NornSettings::default()
-        };
-        validate_settings(&s).unwrap();
-    }
-
-    #[test]
-    fn compact_threshold_above_one_caught() {
-        let s = NornSettings {
-            agent: Some(AgentSettings {
-                compact_threshold: Some(5.0),
-                ..AgentSettings::default()
-            }),
-            ..NornSettings::default()
-        };
-        let err = validate_settings(&s).unwrap_err();
-        let ConfigError::InvalidConfig { reason } = err else {
-            panic!("expected InvalidConfig variant");
-        };
-        assert!(
-            reason.contains("compact_threshold"),
-            "reason missing field name: {reason}",
-        );
-    }
-
-    #[test]
-    fn compact_threshold_negative_caught() {
-        let s = NornSettings {
-            agent: Some(AgentSettings {
-                compact_threshold: Some(-0.1),
-                ..AgentSettings::default()
-            }),
-            ..NornSettings::default()
-        };
-        let err = validate_settings(&s).unwrap_err();
-        let ConfigError::InvalidConfig { reason } = err else {
-            panic!("expected InvalidConfig variant");
-        };
-        assert!(
-            reason.contains("compact_threshold"),
-            "reason missing field name: {reason}",
-        );
+    fn auto_compact_reserve_tokens_accepts_any_value() {
+        use crate::config::AutoCompactReserve;
+        for reserve in [
+            Some(AutoCompactReserve::Tokens(0)),
+            Some(AutoCompactReserve::Tokens(30_000)),
+            Some(AutoCompactReserve::Tokens(10_000_000)),
+            Some(AutoCompactReserve::Off),
+            None,
+        ] {
+            let s = NornSettings {
+                agent: Some(AgentSettings {
+                    auto_compact_reserve_tokens: reserve,
+                    ..AgentSettings::default()
+                }),
+                ..NornSettings::default()
+            };
+            validate_settings(&s).unwrap();
+        }
     }
 
     #[test]

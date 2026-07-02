@@ -202,6 +202,7 @@ mod tests {
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![ToolCallEvent {
                 call_id: call_id.to_owned(),
                 name: name.to_owned(),

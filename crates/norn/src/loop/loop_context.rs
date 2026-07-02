@@ -151,13 +151,13 @@ pub struct LoopContext {
 
     /// present alongside a token estimator and the
 
-    /// [`AgentLoopConfig::auto_compact_threshold_pct`](crate::agent_loop::runner::AgentLoopConfig)
+    /// [`AgentLoopConfig::auto_compact_reserve_tokens`](crate::agent_loop::runner::AgentLoopConfig)
 
     /// trigger, the loop appends a
 
     /// [`SessionEvent::Compaction`](crate::session::events::SessionEvent::Compaction)
 
-    /// once estimated usage crosses the configured fraction.
+    /// once estimated usage crosses `context_window_limit − reserve`.
     pub context_edits: Option<ContextEdits>,
 
     /// Whether persisted compaction supersession marks have been loaded

@@ -15,8 +15,10 @@
 //! either compiled-in constants or the layer above.
 
 use std::collections::BTreeMap;
+use std::fmt;
 
-use serde::{Deserialize, Serialize};
+use serde::de::{self, Visitor};
+use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 // ---------------------------------------------------------------------------
 // Root
@@ -315,6 +317,94 @@ pub struct ProviderSettings {
 // Agent loop
 // ---------------------------------------------------------------------------
 
+/// The `agent.auto_compact_reserve_tokens` setting: a reserve size, or the
+/// explicit `"off"` sentinel that disables auto-compaction.
+///
+/// Three-state presence is deliberate. The field is
+/// `Option<AutoCompactReserve>` on [`AgentSettings`] (and on the CLI
+/// `ConfigOverrides`): `None` means *unset* (defer to the layer below or the
+/// builder default of `Some(30_000)`), [`Self::Off`] means *explicitly
+/// disabled* — and an explicit off must beat the builder default, which a
+/// plain `Option<u64>` could not express (its `None` is indistinguishable
+/// from unset). [`Self::reserve_tokens`] projects the value onto the
+/// `Option<u64>` the loop's [`AgentLoopConfig`] carries, where `None` is the
+/// disabled state the trigger already honours.
+///
+/// The wire form accepts a non-negative integer (`42`) or the case-
+/// insensitive string `"off"`; any other value is a loud deserialisation
+/// error naming the field and the accepted forms.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AutoCompactReserve {
+    /// An explicit reserve headroom in tokens.
+    Tokens(u64),
+    /// Auto-compaction explicitly disabled.
+    Off,
+}
+
+impl AutoCompactReserve {
+    /// Project onto the loop config's `Option<u64>` reserve: `Some(n)` for a
+    /// concrete reserve, `None` for the explicit off — the disabled state the
+    /// runtime trigger already treats as "no auto-compaction".
+    #[must_use]
+    pub const fn reserve_tokens(self) -> Option<u64> {
+        match self {
+            Self::Tokens(n) => Some(n),
+            Self::Off => None,
+        }
+    }
+}
+
+impl Serialize for AutoCompactReserve {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Tokens(n) => serializer.serialize_u64(*n),
+            Self::Off => serializer.serialize_str("off"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AutoCompactReserve {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct ReserveVisitor;
+
+        impl Visitor<'_> for ReserveVisitor {
+            type Value = AutoCompactReserve;
+
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a non-negative integer number of reserve tokens or the string \"off\"")
+            }
+
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Self::Value, E> {
+                Ok(AutoCompactReserve::Tokens(value))
+            }
+
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Self::Value, E> {
+                u64::try_from(value)
+                    .map(AutoCompactReserve::Tokens)
+                    .map_err(|err| {
+                        E::custom(format!(
+                            "invalid value for agent.auto_compact_reserve_tokens: expected a \
+                         non-negative integer or the string \"off\", got {value} ({err})"
+                        ))
+                    })
+            }
+
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Self::Value, E> {
+                if value.eq_ignore_ascii_case("off") {
+                    Ok(AutoCompactReserve::Off)
+                } else {
+                    Err(E::custom(format!(
+                        "invalid value for agent.auto_compact_reserve_tokens: expected a \
+                         non-negative integer or the string \"off\", got \"{value}\""
+                    )))
+                }
+            }
+        }
+
+        deserializer.deserialize_any(ReserveVisitor)
+    }
+}
+
 /// Agent-loop configuration.
 ///
 /// Mirrors the agent-loop subset of
@@ -344,10 +434,16 @@ pub struct AgentSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
 
-    /// Compaction trigger as a fraction of [`Self::context_window`] (e.g.
-    /// `0.85`). Range `0.0..1.0`; validated in NC-003.
+    /// Auto-compaction reserve headroom in tokens below
+    /// [`Self::context_window`]. Compaction fires when the estimate exceeds
+    /// `context_window − auto_compact_reserve_tokens`. Any non-negative
+    /// integer is accepted; a reserve at or above the window disables the
+    /// trigger at runtime (see the loop's `maybe_auto_compact`). The string
+    /// `"off"` ([`AutoCompactReserve::Off`]) is the operator's clean disable —
+    /// it beats the builder default of `30_000`, which unset (`None`) does
+    /// not. See [`AutoCompactReserve`] for the three-state semantics.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub compact_threshold: Option<f64>,
+    pub auto_compact_reserve_tokens: Option<AutoCompactReserve>,
 
     /// Number of trailing turns preserved verbatim when compaction fires.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -777,6 +873,30 @@ pub struct SessionSettings {
 mod tests {
     use super::*;
 
+    /// The `Off` variant round-trips through its string form: serializes to
+    /// `"off"` and deserializes back — the operator-facing disable must
+    /// survive a settings-file rewrite cycle.
+    #[test]
+    fn auto_compact_reserve_off_serde_round_trips() {
+        let json = serde_json::to_string(&AutoCompactReserve::Off).unwrap();
+        assert_eq!(json, "\"off\"");
+        let back: AutoCompactReserve = serde_json::from_str(&json).unwrap();
+        assert_eq!(back, AutoCompactReserve::Off);
+    }
+
+    /// A negative integer is rejected loudly through the `visit_i64` path,
+    /// naming the key and the accepted forms.
+    #[test]
+    fn auto_compact_reserve_rejects_negative_integer() {
+        let err = serde_json::from_str::<AutoCompactReserve>("-1")
+            .expect_err("negative reserve must not deserialize");
+        let msg = err.to_string();
+        assert!(
+            msg.contains("agent.auto_compact_reserve_tokens") && msg.contains("off"),
+            "error must name the key and the accepted forms, got: {msg}",
+        );
+    }
+
     #[test]
     fn default_yields_all_none() {
         let settings = NornSettings::default();
@@ -815,7 +935,7 @@ mod tests {
         assert!(agent.step_timeout.is_none());
         assert!(agent.schema_budget.is_none());
         assert!(agent.context_window.is_none());
-        assert!(agent.compact_threshold.is_none());
+        assert!(agent.auto_compact_reserve_tokens.is_none());
         assert!(agent.compact_keep_turns.is_none());
         assert!(agent.reasoning_effort.is_none());
         assert!(agent.reasoning_summary.is_none());
@@ -915,7 +1035,7 @@ mod tests {
         assert!(agent.step_timeout.is_none());
         assert!(agent.schema_budget.is_none());
         assert!(agent.context_window.is_none());
-        assert!(agent.compact_threshold.is_none());
+        assert!(agent.auto_compact_reserve_tokens.is_none());
         assert!(agent.compact_keep_turns.is_none());
         assert!(agent.reasoning_effort.is_none());
         assert!(agent.reasoning_summary.is_none());
@@ -1042,7 +1162,7 @@ mod tests {
                 step_timeout: Some("45s".to_owned()),
                 schema_budget: Some(4),
                 context_window: Some(200_000),
-                compact_threshold: Some(0.85),
+                auto_compact_reserve_tokens: Some(AutoCompactReserve::Tokens(40_000)),
                 compact_keep_turns: Some(8),
                 conversation_state: Some("provider_threaded".to_owned()),
                 server_compaction_threshold_tokens: Some(200_000),

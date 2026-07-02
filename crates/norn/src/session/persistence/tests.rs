@@ -26,6 +26,7 @@ fn assistant_with_usage(input: u64, output: u64, cache_read: u64) -> SessionEven
         base: EventBase::new(None),
         content: "ok".to_owned(),
         thinking: String::new(),
+        reasoning: Vec::new(),
         tool_calls: Vec::new(),
         usage: EventUsage {
             input_tokens: input,
@@ -54,6 +55,7 @@ fn one_of_each() -> Vec<SessionEvent> {
             base: EventBase::new(None),
             content: "hi".to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![ToolCallEvent {
                 call_id: "call_tc1".to_owned(),
                 name: "Read".to_owned(),
@@ -173,6 +175,59 @@ fn round_trip_all_nine_variants() {
     for (a, b) in events.iter().zip(read.events.iter()) {
         assert_event_eq(a, b);
     }
+}
+
+/// An `AssistantMessage` carrying reasoning items (encrypted and plain) must
+/// survive a disk write → read-back, and the rebuilt provider messages must
+/// carry the reasoning identical to what was persisted. This is the exact
+/// resume path that a live conversation depends on to not shed reasoning
+/// tokens on reload.
+#[test]
+fn round_trip_reasoning_items_through_disk() {
+    use crate::provider::reasoning::{ReasoningItem, ReasoningSummaryPart};
+    use crate::session::conversion::events_to_messages;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+
+    let encrypted = ReasoningItem {
+        id: "rs_enc".to_owned(),
+        summary: vec![ReasoningSummaryPart::SummaryText {
+            text: "encrypted thought".to_owned(),
+        }],
+        content: None,
+        encrypted_content: Some("opaque-blob".to_owned()),
+    };
+    let plain = ReasoningItem {
+        id: "rs_plain".to_owned(),
+        summary: Vec::new(),
+        content: None,
+        encrypted_content: None,
+    };
+    let events = vec![SessionEvent::AssistantMessage {
+        base: EventBase::new(None),
+        content: "answer".to_owned(),
+        thinking: "summary".to_owned(),
+        reasoning: vec![encrypted.clone(), plain.clone()],
+        tool_calls: Vec::new(),
+        usage: EventUsage::default(),
+        stop_reason: "end_turn".to_owned(),
+        response_id: None,
+    }];
+    append_events(tmp.path(), &entry.id, &events, false).unwrap();
+
+    let read = read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(read.skipped_lines, 0);
+    assert_eq!(read.events.len(), 1);
+    assert_event_eq(&events[0], &read.events[0]);
+
+    let msgs = events_to_messages(&read.events);
+    assert_eq!(msgs.len(), 1);
+    assert_eq!(
+        msgs[0].reasoning,
+        vec![encrypted, plain],
+        "reasoning must round-trip through disk into the rebuilt message",
+    );
 }
 
 #[test]
@@ -1546,6 +1601,7 @@ fn replay_fixture() -> (Vec<u8>, EventId) {
         base: EventBase::new(None),
         content: String::new(),
         thinking: String::new(),
+        reasoning: Vec::new(),
         tool_calls: vec![ToolCallEvent {
             call_id: "call_replay_1".to_owned(),
             name: "read".to_owned(),

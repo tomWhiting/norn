@@ -325,6 +325,7 @@ mod tests {
             base: base(),
             content: content.to_owned(),
             thinking: thinking.to_owned(),
+            reasoning: Vec::new(),
             tool_calls: vec![],
             usage: EventUsage::default(),
             stop_reason: String::new(),

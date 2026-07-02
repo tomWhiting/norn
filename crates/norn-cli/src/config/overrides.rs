@@ -179,8 +179,10 @@ pub fn apply_config_overrides_to_loop(overrides: &ConfigOverrides, config: &mut 
     if let Some(window) = overrides.context_window {
         config.context_window_limit = Some(window);
     }
-    if let Some(threshold) = overrides.compact_threshold {
-        config.auto_compact_threshold_pct = Some(threshold);
+    if let Some(reserve) = overrides.auto_compact_reserve_tokens {
+        // `off` projects to `None` (disabled); a concrete reserve to
+        // `Some(n)`. Either explicit `-c` value beats the builder default.
+        config.auto_compact_reserve_tokens = reserve.reserve_tokens();
     }
     if let Some(keep) = overrides.compact_keep_turns {
         config.auto_compact_keep_recent_turns = keep;
@@ -227,8 +229,10 @@ pub fn apply_settings_to_agent_config(
     if let Some(window) = agent.context_window {
         config.context_window_limit = Some(window);
     }
-    if let Some(threshold) = agent.compact_threshold {
-        config.auto_compact_threshold_pct = Some(threshold);
+    if let Some(reserve) = agent.auto_compact_reserve_tokens {
+        // `"off"` projects to `None` (disabled); a concrete reserve to
+        // `Some(n)`. Either explicit value beats the builder default.
+        config.auto_compact_reserve_tokens = reserve.reserve_tokens();
     }
     if let Some(keep) = agent.compact_keep_turns {
         config.auto_compact_keep_recent_turns = keep;
@@ -838,7 +842,7 @@ mod tests {
             "max_turns=99".to_owned(),
             "schema_budget=7".to_owned(),
             "context_window=12345".to_owned(),
-            "compact_threshold=0.5".to_owned(),
+            "auto_compact_reserve_tokens=25000".to_owned(),
             "compact_keep_turns=4".to_owned(),
         ])
         .unwrap();
@@ -852,13 +856,13 @@ mod tests {
         // Fields without a CLI sibling stay at their -c value.
         assert_eq!(config.schema_attempt_budget, 7);
         assert_eq!(config.context_window_limit, Some(12345));
-        assert!((config.auto_compact_threshold_pct.unwrap() - 0.5).abs() < f64::EPSILON);
+        assert_eq!(config.auto_compact_reserve_tokens, Some(25_000));
         assert_eq!(config.auto_compact_keep_recent_turns, 4);
     }
 
     #[test]
     fn settings_to_agent_config_fills_every_field() {
-        use norn::config::{AgentSettings, NornSettings};
+        use norn::config::{AgentSettings, AutoCompactReserve, NornSettings};
         let mut config = default_agent_loop_config();
         let settings = NornSettings {
             agent: Some(AgentSettings {
@@ -866,7 +870,7 @@ mod tests {
                 step_timeout: Some("45s".to_owned()),
                 schema_budget: Some(7),
                 context_window: Some(200_000),
-                compact_threshold: Some(0.6),
+                auto_compact_reserve_tokens: Some(AutoCompactReserve::Tokens(35_000)),
                 compact_keep_turns: Some(8),
                 conversation_state: Some("provider_threaded".to_owned()),
                 server_compaction_threshold_tokens: Some(180_000),
@@ -879,7 +883,7 @@ mod tests {
         assert_eq!(config.step_timeout, Some(Duration::from_secs(45)));
         assert_eq!(config.schema_attempt_budget, 7);
         assert_eq!(config.context_window_limit, Some(200_000));
-        assert!((config.auto_compact_threshold_pct.unwrap() - 0.6).abs() < f64::EPSILON);
+        assert_eq!(config.auto_compact_reserve_tokens, Some(35_000));
         assert_eq!(config.auto_compact_keep_recent_turns, 8);
         assert_eq!(
             config.conversation_state,

@@ -791,6 +791,7 @@ mod tests {
             base: base(),
             content: "**bold**".to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![],
             usage: EventUsage::default(),
             stop_reason: String::new(),

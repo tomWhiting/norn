@@ -23,9 +23,6 @@ use parking_lot::Mutex;
 
 use crate::error::SessionError;
 use crate::integration::hooks::{HookOutcome, HookRegistry};
-use crate::r#loop::numeric::{
-    f64_to_usize_token_count, token_count_to_f64, usize_token_count_to_f64,
-};
 use crate::r#loop::summarization::request_compaction_summary;
 use crate::r#loop::tokens::TokenEstimator;
 use crate::provider::traits::Provider;
@@ -182,10 +179,20 @@ pub struct AutoCompactArgs<'a> {
     pub model: &'a str,
     /// Client-side token estimate for the current prompt.
     pub estimated_tokens: usize,
+    /// Provider-reported token floor from the last completed provider call
+    /// (`input_tokens + output_tokens`), when one exists (see
+    /// [`ContextEdits::usage_floor`]). The trigger anchors on
+    /// `max(estimated_tokens, usage_floor)`: the character estimate cannot
+    /// see request content the provider re-bills every call (replayed
+    /// encrypted reasoning items), while the provider's own bill can never
+    /// understate a request that only grew.
+    pub usage_floor: Option<u64>,
     /// Configured context-window budget; the trigger is inert when unset.
     pub context_window_limit: Option<u64>,
-    /// Fraction of the budget at which to fire; inert when unset.
-    pub threshold_pct: Option<f64>,
+    /// Reserve-token headroom below the budget at which to fire; inert when
+    /// unset. Compaction fires once the estimate exceeds
+    /// `context_window_limit − reserve_tokens`.
+    pub reserve_tokens: Option<u64>,
     /// Assistant turns to retain when compacting.
     pub keep_recent_turns: usize,
     /// Hook registry consulted before compaction runs.
@@ -202,8 +209,11 @@ pub struct AutoCompactArgs<'a> {
 ///
 /// The trigger fires when:
 ///
-/// - `threshold_pct` is `Some` *and* `context_window_limit` is `Some`,
-/// - `estimated_tokens > threshold_pct * context_window_limit`,
+/// - `reserve_tokens` is `Some` *and* `context_window_limit` is `Some`,
+/// - `max(estimated_tokens, usage_floor) > context_window_limit −
+///   reserve_tokens` (the floor is absent until the first live provider
+///   call and after every prompt-view shrink, in which case the estimate
+///   governs alone),
 /// - the [`CompactionState`] has not yet fired in this step,
 /// - the loop holds a [`ContextEdits`] tracker (caller-visible side
 ///   effect: the tracker mutates).
@@ -228,21 +238,33 @@ pub async fn maybe_auto_compact(
     let Some(limit) = args.context_window_limit else {
         return Ok(None);
     };
-    let Some(pct) = args.threshold_pct else {
+    let Some(reserve) = args.reserve_tokens else {
         return Ok(None);
     };
     if limit == 0 {
-        return Ok(None);
-    }
-    if !pct.is_finite() {
         tracing::warn!(
-            threshold_pct = pct,
-            "auto-compaction threshold_pct is not a finite number; trigger disabled",
+            context_window_limit = limit,
+            "auto-compaction context_window_limit is 0; the trigger cannot \
+             compute a threshold — trigger disabled",
         );
         return Ok(None);
     }
-    let threshold = token_count_to_f64(limit) * pct;
-    if usize_token_count_to_f64(args.estimated_tokens) <= threshold {
+    if reserve >= limit {
+        tracing::warn!(
+            reserve_tokens = reserve,
+            context_window_limit = limit,
+            "auto-compaction reserve_tokens is at or above context_window_limit; \
+             every step would trigger compaction — trigger disabled",
+        );
+        return Ok(None);
+    }
+    // `reserve < limit` here, so the subtraction cannot underflow.
+    let threshold = limit - reserve;
+    let estimated = u64::try_from(args.estimated_tokens).unwrap_or(u64::MAX);
+    let effective = args
+        .usage_floor
+        .map_or(estimated, |floor| estimated.max(floor));
+    if effective <= threshold {
         return Ok(None);
     }
     let Some(edits) = args.edits else {
@@ -267,9 +289,12 @@ pub async fn maybe_auto_compact(
         return Ok(None);
     }
 
-    let token_estimate_freed = args
-        .estimated_tokens
-        .saturating_sub(f64_to_usize_token_count(threshold.max(0.0)));
+    // Freed estimate anchors on the same effective count as the trigger:
+    // with a floor above the estimate (the incident shape), an
+    // estimate-based value would be zero despite a genuinely oversized
+    // request.
+    let token_estimate_freed =
+        usize::try_from(effective.saturating_sub(threshold)).unwrap_or(usize::MAX);
 
     let events = args.store.events();
     let elided = &events[..plan.cut_exclusive()];
@@ -445,6 +470,7 @@ mod tests {
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -457,6 +483,7 @@ mod tests {
             base: EventBase::new(None),
             content: "tool".to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![ToolCallEvent {
                 call_id: call_id.to_owned(),
                 name: "read".to_owned(),
@@ -589,8 +616,11 @@ mod tests {
             provider,
             model: "test-model",
             estimated_tokens,
+            usage_floor: None,
             context_window_limit,
-            threshold_pct: Some(0.75),
+            // limit 8_000 − reserve 2_000 = 6_000 trigger point, matching
+            // the fire/no-fire boundaries these tests were written against.
+            reserve_tokens: Some(2_000),
             keep_recent_turns: 10,
             hooks,
             cancel: None,
@@ -724,8 +754,9 @@ mod tests {
                 provider: &provider,
                 model: "test-model",
                 estimated_tokens: 10_000,
+                usage_floor: None,
                 context_window_limit: Some(8_000),
-                threshold_pct: Some(0.75),
+                reserve_tokens: Some(2_000),
                 keep_recent_turns: 10,
                 hooks: None,
                 cancel: Some(&token),
@@ -880,8 +911,99 @@ mod tests {
         assert_eq!(provider.call_count(), 0);
     }
 
+    /// Helper mirroring [`run_trigger`] but with explicit `reserve_tokens`
+    /// and `usage_floor` so the boundary/pathological/floor cases can pin
+    /// the exact trigger math.
+    #[allow(clippy::too_many_arguments)]
+    async fn run_trigger_with_reserve(
+        state: &mut CompactionState,
+        edits: &mut ContextEdits,
+        store: &EventStore,
+        provider: &MockProvider,
+        estimated_tokens: usize,
+        usage_floor: Option<u64>,
+        context_window_limit: Option<u64>,
+        reserve_tokens: Option<u64>,
+    ) -> Result<Option<AutoCompactionRun>, SessionError> {
+        maybe_auto_compact(AutoCompactArgs {
+            state,
+            edits: Some(edits),
+            store,
+            provider,
+            model: "test-model",
+            estimated_tokens,
+            usage_floor,
+            context_window_limit,
+            reserve_tokens,
+            keep_recent_turns: 10,
+            hooks: None,
+            cancel: None,
+        })
+        .await
+    }
+
+    /// The trigger fires strictly *above* `limit − reserve`: at exactly the
+    /// boundary (estimate == limit − reserve) it must not fire; one token
+    /// over it must.
     #[tokio::test]
-    async fn non_finite_threshold_pct_disables_the_trigger() {
+    async fn fires_strictly_above_limit_minus_reserve() {
+        let make_store = || {
+            let store = EventStore::new();
+            for i in 0..30 {
+                store.append(assistant(&format!("t{i}"))).expect("append");
+            }
+            store
+        };
+
+        // limit 10_000 − reserve 3_000 = 7_000 trigger point.
+        // At the boundary: no fire.
+        let store = make_store();
+        let provider = MockProvider::new(vec![]);
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        let at_boundary = run_trigger_with_reserve(
+            &mut state,
+            &mut edits,
+            &store,
+            &provider,
+            7_000,
+            None,
+            Some(10_000),
+            Some(3_000),
+        )
+        .await
+        .expect("ok");
+        assert!(
+            at_boundary.is_none(),
+            "estimate == limit − reserve must not fire"
+        );
+        assert!(!state.has_fired());
+
+        // One token over the boundary: fires.
+        let store = make_store();
+        let provider = MockProvider::new(vec![summary_events("summary")]);
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        let over = run_trigger_with_reserve(
+            &mut state,
+            &mut edits,
+            &store,
+            &provider,
+            7_001,
+            None,
+            Some(10_000),
+            Some(3_000),
+        )
+        .await
+        .expect("ok");
+        assert!(over.is_some(), "one token over the boundary must fire");
+        assert!(state.has_fired());
+    }
+
+    /// A reserve at or above the window would make every step trigger
+    /// compaction; the trigger warns and disables instead of looping.
+    #[tokio::test]
+    async fn reserve_at_or_above_limit_disables_the_trigger() {
         let store = EventStore::new();
         for i in 0..30 {
             store.append(assistant(&format!("t{i}"))).expect("append");
@@ -889,23 +1011,195 @@ mod tests {
         let provider = MockProvider::new(vec![]);
         let mut state = CompactionState::new();
         let mut edits = ContextEdits::new();
-        let n = maybe_auto_compact(AutoCompactArgs {
-            state: &mut state,
-            edits: Some(&mut edits),
-            store: &store,
-            provider: &provider,
-            model: "test-model",
-            estimated_tokens: 10_000,
-            context_window_limit: Some(8_000),
-            threshold_pct: Some(f64::NAN),
-            keep_recent_turns: 10,
-            hooks: None,
-            cancel: None,
-        })
+        // reserve == limit and reserve > limit both disable.
+        for reserve in [Some(8_000_u64), Some(9_000_u64)] {
+            let n = run_trigger_with_reserve(
+                &mut state,
+                &mut edits,
+                &store,
+                &provider,
+                10_000,
+                None,
+                Some(8_000),
+                reserve,
+            )
+            .await
+            .expect("ok");
+            assert!(n.is_none(), "reserve >= limit must not fire");
+            assert!(!state.has_fired());
+        }
+        assert_eq!(provider.call_count(), 0);
+    }
+
+    /// A `None` reserve disables the trigger regardless of the estimate.
+    #[tokio::test]
+    async fn none_reserve_disables_the_trigger() {
+        let store = EventStore::new();
+        for i in 0..30 {
+            store.append(assistant(&format!("t{i}"))).expect("append");
+        }
+        let provider = MockProvider::new(vec![]);
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        let n = run_trigger_with_reserve(
+            &mut state,
+            &mut edits,
+            &store,
+            &provider,
+            1_000_000,
+            None,
+            Some(8_000),
+            None,
+        )
         .await
         .expect("ok");
-        assert!(n.is_none());
+        assert!(n.is_none(), "None reserve disables the trigger");
         assert!(!state.has_fired());
+        assert_eq!(provider.call_count(), 0);
+    }
+
+    /// The owner-incident scenario (2026-07): a driven-mode agent overflowed
+    /// a 272k window at 269k provider-reported input while the client
+    /// estimate saw only ~236k (replayed encrypted reasoning items are
+    /// invisible to the estimator). With the trigger anchored on
+    /// `max(estimate, usage_floor)`, the floor fires the compaction the
+    /// estimate alone never would have.
+    #[tokio::test]
+    async fn usage_floor_above_threshold_fires_despite_low_estimate() {
+        let store = EventStore::new();
+        for i in 0..30 {
+            store.append(assistant(&format!("t{i}"))).expect("append");
+        }
+        let provider = MockProvider::new(vec![summary_events("summary")]);
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        // Estimate 236_000 is below the 242_000 trigger point
+        // (272_000 − 30_000); the floor 271_200 is above it.
+        let run = run_trigger_with_reserve(
+            &mut state,
+            &mut edits,
+            &store,
+            &provider,
+            236_000,
+            Some(271_200),
+            Some(272_000),
+            Some(30_000),
+        )
+        .await
+        .expect("ok")
+        .expect("the usage floor must fire the trigger");
+        assert!(state.has_fired());
+        // Freed estimate anchors on the effective count, not the estimate:
+        // 271_200 − 242_000 = 29_200 (estimate-based would be zero).
+        assert_eq!(run.freed_token_estimate, 29_200);
+    }
+
+    /// Death-spiral regression: a fired compaction must clear the usage
+    /// floor (the estimate then reflects the compacted conversation but a
+    /// stale floor would not), so the next check with a low estimate does
+    /// NOT re-fire; a fresh provider report re-establishes the floor.
+    #[tokio::test]
+    async fn compaction_clears_the_usage_floor_and_does_not_refire() {
+        let store = EventStore::new();
+        for i in 0..30 {
+            store.append(assistant(&format!("t{i}"))).expect("append");
+        }
+        let provider = MockProvider::new(vec![summary_events("summary")]);
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        edits.set_usage_floor(271_200);
+
+        let floor = edits.usage_floor();
+        let first = run_trigger_with_reserve(
+            &mut state,
+            &mut edits,
+            &store,
+            &provider,
+            236_000,
+            floor,
+            Some(272_000),
+            Some(30_000),
+        )
+        .await
+        .expect("ok");
+        assert!(first.is_some(), "floor above threshold fires");
+        assert_eq!(
+            edits.usage_floor(),
+            None,
+            "committing the compaction must clear the floor",
+        );
+
+        // Next step (fresh once-per-step guard): the estimate reflects the
+        // compacted conversation and the floor is gone — no re-fire.
+        let mut next_state = CompactionState::new();
+        let floor = edits.usage_floor();
+        let second = run_trigger_with_reserve(
+            &mut next_state,
+            &mut edits,
+            &store,
+            &provider,
+            5_000,
+            floor,
+            Some(272_000),
+            Some(30_000),
+        )
+        .await
+        .expect("ok");
+        assert!(
+            second.is_none(),
+            "a cleared floor must not re-fire on a small conversation",
+        );
+        assert!(!next_state.has_fired());
+
+        // A fresh provider step re-establishes the floor.
+        edits.set_usage_floor(50_000);
+        assert_eq!(edits.usage_floor(), Some(50_000));
+    }
+
+    /// A floor at or below the trigger point defers to the estimate — the
+    /// effective count is the max of the two, not the floor alone.
+    #[tokio::test]
+    async fn low_usage_floor_defers_to_the_estimate() {
+        let store = EventStore::new();
+        for i in 0..30 {
+            store.append(assistant(&format!("t{i}"))).expect("append");
+        }
+        // Neither number over the 6_000 trigger point: no fire.
+        let provider = MockProvider::new(vec![]);
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        let n = run_trigger_with_reserve(
+            &mut state,
+            &mut edits,
+            &store,
+            &provider,
+            5_000,
+            Some(4_000),
+            Some(8_000),
+            Some(2_000),
+        )
+        .await
+        .expect("ok");
+        assert!(n.is_none(), "max(5_000, 4_000) <= 6_000 must not fire");
+
+        // Estimate over the trigger point with a low floor: fires on the
+        // estimate exactly as without a floor.
+        let provider = MockProvider::new(vec![summary_events("summary")]);
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        let n = run_trigger_with_reserve(
+            &mut state,
+            &mut edits,
+            &store,
+            &provider,
+            6_001,
+            Some(10),
+            Some(8_000),
+            Some(2_000),
+        )
+        .await
+        .expect("ok");
+        assert!(n.is_some(), "the estimate governs when it is the max");
     }
 
     // NH-006 R6 / C58: a CompactionHook returning Block must prevent
@@ -959,6 +1253,165 @@ mod tests {
             0,
             "a blocked compaction must not spend summarization tokens",
         );
+    }
+
+    /// Finding 6 regression: a `context_window_limit` of 0 cannot yield a
+    /// threshold, so the trigger disables (and now warns). The disabled
+    /// behaviour is unchanged — no compaction fires, no summarization call —
+    /// which this pins; the accompanying `warn!` is not asserted here (the
+    /// sibling `reserve >= limit` test does not assert its warn either).
+    #[tokio::test]
+    async fn zero_limit_disables_the_trigger() {
+        let store = EventStore::new();
+        for i in 0..30 {
+            store.append(assistant(&format!("t{i}"))).expect("append");
+        }
+        let provider = MockProvider::new(vec![]);
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        let n = run_trigger_with_reserve(
+            &mut state,
+            &mut edits,
+            &store,
+            &provider,
+            1_000_000,
+            None,
+            Some(0),
+            Some(0),
+        )
+        .await
+        .expect("ok");
+        assert!(n.is_none(), "a zero window must not fire the trigger");
+        assert!(!state.has_fired());
+        assert_eq!(provider.call_count(), 0);
+    }
+
+    /// Finding 1 (incident recurrence): a resumed session replays persisted
+    /// reasoning items the client estimate must count. Here the estimate
+    /// *without* reasoning sits below the `limit − reserve` threshold (a
+    /// reasoning-blind estimator would never fire, and the usage floor is
+    /// `None` on a fresh resume) while the estimate *with* reasoning crosses
+    /// it — so the trigger fires only because the estimator now sees the
+    /// replayed reasoning. This is the original `ContextWindowExceeded`
+    /// shape.
+    #[tokio::test]
+    async fn resumed_reasoning_estimate_crosses_threshold_and_fires() {
+        use crate::r#loop::tokens::{SimpleTokenEstimator, estimate_prompt_tokens};
+        use crate::provider::reasoning::{ReasoningItem, ReasoningSummaryPart};
+        use crate::provider::request::{Message, MessageRole};
+
+        // A resumed conversation: base content sits below the trigger, but
+        // each assistant turn also replays a large encrypted reasoning blob.
+        let est = SimpleTokenEstimator;
+        let messages = vec![
+            // ~260k chars of content → ~65k blind tokens (below the 70k trigger).
+            Message {
+                reasoning: Vec::new(),
+                role: MessageRole::User,
+                content: Some("u".repeat(260_000)),
+                thinking: String::new(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+            },
+            // ~140k chars of replayed encrypted reasoning → ~35k extra tokens.
+            Message {
+                reasoning: vec![ReasoningItem {
+                    id: "rs_resumed".to_string(),
+                    summary: vec![ReasoningSummaryPart::SummaryText {
+                        text: "recap".to_string(),
+                    }],
+                    content: None,
+                    encrypted_content: Some("e".repeat(140_000)),
+                }],
+                role: MessageRole::Assistant,
+                content: Some(String::new()),
+                thinking: String::new(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+            },
+        ];
+
+        let with_reasoning = estimate_prompt_tokens(&est, &messages, &[]);
+        let blind: Vec<Message> = messages
+            .iter()
+            .cloned()
+            .map(|m| Message {
+                reasoning: Vec::new(),
+                ..m
+            })
+            .collect();
+        let without_reasoning = estimate_prompt_tokens(&est, &blind, &[]);
+
+        // limit 100k − reserve 30k = 70k threshold. The reasoning-blind
+        // estimate stays under it; the reasoning-aware one clears it.
+        let limit = 100_000_u64;
+        let reserve = 30_000_u64;
+        let threshold = limit - reserve;
+        assert!(
+            u64::try_from(without_reasoning).expect("fits") <= threshold,
+            "reasoning-blind estimate {without_reasoning} must not cross {threshold}",
+        );
+        assert!(
+            u64::try_from(with_reasoning).expect("fits") > threshold,
+            "reasoning-aware estimate {with_reasoning} must cross {threshold}",
+        );
+
+        // Sanity: the reasoning-blind estimate, fed to the trigger with the
+        // resume-shaped `None` floor, would NOT fire — the incident.
+        {
+            let store = EventStore::new();
+            for i in 0..30 {
+                store.append(assistant(&format!("t{i}"))).expect("append");
+            }
+            let provider = MockProvider::new(vec![]);
+            let mut state = CompactionState::new();
+            let mut edits = ContextEdits::new();
+            let blind_run = run_trigger_with_reserve(
+                &mut state,
+                &mut edits,
+                &store,
+                &provider,
+                without_reasoning,
+                None,
+                Some(limit),
+                Some(reserve),
+            )
+            .await
+            .expect("ok");
+            assert!(
+                blind_run.is_none(),
+                "the reasoning-blind estimate must sail past the trigger — the incident",
+            );
+        }
+
+        // The reasoning-aware estimate fires the compaction the blind one
+        // missed, with the floor unseeded (`None`) as on a fresh resume.
+        let store = EventStore::new();
+        for i in 0..30 {
+            store.append(assistant(&format!("t{i}"))).expect("append");
+        }
+        let provider = MockProvider::new(vec![summary_events("resumed recap")]);
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        let run = run_trigger_with_reserve(
+            &mut state,
+            &mut edits,
+            &store,
+            &provider,
+            with_reasoning,
+            None,
+            Some(limit),
+            Some(reserve),
+        )
+        .await
+        .expect("ok")
+        .expect("the reasoning-aware estimate must fire the trigger");
+        assert!(state.has_fired());
+        assert!(run.freed_token_estimate > 0);
     }
 
     #[test]

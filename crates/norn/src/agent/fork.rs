@@ -88,6 +88,7 @@ impl ContextFilter {
                 base,
                 content,
                 thinking,
+                reasoning,
                 usage,
                 stop_reason,
                 response_id,
@@ -96,6 +97,7 @@ impl ContextFilter {
                 base: base.clone(),
                 content: content.clone(),
                 thinking: thinking.clone(),
+                reasoning: reasoning.clone(),
                 tool_calls: Vec::new(),
                 usage: usage.clone(),
                 stop_reason: stop_reason.clone(),
@@ -497,6 +499,7 @@ mod tests {
             base: EventBase::new(None),
             content: "calling tool".to_string(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: calls
                 .into_iter()
                 .map(|(call_id, name)| ToolCallEvent {

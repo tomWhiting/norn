@@ -226,12 +226,15 @@ pub struct AgentLoopConfig {
     /// provider call still runs.
     pub context_window_limit: Option<u64>,
 
-    /// Optional fraction of `context_window_limit` at which to fire
-    /// auto-compaction (e.g. `0.75` for 75%). Requires both
-    /// `context_window_limit` and a configured token estimator and context
-    /// edits tracker on the loop context to take effect. Compaction fires
-    /// at most once per `run_agent_step` call.
-    pub auto_compact_threshold_pct: Option<f64>,
+    /// Reserve-token headroom below `context_window_limit` at which to fire
+    /// auto-compaction. The trigger fires when the estimated prompt tokens
+    /// exceed `context_window_limit − auto_compact_reserve_tokens` (e.g. a
+    /// `272_000` window with a `30_000` reserve fires at `242_000`).
+    /// Requires `context_window_limit` and a configured token estimator and
+    /// context edits tracker on the loop context to take effect. `None`
+    /// disables the trigger. Compaction fires at most once per
+    /// `run_agent_step` call. Defaults to `Some(30_000)`.
+    pub auto_compact_reserve_tokens: Option<u64>,
 
     /// Number of recent assistant turns to retain when auto-compaction
     /// fires. Older events are summarised into a single
@@ -250,8 +253,9 @@ pub struct AgentLoopConfig {
 
     /// Absolute provider-side compaction threshold in rendered tokens.
     ///
-    /// This is distinct from [`Self::auto_compact_threshold_pct`], which is
-    /// local and expressed as a fraction of [`Self::context_window_limit`].
+    /// This is distinct from [`Self::auto_compact_reserve_tokens`], which is
+    /// local and expressed as reserve headroom below
+    /// [`Self::context_window_limit`].
     pub server_compaction_threshold_tokens: Option<u64>,
 
     /// JSON schema enforced on the final response (structured output).
@@ -320,7 +324,7 @@ impl Default for AgentLoopConfig {
             max_iterations: None,
             step_timeout: None,
             context_window_limit: None,
-            auto_compact_threshold_pct: None,
+            auto_compact_reserve_tokens: Some(30_000),
             auto_compact_keep_recent_turns: 10,
             schema_tool_name: "structured_output".to_string(),
             cache_key: None,
@@ -517,7 +521,7 @@ mod tests {
             "max_iterations": null,
             "step_timeout": null,
             "context_window_limit": null,
-            "auto_compact_threshold_pct": null,
+            "auto_compact_reserve_tokens": 30000,
             "auto_compact_keep_recent_turns": 10,
             "schema_tool_name": "structured_output",
             "cache_key": null,

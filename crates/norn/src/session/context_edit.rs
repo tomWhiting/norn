@@ -71,11 +71,29 @@ impl CompactionPlan {
 ///
 /// Maintains three disjoint sets: suppressed event IDs, superseded event IDs,
 /// and injected event IDs. None of these mutate the underlying [`EventStore`].
+///
+/// Also carries the **usage floor**: the provider-reported token footprint
+/// (`input_tokens + output_tokens`) of the last completed provider call.
+/// The client-side character estimate cannot see request content the
+/// provider re-bills on every call (e.g. replayed encrypted reasoning items
+/// on stateless Responses backends), while the provider's own bill can
+/// never understate the next request — it contains at least what the last
+/// one did. The auto-compaction trigger and the advisory token warning
+/// therefore anchor on `max(estimate, usage_floor)`.
+///
+/// The floor lives here — on the same struct that owns every
+/// conversation-shrinking mutation — so the critical invariant is
+/// structural: **any mutation that removes content from the prompt view
+/// clears the floor.** A stale floor across a shrink would re-fire the
+/// compaction trigger on every step regardless of the (now smaller)
+/// conversation. Growth (injection, appends) never clears: the floor
+/// remains a valid lower bound for a request that only gained content.
 #[derive(Debug, Default)]
 pub struct ContextEdits {
     suppressed: HashSet<EventId>,
     superseded: HashSet<EventId>,
     injected: HashSet<EventId>,
+    usage_floor: Option<u64>,
 }
 
 impl ContextEdits {
@@ -85,12 +103,55 @@ impl ContextEdits {
         Self::default()
     }
 
+    // -- Usage floor -------------------------------------------------------
+
+    /// Record the provider-reported token footprint of the last completed
+    /// provider call: its `input_tokens + output_tokens`. Overwrites any
+    /// previous floor — "last call's report" semantics, so a provider-side
+    /// context reduction (server compaction) is tracked truthfully.
+    ///
+    /// Deliberately **not** seeded from persisted events on session resume.
+    /// The floor is live, per-request accounting, not persisted state: it is
+    /// the last provider call's own bill, and no such call has happened yet
+    /// on a fresh resume. Seeding a synthetic floor from the persisted
+    /// history would be a guess, and a guess that ran high would re-fire the
+    /// trigger every step. Instead a resumed session starts with a
+    /// conservative cold start — the floor is `None` and the client estimate
+    /// governs alone. That estimate now counts the persisted reasoning items
+    /// the request will replay (see
+    /// [`estimate_prompt_tokens`](crate::agent_loop::tokens::estimate_prompt_tokens)),
+    /// so it does not under-count the resumed prompt; the first live provider
+    /// call then establishes the true floor.
+    pub fn set_usage_floor(&mut self, tokens: u64) {
+        self.usage_floor = Some(tokens);
+    }
+
+    /// The provider-reported token floor for the next request, when a live
+    /// provider call has established one since the last prompt-view shrink.
+    #[must_use]
+    pub const fn usage_floor(&self) -> Option<u64> {
+        self.usage_floor
+    }
+
+    /// Clear the usage floor. Invoked by every mutation on this struct
+    /// that shrinks the prompt view (suppression and every supersession
+    /// path): after a shrink the estimate reflects the smaller
+    /// conversation but a stale floor does not, and keeping it would
+    /// re-fire the auto-compaction trigger on every subsequent step.
+    fn clear_usage_floor(&mut self) {
+        self.usage_floor = None;
+    }
+
     /// Restore compaction supersession marks from ids that were already
     /// derived elsewhere — typically
     /// [`ReplayArtifacts::superseded_event_ids`](crate::session::ReplayArtifacts::superseded_event_ids)
     /// from a single-pass session replay. Idempotent.
     pub fn mark_superseded(&mut self, ids: impl IntoIterator<Item = EventId>) {
         self.superseded.extend(ids);
+        // Restoration happens before any live provider call, so this is a
+        // no-op there (floor is still None) — but the invariant stays
+        // total: growing the superseded set shrinks the prompt view.
+        self.clear_usage_floor();
     }
 
     /// Rebuild persisted compaction marks from the append-only store.
@@ -120,6 +181,7 @@ impl ContextEdits {
     /// prompt construction but remain in the store unchanged.
     pub fn suppress(&mut self, event_id: EventId) {
         self.suppressed.insert(event_id);
+        self.clear_usage_floor();
     }
 
     /// Check whether an event is suppressed.
@@ -154,6 +216,7 @@ impl ContextEdits {
         for id in event_ids {
             self.superseded.insert(id);
         }
+        self.clear_usage_floor();
         Ok(compaction_id)
     }
 
@@ -196,6 +259,7 @@ impl ContextEdits {
         for id in ids_before {
             self.superseded.insert(id);
         }
+        self.clear_usage_floor();
         Ok(compaction_id)
     }
 
@@ -293,6 +357,7 @@ impl ContextEdits {
         for id in plan.replaced_ids {
             self.superseded.insert(id);
         }
+        self.clear_usage_floor();
         Ok(AutoCompactionOutcome {
             compaction_id,
             newly_superseded: plan.newly_superseded,
@@ -525,6 +590,114 @@ mod tests {
         }
     }
 
+    // -- Usage floor -------------------------------------------------------
+
+    /// The floor is "last provider report wins": a later, smaller report
+    /// (e.g. after provider-side/server compaction) overwrites a larger one.
+    #[test]
+    fn usage_floor_overwrites_with_the_latest_report() {
+        let mut edits = ContextEdits::new();
+        assert_eq!(edits.usage_floor(), None, "floor starts unset");
+        edits.set_usage_floor(100_000);
+        assert_eq!(edits.usage_floor(), Some(100_000));
+        edits.set_usage_floor(60_000);
+        assert_eq!(
+            edits.usage_floor(),
+            Some(60_000),
+            "the last report wins, even when smaller",
+        );
+    }
+
+    /// Every prompt-view-shrinking mutation clears the floor — this is the
+    /// choke point that prevents the compaction death spiral (a stale floor
+    /// re-firing the trigger against an already-compacted conversation).
+    #[test]
+    fn every_shrinking_mutation_clears_the_usage_floor() {
+        // suppress
+        let store = EventStore::new();
+        let id = store.append(user_msg("m")).expect("append");
+        let mut edits = ContextEdits::new();
+        edits.set_usage_floor(100_000);
+        edits.suppress(id);
+        assert_eq!(edits.usage_floor(), None, "suppress must clear the floor");
+
+        // summarize
+        let store = EventStore::new();
+        let a = store.append(user_msg("a")).expect("append");
+        let mut edits = ContextEdits::new();
+        edits.set_usage_floor(100_000);
+        edits
+            .summarize(&store, vec![a], "s".to_owned())
+            .expect("summarize");
+        assert_eq!(edits.usage_floor(), None, "summarize must clear the floor");
+
+        // compact
+        let store = EventStore::new();
+        let mut ids = Vec::new();
+        for i in 0..3 {
+            ids.push(store.append(user_msg(&format!("m{i}"))).expect("append"));
+        }
+        let mut edits = ContextEdits::new();
+        edits.set_usage_floor(100_000);
+        edits
+            .compact(&store, &ids[2], "c".to_owned())
+            .expect("compact");
+        assert_eq!(edits.usage_floor(), None, "compact must clear the floor");
+
+        // mark_superseded (resume-restoration path; floor is normally None
+        // there, but the invariant stays total)
+        let store = EventStore::new();
+        let id = store.append(user_msg("m")).expect("append");
+        let mut edits = ContextEdits::new();
+        edits.set_usage_floor(100_000);
+        edits.mark_superseded([id]);
+        assert_eq!(
+            edits.usage_floor(),
+            None,
+            "mark_superseded must clear the floor",
+        );
+    }
+
+    /// The manual `/compact` path (`auto_compact_keeping_recent_turns`,
+    /// which commits through `commit_compaction_plan`) clears the floor —
+    /// the same choke point the loop's auto-compaction commit flows through.
+    #[test]
+    fn manual_compact_path_clears_the_usage_floor() {
+        let store = EventStore::new();
+        for i in 0..4 {
+            store
+                .append(assistant_msg(&format!("t{i}")))
+                .expect("append");
+        }
+        let mut edits = ContextEdits::new();
+        edits.set_usage_floor(100_000);
+        let outcome = edits
+            .auto_compact_keeping_recent_turns(&store, 1, 500)
+            .expect("compaction runs")
+            .expect("compaction fires");
+        assert!(!outcome.newly_superseded.is_empty());
+        assert_eq!(
+            edits.usage_floor(),
+            None,
+            "the manual compact path must clear the floor",
+        );
+    }
+
+    /// Injection grows the prompt view; the floor remains a valid lower
+    /// bound and must survive.
+    #[test]
+    fn inject_does_not_clear_the_usage_floor() {
+        let store = EventStore::new();
+        let mut edits = ContextEdits::new();
+        edits.set_usage_floor(100_000);
+        edits.inject(&store, user_msg("injected")).expect("inject");
+        assert_eq!(
+            edits.usage_floor(),
+            Some(100_000),
+            "growth must not clear the floor",
+        );
+    }
+
     // -- R5: Summarize / compact tests ------------------------------------
 
     #[test]
@@ -644,6 +817,7 @@ mod tests {
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -656,6 +830,7 @@ mod tests {
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![ToolCallEvent {
                 call_id: call_id.to_string(),
                 name: "read".to_string(),

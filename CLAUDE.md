@@ -10,7 +10,7 @@ This codebase runs mission-critical infrastructure for financial, legal, and hea
 - **No god files.** Nothing over 500 lines of code (excluding tests, comments, whitespace). Break it into modules.
 - **Modular structure enforced.** `mod.rs` contains only `pub mod` declarations and re-exports. Logic goes in named files. `lib.rs`/`main.rs` are thin entry points.
 - **Production ready.** All code deployable immediately. Would you trust this with patient records?
-- **NO ARBITRARY LIMITS / NO ASSUMED DEFAULTS.** Don't add caps, rate limits, or hardcoded "sensible defaults" for configurable values (scheduler threads, timeouts, retry policy, poll intervals) — they come from the builder or are deferred to beamr's own default. Discuss values before implementing.
+- **NO ARBITRARY LIMITS / NO ARBITRARY DEFAULTS.** The sin is *invented* values, not defaults as such (owner clarification 2026-07-03). Never make up caps, rate limits, or "sensible defaults" for configurable values (scheduler threads, timeouts, retry policy, poll intervals) — a number you invented is arbitrary. Defaults are fine when they are **factual** (e.g. a model's context window from the generated model catalog) or **owner-ruled** (a value the owner explicitly chose, recorded in the decisions docs). Everything stays configurable; explicit config always wins over any default. When a value is needed and no factual/ruled source exists, discuss it with the owner — don't guess, and don't leave the feature silently disabled either.
 - **NO BACKWARDS COMPATIBILITY** during this build — no compat shims, no zombie code, no `#[deprecated]` markers. Replace, don't add alongside.
 
 ## Linting

@@ -486,11 +486,50 @@ impl AgentBuilder {
         // the system prompt's compaction guidance must track exactly the
         // config the loop will actually compact under. The output schema
         // is read from the same source for the same reason.
-        let has_auto_compact = config_override.auto_compact_threshold_pct.is_some()
-            && config_override.context_window_limit.is_some();
-        let tool_output_context_window = config_override
-            .context_window_limit
-            .or_else(|| crate::model_catalog::smallest_context_window_for_model(&model));
+        // Arm auto-compaction through the one shared mechanism every launch
+        // path uses (root here; spawn/fork/rhai children at their own
+        // construction sites): it installs the token estimator and the
+        // context-edit tracker on the loop context and fills an unset
+        // context window from the model catalog for the resolved model, so
+        // the loop's auto-compaction trigger, the system prompt's compaction
+        // guidance, and the tool-output budget all read one effective value.
+        // The fill runs only when the merged window is still None — every
+        // explicit source (settings, `-c` overrides) has already been
+        // overlaid above, so an explicit window stays authoritative even
+        // when it equals the catalogued value. Models absent from the
+        // catalog (arbitrary openai-compatible ids) keep None, leaving the
+        // trigger disabled exactly as before.
+        crate::agent::assembly::arm_auto_compaction(
+            &mut loop_context,
+            &mut config_override,
+            &model,
+        );
+        // The system prompt only promises compaction the loop will actually
+        // perform. The runtime trigger (`maybe_auto_compact`) disables itself
+        // when the reserve is at or above the window — every step would
+        // otherwise fire — so a build with that shape must not emit the
+        // compaction guidance that would then never come true. Both values
+        // are known here, so the contradiction is caught (and warned) once at
+        // build; the per-preflight warn in `compaction.rs` stays for library
+        // callers who mutate the config after `build`.
+        let has_auto_compact = match (
+            config_override.context_window_limit,
+            config_override.auto_compact_reserve_tokens,
+        ) {
+            (Some(limit), Some(reserve)) if reserve >= limit => {
+                tracing::warn!(
+                    reserve_tokens = reserve,
+                    context_window_limit = limit,
+                    "auto_compact_reserve_tokens is at or above context_window; \
+                     the runtime trigger disables in this configuration, so the \
+                     system prompt will not claim auto-compaction is active",
+                );
+                false
+            }
+            (Some(_), Some(_)) => true,
+            _ => false,
+        };
+        let tool_output_context_window = config_override.context_window_limit;
         // The provider is bound here, so the prompt's tools section is
         // resolved against its capabilities — hosted-replaced tools are
         // described as provider-native, never as callable functions. A
@@ -2148,22 +2187,14 @@ mod tests {
             .load_runtime_base()
             .agent_config(AgentLoopConfig {
                 context_window_limit: Some(200_000),
-                auto_compact_threshold_pct: Some(0.8),
+                auto_compact_reserve_tokens: Some(30_000),
                 ..AgentLoopConfig::default()
             })
             .build()
             .expect("build succeeds");
 
         assert_eq!(agent.config.context_window_limit, Some(200_000));
-        assert!(
-            (agent
-                .config
-                .auto_compact_threshold_pct
-                .expect("threshold set")
-                - 0.8)
-                .abs()
-                < f64::EPSILON
-        );
+        assert_eq!(agent.config.auto_compact_reserve_tokens, Some(30_000));
         assert!(
             agent
                 .loop_context
@@ -2189,6 +2220,152 @@ mod tests {
                 .base_system_instruction()
                 .contains("automatically summarised or cleared"),
             "no compaction config means no compaction guidance",
+        );
+    }
+
+    /// Finding 5 regression: a reserve at or above the window makes the
+    /// runtime trigger disable itself (every step would fire), so the build
+    /// must not emit compaction guidance the loop will never honour. Both
+    /// values are known at build time, so `has_auto_compact` is forced false
+    /// even though both fields are `Some`.
+    #[test]
+    fn reserve_at_or_above_window_drops_auto_compact_guidance() {
+        for (window, reserve) in [(50_000_u64, 50_000_u64), (50_000, 60_000)] {
+            let temp = tempfile::tempdir().expect("tempdir");
+            let agent = AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(temp.path())
+                .agent_config(AgentLoopConfig {
+                    context_window_limit: Some(window),
+                    auto_compact_reserve_tokens: Some(reserve),
+                    ..AgentLoopConfig::default()
+                })
+                .build()
+                .expect("build succeeds");
+
+            // The config values themselves are preserved verbatim — the build
+            // only suppresses the *prompt guidance*, matching the runtime
+            // trigger which reads these same values and disables.
+            assert_eq!(agent.config.context_window_limit, Some(window));
+            assert_eq!(agent.config.auto_compact_reserve_tokens, Some(reserve));
+            assert!(
+                !agent
+                    .loop_context
+                    .base_system_instruction()
+                    .contains("automatically summarised or cleared"),
+                "reserve {reserve} >= window {window} must drop the compaction guidance \
+                 (the runtime trigger disables in this shape)",
+            );
+        }
+    }
+
+    /// Reserve-armed default: a catalogued model with no explicit window or
+    /// reserve must default its context window from the model catalog and
+    /// keep the reserve knob armed, so auto-compaction is on by default.
+    #[test]
+    fn catalog_arms_window_and_reserve_by_default() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("gpt-5.5")
+            .working_dir(temp.path())
+            .build()
+            .expect("build succeeds");
+
+        let catalog_window = crate::model_catalog::smallest_context_window_for_model("gpt-5.5");
+        assert!(catalog_window.is_some(), "gpt-5.5 must be in the catalog");
+        assert_eq!(
+            agent.config.context_window_limit, catalog_window,
+            "an unset window must default to the model catalog value",
+        );
+        assert_eq!(
+            agent.config.auto_compact_reserve_tokens,
+            Some(30_000),
+            "the reserve knob is armed by default",
+        );
+        assert!(
+            agent
+                .loop_context
+                .base_system_instruction()
+                .contains("automatically summarised or cleared"),
+            "a catalog-armed window plus the default reserve enables \
+             auto-compaction, so the guidance must be present",
+        );
+    }
+
+    /// An explicitly configured window — even for a catalogued model — must
+    /// win over the catalog fill-in (the catalog only fills an unset value).
+    #[test]
+    fn explicit_window_beats_catalog() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("gpt-5.5")
+            .working_dir(temp.path())
+            .agent_config(AgentLoopConfig {
+                context_window_limit: Some(50_000),
+                ..AgentLoopConfig::default()
+            })
+            .build()
+            .expect("build succeeds");
+
+        assert_eq!(
+            agent.config.context_window_limit,
+            Some(50_000),
+            "an explicit window must not be overwritten by the catalog",
+        );
+    }
+
+    /// A model absent from the catalog keeps an unset window (no error), so
+    /// the auto-compaction trigger stays disabled exactly as before.
+    #[test]
+    fn unknown_model_leaves_window_unset_and_trigger_disabled() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("not-in-catalog")
+            .working_dir(temp.path())
+            .build()
+            .expect("build succeeds");
+
+        assert_eq!(
+            agent.config.context_window_limit, None,
+            "an uncatalogued model must leave the window unset",
+        );
+        assert!(
+            !agent
+                .loop_context
+                .base_system_instruction()
+                .contains("automatically summarised or cleared"),
+            "no window means the trigger is disabled, so no guidance",
+        );
+    }
+
+    /// The catalog fill-in resolves each agent's own model — a sub-agent
+    /// built with a different catalogued model gets that model's window, not
+    /// a shared or parent value.
+    #[test]
+    fn catalog_window_is_resolved_per_model() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let big = AgentBuilder::new(provider_with(vec![]))
+            .model("gpt-5.5")
+            .working_dir(temp.path())
+            .build()
+            .expect("build succeeds");
+        let small = AgentBuilder::new(provider_with(vec![]))
+            .model("gpt-5.3-codex-spark")
+            .working_dir(temp.path())
+            .build()
+            .expect("build succeeds");
+
+        assert_eq!(
+            big.config.context_window_limit,
+            crate::model_catalog::smallest_context_window_for_model("gpt-5.5"),
+        );
+        assert_eq!(
+            small.config.context_window_limit,
+            crate::model_catalog::smallest_context_window_for_model("gpt-5.3-codex-spark"),
+        );
+        assert_ne!(
+            big.config.context_window_limit, small.config.context_window_limit,
+            "each agent resolves its own model's catalog window",
         );
     }
 
@@ -2313,6 +2490,7 @@ mod tests {
                 base: EventBase::new(None),
                 content: String::new(),
                 thinking: String::new(),
+                reasoning: Vec::new(),
                 tool_calls: vec![ToolCallEvent {
                     call_id: "tc-resume".to_owned(),
                     name: "read".to_owned(),

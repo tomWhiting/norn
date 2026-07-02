@@ -386,6 +386,208 @@ fn explicit_config_value_equal_to_default_beats_settings() {
     );
 }
 
+/// `-c auto_compact_reserve_tokens=<u64>` must plumb through the unified
+/// assembly path onto the built `AgentLoopConfig` — the reserve knob is the
+/// operator's lever for the auto-compaction trigger.
+#[test]
+#[serial_test::serial]
+fn auto_compact_reserve_tokens_override_plumbs_to_built_agent() {
+    with_isolated_env(|| {
+        let cli = Cli::parse_from([
+            "norn",
+            "-m",
+            "gpt-5.5",
+            "--no-session",
+            "-c",
+            "auto_compact_reserve_tokens=45000",
+        ]);
+        assert_eq!(
+            build_parts(&cli).config.auto_compact_reserve_tokens,
+            Some(45_000),
+            "-c auto_compact_reserve_tokens must reach the built AgentLoopConfig",
+        );
+    });
+}
+
+/// A plain invocation of a catalogued model must arm auto-compaction by
+/// default: the context window is filled from the model catalog and the
+/// reserve knob defaults to `Some(30_000)`, so the trigger is live without
+/// any explicit configuration.
+#[test]
+#[serial_test::serial]
+fn plain_invocation_arms_catalog_window_and_default_reserve() {
+    with_isolated_env(|| {
+        let cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
+        let config = build_parts(&cli).config;
+        assert_eq!(
+            config.context_window_limit,
+            norn::model_catalog::smallest_context_window_for_model("gpt-5.5"),
+            "a plain invocation must default the window from the model catalog",
+        );
+        assert!(
+            config.context_window_limit.is_some(),
+            "gpt-5.5 is catalogued, so the window must be armed",
+        );
+        assert_eq!(
+            config.auto_compact_reserve_tokens,
+            Some(30_000),
+            "the reserve knob is armed by default on a plain invocation",
+        );
+    });
+}
+
+/// Whether the assembled base system prompt carries the auto-compaction
+/// guidance section — the observable manifestation of the builder's
+/// `has_auto_compact`. A distinctive fragment of `HARNESS_AUTO_COMPACT`.
+fn prompt_has_auto_compact_guidance(parts: &AgentParts) -> bool {
+    parts
+        .loop_context
+        .system_sections
+        .first()
+        .is_some_and(|p| p.contains("may not survive compaction"))
+}
+
+/// The operator's clean disable: `-c auto_compact_reserve_tokens=off` sets
+/// the reserve to `None` (beating the catalogued window's default
+/// `Some(30_000)`) so the trigger is off and the system prompt does not
+/// promise compaction. This is the driven-mode workflow's off switch.
+#[test]
+#[serial_test::serial]
+fn auto_compact_reserve_tokens_off_via_c_flag_disables() {
+    with_isolated_env(|| {
+        let cli = Cli::parse_from([
+            "norn",
+            "-m",
+            "gpt-5.5",
+            "--no-session",
+            "-c",
+            "auto_compact_reserve_tokens=off",
+        ]);
+        let parts = build_parts(&cli);
+        assert_eq!(
+            parts.config.auto_compact_reserve_tokens, None,
+            "`-c auto_compact_reserve_tokens=off` must disable the reserve outright",
+        );
+        assert!(
+            parts.config.context_window_limit.is_some(),
+            "the catalogued window is still armed — only the reserve is off",
+        );
+        assert!(
+            !prompt_has_auto_compact_guidance(&parts),
+            "with the reserve off, the prompt must not claim auto-compaction is active",
+        );
+    });
+}
+
+/// Settings `agent.auto_compact_reserve_tokens = "off"` disables the trigger
+/// exactly as the `-c` sentinel does, and beats the builder default.
+#[test]
+#[serial_test::serial]
+fn auto_compact_reserve_tokens_off_via_settings_disables() {
+    let home = tempfile::tempdir().expect("home tempdir");
+    let workdir = tempfile::tempdir().expect("work tempdir");
+    let home_path = home.path().to_path_buf();
+    let dotnorn = workdir.path().join(".norn");
+    std::fs::create_dir_all(&dotnorn).unwrap();
+    std::fs::write(
+        dotnorn.join("settings.json"),
+        r#"{ "agent": { "auto_compact_reserve_tokens": "off" } }"#,
+    )
+    .unwrap();
+
+    temp_env::with_vars(
+        [
+            ("NORN_HOME", Some(home_path.as_os_str())),
+            ("HOME", Some(home_path.as_os_str())),
+        ],
+        || {
+            std::env::set_current_dir(workdir.path()).expect("chdir");
+            let cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
+            let parts = build_parts(&cli);
+            assert_eq!(
+                parts.config.auto_compact_reserve_tokens, None,
+                "settings \"off\" must disable the reserve, beating the default Some(30_000)",
+            );
+            assert!(
+                !prompt_has_auto_compact_guidance(&parts),
+                "settings \"off\" must drop the prompt's auto-compaction guidance",
+            );
+        },
+    );
+}
+
+/// A bare integer in settings still arms the reserve — the string form is an
+/// addition, not a replacement of the numeric form.
+#[test]
+#[serial_test::serial]
+fn auto_compact_reserve_tokens_integer_via_settings_arms() {
+    let home = tempfile::tempdir().expect("home tempdir");
+    let workdir = tempfile::tempdir().expect("work tempdir");
+    let home_path = home.path().to_path_buf();
+    let dotnorn = workdir.path().join(".norn");
+    std::fs::create_dir_all(&dotnorn).unwrap();
+    std::fs::write(
+        dotnorn.join("settings.json"),
+        r#"{ "agent": { "auto_compact_reserve_tokens": 12345 } }"#,
+    )
+    .unwrap();
+
+    temp_env::with_vars(
+        [
+            ("NORN_HOME", Some(home_path.as_os_str())),
+            ("HOME", Some(home_path.as_os_str())),
+        ],
+        || {
+            std::env::set_current_dir(workdir.path()).expect("chdir");
+            let cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
+            assert_eq!(
+                build_parts(&cli).config.auto_compact_reserve_tokens,
+                Some(12_345),
+                "a numeric settings reserve must arm the trigger at that value",
+            );
+        },
+    );
+}
+
+/// A non-integer, non-`off` reserve in settings is a loud load-time error
+/// naming the key and the accepted forms — never a silent fallback.
+#[test]
+#[serial_test::serial]
+fn auto_compact_reserve_tokens_invalid_settings_string_errors() {
+    let home = tempfile::tempdir().expect("home tempdir");
+    let workdir = tempfile::tempdir().expect("work tempdir");
+    let home_path = home.path().to_path_buf();
+    let dotnorn = workdir.path().join(".norn");
+    std::fs::create_dir_all(&dotnorn).unwrap();
+    std::fs::write(
+        dotnorn.join("settings.json"),
+        r#"{ "agent": { "auto_compact_reserve_tokens": "sometimes" } }"#,
+    )
+    .unwrap();
+
+    temp_env::with_vars(
+        [
+            ("NORN_HOME", Some(home_path.as_os_str())),
+            ("HOME", Some(home_path.as_os_str())),
+        ],
+        || {
+            std::env::set_current_dir(workdir.path()).expect("chdir");
+            let cwd = std::env::current_dir().expect("cwd");
+            let err =
+                norn::config::load_settings(&cwd).expect_err("an invalid reserve must not load");
+            let rendered = err.to_string();
+            assert!(
+                rendered.contains("auto_compact_reserve_tokens"),
+                "the load error must name the key: {rendered}",
+            );
+            assert!(
+                rendered.contains("off"),
+                "the load error must state the accepted forms (\"off\"): {rendered}",
+            );
+        },
+    );
+}
+
 // ---------------------------------------------------------------------------
 // Finding 3 (HIGH): `--rules <file>` must load an explicit rule engine onto
 // the loop context (not be silently ignored).

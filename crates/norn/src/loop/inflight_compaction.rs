@@ -3,9 +3,11 @@
 //! item 6b).
 //!
 //! Before each provider call the runner estimates the prompt size, emits a
-//! `loop.token_warning` event when the estimate exceeds the configured
-//! context-window limit, and fires the auto-compaction trigger when the
-//! estimate crosses the threshold. Historically the trigger only marked
+//! `loop.token_warning` event when `max(estimate, usage_floor)` exceeds the
+//! configured context-window limit, and fires the auto-compaction trigger
+//! when that same effective count crosses the reserve threshold (the floor
+//! is the previous provider call's reported spend — see
+//! [`ContextEdits::usage_floor`]). Historically the trigger only marked
 //! events superseded in the [`ContextEdits`] tracker, which changed what
 //! the *next* step's prompt would contain — the in-flight request had
 //! already been built from the uncompacted message list. This module closes
@@ -124,14 +126,27 @@ pub(super) async fn run_context_preflight(
     };
 
     // R3: client-side token estimation runs immediately before the provider
-    // call. Advisory only — the call still proceeds. When the estimate
-    // exceeds the configured limit, emit a single-event `loop.token_warning`
-    // Custom session event for observers.
+    // call. Advisory only — the call still proceeds. Both the warning and
+    // the compaction trigger below anchor on `max(estimate, usage_floor)`:
+    // the character estimate cannot see request content the provider
+    // re-bills every call (replayed encrypted reasoning items on stateless
+    // Responses backends), while the last call's reported spend is a
+    // truthful lower bound for a request that has only grown since.
+    // `ContextEdits` clears the floor whenever the prompt view shrinks.
     let estimated = estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools);
+    let usage_floor = args
+        .loop_context
+        .context_edits
+        .as_ref()
+        .and_then(ContextEdits::usage_floor);
+    let effective = {
+        let estimated = u64::try_from(estimated).unwrap_or(u64::MAX);
+        usage_floor.map_or(estimated, |floor| estimated.max(floor))
+    };
     let mut request_input_estimate = estimated;
     let hooks = args.loop_context.hooks.clone();
     if let Some(limit) = args.config.context_window_limit
-        && u64::try_from(estimated).unwrap_or(u64::MAX) > limit
+        && effective > limit
     {
         append_and_notify(
             args.store,
@@ -140,6 +155,8 @@ pub(super) async fn run_context_preflight(
                 event_type: "loop.token_warning".to_string(),
                 data: serde_json::json!({
                     "estimated": estimated,
+                    "usage_floor": usage_floor,
+                    "effective": effective,
                     "limit": limit,
                 }),
             },
@@ -148,8 +165,9 @@ pub(super) async fn run_context_preflight(
         .await?;
     }
 
-    // R4: auto-compaction trigger fires once per step when the estimate
-    // crosses `auto_compact_threshold_pct * context_window_limit`.
+    // R4: auto-compaction trigger fires once per step when
+    // `max(estimate, usage_floor)` crosses
+    // `context_window_limit − auto_compact_reserve_tokens`.
     // NH-006 R6: the CompactionHook chain runs inside `maybe_auto_compact`;
     // a Block returns Ok(None) and the trigger is skipped (logged inside).
     let run = maybe_auto_compact(AutoCompactArgs {
@@ -159,8 +177,9 @@ pub(super) async fn run_context_preflight(
         provider: args.provider,
         model: args.model,
         estimated_tokens: estimated,
+        usage_floor,
         context_window_limit: args.config.context_window_limit,
-        threshold_pct: args.config.auto_compact_threshold_pct,
+        reserve_tokens: args.config.auto_compact_reserve_tokens,
         keep_recent_turns: args.config.auto_compact_keep_recent_turns,
         hooks: hooks.as_deref(),
         cancel: args.cancel,
@@ -354,6 +373,7 @@ mod tests {
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             usage: EventUsage::default(),
             stop_reason: "end_turn".to_owned(),

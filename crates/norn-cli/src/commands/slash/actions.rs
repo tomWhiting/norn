@@ -201,6 +201,7 @@ mod tests {
             base: EventBase::new(None),
             content: content.to_owned(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             usage: EventUsage::default(),
             stop_reason: String::new(),

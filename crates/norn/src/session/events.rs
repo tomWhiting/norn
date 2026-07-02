@@ -128,6 +128,27 @@ pub enum SessionEvent {
         content: String,
         /// The assistant's reasoning/thinking content. Empty string when none.
         thinking: String,
+        /// Structured reasoning output items captured from the provider
+        /// stream (`OpenAI` Responses `response.output_item.done` with
+        /// `item.type == "reasoning"`). Persisted so a resumed session can
+        /// replay the model's reasoning state across tool iterations — on
+        /// stateless-replay backends the `encrypted_content` blob is the
+        /// only way to thread reasoning, and dropping these items silently
+        /// shrinks a resumed conversation (a real incident lost ~30k tokens
+        /// of reasoning when a 269k live run resumed at ~236k).
+        ///
+        /// This reuses [`crate::provider::reasoning::ReasoningItem`]
+        /// directly rather than minting a session-local mirror (as
+        /// [`EventUsage`]/[`ToolCallEvent`] do): `ReasoningItem` is already
+        /// the stable persisted wire shape — it is serde-round-tripped
+        /// inside [`Message`](crate::provider::request::Message) today and
+        /// its field attributes were designed for persistence — so
+        /// mirroring it (plus `ReasoningSummaryPart`/`ReasoningContentPart`)
+        /// would buy zero schema benefit. Capture-everything here; the
+        /// request serializer filters to items carrying `encrypted_content`
+        /// at replay time.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        reasoning: Vec<crate::provider::reasoning::ReasoningItem>,
         /// Tool calls made in this response.
         tool_calls: Vec<ToolCallEvent>,
         /// Token usage for this provider call.
@@ -366,6 +387,7 @@ mod tests {
             base: EventBase::new(None),
             content: "answer".to_owned(),
             thinking: "first let me think".to_owned(),
+            reasoning: Vec::new(),
             tool_calls: vec![],
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -390,6 +412,7 @@ mod tests {
             base: EventBase::new(None),
             content: String::new(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![],
             usage: EventUsage::default(),
             stop_reason: String::new(),
@@ -403,6 +426,92 @@ mod tests {
             } => {
                 assert!(content.is_empty());
                 assert!(thinking.is_empty());
+            }
+            _ => panic!("expected AssistantMessage"),
+        }
+    }
+
+    #[test]
+    fn assistant_message_empty_reasoning_omitted_from_wire() {
+        // Wire-format stability: an AssistantMessage with no reasoning must
+        // not emit a "reasoning" key (skip_serializing_if pinned), so events
+        // persisted after this change are byte-identical to the pre-change
+        // format when reasoning is absent.
+        let event = SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            content: "answer".to_owned(),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: vec![],
+            usage: EventUsage::default(),
+            stop_reason: String::new(),
+            response_id: None,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        assert!(
+            !json.contains("\"reasoning\""),
+            "empty reasoning must be skipped: {json}"
+        );
+    }
+
+    #[test]
+    fn assistant_message_legacy_line_without_reasoning_deserializes_empty() {
+        // A legacy JSONL line persisted before the `reasoning` field existed
+        // must deserialize with #[serde(default)] to an empty vec.
+        let legacy = serde_json::json!({
+            "type": "AssistantMessage",
+            "base": {
+                "id": EventId::new().to_string(),
+                "parent_id": null,
+                "timestamp": Utc::now(),
+            },
+            "content": "answer",
+            "thinking": "",
+            "tool_calls": [],
+            "usage": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            },
+        });
+        let parsed: SessionEvent =
+            serde_json::from_value(legacy).expect("legacy line deserializes");
+        match parsed {
+            SessionEvent::AssistantMessage { reasoning, .. } => {
+                assert!(reasoning.is_empty(), "missing field defaults to empty vec");
+            }
+            _ => panic!("expected AssistantMessage"),
+        }
+    }
+
+    #[test]
+    fn assistant_message_reasoning_serde_roundtrip() {
+        use crate::provider::reasoning::{ReasoningItem, ReasoningSummaryPart};
+        let item = ReasoningItem {
+            id: "rs_1".to_owned(),
+            summary: vec![ReasoningSummaryPart::SummaryText {
+                text: "thought".to_owned(),
+            }],
+            content: None,
+            encrypted_content: Some("blob".to_owned()),
+        };
+        let event = SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            content: "answer".to_owned(),
+            thinking: String::new(),
+            reasoning: vec![item.clone()],
+            tool_calls: vec![],
+            usage: EventUsage::default(),
+            stop_reason: String::new(),
+            response_id: None,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        assert!(json.contains("\"reasoning\""));
+        let parsed: SessionEvent = serde_json::from_str(&json).expect("deserialize");
+        match parsed {
+            SessionEvent::AssistantMessage { reasoning, .. } => {
+                assert_eq!(reasoning, vec![item]);
             }
             _ => panic!("expected AssistantMessage"),
         }
@@ -450,6 +559,7 @@ mod tests {
                 base: base(),
                 content: String::new(),
                 thinking: String::new(),
+                reasoning: Vec::new(),
                 tool_calls: vec![],
                 usage: EventUsage::default(),
                 stop_reason: String::new(),

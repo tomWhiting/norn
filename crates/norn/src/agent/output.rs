@@ -317,6 +317,7 @@ mod tests {
             base: EventBase::new(None),
             content: content.to_string(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             usage: EventUsage::default(),
             stop_reason: "end_turn".to_string(),

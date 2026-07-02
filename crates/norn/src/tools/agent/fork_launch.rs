@@ -171,7 +171,15 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
             // R5: the fork's loop config is the granted ChildLoopConfig
             // applied onto AgentLoopConfig::default(); an absent grant is
             // byte-for-byte the default — the pre-R5 behavior.
-            let fork_config = ChildLoopConfig::resolve(loop_config);
+            let mut fork_config = ChildLoopConfig::resolve(loop_config);
+            // Arm auto-compaction on the fork exactly as the root builder
+            // does (the one shared mechanism): install the token estimator
+            // and the context-edit tracker on the fork's loop context and
+            // fill its context window from the catalog for the fork's own
+            // model, so a long-running fork compacts instead of dying
+            // ContextWindowExceeded. A non-catalog model keeps a None
+            // window, leaving the trigger off — matching the root behavior.
+            crate::agent::assembly::arm_auto_compaction(&mut loop_ctx, &mut fork_config, &model);
             run_agent_step(AgentStepRequest {
                 provider: provider.as_ref(),
                 executor: &executor,

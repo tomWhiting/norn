@@ -60,6 +60,56 @@ two are behaviors an agent explicitly wrote "needs sign-off" against. Full detai
    Regression tests: `zero_tool_agent_builds_for_transform_only_use` (library),
    `empty_allowed_tools_builds_zero_tool_transform_agent` (CLI fence).
 
+5. **Auto-compaction is armed by default for every library-launched agent (root and
+   children); reserve-token semantics** — **DECIDED 2026-07-03 (owner)**, after a real
+   driven-mode run died `ContextWindowExceeded` at 269k input tokens
+   with zero compactions (session `faaa1b04…`, 133 steps). Root cause: the trigger required
+   BOTH `context_window_limit` AND `auto_compact_threshold_pct`, and both defaulted `None` —
+   an over-reading of the no-defaults rule. Owner clarification (now in CLAUDE.md): the rule
+   is **no ARBITRARY defaults** — factual defaults (the generated model catalog's per-model
+   `context_window`) and owner-ruled defaults are fine. Rulings: (a) `context_window_limit`
+   defaults from `model_catalog::smallest_context_window_for_model` when not explicitly
+   configured (explicit config always wins; models absent from the catalog stay `None`);
+   (b) the percentage threshold is REPLACED (no compat alias) by
+   `auto_compact_reserve_tokens: Option<u64>`, default **`Some(30_000)`** (owner's value) —
+   trigger fires when estimated tokens exceed `window − reserve` (gpt-5.5: 272_000 − 30_000
+   = 242_000); explicit `off` disables (settings string `"off"` / `-c
+   auto_compact_reserve_tokens=off` — for orchestrators that manage context themselves);
+   `reserve ≥ window` warns loudly and disables (would otherwise fire every step; the builder
+   also warns once and drops the system-prompt compaction guidance). Reserve is absolute, not proportional, because it is sized by
+   turn overhead (next input + compaction summary call), which does not scale with window
+   size. (c) **The trigger signal is usage-anchored**: the chars/4 client estimate cannot see
+   the true cost of encrypted reasoning items (incident numbers: estimate ~236k vs provider-
+   reported 269k), so the trigger and the advisory `loop.token_warning` fire on
+   `max(estimate, usage_floor)` where the floor is the previous step's provider-reported
+   `input_tokens + output_tokens`. The floor lives on `ContextEdits` and is cleared by every
+   conversation-shrinking mutation (suppress/summarize/compact/commit/mark_superseded — a
+   structural invariant, preventing a stale floor from re-firing compaction in a loop) and is
+   never seeded from resumed events. Caveat (flagged): providers reporting cache reads
+   outside `input_tokens` understate the floor — safe direction (`max` with the estimate),
+   but the anchor is weaker there. The client estimate counts persisted reasoning items
+   (encrypted blob + summary/content parts; deliberate overestimate — safe direction), so the
+   first post-resume call is covered even though the floor is never seeded from resumed
+   events. Related: **(i) child agents have no compaction machinery — RULED 2026-07-03
+   (owner): auto-compaction covers ALL agents**, sub-agents and forks included ("we can't
+   have them dying mid-work deep in the stack"; children *shouldn't* normally run long
+   enough to need it, but coverage is required). **DONE**: one shared
+   `arm_auto_compaction(loop_context, config, model)` (agent/assembly.rs) installs the
+   estimator + `ContextEdits` and fills the catalog window per-agent; the builder AND all
+   three child launch paths (spawn, fork, rhai `spawn_agent`) call it — root and children
+   cannot drift. Children compact on their in-memory stores session-lessly. Scoping notes:
+   child system prompts have no compaction-guidance seam (pre-existing; the runtime trigger
+   is what mattered), and "all agents" means all *library-launched* agents — an embedder
+   hand-rolling `run_agent_step` on a self-built `LoopContext` (e.g. the demo examples)
+   must call `arm_auto_compaction` itself; the function's rustdoc is the discoverable
+   contract. Still open: (ii) reactive compact-and-retry on
+   `ContextWindowExceeded` (currently
+   Terminal) as the safety net for catalog-miss models; (iii) the owner's planned
+   session-storage/event-prominence redesign (per-event prominence levels so low-value
+   events — search results, bash output — can be dropped or substituted before
+   summarization-grade compaction is needed). Reasoning persistence: ruled and done — see
+   the §3 entry.
+
 Beyond these, §5.1 (R1 D1-D7) were **applied autonomously while the owner was away** and are all
 reversible on `hardening/final-state` before merge — the owner may override any of them.
 
@@ -206,9 +256,15 @@ because a design fork exists that the agent didn't feel authorized to resolve al
   can read session variables whose names arrive from user-supplied arguments — left functional;
   needs an owner decision on whether user args should be able to name session variables."* — **Discuss**
 - **Reasoning items not persisted into session `AssistantMessage` events** (seam
-  I1-error-taxonomy-reasoning). Deliberately out of scope (`session/**` was allowed for literal
-  fallout only); resumed sessions rebuild with empty reasoning and the next turn regenerates it.
-  Agent flagged: *"for a follow-up decision if resume-time replay is ever wanted."* — **Discuss**
+  I1-error-taxonomy-reasoning). — **DECIDED 2026-07-03 (owner): persist them.** The gap's other
+  face surfaced in the `faaa1b04…` incident: a resumed session was ~30k tokens lighter than its
+  live counterpart *because* the reasoning items evaporated — resume was acting as an
+  accidental compaction while silently losing the model's reasoning state.
+  `SessionEvent::AssistantMessage` now carries the captured `ReasoningItem`s
+  (`encrypted_content` included; serde-defaulted so legacy files read as empty, key omitted
+  when empty so non-reasoning sessions are byte-stable) and `session/conversion.rs` rebuilds
+  `Message.reasoning` on resume. Session files grow accordingly — accepted; feeds the planned
+  session-storage/prominence redesign (§0.5).
 - **`loop/runner.rs` 500-LOC compliance gap — RESOLVED at Wave 4 (`3c84682`).** The draft
   flagged `loop/runner.rs` (852 LOC at the time) as an open CLAUDE.md-compliance gap dominated
   by the ~650-line `run_agent_step_inner`, deferred to a dedicated exclusive-ownership pass. That

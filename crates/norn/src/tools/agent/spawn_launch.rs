@@ -309,7 +309,15 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let run_cancel = cancel.clone();
 
     let join_handle = tokio::spawn(async move {
-        let child_config = ChildLoopConfig::resolve(loop_config);
+        let mut child_config = ChildLoopConfig::resolve(loop_config);
+        // Arm auto-compaction on the child exactly as the root builder does
+        // (the one shared mechanism): install the token estimator and the
+        // context-edit tracker on the child's loop context and fill its
+        // context window from the catalog for the child's own model, so a
+        // long-running spawned child compacts instead of dying
+        // ContextWindowExceeded. A non-catalog model keeps a None window,
+        // leaving the trigger off — matching the root behavior.
+        crate::agent::assembly::arm_auto_compaction(&mut loop_ctx, &mut child_config, &model);
         let delivered_children = loop_ctx.children_usage.clone();
         // Cheap handle to the child's durable pending store, captured
         // before `loop_ctx` is mutably lent to the step requests: the

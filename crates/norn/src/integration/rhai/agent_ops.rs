@@ -362,8 +362,21 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             // applied onto AgentLoopConfig::default(); an absent grant is
             // byte-for-byte the default — the pre-R5 behavior. Same
             // resolution as the spawn/fork launch wrappers.
-            let child_config =
+            let mut child_config =
                 crate::agent::child_policy::ChildLoopConfig::resolve(child_loop_config);
+            // Arm auto-compaction on the script child exactly as the root
+            // builder does (the one shared mechanism): install the token
+            // estimator and the context-edit tracker on the child's loop
+            // context and fill its context window from the catalog for the
+            // child's own model, so a long-running script child compacts
+            // instead of dying ContextWindowExceeded. A non-catalog model
+            // keeps a None window, leaving the trigger off — matching the
+            // root behavior.
+            crate::agent::assembly::arm_auto_compaction(
+                &mut loop_ctx,
+                &mut child_config,
+                &model_for_task,
+            );
             let outcome = run_agent_step(AgentStepRequest {
                 provider: provider.as_ref(),
                 executor: &executor,
@@ -520,6 +533,195 @@ mod tests {
 
     fn build_context() -> NornRhaiContext {
         build_context_with_provider(Arc::new(MockProvider::new(Vec::new())))
+    }
+
+    /// A no-op tool so a rhai child's scripted tool-use turns dispatch
+    /// cleanly (each tool-use round persists an assistant turn + result,
+    /// growing the child's history toward the compaction threshold).
+    struct NoopTool;
+
+    #[async_trait::async_trait]
+    impl crate::tool::traits::Tool for NoopTool {
+        fn name(&self) -> &'static str {
+            "noop"
+        }
+        fn description(&self) -> &'static str {
+            "no-op"
+        }
+        fn input_schema(&self) -> serde_json::Value {
+            serde_json::json!({})
+        }
+        fn effect(&self) -> crate::tool::scheduling::ToolEffect {
+            crate::tool::scheduling::ToolEffect::ReadOnly
+        }
+        async fn execute(
+            &self,
+            _envelope: &crate::tool::envelope::ToolEnvelope,
+            _ctx: &crate::tool::context::ToolContext,
+        ) -> Result<crate::tool::traits::ToolOutput, crate::error::ToolError> {
+            Ok(crate::tool::traits::ToolOutput::success(
+                serde_json::json!({"ok": true}),
+            ))
+        }
+    }
+
+    /// A provider that serves scripted tool-use turns (each reporting an
+    /// oversized usage so the context-edit floor climbs above any window)
+    /// and, crucially, flags when it receives an auto-compaction
+    /// *summarization* request — identified by its fixed system prompt.
+    /// The summarization call only happens when the preflight's estimator
+    /// and catalog window (installed by the shared arming) drive the
+    /// trigger, so the flag is a direct, order-independent proof that the
+    /// rhai spawn site armed the child.
+    struct CompactionDetectingProvider {
+        saw_summarization: Arc<std::sync::atomic::AtomicBool>,
+        tool_turns_remaining: std::sync::Mutex<usize>,
+    }
+
+    impl Provider for CompactionDetectingProvider {
+        fn stream(
+            &self,
+            request: crate::provider::request::ProviderRequest,
+        ) -> Result<crate::provider::traits::ProviderStream, crate::error::ProviderError> {
+            use crate::provider::events::{ProviderEvent, StopReason};
+            use crate::provider::usage::Usage;
+
+            let is_summarization = request.messages.iter().any(|m| {
+                m.content
+                    .as_deref()
+                    .is_some_and(|c| c.contains("You write compaction summaries"))
+            });
+            let events = if is_summarization {
+                self.saw_summarization
+                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                vec![
+                    ProviderEvent::TextDelta {
+                        text: "summary of earlier turns".to_owned(),
+                    },
+                    ProviderEvent::Done {
+                        stop_reason: StopReason::EndTurn,
+                        usage: Usage::default(),
+                        response_id: None,
+                    },
+                ]
+            } else {
+                let mut remaining = self.tool_turns_remaining.lock().expect("lock");
+                if *remaining > 0 {
+                    *remaining -= 1;
+                    vec![
+                        ProviderEvent::ToolCallDelta {
+                            item_id: "tc-noop".to_owned(),
+                            name: Some("noop".to_owned()),
+                            arguments_delta: "{}".to_owned(),
+                            kind: crate::provider::request::ToolCallKind::Function,
+                        },
+                        ProviderEvent::Done {
+                            stop_reason: StopReason::ToolUse,
+                            usage: Usage {
+                                input_tokens: 100_000_000,
+                                output_tokens: 0,
+                                ..Usage::default()
+                            },
+                            response_id: None,
+                        },
+                    ]
+                } else {
+                    vec![
+                        ProviderEvent::TextDelta {
+                            text: "final".to_owned(),
+                        },
+                        ProviderEvent::Done {
+                            stop_reason: StopReason::EndTurn,
+                            usage: Usage::default(),
+                            response_id: None,
+                        },
+                    ]
+                }
+            };
+            Ok(Box::pin(futures_util::stream::iter(
+                events.into_iter().map(Ok),
+            )))
+        }
+    }
+
+    /// Hardening (owner ruling 2026-07-03): a rhai-spawned child must run
+    /// with auto-compaction armed exactly like the root. The rhai spawn
+    /// site calls the shared `arm_auto_compaction` on the child's loop
+    /// context and resolved config. The child's own `EventStore` is
+    /// internal and detached (no handle exposes it), so this proves the
+    /// arming through the *provider*: the child accumulates enough
+    /// tool-use history to cross `auto_compact_keep_recent_turns`, its
+    /// oversized reported usage pushes the preflight past the compaction
+    /// threshold, and the resulting summarization request — recognizable
+    /// by its fixed system prompt — sets a flag. That request is
+    /// impossible without the estimator and catalog window the shared
+    /// arming installs, so the flag proves the rhai site armed the child.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rhai_spawn_child_arms_auto_compaction() {
+        let saw_summarization = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let provider: Arc<dyn Provider> = Arc::new(CompactionDetectingProvider {
+            saw_summarization: Arc::clone(&saw_summarization),
+            // Comfortably more tool-use turns than the default
+            // keep_recent_turns (10), so the child's history crosses the
+            // compaction floor before it stops.
+            tool_turns_remaining: std::sync::Mutex::new(16),
+        });
+
+        let mut host_registry = ToolRegistry::new();
+        host_registry.register(Box::new(NoopTool));
+        let ctx = NornRhaiContext {
+            registry: AgentRegistry::shared(),
+            router: Arc::new(MessageRouter::new()),
+            provider,
+            agent_id: Uuid::new_v4(),
+            runtime: tokio::runtime::Handle::current(),
+            event_store: Arc::new(EventStore::new()),
+            tool_registry: Some(Arc::new(host_registry)),
+            working_dir: crate::tool::context::SharedWorkingDir::default(),
+            child_policy: crate::agent::child_policy::ChildPolicy {
+                messaging: crate::agent::child_policy::MessagingScope::SiblingsAndParent,
+                delegation: crate::agent::child_policy::DelegationBudget {
+                    remaining_depth: 2,
+                    max_concurrent_children: 8,
+                },
+                inbound_capacity: 8,
+                loop_config: None,
+            },
+        };
+        let registry = Arc::clone(&ctx.registry);
+        let catalog_model = crate::model_catalog::default_selection().model;
+        let engine = build_norn_engine(&ctx);
+
+        let handle = engine
+            .eval::<crate::integration::rhai::AgentHandle>(&format!(
+                r#"spawn_agent(#{{ task: "t", model: "{catalog_model}" }})"#
+            ))
+            .expect("spawn succeeds");
+        let child_id = handle.id();
+
+        // The child runs detached; wait for its terminal mark.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            if registry
+                .read()
+                .get(child_id)
+                .is_some_and(|entry| entry.status.is_terminal())
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "rhai child never reached a terminal status",
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        assert!(
+            saw_summarization.load(std::sync::atomic::Ordering::SeqCst),
+            "the rhai child's preflight must issue an auto-compaction \
+             summarization request, proving the estimator and catalog \
+             window were armed on the child",
+        );
     }
 
     fn build_context_with_provider(provider: Arc<dyn Provider>) -> NornRhaiContext {

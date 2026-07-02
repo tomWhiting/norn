@@ -747,6 +747,7 @@ fn fixture_store(scenario: &str) -> Result<EventStore, Box<dyn std::error::Error
             base: EventBase::new(None),
             content: "prior assistant resume answer".to_string(),
             thinking: "**Remembering context**\n\nEarlier reasoning summary".to_string(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             usage: EventUsage::default(),
             stop_reason: "end_turn".to_string(),
