@@ -1,11 +1,18 @@
 # Decisions for Owner Sign-off — Norn Hardening Campaign (2026-07)
 
-This file consolidates every decision the Wave 1 hardening-campaign agents recorded while
+This file consolidates every decision the hardening-campaign agents recorded while
 implementing (tracks T1-T9) and integrating (seams I1-I3) the `hardening/final-state` briefs.
 Nothing here was invented by this document — every line is drawn from an agent's own
-structured `decisions` report at the end of its run. Wave 2's planning journal
-(`wf_5c41d368-666`) recorded a brief plan, not implementation decisions, so it contributes
-nothing to this list.
+structured `decisions` report at the end of its run, or (for §5) from a resolved decision doc
+and the Wave 3-4 commit record. Wave 2's planning journal (`wf_5c41d368-666`) recorded a brief
+plan, not implementation decisions, so it contributes nothing to §1-4.
+
+**Sections 1-4** cover Waves 1-2 (the original draft). **Section 5** was added after the draft
+and covers the R1 assembly-unification decisions (D1-D7, resolved autonomously while the owner
+was away) and the load-bearing decisions of Wave 3 (`32fa720`/`9ac8186`/`8ac4aad`, R1 assembly
+unification) and Wave 4 (`3c84682`, R2 runner state machine + deterministic tool ordering +
+repo-wide LOC/purity sweep). Every §5 entry states the decision, the file path where it lives
+at HEAD (`3c84682`), and whether it needs owner attention.
 
 Per CLAUDE.md's **NO ARBITRARY LIMITS / NO ASSUMED DEFAULTS** rule, agents were required to
 flag any numeric/behavioral default they touched. Section 1 below is the complete list of
@@ -18,6 +25,25 @@ reproduces the two items already held out of the campaign entirely.
 Recommendation key: **Keep** = agent's rationale is sound, ratify as-is. **Discuss** = agent
 implemented something reasonable but explicitly asked for sign-off or flagged an alternative.
 **Revisit** = works today but has a known gap (e.g., no override plumbed yet).
+
+---
+
+## 0. Items most needing owner attention (read these first)
+
+The three below are the highest-priority calls — the first is a genuine design fork, the other
+two are behaviors an agent explicitly wrote "needs sign-off" against. Full detail in §3.
+
+1. **`step_timeout` graceful-timeout redesign** (§3). Today's hard-cut semantics are documented
+   as-is; a graceful grace-period redesign was **proposed but not implemented** because the
+   grace value would be an invented default. Needs an owner decision to proceed. — **Discuss**
+2. **`WalkBuilder::require_git(false)`** in the search/file tools (§2, §3). `.gitignore`/`.ignore`
+   apply even outside a git repo. Agent wrote "needs sign-off." — **Discuss**
+3. **Binary / non-UTF-8 `InvalidData` silent-skip carve-out** in content/AST search (§2, §3).
+   Non-text files are skipped silently rather than reported in `skipped`. Agent wrote "needs
+   sign-off on the InvalidData carve-out." — **Discuss**
+
+Beyond these, §5.1 (R1 D1-D7) were **applied autonomously while the owner was away** and are all
+reversible on `hardening/final-state` before merge — the owner may override any of them.
 
 ---
 
@@ -165,13 +191,14 @@ because a design fork exists that the agent didn't feel authorized to resolve al
   I1-error-taxonomy-reasoning). Deliberately out of scope (`session/**` was allowed for literal
   fallout only); resumed sessions rebuild with empty reasoning and the next turn regenerates it.
   Agent flagged: *"for a follow-up decision if resume-time replay is ever wanted."* — **Discuss**
-- **`loop/runner.rs` exceeds the CLAUDE.md 500-LOC module limit** (911 lines at last check, 852
-  at HEAD; seam I2-loop-agent-seams). The overage is dominated by `run_agent_step_inner`, a
-  single ~650-line function (lines 388-1264) that IS the core step loop and is called into by
-  two other concurrently-owned files (`assembly.rs`/`classify.rs`). The agent declined to split
-  it mid-flight and reported it instead as **a blocker for a dedicated exclusive-ownership
-  pass**, rather than risk an unplanned rewrite of code every other track integrates against.
-  This is an open CLAUDE.md-compliance gap, not a design question. — **Discuss**
+- **`loop/runner.rs` 500-LOC compliance gap — RESOLVED at Wave 4 (`3c84682`).** The draft
+  flagged `loop/runner.rs` (852 LOC at the time) as an open CLAUDE.md-compliance gap dominated
+  by the ~650-line `run_agent_step_inner`, deferred to a dedicated exclusive-ownership pass. That
+  pass is Wave 4's R2 runner state machine: `loop/runner.rs` is now the `loop/runner/` directory
+  (`machine.rs` 201, `dispatch.rs` 380, `entry.rs` 325, `setup.rs` 211, `provider_call.rs` 205,
+  `prompt.rs` 170, `stop.rs` 131, `mod.rs` 37 — all non-test source under the 500-LOC cap), with
+  the step loop reshaped as an explicit `StepMachine` (`StepMachine::initialize` →
+  `StepMachine::run`). No longer an open gap. — **Resolved** (see §5.2)
 - **T8-cli-jsonrpc R2 degraded-mode alternative** — implemented per the requirement's literal
   contract (both `inject` and `cancel` fail in degraded mode), but the agent flagged that
   `cancel` doesn't strictly need the router (its token is local) and a degraded run *could*
@@ -214,6 +241,103 @@ one remaining rustdoc warning in `monitor.rs` to honor the hold).
 
 ---
 
+## 5. R1 assembly-unification (D1–D7) and Wave 3–4 decisions (post-draft)
+
+Everything in §1–4 predates Wave 3. This section covers what landed after the draft: the seven
+R1 open decisions (resolved autonomously per the campaign's standing "keep going" directive, all
+reversible before merge — **owner may override any of these; flag on review**) and the
+load-bearing decisions of the Wave 3 assembly-unification and Wave 4 runner/ordering/LOC work.
+The R1 subsection reproduces `docs/design/norn/R1-DECISIONS-RESOLVED.md` (that file is the
+authoritative source and is left unedited); the framing "applied autonomously, owner may
+override" is intact.
+
+### 5.1 R1 open decisions — applied autonomously (owner may override)
+
+Source: `docs/design/norn/R1-DECISIONS-RESOLVED.md`, resolutions for
+`BRIEF-R1-ASSEMBLY-UNIFICATION.md` §7. Owner was away at the decision point; these are the
+recommended defaults. All verified against HEAD (`3c84682`).
+
+- **D1 — Session-hook ownership: `Agent::run` fires them.** `Agent::run` fires
+  `on_session_start`/`on_session_end` with `info.session_id`
+  (`crates/norn/src/agent/instance.rs:247-257,295-297`); `into_parts` drivers (TUI, print
+  step-loop) get explicit `fire_session_start`/`fire_session_end` helpers on `AgentParts`
+  (`instance.rs:117,128`). Fixes the confirmed bug at the source — embedded agents (including
+  every Meridian path) previously fired no session hooks. The `run` body even names Meridian in
+  its rationale comment. Meridian can drop its hand-firing (see MERIDIAN-HANDOFF §9.1). —
+  **Discuss** (owner-overridable; the applied default)
+- **D2 — Root registry registration: opt-in.** `build()` reserves the `AgentRegistry` "/root"
+  entry only when BOTH `.agent_registry()` and `.register_root(path, role)` are set; never
+  mandatory. Embedders like Meridian wire no coordination and must not be forced to register a
+  root; TUI/print opt in. — **Discuss** (owner-overridable)
+- **D3 — Terminal-reclamation control: `.terminal_reclamation(bool)`, default `true`.** `true`
+  preserves today's unconditional `install_terminal_reclamation`; the TUI passes `false` (its
+  status panel owns reclamation). The default is the existing documented behavior, not an
+  invented value. — **Discuss** (owner-overridable)
+- **D4 — CLI session front door: `.open_session`.** `builder_from_cli` uses
+  `.open_session(SessionManager, SessionSpec, DurabilityPolicy::Flush)` at build time;
+  `--no-session` maps to `.session(EventStore::new())`. Print's post-build ordering for
+  `debug_dump_file` is preserved by reading `parts.info.session_id`. — **Discuss**
+  (owner-overridable)
+- **D5 — Skill-tool registration gate: `load_runtime_base` path only.** `SkillTool` registers
+  where the catalog + `SkillToolConfig` exist — the `load_runtime_base` extension path — gated on
+  `!base.skill_catalog.is_empty()` (`crates/norn/src/agent/builder.rs:360-366`), mirroring the
+  CLI's `!catalog.is_empty()` gate. Library agents built without `load_runtime_base` carry no
+  catalog and so get no skill tool — correct. Registration happens before `from_profile` gating
+  so allow/deny lists apply to it as in the CLI. — **Discuss** (owner-overridable)
+- **D6 — Meridian migration scope: OUT of scope (norn only).** R1 exposes the library surfaces so
+  Meridian *can* delete its copies (`NornSessionStore`; see MERIDIAN-HANDOFF §9.2) via
+  `.open_session`, but the actual Meridian edits are a separate PR. The capability-discovery
+  helper (§C) and shared provider defaults (§D) are NOT added to the library now — intentional
+  Meridian copies until a future ask. — **Keep** (scoping decision; keeps this campaign
+  norn-only and independently mergeable)
+- **D7 — `event_schemas` / `variables` on the builder: yes.** `.event_schemas()` and
+  `.variables()` added to `AgentBuilder` (additive; the CLI needs them and the builder is the
+  assembler). Minor public-surface expansion. — **Keep**
+
+### 5.2 Wave 3–4 load-bearing decisions
+
+Decisions recorded in the Wave 3–4 commit record, verified against HEAD.
+
+- **`SessionSpec` "latest" is working-dir-scoped, never global**
+  (`crates/norn/src/agent/session_spec.rs:39,56`). The no-argument `--resume`/`--fork` sentinels
+  map to `SessionSpec::ResumeLatestInWorkingDir` / `ForkLatestInWorkingDir`, which select the
+  most-recently-updated session whose indexed working directory matches the current project —
+  deliberately NOT the globally most-recent session across every directory, which would
+  cross-contaminate unrelated projects. The empty-string "latest" sentinel is these variants, not
+  `Resume`/`Fork`. — **Keep**
+- **`ToolRegistry::names()` returns lexicographically-sorted names**
+  (`crates/norn/src/tool/registry.rs:174-183`). The backing store is a `HashMap` (per-instance
+  randomised iteration order); every prompt- and request-visible projection of the registry (the
+  system prompt `# Tools` section, the provider tool-definition array via
+  `collect_function_definitions`, the tool catalog, the MCP listing) is built from this iterator,
+  so a stable order keeps those byte-identical between process runs and **preserves provider
+  prompt caching** (the doc comment states this verbatim). — **Keep**
+- **`ToolRegistry::is_registered` is the unmatched-flag-warning reference**
+  (`crates/norn/src/tool/registry.rs:156`; used at
+  `crates/norn-cli/src/runtime/wiring.rs:100`). It answers "is this a real tool at all?" (physical
+  registration, ignoring effect-gating) so the CLI can warn when an `--allowed-tools` /
+  `--disallowed-tools` flag names a tool that matches nothing, without false-flagging a tool that
+  was correctly gated out. — **Keep**
+- **`Box::pin` at the runner step seam** (`crates/norn/src/loop/runner/entry.rs:324`,
+  `Box::pin(machine.run()).await`). The per-step driver future carries the whole step state
+  (~16 KiB); pinning it on the heap keeps every embedder's future — spawned child steps, the TUI
+  event loop, the CLI drivers — small instead of inlining that state into each
+  (`clippy::large_futures`). One allocation per step; `initialize` is a separate statement so the
+  completed init future is not held alive across the run. — **Keep**
+- **R2 runner state machine** (`crates/norn/src/loop/runner/machine.rs`, `StepMachine::initialize`
+  → `StepMachine::run`). The core step loop is reshaped from one ~650-line function into an
+  explicit `StepMachine` split across the `runner/` submodules (setup / prompt / provider_call /
+  dispatch / stop), resolving the §3 LOC gap. Behaviour-preserving refactor. — **Keep**
+- **`Agent::run` auto-fires session hooks** — the D1 mechanism, restated here because it is a
+  Wave 3 behavioral decision with external (Meridian) impact: the end hook fires only on the
+  normal-exit path; an error short-circuits via `?` and skips it, matching the driver contract
+  (`crates/norn/src/agent/instance.rs:250-252`). — **Discuss** (overlaps D1)
+- **Skill-tool gate on non-empty catalog** — the D5 mechanism (see §5.1). Restated as a Wave 3
+  decision because it is the one that lets embedded agents get the skill tool "for free" on the
+  library path. — **Discuss** (overlaps D5)
+
+---
+
 ## Summary
 
 - **Section 1 (documented defaults):** 9 items, all pre-existing constants, all reused not
@@ -224,7 +348,12 @@ one remaining rustdoc warning in `monitor.rs` to honor the hold).
   ambiguity).
 - **Section 3 (explicitly proposed/flagged):** 8 items the agents themselves called out as
   needing an owner decision, ranging from a genuine feature-design question
-  (`step_timeout` graceful redesign) to two explicit "needs sign-off" search-tool behaviors and
-  one CLAUDE.md 500-LOC compliance gap (`loop/runner.rs`) that was deliberately deferred rather
-  than risked mid-integration.
-- **Section 4 (held):** 2 items, untouched, as before.
+  (`step_timeout` graceful redesign) to two explicit "needs sign-off" search-tool behaviors. The
+  CLAUDE.md 500-LOC compliance gap (`loop/runner.rs`) is now **Resolved** at Wave 4 (R2 runner
+  state machine, `loop/runner/`), leaving 7 open owner items in this section.
+- **Section 4 (held):** 2 items (`RunMonitored`, `ToolEnvelope.runtime_inputs` /
+  `ToolContext.runtime_args`), untouched, still present and unwired at HEAD — held for owner
+  design decisions, NOT available features.
+- **Section 5 (R1 D1-D7 + Wave 3-4):** 7 R1 decisions applied autonomously (owner-overridable, 5
+  Discuss / 2 Keep) plus 7 Wave 3-4 load-bearing decisions (mostly Keep). The three items in §0
+  remain the highest-priority owner calls.

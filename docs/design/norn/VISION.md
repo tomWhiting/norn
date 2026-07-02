@@ -2,7 +2,9 @@
 
 ## Overview
 
-Norn is a headless, embeddable agent runtime designed to be programmatically orchestrated by workflow systems. It is a library crate, not an application. The orchestrator, Rhai scripts, and workflow engine call into it. It has no TUI, no CLI, and no interactive mode.
+Norn is a headless, embeddable agent runtime designed to be programmatically orchestrated by workflow systems. At its core it is a library crate: the `norn` crate exposes an `AgentBuilder` that assembles and runs agents, and an embedder — the orchestrator, Rhai scripts, the workflow engine, or any Rust program — drives it directly.
+
+Norn also ships thin interactive front-ends over that same library. A CLI (`norn-cli`, the `norn` binary), a terminal UI (`norn-tui`), and a JSON-RPC driven mode (`norn --protocol jsonrpc`) all assemble their agent through the *exact same* `AgentBuilder` path an embedder uses (`builder_from_cli` → `AgentBuilder`). The CLI's former parallel assembly stack has been removed and the library assembler locked down (`pub(crate)`), so a front-end structurally cannot assemble an agent differently from a library consumer. Meridian is the flagship embedder. The library is the product; the front-ends are drivers.
 
 The name comes from Norse mythology: the Norns are the three beings who tend to Yggdrasil, weaving the threads of fate at the base of the world tree. Urdr (past), Verdandi (present), Skuld (future).
 
@@ -156,6 +158,14 @@ Tools do not merely perform actions and rely on external hooks. Validation and d
 
 ### Runtime-Supplied Tool Arguments
 
+> **Status (2026-07-02): held, not wired.** The `ToolContext.runtime_args` carrier
+> exists but has no writer and no reader; it is deliberately not wired pending a
+> design decision (see `docs/HOLD-FOR-DISCUSSION.md`). Policy that today *is*
+> enforced — path/workspace confinement, file-length limits, the permission
+> policy, per-tool config — reaches tools through the tool context and permission
+> layer, not through this envelope field. The section below describes the intended
+> design, not current behaviour.
+
 Some tool inputs should not be set by the model. They are set by the runtime based on workflow policy, profile configuration, or workspace rules. Examples:
 
 - Maximum file length for write/edit.
@@ -167,6 +177,16 @@ Some tool inputs should not be set by the model. They are set by the runtime bas
 These arguments are part of the tool context, not the model's tool call. The model sees the tool's public schema. The runtime injects policy arguments before execution.
 
 ### Tool Call Envelopes
+
+> **Status (2026-07-02): partially held.** The `ToolEnvelope` type carries the
+> open `metadata` field (part 1) and the model-supplied arguments (part 2). The
+> third part — `runtime_inputs` (`RuntimeInputs`: inbound messages, diagnostics,
+> filesystem changes accumulated since the last tool boundary) — is scaffolded but
+> has zero readers and is deliberately not wired: whether boundary signals ride the
+> envelope or the now-existing message-injection / rules-engine paths is an open
+> architectural decision (see `docs/HOLD-FOR-DISCUSSION.md`). In current behaviour
+> those signals reach the model through the inbound channels and message router
+> described under "Input Channels and Steering," not through the envelope.
 
 Tool calls are wrapped in a runtime envelope with three parts:
 
@@ -282,12 +302,13 @@ The initial tool set:
 **Code intelligence:**
 - **LSP**: language server protocol integration as a tool. Hover, go-to-definition, find references, document symbols, workspace symbols, diagnostics, code coverage, and extensible diagnostic sources (cargo clippy, custom linters). Configurable per workspace.
 
-**Agent coordination (model-driven):**
+**Agent coordination (model-driven):** as implemented, the tools are —
 - **SpawnAgent**: spawn a sub-agent with a task, model, role, and optional forked context.
-- **SendMessage**: send a message to another agent by path.
-- **WaitAgent**: wait for one or more agents to complete or send a message.
+- **SignalAgent**: send a signal to another agent (message / steer / fyi) — the messaging primitive.
+- **WakeAgent**: wake or wait on one or more agents (completion or inbound signal).
 - **CloseAgent**: close an agent and cascade to its descendants.
-- **Fork**: fork the current agent onto a different model for a bounded task. Returns structured audit result.
+- **Fork**: fork the current agent onto a different model for a bounded task. Returns a structured audit result.
+- **Agents**: query the agent registry (statuses, paths, roles) from within a session.
 
 **Workflow and task:**
 - **Skill**: activate a skill (load a SKILL.md prompt template into context).
@@ -445,6 +466,15 @@ For data-processing workloads, the runtime supports fan-out patterns:
 
 ### AI-Monitored Background Tasks
 
+> **Status (2026-07-02): held, not wired.** `RunMonitored` (`agent/monitor.rs`) is
+> scaffolding only — zero production callers, an unused provider parameter, a
+> static-string heartbeat. It is deliberately not wired and not deleted, pending a
+> design decision on whether a monitored task should be a bespoke monitor type or is
+> now better expressed as a persistent child agent plus watch rules (the wake/linger,
+> `signal_agent`, and delegation-budget machinery landed after this scaffolding was
+> written). See `docs/HOLD-FOR-DISCUSSION.md`. The section below is the intended
+> design, not a working feature.
+
 Long-running commands and sub-agents can be monitored by a lightweight model instead of consuming the parent agent's context:
 
 1. Agent spawns a long-running command (build, test suite, server process) or a sub-agent.
@@ -539,14 +569,12 @@ Reflection can be a scheduled process (a "dream program") that wakes an agent to
 
 ### Rhai Integration
 
-Rhai is the scripting layer for workflow definitions. Norn exposes Rhai builtins for agent operations:
+Rhai is the scripting layer for workflow definitions. Norn exposes Rhai builtins for agent operations through `build_norn_engine()` / `register_norn_builtins()`. As implemented, the registered builtins are:
 
-- `run_agent(provider, model, instruction, output_schema)` — execute an agent step and return typed output.
-- `spawn_agent(name, provider, model, instruction)` — spawn a concurrent agent.
-- `send_message(agent_path, content)` — send a message to an agent.
-- `wait_agent(agent_path)` — wait for an agent to complete.
-- `close_agent(agent_path)` — close an agent.
-- `fork_agent(model, instruction)` — fork the current context onto a different model.
+- `spawn_agent(...)` — spawn a concurrent agent, returning an `AgentHandle`.
+- `signal_agent(...)` — signal an agent (message / steer / fyi), overloaded across signal kinds.
+
+The `RunScriptTool` runs inline Rhai against this engine. The broader builtin surface (a synchronous `run_agent` step call, `wake_agent`, `close_agent`, `fork_agent`) is intended but not yet all registered; the model-driven tool surface (SpawnAgent / SignalAgent / WakeAgent / CloseAgent / Fork / Agents) is the fuller coordination path today.
 
 Beyond builtins, Rhai may serve as an extension language with sandboxed host functions for HTTP, file search, tool registration, event handlers, and workflow hooks.
 
@@ -602,7 +630,7 @@ Note: OAuth token pool rotation is a Meridian-specific optimization for users wi
 
 **MCP client**: Norn connects to external MCP tool servers. MCP tools are registered dynamically and appear in the tool registry alongside native tools.
 
-**MCP server**: Norn can run as an MCP server itself, exposing all its tools to other agents and harnesses. This works the same way Claude Code exposes its tools as an MCP server. Other agents (including Claude Code sessions) can connect to Norn's MCP server and use its enhanced tools (AST-aware editing, multi-search, diagnostics-aware write, LSP, task management) without Norn being the primary harness. Start with `norn --mcp` or equivalent.
+**MCP server**: Norn can run as an MCP server itself, exposing all its tools to other agents and harnesses. This works the same way Claude Code exposes its tools as an MCP server. Other agents (including Claude Code sessions) can connect to Norn's MCP server and use its enhanced tools (AST-aware editing, multi-search, diagnostics-aware write, LSP, task management) without Norn being the primary harness. Start it with `norn mcp serve` (JSON-RPC over stdio).
 
 This is distinct from the Norn-wrapped Claude Code integration mode. In MCP server mode, Norn is not wrapping anything — it is simply making its tools available over the standard MCP protocol for any consumer.
 
@@ -810,6 +838,6 @@ Pi extensions are TypeScript modules that register event handlers and custom too
 
 Rune is a pure-Rust scripting language with Rust-like syntax and first-class async/await. It is thematically perfect for Norn (Nordic runes). Currently pre-1.0 with known compiler bugs. Worth revisiting when it reaches a stable release — it could complement Rhai for use cases that need async scripting or a more expressive in-process language.
 
-### TUI
+### Extension Components in the TUI
 
-A terminal user interface for Norn is desirable but not initial scope. The Meridian web view is the primary visual surface. When a TUI is built, it should be exceptional — not a hindrance to navigation, not cluttered with unnecessary chrome. Extension components should render in the TUI via a terminal component model, separate from the React-based web view components.
+The terminal user interface has been built: `norn-tui` is a full interactive front-end (see Overview), assembled through the same `AgentBuilder` path as every other driver. The Meridian web view remains the primary rich visual surface. The remaining forward-looking work here is the terminal *component model* for extensions: extension components should be able to render in the TUI via a terminal component model, separate from the React-based web view components. That component bridge is not yet built.
