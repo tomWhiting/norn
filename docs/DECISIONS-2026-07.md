@@ -45,8 +45,10 @@ two are behaviors an agent explicitly wrote "needs sign-off" against. Full detai
    right. The escape hatch the owner asked for already exists: the per-call `include_ignored`
    parameter (default `false`) walks ignored files on request.
 3. **Binary / non-UTF-8 `InvalidData` silent-skip carve-out** in content/AST search (§2, §3).
-   Non-text files are skipped silently rather than reported in `skipped`. Agent wrote "needs
-   sign-off on the InvalidData carve-out." — **Discuss**
+   — **DECIDED 2026-07-03 (owner)**: ratified as-is. A binary file cannot contain a text
+   match, so nothing is hidden by omitting it from `skipped` (which exists to flag results
+   that may be incomplete); listing every image/object file would be noise. Matches
+   grep/ripgrep behavior. Every other read error is still reported in `skipped`.
 
 4. **Zero-tool agents are supported** — **DECIDED 2026-07-02 (owner-driven fix)**: the former
    `AgentBuilder::build` rejection ("no tools available after exclusions; an agent needs at

@@ -157,12 +157,14 @@ for per-execution runtime-base caching); the two HELD scaffolding items
 
 ## 5. Needs owner sign-off (none block the merge)
 
-- `docs/DECISIONS-2026-07.md` §0 top items: step-timeout graceful
-  redesign, `require_git(false)`, binary-skip carve-out.
+- ~~`docs/DECISIONS-2026-07.md` §0 top items~~ — all three RESOLVED by
+  owner (2026-07-02/03): no default step timeout (graceful redesign
+  dropped), `require_git(false)` ratified, binary silent-skip ratified.
+  A fourth §0 entry records the zero-tool-agent decision.
 - `docs/design/norn/R1-DECISIONS-RESOLVED.md` D1–D7 (applied as
   recommended defaults; D1 session-hook ownership and D6 meridian scope
   most worth a look).
-- **License contradiction**: workspace `Cargo.toml` says `MIT`, the
-  `LICENSE` file is AGPL-3.0. Legal call; flagged, not resolved.
+- ~~License contradiction~~ — RESOLVED by owner (2026-07-03): workspace
+  `Cargo.toml` now declares `AGPL-3.0-only`, matching the `LICENSE` file.
 - Diagnostics + CONVENTIONS.toml discussion (requested, queued for after
   the campaign).
