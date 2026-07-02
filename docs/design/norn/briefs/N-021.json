@@ -1,0 +1,75 @@
+{
+  "id": "N-021",
+  "cluster": "norn",
+  "title": "Search modes — fuzzy matching and AST structural search",
+  "depends_on": ["N-012"],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": ["S10"],
+  "purpose": "The Search tool currently supports only regex content search and glob file finding. Feature 10 calls for a unified multi-search that combines fuzzy matching (nucleo), AST/structural search (tree-sitter queries), and glob filtering. Vector/semantic search is deferred (NG3 adjacent). This brief adds the missing fuzzy and AST modes.",
+  "task": "Add nucleo crate for fuzzy file matching. Add tree-sitter S-expression query support for structural code search. Extend SearchTool input schema with mode parameter. Fuzzy mode ranks files by nucleo score. AST mode matches tree-sitter patterns and returns matched nodes with location. Testing: real temp directory tests for both modes.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Fuzzy file matching via nucleo",
+      "spec": "SearchTool SHALL support a fuzzy mode that matches file paths against a query string using the nucleo fuzzy matching algorithm.",
+      "acceptance": [
+        "Cargo.toml adds nucleo crate",
+        "Input schema gains: mode (Option<String>) — values 'content' (default), 'files', 'fuzzy', 'ast'",
+        "mode='fuzzy' walks directory tree, scores each file path against pattern using nucleo::Matcher",
+        "Results sorted by score descending, limited by max_results",
+        "Output format: { path: String, score: u32 } per match",
+        "Test: create temp dir with 'src/auth/login.rs', 'src/auth/logout.rs', 'src/db/pool.rs', fuzzy search 'login', verify login.rs ranked first"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/search.rs", "crates/norn/Cargo.toml"] },
+      "checklist": [],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R2",
+      "title": "AST structural search via tree-sitter queries",
+      "spec": "SearchTool SHALL support an ast mode that matches tree-sitter S-expression query patterns against source files and returns matched nodes with their locations.",
+      "acceptance": [
+        "mode='ast' requires additional input field: ast_query (String) — a tree-sitter S-expression pattern",
+        "Parses files using the appropriate tree-sitter grammar (detected from extension, reusing ast.rs grammar loading)",
+        "Runs tree-sitter query against the parsed tree",
+        "Returns matched nodes with: file path, line number, column, node kind, matched text",
+        "Glob filter still applies to restrict which files are searched",
+        "Unrecognized file extensions are skipped (not an error)",
+        "Test: create temp .rs file with a function, ast_query '(function_item name: (identifier) @name)', verify function name captured"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/search.rs"] },
+      "checklist": [],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R3",
+      "title": "Mode routing in SearchTool execute",
+      "spec": "SearchTool::execute SHALL route to the appropriate search implementation based on the mode parameter.",
+      "acceptance": [
+        "mode='content' (default): existing regex search — no change",
+        "mode='files': existing glob file finding — no change",
+        "mode='fuzzy': new nucleo path matching from R1",
+        "mode='ast': new tree-sitter query matching from R2",
+        "Unknown mode returns clear error listing valid modes",
+        "Test: verify all 4 modes produce results on the same temp directory"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/search.rs"] },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement vector/semantic search — that requires embedding models and is NG3 adjacent",
+    "SHALL NOT implement combined mode (using one mode as filter and another as ranker) — that is a future enhancement",
+    "SHALL NOT implement AST search across languages in a single query — each file uses its own grammar",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all search tests pass including new fuzzy and AST tests",
+    "cargo clippy -p norn -- -D warnings clean",
+    "Fuzzy search ranks relevant files higher — verified by test",
+    "AST search captures named nodes from tree-sitter queries — verified by test"
+  ]
+}

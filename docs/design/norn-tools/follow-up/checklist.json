@@ -1,0 +1,108 @@
+{
+  "cluster": "norn-tools/follow-up",
+  "sections": [
+    {
+      "name": "Types — FollowUpAction, ExpiryCondition, BeforeContentSource",
+      "items": [
+        {"id": "C1", "text": "FollowUpAction struct in norn::tool::follow_up with action (name), description, tool (target tool name), args (pre-populated argument overrides), expires (ExpiryCondition), confidence, and before_content (BeforeContentSource) fields", "done": false},
+        {"id": "C2", "text": "ExpiryCondition enum in norn::tool::follow_up with FileModified(PathBuf), AnyFileModified(Vec<PathBuf>), TurnScoped, and Never variants", "done": false},
+        {"id": "C3", "text": "BeforeContentSource enum in norn::tool::follow_up with YggdrasilOp(OperationId), StoredContent(HashMap<PathBuf, String>), and Unavailable variants", "done": false},
+        {"id": "C4", "text": "FollowUpAction serializes to JSON matching the follow_ups array format in tool results (action, description, expires fields visible to model)", "done": false}
+      ]
+    },
+    {
+      "name": "Follow-Up Tool — Lookup and Dispatch",
+      "items": [
+        {"id": "C5", "text": "follow_up tool registered with tool_call_id (string) and action (string) parameters", "done": false},
+        {"id": "C6", "text": "Tool looks up tool_call_id in the action log and returns a structured error if not found", "done": false},
+        {"id": "C7", "text": "Tool finds the named action in the call's registered follow-up actions and returns a structured error if no such action exists", "done": false},
+        {"id": "C8", "text": "Tool checks expiry conditions before executing and returns error with reason and suggestion if expired", "done": false},
+        {"id": "C9", "text": "Tool retrieves original tool call's arguments from the event store", "done": false},
+        {"id": "C10", "text": "Tool applies the follow-up's argument overrides to the original arguments (override replaces specific fields, all others from original)", "done": false},
+        {"id": "C11", "text": "Tool invokes the target tool with the merged arguments", "done": false},
+        {"id": "C12", "text": "Result returned as if the target tool had been called directly — same output format, same structured fields", "done": false}
+      ]
+    },
+    {
+      "name": "Undo Registration on Mutation Tools",
+      "items": [
+        {"id": "C13", "text": "edit tool registers an undo follow-up action on successful commit that restores the file to pre-edit content", "done": false},
+        {"id": "C14", "text": "write tool registers an undo follow-up action on successful commit that restores the file to pre-write content", "done": false},
+        {"id": "C15", "text": "apply_patch registers an all-or-nothing undo follow-up that reverts all patched files", "done": false},
+        {"id": "C16", "text": "apply_patch registers per-file undo follow-ups (undo_file:<path>) for each file in the patch", "done": false},
+        {"id": "C17", "text": "All-or-nothing undo uses Yggdrasil operation tracking (revert_operation) when available, falls back to stored content otherwise", "done": false},
+        {"id": "C18", "text": "Per-file undo uses stored before-content directly (not operation revert, which is all-or-nothing)", "done": false},
+        {"id": "C19", "text": "Undo follow-up expires with file_modified:<path> (single file) or any_file_modified (multi-file all-or-nothing)", "done": false}
+      ]
+    },
+    {
+      "name": "Expiry Checking",
+      "items": [
+        {"id": "C20", "text": "FileModified expiry checks whether the specified file has been modified since the original call via content hash comparison", "done": false},
+        {"id": "C21", "text": "AnyFileModified expiry checks whether any file in the set has been modified since the original call", "done": false},
+        {"id": "C22", "text": "TurnScoped expiry marks the action invalid at end of the current turn", "done": false},
+        {"id": "C23", "text": "Never expiry means the action does not expire", "done": false},
+        {"id": "C24", "text": "Expiry checked at execution time, not storage time — cheap hash or timestamp comparison", "done": false},
+        {"id": "C25", "text": "Expired follow-up returns structured error with the reason (which file changed), the tool_call_id, the action name, and a suggestion to re-read and re-generate", "done": false}
+      ]
+    },
+    {
+      "name": "Argument Override Merging",
+      "items": [
+        {"id": "C26", "text": "Follow-up actions store argument overrides, not complete argument sets", "done": false},
+        {"id": "C27", "text": "Merging is deterministic: override replaces named fields, all other fields come from the original call", "done": false},
+        {"id": "C28", "text": "Large arguments (patch text, file content, old_string) read from the action log's stored copy of the original call — never re-transmitted through the model", "done": false}
+      ]
+    },
+    {
+      "name": "Cross-Tool Follow-Up Registration",
+      "items": [
+        {"id": "C29", "text": "apply_patch registers apply_structural and apply_auto follow-ups on strict-mode failure", "done": false},
+        {"id": "C30", "text": "apply_patch registers apply_dry_run follow-up when a dry-run completes successfully", "done": false},
+        {"id": "C31", "text": "edit registers apply_at_occurrence_N follow-ups on ambiguous multi-match", "done": false},
+        {"id": "C32", "text": "write registers undo follow-up on successful commit", "done": false},
+        {"id": "C33", "text": "bash registers rerun and rerun_with_timeout follow-ups", "done": false},
+        {"id": "C34", "text": "Follow-up actions in tool results include the follow_ups array visible to the model with action, description, and expires fields", "done": false}
+      ]
+    },
+    {
+      "name": "Lifecycle Extension — register_follow_ups Phase",
+      "items": [
+        {"id": "C35", "text": "Tool trait gains a register_follow_ups method as a new lifecycle phase after on-success", "done": false},
+        {"id": "C36", "text": "register_follow_ups also runs after error for failure-recovery follow-ups (e.g., apply_structural on strict failure)", "done": false},
+        {"id": "C37", "text": "register_follow_ups returns Vec<FollowUpAction>", "done": false},
+        {"id": "C38", "text": "Registry attaches returned follow-ups to the tool result under a follow_ups key", "done": false},
+        {"id": "C39", "text": "Phase is optional — default implementation returns empty Vec, tools without follow-ups are unchanged", "done": false}
+      ]
+    },
+    {
+      "name": "Yggdrasil Operation Tracking Integration",
+      "items": [
+        {"id": "C40", "text": "Mutation tools record changes as Yggdrasil operations with operation_id mapping to tool_call_id, files modified with before/after content hashes, timestamp, and agent identity", "done": false},
+        {"id": "C41", "text": "YggdrasilOp variant on BeforeContentSource is preferred when Yggdrasil tracking is active", "done": false},
+        {"id": "C42", "text": "StoredContent variant captured eagerly at register_follow_ups time from content the tool read during execute()", "done": false},
+        {"id": "C43", "text": "Unavailable variant returns a clear error on undo attempt — no silent failure", "done": false},
+        {"id": "C44", "text": "libyggd::ops::revert_operation(operation_id) atomically restores all files to pre-operation state", "done": false},
+        {"id": "C45", "text": "When Yggdrasil tracking is not available (norn used outside a Yggdrasil repo), undo falls back to writing stored content from the action log", "done": false}
+      ]
+    },
+    {
+      "name": "Constraints",
+      "items": [
+        {"id": "C46", "text": "follow_up tool validates tool_call_id exists, action is registered, and action has not expired before executing — invalid or expired references produce clear errors (CO1)", "done": false},
+        {"id": "C47", "text": "Argument override merging is deterministic — override replaces specific fields, all other fields from original call, no deep-merge ambiguity (CO2)", "done": false},
+        {"id": "C48", "text": "Target tool's full lifecycle runs when invoked via follow-up: pre-validate, execute, post-validate, on-success, register-follow-ups — no shortcut that bypasses validation (CO3)", "done": false},
+        {"id": "C49", "text": "Follow-up execution logged in action log as a new entry with a reference to the original tool_call_id — action log shows the chain (CO4)", "done": false},
+        {"id": "C50", "text": "follow_up tool itself does not produce follow-up actions — no recursive follow-ups; target tool's result may produce new ones attributed to the target (CO5)", "done": false},
+        {"id": "C51", "text": "Yggdrasil operation tracking is optional — undo falls back to stored content when libyggd unavailable or directory is not a Yggdrasil repo (CO6)", "done": false}
+      ]
+    },
+    {
+      "name": "Prerequisites",
+      "items": [
+        {"id": "C52", "text": "ToolError::PostValidationFailed carries optional committed_output so follow-up actions on failed-but-committed mutations can reference the structured output (PR0)", "done": false},
+        {"id": "C53", "text": "PostCheckResult type returned from RuntimePostValidateCheck::check() with outcome and advisories fields, enabling advisory follow-up registration (PR1)", "done": false}
+      ]
+    }
+  ]
+}

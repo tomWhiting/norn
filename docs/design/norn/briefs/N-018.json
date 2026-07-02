@@ -1,0 +1,119 @@
+{
+  "id": "N-018",
+  "cluster": "norn",
+  "title": "Real sub-agent tooling — replace NoopToolExecutor and Rhai stubs",
+  "depends_on": ["N-014", "N-015"],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": ["S13", "S14", "S15", "S21"],
+  "purpose": "SpawnAgent and Fork currently give sub-agents a NoopToolExecutor, meaning spawned/forked agents can only do text completion — any tool call returns ToolNotFound. The Rhai spawn_agent and fork_agent builtins return canned stub payloads instead of actually running agents. This brief makes multi-agent work real: sub-agents get a real ToolRegistry, and the Rhai bridge actually calls run_agent_step.",
+  "task": "Add tool_registry field to AgentToolInfra. SpawnAgentTool clones the parent registry, applies set_available for requested tool subset, passes as ToolExecutor. ForkTool passes registry to fork(). Remove both NoopToolExecutor definitions. Rhai spawn_agent uses runtime.spawn to run run_agent_step asynchronously, stores JoinHandle in SpawnedAgent. Rhai wait_agent awaits the JoinHandle via block_in_place. Rhai fork_agent calls the real fork() function via block_in_place. Testing: MockProvider tests verifying sub-agents execute tool calls.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Add ToolRegistry to AgentToolInfra",
+      "spec": "AgentToolInfra SHALL carry an optional ToolRegistry that sub-agents receive. When present, spawned and forked agents get a real tool executor instead of NoopToolExecutor.",
+      "acceptance": [
+        "AgentToolInfra gains field: tool_registry (Option<Arc<ToolRegistry>>)",
+        "When tool_registry is Some, SpawnAgentTool clones it for the sub-agent",
+        "When tool_registry is None, SpawnAgentTool returns an error explaining no tools available",
+        "Remove NoopToolExecutor from tools/agent/infra.rs",
+        "Remove NoopToolExecutor from agent/fork.rs",
+        "Test: construct AgentToolInfra with a registry containing a mock tool, spawn sub-agent, verify tool is callable"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/agent/infra.rs", "crates/norn/src/tools/agent/spawn.rs"] },
+      "checklist": [],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R2",
+      "title": "SpawnAgent uses real ToolRegistry",
+      "spec": "SpawnAgentTool SHALL clone the parent's ToolRegistry for the sub-agent. If the spawn request specifies a tool subset, set_available restricts the clone to those tools.",
+      "acceptance": [
+        "SpawnAgentTool::execute clones Arc<ToolRegistry> from AgentToolInfra",
+        "If args.tools is Some(names), calls set_available(names) on the clone",
+        "Passes the clone as &dyn ToolExecutor to run_agent_step",
+        "Sub-agent can successfully execute tools from the parent's registry",
+        "Test: spawn with tools=['search'], verify search tool works but bash returns ToolNotFound"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/agent/spawn.rs"] },
+      "checklist": [],
+      "stories": ["S13", "S15"]
+    },
+    {
+      "id": "R3",
+      "title": "Fork uses real ToolRegistry",
+      "spec": "The fork() function SHALL accept an optional ToolExecutor parameter instead of using NoopToolExecutor. ForkTool passes the registry from AgentToolInfra.",
+      "acceptance": [
+        "fork() signature gains: executor (Arc<dyn ToolExecutor>)",
+        "ForkTool::execute passes infra.tool_registry or a default empty registry",
+        "ForkConfig.tools used to restrict available tools via set_available",
+        "Test: fork with a tool-using prompt, verify tool executes in the forked context"
+      ],
+      "files": { "modify": ["crates/norn/src/agent/fork.rs", "crates/norn/src/tools/agent/fork_tool.rs"] },
+      "checklist": [],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R4",
+      "title": "Rhai spawn_agent — real implementation",
+      "spec": "The Rhai spawn_agent builtin SHALL actually call run_agent_step via tokio::task::block_in_place, replacing the current stub that returns canned JSON.",
+      "acceptance": [
+        "SpawnedAgent struct holds JoinHandle<Result<AgentStepResult, NornError>> instead of Option<Value>",
+        "spawn_agent registers in AgentRegistry, spawns run_agent_step via runtime.spawn()",
+        "Provider and ToolRegistry obtained from NornRhaiContext",
+        "Sub-agent receives the real ToolRegistry (same as R1-R2 pattern)",
+        "Comment 'spawn currently produces a deterministic stub payload' is removed",
+        "Test: Rhai script calls spawn_agent, wait_agent returns actual model output"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/rhai.rs"] },
+      "checklist": [],
+      "stories": ["S21"]
+    },
+    {
+      "id": "R5",
+      "title": "Rhai fork_agent — real implementation",
+      "spec": "The Rhai fork_agent builtin SHALL call the real fork() function from agent/fork.rs via block_in_place, replacing the current stub.",
+      "acceptance": [
+        "fork_agent calls crate::agent::fork::fork() with real provider and registry",
+        "Uses tokio::task::block_in_place for async-sync bridge",
+        "Returns the ForkAudit result as a Rhai Dynamic value (serde conversion)",
+        "Stub 'status: forked' payload removed",
+        "Test: Rhai script calls fork_agent, verify ForkAudit fields present in result"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/rhai.rs"] },
+      "checklist": [],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R6",
+      "title": "Rhai wait_agent — real JoinHandle await",
+      "spec": "wait_agent SHALL await the JoinHandle from spawn_agent instead of returning a stored stub value.",
+      "acceptance": [
+        "wait_agent uses block_in_place to await the JoinHandle",
+        "Returns the AgentStepResult serialized as Rhai Dynamic",
+        "Timeout support: if the agent hasn't completed within a configurable duration, return an error",
+        "If the JoinHandle panicked, return a clear error (not a panic propagation)",
+        "Test: spawn_agent then wait_agent, verify result matches expected model output"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/rhai.rs"] },
+      "checklist": [],
+      "stories": ["S15"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the ToolRegistry implementation — only consume it",
+    "SHALL NOT modify run_agent_step signature — use the existing (or N-017's LoopContext) API",
+    "SHALL NOT implement agent-to-agent tool delegation (agent A using agent B's tools) — sub-agents get a copy of the parent's registry",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "grep -rn 'NoopToolExecutor' crates/norn/src/ returns no matches",
+    "grep -rn 'deterministic stub\\|stub payload\\|status.*forked' crates/norn/src/integration/rhai.rs returns no matches",
+    "A spawned sub-agent successfully executes a tool call — verified by test",
+    "A Rhai spawn_agent + wait_agent round-trip returns real model output — verified by test"
+  ]
+}

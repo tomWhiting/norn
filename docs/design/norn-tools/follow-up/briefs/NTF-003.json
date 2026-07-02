@@ -1,0 +1,182 @@
+{
+  "id": "NTF-003",
+  "cluster": "norn-tools/follow-up",
+  "title": "Follow-up tool: lookup, expiry check, argument merge, and target dispatch",
+  "depends_on": ["NTF-001", "NTF-002"],
+  "blocked_by": ["NTA-001"],
+  "checklist": ["C5", "C6", "C7", "C8", "C9", "C10", "C11", "C12", "C20", "C21", "C22", "C23", "C24", "C25", "C26", "C27", "C28", "C46", "C47", "C48", "C49", "C50"],
+  "stories": ["S1", "S2", "S3", "S5", "S6", "S7", "S8", "S9", "S13"],
+  "purpose": "Implement the follow_up tool that executes deferred actions by referencing a prior tool_call_id and action name. This is the core execution path: look up the original call in the action log, find the named follow-up action, check expiry, merge argument overrides with the original arguments, and dispatch the target tool through the full lifecycle. The tool eliminates re-generation of large arguments (patch text, file content) by reading them from the action log.",
+  "task": "Create crates/norn/src/tools/follow_up/ as a folder module with mod.rs (tool registration), lookup.rs (action log query), expiry.rs (expiry checking against current file state), merge.rs (argument override merging), and dispatch.rs (target tool invocation). The follow_up tool takes tool_call_id and action parameters. It validates the reference, checks expiry, merges arguments, and invokes the target tool through the registry's full lifecycle (pre-validate, execute, post-validate, on-success, register-follow-ups).",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Follow-up tool registration with input schema",
+      "spec": "A FollowUpTool struct SHALL implement the Tool trait in crates/norn/src/tools/follow_up/mod.rs. The tool name SHALL be \"follow_up\". The input schema SHALL have two required string parameters: tool_call_id and action. The tool SHALL be registered in the tool module's registration path. The tool category SHALL be ToolCategory::General.",
+      "acceptance": [
+        "crates/norn/src/tools/follow_up/mod.rs exists with FollowUpTool implementing Tool",
+        "Tool name is \"follow_up\"",
+        "input_schema has tool_call_id (string, required) and action (string, required)",
+        "Tool is registered and appears in the tool catalogue",
+        "cargo check -p norn succeeds"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/follow_up/mod.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": ["C5"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R2",
+      "title": "Action log lookup by tool_call_id",
+      "spec": "The lookup module (crates/norn/src/tools/follow_up/lookup.rs) SHALL query the action log (via ActionLog on ToolContext or LoopContext) to find the entry for the given tool_call_id. If no entry exists, return a ToolOutput with is_error: true and a structured error: {\"error\": \"tool_call_id not found\", \"tool_call_id\": \"...\"}. If the entry exists, retrieve its registered follow-up actions and the original tool call arguments.",
+      "acceptance": [
+        "crates/norn/src/tools/follow_up/lookup.rs exists",
+        "Lookup finds the action log entry by tool_call_id",
+        "Missing tool_call_id returns is_error with structured message",
+        "Found entry yields the follow-up actions list and original arguments"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/follow_up/lookup.rs"
+        ]
+      },
+      "checklist": ["C6", "C9"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R3",
+      "title": "Named action lookup within follow-up actions",
+      "spec": "Given the follow-up actions list from the action log entry, the tool SHALL find the action matching the provided action name. If no matching action exists, return a ToolOutput with is_error: true and a structured error: {\"error\": \"action not found\", \"tool_call_id\": \"...\", \"action\": \"...\", \"available_actions\": [\"...\", ...]}. The available_actions array lists all non-expired action names for the given tool_call_id.",
+      "acceptance": [
+        "Matching action found by exact name comparison",
+        "Missing action returns is_error with available_actions list",
+        "Available actions list excludes expired actions"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/follow_up/lookup.rs"
+        ]
+      },
+      "checklist": ["C7"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R4",
+      "title": "Expiry checking against current file state",
+      "spec": "The expiry module (crates/norn/src/tools/follow_up/expiry.rs) SHALL implement is_expired(condition: &ExpiryCondition, turn_id: &str) -> Result<(), ExpiredError>. FileModified: read the file, compute hash, compare against stored content_hash. AnyFileModified: check each file's hash. TurnScoped: compare against the current turn_id. Never: always Ok. ExpiredError SHALL carry the reason (which file changed or turn ended), the tool_call_id, the action name, and a suggestion string.",
+      "acceptance": [
+        "FileModified returns Err when file hash differs from stored hash",
+        "FileModified returns Ok when file hash matches",
+        "AnyFileModified returns Err naming the first file that changed",
+        "TurnScoped returns Err when turn_id differs from stored turn_id",
+        "Never always returns Ok",
+        "Expired error includes reason, tool_call_id, action, and suggestion",
+        "File read errors are treated as expired (file may have been deleted)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/follow_up/expiry.rs"
+        ]
+      },
+      "checklist": ["C8", "C20", "C21", "C22", "C23", "C24", "C25"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R5",
+      "title": "Argument override merging",
+      "spec": "The merge module (crates/norn/src/tools/follow_up/merge.rs) SHALL implement merge_args(original: &serde_json::Value, overrides: &serde_json::Value) -> serde_json::Value. Both inputs SHALL be JSON objects. The merge is shallow: each key in overrides replaces the corresponding key in original. Keys in original not present in overrides are preserved. Keys in overrides not present in original are added. The merge is deterministic — same inputs always produce same output.",
+      "acceptance": [
+        "Original {\"a\": 1, \"b\": 2} with overrides {\"b\": 3} produces {\"a\": 1, \"b\": 3}",
+        "Original {\"a\": 1} with overrides {\"b\": 2} produces {\"a\": 1, \"b\": 2}",
+        "Original {\"a\": 1, \"b\": 2} with overrides {} produces {\"a\": 1, \"b\": 2}",
+        "Empty original with overrides {\"a\": 1} produces {\"a\": 1}",
+        "Non-object inputs return an error (both must be JSON objects)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/follow_up/merge.rs"
+        ]
+      },
+      "checklist": ["C10", "C26", "C27", "C28"],
+      "stories": ["S5", "S6"]
+    },
+    {
+      "id": "R6",
+      "title": "Target tool dispatch through full lifecycle",
+      "spec": "The dispatch module (crates/norn/src/tools/follow_up/dispatch.rs) SHALL invoke the target tool (named in the FollowUpAction's tool field) through the ToolRegistry's full lifecycle: pre-validate, execute, post-validate, on-success, register-follow-ups. The merged arguments are wrapped in a ToolEnvelope. The result is returned as if the target tool had been called directly. The follow_up tool itself does NOT produce follow-up actions (no recursive follow-ups). The target tool's result MAY produce new follow-ups attributed to the target tool.",
+      "acceptance": [
+        "Target tool is looked up by name in the ToolRegistry",
+        "Missing target tool returns is_error with structured message",
+        "Target tool's full lifecycle runs (pre-validate through register-follow-ups)",
+        "Result format matches direct target tool invocation",
+        "follow_up tool's own register_follow_ups returns empty Vec (no recursion)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/follow_up/dispatch.rs"
+        ]
+      },
+      "checklist": ["C11", "C12", "C46", "C48", "C50"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R7",
+      "title": "Follow-up execution logged as action log entry with chain reference",
+      "spec": "When the follow_up tool dispatches a target tool, the resulting action log entry SHALL include a reference to the original tool_call_id. This chain reference enables the action log to show: original call -> follow-up -> result. The reference is stored as a source_tool_call_id field on the action log entry metadata.",
+      "acceptance": [
+        "Follow-up dispatch produces an action log entry with source_tool_call_id set to the original tool_call_id",
+        "The action log can reconstruct the chain: original -> follow-up",
+        "Direct tool calls have source_tool_call_id as None"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/follow_up/dispatch.rs"
+        ]
+      },
+      "checklist": ["C49"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R8",
+      "title": "Integration tests for the follow-up tool",
+      "spec": "Tests SHALL verify the full follow-up execution path: (1) successful follow-up with argument override, (2) expired follow-up returns structured error, (3) missing tool_call_id returns error, (4) missing action name returns error with available actions, (5) target tool's full lifecycle runs (verified via post-validate or on-success side effects), (6) follow_up tool does not produce follow-up actions on its own result.",
+      "acceptance": [
+        "Test: follow-up with override {\"mode\": \"structural\"} merges correctly and dispatches target",
+        "Test: expired FileModified follow-up returns error with changed file path",
+        "Test: nonexistent tool_call_id returns error",
+        "Test: nonexistent action name returns error with available_actions",
+        "Test: target tool's post-validate runs (Gate mode failure detected)",
+        "Test: follow_up result has no follow_ups key",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/follow_up/tests.rs"
+        ]
+      },
+      "checklist": ["C46", "C47", "C48", "C49", "C50"],
+      "stories": ["S1", "S2", "S3", "S5", "S7"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement undo registration on mutation tools — that is NTF-004",
+    "SHALL NOT implement Yggdrasil operation tracking — that is NTF-004",
+    "SHALL NOT implement action log storage or the action_log query tool — that is NTA-001/NTA-002",
+    "SHALL NOT implement the tool_follow_ups! macro — that is NTM-004",
+    "SHALL NOT implement follow-up discovery queries — that is NTA-004"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "cargo fmt -p norn -- --check produces no diff",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'todo!\\|unimplemented!\\|FIXME\\|HACK\\|TODO' crates/norn/src/tools/follow_up/ returns no matches",
+    "crates/norn/src/tools/follow_up/mod.rs contains only pub mod declarations, re-exports, and the FollowUpTool struct/impl"
+  ]
+}

@@ -1,0 +1,200 @@
+{
+  "id": "NTF-004",
+  "cluster": "norn-tools/follow-up",
+  "title": "Undo follow-up registration on mutation tools + Yggdrasil operation tracking",
+  "depends_on": ["NTF-001", "NTF-002"],
+  "blocked_by": [],
+  "checklist": ["C13", "C14", "C15", "C16", "C17", "C18", "C19", "C29", "C30", "C31", "C32", "C33", "C34", "C40", "C41", "C42", "C43", "C44", "C45", "C48", "C51", "C52", "C53"],
+  "stories": ["S4", "S5", "S6", "S7", "S12", "S14", "S15"],
+  "purpose": "Wire follow-up registration into the mutation tools (edit, write, apply_patch) and the bash tool. Each mutation tool gains a register_follow_ups override that registers undo actions backed by stored before-content or Yggdrasil operation tracking. apply_patch also registers apply_structural, apply_auto, and apply_dry_run follow-ups on appropriate outcomes. edit registers apply_at_occurrence_N on ambiguous matches. bash registers rerun follow-ups. Yggdrasil operation tracking records each mutation as an operation for atomic multi-file undo.",
+  "task": "Override register_follow_ups on EditTool, WriteTool, ApplyPatchTool, and BashTool. Each override inspects the ToolOutput to determine which follow-ups to offer. Mutation tools capture before-content eagerly during execute() and store it via BeforeContentSource::StoredContent. When Yggdrasil tracking is available (detected via libyggd on ToolContext), mutation tools additionally record operations and use BeforeContentSource::YggdrasilOp. Implement the undo execution path: follow_up tool dispatches undo, which reads BeforeContentSource and writes the stored content back (or calls libyggd::ops::revert_operation for YggdrasilOp).",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Edit tool: undo follow-up registration",
+      "spec": "EditTool SHALL override register_follow_ups. On successful commit (output.content[\"committed\"] == true), it SHALL register an undo FollowUpAction with: action=\"undo\", description=\"Revert {path} to pre-edit content\", tool=\"edit\", expires=ExpiryCondition::FileModified with the edited file's path and post-edit content hash, before_content=BeforeContentSource::StoredContent with the pre-edit file content captured during execute(). The edit tool's execute() SHALL capture the file content before applying the edit and make it available for register_follow_ups.",
+      "acceptance": [
+        "Successful edit produces a follow-up with action=\"undo\"",
+        "Undo follow-up description includes the file path",
+        "Undo follow-up expires when the file is modified after the edit",
+        "before_content contains the pre-edit file content",
+        "Uncommitted edits (output.content[\"committed\"] != true) produce no undo follow-up"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/edit.rs"
+        ]
+      },
+      "checklist": ["C13"],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R2",
+      "title": "Edit tool: apply_at_occurrence follow-ups on ambiguous match",
+      "spec": "When an edit matches at multiple locations (output.content[\"match_count\"] > 1), EditTool's register_follow_ups SHALL register apply_at_occurrence_N FollowUpActions for each match location. Each follow-up has: action=\"apply_at_occurrence_{N}\" (1-indexed), description=\"Apply edit at occurrence {N} (line {line}, in {context})\", tool=\"edit\", args overriding occurrence to N, expires=ExpiryCondition::FileModified.",
+      "acceptance": [
+        "Multi-match edit produces N follow-ups (one per occurrence)",
+        "Each follow-up has action name apply_at_occurrence_1, apply_at_occurrence_2, etc.",
+        "Each follow-up's args override sets occurrence to the correct index",
+        "Single-match edit produces no apply_at_occurrence follow-ups"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/edit.rs"
+        ]
+      },
+      "checklist": ["C31"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R3",
+      "title": "Write tool: undo follow-up registration",
+      "spec": "WriteTool SHALL override register_follow_ups. On successful write, it SHALL register an undo FollowUpAction. If the file existed before the write, before_content=BeforeContentSource::StoredContent with the original content. If the file was newly created, before_content stores empty content and undo deletes the file. Expires with FileModified on the written file.",
+      "acceptance": [
+        "Successful write produces a follow-up with action=\"undo\"",
+        "Overwrite of existing file stores the original content in before_content",
+        "Creation of new file stores empty content (undo will delete)",
+        "Undo follow-up expires when the file is modified after the write"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/write.rs"
+        ]
+      },
+      "checklist": ["C14", "C32"],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R4",
+      "title": "ApplyPatch tool: undo follow-ups (all-or-nothing and per-file)",
+      "spec": "ApplyPatchTool SHALL override register_follow_ups. On successful patch application, it SHALL register: (1) an all-or-nothing undo with action=\"undo\", expires=AnyFileModified over all patched files; (2) per-file undo follow-ups with action=\"undo_file:{path}\" for each file in the patch, each expiring with FileModified on that file. The all-or-nothing undo uses YggdrasilOp when available, otherwise StoredContent. Per-file undo always uses StoredContent (not operation revert, which is all-or-nothing).",
+      "acceptance": [
+        "Successful multi-file patch produces 1 all-or-nothing undo + N per-file undos",
+        "All-or-nothing undo expires when any patched file is modified",
+        "Per-file undo expires only when its specific file is modified",
+        "All-or-nothing undo uses YggdrasilOp when available, StoredContent otherwise",
+        "Per-file undo always uses StoredContent"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C15", "C16", "C17", "C18", "C19"],
+      "stories": ["S4", "S14"]
+    },
+    {
+      "id": "R5",
+      "title": "ApplyPatch tool: apply_structural, apply_auto, apply_dry_run follow-ups",
+      "spec": "On strict-mode patch failure (output indicates strict matching failed but structural/auto would work), register_follow_ups SHALL register: apply_structural (overrides mode to \"structural\") and apply_auto (overrides mode to \"auto\"). On successful dry-run (output.content[\"dry_run\"] == true), register apply_dry_run with overrides {\"dry_run\": false}. All expire with FileModified on the target file(s).",
+      "acceptance": [
+        "Strict failure produces apply_structural and apply_auto follow-ups",
+        "apply_structural overrides {\"mode\": \"structural\"}",
+        "apply_auto overrides {\"mode\": \"auto\"}",
+        "Successful dry-run produces apply_dry_run with overrides {\"dry_run\": false}",
+        "Non-strict failure (already auto mode) does not produce apply_structural"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C29", "C30"],
+      "stories": ["S5", "S6"]
+    },
+    {
+      "id": "R6",
+      "title": "Bash tool: rerun and rerun_with_timeout follow-ups",
+      "spec": "BashTool SHALL override register_follow_ups. On any completed execution, it SHALL register: rerun (re-execute the same command) and rerun_with_timeout (re-execute with a longer timeout, overriding timeout_ms to 2x the original). Both expire with ExpiryCondition::Never (commands can always be re-run).",
+      "acceptance": [
+        "Completed bash execution produces rerun and rerun_with_timeout follow-ups",
+        "rerun has empty overrides (same args as original)",
+        "rerun_with_timeout overrides timeout_ms to 2x the original value",
+        "Both use ExpiryCondition::Never"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/bash.rs"
+        ]
+      },
+      "checklist": ["C33"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Yggdrasil operation tracking for mutation tools",
+      "spec": "Mutation tools (edit, write, apply_patch) SHALL record their changes as Yggdrasil operations when libyggd is available. Each tool call that modifies files creates an operation entry via the libyggd operation log with: operation_id mapping to tool_call_id, files modified with before/after content hashes, timestamp, and agent identity from ToolContext. The operation_id is stored in BeforeContentSource::YggdrasilOp for the undo follow-up. When libyggd is not available (detected at ToolContext construction), skip operation recording and use StoredContent only.",
+      "acceptance": [
+        "When libyggd is available, successful mutation creates a Yggdrasil operation",
+        "Operation ID maps to the tool_call_id",
+        "Operation records before/after content hashes for modified files",
+        "Undo follow-up uses YggdrasilOp when operation was recorded",
+        "When libyggd is unavailable, undo follow-up uses StoredContent",
+        "No panic or error when libyggd is unavailable — graceful fallback"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/edit.rs",
+          "crates/norn/src/tools/write.rs",
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C40", "C41", "C42", "C43", "C44", "C45", "C51"],
+      "stories": ["S14", "S15"]
+    },
+    {
+      "id": "R8",
+      "title": "Follow-ups visible in tool results",
+      "spec": "All registered follow-ups SHALL appear in the tool result's follow_ups array via the model_facing_json serialization (wired by NTF-002's registry integration). The model sees action, description, and expires for each follow-up. The follow_ups key is present only when follow-ups were registered.",
+      "acceptance": [
+        "Successful edit result contains follow_ups array with undo entry",
+        "Strict-failed patch result contains follow_ups with apply_structural and apply_auto",
+        "Bash result contains follow_ups with rerun and rerun_with_timeout",
+        "Each follow_up entry has exactly action, description, expires keys"
+      ],
+      "files": {},
+      "checklist": ["C34"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R9",
+      "title": "Tests for undo and follow-up registration",
+      "spec": "Tests SHALL cover: (1) edit undo follow-up registered on commit, not on non-commit, (2) write undo follow-up with existing vs new file, (3) apply_patch all-or-nothing and per-file undo registration, (4) apply_patch strict failure produces apply_structural follow-up, (5) bash rerun follow-ups, (6) Yggdrasil operation recording when available, (7) graceful fallback to StoredContent when unavailable.",
+      "acceptance": [
+        "Test: edit commit produces undo, non-commit does not",
+        "Test: write overwrite stores original content, write create stores empty",
+        "Test: multi-file patch produces 1 + N undo follow-ups",
+        "Test: strict failure produces apply_structural",
+        "Test: bash produces rerun + rerun_with_timeout",
+        "Test: YggdrasilOp used when libyggd available",
+        "Test: StoredContent used when libyggd unavailable",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/edit.rs",
+          "crates/norn/src/tools/write.rs",
+          "crates/norn/src/tools/patch_apply.rs",
+          "crates/norn/src/tools/bash.rs"
+        ]
+      },
+      "checklist": ["C13", "C14", "C15", "C16", "C29", "C30", "C31", "C33", "C40", "C45"],
+      "stories": ["S4", "S5", "S12", "S14", "S15"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the follow_up tool itself — that is NTF-003",
+    "SHALL NOT implement action log storage or queries — that is NTA-001/NTA-002/NTA-004",
+    "SHALL NOT implement the tool_follow_ups! macro — that is NTM-004",
+    "SHALL NOT modify the Tool trait or lifecycle dispatch — that is NTF-002",
+    "SHALL NOT implement search or read tool follow-ups — D7 lists them as possibilities but they are not in scope for this brief"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "cargo fmt -p norn -- --check produces no diff",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'todo!\\|unimplemented!\\|FIXME\\|HACK\\|TODO' crates/norn/src/tools/edit.rs crates/norn/src/tools/write.rs crates/norn/src/tools/patch_apply.rs crates/norn/src/tools/bash.rs returns no matches",
+    "Every mutation tool (edit, write, apply_patch) registers at least an undo follow-up on successful commit"
+  ]
+}

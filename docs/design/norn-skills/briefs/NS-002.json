@@ -1,0 +1,74 @@
+{
+  "id": "NS-002",
+  "cluster": "norn-skills",
+  "title": "Skill catalog, system prompt listing, and diagnostics",
+  "depends_on": ["NS-001"],
+  "blocked_by": [],
+  "checklist": ["C22", "C23", "C24", "C25", "C26", "C27", "C63"],
+  "stories": ["S1", "S18", "S19"],
+  "purpose": "The model needs to know what skills exist before it can invoke them. The SkillCatalog scans 7-tier search directories, holds parsed metadata, produces a formatted listing with behavioral instructions for system prompt injection, and collects diagnostics for shadowed skills and non-conformant metadata.",
+  "task": "Create skill/catalog.rs with a SkillCatalog that scans ordered search directories, stores SkillMetadata per skill, produces a listing with when_to_use appended, and tracks diagnostics. First-match-wins on name collision with diagnostic for shadowed skills.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "SkillCatalog struct",
+      "spec": "skill/catalog.rs SHALL define a SkillCatalog struct with scan(), list(), get(), system_prompt_listing(), and is_empty() methods. The catalog SHALL be Send + Sync.",
+      "acceptance": [
+        "SkillCatalog has scan(dirs: &[PathBuf]) constructor",
+        "list() returns Vec<(String, String)> of (name, description) pairs",
+        "get(name: &str) returns Option<&SkillMetadata>",
+        "system_prompt_listing() returns a String",
+        "is_empty() returns true when no skills were discovered",
+        "SkillCatalog is Send + Sync"
+      ],
+      "files": {
+        "create": ["crates/norn/src/skill/catalog.rs"],
+        "modify": ["crates/norn/src/skill/mod.rs"]
+      },
+      "checklist": ["C22"],
+      "stories": ["S19"]
+    },
+    {
+      "id": "R2",
+      "title": "Seven-tier directory scan with first-match-wins",
+      "spec": "WHEN scan() processes the ordered directory list, a skill name found in an earlier directory SHALL take precedence. The later entry SHALL be skipped and a diagnostic recorded noting the shadow.",
+      "acceptance": [
+        "Two directories both containing 'deploy': only the first is returned by get('deploy')",
+        "list() contains exactly one entry per unique skill name",
+        "A shadowed skill produces a diagnostic with the shadowing path"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/skill/catalog.rs"]
+      },
+      "checklist": ["C23", "C63"],
+      "stories": ["S17", "S18"]
+    },
+    {
+      "id": "R3",
+      "title": "Listing with when_to_use and behavioral instruction",
+      "spec": "system_prompt_listing() SHALL exclude skills where disable_model_invocation is true. For each included skill, description and when_to_use SHALL be concatenated. The listing SHALL include a behavioral instruction telling the model to call the skill tool when a task matches.",
+      "acceptance": [
+        "A skill with disable_model_invocation: true does not appear in the listing",
+        "A skill with when_to_use: 'Use when X' has description + when_to_use concatenated",
+        "The listing starts with '# Available Skills' and a behavioral instruction line",
+        "When no skills exist, system_prompt_listing() returns empty string"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/skill/catalog.rs"]
+      },
+      "checklist": ["C24", "C25", "C26", "C27"],
+      "stories": ["S1"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT wire the catalog into the ToolContext — that is NS-007",
+    "SHALL NOT implement slash command registration — that is NS-006",
+    "SHALL NOT implement template expansion — that is NS-003"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn -- skill::catalog passes all new tests",
+    "cargo clippy -p norn -- -D warnings clean",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

@@ -1,0 +1,98 @@
+{
+  "id": "N-013",
+  "cluster": "norn",
+  "title": "Implement WebSearch, WebFetch, and LSP tools",
+  "depends_on": ["N-006"],
+  "blocked_by": [],
+  "checklist": ["C46", "C47", "C48"],
+  "stories": ["S10", "S11"],
+  "purpose": "Implement web tools (OpenAI server-side search for Codex models, HTML-to-markdown fetch) and LSP tool (hover, definitions, references, diagnostics). Reference: crates/norn/reference/jcode/websearch.rs, webfetch.rs.",
+  "task": "Implement WebSearchTool that delegates to OpenAI server-side search when available and falls back to DuckDuckGo HTML scraping (from jcode reference). Implement WebFetchTool that fetches URLs and converts HTML to markdown. Implement LspTool providing hover, go-to-definition, find references, document symbols, and diagnostics. Testing: Layer 1 unit tests.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Implement WebSearch tool — OpenAI server-side",
+      "spec": "WebSearch tool SHALL support OpenAI server-side web search by including a web_search_preview tool in the provider request. The tool acts as a pass-through — the provider handles the actual search.",
+      "acceptance": [
+        "WebSearchTool implements Tool with name 'web_search', effect Network",
+        "Input schema: { query: String, num_results: Option<u32> }",
+        "When the provider supports server-side search, the tool registers web_search_preview in the tool definitions",
+        "Results are returned as the provider's search output"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/web.rs", "crates/norn/src/tools/mod.rs"] },
+      "checklist": ["C46"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Implement WebSearch tool — DuckDuckGo fallback",
+      "spec": "WHEN server-side search is unavailable, WebSearch SHALL fall back to DuckDuckGo HTML scraping. Pattern from reference/jcode/websearch.rs.",
+      "acceptance": [
+        "Fallback queries https://html.duckduckgo.com/html/?q=<query>",
+        "Parses result titles, URLs, and snippets from HTML",
+        "Returns formatted results as numbered list",
+        "Default num_results is 8, max 20"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/web.rs"] },
+      "checklist": ["C46"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Implement WebFetch tool",
+      "spec": "WebFetch tool SHALL fetch a URL and convert HTML content to markdown. Pattern from reference/jcode/webfetch.rs.",
+      "acceptance": [
+        "WebFetchTool implements Tool with name 'web_fetch', effect Network",
+        "Input schema: { url: String, format: Option<String>, timeout: Option<u64> }",
+        "Formats: 'markdown' (default), 'text', 'html'",
+        "HTML-to-markdown conversion handles headings, links, lists, code blocks",
+        "Max content size 5MB with streaming body read",
+        "Timeout default 30s, max 120s"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/web.rs"] },
+      "checklist": ["C47"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Implement LSP tool",
+      "spec": "LSP tool SHALL provide hover, go-to-definition, find references, document symbols, and diagnostics by delegating to an LSP client connection.",
+      "acceptance": [
+        "LspTool implements Tool with name 'lsp', effect ReadOnly",
+        "Input schema: { action: String, path: String, line: Option<u32>, column: Option<u32>, symbol: Option<String> }",
+        "Actions: 'hover', 'definition', 'references', 'symbols', 'diagnostics'",
+        "Each action returns structured output with file locations and content",
+        "Returns clear error when no LSP server is connected"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/lsp.rs", "crates/norn/src/tools/mod.rs"] },
+      "checklist": ["C48"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R5",
+      "title": "Add web and LSP dependencies",
+      "spec": "Cargo.toml SHALL add reqwest (if not already present), regex for HTML parsing, and any LSP client crate needed.",
+      "acceptance": [
+        "Cargo.toml includes reqwest with stream feature",
+        "Cargo.toml includes regex for HTML parsing",
+        "cargo check -p norn succeeds"
+      ],
+      "files": { "modify": ["crates/norn/Cargo.toml"] },
+      "checklist": ["C46"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement browser automation",
+    "SHALL NOT implement vector/semantic search",
+    "SHALL NOT implement LSP server management (starting/stopping servers) — only the client tool interface",
+    "SHALL NOT implement web scraping beyond HTML-to-markdown conversion"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — web and LSP tests pass",
+    "cargo clippy clean",
+    "WebFetch converts a sample HTML string to markdown correctly",
+    "LSP tool returns structured output for each action type"
+  ]
+}

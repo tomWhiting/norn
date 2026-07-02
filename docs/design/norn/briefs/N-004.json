@@ -1,0 +1,223 @@
+{
+  "id": "N-004",
+  "cluster": "norn",
+  "title": "Implement OpenAI Responses API provider",
+  "depends_on": ["N-002"],
+  "blocked_by": [],
+  "checklist": ["C8", "C9", "C10", "C11", "C12", "C13", "C14"],
+  "stories": ["S1", "S27"],
+  "purpose": "Implement the first real provider: OpenAI via the Responses API. This gives Norn a working LLM backend for the agent loop. The provider connects to POST /v1/responses with SSE streaming, parses server-sent events into the ProviderEvent stream defined in N-002, and handles tool calling, reasoning effort, server-side web search, model selection, authentication, and rate limiting. Provider instances are shared across agents (Arc) with an internal token-bucket rate limiter per D2.",
+  "task": "Implement OpenAiProvider in the provider/openai module. The provider converts ProviderRequest into an OpenAI Responses API JSON payload, POSTs it with Accept: text/event-stream, and parses the SSE byte stream into ProviderEvent values. The provider does NOT set response_format — schema enforcement is the agent loop's responsibility via a dynamic tool in the tools vec (D3). The provider owns an internal token-bucket rate limiter; agents acquire permits before HTTP requests, and 429 responses with Retry-After headers adjust the replenishment rate transparently. Reference material: crates/norn/reference/codex-rs/api-common.rs (ResponsesApiRequest, ResponseEvent, Reasoning), crates/norn/reference/codex-rs/sse-responses.rs (SSE event parsing, error classification). The provider/openai.rs scaffold file is replaced with a provider/openai/ directory module if needed to stay under the 500-line-per-file limit. Testing layers: Layer 1 unit tests for request serialization and SSE event parsing (no network); Layer 4 integration tests gated by OPENAI_TEST_KEY env var.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "OpenAiProvider struct and construction",
+      "spec": "The provider/openai module SHALL define an OpenAiProvider struct that implements the Provider trait from N-002. Construction SHALL accept a ProviderConfig and create an internal reqwest::Client. The provider SHALL be shareable as Arc<OpenAiProvider> and satisfy Send + Sync. The api_key SHALL be stored as SecretString (from N-002) and SHALL NOT appear in Debug output or logs.",
+      "acceptance": [
+        "OpenAiProvider struct exists in crates/norn/src/provider/openai/",
+        "OpenAiProvider::new(config: ProviderConfig) returns Result<Self, ProviderError>",
+        "OpenAiProvider implements Provider trait",
+        "Arc<OpenAiProvider> compiles — a compile-time assertion confirms",
+        "Debug impl for OpenAiProvider does not include the api_key value",
+        "reqwest::Client is constructed once during new() and reused across calls",
+        "Cargo.toml adds reqwest = { workspace = true } as a dependency"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/openai/mod.rs"
+        ],
+        "delete": [
+          "crates/norn/src/provider/openai.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/mod.rs",
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C8"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R2",
+      "title": "Request serialization",
+      "spec": "OpenAiProvider SHALL convert a ProviderRequest into the OpenAI Responses API JSON payload. Messages SHALL be serialized as the `input` array of ResponseInputItem objects. Tool definitions SHALL be serialized as the `tools` array of function objects. The `model` field SHALL be passed through from ProviderRequest. The `stream` field SHALL always be true. The payload SHALL NOT include a `response_format` or `text.format` field — schema enforcement is the agent loop's responsibility via tools, not the provider's.",
+      "acceptance": [
+        "An internal ResponsesApiPayload struct (or equivalent) is serialized to JSON matching the OpenAI Responses API shape",
+        "ProviderRequest.messages maps to input array: system message becomes `instructions` field, user/assistant/tool-result messages become ResponseInputItem objects",
+        "ProviderRequest.tools maps to tools array with type: function, name, description, parameters, strict: true",
+        "stream field is always true",
+        "No response_format field in the serialized JSON",
+        "No text.format field in the serialized JSON",
+        "A Layer 1 unit test serializes a ProviderRequest with 3 messages and 2 tools, asserts the JSON matches the expected shape, and asserts response_format is absent"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/openai/request.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/openai/mod.rs"
+        ]
+      },
+      "checklist": ["C8", "C10"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R3",
+      "title": "SSE stream connection and byte-level parsing",
+      "spec": "WHEN stream() is called, the provider SHALL POST the serialized request to {base_url}/v1/responses with headers Authorization: Bearer {api_key}, Content-Type: application/json, Accept: text/event-stream. The provider SHALL parse the response body as a server-sent event stream, splitting on double-newline boundaries and extracting event type and JSON data fields. Each SSE frame SHALL be deserialized into a typed intermediate event struct before mapping to ProviderEvent.",
+      "acceptance": [
+        "HTTP POST is sent to {base_url}/v1/responses (base_url defaults to https://api.openai.com)",
+        "Request headers include Authorization, Content-Type: application/json, Accept: text/event-stream",
+        "SSE frames are parsed from the byte stream: lines starting with 'event:' and 'data:' are extracted",
+        "Empty data lines and comment lines (starting with ':') are skipped",
+        "An intermediate SseEvent struct holds event_type (String) and data (serde_json::Value)",
+        "A Layer 1 unit test parses a multi-frame SSE byte string (text delta + tool call delta + completed) into the correct sequence of SseEvent values"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/openai/sse.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/openai/mod.rs"
+        ]
+      },
+      "checklist": ["C9"],
+      "stories": ["S27"]
+    },
+    {
+      "id": "R4",
+      "title": "SSE event mapping to ProviderEvent",
+      "spec": "Each parsed SSE event SHALL be mapped to a ProviderEvent. response.output_text.delta maps to TextDelta. response.reasoning_summary_text.delta and response.reasoning_text.delta map to ThinkingDelta. response.function_call_arguments.delta maps to ToolCallDelta with the incremental argument fragment. response.output_item.done with function_call type SHALL NOT re-emit the full arguments — it SHALL emit a ToolCallDelta with an empty arguments_delta to signal completion of the tool call, preventing double-counting when the consumer concatenates deltas. response.completed maps to Done with Usage extracted from the usage object. response.failed and response.incomplete map to Error. Unrecognized event types SHALL be logged and skipped, not treated as errors.",
+      "acceptance": [
+        "response.output_text.delta SSE event produces ProviderEvent::TextDelta",
+        "response.reasoning_summary_text.delta SSE event produces ProviderEvent::ThinkingDelta",
+        "response.reasoning_text.delta SSE event produces ProviderEvent::ThinkingDelta",
+        "response.function_call_arguments.delta SSE event produces ProviderEvent::ToolCallDelta with the incremental argument fragment",
+        "response.output_item.done with function_call type SHALL NOT re-emit the full arguments that were already streamed via delta events — it emits a ToolCallDelta with empty arguments_delta to signal tool call completion",
+        "A Layer 1 unit test simulates a tool call sequence (3 argument deltas followed by output_item.done), concatenates all arguments_delta values, and asserts the result equals the complete arguments without duplication",
+        "response.completed SSE event produces ProviderEvent::Done with StopReason and Usage populated from the response JSON",
+        "response.failed SSE event produces ProviderEvent::Error with a descriptive ProviderError",
+        "response.incomplete SSE event produces ProviderEvent::Error with the incomplete reason",
+        "Unrecognized event types are logged at debug level and produce no ProviderEvent",
+        "A Layer 1 unit test maps 8 different SSE event types and asserts each produces the correct ProviderEvent variant"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/provider/openai/sse.rs"
+        ]
+      },
+      "checklist": ["C9", "C10", "C11"],
+      "stories": ["S27"]
+    },
+    {
+      "id": "R5",
+      "title": "Reasoning effort and model selection",
+      "spec": "WHEN ProviderRequest.reasoning_effort is Some, the serialized request SHALL include a reasoning object with the effort field mapped to the OpenAI API values (low, medium, high). The model field from ProviderRequest SHALL be passed directly to the API without validation — the provider does not maintain an allowlist of models.",
+      "acceptance": [
+        "ProviderRequest with reasoning_effort: Some(High) produces JSON with reasoning: { effort: \"high\" }",
+        "ProviderRequest with reasoning_effort: None produces JSON with no reasoning field",
+        "ProviderRequest.model is passed directly as the model field in the API request",
+        "No model name validation or allowlist in the provider",
+        "A Layer 1 unit test asserts reasoning field serialization for each ReasoningEffort variant and for None"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/provider/openai/request.rs"
+        ]
+      },
+      "checklist": ["C12", "C14"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Server-side web search tool spec",
+      "spec": "WHEN a ToolDefinition in the ProviderRequest has the reserved name 'web_search_preview', the OpenAI provider SHALL serialize it as a server-side web search tool spec with type: web_search_preview, not as a function definition. ToolDefinition is generic (name, description, parameters per N-002) — the provider applies provider-specific serialization based on the tool name. Domain filtering and user location fields SHALL be passed through from the ToolDefinition's parameters JSON if present.",
+      "acceptance": [
+        "A ToolDefinition with name 'web_search_preview' serializes as { type: \"web_search_preview\" } in the tools array, not as a function",
+        "No type field is required on ToolDefinition — the OpenAI provider identifies server-side tools by reserved name",
+        "Optional domain filtering fields (allowed_domains, blocked_domains) from the ToolDefinition.parameters JSON are included in the serialized tool spec",
+        "Optional user_location fields (type, city, region, country) from ToolDefinition.parameters JSON are included",
+        "Regular function ToolDefinitions in the same request serialize normally as function tools",
+        "A Layer 1 unit test serializes a request with one web_search_preview tool and one function tool, asserts the tools array has both with correct types"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/openai/tools.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/openai/mod.rs",
+          "crates/norn/src/provider/openai/request.rs"
+        ]
+      },
+      "checklist": ["C13"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Token-bucket rate limiter with Retry-After handling",
+      "spec": "OpenAiProvider SHALL own an internal token-bucket rate limiter. WHEN stream() is called, the provider SHALL acquire a permit before sending the HTTP request; if no permit is available, the call SHALL await asynchronously until a permit is replenished. WHEN the provider receives an HTTP 429 response, it SHALL read the Retry-After header, adjust the rate limiter's replenishment interval, and retry transparently up to max_retries from ProviderConfig. The caller sees a delayed response, not a rate limit error, unless retries are exhausted.",
+      "acceptance": [
+        "A RateLimiter struct is defined with configurable permits_per_interval and interval_duration",
+        "RateLimiter::acquire() is async and returns when a permit is available",
+        "RateLimiter::adjust_interval(duration: Duration) updates the replenishment rate",
+        "On HTTP 429 with Retry-After header, the provider calls adjust_interval and retries after the specified delay",
+        "On HTTP 429 without Retry-After header, the provider retries after a default backoff (1 second)",
+        "Retries are capped at max_retries from ProviderConfig; exhaustion returns ProviderError::RateLimited",
+        "A Layer 1 unit test creates a RateLimiter with 1 permit per 100ms, acquires 3 permits, verifies the third blocks until replenishment",
+        "RateLimiter is Send + Sync"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/openai/rate_limiter.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/openai/mod.rs"
+        ]
+      },
+      "checklist": ["C8"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "HTTP error handling and Layer 4 integration test",
+      "spec": "The provider SHALL handle non-2xx HTTP responses by mapping status codes to ProviderError variants: 401 to AuthenticationFailed, 429 to rate limiter retry path (R7), 500+ to StreamError with the response body. Connection timeouts SHALL use the timeout from ProviderConfig. A Layer 4 integration test SHALL exercise the full provider against the real OpenAI API, gated by the OPENAI_TEST_KEY environment variable.",
+      "acceptance": [
+        "HTTP 401 produces ProviderError::AuthenticationFailed",
+        "HTTP 429 triggers the retry path from R7",
+        "HTTP 500 produces ProviderError::StreamError with the response body text",
+        "Connection timeout uses ProviderConfig.timeout and produces ProviderError::ConnectionFailed",
+        "A Layer 4 integration test exists that: reads OPENAI_TEST_KEY from env, if absent emits tracing::info!(\"OPENAI_TEST_KEY not set, skipping\") and returns Ok(()), if present sends a simple prompt and asserts at least one TextDelta and one Done event are received",
+        "The integration test does NOT use #[ignore] or feature gates",
+        "The integration test uses a cheap model (gpt-4.1-mini or similar) to minimize cost"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/provider/openai/mod.rs"
+        ]
+      },
+      "checklist": ["C8", "C9", "C10"],
+      "stories": ["S1", "S27"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT set response_format or text.format on the API request — schema enforcement is the agent loop's responsibility via tools",
+    "SHALL NOT implement the agent loop — only the provider that the loop calls",
+    "SHALL NOT implement tool execution — only serialize tool definitions in the request and parse tool call events from the response",
+    "SHALL NOT implement WebSocket transport — HTTP SSE only in this brief",
+    "SHALL NOT validate model names — pass through to API",
+    "SHALL NOT add provider-specific types to the Provider trait or ProviderRequest — all OpenAI-specific types stay inside the openai module",
+    "SHALL NOT implement prompt caching control — defer to a future brief"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo test -p norn succeeds — all unit tests pass (SSE parsing, request serialization, rate limiter, error mapping)",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "grep -rn 'response_format' crates/norn/src/provider/openai/ returns no matches",
+    "grep -rn 'text.*format.*json_schema' crates/norn/src/provider/openai/ returns no matches",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/provider/openai/ returns no matches outside test code",
+    "grep -rn 'todo!\\|unimplemented!' crates/norn/src/provider/openai/ returns no matches",
+    "No file in crates/norn/src/provider/openai/ exceeds 500 lines of code (excluding tests, comments, whitespace)",
+    "Debug output of OpenAiProvider does not contain the API key string",
+    "The integration test skips gracefully when OPENAI_TEST_KEY is absent"
+  ]
+}

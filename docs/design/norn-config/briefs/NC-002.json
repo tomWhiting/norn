@@ -1,0 +1,146 @@
+{
+  "id": "NC-002",
+  "cluster": "norn-config",
+  "title": "Settings types and schema",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10"],
+  "stories": ["S4", "S6", "S7", "S8", "S18"],
+  "purpose": "Define the typed settings structs that represent the JSON settings schema. These types are the shared vocabulary that the loader (NC-003), merger (NC-003), builder integration (NC-004), and downstream consumers (NC-005) all reference. Landing the types first allows NC-003 to import them without a circular dependency.",
+  "task": "Create norn::config::types with NornSettings and all sub-structs: ProviderSettings, AgentSettings, RetrySettings, PermissionSettings, HookSettings, HookEntry, ToolSettings, WriteToolSettings, McpServerSettings, SkillsSettings, ContextSettings, SessionSettings. All structs derive Serialize, Deserialize, Debug, Default with all-None/empty defaults. Duration fields are Option<String> (parsed by humantime at validation time, not at deserialization time).",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "NornSettings top-level struct",
+      "spec": "NornSettings SHALL be the root settings type with optional fields for every configuration section: model, provider, agent, retry, permissions, hooks, tools, mcp_servers, skills, context, session, tui, env.",
+      "acceptance": [
+        "NornSettings defined in norn::config::types",
+        "model field is Option<String>",
+        "provider field is Option<ProviderSettings>",
+        "agent field is Option<AgentSettings>",
+        "retry field is Option<RetrySettings>",
+        "permissions field is Option<PermissionSettings>",
+        "hooks field is Option<HookSettings>",
+        "tools field is Option<ToolSettings>",
+        "mcp_servers field is Option<BTreeMap<String, McpServerSettings>>",
+        "skills field is Option<SkillsSettings>",
+        "context field is Option<ContextSettings>",
+        "session field is Option<SessionSettings>",
+        "tui field is Option<serde_json::Value> (opaque, reserved for TUI cluster)",
+        "env field is Option<BTreeMap<String, String>>",
+        "Derives Serialize, Deserialize, Debug, Default, Clone",
+        "Default yields all-None/empty fields"
+      ],
+      "files": {
+        "create": ["crates/norn/src/config/types.rs"],
+        "modify": ["crates/norn/src/config/mod.rs"]
+      },
+      "checklist": ["C1", "C10"],
+      "stories": ["S18"]
+    },
+    {
+      "id": "R2",
+      "title": "ProviderSettings struct",
+      "spec": "ProviderSettings SHALL hold provider configuration: base_url, timeout, max_retries, options, auth mode, rate_limit, runner_path, debug_dump_dir.",
+      "acceptance": [
+        "ProviderSettings defined in norn::config::types",
+        "base_url is Option<String>",
+        "timeout is Option<String> (humantime duration string)",
+        "max_retries is Option<u32>",
+        "options is Option<serde_json::Value>",
+        "auth is Option<String>",
+        "rate_limit is Option<u32>",
+        "runner_path is Option<String>",
+        "debug_dump_dir is Option<String>",
+        "Derives Serialize, Deserialize, Debug, Default, Clone"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/types.rs"]
+      },
+      "checklist": ["C2"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R3",
+      "title": "AgentSettings and RetrySettings structs",
+      "spec": "AgentSettings SHALL hold agent loop configuration. RetrySettings SHALL hold retry policy configuration. Both use Option<String> for duration fields.",
+      "acceptance": [
+        "AgentSettings defined with fields: max_turns (Option<u32>), step_timeout (Option<String>), schema_budget (Option<u32>), context_window (Option<u64>), compact_threshold (Option<f64>), compact_keep_turns (Option<usize>), reasoning_effort (Option<String>), reasoning_summary (Option<String>), prompt_command_timeout (Option<String>)",
+        "RetrySettings defined with fields: max_retries (Option<u32>), base_delay (Option<String>), backoff_multiplier (Option<f64>)",
+        "Both derive Serialize, Deserialize, Debug, Default, Clone"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/types.rs"]
+      },
+      "checklist": ["C3", "C4"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R4",
+      "title": "PermissionSettings struct",
+      "spec": "PermissionSettings SHALL hold consent-boundary permission rules with allow, deny, and ask arrays.",
+      "acceptance": [
+        "PermissionSettings defined with fields: allow (Option<Vec<String>>), deny (Option<Vec<String>>), ask (Option<Vec<String>>)",
+        "Derives Serialize, Deserialize, Debug, Default, Clone",
+        "Default yields all-None fields (no default allow/deny rules)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/types.rs"]
+      },
+      "checklist": ["C5"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R5",
+      "title": "HookSettings and HookEntry structs",
+      "spec": "HookSettings SHALL have one field per HookRegistry trait. HookEntry SHALL describe a single hook command with optional matcher and timeout.",
+      "acceptance": [
+        "HookSettings defined with fields: pre_tool (Option<Vec<HookEntry>>), post_tool (Option<Vec<HookEntry>>), pre_llm (Option<Vec<HookEntry>>), post_llm (Option<Vec<HookEntry>>), session_event (Option<Vec<HookEntry>>)",
+        "HookEntry defined with fields: matcher (Option<String>), command (String), timeout (Option<u64>)",
+        "Both derive Serialize, Deserialize, Debug, Default, Clone",
+        "HookEntry command is required (not Option) — a hook without a command is invalid"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/types.rs"]
+      },
+      "checklist": ["C6", "C7"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R6",
+      "title": "ToolSettings, MCP, Skills, Context, Session structs",
+      "spec": "ToolSettings SHALL use namespaced sub-objects for per-tool config. Remaining settings structs SHALL hold their respective configuration fields.",
+      "acceptance": [
+        "ToolSettings defined with fields: write (Option<WriteToolSettings>), bash (Option<serde_json::Value>), edit (Option<serde_json::Value>)",
+        "WriteToolSettings defined with fields: max_code_lines (Option<usize>), length_overrides (Option<Vec<LengthOverrideEntry>>)",
+        "LengthOverrideEntry defined with fields: pattern (String), limit (usize)",
+        "McpServerSettings defined with fields: transport (Option<String>), command (Option<String>), args (Option<Vec<String>>), url (Option<String>), env (Option<BTreeMap<String, String>>), headers (Option<BTreeMap<String, String>>)",
+        "SkillsSettings defined with fields: search_paths (Option<Vec<String>>)",
+        "ContextSettings defined with fields: search_paths (Option<Vec<String>>)",
+        "SessionSettings defined with fields: cleanup_days (Option<u32>), history_capacity (Option<usize>)",
+        "All derive Serialize, Deserialize, Debug, Default, Clone"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/types.rs"]
+      },
+      "checklist": ["C8", "C9"],
+      "stories": ["S4"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement loading or parsing logic — that is NC-003",
+    "SHALL NOT implement merge logic — that is NC-003",
+    "SHALL NOT modify builder.rs — that is NC-004",
+    "SHALL NOT add validation logic — that is NC-003",
+    "SHALL NOT add Default implementations with filled-in values (Tom's NO ASSUMED DEFAULTS edict)"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "NornSettings::default() produces all-None/empty fields (verified by test)",
+    "NornSettings round-trips through serde_json (verified by test)",
+    "Partial JSON (only some fields set) deserialises without error (verified by test)",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

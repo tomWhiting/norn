@@ -1,0 +1,160 @@
+{
+  "id": "N-002",
+  "cluster": "norn",
+  "title": "Define Provider trait, ProviderEvent stream, and Usage tracking",
+  "depends_on": ["N-001"],
+  "blocked_by": [],
+  "checklist": ["C5", "C6", "C7"],
+  "stories": ["S1", "S27"],
+  "purpose": "Define the abstraction boundary between Norn and LLM providers. The Provider trait is the testability seam — everything above it (agent loop, tools, schema enforcement) can be tested with MockProvider without making real API calls. This brief establishes the trait, the streaming event types, and token usage tracking.",
+  "task": "Define the Provider trait in the provider module with a stream method that accepts a typed request and returns a boxed stream of ProviderEvents. Define ProviderEvent as an enum covering all streaming event types (text deltas, thinking deltas, tool call deltas, completion, errors). Define ProviderRequest to encapsulate messages, tools, and configuration. Define Usage to track token consumption. Define MockProvider as a test utility for Layer 2 testing. The trait must be object-safe (Arc<dyn Provider>) per D2's shared provider instance requirement. Reference material: crates/norn/reference/codex-rs/api-common.rs (ResponseEvent enum, ResponsesApiRequest). Testing layer: unit tests (Layer 1) for types, mock provider tests (Layer 2) for the trait contract.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define Provider trait",
+      "spec": "The provider module SHALL define a `Provider` trait with an async `stream` method that accepts `ProviderRequest` and returns a boxed stream of `Result<ProviderEvent, ProviderError>`. The trait SHALL be object-safe, Send, and Sync so that provider instances can be shared as `Arc<dyn Provider>` across agents.",
+      "acceptance": [
+        "Provider trait is defined in crates/norn/src/provider/",
+        "Provider trait has a `stream` method returning `Pin<Box<dyn Stream<Item = Result<ProviderEvent, ProviderError>> + Send>>`",
+        "Provider trait requires Send + Sync",
+        "`Arc<dyn Provider>` compiles without error",
+        "Provider trait is re-exported from the provider module's public API"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/traits.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/mod.rs"
+        ]
+      },
+      "checklist": ["C5"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R2",
+      "title": "Define ProviderRequest",
+      "spec": "ProviderRequest SHALL encapsulate all inputs to a provider call: messages (conversation history), tool definitions, model identifier, reasoning effort, and provider-specific configuration. ProviderRequest SHALL NOT contain provider-specific types — it is the normalized input that all providers accept.",
+      "acceptance": [
+        "ProviderRequest struct has fields: messages (Vec<Message>), tools (Vec<ToolDefinition>), model (String), reasoning_effort (Option<ReasoningEffort>), config (ProviderConfig). No output_schema field — the schema tool is registered in the tools vec by the agent loop, not the provider",
+        "Message enum has variants for system, user, assistant (with optional tool calls), and tool result messages",
+        "ToolDefinition struct has name, description, and parameters (JSON Schema as Value)",
+        "ReasoningEffort enum has Low, Medium, High variants",
+        "All types derive Clone, Debug, Serialize, Deserialize",
+        "No provider-specific types (no OpenAI types, no Claude types) in ProviderRequest",
+        "No output_schema field on ProviderRequest — schema enforcement is the agent loop's responsibility via the tools vec"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/request.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/mod.rs"
+        ]
+      },
+      "checklist": ["C5"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R3",
+      "title": "Define ProviderEvent enum",
+      "spec": "ProviderEvent SHALL be an enum covering all streaming events from a provider response. The enum SHALL distinguish between text content, thinking/reasoning content, tool call construction, completion signals, and errors. Each variant SHALL carry only the delta or signal — not accumulated state.",
+      "acceptance": [
+        "ProviderEvent has variants: TextDelta { text: String }, ThinkingDelta { text: String }, ToolCallDelta { id: String, name: Option<String>, arguments_delta: String }, Done { stop_reason: StopReason, usage: Usage }, Error { error: ProviderError }",
+        "StopReason enum has variants: EndTurn, ToolUse, MaxTokens, ContentFilter",
+        "All variants carry delta data only, not accumulated state",
+        "All types derive Clone, Debug"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/events.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/mod.rs"
+        ]
+      },
+      "checklist": ["C6"],
+      "stories": ["S27"]
+    },
+    {
+      "id": "R4",
+      "title": "Define Usage tracking",
+      "spec": "A Usage struct SHALL track token consumption per provider call: input tokens, output tokens, cache read tokens, cache write tokens, and estimated cost. Usage SHALL be returned as part of the Done event.",
+      "acceptance": [
+        "Usage struct has fields: input_tokens (u64), output_tokens (u64), cache_read_tokens (u64), cache_write_tokens (u64), cost_usd (Option<f64>)",
+        "Usage implements Default (all zeros)",
+        "Usage implements Add so that multiple calls can be accumulated",
+        "Usage derives Clone, Debug, Serialize, Deserialize"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/usage.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/mod.rs"
+        ]
+      },
+      "checklist": ["C7"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Define ProviderConfig",
+      "spec": "ProviderConfig SHALL hold provider-level configuration that applies across calls: API key, base URL, timeout, rate limit configuration, and provider-specific options as a generic Value. ProviderConfig SHALL NOT be part of the Provider trait — it is construction-time configuration.",
+      "acceptance": [
+        "ProviderConfig struct has fields: api_key (SecretString), base_url (Option<String>), timeout (Duration), max_retries (u32), provider_options (Option<Value>)",
+        "SecretString is a newtype over String that displays '[REDACTED]' in Debug and Display — prevents credential exposure in logs",
+        "ProviderConfig derives Clone and implements Debug manually (or via SecretString's Debug) to redact api_key",
+        "ProviderConfig does not appear in the Provider trait's stream method signature"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/provider/request.rs"
+        ]
+      },
+      "checklist": ["C5"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Define MockProvider test utility",
+      "spec": "A MockProvider struct SHALL implement the Provider trait by returning pre-configured sequences of ProviderEvents. MockProvider SHALL support asserting on the number of calls made and optionally validating the ProviderRequest content sent on each call. MockProvider SHALL be available behind `#[cfg(test)]` or a `test-utils` feature flag.",
+      "acceptance": [
+        "MockProvider implements Provider trait",
+        "MockProvider::new accepts Vec<Vec<ProviderEvent>> (one response sequence per expected call)",
+        "MockProvider returns the next sequence on each call to stream()",
+        "MockProvider::call_count() returns the number of stream() invocations",
+        "MockProvider panics with a clear message if stream() is called more times than sequences provided",
+        "MockProvider is gated behind #[cfg(any(test, feature = \"test-utils\"))]",
+        "A unit test demonstrates MockProvider: configure two responses, call stream() twice, assert call_count is 2"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/provider/mock.rs"
+        ],
+        "modify": [
+          "crates/norn/src/provider/mod.rs",
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C5"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the OpenAI provider — only the trait and mock (OpenAI provider is a separate brief)",
+    "SHALL NOT implement rate limiting — max_retries in ProviderConfig covers retry policy. Token-bucket rate limiter configuration (permits per minute, bucket size) is deferred to the OpenAI provider brief (N-004) where it is implemented",
+    "SHALL NOT define tool execution types — only ToolDefinition (name, description, parameters schema) for passing tool specs to the provider",
+    "SHALL NOT define the agent loop — only the types the loop will consume",
+    "SHALL NOT add HTTP client dependencies (reqwest, etc.) — those belong to the OpenAI provider brief"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo test -p norn succeeds — MockProvider unit test passes",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "Arc<dyn Provider> compiles — add a compile-time assertion",
+    "No OpenAI-specific types in the provider module",
+    "No reqwest or HTTP client imports in the provider module",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/provider/ returns no matches outside test code"
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "id": "NR-002",
+  "cluster": "norn-runtime",
+  "title": "Norn session loop — async agent lifecycle",
+  "depends_on": ["NR-001"],
+  "blocked_by": [],
+  "checklist": ["C10", "C11", "C12", "C13", "C14", "C15", "C16", "C17"],
+  "stories": ["S1", "S3", "S4", "S20"],
+  "purpose": "Implement the async Norn session loop that replaces the blocking Claude Runner session loop for Norn-powered sessions. This is the core runtime integration — it builds a Norn Agent, runs it via tokio::spawn, translates events into AssistantEvent, and handles session commands through Norn's native mechanisms.",
+  "task": "Implement run_norn_session_loop in norn_session.rs and wire spawn_norn_loop in service.rs to call it. The loop multiplexes four event sources: Norn AgentEvent broadcast, SessionCommand mpsc, idle timeout, and agent completion. Commands are delivered via InboundChannel (SendMessage) and CancellationToken (Stop/Kill). The completion watcher emits lifecycle events on the global EventBus. This brief replaces the NR-001 stub.\n\nDependency setup: No new cargo dependencies. The norn crate is already a dependency of meridian-services (norn = { path = \"../norn\" }). All required tokio features (sync, time, rt-multi-thread) are already present.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "norn_session.rs module with run_norn_session_loop",
+      "spec": "The system SHALL define an async function run_norn_session_loop in assistant/norn_session.rs. It SHALL accept an AgentBuilder, session_id, broadcast::Sender<AssistantEvent>, mpsc::Receiver<SessionCommand>, and optional idle timeout Duration. It SHALL be spawned via tokio::spawn (not spawn_blocking).",
+      "acceptance": [
+        "norn_session.rs exists in crates/meridian-services/src/assistant/",
+        "run_norn_session_loop is async and accepts the specified parameters",
+        "mod.rs exports the new module",
+        "The function runs on the tokio async runtime, not a blocking thread"
+      ],
+      "files": {
+        "create": ["crates/meridian-services/src/assistant/norn_session.rs"],
+        "modify": ["crates/meridian-services/src/assistant/mod.rs"]
+      },
+      "checklist": ["C10"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R2",
+      "title": "AgentBuilder construction with InboundChannel",
+      "spec": "WHEN spawn_norn_loop is called, THE SYSTEM SHALL build an AgentBuilder with: provider (from build_norn_provider or TokenPool-sourced auth), session EventStore (from NR-004), AgentEventSender for event streaming, CancellationToken for shutdown, the resolved Profile, and an InboundChannel for mid-session message delivery. The InboundSender half of the channel SHALL be stored on the SessionHandle so the session loop can receive messages. THE SYSTEM SHALL call Agent::run_with(prompt) where prompt is the initial_message from SessionConfig.",
+      "acceptance": [
+        "AgentBuilder is constructed with provider, event sender, cancellation token, profile, and InboundChannel",
+        "InboundSender is stored on SessionHandle for later SendMessage delivery",
+        "Agent::run_with is called with the initial_message text",
+        "The agent runs as an async task within the norn session loop",
+        "InboundChannel is created by the server (not inherited from sub-agent machinery)"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/service.rs"]
+      },
+      "checklist": ["C6"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Event multiplexing select loop",
+      "spec": "The norn session loop SHALL use tokio::select! to multiplex: (a) AgentEvent from broadcast::Receiver — translated via NornTranslateState and forwarded to the session broadcast, (b) SessionCommand from mpsc::Receiver — dispatched to InboundChannel or CancellationToken, (c) idle timeout — fires after configured duration with no activity, (d) agent join handle — resolves when the Norn agent completes.",
+      "acceptance": [
+        "tokio::select! multiplexes all four sources",
+        "AgentEvent events are translated and forwarded to broadcast::Sender<AssistantEvent>",
+        "SessionCommand messages dispatch correctly",
+        "Idle timeout branch stops the session",
+        "Agent completion branch exits the loop"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_session.rs"]
+      },
+      "checklist": ["C11"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "SendMessage bridge to InboundChannel with DeliveryMode",
+      "spec": "WHEN SessionCommand::SendMessage(text) is received, THE SYSTEM SHALL construct a ChannelMessage from the text, send it via InboundSender with DeliveryMode::Steer (injected at next tool boundary, interrupts current work), AND emit AssistantEvent::UserMessage on the session broadcast. DMs use DeliveryMode::Steer because they are intentional communication requiring attention. Notifications (if routed through a future path) SHOULD use DeliveryMode::FollowUp (surfaces only if agent would otherwise stop).",
+      "acceptance": [
+        "SendMessage constructs a ChannelMessage with the text content",
+        "ChannelMessage is sent via InboundSender (the sender half stored on SessionHandle)",
+        "DeliveryMode::Steer is used for DM-originated messages",
+        "AssistantEvent::UserMessage is emitted with the text on the session broadcast",
+        "Idle timeout timer is reset on SendMessage",
+        "If InboundSender is closed (agent completed), SendMessage returns an error instead of silently dropping"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_session.rs"]
+      },
+      "checklist": ["C12"],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R5",
+      "title": "Stop and Kill via CancellationToken",
+      "spec": "WHEN SessionCommand::Stop is received, THE SYSTEM SHALL cancel the CancellationToken and drain remaining events until the agent completes. WHEN SessionCommand::Kill is received, THE SYSTEM SHALL cancel the CancellationToken and exit the loop immediately without draining.",
+      "acceptance": [
+        "Stop sets a stopping flag, cancels the token, and continues draining events",
+        "Kill cancels the token and breaks from the loop immediately",
+        "Both emit AssistantEvent::StatusChanged with SessionStatus::Stopping then Stopped"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_session.rs"]
+      },
+      "checklist": ["C13", "C14"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Idle timeout with had_activity gate",
+      "spec": "WHEN an idle timeout is configured AND the agent has completed at least one turn (had_activity is true), THE SYSTEM SHALL stop the session after the timeout duration elapses with no events. The timer SHALL reset on every AgentEvent and every SendMessage command. WHEN had_activity is false, the timeout SHALL NOT fire.",
+      "acceptance": [
+        "Idle timeout uses tokio::time::sleep, not crossbeam::after",
+        "Timer resets on AgentEvent receipt and SendMessage receipt",
+        "Timer does not fire before the first turn completes (had_activity gate)",
+        "Timeout causes session stop with SessionExitStatus::IdleTimeout equivalent"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_session.rs"]
+      },
+      "checklist": ["C15"],
+      "stories": ["S20"]
+    },
+    {
+      "id": "R7",
+      "title": "Session completion and status transitions",
+      "spec": "WHEN the Norn agent's run_with join handle resolves with Ok, THE SYSTEM SHALL emit StatusChanged(Stopped), mark the session as completed in the registry, emit ServiceEvent::SessionCompleted on the global EventBus, mark the agent session finished in PG, and release the member's wake claim. WHEN run_with returns Err (provider auth failure, permanent error), THE SYSTEM SHALL emit StatusChanged(Stopped) and ServiceEvent::SessionFailed with the error message. WHEN run_with panics, THE SYSTEM SHALL emit ServiceEvent::SessionFailed. All three paths SHALL release the member's wake claim.",
+      "acceptance": [
+        "Agent completion (Ok) emits StatusChanged(Stopped) + ServiceEvent::SessionCompleted",
+        "Agent error (Err) emits StatusChanged(Stopped) + ServiceEvent::SessionFailed with error message",
+        "Agent panic emits ServiceEvent::SessionFailed",
+        "All three paths (Ok, Err, panic) release wake claim by setting member activity to Available",
+        "All three paths mark the agent session finished in PG",
+        "SessionRegistry is updated via mark_completed in all cases"
+      ],
+      "files": {
+        "modify": [
+          "crates/meridian-services/src/assistant/norn_session.rs",
+          "crates/meridian-services/src/assistant/service.rs"
+        ]
+      },
+      "checklist": ["C16", "C17"],
+      "stories": []
+    }
+  ],
+  "dependency_setup": "No new cargo dependencies. The norn crate is already a dependency of meridian-services (norn = { path = \"../norn\" }). All required tokio features (sync, time, rt-multi-thread) are already present.",
+  "boundaries": [
+    "SHALL NOT implement event translation logic (NR-003 scope — this brief calls NornTranslateState but does not define it)",
+    "SHALL NOT implement session file management (NR-004 scope — this brief receives an EventStore but does not create it)",
+    "SHALL NOT implement namespace tools (NR-006 scope)",
+    "SHALL NOT modify the Claude Runner session loop (session_loop.rs)",
+    "SHALL NOT modify ws/assistant.rs, persistence.rs, or streaming.rs"
+  ],
+  "verification": [
+    "cargo check --workspace passes with norn dependency added to meridian-services Cargo.toml",
+    "spawn_norn_loop replaces the NR-001 stub and constructs a real Norn session",
+    "SessionCommand::SendMessage delivers text through the Norn path",
+    "SessionCommand::Stop and Kill trigger CancellationToken",
+    "Idle timeout fires after configured duration with had_activity gate",
+    "Completion watcher emits ServiceEvent::SessionCompleted"
+  ]
+}

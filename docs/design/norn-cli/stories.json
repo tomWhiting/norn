@@ -1,0 +1,283 @@
+{
+  "cluster": "norn-cli",
+  "personas": [
+    {
+      "name": "Developer",
+      "role": "Using Norn interactively from a terminal",
+      "stories": [
+        {
+          "id": "S1",
+          "text": "As a developer, I want to type `norn` and get an interactive REPL so that I can have a conversation with an agent without writing code."
+        },
+        {
+          "id": "S2",
+          "text": "As a developer, I want to see tool calls and their results streamed in real time so that I can follow what the agent is doing while it works."
+        },
+        {
+          "id": "S3",
+          "text": "As a developer, I want to type `/tools` to see what tools the agent has access to so that I know what capabilities are available in this session."
+        },
+        {
+          "id": "S4",
+          "text": "As a developer, I want to type `/model gpt-5.5` to switch models mid-session so that I can try a different model without restarting."
+        },
+        {
+          "id": "S5",
+          "text": "As a developer, I want multi-line input (Shift+Enter) so that I can write complex prompts without having to escape newlines."
+        },
+        {
+          "id": "S6",
+          "text": "As a developer, I want command history persisted across sessions so that I can recall previous prompts with the up arrow."
+        },
+        {
+          "id": "S7",
+          "text": "As a developer, I want tab completion for slash commands so that I can discover commands without memorising them."
+        },
+        {
+          "id": "S8",
+          "text": "As a developer, I want to press Ctrl+C to interrupt a long-running agent step so that I can cancel work that is going in the wrong direction."
+        }
+      ]
+    },
+    {
+      "name": "Developer",
+      "role": "Resuming and managing sessions",
+      "stories": [
+        {
+          "id": "S9",
+          "text": "As a developer, I want my conversation to be saved automatically so that I can resume it later without losing context."
+        },
+        {
+          "id": "S10",
+          "text": "As a developer, I want to type `norn --resume` to pick up my most recent session so that I can continue where I left off."
+        },
+        {
+          "id": "S11",
+          "text": "As a developer, I want to type `norn session list` to see my recent sessions so that I can find a specific conversation to resume."
+        },
+        {
+          "id": "S12",
+          "text": "As a developer, I want to fork a session so that I can explore a different direction without losing the original conversation."
+        },
+        {
+          "id": "S13",
+          "text": "As a developer, I want to name my sessions (`/name refactor-auth`) so that I can find them later by a meaningful label instead of a UUID."
+        },
+        {
+          "id": "S14",
+          "text": "As a developer, I want to export a session as markdown so that I can share it with colleagues or include it in documentation."
+        },
+        {
+          "id": "S15",
+          "text": "As a developer, I want to type `/compact` when context is getting large so that the conversation is summarised and I can continue without hitting token limits."
+        }
+      ]
+    },
+    {
+      "name": "Script Author",
+      "role": "Using Norn in shell pipelines and automation",
+      "stories": [
+        {
+          "id": "S16",
+          "text": "As a script author, I want to pipe data through Norn (`cat data.csv | norn -p 'Summarise this'`) so that I can use an agent as part of a Unix pipeline."
+        },
+        {
+          "id": "S17",
+          "text": "As a script author, I want to specify an output schema inline (`-s '{...}'`) so that the agent returns structured JSON I can parse with jq."
+        },
+        {
+          "id": "S18",
+          "text": "As a script author, I want `--output-format json` to produce a single JSON envelope so that I can programmatically consume the result including token usage and session metadata."
+        },
+        {
+          "id": "S19",
+          "text": "As a script author, I want `--output-format stream-json` to produce NDJSON events so that I can process tool calls and text deltas as they happen in a streaming pipeline."
+        },
+        {
+          "id": "S20",
+          "text": "As a script author, I want `-q` (quiet) to suppress all progress output on stderr so that my pipeline sees only the final result on stdout."
+        },
+        {
+          "id": "S21",
+          "text": "As a script author, I want exit codes to distinguish success (0), agent error (1), argument error (2), and auth error (3) so that my scripts can handle each case."
+        },
+        {
+          "id": "S22",
+          "text": "As a script author, I want Norn to auto-detect piped stdin and switch to print mode without requiring `-p` so that `echo 'prompt' | norn` works intuitively."
+        },
+        {
+          "id": "S23",
+          "text": "As a script author, I want to send slash commands in print mode (`norn -p '/compact' 'Now summarise'`) so that I can trigger runtime operations from scripts."
+        }
+      ]
+    },
+    {
+      "name": "Agent Operator",
+      "role": "Configuring agents for specific tasks",
+      "stories": [
+        {
+          "id": "S24",
+          "text": "As an agent operator, I want to load a profile (`--profile coding`) that bundles model, tools, system prompt, and capabilities so that I can switch between pre-configured agent roles."
+        },
+        {
+          "id": "S25",
+          "text": "As an agent operator, I want CLI flags to override profile values (`--model gpt-5.5 --profile coding`) so that I can make one-off adjustments without editing the profile file."
+        },
+        {
+          "id": "S26",
+          "text": "As an agent operator, I want to restrict tools via `--allowed-tools bash,read` so that the agent can only use the tools I specify."
+        },
+        {
+          "id": "S27",
+          "text": "As an agent operator, I want to block specific tools via `--disallowed-tools write,edit` so that the agent cannot modify files in a read-only analysis session."
+        },
+        {
+          "id": "S28",
+          "text": "As an agent operator, I want to set per-event output schemas via `--event-schema spoken_response=tts-schema.json` so that each event type conforms to its own contract."
+        },
+        {
+          "id": "S29",
+          "text": "As an agent operator, I want to set session variables (`--variables project=yggdrasil --variables env=staging`) so that the system prompt can reference {{project}} and {{env}} dynamically."
+        },
+        {
+          "id": "S30",
+          "text": "As an agent operator, I want to connect MCP extensions (`-e stdio://path/to/server`) so that the agent has access to external tool servers."
+        },
+        {
+          "id": "S31",
+          "text": "As an agent operator, I want to use `-c key=value` for runtime config overrides so that I can tune timeout, retry, compaction, and context window settings without editing files."
+        },
+        {
+          "id": "S32",
+          "text": "As an agent operator, I want to load rules from a YAML file (`--rules coding-rules.yaml`) so that the agent follows project-specific guidelines."
+        }
+      ]
+    },
+    {
+      "name": "Orchestrator Developer",
+      "role": "Integrating Norn into automated workflows",
+      "stories": [
+        {
+          "id": "S33",
+          "text": "As an orchestrator developer, I want to run Norn as an MCP server (`norn mcp serve`) so that other tools can call Norn's tools via the MCP protocol."
+        },
+        {
+          "id": "S34",
+          "text": "As an orchestrator developer, I want JSON output with usage metadata so that I can track token consumption across workflow steps."
+        },
+        {
+          "id": "S35",
+          "text": "As an orchestrator developer, I want to write the final output to a file (`-o result.json`) so that downstream workflow steps can read it without parsing stdout."
+        },
+        {
+          "id": "S36",
+          "text": "As an orchestrator developer, I want to use `--no-session` for ephemeral runs so that one-shot workflow steps don't pollute the session index."
+        },
+        {
+          "id": "S37",
+          "text": "As an orchestrator developer, I want `--provider claude-runner` to route through Claude Code so that I can use Norn's tool framework with Claude's model."
+        },
+        {
+          "id": "S38",
+          "text": "As an orchestrator developer, I want diagnostics included in the JSON output envelope so that I can programmatically inspect schema violations, tool failures, and policy violations."
+        }
+      ]
+    },
+    {
+      "name": "New User",
+      "role": "Setting up Norn for the first time",
+      "stories": [
+        {
+          "id": "S39",
+          "text": "As a new user, I want `norn auth login` to open a browser for OAuth so that I can authenticate without manually managing API keys."
+        },
+        {
+          "id": "S40",
+          "text": "As a new user, I want `norn auth status` to tell me whether I'm logged in and when my token expires so that I know if authentication is working."
+        },
+        {
+          "id": "S41",
+          "text": "As a new user, I want `norn doctor` to check my setup (auth, provider connectivity, permissions) so that I can diagnose problems before trying to use the agent."
+        },
+        {
+          "id": "S42",
+          "text": "As a new user, I want `norn completion zsh` to generate shell completions so that I can tab-complete commands and flags."
+        },
+        {
+          "id": "S43",
+          "text": "As a new user, I want clear error messages with remediation advice when something goes wrong so that I can fix the problem without reading source code."
+        }
+      ]
+    },
+    {
+      "name": "Developer",
+      "role": "Working with structured output",
+      "stories": [
+        {
+          "id": "S44",
+          "text": "As a developer, I want to specify an output schema from a file (`-s analysis-schema.json`) so that the agent returns data conforming to a pre-defined contract."
+        },
+        {
+          "id": "S45",
+          "text": "As a developer, I want to specify an output schema inline (`-s '{\"type\":\"object\",...}'`) so that I can define quick schemas without creating a file."
+        },
+        {
+          "id": "S46",
+          "text": "As a developer, I want to see schema validation feedback when the model produces invalid output so that I understand why a retry is happening."
+        },
+        {
+          "id": "S47",
+          "text": "As a developer, I want to type `/schema` to see the current output schema so that I can verify what contract the agent is working against."
+        },
+        {
+          "id": "S48",
+          "text": "As a developer, I want to change the output schema mid-session (`/schema '{...}'`) so that I can refine the contract without restarting."
+        }
+      ]
+    },
+    {
+      "name": "Developer",
+      "role": "Monitoring agent behaviour",
+      "stories": [
+        {
+          "id": "S49",
+          "text": "As a developer, I want to see token usage after each agent step so that I can monitor consumption and know when I'm approaching context limits."
+        },
+        {
+          "id": "S50",
+          "text": "As a developer, I want `/session` to show session info (turn count, cumulative tokens, model) so that I can assess the conversation state."
+        },
+        {
+          "id": "S51",
+          "text": "As a developer, I want thinking deltas rendered dimmed so that I can distinguish the model's reasoning from its actual output."
+        },
+        {
+          "id": "S52",
+          "text": "As a developer, I want long tool output truncated with head/tail display so that verbose results don't flood my terminal."
+        },
+        {
+          "id": "S53",
+          "text": "As a developer, I want auto-compaction to fire when context approaches the limit so that long sessions don't fail silently from token overflow."
+        }
+      ]
+    },
+    {
+      "name": "Script Author",
+      "role": "Configuring tool validation via profile",
+      "stories": [
+        {
+          "id": "S54",
+          "text": "As a script author, I want to set file-length thresholds in my profile's tool_config section so that agents working under this profile enforce my team's code standards."
+        },
+        {
+          "id": "S55",
+          "text": "As a script author, I want to override tool-level thresholds from the CLI with -c write.max_code_lines=N so that I can tune validation for a specific run without changing the profile."
+        },
+        {
+          "id": "S56",
+          "text": "As a script author, I want the CLI to wire the DiagnosticCollector into LoopContext automatically so that all tool-level violations are captured without explicit setup."
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,70 @@
+{
+  "id": "PW-001",
+  "cluster": "norn-provider-ws",
+  "title": "Extract HTTP transport from openai/mod.rs to openai/http.rs",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3"],
+  "stories": ["S9"],
+  "purpose": "Create structural symmetry for the dual-transport architecture by extracting the HTTP+SSE transport code into its own file. This is a pure refactor with zero behavioral change — it moves the SenderProvider struct and its execute() method from openai/mod.rs to openai/http.rs, establishing the pattern where each transport is a self-contained module alongside the shared OpenAI API code.",
+  "task": "Move the SenderProvider struct and its execute() method (~220 lines) from openai/mod.rs to a new openai/http.rs file. Update mod.rs to declare the new module and use its public interface. Verify that all existing tests pass unchanged — the extraction must be a pure refactor with identical behavior.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Create openai/http.rs with SenderProvider",
+      "spec": "The SenderProvider struct and its execute() method SHALL be defined in openai/http.rs. The struct SHALL be pub(super) so that mod.rs can construct it. The execute method signature SHALL remain unchanged.",
+      "acceptance": [
+        "SenderProvider struct defined in openai/http.rs",
+        "execute() method has identical signature to current mod.rs version",
+        "SenderProvider is pub(super), not pub"
+      ],
+      "files": {
+        "create": ["crates/norn/src/provider/openai/http.rs"]
+      },
+      "checklist": ["C1"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R2",
+      "title": "Update mod.rs module declarations",
+      "spec": "openai/mod.rs SHALL declare mod http and use SenderProvider from it in the Provider::stream() spawned task. The imports previously used by SenderProvider SHALL move to http.rs.",
+      "acceptance": [
+        "mod.rs contains pub(super) mod http or mod http declaration",
+        "Provider::stream() constructs SenderProvider using http::SenderProvider",
+        "No unused imports remain in mod.rs after extraction"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/mod.rs"]
+      },
+      "checklist": ["C2"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Behavioral parity verification",
+      "spec": "All existing tests in openai/mod.rs test modules SHALL pass unchanged after extraction. The ProviderEvent stream produced by the HTTP transport SHALL be identical to the pre-extraction behavior.",
+      "acceptance": [
+        "All tests in openai/mod.rs pass without modification",
+        "cargo test -p norn passes clean",
+        "No behavioral difference observable via DebugDumper output"
+      ],
+      "files": {
+        "modify": []
+      },
+      "checklist": ["C3"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT change any behavior — pure refactor only",
+    "SHALL NOT modify the Provider trait or any public API",
+    "SHALL NOT move test modules — tests stay in mod.rs",
+    "SHALL NOT add WebSocket code — that is PW-004+ scope"
+  ],
+  "verification": [
+    "cargo check --workspace passes",
+    "cargo test -p norn passes clean",
+    "SenderProvider no longer defined in openai/mod.rs (grep confirms)",
+    "openai/http.rs exists and contains SenderProvider + execute()"
+  ]
+}

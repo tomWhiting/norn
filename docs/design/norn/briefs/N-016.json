@@ -1,0 +1,211 @@
+{
+  "id": "N-016",
+  "cluster": "norn",
+  "title": "Integration — Claude Runner, MCP, Rhai builtins, hooks, extensions",
+  "depends_on": ["N-005", "N-006", "N-014", "N-015"],
+  "blocked_by": [],
+  "checklist": ["C64", "C80", "C81", "C82", "C83", "C84", "C85", "C86", "C87", "C88"],
+  "stories": ["S21", "S23", "S25", "S33", "S34", "S36", "S37", "S38", "S39", "S40"],
+  "purpose": "Wire Norn into the broader Meridian ecosystem. Claude Runner integration maps agent steps to Claude's legitimate subscription path. MCP client connects to external tool servers. MCP server exposes Norn tools to any MCP consumer. Rhai builtins expose agent operations for workflow scripting. Lifecycle hooks provide pre/post interception points. Extensions integrate via Meridian extension protocol. Session variables and diagnostics complete the integration surface.",
+  "task": "Implement the seven integration/ modules: claude.rs (Claude Runner integration producing StepOutcome), mcp_client.rs (connect to MCP servers, register tools dynamically), mcp_server.rs (expose Norn tools via MCP protocol), rhai.rs (Rhai host functions: blocking read_file/run_cmd + handle-returning spawn_agent/send_message), hooks.rs (lifecycle hooks for pre/post tool and LLM calls), variables.rs (session variables with shell execution), diagnostics.rs (diagnostic-grade reporting of tool failures and schema violations). Testing: Layer 1 unit tests, Layer 2 mock integration tests.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Claude Runner integration",
+      "spec": "Claude Runner integration SHALL route agent steps through the legitimate Claude subscription path (Claude Runner / Claude Code). It produces a StepOutcome containing serde_json::Value (pre-validated against the step's output schema).",
+      "acceptance": [
+        "ClaudeRunnerAdapter struct in crates/norn/src/integration/claude.rs",
+        "ClaudeRunnerAdapter implements Provider trait from N-002",
+        "Routes requests through Claude Runner binary via stdin/stdout JSON-RPC",
+        "StepOutcome struct: result (serde_json::Value), usage (Usage), stop_reason (StopReason)",
+        "StepOutcome.result is pre-validated by the schema mechanism from N-005",
+        "Configuration via ClaudeRunnerConfig: runner_path (PathBuf), model (String), max_tokens (Option<u32>)",
+        "Test: mock Claude Runner process, verify StepOutcome returned with correct fields"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/claude.rs", "crates/norn/src/integration/mod.rs"] },
+      "checklist": ["C80"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Norn-wrapped Claude Code mode",
+      "spec": "Norn-wrapped Claude Code SHALL launch Claude Code stripped to bare metal (no native tools, replaced system prompt), provide Norn tools via MCP, and capture events into Norn's session format. Claude Code retains its session history for legitimate resumption.",
+      "acceptance": [
+        "NornWrappedClaudeCode struct in crates/norn/src/integration/claude.rs",
+        "Launches Claude Code with --no-tools and --system-prompt flags",
+        "Starts Norn MCP server (R4) and passes its address to Claude Code",
+        "Captures Claude Code streaming events and maps them to Norn SessionEvents",
+        "Session ID linkage: Norn session references Claude Code session for resumption",
+        "Configuration: claude_code_path (PathBuf), norn_tools (Vec<String>), system_prompt (String)",
+        "Test: verify launch configuration includes MCP server address and stripped flags"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/claude.rs"] },
+      "checklist": ["C81"],
+      "stories": ["S36"]
+    },
+    {
+      "id": "R3",
+      "title": "MCP client for external tool servers",
+      "spec": "MCP client SHALL connect to external MCP tool servers, discover their tools, and register them dynamically in the ToolRegistry. Tools from MCP servers are called via the MCP protocol.",
+      "acceptance": [
+        "McpClient struct in crates/norn/src/integration/mcp_client.rs",
+        "connect(server_config) establishes connection (stdio or HTTP transport)",
+        "discover_tools() returns Vec<ToolDefinition> from the server",
+        "register_tools(registry) wraps discovered tools as McpProxyTool and registers them",
+        "McpProxyTool implements Tool trait — execute() forwards the call via MCP and returns the result",
+        "McpProxyTool.effect() returns Network (all MCP calls are network)",
+        "McpServerConfig struct: name (String), transport (McpTransport), env (HashMap<String, String>)",
+        "McpTransport enum: Stdio { command: String, args: Vec<String> }, Http { url: String }",
+        "Test: mock MCP server, connect, discover tools, verify they appear in registry"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/mcp_client.rs", "crates/norn/src/integration/mod.rs"] },
+      "checklist": ["C82"],
+      "stories": ["S34"]
+    },
+    {
+      "id": "R4",
+      "title": "MCP server exposing Norn tools",
+      "spec": "MCP server SHALL expose all registered Norn tools via the standard MCP protocol so that external agents (including Claude Code) can call them.",
+      "acceptance": [
+        "McpServer struct in crates/norn/src/integration/mcp_server.rs",
+        "McpServer::new(registry, config) creates server with reference to ToolRegistry",
+        "Implements tools/list returning all registered tool definitions",
+        "Implements tools/call dispatching through the full Tool lifecycle (pre-validate, execute, post-validate, on-success)",
+        "Supports stdio transport for local integration",
+        "McpServerConfig struct: transport (McpTransport), server_name (String), server_version (String)",
+        "Test: start server, call tools/list, verify all registered tools returned"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/mcp_server.rs", "crates/norn/src/integration/mod.rs"] },
+      "checklist": ["C83"],
+      "stories": ["S33"]
+    },
+    {
+      "id": "R5",
+      "title": "Rhai builtins for agent operations",
+      "spec": "Rhai builtins SHALL expose agent operations for workflow scripting. Host functions split into blocking (read_file, run_cmd, parse_json, to_json, write_json) and handle-returning (spawn_agent, send_message, wait_agent) categories per grilling refinement.",
+      "acceptance": [
+        "register_norn_builtins(engine, context) registers all host functions on a Rhai Engine",
+        "Blocking functions: read_file(path) -> String, run_cmd(cmd) -> String, read_json(path) -> Dynamic, parse_json(s) -> Dynamic, to_json(val) -> String, write_json(path, val)",
+        "Handle-returning functions: spawn_agent(config) -> AgentHandle, send_message(to, content) -> (), wait_agent(handle) -> Dynamic, fork_agent(config) -> Dynamic",
+        "AgentHandle is an opaque Rhai type wrapping a Uuid",
+        "All handle-returning functions access AgentRegistry and Mailbox via shared context",
+        "StepOutcome bridge: Rhai Dynamic values converted to serde_json::Value for validation",
+        "Test: register builtins, run Rhai script calling read_file on temp file, verify content"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/rhai.rs", "crates/norn/src/integration/mod.rs"] },
+      "checklist": ["C84"],
+      "stories": ["S21"]
+    },
+    {
+      "id": "R6",
+      "title": "Lifecycle hooks",
+      "spec": "Lifecycle hooks SHALL support pre/post interception points for tool calls, LLM calls, and session events. Hooks can observe, log, or modify behavior at these boundaries.",
+      "acceptance": [
+        "HookRegistry struct in crates/norn/src/integration/hooks.rs",
+        "Hook trait with variants: PreToolHook, PostToolHook, PreLlmHook, PostLlmHook, SessionEventHook",
+        "PreToolHook::before_tool(envelope, context) -> HookOutcome (Proceed or Block { reason })",
+        "PostToolHook::after_tool(envelope, output, context)",
+        "PreLlmHook::before_llm(request) -> HookOutcome",
+        "PostLlmHook::after_llm(events_summary)",
+        "SessionEventHook::on_event(event)",
+        "HookRegistry::register(hook) adds hooks by type",
+        "Hooks run in registration order; first Block wins for pre-hooks",
+        "Test: register pre-tool hook that blocks 'bash', verify bash tool execution blocked"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/hooks.rs", "crates/norn/src/integration/mod.rs"] },
+      "checklist": ["C88"],
+      "stories": ["S25"]
+    },
+    {
+      "id": "R7",
+      "title": "Extension system via Meridian extension protocol",
+      "spec": "Extensions SHALL integrate via the Meridian extension protocol: manifest-based registration, HTTP routes, shared runtimes across agents. Norn discovers extensions and registers their tools.",
+      "acceptance": [
+        "ExtensionManifest struct: name (String), version (String), tools (Vec<ExtToolDef>), transport (ExtTransport)",
+        "ExtToolDef struct: name (String), description (String), input_schema (Value)",
+        "ExtTransport enum: Http { base_url: String }, Stdio { command: String }",
+        "ExtensionRegistry struct in crates/norn/src/integration/mod.rs",
+        "ExtensionRegistry::load_manifest(path) parses extension manifest",
+        "ExtensionRegistry::connect(manifest) establishes connection and registers tools",
+        "Extension tools registered as ExtensionProxyTool implementing Tool trait",
+        "Extensions shared across agents via Arc<ExtensionRegistry>",
+        "Test: create mock extension manifest, load it, verify tools discoverable"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/mod.rs"] },
+      "checklist": ["C85"],
+      "stories": ["S37", "S38", "S39", "S40"]
+    },
+    {
+      "id": "R8",
+      "title": "Diagnostics integration",
+      "spec": "Diagnostics SHALL report tool failures, schema violations, and policy violations at compiler-grade quality. Diagnostic events integrate with Norn's session event model.",
+      "acceptance": [
+        "NornDiagnostic struct: severity (DiagnosticSeverity), code (String), message (String), source_tool (Option<String>), file_path (Option<String>), suggestion (Option<String>)",
+        "DiagnosticSeverity enum: Error, Warning, Info, Hint",
+        "DiagnosticCollector struct in crates/norn/src/integration/diagnostics.rs",
+        "DiagnosticCollector::report(diagnostic) appends to collection",
+        "DiagnosticCollector::drain() returns all accumulated diagnostics",
+        "Schema validation failures produce NornDiagnostic with code 'schema-violation'",
+        "Tool pre-validate Block produces NornDiagnostic with code 'tool-blocked'",
+        "Test: collect 3 diagnostics of different severities, drain, verify all returned with correct codes"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/diagnostics.rs", "crates/norn/src/integration/mod.rs"] },
+      "checklist": ["C86"],
+      "stories": []
+    },
+    {
+      "id": "R9",
+      "title": "Session variables with shell execution",
+      "spec": "Session variables SHALL be declarative and scriptable. Variables can have static values or be computed by shell commands at prompt construction time.",
+      "acceptance": [
+        "SessionVariable struct: name (String), source (VariableSource)",
+        "VariableSource enum: Static { value: String }, Shell { command: String, cache_ttl: Option<Duration> }, Computed { func: Box<dyn Fn() -> String + Send + Sync> }",
+        "VariableStore struct in crates/norn/src/integration/variables.rs",
+        "VariableStore::set(variable) registers a variable",
+        "VariableStore::resolve(name) returns the current value (executing shell if needed)",
+        "VariableStore::resolve_all() returns HashMap<String, String>",
+        "Shell variables cache results for cache_ttl duration",
+        "Built-in variables: session_id, working_dir, home_dir",
+        "String substitution: expand(template, variables) replaces {{var_name}} patterns",
+        "Test: set shell variable 'pwd' with command 'pwd', resolve, verify matches current dir"
+      ],
+      "files": { "modify": ["crates/norn/src/integration/variables.rs", "crates/norn/src/integration/mod.rs"] },
+      "checklist": ["C87"],
+      "stories": ["S23"]
+    },
+    {
+      "id": "R10",
+      "title": "Rules shell execution for dynamic content",
+      "spec": "Rules with a shell source SHALL execute a shell command at injection time and use the output as the rule content. This enables rules that include dynamic context (team status, task lists, file trees) computed fresh each time the rule fires.",
+      "acceptance": [
+        "Rule struct (from N-007) gains an optional shell_source field: Option<String>",
+        "When shell_source is set, the rule engine executes the command via tokio::process::Command",
+        "Command output replaces the rule's static content at injection time",
+        "Shell execution has a configurable timeout (default 5s) — timeout produces a diagnostic, not a panic",
+        "Non-zero exit code produces a diagnostic warning and uses the static content as fallback",
+        "Test: create rule with shell_source 'echo hello', fire it, verify injected content is 'hello'"
+      ],
+      "files": { "modify": ["crates/norn/src/rules/types.rs", "crates/norn/src/rules/engine.rs"] },
+      "checklist": ["C64"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement Claude Runner binary — only the adapter that calls it",
+    "SHALL NOT implement MCP protocol from scratch — use an existing MCP crate or define the JSON-RPC interface",
+    "SHALL NOT implement Rhai language features — only register host functions on the existing rhai crate's Engine",
+    "SHALL NOT implement diagnostic rendering/formatting — only data structures and collection",
+    "SHALL NOT embed QuickJS, Lua, or Deno — extensions are external processes per D12",
+    "SHALL NOT implement Meridian extension SDKs — only the Norn-side discovery and proxy",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all integration/ tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "No file over 500 lines of code (excluding tests, comments, whitespace)",
+    "integration/mod.rs contains only pub mod declarations and pub use re-exports",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/integration/ returns no matches outside test code",
+    "grep -rn 'todo!\\|unimplemented!' crates/norn/src/integration/ returns no matches"
+  ]
+}

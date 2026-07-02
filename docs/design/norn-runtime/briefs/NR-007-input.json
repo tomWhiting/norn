@@ -1,0 +1,281 @@
+{
+  "repo_root": "/Users/tom/Developer/ablative/meridian",
+  "brief_id": "NR-007",
+  "reviewers": [
+    "Waffles the Terrible"
+  ],
+  "base_ref": "main",
+  "placement": "local",
+  "isolation": "worktree",
+  "brief_document": {
+    "id": "NR-007",
+    "cluster": "norn-runtime",
+    "title": "Namespace tools \u2014 source, branch, and workflow",
+    "depends_on": [
+      "NR-006"
+    ],
+    "blocked_by": [],
+    "checklist": [
+      "C61",
+      "C62",
+      "C63",
+      "C64"
+    ],
+    "stories": [
+      "S9",
+      "S10",
+      "S11"
+    ],
+    "purpose": "Implement the remaining namespace tools beyond the critical messaging and member tools. These cover development operations (source control, branch management) and workflow dispatch with scheduler commands absorbed from the former admin tool. Together with NR-006, they complete the Meridian tool surface. The former admin tool was dissolved: workspace/profile ops \u2192 meridian_member, channel/search ops \u2192 meridian_messaging, scheduler \u2192 meridian_workflow. Project tool deferred. Command surfaces aligned with TA-006, TA-007, TA-008.",
+    "task": "Implement three namespace tools in crates/meridian-tools/src/: SourceTool (meridian_source, 25 commands), BranchTool (meridian_branch, 22 commands), WorkflowTool (meridian_workflow, 14 commands including scheduler commands absorbed from former admin). Each follows the namespace pattern from NR-006 with command discriminant. Register all tools via register_meridian_tools with profile gating.",
+    "requirements": [
+      {
+        "id": "R1",
+        "title": "SourceTool \u2014 meridian_source namespace",
+        "spec": "SourceTool SHALL implement norn::tool::Tool. The command enum and per-command parameter structs SHALL use #[derive(ToolArgs)] from norn-macros to generate input_schema. The tool SHALL use tool_follow_ups! to register output-to-follow-on mappings per tool-overview.md. 25 commands: status, file_statuses, branches, log, blame, diff_file, diff_summary, tree_show, tree_add, tree_remove, tree_merge, tree_restack, tree_graft, worktree_list, worktree_create, worktree_remove, stage, unstage, stage_all, discard, commit, push, pull, fetch, remotes. Source operations SHALL execute against the workspace working directory resolved from CallerContext.workspace_id. When the agent session is focused on a shared workspace, the working directory resolves to the virtiofs mount path for that workspace (see DESIGN.md D13 workspace focus). Aligned with TA-006.",
+        "acceptance": [
+          "SourceTool implements Tool with name() returning 'meridian_source'",
+          "Command enum and per-command parameter structs use #[derive(ToolArgs)]",
+          "tool_follow_ups! macro registers output-to-follow-on mappings per tool-overview.md",
+          "input_schema includes command enum with all 25 commands",
+          "status command returns working tree state",
+          "file_statuses command returns per-file change state",
+          "branches command lists branches",
+          "log command returns commit history with optional limit and ref spec",
+          "blame command returns line attribution for a file",
+          "diff_file command returns diff for a specific file",
+          "diff_summary command returns summary diff statistics",
+          "tree_show command displays the branch tree structure",
+          "tree_add command adds a branch to the tree",
+          "tree_remove command removes a branch from the tree",
+          "tree_merge command merges within the tree",
+          "tree_restack command rebases the tree",
+          "tree_graft command grafts branches in the tree",
+          "worktree_list command lists worktrees",
+          "worktree_create command creates a worktree",
+          "worktree_remove command removes a worktree",
+          "stage command stages specific file changes",
+          "unstage command unstages specific file changes",
+          "stage_all command stages all changes",
+          "discard command discards uncommitted changes",
+          "commit command commits staged changes with a message",
+          "push command pushes to remote",
+          "pull command pulls from remote",
+          "fetch command fetches from remote without merging",
+          "remotes command lists configured remotes",
+          "All results are structured JSON, not raw shell output",
+          "Service errors (git failure, workspace not found, etc.) return ToolOutput with is_error=true and human-readable error message"
+        ],
+        "files": {
+          "create": [
+            "crates/meridian-tools/src/source.rs"
+          ],
+          "modify": [
+            "crates/meridian-tools/src/mod.rs"
+          ]
+        },
+        "checklist": [
+          "C61"
+        ],
+        "stories": [
+          "S9"
+        ]
+      },
+      {
+        "id": "R2",
+        "title": "BranchTool \u2014 meridian_branch namespace",
+        "spec": "BranchTool SHALL implement norn::tool::Tool. The command enum and per-command parameter structs SHALL use #[derive(ToolArgs)] from norn-macros to generate input_schema. The tool SHALL use tool_follow_ups! to register output-to-follow-on mappings per tool-overview.md. 22 commands spanning branch lifecycle, stack operations, and PR management: branch_status, branch_submit, branch_land, branch_transition, branch_list, branch_show, branch_advance, stack_status, stack_submit, stack_sync, stack_land, stack_restack, pr_status, pr_create, pr_push, pr_sync, pr_approve, pr_request_changes, pr_comment, pr_merge, pr_close, pr_request_reviewers. Branch operations SHALL call the source control service layer for branch stack management. Aligned with TA-007.",
+        "acceptance": [
+          "BranchTool implements Tool with name() returning 'meridian_branch'",
+          "Command enum and per-command parameter structs use #[derive(ToolArgs)]",
+          "tool_follow_ups! macro registers output-to-follow-on mappings per tool-overview.md",
+          "input_schema includes command enum with all 22 commands",
+          "branch_status command returns branch lifecycle state",
+          "branch_submit command submits a single branch for review",
+          "branch_land command lands a single branch",
+          "branch_transition command changes the current branch",
+          "branch_list command lists branches with metadata",
+          "branch_show command shows branch details",
+          "branch_advance command advances a branch",
+          "stack_status command returns the full stack tree state",
+          "stack_submit command submits an entire stack",
+          "stack_sync command syncs the stack with main",
+          "stack_land command lands an entire stack",
+          "stack_restack command rebases the stack",
+          "pr_status command returns PR state",
+          "pr_create command creates a PR for a branch",
+          "pr_push command pushes to the PR branch",
+          "pr_sync command syncs a PR with main",
+          "pr_approve command approves a PR",
+          "pr_request_changes command requests changes on a PR",
+          "pr_comment command adds a comment to a PR",
+          "pr_merge command merges a PR",
+          "pr_close command closes a PR",
+          "pr_request_reviewers command requests reviewers for a PR",
+          "Service errors return ToolOutput with is_error=true and human-readable error message"
+        ],
+        "files": {
+          "create": [
+            "crates/meridian-tools/src/branch.rs"
+          ],
+          "modify": [
+            "crates/meridian-tools/src/mod.rs"
+          ]
+        },
+        "checklist": [
+          "C62"
+        ],
+        "stories": [
+          "S10"
+        ]
+      },
+      {
+        "id": "R3",
+        "title": "WorkflowTool \u2014 meridian_workflow namespace (with scheduler commands)",
+        "spec": "WorkflowTool SHALL implement norn::tool::Tool. The command enum and per-command parameter structs SHALL use #[derive(ToolArgs)] from norn-macros to generate input_schema. The tool SHALL use tool_follow_ups! to register output-to-follow-on mappings per tool-overview.md. 14 commands spanning workflow dispatch and scheduler management: workflow_list, workflow_show, workflow_run, workflow_status, workflow_history, workflow_cancel, scheduler_list, scheduler_create, scheduler_get, scheduler_update, scheduler_delete, scheduler_enable, scheduler_disable, scheduler_run. The scheduler commands are redistributed from the former meridian_admin tool. Workflow operations SHALL call the workflow service layer. Aligned with TA-008.",
+        "acceptance": [
+          "WorkflowTool implements Tool with name() returning 'meridian_workflow'",
+          "Command enum and per-command parameter structs use #[derive(ToolArgs)]",
+          "tool_follow_ups! macro registers output-to-follow-on mappings per tool-overview.md",
+          "input_schema includes command enum with all 14 commands",
+          "workflow_list command lists available workflows",
+          "workflow_show command shows workflow details and parameters",
+          "workflow_run command dispatches a workflow by name with parameters",
+          "workflow_status command returns execution status by ID",
+          "workflow_history command returns execution history",
+          "workflow_cancel command cancels a running execution",
+          "scheduler_list command lists configured scheduled tasks",
+          "scheduler_create command creates a new cron-scheduled task",
+          "scheduler_get command returns scheduler details by ID",
+          "scheduler_update command modifies a scheduler's configuration",
+          "scheduler_delete command removes a scheduler",
+          "scheduler_enable command enables a disabled scheduler",
+          "scheduler_disable command disables an active scheduler",
+          "scheduler_run command manually triggers a scheduled task",
+          "Scheduler commands scope to CallerContext.workspace_id",
+          "Service errors return ToolOutput with is_error=true and human-readable error message"
+        ],
+        "files": {
+          "create": [
+            "crates/meridian-tools/src/workflow.rs"
+          ],
+          "modify": [
+            "crates/meridian-tools/src/mod.rs"
+          ]
+        },
+        "checklist": [
+          "C63",
+          "C64"
+        ],
+        "stories": [
+          "S11"
+        ]
+      }
+    ],
+    "dependency_setup": "No new cargo dependencies. All required crates are established by NR-006's meridian-tools crate setup. The meridian-tools crate already depends on norn, norn-macros, serde, serde_json, thiserror, tracing, uuid, and tokio.",
+    "boundaries": [
+      "SHALL NOT implement project namespace tool (deferred \u2014 not set up yet)",
+      "SHALL NOT create a meridian_admin tool \u2014 former admin actions are redistributed to existing namespace tools per C65",
+      "SHALL NOT modify the messaging or member tools (NR-006 scope \u2014 admin actions redistributed there are NR-006 updates)",
+      "SHALL NOT bypass CallerContext authorization in any tool",
+      "SHALL NOT modify the norn crate"
+    ],
+    "verification": [
+      "All 3 namespace tools have valid input_schema with command enum",
+      "SourceTool has 25 commands, BranchTool has 22 commands, WorkflowTool has 14 commands",
+      "register_meridian_tools adds all enabled tools",
+      "Each tool's execute method returns structured JSON for all commands",
+      "cargo check --workspace passes",
+      "No meridian_admin or meridian_project tool exists"
+    ]
+  },
+  "resolved_context": {
+    "adrs": [],
+    "checklist": [
+      {
+        "id": "C61",
+        "text": "meridian_source tool implements 25 commands: status, file_statuses, branches, log, blame, diff_file, diff_summary, tree_show, tree_add, tree_remove, tree_merge, tree_restack, tree_graft, worktree_list, worktree_create, worktree_remove, stage, unstage, stage_all, discard, commit, push, pull, fetch, remotes (aligned with TA-006)"
+      },
+      {
+        "id": "C62",
+        "text": "meridian_branch tool implements 22 commands: branch_status, branch_submit, branch_land, branch_transition, branch_list, branch_show, branch_advance, stack_status, stack_submit, stack_sync, stack_land, stack_restack, pr_status, pr_create, pr_push, pr_sync, pr_approve, pr_request_changes, pr_comment, pr_merge, pr_close, pr_request_reviewers (aligned with TA-007)"
+      },
+      {
+        "id": "C63",
+        "text": "meridian_workflow tool implements 6 workflow commands: workflow_list, workflow_show, workflow_run, workflow_status, workflow_history, workflow_cancel (aligned with TA-008)"
+      },
+      {
+        "id": "C64",
+        "text": "meridian_workflow tool implements 8 scheduler commands: scheduler_list, scheduler_create, scheduler_get, scheduler_update, scheduler_delete, scheduler_enable, scheduler_disable, scheduler_run (redistributed from former admin tool, aligned with TA-008)"
+      }
+    ],
+    "stories": [
+      {
+        "id": "S9",
+        "text": "As an AI agent doing development work, I want to run source control operations (status, diff, commit, push) via a native tool so that I can manage code changes without parsing shell output."
+      },
+      {
+        "id": "S10",
+        "text": "As an AI agent doing development work, I want to manage branches (submit, land, restack) via a native tool so that I can operate the branch stack without CLI subprocess calls."
+      },
+      {
+        "id": "S11",
+        "text": "As an AI agent, I want to dispatch and monitor workflows via a native tool so that I can coordinate automated work within my session."
+      }
+    ],
+    "constraints": [
+      {
+        "id": "CO1",
+        "text": "No new external dependencies. Namespace tools call service-layer functions via ServiceContext, not HTTP."
+      },
+      {
+        "id": "CO2",
+        "text": "AssistantEvent is the single event type for all downstream consumers. Both runtimes produce it."
+      },
+      {
+        "id": "CO3",
+        "text": "JSONL session files are Norn's source of truth for resume. PG is the UI's source of truth. Neither replaces the other."
+      },
+      {
+        "id": "CO4",
+        "text": "The model sees at most 25 tools (16 standard Norn + up to 7 namespace + 2 optional web). Profile filtering reduces this in practice."
+      },
+      {
+        "id": "CO5",
+        "text": "Session IDs are UUIDs shared between the JSONL filename, PG assistant_session_events key, and SessionHandle registry key."
+      },
+      {
+        "id": "CO6",
+        "text": "Wake prompt delivery mechanism changes, format does not."
+      },
+      {
+        "id": "CO7",
+        "text": "mod.rs contains only pub mod declarations and re-exports."
+      },
+      {
+        "id": "CO8",
+        "text": "No file over 500 lines of code (excluding tests, comments, whitespace)."
+      },
+      {
+        "id": "CO9",
+        "text": "All errors handled via thiserror in library code. No .unwrap() or .expect() in library code."
+      },
+      {
+        "id": "CO10",
+        "text": "Namespace tools implement the existing Tool trait. No changes to the trait interface."
+      }
+    ],
+    "intention": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude Runner stays only for legacy background task dispatch until it can be retired entirely. Member-facing sessions run as typed, observable, in-process agent loops rather than opaque subprocess invocations. Session state persists across visits without relying on a CLI binary's internal persistence. The model sees a focused set of domain tools instead of a raw shell with 175 CLI commands. This is the June 15 deadline work.",
+    "design_path": "docs/design/norn-runtime",
+    "provenance": {
+      "requested_by": "Tom",
+      "quote": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude R"
+    }
+  },
+  "verify_fix_cap": 3,
+  "review_cap": 1,
+  "round_backoff_ms": 2000,
+  "review_deadline_ms": 300000,
+  "workspace_id": "2d5fdd51-1f25-45a4-8f86-4d4c978d1355",
+  "clone_url": "https://github.com/tomWhiting/meridian.git"
+}

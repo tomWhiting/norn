@@ -1,0 +1,201 @@
+{
+  "id": "NTA-001",
+  "cluster": "norn-tools/action-log",
+  "title": "Action log types, event stream storage, and Level 1 summary computation",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C27", "C28", "C29", "C30", "C31", "C32", "C33", "C35", "C37", "C38"],
+  "stories": ["S11", "S12"],
+  "purpose": "Establish the action log as a query layer over the existing EventStore. Define the ActionLogEntry and Outcome types, implement Level 1 summary computation at tool-call completion, and store structured metadata on existing events. The action log retains full data regardless of context compaction — this is the key value proposition. No new storage backend; everything builds on EventStore and PersistenceSink.",
+  "task": "Create crates/norn/src/session/action_log.rs with ActionLogEntry (Level 1 summary fields), Outcome enum, and an ActionLog struct that indexes tool-call events from the EventStore. The ActionLog maintains an in-memory index of ActionLogEntry values keyed by tool_call_id. Level 1 summaries are computed at tool-call completion and stored. Level 2 is the existing ToolResult event data (no duplication). Level 3 is populated lazily on first query (non-mutation tools) or eagerly via register_follow_ups (mutation tools — the FollowUpAction already carries before-content). Wire ActionLog into the tool dispatch path to capture entries as tools complete.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define ActionLogEntry struct with Level 1 fields",
+      "spec": "ActionLogEntry SHALL be defined in crates/norn/src/session/action_log.rs with fields: tool_name (String), tool_call_id (String), tool_use_description (String — the model-provided description from the tool use envelope), timestamp (DateTime<Utc>), outcome (Outcome), summary_line (String — one-line result summary like \"edit committed: src/handler.rs +5/-3\"). ActionLogEntry SHALL derive Clone, Debug, Serialize, Deserialize.",
+      "acceptance": [
+        "crates/norn/src/session/action_log.rs exists",
+        "ActionLogEntry has all 6 Level 1 fields",
+        "ActionLogEntry derives Clone, Debug, Serialize, Deserialize",
+        "serde round-trip test passes"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/session/action_log.rs"
+        ],
+        "modify": [
+          "crates/norn/src/session/mod.rs"
+        ]
+      },
+      "checklist": ["C1"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Define Outcome enum",
+      "spec": "Outcome SHALL be defined in crates/norn/src/session/action_log.rs with variants: Success, Error { message: String }, Blocked { reason: String }. Outcome SHALL derive Clone, Debug, Serialize, Deserialize.",
+      "acceptance": [
+        "Outcome has exactly 3 variants: Success, Error, Blocked",
+        "Error carries a message String",
+        "Blocked carries a reason String",
+        "serde round-trip test passes for all 3 variants"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C2"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Define ActionLog struct with in-memory index",
+      "spec": "ActionLog SHALL be defined in crates/norn/src/session/action_log.rs. It SHALL hold: entries (IndexMap<String, ActionLogEntry> keyed by tool_call_id preserving insertion order), follow_ups (HashMap<String, Vec<FollowUpAction>> keyed by tool_call_id), original_args (HashMap<String, serde_json::Value> keyed by tool_call_id — the input arguments for each tool call), and a reference to the EventStore for Level 2/3 queries. ActionLog SHALL be thread-safe (parking_lot::RwLock wrapping the inner data).",
+      "acceptance": [
+        "ActionLog struct exists with entries, follow_ups, original_args, and EventStore reference",
+        "entries preserves insertion order (IndexMap)",
+        "Thread-safe via parking_lot::RwLock",
+        "ActionLog::new(event_store: Arc<EventStore>) constructor exists"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C18", "C27", "C29"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R4",
+      "title": "Level 1 summary computation at tool-call completion",
+      "spec": "ActionLog SHALL expose a record_completion method called after each tool dispatch: record_completion(tool_name, tool_call_id, tool_use_description, outcome, output, args, follow_ups). This method SHALL: (1) compute a one-line summary_line from the output (e.g., for edit: \"edit committed: {path} +{added}/-{removed}\", for error: \"error: {first_line}\"), (2) create an ActionLogEntry, (3) store it in the entries index, (4) store follow_ups if non-empty, (5) store original args. Summary generation SHALL be a match on tool_name with tool-specific formatters and a generic fallback.",
+      "acceptance": [
+        "record_completion creates an ActionLogEntry and stores it keyed by tool_call_id",
+        "Summary line for edit shows path and diff stats",
+        "Summary line for read shows path and line count",
+        "Summary line for bash shows command (truncated to 80 chars) and exit code",
+        "Generic fallback shows tool_name and outcome",
+        "Follow-ups stored in follow_ups index",
+        "Original args stored in original_args index"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C5", "C6", "C28"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R5",
+      "title": "Level 2 detail retrieval from EventStore",
+      "spec": "ActionLog SHALL expose a get_detail(tool_call_id) method that returns Level 2 data: the ActionLogEntry (Level 1) plus the full tool output JSON, input arguments, duration, and follow-up actions. The tool output is retrieved from the EventStore by finding the ToolResult event matching the tool_call_id. Input arguments come from the original_args index. Follow-ups come from the follow_ups index.",
+      "acceptance": [
+        "get_detail returns Level 1 entry plus full output JSON, args, duration, follow-ups",
+        "Output JSON comes from EventStore ToolResult event matching tool_call_id",
+        "Returns None for unknown tool_call_id",
+        "Level 2 data is available even after context compaction"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C3", "C6", "C30", "C31"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R6",
+      "title": "Level 3 context retrieval with lazy population",
+      "spec": "ActionLog SHALL expose a get_context(tool_call_id) method that returns Level 3 data: Level 2 plus raw tool output before compaction, pre/post validate outcomes, and before/after file content. For mutation tools, before-content is sourced from the follow-up action's BeforeContentSource::StoredContent (captured eagerly at register_follow_ups time). For non-mutation tools, Level 3 data is the same as Level 2 (no file content to capture).",
+      "acceptance": [
+        "get_context returns Level 3 data for mutation tools including before-content from follow-up's StoredContent",
+        "get_context for non-mutation tools returns same as get_detail (no file snapshots)",
+        "Before-content is not stored separately — sourced from FollowUpAction.before_content field",
+        "Returns None for unknown tool_call_id"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C4", "C7", "C8", "C35"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Wire ActionLog into tool dispatch path",
+      "spec": "The tool dispatch path (crates/norn/src/loop/tool_dispatch.rs) SHALL call action_log.record_completion after each tool dispatch completes. The ActionLog SHALL be accessible via LoopContext or ToolContext. The ToolResult event in EventStore is already written by the existing dispatch path — the ActionLog adds its own metadata index on top.",
+      "acceptance": [
+        "ActionLog is accessible from LoopContext",
+        "record_completion called after every tool dispatch (success and error)",
+        "Pre-validate blocks recorded with Outcome::Blocked",
+        "Execute errors recorded with Outcome::Error",
+        "Successful dispatch recorded with Outcome::Success",
+        "Action log queries about its own calls recorded at Level 1 only (CO4 constraint)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/loop/tool_dispatch.rs",
+          "crates/norn/src/loop/context.rs"
+        ]
+      },
+      "checklist": ["C5", "C36"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R8",
+      "title": "Token-efficient Level 1 serialization",
+      "spec": "ActionLogEntry SHALL serialize to a compact JSON format suitable for embedding in tool results. A helper method compact_json(&self) -> serde_json::Value SHALL return a minimal representation: {tool, id, desc, ts, outcome, summary}. Short field names keep token count low. Scanning 100 entries via compact_json SHALL produce under 1000 tokens.",
+      "acceptance": [
+        "compact_json uses short field names: tool, id, desc, ts, outcome, summary",
+        "100 entries with typical values (tool=edit, desc=20 chars, summary=40 chars) produce under 1000 tokens estimated at 4 chars/token",
+        "compact_json output is valid JSON parseable by serde_json"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C32", "C33"],
+      "stories": []
+    },
+    {
+      "id": "R9",
+      "title": "Unit tests for ActionLog",
+      "spec": "Tests SHALL verify: (1) record_completion creates entries retrievable by tool_call_id, (2) entries preserve insertion order, (3) get_detail returns Level 2 data, (4) get_context returns Level 3 data with before-content from follow-up, (5) Outcome serde round-trips, (6) compact_json has correct field names and is compact, (7) self-referential query entries logged at Level 1 only.",
+      "acceptance": [
+        "Test: record_completion + list entries returns in order",
+        "Test: get_detail returns output and args for known tool_call_id",
+        "Test: get_detail returns None for unknown tool_call_id",
+        "Test: compact_json output has exactly 6 keys",
+        "Test: Outcome serde round-trip for all 3 variants",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C1", "C2", "C5", "C27", "C33"],
+      "stories": ["S11", "S12"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the action_log query tool — that is NTA-002",
+    "SHALL NOT implement the mutation ledger — that is NTA-003",
+    "SHALL NOT implement follow-up discovery queries — that is NTA-004",
+    "SHALL NOT implement the follow_up tool — that is NTF-003",
+    "SHALL NOT implement register_follow_ups on any tools — that is NTF-002/NTF-004",
+    "SHALL NOT introduce a new storage backend or file format — EventStore only"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "cargo fmt -p norn -- --check produces no diff",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'todo!\\|unimplemented!\\|FIXME\\|HACK\\|TODO' crates/norn/src/session/action_log.rs returns no matches",
+    "ActionLog is accessible from LoopContext and records every tool dispatch"
+  ]
+}

@@ -1,0 +1,123 @@
+{
+  "id": "NR-001",
+  "cluster": "norn-runtime",
+  "title": "Runtime discriminant and session lifecycle branching",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9"],
+  "stories": ["S12", "S13", "S15"],
+  "purpose": "Introduce the RuntimeKind discriminant so that AssistantService can drive either Norn or Claude Runner behind a single session lifecycle contract. This is the foundation brief — every other brief in the cluster depends on the types and branching established here.",
+  "task": "Add RuntimeKind enum to types.rs, add runtime field to SessionConfig, store RuntimeKind on SessionHandle, add Norn error variants to AssistantError, and modify start_session to branch on RuntimeKind. The Claude Runner path remains unchanged. The Norn path is stubbed (spawn_norn_loop exists but delegates to NR-002 for implementation). Both paths converge on the same SessionRegistry and broadcast::Sender<AssistantEvent>.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "RuntimeKind enum",
+      "spec": "The system SHALL define a RuntimeKind enum with variants ClaudeRunner and Norn in types.rs. RuntimeKind SHALL derive Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize. RuntimeKind SHALL implement Default with ClaudeRunner as the default.",
+      "acceptance": [
+        "RuntimeKind::ClaudeRunner and RuntimeKind::Norn are defined in types.rs",
+        "RuntimeKind derives Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize",
+        "RuntimeKind::default() returns ClaudeRunner"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/types.rs"]
+      },
+      "checklist": ["C1"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "SessionConfig runtime field",
+      "spec": "SessionConfig SHALL have a field `runtime: Option<RuntimeKind>` that defaults to None. WHEN runtime is None, the session SHALL use the server default runtime. WHEN runtime is Some(kind), the session SHALL use that runtime regardless of defaults.",
+      "acceptance": [
+        "SessionConfig has runtime: Option<RuntimeKind> field",
+        "SessionConfig::default() has runtime: None",
+        "Existing SessionConfig construction sites compile without changes (field defaults to None)"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/types.rs"]
+      },
+      "checklist": ["C2"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R3",
+      "title": "SessionHandle stores RuntimeKind",
+      "spec": "SessionHandle SHALL store the resolved RuntimeKind. SessionInfo (the public snapshot) SHALL expose the runtime_kind field so that WS handlers and API responses can report which runtime a session uses.",
+      "acceptance": [
+        "SessionHandle has a runtime_kind: RuntimeKind field",
+        "SessionInfo has a runtime_kind: RuntimeKind field",
+        "SessionRegistry get() and list() return SessionInfo with populated runtime_kind"
+      ],
+      "files": {
+        "modify": [
+          "crates/meridian-services/src/assistant/registry.rs",
+          "crates/meridian-services/src/assistant/types.rs"
+        ]
+      },
+      "checklist": ["C3"],
+      "stories": ["S15"]
+    },
+    {
+      "id": "R4",
+      "title": "Norn error variants",
+      "spec": "AssistantError SHALL have variants NornBuildFailed(String) and NornSessionFailed(String) for errors originating from the Norn runtime path. These SHALL NOT overlap with existing error variants.",
+      "acceptance": [
+        "AssistantError::NornBuildFailed(String) is defined in error.rs",
+        "AssistantError::NornSessionFailed(String) is defined in error.rs",
+        "Both variants have Display implementations via thiserror"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/error.rs"]
+      },
+      "checklist": ["C4"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "start_session branches on RuntimeKind",
+      "spec": "WHEN start_session is called with a SessionConfig whose resolved runtime is ClaudeRunner, THE SYSTEM SHALL follow the existing Claude Runner path (build_command, spawn_session_loop). WHEN the resolved runtime is Norn, THE SYSTEM SHALL follow the Norn path (spawn_norn_loop). Both paths SHALL register a SessionHandle in the same SessionRegistry and produce a broadcast::Sender<AssistantEvent>.",
+      "acceptance": [
+        "start_session resolves RuntimeKind from config.runtime (or server default if None)",
+        "ClaudeRunner path calls existing build_command and spawn_session_loop unchanged",
+        "Norn path calls spawn_norn_loop (stub in this brief, implemented in NR-002)",
+        "Both paths register a SessionHandle with the resolved RuntimeKind",
+        "Both paths create broadcast::channel<AssistantEvent>(256)"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/service.rs"]
+      },
+      "checklist": ["C5", "C7", "C8", "C9"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R6",
+      "title": "spawn_norn_loop stub",
+      "spec": "A spawn_norn_loop method SHALL exist on AssistantService that accepts session_id, config, and RuntimeKind::Norn-specific artifacts. In this brief it SHALL return AssistantError::NornBuildFailed with a message indicating the Norn path is not yet implemented. NR-002 replaces the stub with the real implementation.",
+      "acceptance": [
+        "spawn_norn_loop method exists on AssistantService",
+        "Calling spawn_norn_loop returns Err(AssistantError::NornBuildFailed(...))",
+        "The existing spawn_session_loop is renamed to spawn_claude_runner_loop for clarity"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/service.rs"]
+      },
+      "checklist": ["C6"],
+      "stories": []
+    }
+  ],
+  "dependency_setup": "No new cargo dependencies. All required crates (serde, uuid, thiserror) are already in meridian-services Cargo.toml. The norn crate is also already a dependency (norn = { path = \"../norn\" }).",
+  "boundaries": [
+    "SHALL NOT implement the Norn session loop (NR-002 scope)",
+    "SHALL NOT implement event translation (NR-003 scope)",
+    "SHALL NOT modify the Claude Runner session loop or translate layer",
+    "SHALL NOT add new crate dependencies to meridian-services Cargo.toml (norn is already present from builder work)",
+    "SHALL NOT modify ws/assistant.rs, persistence.rs, or streaming.rs"
+  ],
+  "verification": [
+    "cargo check --workspace passes with the new types",
+    "All existing tests pass unchanged (Claude Runner path unaffected)",
+    "RuntimeKind::default() returns ClaudeRunner",
+    "SessionConfig with runtime: None resolves to the server default",
+    "SessionInfo for a Claude Runner session reports RuntimeKind::ClaudeRunner"
+  ]
+}

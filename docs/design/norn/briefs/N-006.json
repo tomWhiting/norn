@@ -1,0 +1,264 @@
+{
+  "id": "N-006",
+  "cluster": "norn",
+  "title": "Define Tool trait and lifecycle framework",
+  "depends_on": ["N-001"],
+  "blocked_by": [],
+  "checklist": ["C27", "C28", "C29", "C30", "C31", "C32", "C33", "C34"],
+  "stories": ["S5", "S6", "S7", "S22"],
+  "purpose": "Define the tool abstraction layer that every tool in Norn implements. The Tool trait and its four lifecycle phases (pre-validate, execute, post-validate, on-success) are the mechanisms behind AST-aware editing, read-before-overwrite enforcement, and post-edit diagnostics. The framework also defines side-effect declarations for parallel scheduling, bash risk classification, orchestrator context flags for overriding tool behavior, and a registry for managing available tools. This is the foundation that all 19 core tool implementations (C37-C55, C89) build on.",
+  "task": "Define the Tool trait in the tool module with four async lifecycle methods and sync accessors. Define ToolOutput for execution results. Define ToolEnvelope for wrapping tool calls with model-supplied arguments, runtime-supplied inputs, and open metadata. Define ToolContext for orchestrator context flags and runtime-supplied arguments. Define lifecycle phase types: PreValidateOutcome, PostValidateOutcome, PostValidateMode (gate vs report semantics), and runtime check traits for each phase. Define ToolEffect for side-effect declarations and scheduling plan types. Define BashRiskTier with five tiers and a classification function. Define ToolRegistry for storing and looking up tools by name. Define CheckOverride to audit when context flags override compile-time checks. Reference: crates/norn/reference/codex-rs/tool-registry.rs (ToolHandler trait pattern), crates/norn/reference/codex-rs/tool-context.rs (ToolInvocation, ToolOutput patterns), DESIGN.md D5 (lifecycle, gate vs report, context flags) and D6 (envelopes). Testing layer: unit tests (Layer 1) — all types testable in isolation.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define Tool trait and ToolOutput",
+      "spec": "THE SYSTEM SHALL define an object-safe Tool trait in the tool module with sync accessors (name, description, input_schema, effect, post_validate_mode) and four async lifecycle methods (pre_validate, execute, post_validate, on_success). The trait SHALL require Send + Sync for use as Box<dyn Tool + Send + Sync>.",
+      "acceptance": [
+        "Tool trait defined in crates/norn/src/tool/traits.rs",
+        "name() returns &str (tool identifier for LLM tool definitions)",
+        "description() returns &str (tool description for LLM tool list)",
+        "input_schema() returns serde_json::Value (JSON Schema for model-supplied parameters)",
+        "effect() returns ToolEffect (declared side effect for scheduling)",
+        "post_validate_mode() returns PostValidateMode with default implementation returning PostValidateMode::Report",
+        "pre_validate is async, takes &ToolEnvelope and &ToolContext, returns PreValidateOutcome, with default implementation returning Proceed",
+        "execute is async, takes &ToolEnvelope and &ToolContext, returns Result<ToolOutput, ToolError>",
+        "post_validate is async, takes &ToolOutput and &ToolContext, returns PostValidateOutcome, with default implementation returning Pass",
+        "on_success is async, takes &ToolOutput and &ToolContext, with default no-op implementation",
+        "ToolOutput struct has fields: content (serde_json::Value), is_error (bool), duration (std::time::Duration)",
+        "Trait uses #[async_trait] from async-trait crate for object-safe async dispatch",
+        "Box<dyn Tool + Send + Sync> compiles without error",
+        "Cargo.toml includes async-trait as a dependency"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tool/traits.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tool/mod.rs",
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C27"],
+      "stories": ["S5", "S6"]
+    },
+    {
+      "id": "R2",
+      "title": "Define pre-validate phase types",
+      "spec": "WHEN a tool call is about to execute, THE SYSTEM SHALL support pre-validate checks consisting of compile-time checks (the Tool impl's pre_validate method) and runtime checks (configured in ToolContext). A Block result from any check SHALL prevent execution.",
+      "acceptance": [
+        "PreValidateOutcome enum defined in crates/norn/src/tool/lifecycle.rs with variants: Proceed, Block { reason: String }",
+        "RuntimePreValidateCheck trait defined with async check method taking &ToolEnvelope and &ToolContext, returning PreValidateOutcome",
+        "RuntimePreValidateCheck uses #[async_trait] and requires Send + Sync",
+        "Block from compile-time pre_validate prevents execution and returns the reason to the model",
+        "Block from any runtime check prevents execution identically",
+        "Pre-validate checks receive read-only references to the envelope and context"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tool/lifecycle.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tool/mod.rs"
+        ]
+      },
+      "checklist": ["C28"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R3",
+      "title": "Define post-validate phase with gate and report semantics",
+      "spec": "WHEN a tool execution completes, THE SYSTEM SHALL support post-validate checks with gate or report semantics. Gate semantics SHALL stage execution in memory and rollback on validation failure, preserving the valid prior state. Report semantics SHALL commit execution and include validation errors in the tool result. Orchestrator context flags SHALL be able to override the default mode.",
+      "acceptance": [
+        "PostValidateOutcome enum defined in crates/norn/src/tool/lifecycle.rs with variants: Pass, Fail { errors: Vec<String> }",
+        "PostValidateMode enum defined with variants: Gate, Report",
+        "Under Gate mode, Fail means the change is not committed to disk and the model receives the error for retry",
+        "Under Report mode, Fail means the change is committed and errors are included in the tool result",
+        "ToolFlag::AllowBrokenAst overrides Gate to Report for that invocation",
+        "ToolFlag::RejectBrokenAst overrides Report to Gate for that invocation",
+        "CheckOverride struct defined with fields: check_name (String), flag (ToolFlag), source (String) — source is read from the FlagEntry that triggered the override",
+        "When a ToolFlag overrides post-validate mode, a CheckOverride is recorded with the source from the corresponding FlagEntry",
+        "RuntimePostValidateCheck trait defined with async check method taking &ToolOutput and &ToolContext, returning PostValidateOutcome",
+        "RuntimePostValidateCheck uses #[async_trait] and requires Send + Sync"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/lifecycle.rs"
+        ]
+      },
+      "checklist": ["C29"],
+      "stories": ["S5", "S7"]
+    },
+    {
+      "id": "R4",
+      "title": "Define on-success phase types",
+      "spec": "WHEN a tool execution succeeds and post-validate passes, THE SYSTEM SHALL run on-success follow-ups consisting of compile-time follow-ups (the Tool impl's on_success method) and runtime follow-ups (configured in ToolContext). Failures in on-success actions SHALL NOT change the tool result.",
+      "acceptance": [
+        "RuntimeOnSuccessAction trait defined in crates/norn/src/tool/lifecycle.rs with async run method taking &ToolOutput and &ToolContext",
+        "RuntimeOnSuccessAction uses #[async_trait] and requires Send + Sync",
+        "On-success actions receive the final ToolOutput after post-validate passes",
+        "Failures in on-success actions do not modify the tool result",
+        "On-success runs only after post-validate outcome is Pass"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/lifecycle.rs"
+        ]
+      },
+      "checklist": ["C30"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R5",
+      "title": "Define ToolEnvelope with three sections",
+      "spec": "WHEN a tool call is invoked, THE SYSTEM SHALL wrap it in a ToolEnvelope carrying the tool call identity, model-supplied arguments, runtime-supplied inputs accumulated since the last tool boundary, and an open metadata field the model can populate.",
+      "acceptance": [
+        "ToolEnvelope struct defined in crates/norn/src/tool/envelope.rs",
+        "ToolEnvelope has field tool_call_id of type String (model-assigned call identifier)",
+        "ToolEnvelope has field tool_name of type String",
+        "ToolEnvelope has field model_args of type serde_json::Value (model-supplied parameters matching the tool's input schema)",
+        "ToolEnvelope has field runtime_inputs of type RuntimeInputs",
+        "ToolEnvelope has field metadata of type serde_json::Value (open, schemaless, model-populated)",
+        "RuntimeInputs struct has fields: inbound_messages (Vec<InboundMessage>), diagnostics (Vec<DiagnosticReport>), filesystem_changes (Vec<FileChange>)",
+        "InboundMessage struct has fields: author (String), content (String), timestamp (chrono::DateTime<chrono::Utc>)",
+        "DiagnosticReport struct has fields: source (String), severity (String), message (String), file_path (Option<String>)",
+        "FileChange struct has fields: path (String), change_type (FileChangeType) where FileChangeType has variants Created, Modified, Deleted",
+        "ToolEnvelope derives Clone, Debug, Serialize, Deserialize"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tool/envelope.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tool/mod.rs"
+        ]
+      },
+      "checklist": ["C31"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Define ToolContext and ToolFlag",
+      "spec": "THE SYSTEM SHALL define a ToolContext carrying orchestrator context flags, runtime-supplied tool arguments, and runtime-configured lifecycle checks. ToolFlag SHALL be a closed Rust enum set only by orchestrator code (Rhai scripts, workflow definitions), never by the model. Adding a new flag SHALL require a code change with review.",
+      "acceptance": [
+        "ToolContext struct defined in crates/norn/src/tool/context.rs",
+        "ToolContext has field flags of type Vec<FlagEntry>",
+        "ToolContext has field runtime_args of type serde_json::Value (policy-injected arguments not part of the model's tool call)",
+        "ToolContext has field pre_checks of type Vec<Box<dyn RuntimePreValidateCheck>>",
+        "ToolContext has field post_checks of type Vec<Box<dyn RuntimePostValidateCheck>>",
+        "ToolContext has field on_success_actions of type Vec<Box<dyn RuntimeOnSuccessAction>>",
+        "ToolFlag enum has variants: AllowOverwrite, AllowBrokenAst, RejectBrokenAst",
+        "ToolFlag derives Clone, Debug, PartialEq, Eq",
+        "FlagEntry struct has fields: flag (ToolFlag), source (String) — tracks which orchestrator code set each flag",
+        "ToolContext stores flags as Vec<FlagEntry> (not bare Vec<ToolFlag>)",
+        "ToolContext has a set_flag method: fn set_flag(&mut self, flag: ToolFlag, source: impl Into<String>)",
+        "ToolContext has a has_flag method: fn has_flag(&self, flag: &ToolFlag) -> bool",
+        "ToolContext has a flag_source method: fn flag_source(&self, flag: &ToolFlag) -> Option<&str> — returns the source attribution for a set flag",
+        "ToolContext is not part of any tool's input schema"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tool/context.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tool/mod.rs"
+        ]
+      },
+      "checklist": ["C32"],
+      "stories": ["S22"]
+    },
+    {
+      "id": "R7",
+      "title": "Define ToolEffect and scheduling plan",
+      "spec": "WHEN multiple tool calls are present in a single model response, THE SYSTEM SHALL schedule execution based on each tool's declared ToolEffect. ReadOnly tools SHALL execute concurrently. Write tools SHALL execute serially.",
+      "acceptance": [
+        "ToolEffect enum defined in crates/norn/src/tool/scheduling.rs with variants: ReadOnly, Write, Process, Network, Unknown",
+        "ReadOnly and Network effects are eligible for concurrent execution",
+        "Write and Unknown effects require serial execution",
+        "Process effect defaults to serial execution",
+        "SchedulingPlan struct takes a list of (tool_call_id, ToolEffect) pairs and produces an ordered sequence of ExecutionStep values",
+        "ExecutionStep enum has variants: Concurrent { tool_call_ids: Vec<String> }, Serial { tool_call_id: String }",
+        "A unit test creates a SchedulingPlan with 3 ReadOnly, 2 Write, and 1 Network tool call and verifies ReadOnly and Network calls are batched while Write calls are individual serial steps"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tool/scheduling.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tool/mod.rs"
+        ]
+      },
+      "checklist": ["C33"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "Define BashRiskTier classification",
+      "spec": "THE SYSTEM SHALL classify bash commands into five runtime-evaluated risk tiers for permission policies and audit logging. Classification SHALL be pattern-based; new patterns are added by modifying classify_risk.",
+      "acceptance": [
+        "BashRiskTier enum defined in crates/norn/src/tool/risk.rs with variants: Harmless, LowRisk, MediumRisk, HighRisk, Critical",
+        "classify_risk function takes a command string (&str) and returns BashRiskTier",
+        "Harmless covers read-only commands: ls, cat, grep, find, echo, head, tail, wc",
+        "LowRisk covers standard development commands: cargo build, cargo check, npm install, git status, git log, git diff",
+        "MediumRisk covers bounded write commands: git add, touch, mkdir, cp, mv",
+        "HighRisk covers destructive commands: rm, git reset --hard, git push --force, git clean",
+        "Critical covers system-level commands: sudo, chmod 777, curl | bash, wget | sh",
+        "Commands not matching any pattern default to MediumRisk",
+        "BashRiskTier derives Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize",
+        "A unit test verifies classify_risk returns the correct tier for at least one command per tier"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tool/risk.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tool/mod.rs"
+        ]
+      },
+      "checklist": ["C34"],
+      "stories": []
+    },
+    {
+      "id": "R9",
+      "title": "Define ToolRegistry",
+      "spec": "THE SYSTEM SHALL provide a ToolRegistry that stores tools as trait objects and supports registration and lookup by name.",
+      "acceptance": [
+        "ToolRegistry struct defined in crates/norn/src/tool/registry.rs",
+        "register method: fn register(&mut self, tool: Box<dyn Tool + Send + Sync>)",
+        "get method: fn get(&self, name: &str) -> Option<&(dyn Tool + Send + Sync)>",
+        "names method returns an iterator over all registered tool names",
+        "len method returns the count of registered tools",
+        "is_empty method returns true when no tools are registered",
+        "A unit test registers three mock tools, verifies get succeeds for each by name, verifies get returns None for a nonexistent name, and verifies len returns 3"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tool/registry.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tool/mod.rs"
+        ]
+      },
+      "checklist": ["C27"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement any core tool (Read, Write, Edit, Bash, Search, etc.) — only the framework types",
+    "SHALL NOT implement AST validation — only define where it plugs in (post-validate compile-time check)",
+    "SHALL NOT implement file staging for gate semantics — only define PostValidateMode and the gate/report contract",
+    "SHALL NOT add tree-sitter, LSP, or diagnostic crate dependencies — those belong to tool implementation briefs",
+    "SHALL NOT implement the agent loop or tool call orchestration — only define the types the loop will consume",
+    "SHALL NOT implement C35 (dynamic tool availability) or C36 (runtime add/remove on ToolRegistry) — those are separate briefs",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo test -p norn succeeds — all unit tests pass (scheduling plan, risk classification, registry)",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "Box<dyn Tool + Send + Sync> compiles — verified by unit test or compile-time assertion",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/tool/ returns no matches outside test code",
+    "grep -rn 'todo!\\|unimplemented!' crates/norn/src/tool/ returns no matches",
+    "Every type in tool/ re-exported from tool/mod.rs",
+    "tool/mod.rs contains only pub mod declarations and pub use re-exports — no logic"
+  ]
+}

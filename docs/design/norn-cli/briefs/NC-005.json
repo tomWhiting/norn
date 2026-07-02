@@ -1,0 +1,188 @@
+{
+  "id": "NC-005",
+  "cluster": "norn-cli",
+  "title": "Interactive REPL with reedline",
+  "depends_on": ["NC-001", "NC-002", "NC-003", "NC-004"],
+  "blocked_by": [],
+  "checklist": ["C47", "C48", "C49", "C50", "C51", "C52", "C53", "C54", "C55", "C56"],
+  "stories": ["S1", "S2", "S5", "S6", "S7", "S8", "S15", "S49", "S50", "S53"],
+  "purpose": "The interactive REPL is the primary interface for developers using Norn from a terminal. Without it, the CLI can only operate in print mode. This brief delivers the reedline line editor integration, multi-line input, persistent command history, tab completion for slash commands and file paths, a prompt showing model and session state, signal handling for Ctrl+C and Ctrl+D, and multi-turn conversation continuity via EventStore and LoopContext lifecycle management between turns.",
+  "task": "Replace the placeholder REPL handler (repl.rs at root, from NC-006) with a real reedline-powered interactive loop in a repl/ folder module. Wire reedline with a history file at ~/.local/share/norn/history.txt (XDG-compliant), a custom completer providing tab completion for slash commands (from SlashCommandRegistry) and file paths, a prompt renderer showing the active model name and session status, and signal handling. Each turn reads user input, preprocesses it through preprocess_input(), runs run_agent_step() with the accumulated EventStore, and loops. Between turns, call LoopContext::clear_dynamic_sections() and LoopContext::evaluate_prompt_commands() to refresh dynamic system sections. Ctrl+C sends a cancellation signal to the running agent step via the CancellationToken. Ctrl+D exits the REPL cleanly. NOTE: The crate was reorganised — see DESIGN.md Structure section. Import paths use crate::cli, crate::config, crate::runtime, crate::print, not the old flat module names.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Reedline editor integration",
+      "spec": "WHEN the CLI enters interactive REPL mode, the system SHALL construct a reedline::Reedline editor instance with a FileBackedHistory pointing to the XDG data directory (respecting XDG_DATA_HOME, falling back to ~/.local/share/norn/history.txt on Linux and ~/Library/Application Support/norn/history.txt on macOS when XDG vars are unset). The editor SHALL be configured with the NornCompleter (R3) and NornPrompt (R4).",
+      "acceptance": [
+        "Running `norn` in a TTY presents a reedline prompt that accepts input",
+        "Up-arrow recalls previous commands from history",
+        "History file is created at the XDG-compliant path on first use",
+        "History persists across REPL sessions (exit and re-enter, up-arrow shows prior input)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/repl/mod.rs"
+        ],
+        "modify": [
+          "crates/norn-cli/src/main.rs",
+          "crates/norn-cli/src/lib.rs"
+        ],
+        "delete": [
+          "crates/norn-cli/src/repl.rs"
+        ]
+      },
+      "checklist": ["C47", "C49"],
+      "stories": ["S1", "S6"]
+    },
+    {
+      "id": "R2",
+      "title": "Multi-line input",
+      "spec": "WHEN the user presses Alt+Enter (default newline keybinding) while composing input in the REPL, the system SHALL insert a newline into the current buffer instead of submitting. WHEN the user presses Enter, the system SHALL submit the complete multi-line buffer as a single input.",
+      "acceptance": [
+        "Pressing Alt+Enter inserts a newline; the prompt continues on the next line",
+        "Pressing Enter after multi-line input submits the entire buffer",
+        "Multi-line input is passed intact to preprocess_input() and then to the agent"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/repl/mod.rs"
+        ]
+      },
+      "checklist": ["C48"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R3",
+      "title": "Tab completion for slash commands and file paths",
+      "spec": "WHEN the user presses Tab while typing input that begins with '/', the system SHALL offer completions from the set of registered slash command names in the SlashCommandRegistry (both CLI built-ins and profile-registered commands). WHEN the user presses Tab while typing input that does not begin with '/', the system SHALL offer file path completions relative to the current working directory. The completer SHALL implement reedline::Completer.",
+      "acceptance": [
+        "Typing '/he' then Tab completes to '/help'",
+        "Typing '/co' then Tab offers '/compact' and '/config' (if registered)",
+        "Typing 'src/' then Tab lists files in the src/ directory",
+        "Tab completion for slash commands includes all registered commands (built-ins + profile)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/repl/completion.rs"
+        ],
+        "modify": [
+          "crates/norn-cli/src/repl/mod.rs"
+        ]
+      },
+      "checklist": ["C50", "C51"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R4",
+      "title": "Prompt rendering with model name and session status",
+      "spec": "The system SHALL implement reedline::Prompt to display a prompt containing the active model name and a session status indicator (number of turns or token usage). The prompt format SHALL be '{model_name} [{turn_count}] > ' where turn_count is the number of completed user turns in the current session. WHEN no model is set, the system SHALL display 'norn' as the model name.",
+      "acceptance": [
+        "REPL prompt shows the model name (e.g. 'gpt-5.5 [0] > ')",
+        "After each turn, the turn count increments in the prompt",
+        "When no --model is specified and no profile sets a model, prompt shows 'norn [0] > '"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/repl/prompt.rs"
+        ],
+        "modify": [
+          "crates/norn-cli/src/repl/mod.rs"
+        ]
+      },
+      "checklist": ["C52"],
+      "stories": ["S50"]
+    },
+    {
+      "id": "R5",
+      "title": "Ctrl+C interrupts current agent step",
+      "spec": "WHILE an agent step is executing (run_agent_step is in progress), IF the user presses Ctrl+C, the system SHALL cancel the current step via the tokio_util::sync::CancellationToken passed to run_agent_step. The REPL SHALL remain active after cancellation, displaying a 'Cancelled.' message and returning to the prompt for the next input.",
+      "acceptance": [
+        "Pressing Ctrl+C during a long-running agent step cancels it within 1 second",
+        "After cancellation, the REPL prompt reappears and accepts new input",
+        "'Cancelled.' is printed to stderr after the step is cancelled",
+        "The EventStore retains events from the cancelled step (partial work is not discarded)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/repl.rs"
+        ]
+      },
+      "checklist": ["C53"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R6",
+      "title": "Ctrl+D exits the REPL",
+      "spec": "WHEN the user presses Ctrl+D at an empty prompt (EOF signal), the system SHALL exit the REPL loop cleanly, flush any pending session persistence, and exit with code 0.",
+      "acceptance": [
+        "Pressing Ctrl+D at an empty prompt exits the REPL",
+        "Exit code is 0 after Ctrl+D",
+        "Session is persisted before exit (if session persistence is enabled)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/repl.rs"
+        ]
+      },
+      "checklist": ["C54"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R7",
+      "title": "Multi-turn EventStore continuity",
+      "spec": "The REPL loop SHALL maintain a single EventStore instance across all turns within the session. WHEN the user submits input, the system SHALL append a UserMessage event to the store, call run_agent_step with the accumulated store, and loop back for the next input. The messages vector SHALL be rebuilt from the store's events before each run_agent_step call.",
+      "acceptance": [
+        "A second turn's agent call includes context from the first turn",
+        "EventStore.len() increases monotonically across turns",
+        "The agent can reference information from earlier turns in its responses"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/repl.rs"
+        ]
+      },
+      "checklist": ["C55"],
+      "stories": ["S2", "S49"]
+    },
+    {
+      "id": "R8",
+      "title": "LoopContext lifecycle between turns",
+      "spec": "WHEN the REPL completes an agent step and returns to the prompt for the next turn, the system SHALL call LoopContext::clear_dynamic_sections() followed by LoopContext::evaluate_prompt_commands() before the next run_agent_step call. This ensures rule injections and prompt-command outputs are refreshed each turn.",
+      "acceptance": [
+        "Dynamic system sections from rules do not accumulate across turns",
+        "Prompt commands re-execute between turns (or serve cached values within TTL)",
+        "The system instruction string changes between turns when prompt commands produce different output"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/repl.rs"
+        ]
+      },
+      "checklist": ["C56"],
+      "stories": ["S15", "S53"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement streaming display rendering -- that is NC-007",
+    "SHALL NOT implement slash command handlers -- that is NC-006; the REPL calls preprocess_input() but does not define command handlers",
+    "SHALL NOT implement session persistence (JSONL read/write) -- that is NC-002",
+    "SHALL NOT implement provider construction or agent configuration -- that is NC-003 and NC-004",
+    "SHALL NOT use ratatui alternate screen -- output is inline per DESIGN.md NG1",
+    "SHALL NOT implement print mode execution -- that is NC-003"
+  ],
+  "verification": [
+    "cargo check -p norn-cli succeeds",
+    "cargo clippy -p norn-cli -- -D warnings produces zero warnings",
+    "cargo fmt -p norn-cli -- --check produces no diff",
+    "cargo test -p norn-cli passes all tests",
+    "Running `norn` in a TTY shows a reedline prompt with model name",
+    "Up-arrow recalls history from prior sessions",
+    "Tab on '/he' completes to '/help'",
+    "Tab on a file path prefix lists directory contents",
+    "Ctrl+C during agent execution cancels and returns to prompt",
+    "Ctrl+D at empty prompt exits with code 0",
+    "No file exceeds 500 lines of code",
+    "No code in mod.rs beyond pub mod declarations and re-exports",
+    "grep -rn 'TODO\\|FIXME\\|HACK\\|unimplemented!' crates/norn-cli/src/ returns no matches"
+  ]
+}

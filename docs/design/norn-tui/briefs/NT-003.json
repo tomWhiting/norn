@@ -1,0 +1,150 @@
+{
+  "id": "NT-003",
+  "cluster": "norn-tui",
+  "title": "Markdown rendering pipeline with syntax highlighting",
+  "depends_on": ["NT-002"],
+  "blocked_by": [],
+  "checklist": ["C17", "C18", "C19", "C20", "C21", "C22", "C23", "C24", "C25", "C26", "C27"],
+  "stories": ["S1", "S24"],
+  "purpose": "Assistant text arrives as raw markdown via TextDelta events. This brief transforms it into styled terminal output with syntax-highlighted code blocks. Without this, assistant output is plain text with no visual structure — no bold, no headers, no coloured code.",
+  "task": "Implement the markdown rendering pipeline in render/markdown.rs using pulldown-cmark as the event-based parser. Map markdown elements to ANSI-styled output via the NT-002 style system: bold, italic (with underline fallback), headers, inline code, lists, horizontal rules, links (OSC 8 or bracketed). Implement syntect integration in render/syntax.rs for fenced code blocks: load the compressed grammar set, highlight using the language hint, fall back to find_syntax_by_first_line for unlabeled blocks. Implement the streaming buffer strategy: incomplete inline spans (bold/italic markers) buffer until the closing marker arrives; code fences buffer from opening to closing marker then render the complete highlighted block. Plain text outside any open marker flushes immediately.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "pulldown-cmark parser integration",
+      "spec": "The markdown renderer SHALL parse input text using pulldown-cmark's event-based streaming parser AND produce styled terminal output.",
+      "acceptance": [
+        "MarkdownRenderer struct accepts text chunks and produces styled output strings",
+        "Uses pulldown-cmark's Parser with default options",
+        "Output strings contain ANSI escape sequences for styling",
+        "Test: input '**bold**' produces output containing bold SGR"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/render/markdown.rs"]
+      },
+      "checklist": [],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R2",
+      "title": "Inline formatting — bold, italic, inline code",
+      "spec": "The renderer SHALL render bold text with ANSI bold, italic with ANSI italic (underline fallback), and inline code with a distinct foreground colour.",
+      "acceptance": [
+        "**text** renders with bold SGR attribute",
+        "*text* renders with italic SGR when italic_support is true, underline when false",
+        "`code` renders with distinct foreground colour from the style system",
+        "Nested formatting works: ***bold italic*** renders with both attributes",
+        "Test: italic text on a terminal without italic support renders with underline"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/render/markdown.rs"]
+      },
+      "checklist": ["C17", "C18", "C20"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Headers",
+      "spec": "The renderer SHALL render headers with bold attribute and size-appropriate formatting.",
+      "acceptance": [
+        "# H1 renders bold with a blank line before",
+        "## H2 renders bold",
+        "### H3 and deeper render bold",
+        "Headers are visually distinct from body text",
+        "Test: '# Title' input produces bold-styled output"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/render/markdown.rs"]
+      },
+      "checklist": ["C19"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Lists, horizontal rules, links",
+      "spec": "The renderer SHALL render bullet and numbered lists with indentation, horizontal rules as terminal-width lines, and links as OSC 8 hyperlinks or bracketed text.",
+      "acceptance": [
+        "Unordered lists render with bullet characters and 2-space indentation per level",
+        "Ordered lists render with sequential numbers and 2-space indentation per level",
+        "Horizontal rules (---) render as a ─── line spanning the terminal width",
+        "[text](url) renders as OSC 8 hyperlink when supported, 'text (url)' otherwise",
+        "Test: nested list input produces correctly indented output",
+        "Test: link renders as bracketed text when osc_hyperlinks is false"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/render/markdown.rs"]
+      },
+      "checklist": ["C23", "C24", "C25"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Syntect integration for code blocks",
+      "spec": "WHEN a fenced code block has a language hint, THE SYSTEM SHALL syntax-highlight the block using syntect with the matching grammar AND SHALL fall back to find_syntax_by_first_line for unlabeled blocks.",
+      "acceptance": [
+        "SyntaxHighlighter struct wraps syntect's SyntaxSet and ThemeSet",
+        "Grammar set loaded from syntect's compressed binary dump (~100 languages)",
+        "highlight(code, language) returns ANSI-styled output using the language grammar",
+        "When language is None or unrecognised, falls back to find_syntax_by_first_line",
+        "When no syntax is detected, renders as plain monospace (no highlighting)",
+        "Colour output adapts to TerminalCaps (true colour palette vs 256-colour mapping)",
+        "Test: Rust code block produces output with distinct colour for keywords"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/render/syntax.rs"]
+      },
+      "checklist": ["C21", "C22"],
+      "stories": ["S24"]
+    },
+    {
+      "id": "R6",
+      "title": "Code fence buffering",
+      "spec": "WHEN the renderer encounters an opening code fence (```) in streaming input, THE SYSTEM SHALL buffer all content until the closing fence arrives, THEN render the complete block with syntax highlighting.",
+      "acceptance": [
+        "Opening ``` triggers buffer mode — subsequent text is accumulated, not flushed",
+        "Closing ``` triggers flush: accumulated content is highlighted and written to output",
+        "Language hint on the opening fence (```rust) is captured and passed to the highlighter",
+        "If the message ends without a closing fence, the buffered content is flushed as plain text",
+        "Test: streaming input with ``` on one chunk and closing ``` on a later chunk produces a single highlighted block"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/render/markdown.rs"]
+      },
+      "checklist": ["C27"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Inline span buffering",
+      "spec": "WHEN the renderer encounters an opening inline marker (** or *) without its closing marker in the same chunk, THE SYSTEM SHALL buffer content until the closing marker arrives, THEN render the complete styled span.",
+      "acceptance": [
+        "Opening ** without closing ** in the same chunk triggers inline buffer mode",
+        "Subsequent chunks are accumulated until ** is found, then the complete bold span is rendered",
+        "Same behaviour for * (italic) markers",
+        "Plain text before an opening marker is flushed immediately — only the open span is buffered",
+        "If no closing marker arrives within a configurable limit (e.g. 10 chunks), the buffer is flushed as plain text to avoid indefinite buffering",
+        "Test: '**bold' in one chunk and ' text**' in the next produces a single bold span"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/render/markdown.rs"]
+      },
+      "checklist": ["C26"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the streaming event loop or ProviderEvent dispatch — that is NT-011",
+    "SHALL NOT implement per-tool rendering — that is NT-006/NT-007",
+    "SHALL NOT handle ToolCallDelta events — the markdown renderer processes text content only",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "Bold, italic, headers, inline code, lists, horizontal rules, and links render correctly — verified by tests",
+    "Fenced code blocks with language hints produce syntax-highlighted output — verified by test",
+    "Streaming buffer handles split markers across chunks — verified by tests",
+    "256-colour fallback produces valid output — verified by test with true_colour=false"
+  ]
+}

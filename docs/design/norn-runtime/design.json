@@ -1,0 +1,337 @@
+{
+  "schema_version": 1,
+  "cluster": "norn-runtime",
+  "title": "Norn as Primary Runtime",
+
+  "intention": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude Runner stays only for legacy background task dispatch until it can be retired entirely. Member-facing sessions run as typed, observable, in-process agent loops rather than opaque subprocess invocations. Session state persists across visits without relying on a CLI binary's internal persistence. The model sees a focused set of domain tools instead of a raw shell with 175 CLI commands. This is the June 15 deadline work.",
+
+  "problem": [
+    "Session persistence is missing in-process. make_norn_step_runner builds an AgentBuilder without calling .session(), creating a bare EventStore::new() — in-memory only, no JsonlSink, events dropped when the step finishes. The server needs the same durability as norn-cli but with server-managed paths and PG telemetry integration.",
+    "No Meridian domain tools. Norn has 16 standard developer tools but an agent running as a Meridian member needs messaging, status management, workflow dispatch, VCS operations, and project management. The 175+ CLI commands across 26 groups cannot be exposed as flat tools — the design needs hierarchical namespace tools.",
+    "No assistant service integration. The assistant service is built around ClaudeProcess — subprocess via ClaudeCommand, JSONL on stdin/stdout, TranslateState converting ClaudeEvent to AssistantEvent. Norn is in-process with typed AgentEvent broadcast. The session loop, event translation, persistence pipeline, Redis streaming, WebSocket delivery, and wake prompt mechanism all assume the subprocess model."
+  ],
+
+  "solution": {
+    "summary": "Branch AssistantService on RuntimeKind to spawn Norn sessions alongside Claude Runner. Norn sessions run as async tokio::spawn tasks, produce the same AssistantEvent stream via NornTranslateState, persist to both JSONL (session resume) and PG (UI history), and expose Meridian capabilities as 7 namespace tools with a command discriminant. The transition is incremental — both runtimes coexist with profile-based selection.",
+    "pieces": [
+      {
+        "id": "P1",
+        "title": "Runtime discriminant and session lifecycle",
+        "description": "RuntimeKind enum (ClaudeRunner | Norn) on SessionHandle. AssistantService::start_session branches after token acquisition. Both paths produce broadcast::Sender<AssistantEvent>. spawn_norn_loop builds AgentBuilder, creates event channels, spawns async task. Existing Claude Runner path unchanged."
+      },
+      {
+        "id": "P2",
+        "title": "Norn session loop and event translation",
+        "description": "Async run_norn_session_loop multiplexes AgentEvent broadcast, SessionCommand mpsc, idle timeout, and agent completion via tokio::select. NornTranslateState converts ProviderEvent to AssistantEvent: TextDelta, ThinkingDelta, ToolUseStarted, ToolResult, Usage+TurnComplete, SubAgentEvent. Synthesizes SessionStarted from AgentBuilder config."
+      },
+      {
+        "id": "P3",
+        "title": "Session persistence — JSONL and PG",
+        "description": "Server-managed JSONL at {data_dir}/sessions/norn/{session_id}.jsonl via EventStore+JsonlSink. Resume reads JSONL, creates EventStore::with_sink_and_events. Fork copies source JSONL to new path. PG persistence and Redis streaming continue unchanged — they subscribe to AssistantEvent broadcast."
+      },
+      {
+        "id": "P4",
+        "title": "Wake config and authentication",
+        "description": "wake_configs table gains runtime column (nullable, default NULL = server default). Token acquisition from same TokenPool as Claude Runner. Wake prompt delivery via AgentBuilder::prompt() for Norn, SessionConfig::initial_message for Claude Runner. WakeupService unchanged."
+      },
+      {
+        "id": "P5",
+        "title": "Namespace tool infrastructure and critical tools",
+        "description": "MeridianToolContext holds Arc<ServiceContext>. CallerContext carries member_id, session_id (Uuid), workspace_id (Option<Uuid>), agent_cert_fingerprint (Option<[u8;32]>). register_meridian_tools conditionally registers tools based on profile. MessagingTool (12 commands), MemberTool (7), WorkspaceTool (4) implement norn::tool::Tool with command discriminant."
+      },
+      {
+        "id": "P6",
+        "title": "Development and workflow namespace tools",
+        "description": "SourceTool (25 commands), BranchTool (22 commands), WorkflowTool (14 commands including scheduler). All use command discriminant. Profile-gated registration. Service errors return ToolOutput with is_error=true."
+      },
+      {
+        "id": "P7",
+        "title": "In-process notification injection",
+        "description": "Post-tool-batch notification check queries pending notifications via MessagingService, formats as ChannelMessage with DeliveryMode::Steer, injects via InboundSender. Replaces CLI subprocess hook. Notifications marked as delivered after injection to prevent re-injection."
+      },
+      {
+        "id": "P8",
+        "title": "Frontend runtime awareness",
+        "description": "runtime_kind field surfaced in frontend session types and hooks. Model fallback strings in AssistantPanel.tsx become runtime-aware. Session toolbar gains runtime badge (Norn or Claude Runner) with distinct visual treatment."
+      }
+    ]
+  },
+
+  "decisions": [
+    {
+      "id": "D1",
+      "title": "RuntimeKind discriminant per session",
+      "body": "A RuntimeKind enum on SessionHandle distinguishes Norn from Claude Runner. AssistantService::start_session checks configuration to select the runtime. Both paths produce the same broadcast::Sender<AssistantEvent>, so downstream consumers are runtime-agnostic.",
+      "choice": "RuntimeKind enum with ClaudeRunner (default) and Norn variants.",
+      "rationale": "Clean branching point. Both paths share the session registry, command channel, and event broadcast. The enum is the single place where runtime-specific logic lives.",
+      "implications": [
+        "SessionHandle stores RuntimeKind for lifecycle queries",
+        "SessionConfig gains optional runtime field",
+        "Server config has default_runtime setting"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D2",
+      "title": "Dual persistence — JSONL and PG",
+      "body": "Two independent persistence paths serve different consumers. JSONL files are Norn's source of truth for session resume (EventStore write-through). PG assistant_session_events are the UI's source of truth for history display. They are complementary, not redundant.",
+      "choice": "JSONL for Norn resume, PG for UI history. Independent streams.",
+      "rationale": "JSONL carries Norn's internal state (conversation threading, cache keys). PG carries the UI's event stream (text deltas, tool summaries, turn boundaries). Conflating them loses fidelity in both directions.",
+      "implications": [
+        "Server-managed session directory at {data_dir}/sessions/norn/",
+        "Resume reads JSONL, creates EventStore::with_sink_and_events",
+        "PG persistence subscribes to AssistantEvent broadcast, unchanged"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D3",
+      "title": "Async Norn session loop via tokio::spawn",
+      "body": "Norn is async. The session loop runs as a tokio::spawn task, multiplexing four sources via tokio::select: AgentEvent broadcast, SessionCommand mpsc, idle timeout, and agent completion (JoinHandle).",
+      "choice": "tokio::spawn, not spawn_blocking. Four-source select loop.",
+      "rationale": "Norn's Agent::run() is async. spawn_blocking would needlessly waste a thread pool slot. The four-source select matches the Claude Runner loop's responsibilities (events, commands, timeout, completion) with async semantics.",
+      "implications": [
+        "No crossbeam bridges needed (async channels throughout)",
+        "Idle timeout resets on AgentEvent, not on wall clock",
+        "CancellationToken for Stop/Kill instead of process signals"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D4",
+      "title": "NornTranslateState parallel to TranslateState",
+      "body": "NornTranslateState converts AgentEvent/ProviderEvent to AssistantEvent, parallel to the existing TranslateState that converts ClaudeEvent to AssistantEvent. Key mappings: TextDelta→TextDelta, ThinkingDelta→ThinkingDelta, ToolCallComplete→ToolUseStarted, Done→Usage+TurnComplete.",
+      "choice": "Separate translator, same output type.",
+      "rationale": "The input types are fundamentally different (ProviderEvent vs ClaudeEvent). A shared translator would be a forced abstraction. The output type (AssistantEvent) is the shared interface that matters.",
+      "implications": [
+        "Per-turn state (tool IDs, sub-agents, block index) cleared on Done",
+        "Sub-agent events wrapped in AssistantEvent::SubAgentEvent",
+        "SessionStarted synthesized from AgentBuilder config"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D5",
+      "title": "Hierarchical namespace tools with command discriminant",
+      "body": "175 flat tools would overwhelm the model. Meridian capabilities are grouped into namespace tools — each namespace is a single Norn Tool with a command discriminant. Nine tools defined, eight active (project deferred). Three-tool split per Tom's direction: meridian_member (identity), meridian_workspace (environment), meridian_exchange (cross-instance).",
+      "choice": "command discriminant, not action (avoids ToolEffect overloading). Nine tools, eight active.",
+      "rationale": "Model sees 5-7 tools instead of 175. Each namespace has focused description. Profile gating at namespace level. Adding a CLI command = adding a command variant, not a new tool.",
+      "implications": [
+        "meridian_messaging (12), meridian_member (7), meridian_workspace (4), meridian_source (25), meridian_branch (22), meridian_workflow (14), meridian_exchange (21)",
+        "meridian_review (10) defined by tool-architecture cluster",
+        "meridian_project deferred"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D6",
+      "title": "Profile-gated tool sets with bash opt-in",
+      "body": "Agent profiles control which namespace tools are available. Default profiles omit bash entirely — agents operate through typed namespace tools plus file tools. Bash is opt-in for dev agents that run tests and builds.",
+      "choice": "Bash opt-in. Default profiles are bash-free.",
+      "rationale": "Bash is the escape hatch that makes every other security measure advisory. Certificate auth, contract capabilities, per-tool effect classification — none matter if the agent can shell out. Bash-free profiles are genuinely secure.",
+      "implications": [
+        "Member agent: messaging + member + workflow (no bash)",
+        "Dev agent: source + branch + bash",
+        "register_meridian_tools checks profile tool list"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D7",
+      "title": "Direct service layer calls, no HTTP",
+      "body": "Namespace tools call service-layer functions directly via ServiceContext. CallerContext carries member_id, session_id (Uuid), workspace_id (Option<Uuid>), agent_cert_fingerprint (Option<[u8;32]>). Published as Arc extension on ToolContext at agent construction. Unforgeable.",
+      "choice": "In-process calls via ServiceContext. CallerContext canonical definition in NR-006 R2.",
+      "rationale": "Norn runs in the same process as the services. HTTP round-trips are unnecessary overhead. CallerContext as an unforgeable extension eliminates identity spoofing.",
+      "implications": [
+        "tool-architecture cluster references NR-006 R2 for CallerContext",
+        "VM sessions use subset ServiceContext (workflow + source only)",
+        "Unavailable services return context-aware error messages"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D8",
+      "title": "Wake prompt unchanged, delivery mechanism changes",
+      "body": "build_wake_prompt is runtime-agnostic — it fetches inbox, formats DM envelopes, returns text. For Norn, the text is passed to AgentBuilder::prompt(). For Claude Runner, it remains SessionConfig::initial_message. WakeupService calls start_session which branches on RuntimeKind.",
+      "choice": "Same prompt, different delivery.",
+      "rationale": "The prompt format works. Changing delivery is sufficient — changing format would be unnecessary churn.",
+      "implications": [
+        "WakeupService unchanged beyond reading resolved RuntimeKind",
+        "wake_configs table gains runtime column for per-member override"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D9",
+      "title": "Execution context dispatch for host and VM",
+      "body": "Both host and VM provide in-process service calls. The host ServiceContext has the full service set. The VM ServiceContext has only workflow + source. Namespace tools call whichever ServiceContext they receive. When a tool calls an unavailable service, the interface returns a context-aware error.",
+      "choice": "Same in-process pattern, different service availability. VM agents use profile omission for unavailable tools.",
+      "rationale": "Per Steve's insight: don't register tools for unavailable services, just omit from VM profile. The agent never sees them and can't call them. Cleaner than register-then-error.",
+      "implications": [
+        "VM profile omits meridian_messaging, meridian_member, meridian_workspace",
+        "exchange-workspaces D6 wires VM's ServiceContext into register_meridian_tools"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D10",
+      "title": "CallerContext with agent certificate fingerprint",
+      "body": "CallerContext gains agent_cert_fingerprint: Option<[u8; 32]> for exchange/VM identity. None for host-instance sessions, Some for VM/exchange sessions. SHA-256 hash matching the exchange crate's representation.",
+      "choice": "Optional cert fingerprint on CallerContext.",
+      "rationale": "Namespace tools that cross the exchange boundary need to sign with the agent cert. The fingerprint identifies which cert to use.",
+      "implications": [
+        "meridian-trust crate provides cert verification",
+        "meridian_exchange tool gated by profile"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D11",
+      "title": "Workspace focus for shared workspace access via virtiofs",
+      "body": "Agents on the home instance access shared VM workspace files through the virtiofs mount. meridian_source working directory resolution supports a workspace focus concept — when focused on a shared workspace, source operations target the mount path. The agent stays local with full services but targets the VM's files.",
+      "choice": "Workspace focus routes source operations to virtiofs mount path.",
+      "rationale": "Agent keeps full service access (messaging, member) while operating on remote files. Avoids running the agent in the VM with limited services.",
+      "implications": [
+        "exchange-workspaces D20 specifies workspace_focus/unfocus commands",
+        "meridian_source working directory resolution must support mount paths",
+        "Session metadata (CallerContext.workspace_id + workspace mode) drives resolution"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D12",
+      "title": "Fix make_norn_step_runner persistence",
+      "body": "make_norn_step_runner must call .session(store) on the AgentBuilder. Session file path derived from workflow execution step context: {data_dir}/sessions/workflow/{step_id}.jsonl.",
+      "choice": "Explicit .session(store) call with workflow-scoped path.",
+      "rationale": "Without this, workflow step events are lost when the step completes.",
+      "implications": [
+        "Separate brief (NR-008) because it touches workflow path, not assistant path"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D13",
+      "title": "In-process notification injection via InboundChannel",
+      "body": "Replace the CLI subprocess notification hook with an in-process post-tool-batch check. After each tool batch completes, query pending notifications via MessagingService, format as ChannelMessage with DeliveryMode::Steer, inject via InboundSender. The agent picks them up at the next drain point — same mechanism as mid-session DM delivery.",
+      "choice": "InboundChannel injection at tool batch boundary, not tool lifecycle hooks.",
+      "rationale": "InboundChannel is already proven for DM delivery. The three tools with lifecycle hooks (Edit, Patch, Write) are file mutation tools — wrong place for notifications. The tool batch boundary matches the existing PreToolUse hook timing.",
+      "implications": [
+        "Two new service wrapper methods: get_pending_notifications, count_pending_notifications",
+        "NotificationChecker struct constructed per-session from ServiceContext and CallerContext",
+        "Notifications marked delivered after injection to prevent re-injection"
+      ],
+      "status": "active",
+      "superseded_by": null
+    },
+    {
+      "id": "D14",
+      "title": "Frontend runtime awareness via existing API field",
+      "body": "The backend SessionInfoResponse already includes runtime_kind. The frontend never reads it. Surface runtime_kind through SessionStartedEvent and assistant hooks. Fix two hardcoded 'claude' model fallbacks in AssistantPanel.tsx. Add runtime badge to session toolbar.",
+      "choice": "Read existing backend field, don't create new infrastructure.",
+      "rationale": "The data path exists. The gap is purely frontend consumption.",
+      "implications": [
+        "SessionStartedEvent gains optional runtime_kind field",
+        "Model fallback becomes runtime-aware (Norn vs Claude Runner)",
+        "Session toolbar shows runtime badge with distinct color"
+      ],
+      "status": "active",
+      "superseded_by": null
+    }
+  ],
+
+  "constraints": [
+    {
+      "id": "CO1",
+      "description": "No new external dependencies. Namespace tools call service-layer functions via ServiceContext, not HTTP."
+    },
+    {
+      "id": "CO2",
+      "description": "AssistantEvent is the single event type for all downstream consumers. Both runtimes produce it."
+    },
+    {
+      "id": "CO3",
+      "description": "JSONL session files are Norn's source of truth for resume. PG is the UI's source of truth. Neither replaces the other."
+    },
+    {
+      "id": "CO4",
+      "description": "The model sees at most 25 tools (16 standard Norn + up to 7 namespace + 2 optional web). Profile filtering reduces this in practice."
+    },
+    {
+      "id": "CO5",
+      "description": "Session IDs are UUIDs shared between the JSONL filename, PG assistant_session_events key, and SessionHandle registry key."
+    },
+    {
+      "id": "CO6",
+      "description": "Wake prompt delivery mechanism changes, format does not."
+    },
+    {
+      "id": "CO7",
+      "description": "mod.rs contains only pub mod declarations and re-exports."
+    },
+    {
+      "id": "CO8",
+      "description": "No file over 500 lines of code (excluding tests, comments, whitespace)."
+    },
+    {
+      "id": "CO9",
+      "description": "All errors handled via thiserror in library code. No .unwrap() or .expect() in library code."
+    },
+    {
+      "id": "CO10",
+      "description": "Namespace tools implement the existing Tool trait. No changes to the trait interface."
+    }
+  ],
+
+  "goals": [
+    "Member-facing sessions run through Norn in-process with full session persistence and resume capability",
+    "The model sees 5-7 focused namespace tools for Meridian operations, not 175 flat commands",
+    "PG persistence, Redis streaming, and WebSocket delivery work identically for Norn and Claude Runner sessions",
+    "Wake prompts and inbox delivery work through Norn without changes to the wake prompt format",
+    "Agent profiles control which namespace tools are available, matching the agent's role",
+    "The transition is incremental — both runtimes coexist until Claude Runner can be retired",
+    "Notifications are injected in-process via InboundChannel without CLI subprocess overhead",
+    "Frontend distinguishes Norn from Claude Runner sessions with runtime badge and correct model display"
+  ],
+
+  "non_goals": [
+    "Retiring Claude Runner — this cluster wires Norn in alongside it",
+    "Changing the wake prompt format — the delivery mechanism changes, not the content",
+    "MCP server integration — Norn tools are in-process, MCP is external-facing",
+    "Norn TUI for server sessions — server sessions are headless",
+    "Migrating existing Claude Runner session history to Norn format",
+    "Real-time tool permission prompting — server sessions are headless, permission is profile-configured"
+  ],
+
+  "boundaries": [
+    "SHALL NOT modify the norn crate's Tool trait — namespace tools implement the existing interface",
+    "SHALL NOT add MCP transport for internal tools — in-process calls only",
+    "SHALL NOT change the wake prompt format",
+    "SHALL NOT create a meridian_admin tool — former admin actions are redistributed",
+    "SHALL NOT bypass CallerContext authorization — all mutations scope to member_id",
+    "SHALL NOT remove the CLI notify check hook — it continues to work for Claude Runner"
+  ],
+
+  "structure": {
+    "new_crates": [],
+    "modified_crates": ["meridian-services", "meridian-tools", "meridian-server", "norn"],
+    "dependency_chain": [
+      "NR-001 → NR-002/003/004/005 parallel",
+      "NR-002 → NR-006/008",
+      "NR-006 → NR-007",
+      "NR-002 → NR-009",
+      "NR-001 → NR-010"
+    ]
+  }
+}

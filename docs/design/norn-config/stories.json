@@ -1,0 +1,61 @@
+{
+  "cluster": "norn-config",
+  "personas": [
+    {
+      "name": "AI Agent",
+      "role": "Operating Under Configuration",
+      "stories": [
+        {"id": "S1", "text": "As an AI agent, I want my tool permissions to be configured in a settings file so that the operator does not need to pass --allowed-tools on every invocation."},
+        {"id": "S2", "text": "As an AI agent, I want reasoning effort to be set in settings so that I operate at the configured reasoning level without per-invocation flags."},
+        {"id": "S3", "text": "As an AI agent spawning sub-agents, I want profile resolution to work from within libnorn so that child agents can load profiles by name at runtime."}
+      ]
+    },
+    {
+      "name": "Human Operator",
+      "role": "Configuring Norn Globally",
+      "stories": [
+        {"id": "S4", "text": "As an operator, I want to set my preferred model in ~/.norn/settings.json so that every Norn session uses it without me passing --model."},
+        {"id": "S5", "text": "As an operator, I want to define MCP server connections in my settings file so that they are available in every session."},
+        {"id": "S6", "text": "As an operator, I want to set permission deny rules in my user settings so that dangerous tool patterns are blocked across all projects."},
+        {"id": "S7", "text": "As an operator, I want to configure hooks in my settings file so that they fire automatically without me registering them programmatically."},
+        {"id": "S8", "text": "As an operator, I want to override the provider timeout and retry settings in my settings file so that I do not need to pass -c flags on every invocation."}
+      ]
+    },
+    {
+      "name": "Human Operator",
+      "role": "Configuring Norn Per-Project",
+      "stories": [
+        {"id": "S9", "text": "As an operator, I want to place a .norn/settings.json in my project so that project-specific settings apply automatically when I run Norn in that directory."},
+        {"id": "S10", "text": "As an operator, I want project settings to override my user settings so that each project can tailor Norn without changing my global config."},
+        {"id": "S11", "text": "As an operator, I want a .norn/settings.local.json that is gitignored so that I can have personal overrides in a shared project without committing them."},
+        {"id": "S12", "text": "As an operator, I want to add project-specific skill search paths in .norn/settings.json so that project skills are discovered automatically."},
+        {"id": "S13", "text": "As an operator, I want project hooks to extend my user hooks, not replace them, so that project-specific automation adds to my personal setup."}
+      ]
+    },
+    {
+      "name": "Human Operator",
+      "role": "Overriding Configuration at Invocation",
+      "stories": [
+        {"id": "S14", "text": "As an operator, I want CLI flags to override settings file values so that I can make one-off changes without editing files."},
+        {"id": "S15", "text": "As an operator, I want NORN_HOME to redirect all Norn state to a custom directory so that I can run isolated instances for testing or CI."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Maintaining the Codebase",
+      "stories": [
+        {"id": "S16", "text": "As a developer, I want path resolution to be in the norn crate so that I do not need to depend on norn-cli to resolve ~/.norn/ paths."},
+        {"id": "S17", "text": "As a developer, I want a single split_frontmatter function so that I do not maintain duplicate parsing logic across profiles, rules, and skills."},
+        {"id": "S18", "text": "As a developer, I want settings types to derive Default with all-None fields so that tests can construct partial settings without specifying every field."}
+      ]
+    },
+    {
+      "name": "Workflow Engine",
+      "role": "Launching Norn Programmatically",
+      "stories": [
+        {"id": "S19", "text": "As a workflow engine, I want to load merged settings from libnorn so that I can construct a RuntimeBundle without going through the CLI."},
+        {"id": "S20", "text": "As a workflow engine, I want per-tool config (write limits, edit config) to be expressible in settings so that workflow-level tool policies do not require custom code."}
+      ]
+    }
+  ]
+}

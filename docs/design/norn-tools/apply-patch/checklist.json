@@ -1,0 +1,100 @@
+{
+  "cluster": "norn-tools/apply-patch",
+  "sections": [
+    {
+      "name": "Entity-First Resolution (D1)",
+      "items": [
+        {"id": "C1", "text": "Hunk resolution tries entity-guided placement first (tier 1), then context-anchored search (tier 2), then header correction + diffy (tier 3)", "done": false},
+        {"id": "C2", "text": "Tier 1 reads the @@ semantic anchor text (after the second @@) and uses it to locate the target entity", "done": false},
+        {"id": "C3", "text": "Tier 1 scopes context search to the matched entity's byte range when entity is found", "done": false},
+        {"id": "C4", "text": "Tier 2 full-file context-anchored search runs exact match, then whitespace-insensitive, then trim-insensitive", "done": false},
+        {"id": "C5", "text": "Tier 3 header correction + diffy is the last resort, not the first attempt", "done": false},
+        {"id": "C6", "text": "Resolution tier used is reported per-hunk in the tool result", "done": false}
+      ]
+    },
+    {
+      "name": "libyggd AST Integration (D2)",
+      "items": [
+        {"id": "C7", "text": "norn crate has an optional dependency on libyggd behind a cargo feature flag named libyggd-ast", "done": false},
+        {"id": "C8", "text": "EntityExtractor trait defined with fn extract(&self, source: &str, path: &Path) -> Option<Vec<Entity>>", "done": false},
+        {"id": "C9", "text": "ApplyPatchTool holds Option<Arc<dyn EntityExtractor>> — None when libyggd-ast feature disabled, Some when enabled", "done": false},
+        {"id": "C10", "text": "libyggd-ast feature provides a concrete EntityExtractor implementation that calls libyggd::ast::extract_entities()", "done": false},
+        {"id": "C11", "text": "norn-cli crate enables the libyggd-ast feature", "done": false},
+        {"id": "C12", "text": "When libyggd-ast is disabled, tier 1 is skipped and resolution starts at tier 2 (context-anchored search)", "done": false},
+        {"id": "C13", "text": "Existing SupportedLanguage enum and parallel tree-sitter code in ast.rs replaced by EntityExtractor trait", "done": false},
+        {"id": "C14", "text": "Entity extraction supports 18+ languages via libyggd (Rust, TypeScript, Python, Go, Java, C, C++, and more)", "done": false}
+      ]
+    },
+    {
+      "name": "New File Creation and Deletion (D3)",
+      "items": [
+        {"id": "C15", "text": "Patches with --- /dev/null as source create new files", "done": false},
+        {"id": "C16", "text": "Pre-validate skips file-exists and read-before-edit checks for /dev/null source blocks", "done": false},
+        {"id": "C17", "text": "Execute starts from an empty string for /dev/null source blocks instead of reading the file", "done": false},
+        {"id": "C18", "text": "Parent directories are created if needed for new files (same behavior as Write tool)", "done": false},
+        {"id": "C19", "text": "AST validation runs on new file content before writing", "done": false},
+        {"id": "C20", "text": "/dev/null source detected during block parsing, not as a special case in pre-validate", "done": false},
+        {"id": "C21", "text": "Patches with +++ /dev/null as target delete the target file", "done": false},
+        {"id": "C22", "text": "Pre-validate rejects patches where a later hunk modifies a file that an earlier hunk deletes", "done": false},
+        {"id": "C23", "text": "Execute captures full file content as before-content before deleting", "done": false},
+        {"id": "C24", "text": "Convention checks do not run on deleted files", "done": false},
+        {"id": "C25", "text": "Deletion recorded in action log mutation ledger as status deleted with before-content", "done": false}
+      ]
+    },
+    {
+      "name": "Dry-Run Mode (D4)",
+      "items": [
+        {"id": "C26", "text": "dry_run boolean parameter added to apply_patch input schema", "done": false},
+        {"id": "C27", "text": "Dry-run resolves all hunks and validates staged content without writing to disk", "done": false},
+        {"id": "C28", "text": "Dry-run output includes per-file resolution details: tier used, entity matched, line drift", "done": false},
+        {"id": "C29", "text": "Dry-run output includes AST validation result (pass/fail with diagnostics)", "done": false},
+        {"id": "C30", "text": "Dry-run output includes blast radius: lines added, removed, modified per file and containing symbols", "done": false},
+        {"id": "C31", "text": "Dry-run output includes file length impact (before/after line counts)", "done": false},
+        {"id": "C32", "text": "Dry-run output includes diagnostics preview matching what DiagnosticsPostCheck would report", "done": false},
+        {"id": "C33", "text": "Dry-run produces identical resolution to actual application — same code path, only disk-write skipped", "done": false},
+        {"id": "C34", "text": "Dry-run results stored in the action log", "done": false}
+      ]
+    },
+    {
+      "name": "Strict Mode (D5)",
+      "items": [
+        {"id": "C35", "text": "mode parameter added to apply_patch input schema with values auto, strict, structural", "done": false},
+        {"id": "C36", "text": "auto mode (default) uses entity-first resolution with full tier fallback", "done": false},
+        {"id": "C37", "text": "strict mode only applies when context lines match exactly at the stated line position", "done": false},
+        {"id": "C38", "text": "strict mode reports what structural matching would have found when exact matching fails", "done": false},
+        {"id": "C39", "text": "strict mode structural_alternative includes would_apply, entity, entity_range, matched_at_line, drift, confidence", "done": false},
+        {"id": "C40", "text": "structural mode skips diffy entirely and requires entity resolution for every hunk", "done": false},
+        {"id": "C41", "text": "Failed strict-mode result includes a follow-up action ID for applying with structural matching", "done": false}
+      ]
+    },
+    {
+      "name": "Patch Artifacts (D6)",
+      "items": [
+        {"id": "C42", "text": "Patches can be assigned an artifact ID via an artifact_id parameter", "done": false},
+        {"id": "C43", "text": "Artifact storage uses the existing session event stream", "done": false},
+        {"id": "C44", "text": "Artifacts persist across turns but not across sessions", "done": false},
+        {"id": "C45", "text": "inspect_patch follow-up allows viewing a stored artifact by ID, optionally filtered by file or hunk index", "done": false},
+        {"id": "C46", "text": "edit_patch follow-up allows amending a specific hunk in a stored artifact before applying", "done": false},
+        {"id": "C47", "text": "apply_patch accepts artifact_id to apply a previously stored artifact", "done": false},
+        {"id": "C48", "text": "Artifact summary includes file count, hunk count, and blast radius estimate", "done": false}
+      ]
+    },
+    {
+      "name": "Committed/Failed Transparency (D8)",
+      "items": [
+        {"id": "C49", "text": "Tool result always reports committed state accurately even when post-validation fails (depends NTI-001)", "done": false},
+        {"id": "C50", "text": "Model receives both the error reason and the committed output (files_modified, diagnostics, committed flag) when Gate-mode post-validation fails", "done": false}
+      ]
+    },
+    {
+      "name": "Constraints",
+      "items": [
+        {"id": "C51", "text": "Patch input format remains standard unified diff — no proprietary format required from models (CO1)", "done": false},
+        {"id": "C52", "text": "Entity resolution does not add perceptible latency to simple patches — libyggd entity extraction is lazy, invoked only when @@ anchor contains a name (CO2)", "done": false},
+        {"id": "C53", "text": "Dry-run produces identical resolution to actual application — same code path, disk-write step skipped (CO3)", "done": false},
+        {"id": "C54", "text": "File creation via /dev/null creates parent directories same as Write tool (CO5)", "done": false},
+        {"id": "C55", "text": "Tool remains usable without libyggd — libyggd-ast feature flag is optional, entity-first tier skipped when disabled (CO6)", "done": false}
+      ]
+    }
+  ]
+}

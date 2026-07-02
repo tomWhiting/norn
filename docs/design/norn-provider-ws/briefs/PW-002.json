@@ -1,0 +1,84 @@
+{
+  "id": "PW-002",
+  "cluster": "norn-provider-ws",
+  "title": "Auth adapter — async auth_headers method on AuthProvider",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C48", "C49", "C50", "C51"],
+  "stories": [],
+  "purpose": "Extend the AuthProvider trait with an async auth_headers method that extracts bearer token and chatgpt-account-id as header name-value pairs. The existing apply_auth method couples auth to reqwest::RequestBuilder; WebSocket handshakes need raw headers for the HTTP upgrade request. This brief provides that surface without touching the WS transport itself.",
+  "task": "Add an async auth_headers() method to the AuthProvider trait. Implement it for OAuthAuthProvider (via AuthManager::auth().await), ApiKeyAuthProvider (bearer token only), and MockAuthProvider (consuming from the shared token sequence). The method returns Vec<(String, String)> of header name-value pairs.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "AuthProvider trait gains auth_headers",
+      "spec": "The AuthProvider trait SHALL define an async method auth_headers(&self) -> Result<Vec<(String, String)>, ProviderError>. The method SHALL return header name-value pairs suitable for an HTTP upgrade request.",
+      "acceptance": [
+        "auth_headers method defined on AuthProvider trait",
+        "Method is async (via #[async_trait])",
+        "Return type is Result<Vec<(String, String)>, ProviderError>"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/auth.rs"]
+      },
+      "checklist": ["C48"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "OAuthAuthProvider implements auth_headers",
+      "spec": "WHEN auth_headers is called on OAuthAuthProvider THE SYSTEM SHALL call self.manager.auth().await to retrieve the current token AND SHALL return Authorization: Bearer <token> and chatgpt-account-id headers.",
+      "acceptance": [
+        "OAuthAuthProvider::auth_headers returns bearer token header",
+        "chatgpt-account-id header included when available from AuthManager",
+        "Returns ProviderError::AuthenticationFailed when no token is available"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/auth.rs"]
+      },
+      "checklist": ["C49"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "ApiKeyAuthProvider implements auth_headers",
+      "spec": "WHEN auth_headers is called on ApiKeyAuthProvider THE SYSTEM SHALL return a single Authorization: Bearer <key> header AND SHALL NOT include chatgpt-account-id.",
+      "acceptance": [
+        "ApiKeyAuthProvider::auth_headers returns one-element vec with bearer header",
+        "No chatgpt-account-id header in the result"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/auth.rs"]
+      },
+      "checklist": ["C50"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "MockAuthProvider implements auth_headers",
+      "spec": "WHEN auth_headers is called on MockAuthProvider THE SYSTEM SHALL consume the next token from the same sequence used by apply_auth AND SHALL increment the shared apply_count.",
+      "acceptance": [
+        "MockAuthProvider::auth_headers returns bearer header from token sequence",
+        "Calling auth_headers consumes the same token that apply_auth would have consumed",
+        "apply_call_count increments on auth_headers calls"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/auth.rs"]
+      },
+      "checklist": ["C51"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the existing apply_auth method signature or behavior",
+    "SHALL NOT modify the on_unauthorized method",
+    "SHALL NOT add WebSocket-specific code — this is a generic auth surface extension"
+  ],
+  "verification": [
+    "cargo check --workspace passes",
+    "cargo test -p norn passes clean",
+    "Existing apply_auth tests still pass unchanged",
+    "New tests verify auth_headers returns correct headers for each provider type",
+    "MockAuthProvider test verifies shared token sequence consumption"
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "id": "PW-010",
+  "cluster": "norn-provider-ws",
+  "title": "Transport selection, dispatch, and HTTP fallback",
+  "depends_on": ["PW-001", "PW-005", "PW-006", "PW-007", "PW-008"],
+  "blocked_by": [],
+  "checklist": ["C44", "C45", "C46", "C47", "C56"],
+  "stories": ["S3", "S6", "S11", "S12"],
+  "purpose": "Wire the WS transport into OpenAiProvider's Provider::stream() implementation. This is the final integration brief that connects the pool (PW-005), framing (PW-007), lifecycle (PW-008), and HTTP transport (PW-001) into a unified dispatch. WS is attempted first for known endpoints; HTTP is the fallback for custom endpoints and when WS is unavailable.",
+  "task": "Modify OpenAiProvider to hold a WsPool. Update Provider::stream() to first try acquiring a WS connection from the pool. If successful, use the WS framing (PW-007) to send the request and stream events. If the pool returns a fallback signal (pool full, cooldown, custom endpoint), dispatch to the HTTP transport (PW-001). Log transport selection and fallback events.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "WsPool on OpenAiProvider",
+      "spec": "OpenAiProvider SHALL hold an Option<WsPool> initialized for known OpenAI endpoints (api.openai.com, chatgpt.com) and None for custom base_url endpoints.",
+      "acceptance": [
+        "WsPool created during OpenAiProvider construction for known endpoints",
+        "Option<WsPool> is None for custom base_url",
+        "Pool config (min/max connections, idle timeout) sourced from ProviderConfig"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/mod.rs"]
+      },
+      "checklist": ["C44", "C45"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R2",
+      "title": "WS-first dispatch in Provider::stream()",
+      "spec": "WHEN Provider::stream() is called AND the provider has a WsPool THE SYSTEM SHALL first attempt to acquire a connection from the pool. If a connection is acquired, the spawned task SHALL use WS framing to send the request and stream events.",
+      "acceptance": [
+        "stream() tries WS pool before HTTP for known endpoints",
+        "WS path uses PW-007 send/receive functions",
+        "Spawned task structure matches the existing HTTP pattern (mpsc channel + ReceiverStream)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/mod.rs"]
+      },
+      "checklist": ["C44"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R3",
+      "title": "HTTP fallback on pool unavailability",
+      "spec": "WHEN the WS pool signals fallback (pool full, cooldown, establishment failure) OR when the provider has no WsPool (custom endpoint) THE SYSTEM SHALL dispatch to the HTTP transport (http.rs SenderProvider).",
+      "acceptance": [
+        "Pool-full signal triggers HTTP dispatch",
+        "Cooldown state triggers HTTP dispatch",
+        "Custom base_url (no WsPool) always uses HTTP",
+        "HTTP path is the exact extracted code from PW-001 — no reimplementation"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/mod.rs"]
+      },
+      "checklist": ["C46"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R4",
+      "title": "Fallback logging",
+      "spec": "WHEN the transport falls back from WS to HTTP THE SYSTEM SHALL log the event at warn level with the reason (pool full, cooldown, establishment failure, custom endpoint).",
+      "acceptance": [
+        "tracing::warn emitted on every WS-to-HTTP fallback",
+        "Log message includes the specific reason for fallback",
+        "No warn log when HTTP is the expected transport (custom endpoint)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/mod.rs"]
+      },
+      "checklist": ["C47"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R5",
+      "title": "Pool state change logging",
+      "spec": "Pool state changes (scale up, scale down, cooldown enter/exit) SHALL be logged at debug level.",
+      "acceptance": [
+        "tracing::debug on pool scale-up (new slot created)",
+        "tracing::debug on pool scale-down (idle slot removed)",
+        "tracing::debug on cooldown enter and exit",
+        "tracing::debug on connection lifecycle events (establish, reconnect, close)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs", "crates/norn/src/provider/openai/mod.rs"]
+      },
+      "checklist": ["C56"],
+      "stories": ["S12"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the Provider trait — stream() signature stays the same",
+    "SHALL NOT reimplement the HTTP transport — use PW-001's http.rs directly",
+    "SHALL NOT hardcode endpoint detection patterns — use the existing base_url() method and constants",
+    "SHALL NOT add config values without discussion — pool config comes from ProviderConfig"
+  ],
+  "verification": [
+    "cargo check --workspace passes",
+    "cargo test -p norn passes clean",
+    "cargo clippy --workspace --all-targets -- -D warnings passes clean",
+    "Integration: known endpoint uses WS pool, custom endpoint uses HTTP",
+    "Integration: pool-full scenario falls back to HTTP with warn log",
+    "Integration: existing HTTP-only tests still pass (behavioral parity)",
+    "grep for tracing::warn confirms fallback logging on all fallback paths",
+    "grep for tracing::debug confirms pool state change logging"
+  ]
+}

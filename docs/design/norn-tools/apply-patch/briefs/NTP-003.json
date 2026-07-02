@@ -1,0 +1,162 @@
+{
+  "id": "NTP-003",
+  "cluster": "norn-tools/apply-patch",
+  "title": "libyggd AST integration via EntityExtractor trait and feature flag",
+  "depends_on": ["NTP-002"],
+  "blocked_by": [],
+  "checklist": ["C7", "C8", "C9", "C10", "C11", "C12", "C13", "C14", "C52", "C55"],
+  "stories": ["S15", "S17", "S18"],
+  "purpose": "Replace Norn's parallel tree-sitter integration (SupportedLanguage enum with 5 languages, collect_named_containers, find_entity_range in ast.rs) with libyggd's extract_entities() which provides 18+ languages, qualified name resolution, EntityKind with 28+ variants, content and structural hashing, and entity caching. The integration uses an optional cargo feature flag so norn remains usable without libyggd's full dependency tree.",
+  "task": "Define an EntityExtractor trait in norn's tool module. Implement it for libyggd behind a libyggd-ast cargo feature flag. Wire the extractor into ApplyPatchTool so tier 1 resolution uses it instead of the current find_entity_range/collect_named_containers code. Remove the SupportedLanguage enum and parallel tree-sitter code from ast.rs. Enable the feature in norn-cli. Ensure the tool works correctly with and without the feature flag.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define EntityExtractor trait",
+      "spec": "An EntityExtractor trait SHALL be defined in crates/norn/src/tools/patch_entity.rs with a single method: fn extract(&self, source: &str, path: &Path) -> Option<Vec<ExtractedEntity>>. ExtractedEntity SHALL be a lightweight struct with name (Option<String>), qualified_name (String), kind (String), byte_range (Range<usize>), and line_range (Range<usize>). The trait SHALL be Send + Sync. The struct SHALL be defined in the same file. This is a Norn-local type, not a re-export of libyggd's StructuralEntity — it decouples the trait from libyggd's API.",
+      "acceptance": [
+        "EntityExtractor trait exists in crates/norn/src/tools/patch_entity.rs",
+        "ExtractedEntity struct exists with name, qualified_name, kind, byte_range, line_range fields",
+        "Trait method returns Option<Vec<ExtractedEntity>> (None for unsupported languages, Some for extracted)",
+        "Trait is Send + Sync",
+        "crates/norn/src/tools/mod.rs declares pub(crate) mod patch_entity"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/patch_entity.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": ["C8"],
+      "stories": ["S17", "S18"]
+    },
+    {
+      "id": "R2",
+      "title": "Implement libyggd EntityExtractor behind feature flag",
+      "spec": "A LibygdEntityExtractor struct SHALL implement EntityExtractor by calling libyggd::ast::extract_entities(source, language) where language is detected from the file path via libyggd::ast::detect_language(). The implementation SHALL convert libyggd::ast::StructuralEntity to norn's ExtractedEntity. The struct and impl SHALL be gated behind #[cfg(feature = \"libyggd-ast\")]. crates/norn/Cargo.toml SHALL declare libyggd-ast as an optional feature that adds libyggd as a dependency.",
+      "acceptance": [
+        "LibygdEntityExtractor struct exists gated by #[cfg(feature = \"libyggd-ast\")]",
+        "It calls libyggd::ast::extract_entities with the detected language",
+        "It returns None for unsupported languages (when detect_language returns None)",
+        "It converts StructuralEntity fields to ExtractedEntity fields",
+        "crates/norn/Cargo.toml has [features] libyggd-ast = [\"dep:libyggd\"]",
+        "libyggd dependency is declared as optional: libyggd = { path = \"../libyggd\", optional = true }"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_entity.rs",
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C7", "C10", "C14"],
+      "stories": ["S15", "S17"]
+    },
+    {
+      "id": "R3",
+      "title": "Wire EntityExtractor into ApplyPatchTool",
+      "spec": "ApplyPatchTool SHALL hold an Option<Arc<dyn EntityExtractor>> field. When the field is Some, tier 1 resolution SHALL call extractor.extract() to find entities, search for the hunk's semantic anchor in the entity list by name matching, and scope context search to the matched entity's line range. When None, tier 1 is skipped and resolution starts at tier 2. The find_entity_range function in patch_apply.rs SHALL be replaced with a call through the EntityExtractor. A constructor ApplyPatchTool::with_extractor(extractor) SHALL be added alongside the existing new().",
+      "acceptance": [
+        "ApplyPatchTool has an extractor: Option<Arc<dyn EntityExtractor>> field",
+        "ApplyPatchTool::new() sets extractor to None",
+        "ApplyPatchTool::with_extractor(Arc<dyn EntityExtractor>) sets extractor to Some",
+        "apply_unified_tiered receives the extractor as a parameter",
+        "Tier 1 calls extractor.extract() when extractor is Some",
+        "Tier 1 is skipped when extractor is None",
+        "Name matching searches ExtractedEntity.name and ExtractedEntity.qualified_name"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs",
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C9", "C12"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R4",
+      "title": "Remove parallel tree-sitter code from ast.rs",
+      "spec": "The SupportedLanguage enum, container_kinds function, find_entity_range function, and collect_named_containers function SHALL be removed from ast.rs. The check_syntax function and AstCheck type in ast.rs SHALL remain — they serve a different purpose (syntax validation, not entity extraction). Any remaining code in ast.rs that referenced the removed items SHALL be updated. patch_apply.rs SHALL no longer import from ast.rs for entity finding.",
+      "acceptance": [
+        "SupportedLanguage enum no longer exists in ast.rs",
+        "find_entity_range function no longer exists in ast.rs",
+        "collect_named_containers function no longer exists in ast.rs",
+        "container_kinds function no longer exists in ast.rs",
+        "check_syntax and AstCheck still exist and function correctly",
+        "No dead imports remain in patch_apply.rs referencing removed items",
+        "cargo check -p norn succeeds with libyggd-ast feature disabled"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/ast.rs",
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C13"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Enable libyggd-ast in norn-cli",
+      "spec": "crates/norn-cli/Cargo.toml SHALL enable the libyggd-ast feature on its norn dependency. The norn-cli runtime wiring SHALL construct ApplyPatchTool::with_extractor(Arc::new(LibygdEntityExtractor)) when the feature is enabled, and ApplyPatchTool::new() when disabled. The MCP server's build_stateless_registry SHALL also use with_extractor when available.",
+      "acceptance": [
+        "crates/norn-cli/Cargo.toml has norn = { ..., features = [\"libyggd-ast\"] }",
+        "Runtime wiring creates ApplyPatchTool::with_extractor when libyggd-ast is enabled",
+        "MCP build_stateless_registry creates ApplyPatchTool::with_extractor when libyggd-ast is enabled",
+        "cargo check -p norn-cli succeeds"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/Cargo.toml",
+          "crates/norn-cli/src/runtime/wiring.rs",
+          "crates/norn-cli/src/commands/mcp.rs"
+        ]
+      },
+      "checklist": ["C11"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Tests for EntityExtractor integration and feature gating",
+      "spec": "Tests SHALL verify: a mock EntityExtractor that returns entities enables tier 1 resolution, a mock that returns None for all files forces tier 2 fallback, ApplyPatchTool::new() (no extractor) skips tier 1 entirely, and the libyggd implementation correctly converts StructuralEntity to ExtractedEntity. Feature-gated tests SHALL verify libyggd entity extraction works for at least Rust, Python, and TypeScript.",
+      "acceptance": [
+        "Test: mock extractor returning an entity enables tier 1 resolution with correct scoping",
+        "Test: mock extractor returning None forces tier 2 fallback",
+        "Test: ApplyPatchTool::new() (None extractor) skips tier 1",
+        "Test (feature-gated): LibygdEntityExtractor extracts entities from Rust source",
+        "Test (feature-gated): LibygdEntityExtractor extracts entities from Python source",
+        "Test (feature-gated): LibygdEntityExtractor returns None for unsupported extensions",
+        "All tests pass with cargo test -p norn",
+        "All tests pass with cargo test -p norn --features libyggd-ast"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_entity.rs",
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C12", "C14", "C52", "C55"],
+      "stories": ["S18"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify libyggd's API — only consume it",
+    "SHALL NOT remove check_syntax or AstCheck from ast.rs — those serve syntax validation, not entity extraction",
+    "SHALL NOT add entity extraction caching in norn — libyggd has its own AstCache; use extract_entities_cached when available",
+    "SHALL NOT add dry_run or mode parameters — those are NTP-004 and NTP-005",
+    "SHALL NOT change the Claude Code format parser — CC format does not use entity resolution"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors (no libyggd-ast feature)",
+    "cargo check -p norn --features libyggd-ast succeeds with zero errors",
+    "cargo check -p norn-cli succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero warnings",
+    "cargo clippy -p norn --features libyggd-ast -- -D warnings produces zero warnings",
+    "cargo test -p norn passes all tests",
+    "cargo test -p norn --features libyggd-ast passes all tests",
+    "grep -rn 'SupportedLanguage' crates/norn/src/ returns no matches (removed)",
+    "grep -rn 'find_entity_range' crates/norn/src/tools/ast.rs returns no matches (removed)",
+    "grep -rn 'EntityExtractor' crates/norn/src/tools/patch_entity.rs confirms trait exists"
+  ]
+}

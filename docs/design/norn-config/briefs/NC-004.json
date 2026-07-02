@@ -1,0 +1,133 @@
+{
+  "id": "NC-004",
+  "cluster": "norn-config",
+  "title": "Builder integration — settings into RuntimeBundle",
+  "depends_on": ["NC-003"],
+  "blocked_by": [],
+  "checklist": ["C36", "C37", "C38", "C39", "C40", "C41"],
+  "stories": ["S2", "S4", "S5", "S8", "S14"],
+  "purpose": "Wire the settings loader and merger into build_runtime so that settings files populate the RuntimeBundle. Every value that was previously only settable via CLI flags or -c overrides can now come from a settings file, with CLI retaining highest precedence. This is the integration point between the config system (NC-001 through NC-003) and the runtime.",
+  "task": "Modify build_runtime in norn-cli to load and merge settings before constructing the runtime. Populate AgentLoopConfig, ProviderConfigOverrides, and RetryPolicy from merged settings. Ensure CLI -c overrides take precedence over settings. Ensure profile reasoning_effort takes precedence over settings agent.reasoning_effort.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Load and merge settings in build_runtime",
+      "spec": "WHEN build_runtime is called, THE SYSTEM SHALL load settings from all three file paths, merge them with five-layer precedence, and validate the result before proceeding with runtime construction.",
+      "acceptance": [
+        "build_runtime calls norn::config::loader::load_settings early in its pipeline",
+        "Merged settings available before profile loading, CLI override application, and LoopContext construction",
+        "Settings loading errors propagate as BuildError::Argument",
+        "Test: build_runtime with a settings file picks up values from the file"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C36"],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R2",
+      "title": "AgentLoopConfig from settings",
+      "spec": "WHEN merged settings contain agent section fields, THE SYSTEM SHALL populate the corresponding AgentLoopConfig fields. Duration strings SHALL be parsed via humantime.",
+      "acceptance": [
+        "agent.max_turns populates AgentLoopConfig::max_iterations",
+        "agent.step_timeout populates AgentLoopConfig::step_timeout (parsed via humantime)",
+        "agent.schema_budget populates AgentLoopConfig::schema_attempt_budget",
+        "agent.context_window populates AgentLoopConfig::context_window_limit",
+        "agent.compact_threshold populates AgentLoopConfig::auto_compact_threshold_pct",
+        "agent.compact_keep_turns populates AgentLoopConfig::auto_compact_keep_recent_turns",
+        "Test: settings agent fields flow into AgentLoopConfig"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C37"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R3",
+      "title": "ProviderConfigOverrides from settings",
+      "spec": "WHEN merged settings contain provider section fields, THE SYSTEM SHALL populate the corresponding ProviderConfigOverrides fields.",
+      "acceptance": [
+        "provider.base_url populates ProviderConfigOverrides::base_url",
+        "provider.timeout populates ProviderConfigOverrides (parsed via humantime)",
+        "provider.max_retries populates ProviderConfigOverrides::max_retries",
+        "provider.options populates ProviderConfigOverrides::provider_options",
+        "provider.debug_dump_dir populates ProviderConfigOverrides::debug_dump_dir",
+        "Test: settings provider fields flow into ProviderConfigOverrides"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C38"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R4",
+      "title": "RetryPolicy from settings",
+      "spec": "WHEN merged settings contain retry section fields, THE SYSTEM SHALL construct a RetryPolicy from them.",
+      "acceptance": [
+        "retry.max_retries populates RetryPolicy::max_retries",
+        "retry.base_delay populates RetryPolicy::initial_backoff (parsed via humantime)",
+        "retry.backoff_multiplier populates RetryPolicy::backoff_multiplier",
+        "Settings retry values apply when no -c retry_* is set",
+        "Test: settings retry fields produce a RetryPolicy"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C39"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R5",
+      "title": "CLI -c precedence over settings",
+      "spec": "WHEN both a settings file and a -c key=value override set the same field, THE SYSTEM SHALL use the -c value. Settings provide defaults; CLI provides overrides.",
+      "acceptance": [
+        "Settings agent.max_turns=10 + -c max_turns=5 produces max_iterations=5",
+        "Settings provider.base_url=X + -c base_url=Y produces base_url=Y",
+        "-c values are applied AFTER settings values in the pipeline",
+        "Test: -c override wins over settings value"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs", "crates/norn-cli/src/config/assembly.rs"]
+      },
+      "checklist": ["C40"],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R6",
+      "title": "Profile reasoning_effort precedence over settings",
+      "spec": "WHEN both settings agent.reasoning_effort and a profile reasoning_effort are set, THE SYSTEM SHALL use the profile value. Profile is model-specific and should not be overridden by a global settings default.",
+      "acceptance": [
+        "Settings agent.reasoning_effort=low + profile reasoning_effort=high produces high",
+        "Settings agent.reasoning_effort=low + no profile reasoning_effort produces low",
+        "No settings + profile reasoning_effort=medium produces medium",
+        "CLI --reasoning-effort wins over both",
+        "Test: profile reasoning_effort overrides settings"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C41"],
+      "stories": ["S2"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify NornSettings struct — that was NC-002",
+    "SHALL NOT modify loader or merge logic — that was NC-003",
+    "SHALL NOT implement permission runtime evaluation — that is downstream",
+    "SHALL NOT implement hook registration from settings — that is the hooks cluster",
+    "SHALL NOT wire downstream config surfaces (skills, context) — that is NC-005"
+  ],
+  "verification": [
+    "cargo check -p norn -p norn-cli succeeds",
+    "cargo test -p norn -p norn-cli — all tests pass",
+    "cargo clippy -p norn -p norn-cli -- -D warnings clean",
+    "Settings values flow into AgentLoopConfig (verified by test with tempdir settings file)",
+    "CLI -c overrides take precedence over settings (verified by test)",
+    "Profile reasoning_effort overrides settings (verified by test)",
+    "All existing builder.rs tests pass unchanged",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

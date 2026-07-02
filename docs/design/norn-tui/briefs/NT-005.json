@@ -1,0 +1,134 @@
+{
+  "id": "NT-005",
+  "cluster": "norn-tui",
+  "title": "Autocomplete — slash commands, skills, and file paths",
+  "depends_on": ["NT-004"],
+  "blocked_by": [],
+  "checklist": ["C49", "C50", "C51", "C52", "C53", "C54", "C55"],
+  "stories": ["S8", "S9"],
+  "purpose": "Slash commands and file path references are the primary interaction surfaces beyond free-text prompts. This brief adds trigger-based autocomplete that renders as a popup within the fixed panel, letting users discover commands and reference files without memorising paths or command names.",
+  "task": "Implement autocomplete in input/autocomplete.rs. Detect trigger characters: / at column 0 opens slash command completion (including skills), @ opens file/directory path completion. Build candidate lists from the SlashCommandRegistry (for / trigger, including source tags) and nucleo fuzzy matching against the working tree (for @ trigger). Render the popup inside the fixed panel, growing upward with DECSTBM reissue. Limit to 8 visible rows with overflow count. Up/Down navigate, Tab accepts, Escape dismisses, typing narrows candidates.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Trigger detection",
+      "spec": "WHEN the user types / at column 0, THE SYSTEM SHALL open slash command autocomplete. WHEN the user types @, THE SYSTEM SHALL open file path autocomplete.",
+      "acceptance": [
+        "/ at column 0 (first character of input or first character after a newline) triggers slash autocomplete",
+        "/ in the middle of a word does not trigger autocomplete",
+        "@ anywhere in the input triggers file path autocomplete",
+        "detect_trigger(input, cursor_col) returns Option<AutocompleteTrigger> with the trigger type and prefix",
+        "Test: '/' at position 0 returns SlashCommand trigger",
+        "Test: 'text /' at position 5 does not trigger",
+        "Test: '@src' returns FilePath trigger with prefix 'src'"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/input/autocomplete.rs"]
+      },
+      "checklist": ["C49", "C51"],
+      "stories": ["S8", "S9"]
+    },
+    {
+      "id": "R2",
+      "title": "Slash command candidate generation",
+      "spec": "WHEN slash command autocomplete is triggered, THE SYSTEM SHALL generate candidates from the SlashCommandRegistry with name, source tag, and description.",
+      "acceptance": [
+        "Candidates include all registered slash commands (builtin + profile). Note: skill names depend on SkillSearchPaths being installed on the ToolContext (wired in builder.rs). If SkillSearchPaths is not installed, skill completion is unavailable — handle gracefully by omitting skills from candidates",
+        "Each candidate has: name, source_tag ('builtin' or 'profile'), description",
+        "Candidates are filtered by the prefix typed after /",
+        "Candidates are sorted alphabetically by name",
+        "Test: with prefix 'he', candidate list contains 'help' and not 'tools'"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/autocomplete.rs"]
+      },
+      "checklist": ["C50"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R3",
+      "title": "File path candidate generation",
+      "spec": "WHEN file path autocomplete is triggered, THE SYSTEM SHALL generate candidates by fuzzy matching the prefix against the working tree using nucleo-matcher.",
+      "acceptance": [
+        "File paths are collected from the working tree (respecting .gitignore via the ignore crate or equivalent)",
+        "Nucleo fuzzy matcher scores paths against the typed prefix",
+        "Results sorted by match score descending",
+        "Directories are visually distinguished from files (trailing / or distinct styling)",
+        "Test: prefix 'main' matches 'src/main.rs' with a positive score"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/autocomplete.rs"]
+      },
+      "checklist": ["C51"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R4",
+      "title": "Popup rendering in the fixed panel",
+      "spec": "The autocomplete popup SHALL render inside the fixed panel, growing upward from the input area, with DECSTBM reissued to accommodate the popup height.",
+      "acceptance": [
+        "AutocompletePopup struct holds: candidates, selected_index, visible_offset",
+        "render(row, width, writer, caps) writes the popup rows above the input area",
+        "The currently selected candidate is highlighted (reverse video or distinct background)",
+        "Opening the popup triggers DECSTBM reissue (scroll region shrinks to make room)",
+        "Closing the popup triggers DECSTBM reissue (scroll region grows back)",
+        "Test: popup with 5 candidates renders 5 rows plus the selection highlight"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/autocomplete.rs"]
+      },
+      "checklist": ["C52"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Popup size limit and overflow",
+      "spec": "The autocomplete popup SHALL show at most 8 rows AND SHALL display a count indicator when additional candidates exist.",
+      "acceptance": [
+        "When candidates exceed 8, only 8 are visible at a time",
+        "A count indicator (e.g. '4 more...') appears at the bottom of the popup when there are hidden candidates",
+        "Scrolling the selection past the visible window shifts the visible range",
+        "Test: 12 candidates show 8 visible plus '4 more...' indicator"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/autocomplete.rs"]
+      },
+      "checklist": ["C53"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Popup navigation and acceptance",
+      "spec": "WHEN the autocomplete popup is open, Up/Down SHALL navigate candidates, Tab SHALL accept the selected candidate, and Escape SHALL dismiss the popup.",
+      "acceptance": [
+        "Up arrow moves selection up (wraps to bottom at top)",
+        "Down arrow moves selection down (wraps to top at bottom)",
+        "Tab inserts the selected candidate's text at the trigger position, replacing the typed prefix",
+        "Escape closes the popup without inserting anything",
+        "Typing additional characters narrows the candidate list in real-time",
+        "If narrowing leaves zero candidates, the popup closes automatically",
+        "Test: Tab on selected candidate inserts its text and closes popup"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/autocomplete.rs"]
+      },
+      "checklist": ["C54", "C55"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the input editor itself — that is NT-004",
+    "SHALL NOT implement agent name, profile name, or session name completion — @ is for files only per Tom's direction",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "Trigger detection identifies / at column 0 and @ correctly — verified by tests",
+    "Slash command candidates filtered by prefix — verified by test",
+    "File path fuzzy matching produces scored results — verified by test",
+    "Popup renders correct number of rows with overflow indicator — verified by test",
+    "Tab acceptance inserts correct text — verified by test"
+  ]
+}

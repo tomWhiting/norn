@@ -1,0 +1,104 @@
+{
+  "id": "NX-004",
+  "cluster": "norn-context",
+  "title": "Nested NORN.md as synthetic rules",
+  "depends_on": ["NX-001", "NX-002"],
+  "blocked_by": [],
+  "checklist": ["C22", "C23", "C24", "C25", "C26", "C27"],
+  "stories": ["S2", "S3", "S4", "S11", "S12"],
+  "purpose": "Subdirectories can have their own NORN.md files that provide directory-specific conventions. Rather than building a parallel activation system, these are registered as synthetic rules in the existing RuleEngine. This reuses trigger evaluation, presence tracking, and compaction recovery without new machinery.",
+  "task": "Extend context/scanner.rs with a function that, given a PathChanged event, checks if the file's directory ancestry contains a NORN.md that hasn't been registered yet. When found, create a synthetic Rule with a PathGlob trigger matching the directory and descendants, register it in the RuleEngine via add_rule(). Track which directories have been scanned to avoid duplicate registration.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Nested NORN.md detection on PathChanged",
+      "spec": "WHEN a RuntimeEvent::PathChanged occurs, the scanner SHALL check if any directory in the file's ancestry (up to the project root) contains a NORN.md file that has not yet been registered as a synthetic rule.",
+      "acceptance": [
+        "Reading src/api/handler.rs checks src/api/ for NORN.md, then src/ for NORN.md",
+        "The check stops at the project root (cwd), does not walk above it",
+        "Directories already scanned are skipped (O(1) lookup via a HashSet)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/scanner.rs"]
+      },
+      "checklist": ["C22"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R2",
+      "title": "Synthetic rule creation",
+      "spec": "WHEN a NORN.md is found in a subdirectory, the scanner SHALL create a Rule with: ID 'norn-md:{relative-path}', a PathGlob trigger matching '{subdir}/**', DeliveryMode::SystemContextAppend, TriggerTiming::After, and the file content as the body.",
+      "acceptance": [
+        "NORN.md in src/api/ creates a Rule with id 'norn-md:src/api'",
+        "The trigger pattern is 'src/api/**'",
+        "The delivery mode is SystemContextAppend",
+        "The timing is After",
+        "The body is the full content of the NORN.md file",
+        "shell_source is None"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/scanner.rs"]
+      },
+      "checklist": ["C23", "C24", "C25"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R3",
+      "title": "Single registration per directory",
+      "spec": "A nested NORN.md SHALL be registered as a synthetic rule exactly once. Subsequent PathChanged events in the same directory or its descendants SHALL NOT re-register the rule.",
+      "acceptance": [
+        "First PathChanged in src/api/ registers the synthetic rule",
+        "Second PathChanged in src/api/ does not create a duplicate rule",
+        "PathChanged in src/api/v2/ (subdirectory) does not re-register src/api/NORN.md"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/scanner.rs"]
+      },
+      "checklist": ["C26"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R4",
+      "title": "Compaction recovery via presence tracking",
+      "spec": "Synthetic rules SHALL recover from compaction via the RuleEngine's existing presence tracking (RulePresenceSet). WHEN a synthetic rule is lost from context during compaction, it SHALL re-activate on the next PathChanged event in the matching directory.",
+      "acceptance": [
+        "After compaction clears dynamic sections, the synthetic rule is no longer in the presence set",
+        "A subsequent PathChanged in the matching directory triggers re-injection via the rules engine",
+        "The re-injected content matches the original NORN.md content"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/scanner.rs"]
+      },
+      "checklist": ["C27"],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R5",
+      "title": "RuleEngine integration",
+      "spec": "Synthetic rules SHALL be added to the RuleEngine via the public add_rule() method. The scanner SHALL NOT modify RuleEngine internals.",
+      "acceptance": [
+        "scanner calls engine.add_rule(rule) for each synthetic rule",
+        "The synthetic rule appears in engine.process_event() results when a matching PathChanged occurs",
+        "No modifications to rules/engine.rs internals are needed"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/scanner.rs"]
+      },
+      "checklist": [],
+      "stories": ["S3"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the RuleEngine struct or its internal methods — use add_rule() only",
+    "SHALL NOT modify the Rule type or TriggerCondition type",
+    "SHALL NOT implement file watching — detection is reactive on PathChanged events",
+    "SHALL NOT handle always-on context files — that is NX-001"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn -- context::scanner passes all tests",
+    "cargo clippy -p norn -- -D warnings clean",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)",
+    "Synthetic rule IDs follow 'norn-md:{path}' convention in all tests"
+  ]
+}

@@ -1,0 +1,157 @@
+{
+  "id": "NC-003",
+  "cluster": "norn-config",
+  "title": "Settings loader, merger, and validator",
+  "depends_on": ["NC-001", "NC-002"],
+  "blocked_by": [],
+  "checklist": ["C11", "C12", "C13", "C14", "C15", "C16", "C17", "C18", "C19", "C20", "C33", "C34", "C35"],
+  "stories": ["S9", "S10", "S11", "S13", "S14", "S19"],
+  "purpose": "Implement the settings loading pipeline: discover settings files at up to three paths, parse JSON, merge layers with field-type-appropriate strategies, and validate the result. This is the core of the configuration system — it turns files on disk into a merged NornSettings that downstream code can consume.",
+  "task": "Create norn::config::loader with load_settings() that discovers and parses settings files. Create norn::config::merge with merge_settings() implementing five-layer precedence with field-type-specific merge strategies (scalar override, deny-additive, allow-concatenate, hook-extend, MCP-by-name, tool-deep-merge). Create norn::config::validate with validate_settings() that checks duration strings, permission patterns, and MCP server shapes.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Settings file discovery",
+      "spec": "load_settings() SHALL discover settings files at three paths: ~/.norn/settings.json (user), .norn/settings.json (project), .norn/settings.local.json (local). Missing files SHALL be treated as empty settings (all-None). The function SHALL accept an explicit working directory for project-level discovery.",
+      "acceptance": [
+        "load_settings(cwd: &Path) defined in norn::config::loader",
+        "Returns Result<LoadedSettings, ConfigError> where LoadedSettings holds user, project, and local layers",
+        "User path resolved via norn::config::paths::settings_file()",
+        "Project path is cwd/.norn/settings.json",
+        "Local path is cwd/.norn/settings.local.json",
+        "Missing file produces NornSettings::default() for that layer (no error)",
+        "Test: missing files produce all-None settings"
+      ],
+      "files": {
+        "create": ["crates/norn/src/config/loader.rs"],
+        "modify": ["crates/norn/src/config/mod.rs"]
+      },
+      "checklist": ["C11", "C12"],
+      "stories": ["S9", "S19"]
+    },
+    {
+      "id": "R2",
+      "title": "JSON parsing with typed errors",
+      "spec": "WHEN a settings file exists but contains malformed JSON, THE SYSTEM SHALL return a ConfigError naming the file path and the parse error. It SHALL NOT panic or silently ignore the file.",
+      "acceptance": [
+        "Malformed JSON produces ConfigError::InvalidConfig with file path in the reason",
+        "serde_json parse error message included in the reason",
+        "Test: malformed JSON file produces descriptive error"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/loader.rs"]
+      },
+      "checklist": ["C13"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Five-layer merge for scalar fields",
+      "spec": "merge_settings() SHALL merge NornSettings layers in order: compiled defaults, user, project, local, CLI overrides. For scalar fields (Option<T>), higher-precedence non-None value SHALL win.",
+      "acceptance": [
+        "merge_settings defined in norn::config::merge",
+        "Accepts user, project, local layers plus a CLI override layer",
+        "Returns a single merged NornSettings",
+        "Scalar: local Some(x) wins over project Some(y) wins over user Some(z)",
+        "Scalar: None at higher layer preserves lower layer's value",
+        "Test: three-layer scalar merge with mixed None/Some values"
+      ],
+      "files": {
+        "create": ["crates/norn/src/config/merge.rs"],
+        "modify": ["crates/norn/src/config/mod.rs"]
+      },
+      "checklist": ["C14", "C15"],
+      "stories": ["S10", "S14"]
+    },
+    {
+      "id": "R4",
+      "title": "Permission deny-additive merge",
+      "spec": "Permission deny arrays SHALL union across all layers. A deny rule at any layer cannot be removed by a higher-precedence layer. Permission allow arrays SHALL concatenate across layers and deduplicate.",
+      "acceptance": [
+        "Deny: user [A, B] + project [C] + local [] produces [A, B, C]",
+        "Deny: local cannot remove a user-level deny",
+        "Allow: user [X] + project [X, Y] produces [X, Y] (deduplicated)",
+        "Ask: same concatenate-deduplicate as allow",
+        "Test: deny-additive merge verified",
+        "Test: allow-deduplicate merge verified"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/merge.rs"]
+      },
+      "checklist": ["C16", "C17"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R5",
+      "title": "Hook and MCP merge strategies",
+      "spec": "Hook arrays SHALL merge by event type: project hooks extend user hooks within the same event. MCP servers SHALL merge by name: same-name project server overrides user server definition.",
+      "acceptance": [
+        "Hooks: user pre_tool [A] + project pre_tool [B] produces pre_tool [A, B]",
+        "Hooks: project does not remove user hooks of the same event type",
+        "MCP: user {s1: def_a} + project {s1: def_b, s2: def_c} produces {s1: def_b, s2: def_c}",
+        "MCP: same-name project server fully replaces user server (not deep-merged)",
+        "Test: hook extend merge verified",
+        "Test: MCP by-name merge verified"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/merge.rs"]
+      },
+      "checklist": ["C18", "C19"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R6",
+      "title": "Tool config deep merge",
+      "spec": "Tool configuration SHALL deep-merge: a specific key override at project level preserves sibling keys from user level.",
+      "acceptance": [
+        "User tools.write.max_code_lines=500 + project tools.write.length_overrides=[...] produces both keys present",
+        "Project tools.write.max_code_lines=800 overrides user's 500 for that key",
+        "Test: deep merge preserves sibling keys across layers"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/merge.rs"]
+      },
+      "checklist": ["C20"],
+      "stories": ["S20"]
+    },
+    {
+      "id": "R7",
+      "title": "Settings validation",
+      "spec": "validate_settings() SHALL validate the merged settings: duration strings via humantime, permission patterns for syntactic well-formedness, MCP server entries for required fields. Unknown top-level keys SHALL emit tracing::warn, not an error.",
+      "acceptance": [
+        "validate_settings defined in norn::config::validate",
+        "Invalid duration string produces ConfigError naming the field and value",
+        "Invalid permission pattern produces ConfigError naming the pattern",
+        "MCP server missing both command and url produces ConfigError",
+        "Unknown top-level keys produce tracing::warn (not error)",
+        "Valid settings pass without error",
+        "Test: invalid duration caught",
+        "Test: valid settings pass"
+      ],
+      "files": {
+        "create": ["crates/norn/src/config/validate.rs"],
+        "modify": ["crates/norn/src/config/mod.rs"]
+      },
+      "checklist": ["C33", "C34", "C35"],
+      "stories": ["S11"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify builder.rs — that is NC-004",
+    "SHALL NOT modify the NornSettings struct definition — that was NC-002",
+    "SHALL NOT implement hook execution — that is the hooks cluster",
+    "SHALL NOT implement MCP server lifecycle — that is a separate concern",
+    "SHALL NOT implement permission pattern matching/evaluation at runtime — that is downstream"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "Merge: three-layer scalar merge produces correct precedence (verified by test)",
+    "Merge: deny arrays are union-merged (verified by test)",
+    "Merge: hooks extend, not replace (verified by test)",
+    "Validation: invalid duration produces descriptive error (verified by test)",
+    "Loading: missing file produces empty settings, not error (verified by test)",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

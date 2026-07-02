@@ -1,0 +1,122 @@
+{
+  "id": "N-020",
+  "cluster": "norn",
+  "title": "Profiles, capabilities, slash commands, and runtime prompt commands",
+  "depends_on": ["N-017"],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": ["S22", "S23", "S24", "S28"],
+  "purpose": "Feature 19 (profiles/capabilities), 38 (skills/slash commands/profiles/prompt templates), 39 (session variables in prompts), and 40 (runtime system prompt commands) are all unimplemented. The Profile struct is the missing glue that configures what model, tools, hooks, rules, instructions, and capabilities an agent gets. Slash commands pre-process user input before it reaches the model. Runtime system prompt commands populate dynamic prompt sections from shell commands. This brief implements all of them.",
+  "task": "Define Profile struct with model, reasoning_effort, tools, hooks, rules, system_instructions, settings, capabilities. Define Capability as a composable unit of tools + instructions + hooks. Implement from_profile() that constructs a LoopContext (from N-017) and configures the ToolRegistry from a Profile. Implement slash command pre-processing in the loop (detect /command prefix, expand to skill or tool invocation). Implement runtime prompt commands (shell commands registered as system sections that execute at prompt construction time). Thread reasoning_effort from Profile through to ProviderRequest.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Profile struct and serialization",
+      "spec": "Profile SHALL configure all aspects of an agent's behavior: model, reasoning effort, tools, hooks, rules, system instructions, settings, and composable capabilities.",
+      "acceptance": [
+        "Profile struct in crates/norn/src/profile.rs",
+        "Fields: name (String), model (String), reasoning_effort (Option<ReasoningEffort>), tools (Option<Vec<String>>), system_instructions (Vec<String>), capabilities (Vec<Capability>), settings (HashMap<String, Value>)",
+        "Profile derives Clone, Debug, Serialize, Deserialize",
+        "Loads from TOML or JSON file via Profile::from_file(path)",
+        "Test: round-trip serialize/deserialize a profile with all fields set"
+      ],
+      "files": { "create": ["crates/norn/src/profile.rs"], "modify": ["crates/norn/src/lib.rs"] },
+      "checklist": [],
+      "stories": ["S22"]
+    },
+    {
+      "id": "R2",
+      "title": "Capability composition",
+      "spec": "Capabilities SHALL be composable units that contribute tools, system instructions, and hooks. A Profile's capabilities are merged to produce the final configuration.",
+      "acceptance": [
+        "Capability struct: name (String), tools (Vec<String>), system_instructions (Vec<String>), disallowed_patterns (Vec<String>)",
+        "Profile::resolved_tools() merges Profile.tools with all Capability.tools, deduplicates",
+        "Profile::resolved_instructions() concatenates Profile.system_instructions with all Capability.system_instructions",
+        "Profile::resolved_disallowed() collects all Capability.disallowed_patterns",
+        "Test: profile with 2 capabilities, verify merged tools and instructions"
+      ],
+      "files": { "modify": ["crates/norn/src/profile.rs"] },
+      "checklist": [],
+      "stories": ["S22"]
+    },
+    {
+      "id": "R3",
+      "title": "from_profile builds LoopContext and configures registry",
+      "spec": "from_profile SHALL construct a fully configured LoopContext and restrict the ToolRegistry based on the Profile.",
+      "acceptance": [
+        "from_profile(profile, registry, rules, hooks) -> (LoopContext, ToolRegistry)",
+        "Calls registry.set_available(profile.resolved_tools()) to restrict tools",
+        "Constructs LoopContext with profile.resolved_instructions() as system sections",
+        "Sets reasoning_effort on the LoopContext for threading to ProviderRequest",
+        "If profile has rules, loads them into the RuleEngine",
+        "Test: from_profile with tools=['read','write'], verify only those tools available"
+      ],
+      "files": { "modify": ["crates/norn/src/profile.rs", "crates/norn/src/loop/runner.rs"] },
+      "checklist": [],
+      "stories": ["S23"]
+    },
+    {
+      "id": "R4",
+      "title": "Thread reasoning_effort to ProviderRequest",
+      "spec": "reasoning_effort from the Profile SHALL be passed through to the ProviderRequest. Currently call_provider hardcodes it to None.",
+      "acceptance": [
+        "LoopContext gains field: reasoning_effort (Option<ReasoningEffort>)",
+        "call_provider reads reasoning_effort from LoopContext",
+        "ProviderRequest.reasoning is set from the LoopContext value",
+        "Test: set reasoning_effort to Low in LoopContext, verify ProviderRequest has it"
+      ],
+      "files": { "modify": ["crates/norn/src/loop/classify.rs", "crates/norn/src/loop/runner.rs"] },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Slash command preprocessing",
+      "spec": "User input starting with / SHALL be intercepted before reaching the model and expanded into a skill activation or tool invocation.",
+      "acceptance": [
+        "SlashCommand struct: name (String), handler (SlashCommandHandler enum)",
+        "SlashCommandHandler enum: Skill { skill_name: String }, Tool { tool_name: String, args: Value }, Custom { handler: Box<dyn Fn> }",
+        "SlashCommandRegistry in loop/commands.rs",
+        "preprocess_input(input, registry) -> PreprocessResult enum { Passthrough(String), Expanded { messages: Vec<Message> } }",
+        "Called in run_agent_step before the user prompt is added to messages",
+        "/compact, /help, /status as built-in examples",
+        "Test: input '/review foo.rs' expands to skill activation for 'review' with arg 'foo.rs'"
+      ],
+      "files": { "create": ["crates/norn/src/loop/commands.rs"], "modify": ["crates/norn/src/loop/runner.rs", "crates/norn/src/loop/mod.rs"] },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Runtime system prompt commands",
+      "spec": "Profiles SHALL be able to register shell commands that run at prompt construction time and contribute dynamic sections to the system prompt.",
+      "acceptance": [
+        "PromptCommand struct: name (String), command (String), cache_ttl (Option<Duration>)",
+        "Profile gains field: prompt_commands (Vec<PromptCommand>)",
+        "At each iteration start, LoopContext evaluates prompt_commands via tokio::process::Command",
+        "Command stdout becomes a system section (append_system_section)",
+        "Cache: if cache_ttl set and previous result is fresh, reuse without re-executing",
+        "Command timeout: 5s default, failure produces diagnostic warning and skips section",
+        "Test: prompt command 'echo Current dir: $(pwd)' appears in system instruction"
+      ],
+      "files": { "modify": ["crates/norn/src/profile.rs", "crates/norn/src/loop/runner.rs"] },
+      "checklist": [],
+      "stories": ["S24"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement profile persistence or a profile registry — profiles are constructed by the caller",
+    "SHALL NOT implement capability discovery from filesystem — capabilities are defined in profile files",
+    "SHALL NOT implement profile-based provider routing (choosing Claude vs OpenAI based on profile) — that is caller responsibility",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "Profile serialization round-trips correctly — verified by test",
+    "Capability composition produces correct merged tool list — verified by test",
+    "reasoning_effort flows from Profile to ProviderRequest — verified by test",
+    "Slash command expands to skill activation — verified by test"
+  ]
+}

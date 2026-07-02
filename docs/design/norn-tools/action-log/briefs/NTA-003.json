@@ -1,0 +1,148 @@
+{
+  "id": "NTA-003",
+  "cluster": "norn-tools/action-log",
+  "title": "Mutation ledger: file tracking with external revert detection",
+  "depends_on": ["NTA-001", "NTA-002"],
+  "blocked_by": [],
+  "checklist": ["C15", "C21", "C22", "C23", "C24", "C25", "C26"],
+  "stories": ["S8", "S9", "S10"],
+  "purpose": "Add a mutation ledger to the action log — a derived view that tracks every file modification during the session. The ledger answers \"what files did I change?\" without relying on git status, which shows pre-existing dirty files and changes from other agents in a shared working tree. External revert detection is lazy: when queried, each file is hashed and compared against the post-mutation hash. No filesystem watching, no polling.",
+  "task": "Create crates/norn/src/session/mutation_ledger.rs with MutationLedgerEntry (file_path, operation, first/last tool_call_id, revert_status, diff_stats). The MutationLedger is built from ActionLog entries — each time a mutation tool completes, the ledger updates. Add the mutations query to the action_log tool (NTA-002) that returns ledger entries with lazy revert detection. The ledger is a derived view, not a separate store — it reads from ActionLog and the filesystem.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define MutationLedgerEntry struct",
+      "spec": "MutationLedgerEntry SHALL be defined in crates/norn/src/session/mutation_ledger.rs with fields: file_path (PathBuf), operation (MutationOp enum: Created, Modified, Deleted), first_tool_call_id (String — first tool call that touched this file), last_tool_call_id (String — most recent tool call that touched this file), revert_status (RevertStatus enum: Active, ExternallyReverted, SubsequentlyModified), and diff_stats (DiffStats struct: lines_added: u32, lines_removed: u32). MutationLedgerEntry SHALL derive Clone, Debug, Serialize, Deserialize.",
+      "acceptance": [
+        "crates/norn/src/session/mutation_ledger.rs exists",
+        "MutationLedgerEntry has all specified fields",
+        "MutationOp has exactly 3 variants: Created, Modified, Deleted",
+        "RevertStatus has exactly 3 variants: Active, ExternallyReverted, SubsequentlyModified",
+        "DiffStats has lines_added and lines_removed fields",
+        "All types derive Clone, Debug, Serialize, Deserialize"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/session/mutation_ledger.rs"
+        ],
+        "modify": [
+          "crates/norn/src/session/mod.rs"
+        ]
+      },
+      "checklist": ["C21"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "MutationLedger derived from ActionLog entries",
+      "spec": "MutationLedger SHALL be a struct that builds its entries from the ActionLog. When ActionLog::record_completion is called for a mutation tool (edit, write, apply_patch), MutationLedger::record_mutation SHALL be called with the file path(s), operation, tool_call_id, and diff stats extracted from the tool output. Multiple mutations to the same file update the existing entry (last_tool_call_id, diff_stats accumulate). The ledger is NOT a separate store — it derives from ActionLog data.",
+      "acceptance": [
+        "MutationLedger.record_mutation updates or creates entries",
+        "Same file mutated twice: last_tool_call_id updated, first_tool_call_id preserved",
+        "Diff stats from subsequent mutations accumulate",
+        "Ledger entries retrievable by file_path",
+        "Ledger entries are session-scoped (only current session's tool calls)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/mutation_ledger.rs",
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C22", "C26"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R3",
+      "title": "External revert detection via hash comparison at query time",
+      "spec": "When the mutation ledger is queried (not at mutation time), each entry's file SHALL be read and hashed. The hash is compared against the post-mutation hash stored when the last tool call touching that file completed. If the hash differs AND no subsequent tool call in the ActionLog touched that file, the entry's revert_status is set to ExternallyReverted. If a subsequent tool call DID touch the file, revert_status is SubsequentlyModified. If the hash matches, revert_status is Active. Hash computation uses the same algorithm as ExpiryCondition (SHA-256 of file content).",
+      "acceptance": [
+        "File unchanged since mutation: revert_status = Active",
+        "File changed externally (no subsequent tool call): revert_status = ExternallyReverted",
+        "File changed by a later tool call: revert_status = SubsequentlyModified",
+        "File deleted since mutation: revert_status = ExternallyReverted",
+        "Hash comparison only happens at query time, not at mutation time",
+        "No filesystem watching or polling"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/mutation_ledger.rs"
+        ]
+      },
+      "checklist": ["C23", "C24", "C25"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R4",
+      "title": "Store post-mutation content hash on record_mutation",
+      "spec": "When record_mutation is called, the MutationLedger SHALL compute and store the content hash of the file as it exists after the mutation. For deletions, store a sentinel hash. This stored hash is the baseline for external revert detection at query time.",
+      "acceptance": [
+        "record_mutation computes SHA-256 hash of file content after mutation",
+        "Hash stored on the MutationLedgerEntry",
+        "Deleted files store a sentinel hash value",
+        "Hash computation does not block the tool dispatch path (file is already on disk)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/mutation_ledger.rs"
+        ]
+      },
+      "checklist": ["C23"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Add mutations query to the action_log tool",
+      "spec": "The action_log tool (NTA-002) SHALL accept query=\"mutations\". The mutations query returns all MutationLedgerEntry values with revert detection evaluated at query time. The filter object's file field filters to entries matching that file path. Output structure: {\"query\": \"mutations\", \"count\": N, \"entries\": [{file_path, operation, first_tool_call_id, last_tool_call_id, revert_status, diff_stats}, ...]}.",
+      "acceptance": [
+        "action_log tool accepts query=\"mutations\"",
+        "mutations query returns MutationLedgerEntry values with revert_status evaluated at query time",
+        "filter.file limits results to matching file path",
+        "Output has query, count, entries fields",
+        "Each entry includes all MutationLedgerEntry fields including revert_status"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/action_log.rs"
+        ]
+      },
+      "checklist": ["C15"],
+      "stories": ["S8", "S10"]
+    },
+    {
+      "id": "R6",
+      "title": "Tests for mutation ledger",
+      "spec": "Tests SHALL verify: (1) single file mutation creates entry, (2) multiple mutations to same file update last_tool_call_id, (3) external revert detected (modify file after mutation, query shows ExternallyReverted), (4) subsequent tool mutation shows SubsequentlyModified, (5) unchanged file shows Active, (6) deleted file shows ExternallyReverted, (7) mutations query through action_log tool returns correct entries, (8) session-scoped — only current session mutations shown.",
+      "acceptance": [
+        "Test: single mutation creates entry with correct fields",
+        "Test: two mutations to same file updates last_tool_call_id",
+        "Test: external file modification detected as ExternallyReverted",
+        "Test: subsequent tool mutation detected as SubsequentlyModified",
+        "Test: unchanged file detected as Active",
+        "Test: mutations query returns correct count and entries",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/mutation_ledger.rs"
+        ]
+      },
+      "checklist": ["C21", "C22", "C23", "C24", "C25", "C26"],
+      "stories": ["S8", "S9", "S10"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement cross-session mutation tracking — the ledger is session-scoped (NG1)",
+    "SHALL NOT implement real-time file watching or polling — detection is lazy at query time (CO2)",
+    "SHALL NOT integrate with git status — the ledger is independent of git",
+    "SHALL NOT implement follow-up action storage — that is NTA-004"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "cargo fmt -p norn -- --check produces no diff",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'todo!\\|unimplemented!\\|FIXME\\|HACK\\|TODO' crates/norn/src/session/mutation_ledger.rs returns no matches",
+    "action_log tool accepts query=\"mutations\" and returns correct entries"
+  ]
+}

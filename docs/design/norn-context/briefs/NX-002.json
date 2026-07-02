@@ -1,0 +1,149 @@
+{
+  "id": "NX-002",
+  "cluster": "norn-context",
+  "title": "Mtime staleness detection and rule file discovery",
+  "depends_on": ["NX-001", "NC-001"],
+  "blocked_by": [],
+  "checklist": ["C18", "C19", "C20", "C21", "C28", "C29", "C30", "C31"],
+  "stories": ["S7", "S9", "S13", "S16"],
+  "purpose": "Context files may be edited mid-session, and rule files on disk need to be discovered and loaded into the RuleEngine. This brief combines mtime-based staleness detection (so the runtime picks up NORN.md changes without a file watcher) with rule directory scanning (bridge between rules on disk and the running engine). Both are filesystem operations in the same narrow domain — staleness can't be tested without discovery.",
+  "task": "Add a staleness check method to the context loader that stats always-on context files and re-reads on mtime change. Integrate the check point into LoopContext. Create context/scanner.rs to scan ordered rule directories (.norn/rules/, ~/.norn/rules/, optionally .claude/rules/), parse .md files via parse_rule_file(), derive RuleId from file stem, and apply first-found-wins on ID collision. Add rules_dir() path helpers.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Staleness check method",
+      "spec": "The context loader SHALL provide a check_staleness() method that stats both always-on context files and compares mtime against the last-seen values.",
+      "acceptance": [
+        "check_staleness() stats ~/.norn/NORN.md and {cwd}/NORN.md",
+        "Returns false (no change) when neither file's mtime has changed",
+        "Returns true (changed) when either file's mtime differs from last-seen",
+        "Records the new mtime after detecting a change"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/loader.rs"]
+      },
+      "checklist": ["C18", "C19"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R2",
+      "title": "Re-read on staleness",
+      "spec": "WHEN check_staleness() detects a change, it SHALL re-read the changed file(s) and update the stored content. A subsequent call to the content method SHALL return the new content.",
+      "acceptance": [
+        "After modifying a context file and calling check_staleness(), the content reflects the new file",
+        "Only the changed file is re-read (the unchanged file retains its cached content)",
+        "The mtime for the changed file is updated to the new value"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/loader.rs"]
+      },
+      "checklist": ["C20"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R3",
+      "title": "Missing file handling",
+      "spec": "IF a context file does not exist when check_staleness() is called, the stat SHALL complete without error. IF a file that previously existed is now missing, the stored content for that file SHALL be cleared.",
+      "acceptance": [
+        "check_staleness() with neither file existing returns false and no error",
+        "A previously-existing file that is now deleted results in cleared content for that file",
+        "A file that appears for the first time mid-session is detected and loaded"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/loader.rs"]
+      },
+      "checklist": ["C21"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "LoopContext integration point",
+      "spec": "LoopContext SHALL hold an optional reference to the context loader. A method SHALL be available to check staleness and trigger a rebuild of system_sections[0] when content has changed.",
+      "acceptance": [
+        "LoopContext gains an optional context loader field",
+        "A method on LoopContext calls check_staleness() and rebuilds system_sections[0] if true",
+        "The method is callable at the start of each iteration (alongside evaluate_prompt_commands)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/loop/loop_context.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "rules_dir path helpers",
+      "spec": "norn::config::paths SHALL provide a rules_dir() function returning norn_dir()/rules/. norn-cli SHALL provide a project_rules_dir() for {cwd}/.norn/rules/.",
+      "acceptance": [
+        "norn::config::paths::rules_dir() returns ~/.norn/rules/ (or NORN_HOME equivalent)",
+        "norn-cli exposes a project_rules_dir() returning {cwd}/.norn/rules/"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/paths.rs", "crates/norn-cli/src/config/paths.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Rule directory scanning",
+      "spec": "context/scanner.rs SHALL scan an ordered list of rule directories. For each directory that exists, it SHALL enumerate all .md files, parse each via parse_rule_file(), and collect the successfully parsed rules.",
+      "acceptance": [
+        "A directory containing rust-conventions.md and testing.md produces 2 parsed rules",
+        "A directory that does not exist is silently skipped",
+        "Non-.md files in the directory are ignored",
+        "Parse failures for individual files are logged via tracing::warn and skipped"
+      ],
+      "files": {
+        "create": ["crates/norn/src/context/scanner.rs"],
+        "modify": ["crates/norn/src/context/mod.rs"]
+      },
+      "checklist": ["C28", "C29"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R7",
+      "title": "Rule ID from file stem",
+      "spec": "The rule ID SHALL be derived from the file stem: rust-conventions.md becomes RuleId(\"rust-conventions\").",
+      "acceptance": [
+        "rust-conventions.md produces RuleId(\"rust-conventions\")",
+        "MY-RULE.md produces RuleId(\"MY-RULE\")",
+        "The file extension (.md) is stripped, everything else is preserved"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/scanner.rs"]
+      },
+      "checklist": ["C30"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R8",
+      "title": "First-found-wins on ID collision",
+      "spec": "WHEN the same rule ID is found in multiple directories (e.g. both project and user directories contain rust-conventions.md), the version from the earlier directory in the scan order SHALL be used. The later version SHALL be silently skipped.",
+      "acceptance": [
+        "With project and user dirs both containing rust-conventions.md, only the project version is loaded",
+        "The skipped rule is logged at tracing::debug level",
+        "The returned Vec<Rule> contains exactly one rule per unique ID"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/scanner.rs"]
+      },
+      "checklist": ["C31"],
+      "stories": ["S16"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement file watchers (notify crate or similar) — mtime stat is sufficient",
+    "SHALL NOT modify the agent loop's iteration logic — only add a callable method on LoopContext",
+    "SHALL NOT implement nested NORN.md detection — that is NX-004",
+    "SHALL NOT implement Claude Code format compatibility — that is NX-003",
+    "SHALL NOT wire into build_runtime — that is NX-005",
+    "SHALL NOT modify the RuleEngine internals — only add rules via the public add_rule() method"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn -- context passes all tests",
+    "cargo clippy -p norn -- -D warnings clean",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

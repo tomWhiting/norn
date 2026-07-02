@@ -1,0 +1,74 @@
+{
+  "cluster": "norn-agents",
+  "sections": [
+    {
+      "name": "Profile System",
+      "items": [
+        {"id": "C1", "text": "Profile parser accepts markdown files with YAML frontmatter and extracts structured fields plus markdown body as system prompt.", "done": false},
+        {"id": "C2", "text": "Profile frontmatter supports name, description, model, tools (list or comma-separated), disallowedTools, reasoning_effort, reasoning_summary, and capabilities fields.", "done": false},
+        {"id": "C3", "text": "Profiles resolve from ~/.norn/profiles/ as .md files.", "done": false},
+        {"id": "C4", "text": "Two-tier scanning: workspace-level ({cwd}/.norn/profiles/) checked first, user-level (~/.norn/profiles/) as fallback. Workspace wins on name collision.", "done": false},
+        {"id": "C5", "text": "Meridian profiles at {cwd}/.meridian/profiles/ are checked as an additional scan tier.", "done": false},
+        {"id": "C6", "text": "Profile resolution is available from libnorn (not CLI-only) so SpawnAgentTool can load profiles at runtime.", "done": false},
+        {"id": "C7", "text": "norn-cli profile_loader.rs delegates to libnorn's profile loader instead of its own TOML/JSON parser.", "done": false},
+        {"id": "C8", "text": "paths.rs profiles_dir() returns ~/.norn/profiles/ not ~/.norn/config/profiles/.", "done": false},
+        {"id": "C9", "text": "Capability parser accepts markdown files with YAML frontmatter and extracts tools, disallowedTools, and prompt_fragment.", "done": false},
+        {"id": "C10", "text": "Capability resolution merges capabilities into a profile: tools union, disallowedTools append, prompt_fragment appends to system prompt.", "done": false}
+      ]
+    },
+    {
+      "name": "Persistent Task Store",
+      "items": [
+        {"id": "C11", "text": "DiskTaskStore persists tasks to ~/.norn/tasks/{group-slug}/ as individual {task-id}.json files. Task groups are session-agnostic.", "done": false},
+        {"id": "C12", "text": "DiskTaskStore implements the existing TaskStore trait with all five operations (create, get, list, update, complete) plus create_group, list_groups.", "done": false},
+        {"id": "C13", "text": "TaskEntry has parent_task_id: Option<String> for hierarchical task trees.", "done": false},
+        {"id": "C14", "text": "TaskEntry has assigned_agent: Option<String> recording which agent (by registry path) is assigned to the task.", "done": false},
+        {"id": "C15", "text": "create_subtask creates a task with parent_task_id set, forming a tree.", "done": false},
+        {"id": "C16", "text": "children(parent_id) returns direct child tasks of a parent.", "done": false},
+        {"id": "C17", "text": "ancestors(task_id) walks the parent chain to the root task.", "done": false},
+        {"id": "C18", "text": "Status roll-up: parent effective status is Blocked if any child Blocked, InProgress if any child InProgress, Completed only when all children Completed.", "done": false},
+        {"id": "C19", "text": "claim(task_id, agent_path) atomically sets assigned_agent only if currently unassigned.", "done": false},
+        {"id": "C20", "text": "SharedTaskStore installed on ToolContext during build_runtime.", "done": false},
+        {"id": "C21", "text": "InMemoryTaskStore remains available for testing and ephemeral sessions.", "done": false}
+      ]
+    },
+    {
+      "name": "ToolContext Extension Wiring",
+      "items": [
+        {"id": "C22", "text": "AgentToolInfra installed on ToolContext during build_runtime with AgentRegistry, Mailbox, Provider, EventStore, root agent UUID, and ToolRegistry.", "done": false},
+        {"id": "C23", "text": "SharedToolCatalog installed on ToolContext during build_runtime, built from the registry's tool definitions.", "done": false},
+        {"id": "C24", "text": "All five agent tools (spawn_agent, fork, send_message, wait_agent, close_agent) return successful results when invoked, not extension-missing errors.", "done": false},
+        {"id": "C25", "text": "task tool returns successful results when invoked, not extension-missing errors.", "done": false},
+        {"id": "C26", "text": "tool_search tool returns successful results when invoked, not extension-missing errors.", "done": false}
+      ]
+    },
+    {
+      "name": "Async Spawn and AgentHandle",
+      "items": [
+        {"id": "C27", "text": "SpawnAgentTool launches the child via tokio::spawn and returns immediately with agent_id and registry path.", "done": false},
+        {"id": "C28", "text": "SpawnAgentTool accepts an optional profile parameter and builds the child LoopContext via from_profile() when provided.", "done": false},
+        {"id": "C29", "text": "Child agent receives filtered tool definitions from SubAgentExecutor's allow-list, not an empty slice.", "done": false},
+        {"id": "C30", "text": "AgentHandle stored as ToolContext extension keyed by agent_id, providing status watch receiver and InboundSender.", "done": false},
+        {"id": "C31", "text": "InboundChannel created for each child agent; parent holds the sender via AgentHandle.", "done": false},
+        {"id": "C32", "text": "Child agent drains InboundChannel at tool boundaries using the existing Steer/FollowUp drain logic.", "done": false}
+      ]
+    },
+    {
+      "name": "Reactive Wait and Completion",
+      "items": [
+        {"id": "C33", "text": "WaitAgentTool uses tokio::sync::watch channel subscription instead of 50ms polling.", "done": false},
+        {"id": "C34", "text": "WaitAgentTool supports waiting on multiple agents via tokio::select! for first-to-finish.", "done": false},
+        {"id": "C35", "text": "Child sends completion notification to parent's mailbox with trigger_turn: true on reaching terminal status.", "done": false},
+        {"id": "C36", "text": "close_agent performs DFS shutdown of all descendants before transitioning the target.", "done": false}
+      ]
+    },
+    {
+      "name": "Sub-Agent Observability",
+      "items": [
+        {"id": "C37", "text": "Sub-agents can be configured with EventType::Progress schema via EventSchemaSet for structured status updates.", "done": false},
+        {"id": "C38", "text": "tool_use_description on sub-agent tool calls is accessible to the parent for progress visibility.", "done": false},
+        {"id": "C39", "text": "Sub-agent's EventStore is linked to the parent's session for audit trail purposes.", "done": false}
+      ]
+    }
+  ]
+}

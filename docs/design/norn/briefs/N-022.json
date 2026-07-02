@@ -1,0 +1,111 @@
+{
+  "id": "N-022",
+  "cluster": "norn",
+  "title": "Session tree model — branching, forking, reintegration",
+  "depends_on": ["N-003", "N-014"],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": ["S29", "S30"],
+  "purpose": "Feature 22 calls for Pi-style session trees where sessions support branching, forking, reintegration, and audit trails. The current session model is flat: each agent gets its own EventStore (a Vec<SessionEvent>). Fork creates a child EventStore by copying filtered events, but there is no tree structure tracking parent-child relationships between sessions. This brief adds SessionTree to manage multiple sessions with tree relationships.",
+  "task": "Create SessionTree struct managing a HashMap<SessionId, SessionNode> where each node holds an EventStore, parent link, children list, and metadata. Implement branch (create child from parent at a specific event), merge_summary (bring a child's summary back into the parent as a Compaction event), list_children, get_ancestry. Wire fork() from agent/fork.rs to register in the SessionTree instead of creating disconnected EventStores. Testing: unit tests for tree operations.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "SessionTree struct with parent-child tracking",
+      "spec": "SessionTree SHALL manage multiple EventStores in a tree structure with parent-child relationships and metadata per session.",
+      "acceptance": [
+        "SessionTree struct in crates/norn/src/session/tree.rs",
+        "SessionId type alias for Uuid",
+        "SessionNode struct: id (SessionId), store (EventStore), parent (Option<SessionId>), children (Vec<SessionId>), metadata (SessionMetadata)",
+        "SessionMetadata struct: created_at (DateTime<Utc>), model (String), role (Option<String>), status (SessionStatus)",
+        "SessionStatus enum: Active, Completed, Failed, Merged",
+        "SessionTree::new() creates root session",
+        "SessionTree::get(id) -> Option<&SessionNode>",
+        "SessionTree::get_store(id) -> Option<&EventStore>",
+        "SessionTree::root() -> SessionId",
+        "Uses parking_lot::RwLock for concurrent access",
+        "Test: create tree, add 3 child sessions, verify parent-child links"
+      ],
+      "files": { "create": ["crates/norn/src/session/tree.rs"], "modify": ["crates/norn/src/session/mod.rs"] },
+      "checklist": [],
+      "stories": ["S29"]
+    },
+    {
+      "id": "R2",
+      "title": "Branch operation",
+      "spec": "SessionTree::branch SHALL create a child session from a parent, optionally copying events up to a specified point. The child starts with filtered parent context.",
+      "acceptance": [
+        "branch(parent_id, config) -> Result<SessionId> where config includes context_filter",
+        "Child EventStore populated from parent events filtered by ContextFilter (same as fork uses)",
+        "Parent's children list updated to include the new child",
+        "Child's parent set to the parent_id",
+        "Fork event appended to parent's store with the child session ID",
+        "Test: branch from parent with 10 events, filter to last 5, verify child has 5 events"
+      ],
+      "files": { "modify": ["crates/norn/src/session/tree.rs"] },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Merge summary operation",
+      "spec": "SessionTree::merge_summary SHALL bring a child session's results back into the parent as a Compaction or summary event, marking the child as Merged.",
+      "acceptance": [
+        "merge_summary(child_id, summary) -> Result<()>",
+        "Appends a SessionEvent::Compaction to the parent's store with the summary content",
+        "Sets child status to Merged",
+        "Child's events remain intact (never deleted — audit trail preserved)",
+        "Merge of a non-child returns error",
+        "Test: branch, add events to child, merge_summary, verify parent has compaction event"
+      ],
+      "files": { "modify": ["crates/norn/src/session/tree.rs"] },
+      "checklist": [],
+      "stories": ["S30"]
+    },
+    {
+      "id": "R4",
+      "title": "Tree navigation",
+      "spec": "SessionTree SHALL support navigating the tree structure: listing children, getting ancestry, and finding sessions by metadata.",
+      "acceptance": [
+        "list_children(id) -> Vec<SessionId>",
+        "get_ancestry(id) -> Vec<SessionId> (from root to the given session)",
+        "active_sessions() -> Vec<SessionId> (sessions with status Active)",
+        "session_count() -> usize",
+        "Test: create a 3-level tree (root -> child -> grandchild), verify ancestry returns all 3 in order"
+      ],
+      "files": { "modify": ["crates/norn/src/session/tree.rs"] },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Wire fork() to use SessionTree",
+      "spec": "The fork() function in agent/fork.rs SHALL register the forked session in the SessionTree instead of creating a disconnected EventStore.",
+      "acceptance": [
+        "fork() gains optional parameter: session_tree (Option<Arc<SessionTree>>)",
+        "When session_tree is Some, calls tree.branch() instead of manually copying events",
+        "Fork result includes the child session_id from the tree",
+        "When session_tree is None, falls back to current behavior (disconnected EventStore)",
+        "Test: fork with SessionTree, verify child appears in tree.list_children(parent)"
+      ],
+      "files": { "modify": ["crates/norn/src/agent/fork.rs"] },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement session persistence to disk — tree is in-memory",
+    "SHALL NOT implement session replay or time-travel debugging",
+    "SHALL NOT implement cross-tree merging (merging sessions from different trees)",
+    "SHALL NOT implement graph-backed storage (NG3) — this is an in-memory tree structure",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all session tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "Tree navigation returns correct ancestry — verified by test",
+    "merge_summary preserves child events while adding summary to parent — verified by test",
+    "fork() creates a session in the tree when SessionTree is provided — verified by test"
+  ]
+}

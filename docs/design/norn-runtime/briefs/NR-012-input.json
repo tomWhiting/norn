@@ -1,0 +1,193 @@
+{
+  "repo_root": "/Users/tom/Developer/ablative/meridian",
+  "brief_id": "NR-012",
+  "reviewers": [
+    "Waffles the Terrible"
+  ],
+  "base_ref": "main",
+  "placement": "local",
+  "isolation": "worktree",
+  "brief_document": {
+    "id": "NR-012",
+    "cluster": "norn-runtime",
+    "title": "Member-facing Norn session setup \u2014 profile and idle timeout",
+    "depends_on": [
+      "NR-006"
+    ],
+    "blocked_by": [],
+    "checklist": [
+      "C82",
+      "C83",
+      "C84"
+    ],
+    "stories": [
+      "S24",
+      "S25"
+    ],
+    "purpose": "No member-facing Norn profile exists. The four existing Norn profiles (developer, scout, codebase-explorer, reviewer) are workflow-oriented \u2014 they use gpt-5.5, declare no namespace tools, and have no messaging-specific system instructions. A member-facing session needs a profile that enables the right namespace tools, sets an appropriate model, and includes system_instructions for workspace member behavior (messaging conventions, wake protocol, team awareness). Additionally, wake_config_session.rs hardcodes idle_timeout_secs to Some(0) which becomes Duration::from_secs(0) for Norn \u2014 an instant timeout after the first turn. This must be fixed for member sessions that need to process their prompt and stop naturally.",
+    "task": "Author a norn-member.md profile in .meridian/profiles/ with the right namespace tools, system_instructions, and model placeholder. Fix the idle_timeout_secs hardcoding in wake_config_session.rs to use None (no timeout, agent stops when work is complete) or read from the wake_config if set. Together these make member-facing Norn sessions viable \u2014 the profile configures what the agent can do and knows, the timeout fix ensures it doesn't stop prematurely.",
+    "requirements": [
+      {
+        "id": "R1",
+        "title": "Author norn-member profile",
+        "spec": "The file .meridian/profiles/norn-member.md SHALL define a Norn profile for interactive member sessions with namespace tools for messaging, member lookup, workspace queries, and workflow dispatch AND it SHALL include system_instructions for workspace member behavior.",
+        "acceptance": [
+          ".meridian/profiles/norn-member.md exists with YAML frontmatter (name, description, model, tools, color)",
+          "tools list includes: meridian_messaging, meridian_member, meridian_workspace, meridian_workflow, read, write, edit, search, task, tool_search, action_log, spawn_agent",
+          "tools list EXCLUDES: bash, meridian_source, meridian_branch, meridian_review, meridian_exchange, lsp, apply_patch",
+          "model field is set (Tom's choice \u2014 placeholder until decided)",
+          "system_instructions section covers: identity injection (agent knows who it is via session context), messaging conventions (use namespace tools not CLI), wake protocol (check inbox, set focus, do work, respond, clear focus), team awareness (use meridian_member for lookups), what NOT to do (no bash, no guessing member IDs)"
+        ],
+        "files": {
+          "create": [
+            ".meridian/profiles/norn-member.md"
+          ]
+        },
+        "checklist": [
+          "C82"
+        ],
+        "stories": [
+          "S24"
+        ]
+      },
+      {
+        "id": "R2",
+        "title": "Fix idle_timeout_secs hardcoding for wake sessions",
+        "spec": "WHEN session_config_from_wake_config builds a SessionConfig THE SYSTEM SHALL read idle_timeout_secs from the wake_config record if set AND it SHALL use None (no idle timeout) as the default instead of Some(0) AND it SHALL NOT hardcode a timeout value.",
+        "acceptance": [
+          "wake_config_session.rs:39 no longer hardcodes idle_timeout_secs: Some(0)",
+          "If wake_config has an idle_timeout field with a nonzero value, SessionConfig.idle_timeout_secs is Some(value)",
+          "If wake_config has no idle_timeout field or it is null, SessionConfig.idle_timeout_secs is None \u2014 the session runs until the agent completes naturally or is stopped externally",
+          "Norn sessions with None idle_timeout do not trigger the idle timeout branch in norn_session.rs select loop",
+          "Existing Claude Runner wake sessions are unaffected \u2014 the Claude Runner session loop interprets idle_timeout_secs independently"
+        ],
+        "files": {
+          "modify": [
+            "crates/meridian-services/src/assistant/wake_config_session.rs"
+          ]
+        },
+        "checklist": [
+          "C83"
+        ],
+        "stories": [
+          "S25"
+        ]
+      },
+      {
+        "id": "R3",
+        "title": "Wire norn-member as default profile for Norn wake sessions",
+        "spec": "WHEN a wake session starts with RuntimeKind::Norn AND no explicit profile is set in the wake_config THE SYSTEM SHALL use 'norn-member' as the default profile name AND it SHALL NOT fall back to a Claude Runner profile.",
+        "acceptance": [
+          "session_config_from_wake_config sets profile to 'norn-member' when runtime is Norn and wake_config.profile is null",
+          "Explicit profile in wake_config overrides the default (wake_config.profile='norn-developer' still works)",
+          "Claude Runner wake sessions continue to use their existing default profile"
+        ],
+        "files": {
+          "modify": [
+            "crates/meridian-services/src/assistant/wake_config_session.rs"
+          ]
+        },
+        "checklist": [
+          "C84"
+        ],
+        "stories": [
+          "S24"
+        ]
+      }
+    ],
+    "boundaries": [
+      "SHALL NOT modify the Norn profile resolution system \u2014 the profile is a standard .md file resolved by the existing profile loader",
+      "SHALL NOT hardcode the model in the profile \u2014 leave as a configurable field for Tom to set",
+      "SHALL NOT add bash to the member profile tool list \u2014 member sessions are bash-free by design (D6)",
+      "SHALL NOT modify the wake_config database schema \u2014 idle_timeout reads from an existing or new column, not a schema change"
+    ],
+    "verification": [
+      ".meridian/profiles/norn-member.md exists and is valid YAML frontmatter + Markdown",
+      "Profile resolution for 'norn-member' returns the correct tool list and system_instructions",
+      "Wake session with runtime='norn' and no explicit profile uses 'norn-member'",
+      "Wake session with idle_timeout_secs=None does not trigger idle timeout in the Norn select loop",
+      "Existing Claude Runner wake sessions are unaffected by the timeout change"
+    ]
+  },
+  "resolved_context": {
+    "adrs": [],
+    "checklist": [
+      {
+        "id": "C82",
+        "text": "norn-member.md profile exists with namespace tools (messaging, member, workspace, workflow), system_instructions for workspace member behavior, bash excluded"
+      },
+      {
+        "id": "C83",
+        "text": "wake_config_session.rs idle_timeout_secs reads from wake_config or defaults to None instead of hardcoded Some(0)"
+      },
+      {
+        "id": "C84",
+        "text": "Norn wake sessions with no explicit profile default to norn-member profile"
+      }
+    ],
+    "stories": [
+      {
+        "id": "S24",
+        "text": "As a developer, I want a member-facing Norn profile that configures namespace tools and system instructions for workspace member behavior so that I can wake members as Norn sessions without manual configuration."
+      },
+      {
+        "id": "S25",
+        "text": "As a developer, I want Norn wake sessions to run until the agent completes naturally instead of timing out immediately so that members can process their full inbox before stopping."
+      }
+    ],
+    "constraints": [
+      {
+        "id": "CO1",
+        "text": "No new external dependencies. Namespace tools call service-layer functions via ServiceContext, not HTTP."
+      },
+      {
+        "id": "CO2",
+        "text": "AssistantEvent is the single event type for all downstream consumers. Both runtimes produce it."
+      },
+      {
+        "id": "CO3",
+        "text": "JSONL session files are Norn's source of truth for resume. PG is the UI's source of truth. Neither replaces the other."
+      },
+      {
+        "id": "CO4",
+        "text": "The model sees at most 25 tools (16 standard Norn + up to 7 namespace + 2 optional web). Profile filtering reduces this in practice."
+      },
+      {
+        "id": "CO5",
+        "text": "Session IDs are UUIDs shared between the JSONL filename, PG assistant_session_events key, and SessionHandle registry key."
+      },
+      {
+        "id": "CO6",
+        "text": "Wake prompt delivery mechanism changes, format does not."
+      },
+      {
+        "id": "CO7",
+        "text": "mod.rs contains only pub mod declarations and re-exports."
+      },
+      {
+        "id": "CO8",
+        "text": "No file over 500 lines of code (excluding tests, comments, whitespace)."
+      },
+      {
+        "id": "CO9",
+        "text": "All errors handled via thiserror in library code. No .unwrap() or .expect() in library code."
+      },
+      {
+        "id": "CO10",
+        "text": "Namespace tools implement the existing Tool trait. No changes to the trait interface."
+      }
+    ],
+    "intention": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude Runner stays only for legacy background task dispatch until it can be retired entirely. Member-facing sessions run as typed, observable, in-process agent loops rather than opaque subprocess invocations. Session state persists across visits without relying on a CLI binary's internal persistence. The model sees a focused set of domain tools instead of a raw shell with 175 CLI commands. This is the June 15 deadline work.",
+    "design_path": "docs/design/norn-runtime",
+    "provenance": {
+      "requested_by": "Tom",
+      "quote": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude R"
+    }
+  },
+  "verify_fix_cap": 3,
+  "review_cap": 1,
+  "round_backoff_ms": 2000,
+  "review_deadline_ms": 300000,
+  "workspace_id": "2d5fdd51-1f25-45a4-8f86-4d4c978d1355",
+  "clone_url": "https://github.com/tomWhiting/meridian.git"
+}

@@ -1,0 +1,125 @@
+{
+  "id": "NA-007",
+  "cluster": "norn-agents",
+  "title": "Reactive wait, DFS shutdown, and inbound channel wiring",
+  "depends_on": ["NA-006"],
+  "blocked_by": [],
+  "checklist": ["C32", "C33", "C34", "C36"],
+  "stories": ["S3", "S4", "S5", "S6", "S10"],
+  "purpose": "WaitAgentTool polls the registry every 50ms, wasting CPU. CloseAgentTool does single-level transitions, leaving grandchildren orphaned. Sub-agents have no way to receive steering messages from their parent. This brief rewrites wait to use watch channel subscriptions (zero CPU idle), adds multi-agent wait via tokio::select!, implements recursive DFS shutdown, and wires InboundChannel so children drain Steer/FollowUp messages at tool boundaries.",
+  "task": "Rewrite WaitAgentTool to subscribe to the AgentHandle's status watch::Receiver instead of polling. Support waiting on multiple agents via tokio::select! for first-to-finish patterns. Rewrite CloseAgentTool to perform DFS shutdown: find all descendants in the registry, shut them down leaf-to-root. Wire InboundChannel draining for sub-agents so Steer and FollowUp messages from the parent are processed at tool boundaries. Rename signal_agent tool's usage to reflect steering patterns via InboundChannel.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Reactive wait via watch channel",
+      "spec": "WaitAgentTool SHALL subscribe to the child's status watch channel instead of polling the registry every 50ms.",
+      "acceptance": [
+        "WaitAgentTool retrieves AgentHandle from AgentHandles extension using the target agent_id",
+        "Subscribes to handle.status_rx (watch::Receiver<AgentStatus>)",
+        "Awaits status change to Completed or Failed — zero CPU while idle",
+        "Timeout still applies via tokio::time::timeout wrapping the watch",
+        "Immediate-poll mode (timeout: 0) checks current status without subscribing",
+        "Falls back to registry polling if AgentHandle not found (for agents not spawned by current parent)",
+        "WAIT_POLL_MS constant removed",
+        "Test: spawn child, wait_agent returns when child completes (no 50ms polling)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/agent/coord.rs"]
+      },
+      "checklist": ["C33"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R2",
+      "title": "Multi-agent wait via tokio::select!",
+      "spec": "WaitAgentTool SHALL support waiting on multiple agents and returning when the first one finishes.",
+      "acceptance": [
+        "WaitAgentArgs.agent_id accepts a single string OR the tool gains an additional parameter for multiple agent IDs",
+        "When multiple IDs provided: subscribe to all watch channels, use tokio::select! (or select_all) to await first completion",
+        "Return payload identifies which agent completed first and its status",
+        "Remaining agents continue running — only the first-to-finish is reported",
+        "Test: spawn 2 children, wait on both, fast child completes first, verify fast child's ID returned"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/agent/coord.rs"]
+      },
+      "checklist": ["C34"],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R3",
+      "title": "DFS shutdown for close_agent",
+      "spec": "CloseAgentTool SHALL perform depth-first shutdown of all descendants before transitioning the target agent.",
+      "acceptance": [
+        "close_agent finds all descendants of the target in the AgentRegistry (using parent_id chains)",
+        "Shuts down leaf nodes first, working up to the target (DFS post-order)",
+        "Each agent transitions: mark_completing, then mark_completed (or mark_failed if shutdown fails)",
+        "Child JoinHandles are aborted or signalled via InboundChannel with a shutdown steer message",
+        "Return payload lists all agents shut down with their final status",
+        "Test: root -> child -> grandchild, close root, all three end up Completed",
+        "Test: close on a leaf agent with no children works (degenerate case)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/agent/coord.rs"]
+      },
+      "checklist": ["C36"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R4",
+      "title": "InboundChannel wiring for sub-agents",
+      "spec": "Sub-agents SHALL drain their InboundChannel at tool boundaries, processing Steer and FollowUp messages from the parent.",
+      "acceptance": [
+        "NA-006 creates InboundChannel pair at spawn time — this brief ensures the child's run_agent_step receives the InboundChannel receiver",
+        "Child agent drains InboundChannel using the existing Steer/FollowUp drain logic in the agent loop",
+        "signal_agent tool can push to a child's InboundChannel via the AgentHandle's InboundSender when the target is a child agent",
+        "Steer messages injected after current tool batch, before next provider request",
+        "FollowUp messages injected when the child would otherwise stop",
+        "Test: spawn child, send steer message via signal_agent, verify child receives it"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/agent/coord.rs",
+          "crates/norn/src/tools/agent/spawn.rs"
+        ]
+      },
+      "checklist": ["C32"],
+      "stories": ["S5", "S10"]
+    },
+    {
+      "id": "R5",
+      "title": "Updated tool descriptions and guidance",
+      "spec": "wait_agent tool description and usage guidance SHALL reflect reactive wait, multi-agent patterns, and steering.",
+      "acceptance": [
+        "wait_agent.description.md describes reactive wait and multi-agent support",
+        "wait_agent.usage.md includes: single-agent wait, multi-agent first-to-finish, timeout patterns",
+        "signal_agent.usage.md updated with InboundChannel steering patterns (Steer vs FollowUp delivery modes)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/guidance/wait_agent.description.md",
+          "crates/norn/src/tools/guidance/wait_agent.usage.md",
+          "crates/norn/src/tools/guidance/signal_agent.usage.md"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify SpawnAgentTool's core spawn logic — that is NA-006 (only minor InboundChannel threading adjustments)",
+    "SHALL NOT implement sub-agent observability — that is NA-008",
+    "SHALL NOT implement GoalTracker integration — deferred per Tom direction",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "wait_agent uses watch channel, not polling — verified by test and absence of WAIT_POLL_MS",
+    "Multi-agent wait returns first-to-finish — verified by test",
+    "DFS shutdown closes entire subtree — verified by test",
+    "InboundChannel steer messages delivered to sub-agent — verified by test",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

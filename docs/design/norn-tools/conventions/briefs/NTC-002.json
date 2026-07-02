@@ -1,0 +1,190 @@
+{
+  "id": "NTC-002",
+  "cluster": "norn-tools/conventions",
+  "title": "Convention matching, adapter dispatch, and hardcoded check removal",
+  "depends_on": ["NTC-001"],
+  "blocked_by": [],
+  "checklist": ["C9", "C10", "C11", "C12", "C13", "C14", "C15", "C28", "C29", "C30", "C31", "C32", "C33", "C34", "C35", "C36", "C37", "C38", "C39"],
+  "stories": ["S3", "S7", "S8", "S13", "S14", "S15"],
+  "purpose": "Convention matching is the core dispatch mechanism: given a modified file and the triggering tool name, which convention groups apply? This brief implements the matching engine, rewires DiagnosticsPostCheck to dispatch checks via matched conventions instead of hardcoded logic, resolves adapter names against the AdapterRegistry, loads declarative adapters from adapters_dir, and removes the hardcoded 500/200 LOC limits, hardcoded clippy check, and hardcoded bypass detection. After this brief, post-mutation checks are fully convention-driven.",
+  "task": "Add a matching module to crates/norn/src/tools/conventions/ that implements convention group matching: given a tool name and file path, return all matching ConventionGroups. Implement priority-based LOC conflict resolution. Rewrite DiagnosticsPostCheck::check() to use the matching engine: when conventions is Some, iterate matching groups and dispatch adapter checks per advise_on/block_on lists; when conventions is None, run no quality checks (pass through). Remove the hardcoded check_file_length, check_rust_diagnostics, and check_rust_bypasses functions. Wire adapters_dir loading into AdapterRegistry at startup. Add bypass_detection defaulting logic (true for Rust/TypeScript, false otherwise).",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Convention matching module",
+      "spec": "A matching.rs file SHALL exist in crates/norn/src/tools/conventions/ containing a match_conventions function. WHEN given a tool name (e.g. \"edit\"), a file path, and a ConventionsConfig, it SHALL return a Vec of references to ConventionGroups where the tool name is in the group's tools list AND the file path matches any of the group's compiled path globs.",
+      "acceptance": [
+        "crates/norn/src/tools/conventions/matching.rs exists",
+        "match_conventions(tool_name, file_path, config) returns matching groups",
+        "Groups where tool name is not in the tools list are excluded",
+        "Groups where file path does not match any paths glob are excluded",
+        "Groups where both conditions match are included",
+        "Test: config with rust-general (tools=[edit], paths=[*.rs]) and typescript (tools=[write], paths=[*.ts]) — calling with (edit, foo.rs) returns rust-general only",
+        "Test: calling with (write, foo.ts) returns typescript only",
+        "Test: calling with (read, foo.rs) returns empty — read is not in any tools list"
+      ],
+      "files": {
+        "create": ["crates/norn/src/tools/conventions/matching.rs"],
+        "modify": ["crates/norn/src/tools/conventions/mod.rs"]
+      },
+      "checklist": ["C9", "C10", "C11", "C14"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R2",
+      "title": "Priority-based LOC conflict resolution",
+      "spec": "WHEN multiple matching groups specify a LOC check for the same file, the group with the highest priority field SHALL win. WHEN two groups have the same priority and both specify LOC limits, first-match order (iteration order of the BTreeMap) SHALL win and a warning SHALL be logged at config load time identifying the conflicting groups.",
+      "acceptance": [
+        "resolve_loc_limit function takes matched groups and returns the winning LocCheck or None",
+        "Higher priority group's LOC limit wins over lower priority group's",
+        "Equal priority: first group in BTreeMap order wins",
+        "Warning logged at load time when priority conflict detected",
+        "Test: groups at priority 10 and 0 — priority 10 wins",
+        "Test: groups both at priority 0 with different limits — first-match wins"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/conventions/matching.rs"]
+      },
+      "checklist": ["C12", "C13"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Adapter name resolution",
+      "spec": "WHEN DiagnosticsPostCheck dispatches checks for a matching convention group, adapter names in advise_on and block_on SHALL be resolved against the AdapterRegistry on DiagnosticInfra. IF an adapter name does not resolve, it SHALL be skipped with a tracing::warn logged. Unresolvable names SHALL NOT prevent other adapters in the same group from running.",
+      "acceptance": [
+        "Adapter names are looked up in AdapterRegistry by name",
+        "Resolved adapters are dispatched for the modified file",
+        "Unresolvable adapter names produce a tracing::warn with the name and group",
+        "Other adapters in the same group still run when one is unresolvable",
+        "Test: group with advise_on=[clippy, nonexistent] — clippy runs, nonexistent warns"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/diagnostics_check.rs",
+          "crates/diagnostics/src/adapter/registry.rs"
+        ]
+      },
+      "checklist": ["C36", "C37"],
+      "stories": ["S13", "S14"]
+    },
+    {
+      "id": "R4",
+      "title": "Declarative adapters from adapters_dir",
+      "spec": "WHEN a convention group specifies an adapters_dir path, the startup wiring SHALL load all .toml files from that directory as declarative adapters and register them on the AdapterRegistry. Custom adapters SHALL be executed as subprocesses only — no arbitrary code loading into the norn process.",
+      "acceptance": [
+        "adapters_dir path resolved relative to workspace root",
+        "All .toml files in the directory are loaded as declarative adapters",
+        "Loaded adapters appear in the AdapterRegistry and can be referenced by name in advise_on/block_on",
+        "Adapter execution uses subprocess invocation (existing declarative adapter engine)",
+        "No code from adapters_dir is loaded into the norn process address space",
+        "Test: adapters_dir with a mypy.toml adapter, reference mypy in advise_on — resolves"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/diagnostics_check.rs",
+          "crates/norn/src/tools/conventions/config.rs"
+        ]
+      },
+      "checklist": ["C38", "C39"],
+      "stories": ["S15"]
+    },
+    {
+      "id": "R5",
+      "title": "Rewrite DiagnosticsPostCheck to use conventions",
+      "spec": "DiagnosticsPostCheck::check() SHALL be rewritten. WHEN conventions is Some, it SHALL: (1) extract modified paths from the tool output, (2) call match_conventions for each path with the current tool name, (3) for each matching group run LOC checks per the group's loc field, (4) dispatch adapter checks for each adapter in advise_on and block_on, (5) collect results as advisories or errors per D3. WHEN conventions is None, it SHALL return PostValidateOutcome::Pass immediately — no quality checks run.",
+      "acceptance": [
+        "When conventions is Some, DiagnosticsPostCheck uses match_conventions to find applicable groups",
+        "LOC check runs per group's loc.limit and loc.handling",
+        "Adapter dispatch runs per group's advise_on and block_on lists",
+        "When conventions is None, check() returns PostValidateOutcome::Pass immediately",
+        "extract_modified_paths function preserved (unchanged) for path extraction",
+        "Test: conventions with rust-general group, edit a .rs file — group's checks run",
+        "Test: conventions with no matching group for .md file — no checks run",
+        "Test: conventions is None — pass through, no checks"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/diagnostics_check.rs"]
+      },
+      "checklist": ["C28", "C29", "C34"],
+      "stories": ["S7", "S8"]
+    },
+    {
+      "id": "R6",
+      "title": "Remove hardcoded checks",
+      "spec": "The hardcoded check_file_length function (500/200 LOC limits), check_rust_diagnostics function (hardcoded clippy), and check_rust_bypasses function (hardcoded bypass detection) SHALL be removed from diagnostics_check.rs. These checks are replaced by convention-driven equivalents in R5. The check_single_file function that calls them SHALL also be removed.",
+      "acceptance": [
+        "check_file_length function does not exist in diagnostics_check.rs",
+        "check_rust_diagnostics function does not exist in diagnostics_check.rs",
+        "check_rust_bypasses function does not exist in diagnostics_check.rs",
+        "check_single_file function does not exist in diagnostics_check.rs",
+        "No hardcoded 500 or 200 LOC limit anywhere in diagnostics_check.rs",
+        "No hardcoded clippy dispatch in diagnostics_check.rs",
+        "grep -r 'check_file_length\\|check_rust_diagnostics\\|check_rust_bypasses\\|check_single_file' crates/norn/src/tools/diagnostics_check.rs returns no matches",
+        "All tests pass — no test depends on hardcoded check functions"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/diagnostics_check.rs"]
+      },
+      "checklist": ["C30", "C31", "C32", "C33"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Bypass detection defaults",
+      "spec": "WHEN a convention group does not specify bypass_detection, it SHALL default to true for Rust (.rs) and TypeScript (.ts, .tsx) files, and false for all other file types. The default is determined by the file extension of the modified file, not by the convention group's paths globs.",
+      "acceptance": [
+        "bypass_detection defaults to true for .rs files",
+        "bypass_detection defaults to true for .ts and .tsx files",
+        "bypass_detection defaults to false for .py, .sh, .go, and all other extensions",
+        "Explicit bypass_detection = false in the convention group overrides the default",
+        "Explicit bypass_detection = true in the convention group overrides the default",
+        "Test: .rs file with no bypass_detection specified — defaults to true",
+        "Test: .py file with no bypass_detection specified — defaults to false",
+        "Test: .rs file with bypass_detection = false — bypass detection skipped"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/conventions/matching.rs",
+          "crates/norn/src/tools/diagnostics_check.rs"
+        ]
+      },
+      "checklist": ["C35"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "No-match passthrough",
+      "spec": "WHEN conventions is Some but no convention group matches the modified file (neither tool name nor path glob matches any group), no post-mutation quality checks SHALL run for that file. The file SHALL pass through with PostValidateOutcome::Pass. This is the designed behavior per CO1 — unconfigured file types get no validation.",
+      "acceptance": [
+        "Editing a .md file in a config with only rust and typescript groups produces no checks",
+        "PostValidateOutcome::Pass returned for unmatched files",
+        "Test: conventions with rust-general group only, edit a .py file — pass through"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/diagnostics_check.rs"]
+      },
+      "checklist": ["C15"],
+      "stories": ["S7"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the advisory injection into tool output — that is NTC-003",
+    "SHALL NOT implement PostCheckResult or the Advisory type — that is NTC-003",
+    "SHALL NOT implement the init command — that is NTC-004",
+    "SHALL NOT add backwards-compatibility fallback paths for the removed hardcoded checks",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "grep -r 'check_file_length' crates/norn/src/tools/diagnostics_check.rs returns no matches",
+    "grep -r 'check_rust_diagnostics' crates/norn/src/tools/diagnostics_check.rs returns no matches",
+    "grep -r 'check_rust_bypasses' crates/norn/src/tools/diagnostics_check.rs returns no matches",
+    "grep -rn '500' crates/norn/src/tools/diagnostics_check.rs returns no hardcoded LOC limits",
+    "grep -rn '200' crates/norn/src/tools/diagnostics_check.rs returns no hardcoded LOC limits",
+    "crates/norn/src/tools/conventions/matching.rs exists",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

@@ -1,0 +1,153 @@
+{
+  "id": "NC-001",
+  "cluster": "norn-config",
+  "title": "Shared frontmatter utility and path resolution migration",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C21", "C22", "C23", "C24", "C25", "C26", "C27", "C28", "C29", "C30", "C31", "C32"],
+  "stories": ["S3", "S15", "S16", "S17"],
+  "purpose": "Extract the duplicated split_frontmatter into a shared utility and migrate path resolution from norn-cli into libnorn. These are cross-cutting prerequisites: every other norn-config brief needs paths, and the skills, rules, and profile clusters all need frontmatter parsing. Landing this first unblocks all four downstream clusters.",
+  "task": "Create norn::util::frontmatter with a shared split_frontmatter function and FrontmatterError enum. Update profile/loader.rs and rules/parser.rs to delegate to the shared implementation. Create norn::config::paths with norn_dir(), profiles_dir(), session_data_dir(), and settings_file() migrated from norn-cli. Update norn-cli to delegate to the new paths. Fix the REPL history path to honour NORN_HOME. Remove the unused config_dir() helper.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Shared frontmatter utility",
+      "spec": "The norn crate SHALL provide a shared split_frontmatter function in norn::util::frontmatter that splits markdown content at YAML frontmatter delimiters (---). The function SHALL return the YAML section and the body section as borrowed string slices. It SHALL NOT allocate when the input is well-formed.",
+      "acceptance": [
+        "norn/src/util/mod.rs exists with pub mod frontmatter",
+        "norn/src/util/frontmatter.rs exports split_frontmatter and FrontmatterError",
+        "split_frontmatter returns Result<(&str, &str), FrontmatterError>",
+        "FrontmatterError has MissingOpening and MissingClosing variants",
+        "Handles CRLF line endings",
+        "Empty body after closing --- returns empty &str",
+        "Empty YAML between --- delimiters returns empty &str",
+        "norn/src/lib.rs declares pub mod util"
+      ],
+      "files": {
+        "create": ["crates/norn/src/util/mod.rs", "crates/norn/src/util/frontmatter.rs"],
+        "modify": ["crates/norn/src/lib.rs"]
+      },
+      "checklist": ["C28", "C29"],
+      "stories": ["S17"]
+    },
+    {
+      "id": "R2",
+      "title": "Profile loader delegates to shared frontmatter",
+      "spec": "profile/loader.rs SHALL delegate to norn::util::frontmatter::split_frontmatter and map FrontmatterError to ConfigError. The local split_frontmatter function SHALL be removed.",
+      "acceptance": [
+        "profile/loader.rs imports norn::util::frontmatter::split_frontmatter",
+        "No split_frontmatter function definition remains in profile/loader.rs",
+        "FrontmatterError mapped to ConfigError::InvalidConfig",
+        "All existing profile/loader.rs tests pass unchanged"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/profile/loader.rs"]
+      },
+      "checklist": ["C30"],
+      "stories": ["S17"]
+    },
+    {
+      "id": "R3",
+      "title": "Rules parser delegates to shared frontmatter",
+      "spec": "rules/parser.rs SHALL delegate to norn::util::frontmatter::split_frontmatter and map FrontmatterError to RulesError. The local split_front_matter function SHALL be removed.",
+      "acceptance": [
+        "rules/parser.rs imports norn::util::frontmatter::split_frontmatter",
+        "No split_front_matter function definition remains in rules/parser.rs",
+        "FrontmatterError mapped to RulesError::ParseFailed",
+        "All existing rules/parser.rs tests pass unchanged"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/rules/parser.rs"]
+      },
+      "checklist": ["C31"],
+      "stories": ["S17"]
+    },
+    {
+      "id": "R4",
+      "title": "Path resolution in libnorn",
+      "spec": "norn::config::paths SHALL provide norn_dir(), profiles_dir(), session_data_dir(), and settings_file() functions that resolve paths under ~/.norn/ with NORN_HOME override support. All functions SHALL return Option<PathBuf> (no panics).",
+      "acceptance": [
+        "norn/src/config/mod.rs exists with pub mod paths",
+        "norn/src/config/paths.rs exports norn_dir, profiles_dir, session_data_dir, settings_file",
+        "norn_dir() honours NORN_HOME env var when set and non-empty",
+        "norn_dir() falls back to dirs::home_dir().join('.norn')",
+        "norn_dir() returns None when neither NORN_HOME nor home_dir resolves",
+        "profiles_dir() returns norn_dir()/profiles/",
+        "session_data_dir() returns Option<PathBuf>, not a panic",
+        "settings_file() returns norn_dir()/settings.json",
+        "norn/src/lib.rs declares pub mod config"
+      ],
+      "files": {
+        "create": ["crates/norn/src/config/mod.rs", "crates/norn/src/config/paths.rs"],
+        "modify": ["crates/norn/src/lib.rs"]
+      },
+      "checklist": ["C21", "C22", "C23", "C24"],
+      "stories": ["S3", "S15", "S16"]
+    },
+    {
+      "id": "R5",
+      "title": "norn-cli delegates to libnorn paths",
+      "spec": "norn-cli/src/config/paths.rs SHALL delegate all path resolution to norn::config::paths. The local implementations of norn_dir(), profiles_dir(), and session_data_dir() SHALL become thin wrappers or re-exports.",
+      "acceptance": [
+        "norn-cli paths.rs imports from norn::config::paths",
+        "norn_dir() delegates to norn::config::paths::norn_dir()",
+        "profiles_dir() delegates to norn::config::paths::profiles_dir()",
+        "session_data_dir() delegates to norn::config::paths::session_data_dir()",
+        "NORN_HOME constant removed from norn-cli paths.rs (lives in norn::config::paths)",
+        "All existing norn-cli paths.rs tests pass"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/config/paths.rs"]
+      },
+      "checklist": ["C25"],
+      "stories": ["S16"]
+    },
+    {
+      "id": "R6",
+      "title": "REPL history honours NORN_HOME",
+      "spec": "REPL history_file_path() SHALL use norn::config::paths::norn_dir() instead of hardcoding dirs::home_dir().join('.norn'). It SHALL return Option<PathBuf> to handle the case where norn_dir() returns None.",
+      "acceptance": [
+        "history_file_path() imports norn::config::paths::norn_dir",
+        "history_file_path() returns Option<PathBuf>",
+        "No direct call to dirs::home_dir() remains in history.rs",
+        "Setting NORN_HOME changes the history file location"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/repl/history.rs"]
+      },
+      "checklist": ["C26"],
+      "stories": ["S15"]
+    },
+    {
+      "id": "R7",
+      "title": "Remove unused config_dir helper",
+      "spec": "config_dir() and CONFIG_SUBDIR SHALL be removed from norn-cli paths.rs. No code references them.",
+      "acceptance": [
+        "No config_dir() function in norn-cli paths.rs",
+        "No CONFIG_SUBDIR constant in norn-cli paths.rs",
+        "No references to config_dir in the workspace (grep confirms)",
+        "cargo check -p norn-cli passes"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/config/paths.rs"]
+      },
+      "checklist": ["C27"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the Profile struct or profile loading logic beyond swapping the frontmatter call",
+    "SHALL NOT modify the Rule struct or rule parsing logic beyond swapping the frontmatter call",
+    "SHALL NOT create settings types or loader logic — that is NC-002 and NC-003",
+    "SHALL NOT modify builder.rs — that is NC-004"
+  ],
+  "verification": [
+    "cargo check -p norn -p norn-cli succeeds",
+    "cargo test -p norn -p norn-cli — all tests pass",
+    "cargo clippy -p norn -p norn-cli -- -D warnings clean",
+    "grep -r 'fn split_frontmatter\\|fn split_front_matter' crates/norn/src/ returns only util/frontmatter.rs",
+    "grep -r 'dirs::home_dir' crates/norn-cli/src/repl/history.rs returns no matches",
+    "grep -r 'config_dir\\|CONFIG_SUBDIR' crates/norn-cli/src/config/paths.rs returns no matches",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

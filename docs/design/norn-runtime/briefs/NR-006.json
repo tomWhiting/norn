@@ -1,0 +1,164 @@
+{
+  "id": "NR-006",
+  "cluster": "norn-runtime",
+  "title": "Namespace tool infrastructure and critical tools (messaging, member, workspace)",
+  "depends_on": ["NR-001", "NR-002"],
+  "blocked_by": [],
+  "checklist": ["C53", "C54", "C55", "C56", "C57", "C58", "C59", "C60", "C65", "C75"],
+  "stories": ["S5", "S6", "S7", "S8"],
+  "purpose": "Build the namespace tool infrastructure (MeridianToolContext, registration, profile gating) and implement the three critical namespace tools that every member-facing agent needs: meridian_messaging, meridian_member, and meridian_workspace. These are the critical tool surface for a Norn-powered member session to communicate, look up other members, and query workspace context.",
+  "task": "Create crates/meridian-tools/src/ module with the MeridianToolContext extension, the register_meridian_tools function, and the MessagingTool, MemberTool, and WorkspaceTool implementations. Each namespace tool implements norn::tool::Tool with a command discriminant. Tools call service-layer functions directly via ServiceContext. Profile filtering gates which namespace tools are available. The CallerContext extension carries member_id, session_id, and workspace_id for authorization.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "norn_tools module and MeridianToolContext",
+      "spec": "The system SHALL create a norn_tools module in crates/meridian-services/src/ with a MeridianToolContext type that holds Arc<ServiceContext> and implements a trait-based service interface (per DESIGN.md D11). MeridianToolContext SHALL be installed as a ToolContext extension during AgentBuilder construction. Namespace tools SHALL extract it from ToolContext to access service-layer functions. Both host and VM provide in-process backends — host has the full service set, VM has a limited set (workflow + source). Tools calling unavailable services receive context-aware error messages per D11.",
+      "acceptance": [
+        "crates/meridian-tools/src/lib.rs exists with pub mod declarations and re-exports",
+        "crates/meridian-tools/src/context.rs defines MeridianToolContext",
+        "MeridianToolContext holds Arc<ServiceContext> for in-process service calls",
+        "MeridianToolContext is retrievable from ToolContext via get_extension::<MeridianToolContext>()",
+        "MeridianToolContext exposes trait methods (e.g. send_dm, get_inbox) that both host and VM backends implement in-process",
+        "Host backend calls full ServiceContext; VM backend calls limited ServiceContext (workflow + source only)",
+        "Tools calling unavailable services in VM context receive context-aware errors (e.g. 'messaging is not available in shared workspace mode')"
+      ],
+      "files": {
+        "create": [
+          "crates/meridian-tools/Cargo.toml",
+          "crates/meridian-tools/src/lib.rs",
+          "crates/meridian-tools/src/context.rs"
+        ],
+        "modify": ["Cargo.toml"]
+      },
+      "checklist": ["C54", "C57"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "CallerContext extension for authorization and identity",
+      "spec": "A CallerContext type SHALL carry member_id (Uuid), session_id (Uuid), workspace_id (Option<Uuid>), and agent_cert_fingerprint (Option<[u8; 32]>) as an Arc extension on ToolContext. CallerContext is set at AgentBuilder construction and is unforgeable — not passable as tool input. Namespace tools SHALL read CallerContext to scope storage queries, authorize operations to the calling member, and optionally sign exchange actions with the agent cert. This is the canonical CallerContext definition — other clusters (TA-001, W-006) reference this.",
+      "acceptance": [
+        "CallerContext struct has fields: member_id (Uuid), session_id (Uuid), workspace_id (Option<Uuid>), agent_cert_fingerprint (Option<[u8; 32]>)",
+        "CallerContext installed as Arc extension on ToolContext during Norn session setup in AssistantService",
+        "CallerContext is not constructable from tool input — only from session setup code",
+        "Namespace tools extract CallerContext via get_extension::<CallerContext>() and use member_id for authorization scoping",
+        "agent_cert_fingerprint is None for host-instance sessions, Some for VM/exchange sessions"
+      ],
+      "files": {
+        "modify": ["crates/meridian-tools/src/context.rs"]
+      },
+      "checklist": ["C53"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "register_meridian_tools function",
+      "spec": "A register_meridian_tools function SHALL accept an AgentBuilder, ServiceContext, CallerContext, and a list of enabled tool names. It SHALL add each enabled namespace tool to the builder via .tool(). Tool names use the meridian_ prefix (e.g., meridian_messaging, meridian_member). WHEN a tool name is not in the enabled list, THE SYSTEM SHALL skip it.",
+      "acceptance": [
+        "register_meridian_tools function exists in crates/meridian-tools/src/lib.rs",
+        "It adds Box<dyn Tool> instances for each enabled namespace tool",
+        "Disabled tools are not added to the builder",
+        "Tool registry names use meridian_ prefix"
+      ],
+      "files": {
+        "modify": ["crates/meridian-tools/src/mod.rs"]
+      },
+      "checklist": ["C55", "C56", "C58"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R4",
+      "title": "MessagingTool — meridian_messaging namespace",
+      "spec": "MessagingTool SHALL implement norn::tool::Tool. The command enum and per-command parameter structs SHALL use #[derive(ToolArgs)] from norn-macros to generate input_schema. The tool SHALL use tool_follow_ups! to register output-to-follow-on mappings per tool-overview.md. Commands: send, inbox, read, search, mark_read, snooze, respond, retry, channel_send, channel_mentions, notify_check, notify_summary. The execute method SHALL dispatch on the command value and call the corresponding service-layer function via MeridianToolContext. Notification commands (snooze, notify_check, notify_summary) and channel commands (channel_send, channel_mentions) are part of the messaging namespace, not separate tools. Aligned with TA-002.",
+      "acceptance": [
+        "MessagingTool implements Tool with name() returning 'meridian_messaging'",
+        "Command enum and per-command parameter structs use #[derive(ToolArgs)]",
+        "tool_follow_ups! macro registers output-to-follow-on mappings per tool-overview.md",
+        "input_schema includes command enum with all 12 commands",
+        "send command calls MessagingService::send_dm with content, recipient name",
+        "inbox command retrieves conversations with metadata for the calling member",
+        "read command fetches full message content by ID",
+        "search command finds messages by query text",
+        "mark_read command marks a conversation as read",
+        "snooze command defers a message for later",
+        "respond command replies to a message with content and optional structured data",
+        "retry command retries a failed message delivery",
+        "channel_send command sends a message to a named channel",
+        "channel_mentions command queries @mentions for the calling member in a channel",
+        "notify_check command returns pending notification count",
+        "notify_summary command returns a summary of pending notifications",
+        "All commands scope to CallerContext.member_id",
+        "Service errors (PG connection failure, member not found, etc.) return ToolOutput with is_error=true and human-readable error message, not agent-level panics"
+      ],
+      "files": {
+        "create": ["crates/meridian-tools/src/messaging.rs"]
+      },
+      "checklist": ["C59"],
+      "stories": ["S5", "S6"]
+    },
+    {
+      "id": "R5",
+      "title": "MemberTool — meridian_member namespace",
+      "spec": "MemberTool SHALL implement norn::tool::Tool. The command enum and per-command parameter structs SHALL use #[derive(ToolArgs)] from norn-macros to generate input_schema. The tool SHALL use tool_follow_ups! to register output-to-follow-on mappings per tool-overview.md. Commands: get, list, lookup, status_set, status_get, activity, set_profile. The execute method SHALL dispatch on the command and call the service layer. MemberTool is the identity directory — 'who is this person, what are they doing, what profile are they assigned.' Hits MemberService. No team operations (teams are not a v2 concept).",
+      "acceptance": [
+        "MemberTool implements Tool with name() returning 'meridian_member'",
+        "Command enum and per-command parameter structs use #[derive(ToolArgs)]",
+        "tool_follow_ups! macro registers output-to-follow-on mappings per tool-overview.md",
+        "input_schema includes command enum with all 7 commands",
+        "get command returns member details by ID or name",
+        "list command returns members in the workspace",
+        "lookup command resolves member name to ID",
+        "status_set command updates the calling member's activity status",
+        "status_get command returns a member's current status",
+        "activity command sets the calling member's focus text",
+        "set_profile command assigns a named profile to a member",
+        "status_set, activity, and set_profile scope to CallerContext.member_id (cannot modify others)",
+        "Service errors (member not found, PG failure, etc.) return ToolOutput with is_error=true and human-readable error message, not agent-level panics"
+      ],
+      "files": {
+        "create": ["crates/meridian-tools/src/member.rs"]
+      },
+      "checklist": ["C60"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R6",
+      "title": "WorkspaceTool — meridian_workspace namespace",
+      "spec": "WorkspaceTool SHALL implement norn::tool::Tool. The command enum and per-command parameter structs SHALL use #[derive(ToolArgs)] from norn-macros to generate input_schema. The tool SHALL use tool_follow_ups! to register output-to-follow-on mappings per tool-overview.md. Commands: workspace_list, workspace_get, workspace_members, workspace_config. The execute method SHALL dispatch on the command and call WorkspaceService. WorkspaceTool is the workspace environment — 'what workspaces exist, who's in them, how are they configured.' Separate from meridian_member (identity) and meridian_exchange (cross-instance operations).",
+      "acceptance": [
+        "WorkspaceTool implements Tool with name() returning 'meridian_workspace'",
+        "Command enum and per-command parameter structs use #[derive(ToolArgs)]",
+        "tool_follow_ups! macro registers output-to-follow-on mappings per tool-overview.md",
+        "input_schema includes command enum with all 4 commands",
+        "workspace_list command returns workspaces the calling member has access to",
+        "workspace_get command returns workspace details (ID, name, config, mode) by workspace_id",
+        "workspace_members command lists members in a specified workspace",
+        "workspace_config command returns workspace configuration settings",
+        "All commands scope to CallerContext.member_id for access control",
+        "Service errors return ToolOutput with is_error=true and human-readable error message, not agent-level panics"
+      ],
+      "files": {
+        "create": ["crates/meridian-tools/src/workspace.rs"]
+      },
+      "checklist": ["C75"],
+      "stories": []
+    }
+  ],
+  "dependency_setup": "NEW CRATE — crates/meridian-tools/. Step 1: Add \"crates/meridian-tools\" to workspace.members in root Cargo.toml. Step 2: Create crates/meridian-tools/Cargo.toml with contents: [package] name=\"meridian-tools\", version.workspace=true, edition.workspace=true, license.workspace=true. [dependencies] norn={path=\"../norn\"}, norn-macros={path=\"../norn-macros\"}, async-trait.workspace=true, serde.workspace=true, serde_json.workspace=true, thiserror.workspace=true, tracing.workspace=true, uuid.workspace=true, tokio={workspace=true}. [dev-dependencies] tempfile.workspace=true, tokio={workspace=true, features=[\"macros\",\"rt-multi-thread\",\"test-util\"]}. [lints] workspace=true. Step 3: Add meridian-tools to meridian-services — cargo add --path ../meridian-tools --package meridian-services.",
+  "boundaries": [
+    "SHALL NOT implement source, branch, workflow, project, or exchange namespace tools (future briefs NR-007+, W-007)",
+    "SHALL NOT modify the norn crate — tool implementations live in meridian-services",
+    "SHALL NOT expose HTTP endpoints for namespace tool operations — these are in-process only",
+    "SHALL NOT bypass authorization — all mutations scope to CallerContext.member_id",
+    "SHALL NOT implement team operations — teams are not a v2 concept"
+  ],
+  "verification": [
+    "cargo check --workspace passes with norn_tools module",
+    "MessagingTool input_schema validates with all 12 command variants",
+    "MemberTool input_schema validates with all 7 command variants",
+    "WorkspaceTool input_schema validates with all 4 command variants",
+    "register_meridian_tools skips disabled tools",
+    "Tool execute methods return structured JSON results",
+    "CallerContext is correctly propagated from session setup to tool execution"
+  ]
+}

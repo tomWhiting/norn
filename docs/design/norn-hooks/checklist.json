@@ -1,0 +1,111 @@
+{
+  "cluster": "norn-hooks",
+  "sections": [
+    {
+      "name": "Module Promotion and HookOutcome Extension",
+      "items": [
+        {"id": "C1", "text": "integration/hooks.rs promoted to integration/hooks/ folder module with mod.rs and traits.rs.", "done": false},
+        {"id": "C2", "text": "All existing hook trait tests pass unchanged after module promotion.", "done": false},
+        {"id": "C3", "text": "HookOutcome has three variants: Proceed, Block { reason }, Modify { updated_input }.", "done": false},
+        {"id": "C4", "text": "HookOutcome::Modify returned only from PreToolHook. Other pre-hooks return Proceed or Block only.", "done": false},
+        {"id": "C5", "text": "tool_dispatch.rs handles Modify by replacing model_args and passing serialized modified args to execute_single_tool.", "done": false},
+        {"id": "C6", "text": "pre_validate receives modified args when HookOutcome::Modify is returned by a pre-tool hook.", "done": false},
+        {"id": "C7", "text": "HookType enum in error.rs has variants: PreTool, PreLlm, UserPrompt, Stop, SubagentStop, PreCompaction.", "done": false},
+        {"id": "C8", "text": "Hook enum expanded with variants for all new hook traits (UserPrompt, Stop, Subagent, SessionLifecycle, Compaction, PostToolFailure).", "done": false}
+      ]
+    },
+    {
+      "name": "New Hook Traits",
+      "items": [
+        {"id": "C9", "text": "UserPromptHook trait with async on_user_prompt method that returns HookOutcome (Proceed or Block).", "done": false},
+        {"id": "C10", "text": "StopHook trait with async on_stop method that returns HookOutcome (Proceed or Block).", "done": false},
+        {"id": "C11", "text": "SubagentHook trait with async on_subagent_start (observational) and on_subagent_stop (returns HookOutcome) methods.", "done": false},
+        {"id": "C12", "text": "SessionLifecycleHook trait with async on_session_start and on_session_end methods (observational, no return).", "done": false},
+        {"id": "C13", "text": "CompactionHook trait with async before_compaction method that returns HookOutcome (Proceed or Block).", "done": false},
+        {"id": "C14", "text": "PostToolFailureHook trait with async after_tool_failure method (observational, no return).", "done": false},
+        {"id": "C15", "text": "All new traits registered on HookRegistry via Hook enum variants with per-category dispatch methods.", "done": false}
+      ]
+    },
+    {
+      "name": "Config Schema",
+      "items": [
+        {"id": "C16", "text": "HookEventType closed enum with 13 snake_case names: pre_tool, post_tool, post_tool_failure, pre_llm, post_llm, session_event, user_prompt, stop, subagent_start, subagent_stop, session_start, session_end, pre_compaction.", "done": false},
+        {"id": "C17", "text": "HookGroupConfig deserializes from JSON with optional matcher field and required hooks array.", "done": false},
+        {"id": "C18", "text": "HookCommandConfig has required type (command), required command string, and required timeout (seconds).", "done": false},
+        {"id": "C19", "text": "Timeout field on HookCommandConfig is required with no hardcoded default.", "done": false}
+      ]
+    },
+    {
+      "name": "Settings Loading",
+      "items": [
+        {"id": "C20", "text": "Hooks loaded from ~/.norn/settings.json as user-global scope.", "done": false},
+        {"id": "C21", "text": "Hooks loaded from .norn/settings.json as project scope.", "done": false},
+        {"id": "C22", "text": "Hooks loaded from .norn/settings.local.json as local project override scope.", "done": false},
+        {"id": "C23", "text": "Hook groups concatenated across tiers in priority order (user-global first, local-project last) per event type.", "done": false},
+        {"id": "C24", "text": "Settings captured at startup; runtime modifications have no effect on current session.", "done": false},
+        {"id": "C25", "text": "load_hooks_from_settings called in norn-cli builder.rs, registers ShellCommandHook instances on HookRegistry.", "done": false}
+      ]
+    },
+    {
+      "name": "Shell Command Execution",
+      "items": [
+        {"id": "C26", "text": "ShellCommandHook spawns sh -c <command> with HookInput JSON piped to stdin.", "done": false},
+        {"id": "C27", "text": "ShellCommandHook enforces configured timeout via tokio::time::timeout; kills child on expiry.", "done": false},
+        {"id": "C28", "text": "Exit code 0: stdout parsed as JSON HookOutput and mapped to HookOutcome.", "done": false},
+        {"id": "C29", "text": "Exit code 2: HookOutcome::Block returned with stderr as reason.", "done": false},
+        {"id": "C30", "text": "Other exit codes: warning logged, HookOutcome::Proceed returned.", "done": false},
+        {"id": "C31", "text": "Empty or non-JSON stdout on exit 0: HookOutcome::Proceed returned (graceful degradation).", "done": false},
+        {"id": "C32", "text": "ShellCommandHook checks matcher before spawning; returns Proceed immediately on no match.", "done": false}
+      ]
+    },
+    {
+      "name": "Hook Input and Output Protocol",
+      "items": [
+        {"id": "C33", "text": "HookInput contains common fields: session_id, cwd, hook_event_name, agent_id, profile_name.", "done": false},
+        {"id": "C34", "text": "Tool-event HookInput includes tool_name, tool_input, tool_call_id.", "done": false},
+        {"id": "C35", "text": "Post-tool HookInput includes tool_output, tool_duration_ms, tool_is_error.", "done": false},
+        {"id": "C36", "text": "LLM-event HookInput includes model and message_count.", "done": false},
+        {"id": "C37", "text": "Stop HookInput includes final_text.", "done": false},
+        {"id": "C38", "text": "Subagent HookInput includes subagent_id and subagent_type.", "done": false},
+        {"id": "C39", "text": "HookOutput for pre_tool supports decision field with values proceed, block, modify.", "done": false},
+        {"id": "C40", "text": "HookOutput for pre_tool with decision=modify requires updated_input field.", "done": false},
+        {"id": "C41", "text": "HookOutput for other blocking events supports decision field with values proceed, block.", "done": false},
+        {"id": "C42", "text": "Environment variables NORN_PROJECT_DIR, NORN_SESSION_ID, NORN_AGENT_ID, NORN_PROFILE, NORN_HOOK_EVENT set on shell hook child process.", "done": false}
+      ]
+    },
+    {
+      "name": "Session Event Dispatch",
+      "items": [
+        {"id": "C43", "text": "Shell session event hooks fire via tokio::spawn with timeout (fire-and-forget).", "done": false},
+        {"id": "C44", "text": "Trait-based SessionEventHook implementations dispatched synchronously in registration order.", "done": false},
+        {"id": "C45", "text": "Non-reentrant runtime guard on HookRegistry prevents recursive session event hook dispatch.", "done": false}
+      ]
+    },
+    {
+      "name": "Matchers",
+      "items": [
+        {"id": "C46", "text": "HookMatcher compiles regex pattern at settings load time.", "done": false},
+        {"id": "C47", "text": "Invalid regex pattern rejected as config error at startup.", "done": false},
+        {"id": "C48", "text": "Tool events (pre_tool, post_tool, post_tool_failure) match against tool name.", "done": false},
+        {"id": "C49", "text": "LLM events (pre_llm, post_llm) match against model name.", "done": false},
+        {"id": "C50", "text": "Subagent events (subagent_start, subagent_stop) match against profile name or agent type.", "done": false},
+        {"id": "C51", "text": "Session events match against event variant name.", "done": false},
+        {"id": "C52", "text": "Absent matcher, empty string, or * matches all events of that type.", "done": false},
+        {"id": "C53", "text": "Events without matcher support (user_prompt, stop, session_start, session_end, pre_compaction) always fire when registered.", "done": false}
+      ]
+    },
+    {
+      "name": "Hook Wiring in Agent Loop",
+      "items": [
+        {"id": "C54", "text": "UserPromptHook dispatched at the entry of run_agent_step before initial message construction.", "done": false},
+        {"id": "C55", "text": "StopHook dispatched after the final iteration before AgentStepResult is returned.", "done": false},
+        {"id": "C56", "text": "SubagentHook on_subagent_start dispatched in spawn.rs launch function.", "done": false},
+        {"id": "C57", "text": "SubagentHook on_subagent_stop dispatched in spawn.rs finish function.", "done": false},
+        {"id": "C58", "text": "CompactionHook dispatched in compaction.rs before compaction event is appended.", "done": false},
+        {"id": "C59", "text": "PostToolFailureHook dispatched in tool_dispatch.rs when tool output contains an error.", "done": false},
+        {"id": "C60", "text": "SessionLifecycleHook on_session_start dispatched in norn-cli runtime at session construction.", "done": false},
+        {"id": "C61", "text": "SessionLifecycleHook on_session_end dispatched in norn-cli runtime at session teardown.", "done": false}
+      ]
+    }
+  ]
+}

@@ -1,0 +1,720 @@
+{
+  "cluster": "norn-cli",
+  "sections": [
+    {
+      "name": "Crate Setup",
+      "items": [
+        {
+          "id": "C1",
+          "text": "norn-cli crate exists as a workspace member with norn as a dependency",
+          "done": false
+        },
+        {
+          "id": "C2",
+          "text": "Binary target named 'norn' is declared in Cargo.toml",
+          "done": false
+        },
+        {
+          "id": "C3",
+          "text": "clap derive used for argument parsing with subcommand support",
+          "done": false
+        },
+        {
+          "id": "C4",
+          "text": "Cargo.toml declares reedline, clap, dirs, serde_json, tracing-subscriber as dependencies",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Mode Detection",
+      "items": [
+        {
+          "id": "C5",
+          "text": "Default mode is interactive REPL when both stdin and stdout are TTYs",
+          "done": false
+        },
+        {
+          "id": "C6",
+          "text": "-p / --print flag forces non-interactive print mode",
+          "done": false
+        },
+        {
+          "id": "C7",
+          "text": "Piped stdin (stdin not a TTY) auto-selects print mode",
+          "done": false
+        },
+        {
+          "id": "C8",
+          "text": "Piped stdout (stdout not a TTY) auto-selects print mode",
+          "done": false
+        },
+        {
+          "id": "C9",
+          "text": "Positional PROMPT arguments accepted in both modes",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Agent Configuration Flags",
+      "items": [
+        {
+          "id": "C10",
+          "text": "-m / --model flag overrides the profile model",
+          "done": false
+        },
+        {
+          "id": "C11",
+          "text": "--profile flag loads a Profile from file path or ~/.config/norn/profiles/ by name",
+          "done": false
+        },
+        {
+          "id": "C12",
+          "text": "-S / --system-prompt flag overrides profile system instructions",
+          "done": false
+        },
+        {
+          "id": "C13",
+          "text": "--append-system-prompt flag appends to profile system instructions",
+          "done": false
+        },
+        {
+          "id": "C14",
+          "text": "--allowed-tools flag sets tool allow-list (comma-separated, supports globs)",
+          "done": false
+        },
+        {
+          "id": "C15",
+          "text": "--disallowed-tools flag sets tool deny-list (comma-separated)",
+          "done": false
+        },
+        {
+          "id": "C16",
+          "text": "--reasoning-effort flag accepts low/medium/high and threads to LoopContext",
+          "done": false
+        },
+        {
+          "id": "C17",
+          "text": "--max-turns flag sets AgentLoopConfig::max_iterations",
+          "done": false
+        },
+        {
+          "id": "C18",
+          "text": "--timeout flag parses duration string and sets AgentLoopConfig::step_timeout",
+          "done": false
+        },
+        {
+          "id": "C19",
+          "text": "-C / --working-dir flag sets the working directory before agent execution",
+          "done": false
+        },
+        {
+          "id": "C20",
+          "text": "-c / --config flag accepts KEY=VALUE pairs and maps to AgentLoopConfig/ProviderConfig fields",
+          "done": false
+        },
+        {
+          "id": "C21",
+          "text": "--rules flag loads a RuleEngine from the specified YAML file",
+          "done": false
+        },
+        {
+          "id": "C22",
+          "text": "--variables flag sets session variables expanded as {{key}} in system instructions and tool descriptions",
+          "done": false
+        },
+        {
+          "id": "C23",
+          "text": "-e / --extension flag connects MCP extensions by URI (repeatable)",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Output Control Flags",
+      "items": [
+        {
+          "id": "C24",
+          "text": "-s / --output-schema flag accepts inline JSON (starts with {) or file path",
+          "done": false
+        },
+        {
+          "id": "C25",
+          "text": "--event-schema flag accepts TYPE=JSON|PATH pairs for per-event-type schemas (repeatable)",
+          "done": false
+        },
+        {
+          "id": "C26",
+          "text": "-f / --output-format flag accepts text, json, or stream-json",
+          "done": false
+        },
+        {
+          "id": "C27",
+          "text": "text format: final output to stdout, progress/tools to stderr",
+          "done": false
+        },
+        {
+          "id": "C28",
+          "text": "json format: single JSON envelope to stdout with output, usage, model, session_id, events, result",
+          "done": false
+        },
+        {
+          "id": "C29",
+          "text": "stream-json format: NDJSON events to stdout (text_delta, tool_call, tool_result, thinking_delta, completed)",
+          "done": false
+        },
+        {
+          "id": "C30",
+          "text": "-o / --output flag writes final output to file",
+          "done": false
+        },
+        {
+          "id": "C31",
+          "text": "-q / --quiet flag suppresses progress and tool output on stderr",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Session Control",
+      "items": [
+        {
+          "id": "C32",
+          "text": "-r / --resume flag resumes a session by ID or name (no arg = most recent)",
+          "done": false
+        },
+        {
+          "id": "C33",
+          "text": "--fork flag forks a session by ID or name (no arg = most recent)",
+          "done": false
+        },
+        {
+          "id": "C34",
+          "text": "--no-session flag disables session persistence for the current run",
+          "done": false
+        },
+        {
+          "id": "C35",
+          "text": "--session-name flag sets a human-readable name for the session",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Session Persistence",
+      "items": [
+        {
+          "id": "C36",
+          "text": "Sessions persisted as JSONL files at ~/.local/share/norn/sessions/{id}.jsonl",
+          "done": false
+        },
+        {
+          "id": "C37",
+          "text": "Session index maintained at ~/.local/share/norn/sessions/index.jsonl",
+          "done": false
+        },
+        {
+          "id": "C38",
+          "text": "Events appended to session file after each run_agent_step call",
+          "done": false
+        },
+        {
+          "id": "C39",
+          "text": "Session index updated atomically after each append",
+          "done": false
+        },
+        {
+          "id": "C40",
+          "text": "Resume reconstructs EventStore and message history from JSONL file",
+          "done": false
+        },
+        {
+          "id": "C41",
+          "text": "Fork copies source events into new session with Fork event appended",
+          "done": false
+        },
+        {
+          "id": "C42",
+          "text": "XDG_DATA_HOME respected for session storage location",
+          "done": false
+        },
+        {
+          "id": "C43",
+          "text": "macOS falls back to ~/Library/Application Support/norn/ when XDG vars unset",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Stdin Handling",
+      "items": [
+        {
+          "id": "C44",
+          "text": "Piped stdin detected via stdin.is_terminal() \u2014 no flag required",
+          "done": false
+        },
+        {
+          "id": "C45",
+          "text": "Piped stdin content read in full before execution",
+          "done": false
+        },
+        {
+          "id": "C46",
+          "text": "When both stdin content and positional PROMPT exist, stdin is prepended as context with <stdin> delimiters",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Interactive REPL",
+      "items": [
+        {
+          "id": "C47",
+          "text": "reedline line editor used for interactive input",
+          "done": false
+        },
+        {
+          "id": "C48",
+          "text": "Multi-line input supported via configurable key (Shift+Enter or Alt+Enter)",
+          "done": false
+        },
+        {
+          "id": "C49",
+          "text": "Command history persisted to ~/.local/share/norn/history.txt",
+          "done": false
+        },
+        {
+          "id": "C50",
+          "text": "Tab completion for slash commands",
+          "done": false
+        },
+        {
+          "id": "C51",
+          "text": "Tab completion for file paths",
+          "done": false
+        },
+        {
+          "id": "C52",
+          "text": "Prompt displays model name and session status",
+          "done": false
+        },
+        {
+          "id": "C53",
+          "text": "Ctrl+C interrupts current agent step",
+          "done": false
+        },
+        {
+          "id": "C54",
+          "text": "Ctrl+D exits the REPL",
+          "done": false
+        },
+        {
+          "id": "C55",
+          "text": "Multi-turn conversation maintains EventStore across turns",
+          "done": false
+        },
+        {
+          "id": "C56",
+          "text": "LoopContext dynamic sections cleared between turns, prompt commands re-evaluated",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Slash Commands",
+      "items": [
+        {
+          "id": "C57",
+          "text": "Slash commands processed via preprocess_input() in both REPL and print mode",
+          "done": false
+        },
+        {
+          "id": "C58",
+          "text": "/help lists available commands with descriptions",
+          "done": false
+        },
+        {
+          "id": "C59",
+          "text": "/tools lists available tools with names and descriptions",
+          "done": false
+        },
+        {
+          "id": "C60",
+          "text": "/model with no arg shows current model; with arg switches model",
+          "done": false
+        },
+        {
+          "id": "C61",
+          "text": "/schema with no arg shows current output schema; with arg sets it",
+          "done": false
+        },
+        {
+          "id": "C62",
+          "text": "/compact triggers real context compaction via ContextEdits::auto_compact_keeping_recent_turns",
+          "done": false
+        },
+        {
+          "id": "C63",
+          "text": "/clear resets the EventStore and message history",
+          "done": false
+        },
+        {
+          "id": "C64",
+          "text": "/session shows session ID, name, turn count, and cumulative token usage",
+          "done": false
+        },
+        {
+          "id": "C65",
+          "text": "/name sets a human-readable name for the current session",
+          "done": false
+        },
+        {
+          "id": "C66",
+          "text": "/variables lists active session variables and their values",
+          "done": false
+        },
+        {
+          "id": "C67",
+          "text": "/exit and /quit exit the REPL",
+          "done": false
+        },
+        {
+          "id": "C68",
+          "text": "Profile-registered slash commands loaded from SlashCommandRegistry",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Streaming Display",
+      "items": [
+        {
+          "id": "C69",
+          "text": "CLI subscribes to broadcast::Sender<ProviderEvent> for real-time streaming",
+          "done": false
+        },
+        {
+          "id": "C70",
+          "text": "Text deltas streamed to stdout character-by-character in REPL mode",
+          "done": false
+        },
+        {
+          "id": "C71",
+          "text": "Thinking deltas rendered dimmed on stderr",
+          "done": false
+        },
+        {
+          "id": "C72",
+          "text": "Tool call summary displayed when tool call is complete (tool name + key arguments)",
+          "done": false
+        },
+        {
+          "id": "C73",
+          "text": "Tool results displayed with head/tail truncation for long output",
+          "done": false
+        },
+        {
+          "id": "C74",
+          "text": "Schema validation feedback shown on stderr when schema attempt fails",
+          "done": false
+        },
+        {
+          "id": "C75",
+          "text": "Token usage summary (input/output tokens, elapsed time) shown after each step",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Profile Integration",
+      "items": [
+        {
+          "id": "C76",
+          "text": "Profile resolved from file path (contains / or .) or name from ~/.config/norn/profiles/",
+          "done": false
+        },
+        {
+          "id": "C77",
+          "text": "from_profile() used to build LoopContext and gated ToolRegistry",
+          "done": false
+        },
+        {
+          "id": "C78",
+          "text": "CLI flags override profile values (model, system prompt, tools, reasoning effort)",
+          "done": false
+        },
+        {
+          "id": "C79",
+          "text": "Per-event schemas from profile merged with --event-schema CLI flags",
+          "done": false
+        },
+        {
+          "id": "C80",
+          "text": "Profile prompt_commands threaded into LoopContext",
+          "done": false
+        },
+        {
+          "id": "C81",
+          "text": "Profile capabilities resolved into tool allow-list, instructions, and disallowed patterns",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Auth Subcommand",
+      "items": [
+        {
+          "id": "C82",
+          "text": "norn auth login triggers OAuth PKCE flow via norn::provider::auth::login()",
+          "done": false
+        },
+        {
+          "id": "C83",
+          "text": "norn auth logout clears credentials via norn::provider::auth::logout()",
+          "done": false
+        },
+        {
+          "id": "C84",
+          "text": "norn auth status reports login state, token expiry, and account ID without exposing tokens",
+          "done": false
+        },
+        {
+          "id": "C85",
+          "text": "--codex-home flag on auth login overrides the codex home directory",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Session Subcommands",
+      "items": [
+        {
+          "id": "C86",
+          "text": "norn session list shows sessions from current directory (--all for all)",
+          "done": false
+        },
+        {
+          "id": "C87",
+          "text": "norn session list supports --limit and --format (table or json)",
+          "done": false
+        },
+        {
+          "id": "C88",
+          "text": "norn session show displays session metadata and event summary",
+          "done": false
+        },
+        {
+          "id": "C89",
+          "text": "norn session resume enters REPL with resumed session",
+          "done": false
+        },
+        {
+          "id": "C90",
+          "text": "norn session fork creates new session from existing and enters REPL",
+          "done": false
+        },
+        {
+          "id": "C91",
+          "text": "norn session export serializes session to jsonl, json, or markdown",
+          "done": false
+        },
+        {
+          "id": "C92",
+          "text": "norn session remove deletes session file and index entry",
+          "done": false
+        },
+        {
+          "id": "C93",
+          "text": "Session ID accepts partial prefix (minimum 8 characters) for disambiguation",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "MCP Subcommands",
+      "items": [
+        {
+          "id": "C94",
+          "text": "norn mcp serve starts Norn as MCP server on stdio with full tool registry",
+          "done": false
+        },
+        {
+          "id": "C95",
+          "text": "norn mcp connect tests connection to external MCP server and reports capabilities",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Doctor Subcommand",
+      "items": [
+        {
+          "id": "C96",
+          "text": "norn doctor checks OAuth status",
+          "done": false
+        },
+        {
+          "id": "C97",
+          "text": "norn doctor checks provider connectivity",
+          "done": false
+        },
+        {
+          "id": "C98",
+          "text": "norn doctor checks working directory permissions",
+          "done": false
+        },
+        {
+          "id": "C99",
+          "text": "norn doctor reports pass/fail with actionable remediation messages",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Shell Completions",
+      "items": [
+        {
+          "id": "C100",
+          "text": "norn completion generates scripts for bash, zsh, and fish via clap_complete",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Exit Codes",
+      "items": [
+        {
+          "id": "C101",
+          "text": "Exit code 0 on successful completion",
+          "done": false
+        },
+        {
+          "id": "C102",
+          "text": "Exit code 1 on agent error (provider failure, tool error, schema unreachable)",
+          "done": false
+        },
+        {
+          "id": "C103",
+          "text": "Exit code 2 on CLI argument error",
+          "done": false
+        },
+        {
+          "id": "C104",
+          "text": "Exit code 3 on authentication error",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Provider Construction",
+      "items": [
+        {
+          "id": "C105",
+          "text": "OpenAiProvider constructed with OAuth auth source by default",
+          "done": false
+        },
+        {
+          "id": "C106",
+          "text": "Base URL auto-detected from AuthSource (ChatGPT backend for OAuth, api.openai.com for API key)",
+          "done": false
+        },
+        {
+          "id": "C107",
+          "text": "Provider config respects -c overrides for base_url, max_retries, request_timeout, and provider_options",
+          "done": false
+        },
+        {
+          "id": "C108",
+          "text": "--provider flag selects backend: openai (default) or claude-runner (ClaudeRunnerAdapter)",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Runtime Wiring",
+      "items": [
+        {
+          "id": "C109",
+          "text": "SimpleTokenEstimator wired into LoopContext::token_estimator unconditionally",
+          "done": false
+        },
+        {
+          "id": "C110",
+          "text": "ContextEdits::new() wired into LoopContext::context_edits unconditionally",
+          "done": false
+        },
+        {
+          "id": "C111",
+          "text": "RetryPolicy constructed from -c retry_max and retry_base_delay overrides (default: no retry)",
+          "done": false
+        },
+        {
+          "id": "C112",
+          "text": "DiagnosticCollector constructed and drained at step completion",
+          "done": false
+        },
+        {
+          "id": "C113",
+          "text": "Diagnostics rendered on stderr in text mode, included in json envelope, emitted as events in stream-json",
+          "done": false
+        },
+        {
+          "id": "C114",
+          "text": "IterationMonitorConfig loaded from profile iteration_monitor section",
+          "done": false
+        },
+        {
+          "id": "C115",
+          "text": "-c retry_max maps to RetryPolicy::max_retries (loop-level), distinct from -c max_retries (HTTP-level ProviderConfig)",
+          "done": false
+        },
+        {
+          "id": "C116",
+          "text": "-c request_timeout maps to ProviderConfig::timeout (per-request HTTP timeout)",
+          "done": false
+        },
+        {
+          "id": "C117",
+          "text": "-c provider_options accepts inline JSON mapped to ProviderConfig::provider_options",
+          "done": false
+        }
+      ]
+    },
+    {
+      "name": "Diagnostics CLI Integration",
+      "items": [
+        {
+          "id": "C118",
+          "text": "CLI constructs DiagnosticCollector and sets it on LoopContext::diagnostics before run_agent_step",
+          "done": false
+        },
+        {
+          "id": "C119",
+          "text": "DiagnosticCollector published on ToolContext via ToolRegistry::set_context with insert_extension",
+          "done": false
+        },
+        {
+          "id": "C120",
+          "text": "Profile tool_config section parsed for per-tool validation thresholds (max_code_lines, glob overrides)",
+          "done": false
+        },
+        {
+          "id": "C121",
+          "text": "-c write.max_code_lines=N sets WriteTool length limit from CLI override",
+          "done": false
+        },
+        {
+          "id": "C122",
+          "text": "Profile tool_config for Write constructs LengthLimit with specified default and glob overrides",
+          "done": false
+        },
+        {
+          "id": "C123",
+          "text": "DiagnosticCollector drained after run_agent_step and rendered per output format (text=stderr, json=envelope, stream-json=events)",
+          "done": false
+        }
+      ]
+    }
+  ]
+}

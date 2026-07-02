@@ -1,0 +1,135 @@
+{
+  "id": "NH-004",
+  "cluster": "norn-hooks",
+  "title": "Hook I/O protocol types",
+  "depends_on": ["NH-001"],
+  "blocked_by": [],
+  "checklist": ["C33", "C34", "C35", "C36", "C37", "C38", "C39", "C40", "C41", "C42"],
+  "stories": ["S11", "S12", "S13", "S14", "S15", "S16"],
+  "purpose": "Shell command hooks need a standardized JSON protocol for communicating with external processes. This brief defines the HookInput struct (serialized to stdin) with common and per-event-type fields, the HookOutput struct (deserialized from stdout) with decision mapping, and the environment variable constants. NH-005 (ShellCommandHook) uses these types to serialize context and parse decisions.",
+  "task": "Create crates/norn/src/integration/hooks/input.rs with HookInput and per-event-type field structs, all Serialize. Create crates/norn/src/integration/hooks/output.rs with HookOutput, decision parsing, and HookOutcome mapping. Define environment variable name constants. Update hooks/mod.rs with pub mod declarations and re-exports.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "HookInput common fields",
+      "spec": "HookInput SHALL contain common fields present for all event types: session_id, cwd, hook_event_name, agent_id, profile_name. All fields SHALL serialize to snake_case JSON keys.",
+      "acceptance": [
+        "HookInput struct with fields: session_id (String), cwd (String), hook_event_name (String), agent_id (String), profile_name (String)",
+        "Derives Serialize, Debug, Clone",
+        "Serializes to flat JSON object with snake_case keys",
+        "Test: serialize HookInput, verify all common fields present in JSON output"
+      ],
+      "files": {
+        "create": ["crates/norn/src/integration/hooks/input.rs"]
+      },
+      "checklist": ["C33"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R2",
+      "title": "Tool-event HookInput fields",
+      "spec": "WHEN the hook event is a tool event (pre_tool, post_tool, post_tool_failure), HookInput SHALL include tool_name, tool_input, and tool_call_id fields. These SHALL be flattened into the same JSON object as the common fields.",
+      "acceptance": [
+        "tool_name: Option<String> — present for tool events, None otherwise",
+        "tool_input: Option<serde_json::Value> — the tool's arguments",
+        "tool_call_id: Option<String> — provider-assigned tool call ID",
+        "Fields serialize as snake_case alongside common fields (not nested)",
+        "Option fields absent from JSON when None (serde skip_serializing_if)",
+        "Test: tool-event HookInput includes tool_name, tool_input, tool_call_id"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/input.rs"]
+      },
+      "checklist": ["C34"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R3",
+      "title": "Post-tool HookInput fields",
+      "spec": "WHEN the hook event is post_tool or post_tool_failure, HookInput SHALL additionally include tool_output, tool_duration_ms, and tool_is_error fields.",
+      "acceptance": [
+        "tool_output: Option<serde_json::Value> — the tool's output value",
+        "tool_duration_ms: Option<u64> — execution duration in milliseconds",
+        "tool_is_error: Option<bool> — whether the output represents an error",
+        "Test: post-tool HookInput includes all tool fields plus output fields"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/input.rs"]
+      },
+      "checklist": ["C35"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R4",
+      "title": "LLM, stop, and subagent HookInput fields",
+      "spec": "HookInput SHALL include per-event-type fields for LLM events (model, message_count), stop events (final_text), and subagent events (subagent_id, subagent_type). All are Optional and absent from JSON when None.",
+      "acceptance": [
+        "model: Option<String> — present for pre_llm, post_llm",
+        "message_count: Option<usize> — present for pre_llm, post_llm",
+        "final_text: Option<String> — present for stop events",
+        "subagent_id: Option<String> — present for subagent events",
+        "subagent_type: Option<String> — present for subagent events",
+        "Test: LLM-event HookInput includes model and message_count",
+        "Test: stop-event HookInput includes final_text",
+        "Test: subagent-event HookInput includes subagent_id and subagent_type"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/input.rs"]
+      },
+      "checklist": ["C36", "C37", "C38"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R5",
+      "title": "HookOutput deserialization and decision mapping",
+      "spec": "HookOutput SHALL deserialize from JSON stdout of a shell hook. WHEN the decision field is \"proceed\" or absent, map to HookOutcome::Proceed. WHEN \"block\", map to HookOutcome::Block with reason. WHEN \"modify\" (pre_tool only), map to HookOutcome::Modify with updated_input. IF decision is \"modify\" and updated_input is missing, THEN treat as a config error logged at warn level and map to Proceed.",
+      "acceptance": [
+        "HookOutput struct with fields: decision (Option<String>), reason (Option<String>), updated_input (Option<serde_json::Value>)",
+        "Derives Deserialize, Debug, Clone",
+        "to_hook_outcome(&self, event_type: HookEventType) -> HookOutcome method",
+        "decision=None or \"proceed\" → Proceed",
+        "decision=\"block\" → Block { reason: self.reason.unwrap_or_default() }",
+        "decision=\"modify\" with updated_input present → Modify { updated_input }",
+        "decision=\"modify\" without updated_input → Proceed (logged at warn)",
+        "decision=\"modify\" for non-pre_tool events → Proceed (logged at warn)",
+        "Test: all decision paths produce correct HookOutcome"
+      ],
+      "files": {
+        "create": ["crates/norn/src/integration/hooks/output.rs"]
+      },
+      "checklist": ["C39", "C40", "C41"],
+      "stories": ["S12", "S13", "S15", "S16"]
+    },
+    {
+      "id": "R6",
+      "title": "Environment variable constants",
+      "spec": "The hooks module SHALL define string constants for the 5 environment variables set on shell hook child processes: NORN_PROJECT_DIR, NORN_SESSION_ID, NORN_AGENT_ID, NORN_PROFILE, NORN_HOOK_EVENT.",
+      "acceptance": [
+        "5 pub const &str constants defined in a visible location (input.rs or a dedicated constants section)",
+        "NORN_PROJECT_DIR, NORN_SESSION_ID, NORN_AGENT_ID, NORN_PROFILE, NORN_HOOK_EVENT",
+        "Re-exported from hooks/mod.rs",
+        "Test: verify constants are non-empty and have expected values"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/input.rs", "crates/norn/src/integration/hooks/mod.rs"]
+      },
+      "checklist": ["C42"],
+      "stories": ["S14"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement shell command execution — that is NH-005",
+    "SHALL NOT implement settings file loading — that is NH-003",
+    "SHALL NOT wire these types into the agent loop — that is NH-005 and NH-007",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "HookInput serializes to JSON with all common fields present — verified by test",
+    "HookOutput decision mapping covers all paths — verified by test",
+    "Environment variable constants are re-exported from hooks module",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

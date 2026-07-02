@@ -1,0 +1,116 @@
+{
+  "id": "PW-004",
+  "cluster": "norn-provider-ws",
+  "title": "WebSocket connection establishment with tokio-tungstenite",
+  "depends_on": ["PW-002"],
+  "blocked_by": [],
+  "checklist": ["C4", "C5", "C6", "C7", "C8", "C9", "C57", "C58"],
+  "stories": ["S1"],
+  "purpose": "Establish the core WebSocket connection capability — connecting to OpenAI Responses API endpoints over wss:// with rustls TLS, proper handshake headers, compression, and ping/pong handling. This brief builds the connection primitive that the pool (PW-005) and framing (PW-007) briefs build on.",
+  "task": "Add tokio-tungstenite as a direct dependency in the norn crate. Create openai/websocket.rs with a WsConnection struct wrapping tokio-tungstenite's WebSocket stream. Implement connection establishment to both api.openai.com and chatgpt.com endpoints with URL scheme swapping (https → wss), the OpenAI-Beta responses_websockets header, auth headers from AuthProvider::auth_headers (PW-002), permessage-deflate compression, and automatic ping/pong.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "tokio-tungstenite dependency",
+      "spec": "The norn crate Cargo.toml SHALL declare tokio-tungstenite as a direct dependency with rustls-tls features. No new external crates beyond tokio-tungstenite SHALL be introduced.",
+      "acceptance": [
+        "tokio-tungstenite listed in crates/norn/Cargo.toml dependencies",
+        "Uses the workspace-patched version (openai-oss-forks)",
+        "rustls-tls feature enabled",
+        "cargo check --workspace passes with the new dep"
+      ],
+      "files": {
+        "modify": ["crates/norn/Cargo.toml"]
+      },
+      "checklist": ["C57", "C58"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "WsConnection struct",
+      "spec": "openai/websocket.rs SHALL define a WsConnection struct wrapping the tokio-tungstenite WebSocketStream. The struct SHALL track establishment time via std::time::Instant for age-based reconnection in PW-008.",
+      "acceptance": [
+        "WsConnection struct defined in openai/websocket.rs",
+        "Wraps WebSocketStream with TLS (MaybeTlsStream or equivalent)",
+        "established_at: Instant field set at construction time",
+        "Struct is Send (required for Arc<Mutex<_>> usage in pool)"
+      ],
+      "files": {
+        "create": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "URL scheme swapping",
+      "spec": "WHEN establishing a WS connection THE SYSTEM SHALL convert the base URL from https:// to wss:// and append /responses to form the WebSocket endpoint URL.",
+      "acceptance": [
+        "https://api.openai.com/v1 becomes wss://api.openai.com/v1/responses",
+        "https://chatgpt.com/backend-api/codex becomes wss://chatgpt.com/backend-api/codex/responses"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C4", "C5"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R4",
+      "title": "Handshake headers",
+      "spec": "WHEN performing the WS upgrade handshake THE SYSTEM SHALL include the OpenAI-Beta header from the WS_BETA_VERSION constant AND SHALL include auth headers from AuthProvider::auth_headers.",
+      "acceptance": [
+        "WS_BETA_VERSION constant defined with value responses_websockets=2026-02-06",
+        "OpenAI-Beta header set in the upgrade request",
+        "Bearer token and chatgpt-account-id (when available) set via auth_headers"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C6", "C7"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "TLS and compression",
+      "spec": "WHEN connecting via wss:// THE SYSTEM SHALL use rustls for TLS AND SHALL enable permessage-deflate compression in the WebSocket config.",
+      "acceptance": [
+        "Connection uses rustls (not native-tls)",
+        "WebSocketConfig enables permessage-deflate",
+        "Ping/pong frames handled automatically by tokio-tungstenite"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C8", "C9"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Module declaration",
+      "spec": "openai/mod.rs SHALL declare mod websocket so the new module is compiled.",
+      "acceptance": [
+        "mod websocket declared in openai/mod.rs",
+        "cargo check --workspace passes"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/mod.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the connection pool — that is PW-005 scope",
+    "SHALL NOT implement request/response framing — that is PW-007 scope",
+    "SHALL NOT implement transport selection or fallback — that is PW-010 scope",
+    "SHALL NOT implement connection lifecycle (age tracking, reconnection) — that is PW-008 scope"
+  ],
+  "verification": [
+    "cargo check --workspace passes",
+    "cargo test -p norn passes clean",
+    "openai/websocket.rs exists with WsConnection struct and connect function",
+    "WS_BETA_VERSION constant is greppable",
+    "tokio-tungstenite appears in norn Cargo.toml deps"
+  ]
+}

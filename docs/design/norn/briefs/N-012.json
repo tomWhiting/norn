@@ -1,0 +1,98 @@
+{
+  "id": "N-012",
+  "cluster": "norn",
+  "title": "Implement Search and Bash tools",
+  "depends_on": ["N-006"],
+  "blocked_by": [],
+  "checklist": ["C44", "C45"],
+  "stories": ["S10"],
+  "purpose": "Implement the unified Search tool (combining ripgrep content search, file finding via glob, and fuzzy matching) and the Bash tool (streaming output with progress detection, risk classification integration from N-006 R8).",
+  "task": "Implement SearchTool combining content search (ripgrep/grep), file finding (glob patterns), and fuzzy name matching. Implement BashTool that executes shell commands with streaming output, progress detection, and risk tier classification. Both implement the Tool trait from N-006. Testing: Layer 1 unit tests with real temp directories.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Implement Search tool — content search",
+      "spec": "Search tool SHALL support content search via regex patterns across file trees. Results SHALL include file path, line number, and matching line content.",
+      "acceptance": [
+        "SearchTool implements Tool with name 'search', effect ReadOnly",
+        "Input schema: { pattern: String, path: Option<String>, glob: Option<String>, max_results: Option<u32> }",
+        "Regex pattern search returns file:line:content format",
+        "glob filter restricts search to matching files",
+        "max_results caps output (default 50)",
+        "Test: create temp dir with 3 files, search for known pattern, verify correct file:line results"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/search.rs", "crates/norn/src/tools/mod.rs"] },
+      "checklist": ["C44"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R2",
+      "title": "Implement Search tool — file finding",
+      "spec": "Search tool SHALL support file finding via glob patterns, returning matching file paths.",
+      "acceptance": [
+        "Input with glob but no pattern returns file paths matching the glob",
+        "Glob matching uses standard glob syntax (**, *, ?)",
+        "Test: create temp dir tree, glob for '**/*.rs', verify correct paths returned"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/search.rs"] },
+      "checklist": ["C44"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R3",
+      "title": "Implement Bash tool with streaming output",
+      "spec": "Bash tool SHALL execute shell commands and return combined stdout/stderr output. Long-running commands SHALL stream output with progress detection (output lines as they arrive).",
+      "acceptance": [
+        "BashTool implements Tool with name 'bash', effect Process",
+        "Input schema: { command: String, timeout: Option<u64>, working_dir: Option<String> }",
+        "Executes via tokio::process::Command with sh -c",
+        "Returns exit code, stdout, stderr in ToolOutput",
+        "Timeout kills the process after the specified duration (default 120s)",
+        "Test: run 'echo hello', verify stdout contains 'hello' and exit code 0"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/bash.rs", "crates/norn/src/tools/mod.rs"] },
+      "checklist": ["C45"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Bash risk classification integration",
+      "spec": "Bash tool pre-validate SHALL classify the command using classify_risk from N-006 R8. The risk tier SHALL be included in the ToolOutput metadata.",
+      "acceptance": [
+        "Pre-validate calls classify_risk on the command string",
+        "Risk tier is included in tool output as metadata",
+        "Critical-tier commands produce a pre-validate warning (not block — blocking is orchestrator policy)",
+        "Test: 'rm -rf /' classifies as Critical, 'ls' as Harmless"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/bash.rs"] },
+      "checklist": ["C45"],
+      "stories": ["S43"]
+    },
+    {
+      "id": "R5",
+      "title": "Add search dependencies",
+      "spec": "Cargo.toml SHALL add grep/regex and glob crates as needed.",
+      "acceptance": [
+        "Cargo.toml includes regex and glob (or equivalent)",
+        "cargo check -p norn succeeds"
+      ],
+      "files": { "modify": ["crates/norn/Cargo.toml"] },
+      "checklist": ["C44"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement AST/structural search (ast-grep) — deferred to later brief",
+    "SHALL NOT implement vector/semantic search — deferred",
+    "SHALL NOT implement fuzzy file matching (nucleo) — deferred to later brief",
+    "SHALL NOT implement bash command approval/permission system — that's orchestrator policy",
+    "SHALL NOT implement bash sandboxing — that's deployment configuration"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — search and bash tests pass with real temp dirs",
+    "cargo clippy clean",
+    "Search returns correct results for content and file finding",
+    "Bash executes commands and captures output"
+  ]
+}

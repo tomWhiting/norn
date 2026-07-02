@@ -1,0 +1,80 @@
+{
+  "id": "PW-003",
+  "cluster": "norn-provider-ws",
+  "title": "DebugDumper WS entry types — ws_send and ws_lifecycle",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C52", "C53", "C54"],
+  "stories": ["S10"],
+  "purpose": "Extend the DebugDumper with entry types for WebSocket traffic so that WS transport debug output uses the same JSONL structure as HTTP. Outgoing WS frames get a ws_send entry type, connection lifecycle events get a ws_lifecycle entry type, and incoming WS events reuse the existing sse_event type via SseEvent mapping (D3).",
+  "task": "Add two new DebugPayload variants (WsSend and WsLifecycle) and corresponding write methods (write_ws_send and write_ws_lifecycle) to the DebugDumper. Incoming WS events need no new code — they are mapped to SseEvent and logged via the existing write_sse_event method.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "WsSend debug payload variant",
+      "spec": "The DebugPayload enum SHALL include a WsSend variant with message_type (String) and body (serde_json::Value) fields. The entry type discriminator SHALL be ws_send.",
+      "acceptance": [
+        "DebugPayload::WsSend variant exists with message_type and body fields",
+        "Serializes to JSONL with type: ws_send"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/debug.rs"]
+      },
+      "checklist": ["C52"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R2",
+      "title": "WsLifecycle debug payload variant",
+      "spec": "The DebugPayload enum SHALL include a WsLifecycle variant with event (String — connect/reconnect/close), url (String), and reason (Option<String>) fields. The entry type discriminator SHALL be ws_lifecycle.",
+      "acceptance": [
+        "DebugPayload::WsLifecycle variant exists with event, url, and reason fields",
+        "Serializes to JSONL with type: ws_lifecycle",
+        "reason is omitted from JSON when None"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/debug.rs"]
+      },
+      "checklist": ["C53"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R3",
+      "title": "write_ws_send and write_ws_lifecycle methods",
+      "spec": "DebugDumper SHALL expose pub fn write_ws_send(&self, message_type: &str, body: &serde_json::Value) and pub fn write_ws_lifecycle(&self, event: &str, url: &str, reason: Option<&str>) methods that append the corresponding JSONL entries.",
+      "acceptance": [
+        "write_ws_send appends a ws_send entry with timestamp, message_type, and body",
+        "write_ws_lifecycle appends a ws_lifecycle entry with timestamp, event, url, and optional reason",
+        "Both methods use the same append_entry infrastructure as existing methods"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/debug.rs"]
+      },
+      "checklist": ["C52", "C53"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Incoming WS events reuse write_sse_event",
+      "spec": "Incoming WS messages SHALL be logged via the existing write_sse_event method after being mapped to SseEvent. No new DebugDumper method is needed for incoming WS events.",
+      "acceptance": [
+        "No new method added for incoming WS events",
+        "Design doc (D3) confirms SseEvent mapping makes write_sse_event applicable to WS"
+      ],
+      "files": {},
+      "checklist": ["C54"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify existing DebugPayload variants (Request, ResponseMeta, SseEvent)",
+    "SHALL NOT modify the write_request, write_response_meta, or write_sse_event methods",
+    "SHALL NOT add WebSocket transport code — this brief only extends the debug infrastructure"
+  ],
+  "verification": [
+    "cargo check --workspace passes",
+    "cargo test -p norn passes clean",
+    "New tests verify ws_send and ws_lifecycle JSONL entries serialize correctly",
+    "Existing debug dump tests pass unchanged"
+  ]
+}

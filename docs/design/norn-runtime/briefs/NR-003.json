@@ -1,0 +1,157 @@
+{
+  "id": "NR-003",
+  "cluster": "norn-runtime",
+  "title": "NornTranslateState — AgentEvent to AssistantEvent translation",
+  "depends_on": ["NR-001"],
+  "blocked_by": [],
+  "checklist": ["C18", "C19", "C20", "C21", "C22", "C23", "C24", "C25", "C26", "C27", "C28", "C29", "C30", "C31"],
+  "stories": ["S2", "S13", "S17"],
+  "purpose": "The event translation layer that converts Norn's typed AgentEvent/ProviderEvent stream into the same AssistantEvent variants that the Claude Runner path produces. This is what makes the frontend, persistence, and WebSocket layers runtime-agnostic — they receive identical AssistantEvent streams regardless of which runtime generated them.",
+  "task": "Implement NornTranslateState in assistant/norn_translate.rs. It consumes AgentEvent values (which wrap ProviderEvent with agent identity) and produces Vec<AssistantEvent>. It tracks tool call state, sub-agent identity, and turn boundaries. It synthesizes a SessionStarted event from configuration before the first real event. The existing workflow norn_translate.rs is the pattern reference but produces different output types.\n\nDependency setup: No new cargo dependencies. The norn crate (ProviderEvent, AgentEvent, Usage types) is already a dependency of meridian-services.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "NornTranslateState struct and constructor",
+      "spec": "NornTranslateState SHALL be a struct with state for: active tool calls (HashMap<String, String> mapping tool_call_id to tool_name), root agent ID (Uuid), emitted tool IDs (HashSet<String>), active sub-agents (HashMap<String, String>), session_started flag (bool), and session config metadata for synthesizing SessionStarted.",
+      "acceptance": [
+        "NornTranslateState is defined in assistant/norn_translate.rs",
+        "Constructor accepts root_agent_id: Uuid and session config metadata (model, tools, context_window, agents, skills, mcp_servers)",
+        "All state fields are initialized empty/false"
+      ],
+      "files": {
+        "create": ["crates/meridian-services/src/assistant/norn_translate.rs"],
+        "modify": ["crates/meridian-services/src/assistant/mod.rs"]
+      },
+      "checklist": ["C18"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Streaming delta translations",
+      "spec": "WHEN a ProviderEvent::TextDelta is received, THE SYSTEM SHALL produce AssistantEvent::TextDelta. WHEN ProviderEvent::ThinkingDelta is received, THE SYSTEM SHALL produce AssistantEvent::ThinkingDelta. Both SHALL carry the session_id.",
+      "acceptance": [
+        "TextDelta maps 1:1 with text field preserved",
+        "ThinkingDelta maps 1:1 with thinking field preserved",
+        "Both carry the correct session_id"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_translate.rs"]
+      },
+      "checklist": ["C19", "C20"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Tool lifecycle translations",
+      "spec": "WHEN ProviderEvent::ToolCallComplete is received, THE SYSTEM SHALL produce AssistantEvent::ToolUseStarted with tool_call_id, tool_name, and parsed input from the arguments JSON. WHEN ProviderEvent::ToolCallDelta is received, THE SYSTEM SHALL produce AssistantEvent::ToolInputDelta with the tool_call_id resolved from state. WHEN ProviderEvent::ToolResult is received, THE SYSTEM SHALL produce AssistantEvent::ToolResult with result, is_error, and tool_call_id.",
+      "acceptance": [
+        "ToolCallComplete produces ToolUseStarted with complete input parsed from arguments JSON",
+        "ToolCallDelta produces ToolInputDelta with tool_call_id from ToolCallDelta.id",
+        "ToolResult produces ToolResult with is_error derived from output content",
+        "Tool call ID is tracked in active_tool_calls state",
+        "Duplicate tool IDs are not re-emitted (emitted_tool_ids dedup)"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_translate.rs"]
+      },
+      "checklist": ["C21", "C22", "C23"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Complete snapshot translations",
+      "spec": "WHEN ProviderEvent::TextComplete is received, THE SYSTEM SHALL produce AssistantEvent::AssistantMessage with the complete text (replay-only, not sent live). WHEN ProviderEvent::ThinkingComplete is received, THE SYSTEM SHALL produce AssistantEvent::AssistantThinking with the complete thinking text (replay-only).",
+      "acceptance": [
+        "TextComplete maps to AssistantMessage",
+        "ThinkingComplete maps to AssistantThinking",
+        "Both have is_replay_only() returning true",
+        "Both carry correct session_id"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_translate.rs"]
+      },
+      "checklist": ["C24", "C25"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Turn completion and usage translations",
+      "spec": "WHEN ProviderEvent::Done is received, THE SYSTEM SHALL produce AssistantEvent::Usage with is_turn_final: true (input_tokens, output_tokens, cache_read_input_tokens mapped from usage.cache_read_tokens, cache_creation_input_tokens mapped from usage.cache_write_tokens) followed by AssistantEvent::TurnComplete. Usage SHALL be emitted before TurnComplete. Per-turn state SHALL be cleared after emitting these events.",
+      "acceptance": [
+        "Done produces Usage then TurnComplete in that order",
+        "Usage has is_turn_final: true",
+        "cache_read_input_tokens comes from Norn Usage.cache_read_tokens",
+        "cache_creation_input_tokens comes from Norn Usage.cache_write_tokens",
+        "active_tool_calls, emitted_tool_ids, and active_sub_agents are cleared after Done"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_translate.rs"]
+      },
+      "checklist": ["C26", "C31"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Error translation",
+      "spec": "WHEN ProviderEvent::Error is received, THE SYSTEM SHALL produce AssistantEvent::Error with the error message formatted via Display.",
+      "acceptance": [
+        "Error produces AssistantEvent::Error",
+        "Error message is formatted from ProviderError via Display",
+        "session_id is correct"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_translate.rs"]
+      },
+      "checklist": ["C27"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Synthesized SessionStarted event",
+      "spec": "WHEN the first real AgentEvent is received AND session_started is false, THE SYSTEM SHALL emit a synthesized AssistantEvent::SessionStarted with model, tools, context_window, agents, skills, and mcp_servers from the configuration provided at construction. THE SYSTEM SHALL set session_started to true. Subsequent events SHALL NOT re-emit SessionStarted.",
+      "acceptance": [
+        "SessionStarted is emitted before the first real event",
+        "SessionStarted contains model name, tool list, context_window, agents, skills, mcp_servers",
+        "SessionStarted is emitted exactly once per session"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_translate.rs"]
+      },
+      "checklist": ["C28"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "Sub-agent event wrapping",
+      "spec": "WHEN an AgentEvent has agent_id != root_agent_id, THE SYSTEM SHALL wrap the translated events in AssistantEvent::SubAgentEvent with the agent_id as a string. WHEN a ToolCallComplete matches a delegation tool name (referenced via constants from the norn crate, not hardcoded strings), THE SYSTEM SHALL also emit SubAgentStarted. WHEN a ToolResult for an active sub-agent is received, THE SYSTEM SHALL also emit SubAgentCompleted.",
+      "acceptance": [
+        "Events from child agents (agent_id != root) are wrapped in SubAgentEvent",
+        "Delegation tool detection uses norn::tools::agent::SPAWN_TOOL_NAME and FORK_TOOL_NAME constants (not string literals 'Task' or 'Agent')",
+        "Delegation tool calls emit SubAgentStarted with description from tool arguments",
+        "ToolResult for an active sub-agent emits SubAgentCompleted",
+        "Sub-agent tracking uses agent_id (Uuid as String), not parent_tool_use_id"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/norn_translate.rs"]
+      },
+      "checklist": ["C29", "C30"],
+      "stories": ["S17"]
+    }
+  ],
+  "dependency_setup": "No new cargo dependencies. The norn crate (ProviderEvent, AgentEvent, Usage types) is already a dependency of meridian-services.",
+  "boundaries": [
+    "SHALL NOT modify the existing TranslateState (ClaudeEvent translator)",
+    "SHALL NOT modify AssistantEvent variants — produce existing variants only",
+    "SHALL NOT modify ws/assistant.rs, persistence.rs, or streaming.rs",
+    "SHALL NOT implement the Norn session loop (NR-002 scope — this brief provides the translator that NR-002 calls)"
+  ],
+  "verification": [
+    "Every ProviderEvent variant has a corresponding test in norn_translate.rs",
+    "TextDelta, ThinkingDelta produce the expected AssistantEvent variants",
+    "ToolCallComplete → ToolUseStarted with parsed input",
+    "Done → Usage(is_turn_final: true) + TurnComplete in correct order",
+    "SessionStarted is synthesized once, before the first real event",
+    "Sub-agent wrapping works for child agent_ids",
+    "cargo test -p meridian-services passes all new tests"
+  ]
+}

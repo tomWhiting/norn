@@ -1,0 +1,102 @@
+{
+  "id": "PW-007",
+  "cluster": "norn-provider-ws",
+  "title": "WS request/response framing and event mapping",
+  "depends_on": ["PW-003", "PW-004"],
+  "blocked_by": [],
+  "checklist": ["C10", "C11", "C12", "C13", "C55"],
+  "stories": ["S8"],
+  "purpose": "Implement the WebSocket wire protocol for sending requests and receiving streaming events. Outgoing requests are wrapped in a response.create JSON envelope. Incoming WS text messages are parsed as JSON, mapped to SseEvent, and fed through the existing map_sse_event() dispatcher — zero duplication of event mapping logic (D3). WS-specific error envelopes are classified through the existing classify_failed_error().",
+  "task": "Add send and receive functions to openai/websocket.rs. The send function wraps a ResponsesApiPayload (from build_payload) in a {\"type\": \"response.create\", ...} envelope and sends it as a WS Text message. The receive loop reads WS Text messages, parses each as JSON, extracts the type field as event_type, constructs an SseEvent, and feeds it through map_sse_event(). WS error envelopes ({\"type\": \"error\"}) are mapped to ProviderError. Debug logging via DebugDumper write_ws_send (PW-003) and write_sse_event.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "response.create envelope",
+      "spec": "WHEN sending a request over WS THE SYSTEM SHALL wrap the ResponsesApiPayload fields in a JSON object with \"type\": \"response.create\" and send it as a WS Text message.",
+      "acceptance": [
+        "Outgoing WS message is a JSON object with type field set to response.create",
+        "All ResponsesApiPayload fields (model, instructions, input, tools, etc.) present in the envelope",
+        "Sent as tungstenite Message::Text"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C10"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "WS message to SseEvent mapping",
+      "spec": "WHEN a WS Text message is received THE SYSTEM SHALL parse it as JSON, extract the type field as event_type, use the full JSON object as data, construct an SseEvent, and feed it through map_sse_event().",
+      "acceptance": [
+        "WS JSON message {\"type\": \"response.output_text.delta\", \"delta\": \"hello\"} produces SseEvent with event_type response.output_text.delta",
+        "data field is the complete JSON object (not just the delta)",
+        "map_sse_event produces the same ProviderEvent as it would for an equivalent SSE event"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C11"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R3",
+      "title": "Event stream parity",
+      "spec": "The ProviderEvent stream produced by the WS transport SHALL match the HTTP transport for identical request payloads. All event types (TextDelta, ThinkingDelta, ToolCallDelta, TextComplete, ThinkingComplete, ToolCallComplete, Done) SHALL be produced identically.",
+      "acceptance": [
+        "WS transport produces the same sequence of ProviderEvent variants as HTTP for the same conversation",
+        "Done event includes stop_reason, usage, and response_id",
+        "No event types are silently dropped by the WS path"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C12"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R4",
+      "title": "WS error envelope mapping",
+      "spec": "WHEN a WS message has type \"error\" THE SYSTEM SHALL extract the error object and map it to ProviderError. Rate limit errors (status 429) SHALL include retry_after. Authentication errors (status 401) SHALL use ProviderError::AuthenticationFailed.",
+      "acceptance": [
+        "WS error {\"type\": \"error\", \"error\": {\"code\": \"rate_limit_exceeded\", ...}} maps to ProviderError::RateLimited",
+        "WS error with status 401 maps to ProviderError::AuthenticationFailed",
+        "Other error codes mapped via classify_failed_error where applicable"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C13"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Debug logging for WS traffic",
+      "spec": "WHEN sending a WS message THE SYSTEM SHALL call DebugDumper::write_ws_send with the message type and body. WHEN receiving WS events THE SYSTEM SHALL call DebugDumper::write_sse_event after SseEvent construction. The WS transport SHALL log request start, event count, and completion at debug level.",
+      "acceptance": [
+        "Outgoing response.create envelope logged via write_ws_send",
+        "Incoming events logged via write_sse_event (same entry type as HTTP)",
+        "tracing::debug spans for request start, event count, completion match HTTP transport pattern"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C55"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT duplicate map_sse_event logic — reuse the existing function from sse.rs",
+    "SHALL NOT implement connection management — use WsConnection from PW-004",
+    "SHALL NOT implement the Provider::stream() dispatch — that is PW-010 scope",
+    "SHALL NOT implement response.processed — that is PW-009 scope"
+  ],
+  "verification": [
+    "cargo check --workspace passes",
+    "cargo test -p norn passes clean",
+    "Tests verify response.create envelope construction from a ResponsesApiPayload",
+    "Tests verify WS JSON message → SseEvent → ProviderEvent mapping for all event types",
+    "Tests verify WS error envelope → ProviderError mapping for 429 and 401",
+    "No calls to map_sse_event appear outside sse.rs and websocket.rs (grep confirms reuse, not duplication)"
+  ]
+}

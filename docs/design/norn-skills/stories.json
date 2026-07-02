@@ -1,0 +1,50 @@
+{
+  "cluster": "norn-skills",
+  "personas": [
+    {
+      "name": "AI Agent",
+      "role": "Using Skills During Execution",
+      "stories": [
+        {"id": "S1", "text": "As an AI agent, I want to see a list of available skills with descriptions and when-to-use guidance in my system prompt so that I can invoke relevant skills without guessing names."},
+        {"id": "S2", "text": "As an AI agent, I want to invoke a skill by name and receive its expanded instructions with frontmatter stripped so that I can follow domain-specific workflows."},
+        {"id": "S3", "text": "As an AI agent, I want skill arguments to be substituted into the skill body before I see it so that the instructions reference the specific task at hand."},
+        {"id": "S4", "text": "As an AI agent, I want dynamic shell output injected into skill content before it reaches me so that I have real-time context without needing to run commands myself."},
+        {"id": "S5", "text": "As an AI agent, I want Norn session variables ({{name}}) expanded in skill content so that I can reference runtime state like working directory and session ID."},
+        {"id": "S6", "text": "As an AI agent, I want to know when a skill's shell command fails so that I can adjust my approach instead of working with incomplete context."},
+        {"id": "S7", "text": "As an AI agent, I want to see the skill directory path and bundled resource listing in the activation result so that I can load reference files on demand."}
+      ]
+    },
+    {
+      "name": "Human Operator",
+      "role": "Invoking Skills Interactively",
+      "stories": [
+        {"id": "S8", "text": "As a human operator, I want to invoke skills via slash commands (/skill-name) so that I can trigger domain workflows without remembering tool syntax."},
+        {"id": "S9", "text": "As a human operator, I want to pass arguments to skills (/fix-issue 123) with shell-style quoting support so that multi-word arguments are handled correctly."},
+        {"id": "S10", "text": "As a human operator, I want skills I authored for Claude Code to work in Norn without modification so that I don't maintain two copies."},
+        {"id": "S11", "text": "As a human operator, I want skills from .agents/skills/ (cross-client standard) to be discovered by Norn so that skills shared across tools work everywhere."}
+      ]
+    },
+    {
+      "name": "Profile Author",
+      "role": "Configuring Skills for Agents",
+      "stories": [
+        {"id": "S12", "text": "As a profile author, I want to place project-specific skills in .norn/skills/ so that agents working in this project have domain capabilities."},
+        {"id": "S13", "text": "As a profile author, I want to place personal skills in ~/.norn/skills/ so that they apply across all my projects."},
+        {"id": "S14", "text": "As a profile author, I want to set an effort level in a skill's frontmatter so that the agent uses appropriate reasoning effort for that skill's domain."},
+        {"id": "S15", "text": "As a profile author, I want to hide a skill from the model's auto-invocation (disable-model-invocation: true) so that it is only triggered by explicit slash commands."},
+        {"id": "S16", "text": "As a profile author, I want to create background-knowledge skills (user-invocable: false) so that the model can load them automatically but the user doesn't see them in the slash command menu."},
+        {"id": "S17", "text": "As a profile author, I want project skills to override user skills on name collision so that project-specific behavior wins."},
+        {"id": "S18", "text": "As a profile author, I want diagnostic warnings when skill frontmatter is non-conformant so that I can fix issues without skills silently failing."}
+      ]
+    },
+    {
+      "name": "Workflow Author",
+      "role": "Orchestrating Agents with Skills",
+      "stories": [
+        {"id": "S19", "text": "As a workflow author, I want the skill catalog available as an API (SkillCatalog.list()) so that I can programmatically discover and configure skills for agent steps."},
+        {"id": "S20", "text": "As a workflow author, I want skill effort overrides to apply to the child LoopContext in fork mode so that sub-agents use the appropriate reasoning level."},
+        {"id": "S21", "text": "As a workflow author, I want shell execution in skills to be globally disableable via settings so that I can run agents in restricted environments."}
+      ]
+    }
+  ]
+}

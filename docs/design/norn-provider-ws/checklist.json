@@ -1,0 +1,128 @@
+{
+  "cluster": "norn-provider-ws",
+  "sections": [
+    {
+      "name": "HTTP Transport Extraction",
+      "items": [
+        {"id": "C1", "text": "SenderProvider struct and execute() method extracted from openai/mod.rs to openai/http.rs.", "done": false},
+        {"id": "C2", "text": "HTTP transport in http.rs is structurally symmetric with websocket.rs — each transport is a self-contained module.", "done": false},
+        {"id": "C3", "text": "HTTP transport produces identical ProviderEvent stream as before extraction (no behavioral change).", "done": false}
+      ]
+    },
+    {
+      "name": "WebSocket Connection",
+      "items": [
+        {"id": "C4", "text": "WebSocket connection established to wss://api.openai.com/v1/responses with rustls TLS.", "done": false},
+        {"id": "C5", "text": "WebSocket connection established to wss://chatgpt.com/backend-api/codex/responses for OAuth auth.", "done": false},
+        {"id": "C6", "text": "WS upgrade handshake includes OpenAI-Beta header with version from named constant WS_BETA_VERSION.", "done": false},
+        {"id": "C7", "text": "Auth bearer token and chatgpt-account-id applied during WS upgrade handshake via AuthProvider::auth_headers.", "done": false},
+        {"id": "C8", "text": "permessage-deflate compression enabled on WS connection.", "done": false},
+        {"id": "C9", "text": "Ping/pong frames handled automatically by tokio-tungstenite.", "done": false}
+      ]
+    },
+    {
+      "name": "WebSocket Request and Response",
+      "items": [
+        {"id": "C10", "text": "Request payload wrapped in {\"type\": \"response.create\", ...} envelope before WS send.", "done": false},
+        {"id": "C11", "text": "WS Text messages parsed as JSON with type field extracted as event_type and fed through map_sse_event().", "done": false},
+        {"id": "C12", "text": "ProviderEvent stream from WS transport matches HTTP transport for identical request inputs.", "done": false},
+        {"id": "C13", "text": "WS error envelopes ({\"type\": \"error\", ...}) mapped to ProviderError with classified error types via classify_failed_error().", "done": false}
+      ]
+    },
+    {
+      "name": "Connection Pool",
+      "items": [
+        {"id": "C14", "text": "WsPool struct holds Vec<WsSlot>, pool config (min/max connections, idle timeout), cooldown state, and failure counter.", "done": false},
+        {"id": "C15", "text": "WsSlot struct holds WsState, established_at timestamp, and last_used timestamp.", "done": false},
+        {"id": "C16", "text": "WsState enum defined with four variants: Available(WsConnection), InUse, Disconnected, Disabled.", "done": false},
+        {"id": "C17", "text": "Pool protected by tokio::sync::Mutex. Lock held only for slot scan and state swap (microseconds), never for streaming duration.", "done": false},
+        {"id": "C18", "text": "Dynamic warm floor: target pool size is max(min_connections, active_count + headroom), capped at max_connections.", "done": false},
+        {"id": "C19", "text": "Pool proactively establishes connections to maintain headroom before callers need them.", "done": false},
+        {"id": "C20", "text": "Pool shrinks on idle: connections above the dynamic target closed after idle_timeout of inactivity.", "done": false},
+        {"id": "C21", "text": "Caller arriving when all slots InUse and pool at max_connections falls back to HTTP for that request.", "done": false},
+        {"id": "C22", "text": "WsPoolConfig holds min_connections (4), headroom (2), max_connections (16), idle_timeout (10 min), base_backoff (5s), max_backoff (5 min), reconnect_margin (5 min) — all configurable via ProviderConfig.", "done": false}
+      ]
+    },
+    {
+      "name": "Per-Slot State Machine",
+      "items": [
+        {"id": "C23", "text": "Caller finding Available takes connection and swaps slot to InUse.", "done": false},
+        {"id": "C24", "text": "Caller finding Disconnected swaps slot to InUse and attempts WS establishment.", "done": false},
+        {"id": "C25", "text": "InUse state guards against double-establishment on same slot: concurrent callers move to next slot.", "done": false},
+        {"id": "C26", "text": "After request: healthy connection returned as Available, broken connection marked Disconnected.", "done": false},
+        {"id": "C27", "text": "Connection reused across sequential requests on the same slot without re-establishing TLS.", "done": false}
+      ]
+    },
+    {
+      "name": "Pool Recovery",
+      "items": [
+        {"id": "C28", "text": "When all recent establishment attempts fail, pool enters cooldown with exponential backoff.", "done": false},
+        {"id": "C29", "text": "During cooldown, all callers use HTTP. After cooldown expires, pool tries WS again on next request.", "done": false},
+        {"id": "C30", "text": "Successful establishment resets cooldown backoff to zero.", "done": false},
+        {"id": "C31", "text": "No caller is permanently stuck on HTTP unless WS establishment fails through full cooldown escalation to Disabled.", "done": false},
+        {"id": "C32", "text": "Callers that used HTTP due to pool-full rotate back to WS when a slot frees up on subsequent requests.", "done": false},
+        {"id": "C33", "text": "Circuit breaker: when backoff reaches max_backoff and final attempt fails, pool transitions to Disabled (irreversible within session).", "done": false}
+      ]
+    },
+    {
+      "name": "Connection Lifecycle",
+      "items": [
+        {"id": "C34", "text": "Per-slot connection age tracked from establishment time via std::time::Instant.", "done": false},
+        {"id": "C35", "text": "Proactive reconnection triggered when connection age exceeds reconnect_margin before the 60-minute limit.", "done": false},
+        {"id": "C36", "text": "websocket_connection_limit_reached error triggers fresh connection and single request retry.", "done": false},
+        {"id": "C37", "text": "Connection dropped and recreated on any unexpected WS Close frame from server.", "done": false},
+        {"id": "C38", "text": "Warm floor established via parallel tokio::spawn on first pool access. First caller waits only for its own connection, remaining establish in background.", "done": false}
+      ]
+    },
+    {
+      "name": "Protocol Acknowledgment",
+      "items": [
+        {"id": "C39", "text": "response.processed message sent on WS after receiving ProviderEvent::Done with response_id.", "done": false},
+        {"id": "C40", "text": "response.processed send failure logged at warn level and does not fail the request.", "done": false}
+      ]
+    },
+    {
+      "name": "Prewarm",
+      "items": [
+        {"id": "C41", "text": "WS transport supports internal generate: false prewarm on fresh connections as a transport-level optimization.", "done": false},
+        {"id": "C42", "text": "Prewarm is best-effort — wasted without harm if another caller uses the connection before the real request.", "done": false},
+        {"id": "C43", "text": "No prewarm method on the Provider trait. Provider trait remains single-method (stream only).", "done": false}
+      ]
+    },
+    {
+      "name": "Transport Selection and Fallback",
+      "items": [
+        {"id": "C44", "text": "WS transport attempted first for api.openai.com and chatgpt.com endpoints.", "done": false},
+        {"id": "C45", "text": "HTTP transport used for custom base_url endpoints without WS attempt.", "done": false},
+        {"id": "C46", "text": "HTTP fallback always available — pool-full, cooldown, Disabled, and establishment failure all degrade to HTTP.", "done": false},
+        {"id": "C47", "text": "Transport fallback logged at warn level with failure reason.", "done": false}
+      ]
+    },
+    {
+      "name": "Auth Adapter",
+      "items": [
+        {"id": "C48", "text": "AuthProvider trait gains async auth_headers method returning Vec<(String, String)> of header name-value pairs.", "done": false},
+        {"id": "C49", "text": "OAuthAuthProvider implements auth_headers via AuthManager::auth().await, returning bearer token and chatgpt-account-id.", "done": false},
+        {"id": "C50", "text": "ApiKeyAuthProvider implements auth_headers returning bearer token only.", "done": false},
+        {"id": "C51", "text": "MockAuthProvider implements auth_headers consuming from the same token sequence as apply_auth.", "done": false}
+      ]
+    },
+    {
+      "name": "Debug and Observability",
+      "items": [
+        {"id": "C52", "text": "DebugDumper gains write_ws_send method producing ws_send JSONL entry type for outgoing WS frames.", "done": false},
+        {"id": "C53", "text": "DebugDumper gains write_ws_lifecycle method producing ws_lifecycle JSONL entry type for connection events.", "done": false},
+        {"id": "C54", "text": "Incoming WS events logged via existing write_sse_event after SseEvent construction (same entry type as HTTP).", "done": false},
+        {"id": "C55", "text": "WS transport logs connection establishment, request start, event count, and completion at debug level.", "done": false},
+        {"id": "C56", "text": "Pool state changes (scale up, scale down, cooldown enter/exit, Disabled) logged at debug level.", "done": false}
+      ]
+    },
+    {
+      "name": "Dependencies",
+      "items": [
+        {"id": "C57", "text": "tokio-tungstenite added as direct dependency in norn Cargo.toml with rustls-tls features.", "done": false},
+        {"id": "C58", "text": "No new external crates introduced beyond tokio-tungstenite (already in workspace patch).", "done": false}
+      ]
+    }
+  ]
+}

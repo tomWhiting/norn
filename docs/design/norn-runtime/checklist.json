@@ -1,0 +1,177 @@
+{
+  "cluster": "norn-runtime",
+  "sections": [
+    {
+      "name": "Runtime Discriminant and Types",
+      "items": [
+        {"id": "C1", "text": "RuntimeKind enum with ClaudeRunner and Norn variants defined in types.rs", "done": false},
+        {"id": "C2", "text": "SessionConfig has an optional runtime field of type Option<RuntimeKind>", "done": false},
+        {"id": "C3", "text": "SessionHandle stores RuntimeKind and is queryable via the registry", "done": false},
+        {"id": "C4", "text": "AssistantError has NornBuildFailed and NornSessionFailed variants", "done": false}
+      ]
+    },
+    {
+      "name": "Session Lifecycle Branching",
+      "items": [
+        {"id": "C5", "text": "AssistantService::start_session branches on RuntimeKind after token acquisition", "done": false},
+        {"id": "C6", "text": "spawn_norn_loop method builds AgentBuilder, creates event channels, spawns async task", "done": false},
+        {"id": "C7", "text": "Existing spawn_session_loop (Claude Runner path) is unchanged and continues to work", "done": false},
+        {"id": "C8", "text": "Both runtime paths register a SessionHandle with the same SessionRegistry", "done": false},
+        {"id": "C9", "text": "Both runtime paths produce broadcast::Sender<AssistantEvent> for downstream consumers", "done": false}
+      ]
+    },
+    {
+      "name": "Norn Session Loop",
+      "items": [
+        {"id": "C10", "text": "run_norn_session_loop is an async function spawned via tokio::spawn (not spawn_blocking)", "done": false},
+        {"id": "C11", "text": "Norn session loop multiplexes AgentEvent broadcast, SessionCommand mpsc, idle timeout, and agent completion", "done": false},
+        {"id": "C12", "text": "SessionCommand::SendMessage delivers text via Norn InboundChannel", "done": false},
+        {"id": "C13", "text": "SessionCommand::Stop cancels via CancellationToken with graceful drain of remaining events", "done": false},
+        {"id": "C14", "text": "SessionCommand::Kill cancels via CancellationToken immediately", "done": false},
+        {"id": "C15", "text": "Idle timeout fires only after the agent has completed at least one turn", "done": false},
+        {"id": "C16", "text": "Session status transitions to Stopped when the Norn agent run completes", "done": false},
+        {"id": "C17", "text": "Completion watcher emits ServiceEvent::SessionCompleted or SessionFailed on the global EventBus", "done": false}
+      ]
+    },
+    {
+      "name": "Event Translation (Norn to AssistantEvent)",
+      "items": [
+        {"id": "C18", "text": "NornTranslateState defined in assistant/norn_translate.rs, parallel to TranslateState", "done": false},
+        {"id": "C19", "text": "ProviderEvent::TextDelta maps to AssistantEvent::TextDelta", "done": false},
+        {"id": "C20", "text": "ProviderEvent::ThinkingDelta maps to AssistantEvent::ThinkingDelta", "done": false},
+        {"id": "C21", "text": "ProviderEvent::ToolCallComplete maps to AssistantEvent::ToolUseStarted with complete input", "done": false},
+        {"id": "C22", "text": "ProviderEvent::ToolCallDelta maps to AssistantEvent::ToolInputDelta with resolved tool_call_id", "done": false},
+        {"id": "C23", "text": "ProviderEvent::ToolResult maps to AssistantEvent::ToolResult with is_error derived from output", "done": false},
+        {"id": "C24", "text": "ProviderEvent::TextComplete maps to AssistantEvent::AssistantMessage (replay-only snapshot)", "done": false},
+        {"id": "C25", "text": "ProviderEvent::ThinkingComplete maps to AssistantEvent::AssistantThinking (replay-only snapshot)", "done": false},
+        {"id": "C26", "text": "ProviderEvent::Done maps to AssistantEvent::Usage (is_turn_final: true) then TurnComplete", "done": false},
+        {"id": "C27", "text": "ProviderEvent::Error maps to AssistantEvent::Error with formatted message", "done": false},
+        {"id": "C28", "text": "NornTranslateState synthesizes SessionStarted from AgentBuilder config before first real event", "done": false},
+        {"id": "C29", "text": "Sub-agent events (agent_id != root) are wrapped in AssistantEvent::SubAgentEvent", "done": false},
+        {"id": "C30", "text": "Task/Agent tool calls emit SubAgentStarted, their results emit SubAgentCompleted", "done": false},
+        {"id": "C31", "text": "Per-turn state (tool IDs, sub-agents, block index map) is cleared on Done event", "done": false}
+      ]
+    },
+    {
+      "name": "Session Persistence",
+      "items": [
+        {"id": "C32", "text": "Norn sessions call AgentBuilder::session(store) with a JsonlSink-backed EventStore", "done": false},
+        {"id": "C33", "text": "Session JSONL files stored at {data_dir}/sessions/norn/{session_id}.jsonl", "done": false},
+        {"id": "C34", "text": "Session resume reads existing JSONL file and creates EventStore::with_sink_and_events", "done": false},
+        {"id": "C35", "text": "New sessions create EventStore::with_sink (empty events, append-only sink)", "done": false},
+        {"id": "C36", "text": "Session fork copies source JSONL to new path, then resumes from copy", "done": false},
+        {"id": "C37", "text": "PG persistence (persist_events) continues unchanged — subscribes to AssistantEvent broadcast", "done": false},
+        {"id": "C38", "text": "Redis streaming (stream_deltas_to_redis) continues unchanged", "done": false},
+        {"id": "C39", "text": "NornSessionStore type encapsulates server-side session file operations (create, resume, fork)", "done": false},
+        {"id": "C40", "text": "make_norn_step_runner calls .session() on AgentBuilder with workflow-scoped EventStore", "done": false},
+        {"id": "C41", "text": "Workflow session files stored at {data_dir}/sessions/workflow/{step_id}.jsonl", "done": false}
+      ]
+    },
+    {
+      "name": "Authentication",
+      "items": [
+        {"id": "C42", "text": "Norn sessions authenticate via OAuth (codex-login), independent of TokenPool (Tom direction 2026-05-28)", "done": true},
+        {"id": "C43", "text": "No pool token acquired for Norn sessions — provider uses AuthSource::OAuth", "done": true},
+        {"id": "C44", "text": "Claude Runner uses pool tokens, Norn uses independent OAuth — clean separation", "done": true}
+      ]
+    },
+    {
+      "name": "Wake and Inbox Delivery",
+      "items": [
+        {"id": "C45", "text": "build_wake_prompt unchanged — produces text prompt for both runtimes", "done": false},
+        {"id": "C46", "text": "Wake prompt delivered as AgentBuilder::prompt() for Norn sessions", "done": false},
+        {"id": "C47", "text": "Mid-session DMs delivered via SessionCommand::SendMessage", "done": false},
+        {"id": "C48", "text": "WakeupService unchanged — calls start_session which branches on RuntimeKind", "done": false},
+        {"id": "C49", "text": "Atomic claim via try_claim_for_wakeup works with Norn sessions", "done": false}
+      ]
+    },
+    {
+      "name": "Wake Config Integration",
+      "items": [
+        {"id": "C50", "text": "wake_configs table has a runtime column (text, nullable, default null = server default)", "done": false},
+        {"id": "C51", "text": "session_config_from_wake_config reads runtime field and sets SessionConfig.runtime", "done": false},
+        {"id": "C52", "text": "Server config has a default_runtime setting (ClaudeRunner during transition, Norn after)", "done": false}
+      ]
+    },
+    {
+      "name": "Namespace Tools — Infrastructure",
+      "items": [
+        {"id": "C53", "text": "CallerContext (from TA-001) carries member_id, session_id, workspace_id as Arc extension on ToolContext", "done": false},
+        {"id": "C54", "text": "Namespace tools call service-layer functions directly (in-process, no HTTP)", "done": false},
+        {"id": "C55", "text": "register_meridian_tools adds enabled namespace tools to AgentBuilder via .tool()", "done": false},
+        {"id": "C56", "text": "Profile filtering via allowed_tools/disallowed_tools gates namespace availability", "done": false},
+        {"id": "C57", "text": "Namespace tool implementations live in crates/meridian-tools/src/", "done": false},
+        {"id": "C58", "text": "Each namespace tool uses meridian_ prefix in the tool registry name", "done": false}
+      ]
+    },
+    {
+      "name": "Namespace Tools — Critical",
+      "items": [
+        {"id": "C59", "text": "meridian_messaging tool implements 12 commands: send, inbox, read, search, mark_read, snooze, respond, retry, channel_send, channel_mentions, notify_check, notify_summary (aligned with TA-002)", "done": false},
+        {"id": "C60", "text": "meridian_member tool implements 7 commands: get, list, lookup, status_set, status_get, activity, set_profile (identity directory — hits MemberService)", "done": false},
+        {"id": "C75", "text": "meridian_workspace tool implements 4 commands: workspace_list, workspace_get, workspace_members, workspace_config (workspace environment — hits WorkspaceService)", "done": false},
+        {"id": "C61", "text": "meridian_source tool implements 25 commands: status, file_statuses, branches, log, blame, diff_file, diff_summary, tree_show, tree_add, tree_remove, tree_merge, tree_restack, tree_graft, worktree_list, worktree_create, worktree_remove, stage, unstage, stage_all, discard, commit, push, pull, fetch, remotes (aligned with TA-006)", "done": false},
+        {"id": "C62", "text": "meridian_branch tool implements 22 commands: branch_status, branch_submit, branch_land, branch_transition, branch_list, branch_show, branch_advance, stack_status, stack_submit, stack_sync, stack_land, stack_restack, pr_status, pr_create, pr_push, pr_sync, pr_approve, pr_request_changes, pr_comment, pr_merge, pr_close, pr_request_reviewers (aligned with TA-007)", "done": false}
+      ]
+    },
+    {
+      "name": "Namespace Tools — Important",
+      "items": [
+        {"id": "C63", "text": "meridian_workflow tool implements 6 workflow commands: workflow_list, workflow_show, workflow_run, workflow_status, workflow_history, workflow_cancel (aligned with TA-008)", "done": false},
+        {"id": "C64", "text": "meridian_workflow tool implements 8 scheduler commands: scheduler_list, scheduler_create, scheduler_get, scheduler_update, scheduler_delete, scheduler_enable, scheduler_disable, scheduler_run (redistributed from former admin tool, aligned with TA-008)", "done": false},
+        {"id": "C65", "text": "Former meridian_admin actions redistributed: workspace_list/get to meridian_workspace, channel_list/send to meridian_messaging, search to meridian_messaging, profile assignment to meridian_member (set_profile), scheduler to meridian_workflow", "done": false}
+      ]
+    },
+    {
+      "name": "WebSocket and Frontend Compatibility",
+      "items": [
+        {"id": "C66", "text": "ws/assistant.rs compiles and passes all existing tests without modification after all NR-* briefs land", "done": false},
+        {"id": "C67", "text": "ws/session_replay compiles and passes all existing tests without modification after all NR-* briefs land", "done": false},
+        {"id": "C68", "text": "WS resubscribe (try_resubscribe) handles Norn broadcast sender drop identically to Claude Runner drop", "done": false}
+      ]
+    },
+    {
+      "name": "Integration Verification",
+      "items": [
+        {"id": "C69", "text": "cargo clippy --workspace -- -D warnings passes clean", "done": false},
+        {"id": "C70", "text": "All existing assistant service tests pass without modification", "done": false},
+        {"id": "C71", "text": "Norn session loop tests verify complete event translation pipeline", "done": false},
+        {"id": "C72", "text": "Namespace tool tests verify all actions with mocked service layer", "done": false},
+        {"id": "C73", "text": "Session persistence tests verify create, resume, and fork flows", "done": false},
+        {"id": "C74", "text": "No file exceeds 500 lines of code (excluding tests, comments, whitespace)", "done": false}
+      ]
+    },
+    {
+      "name": "Mid-Session DM Delivery",
+      "items": [
+        {"id": "C76", "text": "wake_trigger delivers DMs to active Norn sessions via SessionCommand::SendMessage instead of returning WakeSkipped", "done": false},
+        {"id": "C77", "text": "Mid-session DM formatted via format_agent_dm_envelope — identical envelope shape to wake prompt delivery, notification marked delivered after successful send", "done": false}
+      ]
+    },
+    {
+      "name": "Notification Check at Tool Boundaries",
+      "items": [
+        {"id": "C78", "text": "MessagingService exposes get_pending_notifications and count_pending_notifications wrapper methods delegating to NotificationStore", "done": false},
+        {"id": "C79", "text": "NotificationChecker struct holds Arc<MessagingService> and member_id, constructed in spawn_norn_loop, published as ToolContext extension", "done": false},
+        {"id": "C80", "text": "Post-tool-batch notification check injects pending notifications as ChannelMessage with DeliveryMode::Steer via InboundSender at the runner drain point", "done": false},
+        {"id": "C81", "text": "Injected notifications are marked as delivered so they are not re-injected on subsequent tool batches", "done": false}
+      ]
+    },
+    {
+      "name": "Member Session Setup",
+      "items": [
+        {"id": "C82", "text": "norn-member.md profile exists with namespace tools (messaging, member, workspace, workflow), system_instructions for workspace member behavior, bash excluded", "done": false},
+        {"id": "C83", "text": "wake_config_session.rs idle_timeout_secs reads from wake_config or defaults to None instead of hardcoded Some(0)", "done": false},
+        {"id": "C84", "text": "Norn wake sessions with no explicit profile default to norn-member profile", "done": false}
+      ]
+    },
+    {
+      "name": "Frontend Runtime Awareness",
+      "items": [
+        {"id": "C85", "text": "Frontend session types include runtime_kind field, surfaced through useAssistantSession and useActiveAgentSessions hooks", "done": false},
+        {"id": "C86", "text": "No hardcoded 'claude' model fallback strings in AssistantPanel.tsx — runtime-aware fallback instead", "done": false},
+        {"id": "C87", "text": "Session toolbar displays a runtime badge (Norn or Claude Runner) in the ProfileRow with distinct visual treatment", "done": false}
+      ]
+    }
+  ]
+}

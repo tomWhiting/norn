@@ -1,0 +1,166 @@
+{
+  "id": "NT-004",
+  "cluster": "norn-tui",
+  "title": "Input editor and keybindings",
+  "depends_on": ["NT-002"],
+  "blocked_by": [],
+  "checklist": ["C42", "C43", "C44", "C45", "C46", "C47", "C48"],
+  "stories": ["S7", "S10", "S11", "S22"],
+  "purpose": "The user needs to type prompts, submit them, navigate history, and compose multi-line input. This brief builds the input editor that renders in the fixed panel, handles key events, and manages history persistence.",
+  "task": "Implement the multi-line input editor in input/editor.rs. Enter submits, Shift+Enter (Kitty keyboard) or Alt+Enter (fallback) inserts newlines. The input area grows upward when newlines are added, triggering DECSTBM reissue via the fixed panel compositor. Escape clears input, Ctrl+C on empty exits. Up/Down cycle through history when no autocomplete popup is open. History persists to ~/.norn/history.txt. Implement the key event → action mapping in input/keybindings.rs.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Input editor state and rendering",
+      "spec": "The input editor SHALL maintain a multi-line text buffer and render it in the fixed panel's input area.",
+      "acceptance": [
+        "InputEditor struct holds: lines (Vec<String>), cursor_row, cursor_col",
+        "render(row, width, writer, caps) writes the input content at the specified fixed panel rows",
+        "Cursor is positioned at (cursor_row, cursor_col) within the input area after rendering",
+        "height() returns the number of lines (minimum 1)",
+        "Test: empty editor has height 1",
+        "Test: editor with 3 lines has height 3"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/input/editor.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Submit on Enter",
+      "spec": "WHEN the user presses Enter, THE SYSTEM SHALL submit the current input buffer contents to the agent loop AND clear the editor.",
+      "acceptance": [
+        "submit() returns the full input text (all lines joined with newlines) and clears the buffer",
+        "After submit, height returns to 1 (single empty line)",
+        "Empty input is not submitted (Enter on empty buffer is a no-op)",
+        "Test: submit on 'hello\\nworld' returns 'hello\\nworld' and resets to empty"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/editor.rs"]
+      },
+      "checklist": ["C42"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R3",
+      "title": "Multi-line input with newline insertion",
+      "spec": "WHEN the user presses Shift+Enter (Kitty keyboard) or Alt+Enter (fallback), THE SYSTEM SHALL insert a newline at the cursor position AND expand the input area upward.",
+      "acceptance": [
+        "Shift+Enter inserts a newline when TerminalCaps.kitty_keyboard is true",
+        "Alt+Enter (ESC followed by Enter) inserts a newline on all terminals",
+        "New line is inserted at cursor_row, cursor moves to the start of the new line",
+        "Input area height increases by 1, triggering DECSTBM reissue through the fixed panel compositor",
+        "Test: inserting a newline on a 1-line editor produces a 2-line editor with height 2"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/editor.rs"]
+      },
+      "checklist": ["C43", "C44"],
+      "stories": ["S7", "S22"]
+    },
+    {
+      "id": "R4",
+      "title": "Escape clears input",
+      "spec": "WHEN the user presses Escape, THE SYSTEM SHALL clear the input buffer and reset to a single empty line.",
+      "acceptance": [
+        "Escape clears all lines, resets to single empty line",
+        "Cursor resets to (0, 0)",
+        "Input area height returns to 1, triggering DECSTBM reissue if it was multi-line",
+        "Test: Escape on multi-line input produces empty single-line editor"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/editor.rs"]
+      },
+      "checklist": ["C45"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R5",
+      "title": "Ctrl+C exit on empty input",
+      "spec": "WHEN the user presses Ctrl+C AND the input buffer is empty, THE SYSTEM SHALL signal TUI exit. WHEN the input buffer is not empty, Ctrl+C SHALL clear the input (same as Escape).",
+      "acceptance": [
+        "Ctrl+C on empty input returns an Exit action",
+        "Ctrl+C on non-empty input clears the buffer (same behaviour as Escape)",
+        "Test: Ctrl+C on empty returns Exit action",
+        "Test: Ctrl+C on non-empty clears and returns no action"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/editor.rs"]
+      },
+      "checklist": ["C46"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "History navigation",
+      "spec": "WHEN the user presses Up/Down arrows AND no autocomplete popup is open, THE SYSTEM SHALL cycle through previous inputs.",
+      "acceptance": [
+        "InputHistory struct holds a Vec<String> of previous submissions and a navigation index",
+        "Up arrow replaces the current editor content with the previous history entry",
+        "Down arrow moves forward through history; at the end, restores the draft input",
+        "The current draft (unsaved input before navigating) is preserved and restored when navigating past the newest entry",
+        "Test: submitting 'a' then 'b', then pressing Up twice shows 'a'"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/editor.rs"]
+      },
+      "checklist": ["C47"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R7",
+      "title": "History persistence",
+      "spec": "Input history SHALL persist to ~/.norn/history.txt, loading on startup and appending on each submission.",
+      "acceptance": [
+        "On startup, load history from ~/.norn/history.txt (one entry per line, most recent last)",
+        "On each submit, append the submitted text as a new line",
+        "File is created on first submission if it does not exist",
+        "File read failure on startup is not fatal — start with empty history",
+        "Test: round-trip: save entries, reload, verify order"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/input/editor.rs"]
+      },
+      "checklist": ["C48"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R8",
+      "title": "Key event to action mapping",
+      "spec": "The keybindings module SHALL map terminal key events to InputAction variants that the editor and event loop consume.",
+      "acceptance": [
+        "InputAction enum: Submit, InsertNewline, InsertChar(char), Backspace, Delete, CursorLeft, CursorRight, CursorUp, CursorDown, ClearInput, Exit, HistoryPrev, HistoryNext",
+        "map_key_event(event, caps, popup_open) -> Option<InputAction> translates terminal events to actions",
+        "Shift+Enter maps to InsertNewline when kitty_keyboard is true",
+        "Alt+Enter (ESC + Enter sequence) maps to InsertNewline always",
+        "Up/Down map to HistoryPrev/HistoryNext when popup_open is false",
+        "Test: Enter key maps to Submit",
+        "Test: Alt+Enter maps to InsertNewline"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/input/keybindings.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement autocomplete trigger detection or popup rendering — that is NT-005",
+    "SHALL NOT implement ProviderEvent handling or agent loop dispatch — that is NT-011",
+    "SHALL NOT implement the main event loop — that is NT-011; this brief builds the input components that the event loop consumes",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "Editor submit returns correct text and resets — verified by test",
+    "Multi-line newline insertion increases height — verified by test",
+    "Escape clears editor — verified by test",
+    "History navigation cycles through entries — verified by test",
+    "History persistence round-trips — verified by test",
+    "Key mapping produces correct actions — verified by tests"
+  ]
+}

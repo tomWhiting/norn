@@ -1,0 +1,140 @@
+{
+  "id": "NH-002",
+  "cluster": "norn-hooks",
+  "title": "New hook traits for extended lifecycle events",
+  "depends_on": ["NH-001"],
+  "blocked_by": [],
+  "checklist": ["C9", "C10", "C11", "C12", "C13", "C14", "C15"],
+  "stories": ["S23"],
+  "purpose": "Norn's 5 existing hook traits cover tool and LLM boundaries plus session events. Six additional lifecycle boundaries have no hook coverage: user prompt submission, agent stop, sub-agent lifecycle, session lifecycle, compaction, and tool failure. This brief adds the 6 new traits and registers them on HookRegistry so both programmatic and config-driven hooks can target all 11 event types.",
+  "task": "Create crates/norn/src/integration/hooks/new_traits.rs with 6 new async hook traits: UserPromptHook, StopHook, SubagentHook, SessionLifecycleHook, CompactionHook, PostToolFailureHook. Extend the Hook enum with 6 new variants. Add per-category storage vectors and dispatch methods on HookRegistry. Update hooks/mod.rs to declare and re-export the new module. Update integration/mod.rs re-exports. Dispatch wiring into the agent loop is NH-007, not this brief.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "UserPromptHook trait",
+      "spec": "UserPromptHook SHALL have an async method on_user_prompt that receives the prompt text and session ID and returns HookOutcome (Proceed or Block). SHALL NOT return Modify.",
+      "acceptance": [
+        "UserPromptHook trait defined with: async fn on_user_prompt(&self, prompt: &str, session_id: &str) -> HookOutcome",
+        "Trait is Send + Sync",
+        "Uses #[async_trait]",
+        "Test: implement a blocking UserPromptHook, verify Block { reason } returned"
+      ],
+      "files": {
+        "create": ["crates/norn/src/integration/hooks/new_traits.rs"]
+      },
+      "checklist": ["C9"],
+      "stories": ["S23"]
+    },
+    {
+      "id": "R2",
+      "title": "StopHook trait",
+      "spec": "StopHook SHALL have an async method on_stop that receives the final text and returns HookOutcome (Proceed or Block). Block forces the agent loop to continue.",
+      "acceptance": [
+        "StopHook trait defined with: async fn on_stop(&self, final_text: &str) -> HookOutcome",
+        "Trait is Send + Sync",
+        "Test: implement a StopHook that blocks when final_text is empty, verify Block returned"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/new_traits.rs"]
+      },
+      "checklist": ["C10"],
+      "stories": ["S23"]
+    },
+    {
+      "id": "R3",
+      "title": "SubagentHook trait",
+      "spec": "SubagentHook SHALL have two async methods: on_subagent_start (observational, no return) and on_subagent_stop (returns HookOutcome). Both receive the agent ID and agent type as string slices.",
+      "acceptance": [
+        "on_subagent_start(&self, agent_id: &str, agent_type: &str) — no return value",
+        "on_subagent_stop(&self, agent_id: &str, agent_type: &str) -> HookOutcome",
+        "Trait is Send + Sync",
+        "Test: implement SubagentHook, verify start is observational, stop can block"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/new_traits.rs"]
+      },
+      "checklist": ["C11"],
+      "stories": ["S23"]
+    },
+    {
+      "id": "R4",
+      "title": "SessionLifecycleHook trait",
+      "spec": "SessionLifecycleHook SHALL have two async methods: on_session_start and on_session_end. Both are observational (no return value). Both receive the session ID.",
+      "acceptance": [
+        "on_session_start(&self, session_id: &str) — no return value",
+        "on_session_end(&self, session_id: &str) — no return value",
+        "Trait is Send + Sync",
+        "Test: implement SessionLifecycleHook with a counter, verify both methods fire"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/new_traits.rs"]
+      },
+      "checklist": ["C12"],
+      "stories": ["S23"]
+    },
+    {
+      "id": "R5",
+      "title": "CompactionHook trait",
+      "spec": "CompactionHook SHALL have an async method before_compaction that receives the event count and returns HookOutcome (Proceed or Block). Block prevents the compaction.",
+      "acceptance": [
+        "before_compaction(&self, event_count: usize) -> HookOutcome",
+        "Trait is Send + Sync",
+        "Test: implement CompactionHook that blocks when event_count < 10, verify Block returned"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/new_traits.rs"]
+      },
+      "checklist": ["C13"],
+      "stories": ["S23"]
+    },
+    {
+      "id": "R6",
+      "title": "PostToolFailureHook trait",
+      "spec": "PostToolFailureHook SHALL have an async method after_tool_failure that receives the ToolEnvelope and ToolOutput. Observational only — no return value.",
+      "acceptance": [
+        "after_tool_failure(&self, envelope: &ToolEnvelope, output: &ToolOutput, ctx: &ToolContext) — no return value",
+        "Trait is Send + Sync",
+        "Test: implement PostToolFailureHook with a counter, verify it fires on error output"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/new_traits.rs"]
+      },
+      "checklist": ["C14"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Hook enum and HookRegistry extension",
+      "spec": "The Hook enum SHALL gain 6 new variants: UserPrompt, Stop, Subagent, SessionLifecycle, Compaction, PostToolFailure. HookRegistry SHALL store each in a per-category Vec and provide dispatch methods matching the existing pattern (sequential, pre-hooks short-circuit on Block).",
+      "acceptance": [
+        "Hook enum has 11 variants total (5 existing + 6 new)",
+        "HookRegistry has 6 new private Vec fields: user_prompt, stop, subagent, session_lifecycle, compaction, post_tool_failure",
+        "register() matches on all 11 variants and pushes to the correct Vec",
+        "6 new dispatch methods: run_user_prompt, run_stop, run_subagent_start, run_subagent_stop, run_session_start, run_session_end, run_pre_compaction, run_post_tool_failure",
+        "Pre-hooks (user_prompt, stop, subagent_stop, pre_compaction) short-circuit on first Block",
+        "Observational hooks (subagent_start, session_start, session_end, post_tool_failure) fire all in order",
+        "Per-category _len() methods added for all new categories",
+        "Test: register one of each new type, verify counts and dispatch"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/traits.rs", "crates/norn/src/integration/hooks/mod.rs", "crates/norn/src/integration/mod.rs"]
+      },
+      "checklist": ["C15"],
+      "stories": ["S23"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT wire dispatch points into the agent loop — that is NH-007",
+    "SHALL NOT implement ShellCommandHook or config-driven registration — those are NH-005 and NH-006",
+    "SHALL NOT modify existing hook trait signatures",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "grep -c 'pub trait' crates/norn/src/integration/hooks/new_traits.rs returns 6",
+    "All existing hook tests in traits.rs pass unchanged",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

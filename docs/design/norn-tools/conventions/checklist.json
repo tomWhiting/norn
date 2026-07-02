@@ -1,0 +1,98 @@
+{
+  "cluster": "norn-tools/conventions",
+  "sections": [
+    {
+      "name": "CONVENTIONS.toml Parsing and ConventionsConfig Type",
+      "items": [
+        {"id": "C1", "text": "ConventionsConfig struct defined in a conventions module under crates/norn/src/tools/", "done": false},
+        {"id": "C2", "text": "ConventionsConfig parsed from TOML using toml crate with #[derive(Deserialize)]", "done": false},
+        {"id": "C3", "text": "ConventionGroup struct has fields: tools (Vec<String>), paths (Vec<String>), loc (Option<LocCheck>), advise_on (Vec<String>), block_on (Vec<String>), bypass_detection (Option<bool>), adapters_dir (Option<PathBuf>), priority (i32 default 0)", "done": false},
+        {"id": "C4", "text": "LocCheck struct has fields: limit (u64), handling (Handling enum: Advise or Block)", "done": false},
+        {"id": "C5", "text": "ConventionsConfig::load(path) reads and parses CONVENTIONS.toml, returning Result<ConventionsConfig, ConventionsError>", "done": false},
+        {"id": "C6", "text": "ConventionsConfig::load returns a typed error (ConventionsError) for missing file, parse failure, and invalid glob patterns", "done": false},
+        {"id": "C7", "text": "DiagnosticInfra gains conventions: Option<ConventionsConfig> field", "done": false},
+        {"id": "C8", "text": "ConventionsConfig is parsed at session startup and stored on DiagnosticInfra before any tool execution", "done": false}
+      ]
+    },
+    {
+      "name": "Convention Matching",
+      "items": [
+        {"id": "C9", "text": "Convention groups are matched by tool name (current tool in tools list) AND file path (modified file matches any paths glob)", "done": false},
+        {"id": "C10", "text": "Glob patterns in paths are compiled at load time using the globset crate, same as AdapterRegistry", "done": false},
+        {"id": "C11", "text": "Multiple convention groups can match the same file; all matching groups run their checks", "done": false},
+        {"id": "C12", "text": "When multiple groups specify conflicting LOC limits, the group with the highest priority field wins", "done": false},
+        {"id": "C13", "text": "Groups at the same priority with conflicting LOC limits: first-match wins, warning logged at startup", "done": false},
+        {"id": "C14", "text": "Path matching is relative to the workspace root stored on DiagnosticInfra", "done": false},
+        {"id": "C15", "text": "If no convention group matches a file, no post-mutation quality checks run for that file", "done": false}
+      ]
+    },
+    {
+      "name": "Advisory and Blocking Pathway",
+      "items": [
+        {"id": "C16", "text": "PostCheckResult struct defined with fields: outcome (PostValidateOutcome), advisories (Vec<Advisory>)", "done": false},
+        {"id": "C17", "text": "Advisory struct defined with fields: message (String), source (String)", "done": false},
+        {"id": "C18", "text": "RuntimePostValidateCheck::check() return type changed from PostValidateOutcome to PostCheckResult", "done": false},
+        {"id": "C19", "text": "ToolRegistry::execute_tool post-check loop updated to handle PostCheckResult: outcome processed as before, advisories collected separately", "done": false},
+        {"id": "C20", "text": "Advisories injected into tool output under an advisories key by the registry", "done": false},
+        {"id": "C21", "text": "Advisories do not set is_error on the tool output", "done": false},
+        {"id": "C22", "text": "Advisories do not cause PostValidateOutcome::Fail", "done": false},
+        {"id": "C23", "text": "Adapter results from advise_on list produce Advisory items (informational)", "done": false},
+        {"id": "C24", "text": "Adapter results from block_on list produce errors that trigger PostValidateOutcome::Fail", "done": false},
+        {"id": "C25", "text": "LOC check with handling = advise produces Advisory items", "done": false},
+        {"id": "C26", "text": "LOC check with handling = block produces errors that trigger PostValidateOutcome::Fail", "done": false},
+        {"id": "C27", "text": "Tool's own AST validation (tree-sitter parse check) remains unconditional and always blocks, unaffected by conventions", "done": false}
+      ]
+    },
+    {
+      "name": "DiagnosticsPostCheck Convention Integration",
+      "items": [
+        {"id": "C28", "text": "When conventions is Some, DiagnosticsPostCheck uses convention groups exclusively for post-mutation checks", "done": false},
+        {"id": "C29", "text": "When conventions is None, DiagnosticsPostCheck runs no post-mutation quality checks (only structural AST validation from tool itself)", "done": false},
+        {"id": "C30", "text": "Hardcoded 500 LOC limit removed from diagnostics_check.rs", "done": false},
+        {"id": "C31", "text": "Hardcoded 200 LOC limit for mod.rs/lib.rs/main.rs removed from diagnostics_check.rs", "done": false},
+        {"id": "C32", "text": "Hardcoded clippy check removed from diagnostics_check.rs", "done": false},
+        {"id": "C33", "text": "Hardcoded bypass detection removed from diagnostics_check.rs", "done": false},
+        {"id": "C34", "text": "DiagnosticsPostCheck iterates matching convention groups and dispatches adapter checks per advise_on/block_on lists", "done": false},
+        {"id": "C35", "text": "bypass_detection defaults to true for Rust and TypeScript, false for other languages", "done": false}
+      ]
+    },
+    {
+      "name": "Adapter Resolution",
+      "items": [
+        {"id": "C36", "text": "Adapter names in advise_on/block_on resolve against the AdapterRegistry on DiagnosticInfra", "done": false},
+        {"id": "C37", "text": "Unresolvable adapter names log a warning at startup but do not prevent other conventions from loading", "done": false},
+        {"id": "C38", "text": "Declarative TOML adapters from adapters_dir are loaded and registered on AdapterRegistry alongside compiled adapters", "done": false},
+        {"id": "C39", "text": "Custom adapters from adapters_dir are sandboxed to subprocess execution only — no arbitrary code loading into the norn process", "done": false}
+      ]
+    },
+    {
+      "name": "Init Command",
+      "items": [
+        {"id": "C40", "text": "norn init conventions command exists as a CLI subcommand", "done": false},
+        {"id": "C41", "text": "Init scans the project file tree, collects file extensions and their counts", "done": false},
+        {"id": "C42", "text": "Init checks which compiled adapters are available for each detected file type", "done": false},
+        {"id": "C43", "text": "Init checks which external tools are installed via which/where lookup (mypy, ruff, eslint, shellcheck, etc.)", "done": false},
+        {"id": "C44", "text": "Init generates convention groups with language-ecosystem-appropriate LOC limits", "done": false},
+        {"id": "C45", "text": "Init populates advise_on with available adapters, block_on empty by default", "done": false},
+        {"id": "C46", "text": "Init writes CONVENTIONS.toml with comments explaining each field", "done": false},
+        {"id": "C47", "text": "Init never overwrites an existing CONVENTIONS.toml — appends missing groups or writes to a new path", "done": false}
+      ]
+    },
+    {
+      "name": "Prerequisites",
+      "items": [
+        {"id": "C48", "text": "ToolError::PostValidationFailed carries optional committed_output so blocking convention checks preserve the tool's structured output (PR0)", "done": false},
+        {"id": "C49", "text": "PostCheckResult type exists so advisory convention results flow through output without triggering Fail (PR1)", "done": false}
+      ]
+    },
+    {
+      "name": "Constraints",
+      "items": [
+        {"id": "C50", "text": "CONVENTIONS.toml is optional — projects without one get no post-mutation quality checks", "done": false},
+        {"id": "C51", "text": "LOC counting uses tokei (language-aware, not raw wc -l)", "done": false},
+        {"id": "C52", "text": "Glob matching uses the globset crate, same as search tool and AdapterRegistry", "done": false},
+        {"id": "C53", "text": "No file exceeds 500 lines of code (excluding tests, comments, whitespace)", "done": false}
+      ]
+    }
+  ]
+}

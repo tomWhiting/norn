@@ -1,0 +1,97 @@
+{
+  "id": "N-011",
+  "cluster": "norn",
+  "title": "Wire ToolExecutor, iteration monitors, and inbound channels into agent loop",
+  "depends_on": ["N-005", "N-006", "N-008", "N-009"],
+  "blocked_by": [],
+  "checklist": ["C33", "C35", "C36"],
+  "stories": ["S3", "S4", "S22", "S26"],
+  "purpose": "Connect the independently-built mechanisms into the running agent loop. ToolRegistry implements ToolExecutor. Iteration monitors called during the loop. Inbound channels drained at tool boundaries. Dynamic tool availability wired to profile configuration.",
+  "task": "Implement three integration points plus dynamic availability: (1) ToolRegistry implements ToolExecutor dispatching through full lifecycle. (2) Wire evaluate_iteration into loop cycle. (3) Wire inbound channel drain into tool boundaries. (4) Dynamic tool set management. Testing: Layer 2 mock provider tests.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "ToolRegistry implements ToolExecutor",
+      "spec": "ToolRegistry SHALL implement the ToolExecutor trait, dispatching through pre-validate/execute/post-validate/on-success with gate/report handling.",
+      "acceptance": [
+        "ToolRegistry implements ToolExecutor",
+        "Pre-validate Block prevents execution",
+        "Post-validate Gate failure returns error without committing",
+        "Post-validate Report failure returns output with errors",
+        "On-success runs only when post-validate passes",
+        "ToolNotFound for unregistered tools"
+      ],
+      "files": { "modify": ["crates/norn/src/tool/registry.rs", "crates/norn/src/tool/mod.rs"] },
+      "checklist": ["C33"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Wire iteration monitors into agent loop",
+      "spec": "The loop SHALL call evaluate_iteration after each cycle. Signals appended as system events. HandoffTriggered injects wrap-up guidance.",
+      "acceptance": [
+        "evaluate_iteration called once per loop iteration",
+        "TokenWarning appends system event",
+        "HandoffTriggered injects wrap-up UserMessage",
+        "Test triggers a token warning and verifies event in store"
+      ],
+      "files": { "modify": ["crates/norn/src/loop/runner.rs"] },
+      "checklist": [],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R3",
+      "title": "Wire inbound channels into tool boundaries",
+      "spec": "The loop SHALL drain the inbound channel after each tool batch. Steer messages injected before next provider call. Follow-up messages held until model would stop.",
+      "acceptance": [
+        "Inbound channel drained after tool batch",
+        "Steer messages become UserMessage events before next call",
+        "Follow-up messages injected only when loop would return Completed",
+        "Test sends Steer mid-loop, verifies in next context",
+        "Test sends Follow-up, verifies loop continues"
+      ],
+      "files": { "modify": ["crates/norn/src/loop/runner.rs"] },
+      "checklist": [],
+      "stories": ["S3", "S26"]
+    },
+    {
+      "id": "R4",
+      "title": "Dynamic tool availability",
+      "spec": "ToolRegistry SHALL support set_available to restrict active tools without removing them.",
+      "acceptance": [
+        "set_available(names) restricts get() results",
+        "Unavailable tools return ToolNotFound",
+        "reset_available() restores all",
+        "Test: register 3, set available 1, verify only 1 accessible"
+      ],
+      "files": { "modify": ["crates/norn/src/tool/registry.rs"] },
+      "checklist": ["C35"],
+      "stories": ["S22"]
+    },
+    {
+      "id": "R5",
+      "title": "ToolRegistry runtime mutation",
+      "spec": "ToolRegistry SHALL support adding and removing tools at runtime.",
+      "acceptance": [
+        "register() adds immediately available tool",
+        "remove() returns Option<Box<dyn Tool>>",
+        "get() after remove returns None",
+        "Test: add tool at runtime, verify execution"
+      ],
+      "files": { "modify": ["crates/norn/src/tool/registry.rs"] },
+      "checklist": ["C36"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement specific tool logic",
+    "SHALL NOT implement session persistence",
+    "SHALL NOT modify Provider trait or MockProvider"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "All existing tests still pass plus new integration tests",
+    "cargo clippy clean",
+    "Full lifecycle dispatch verified by test with mock tool having all 4 phases"
+  ]
+}

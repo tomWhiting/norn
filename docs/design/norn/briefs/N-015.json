@@ -1,0 +1,172 @@
+{
+  "id": "N-015",
+  "cluster": "norn",
+  "title": "Agent tools — SpawnAgent, Fork, Task, Skill, RunScript, ToolSearch, ApplyPatch",
+  "depends_on": ["N-006", "N-014"],
+  "blocked_by": [],
+  "checklist": ["C49", "C50", "C51", "C52", "C53", "C54", "C55"],
+  "stories": ["S15", "S20", "S21"],
+  "purpose": "Implement the tools that agents use to coordinate with other agents, manage tasks, activate skills, run scripts, search the tool catalog, and apply patches. Agent coordination tools (SpawnAgent, Fork, SendMessage/WaitAgent/CloseAgent) wrap the infrastructure from N-014. Standalone tools (Task, Skill, RunScript, ToolSearch, ApplyPatch) are self-contained and only depend on the Tool trait from N-006.",
+  "task": "Implement 8 tools across 6 files in tools/: agent.rs (SpawnAgent, Fork, SendMessage, WaitAgent, CloseAgent — 5 tools wrapping N-014 infrastructure), task.rs (Task tool with CRUD ops), skill.rs (Skill tool loading prompt templates), script.rs (RunScript executing inline Rhai), tool_search.rs (ToolSearch with BM25), patch.rs (ApplyPatch applying unified diffs). All implement the Tool trait from N-006. Testing: Layer 1 unit tests.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "SpawnAgent tool",
+      "spec": "SpawnAgent tool SHALL create a sub-agent by calling AgentRegistry::reserve and then launching the agent loop. The tool returns when the sub-agent completes, providing its structured output.",
+      "acceptance": [
+        "SpawnAgentTool implements Tool with name 'spawn_agent', effect Process",
+        "Input schema: { task: String, model: String, role: String, tools: Option<Vec<String>>, path: Option<String> }",
+        "Tool accesses AgentRegistry via Arc from ToolContext runtime_args",
+        "Calls registry.reserve(), spawns agent loop via tokio::spawn, returns SpawnGuard handle",
+        "Output includes agent_id, result (sub-agent's structured output), usage",
+        "Error when registry is not available in context",
+        "Test with MockProvider: spawn sub-agent, verify registry entry created and cleaned up"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/agent.rs", "crates/norn/src/tools/mod.rs"] },
+      "checklist": ["C49"],
+      "stories": ["S15"]
+    },
+    {
+      "id": "R2",
+      "title": "Fork tool",
+      "spec": "Fork tool SHALL fork the current agent onto a different model for a bounded task, calling the fork logic from N-014, and return the ForkAudit as tool output.",
+      "acceptance": [
+        "ForkTool implements Tool with name 'fork', effect Process",
+        "Input schema: { task: String, model: String, include_system: Option<bool>, include_recent_n: Option<u32>, exclude_tool_calls: Option<bool> }",
+        "Constructs ForkConfig from input and calls fork() from agent/fork.rs",
+        "Returns ForkAudit fields as structured JSON output",
+        "Test: fork with mock provider, verify ForkAudit returned with correct model"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/agent.rs"] },
+      "checklist": ["C50"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "SendMessage, WaitAgent, CloseAgent tools",
+      "spec": "Three coordination tools: SendMessage sends to another agent's mailbox, WaitAgent blocks until a specific agent completes, CloseAgent requests an agent to wrap up.",
+      "acceptance": [
+        "SendMessageTool implements Tool with name 'send_message', effect Process",
+        "SendMessage input: { to: String, content: Value, trigger_turn: Option<bool> }",
+        "SendMessage calls Mailbox::send with the sender's agent ID from context",
+        "WaitAgentTool implements Tool with name 'wait_agent', effect Process",
+        "WaitAgent input: { agent_id: String, timeout: Option<u64> }",
+        "WaitAgent polls registry until agent status is Completed or Failed, with configurable timeout",
+        "CloseAgentTool implements Tool with name 'close_agent', effect Process",
+        "CloseAgent input: { agent_id: String, reason: Option<String> }",
+        "CloseAgent sets target agent status to Completing",
+        "Test: send message, verify it arrives in target mailbox"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/agent.rs"] },
+      "checklist": ["C51"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Task tool with CRUD operations",
+      "spec": "Task tool SHALL support create, list, update, and complete operations on a task store. Tasks have status, description, dependencies, and metadata.",
+      "acceptance": [
+        "TaskTool implements Tool with name 'task', effect ReadOnly for list, Write for create/update/complete",
+        "Input schema: { action: String, task_id: Option<String>, description: Option<String>, status: Option<String>, depends_on: Option<Vec<String>>, metadata: Option<Value> }",
+        "Actions: 'create', 'list', 'update', 'complete', 'get'",
+        "TaskEntry struct: id (String), description (String), status (TaskStatus), depends_on (Vec<String>), metadata (Value), created_at (DateTime<Utc>), updated_at (DateTime<Utc>)",
+        "TaskStatus enum: Pending, InProgress, Completed, Blocked",
+        "TaskStore trait abstracts storage — default InMemoryTaskStore provided",
+        "List action supports filtering by status",
+        "Test: create 3 tasks, list all, update one, complete one, verify states"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/task.rs", "crates/norn/src/tools/mod.rs"] },
+      "checklist": ["C52"],
+      "stories": ["S20"]
+    },
+    {
+      "id": "R5",
+      "title": "Skill tool loading prompt templates",
+      "spec": "Skill tool SHALL load a SKILL.md prompt template by name and inject its content into the agent's context. Skills are looked up from a configurable directory.",
+      "acceptance": [
+        "SkillTool implements Tool with name 'skill', effect ReadOnly",
+        "Input schema: { name: String }",
+        "Searches skill_dirs (Vec<PathBuf> from context) for <name>/SKILL.md or <name>.md",
+        "Returns the skill content as the tool output for the model to follow",
+        "Returns clear error when skill not found, listing available skills",
+        "Test: create temp dir with a skill file, load by name, verify content returned"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/skill.rs", "crates/norn/src/tools/mod.rs"] },
+      "checklist": ["C53"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "RunScript tool for inline Rhai execution",
+      "spec": "RunScript tool SHALL execute inline Rhai scripts with sandboxed host functions. This is lightweight ad-hoc scripting, not heavy orchestration. Host functions split into blocking (read_file, run_cmd) and handle-returning (spawn_agent) categories per grilling refinement.",
+      "acceptance": [
+        "RunScriptTool implements Tool with name 'run_script', effect Process",
+        "Input schema: { script: String, args: Option<Value> }",
+        "Creates a Rhai Engine with registered host functions",
+        "Blocking host functions: read_file(path) -> String, run_cmd(cmd) -> String, parse_json(s) -> Dynamic, to_json(val) -> String",
+        "Script args injected as a Rhai scope variable named 'args'",
+        "Script return value serialized to serde_json::Value via serde_json (StepOutcome bridge pattern)",
+        "Script execution has a configurable timeout (default 30s)",
+        "Cargo.toml adds rhai crate dependency",
+        "Test: run script that reads a temp file, verify output matches file content"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/script.rs", "crates/norn/src/tools/mod.rs", "crates/norn/Cargo.toml"] },
+      "checklist": ["C54"],
+      "stories": ["S21"]
+    },
+    {
+      "id": "R7",
+      "title": "ToolSearch with BM25 ranking",
+      "spec": "ToolSearch tool SHALL perform BM25 keyword search over the tool catalog (name + description) and return ranked results. This is useful when large tool registries exist, especially MCP servers with many tools.",
+      "acceptance": [
+        "ToolSearchTool implements Tool with name 'tool_search', effect ReadOnly",
+        "Input schema: { query: String, max_results: Option<u32> }",
+        "BM25 scoring computed over tool name and description text",
+        "Returns ranked list of { name, description, score } objects",
+        "Default max_results is 10",
+        "Empty query returns all tools sorted alphabetically",
+        "Test: register 5 tools with varied descriptions, search for keyword, verify top result is most relevant"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/tool_search.rs", "crates/norn/src/tools/mod.rs"] },
+      "checklist": ["C55"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "ApplyPatch tool for unified diffs",
+      "spec": "ApplyPatch tool SHALL apply unified diff patches to files. Post-validate runs AST validation via tree-sitter (same mechanism as Edit tool from N-010) using Gate semantics — if AST breaks, the patch is rolled back.",
+      "acceptance": [
+        "ApplyPatchTool implements Tool with name 'apply_patch', effect Write",
+        "Input schema: { patch: String, working_dir: Option<String> }",
+        "Parses unified diff format (---/+++ headers, @@ hunks)",
+        "Applies hunks to target files, respecting context lines for positioning",
+        "post_validate_mode returns Gate (same as Edit tool)",
+        "Post-validate calls the same AST validation used by Edit (tree-sitter parse, check for ERROR nodes)",
+        "pre_validate checks all target files exist and have been read (same read-tracking as Edit)",
+        "Returns diff summary: files modified, hunks applied, lines added/removed",
+        "Test: create a file, apply a valid patch, verify file content changed correctly",
+        "Test: apply a patch with bad context lines, verify error returned"
+      ],
+      "files": { "modify": ["crates/norn/src/tools/patch.rs", "crates/norn/src/tools/mod.rs"] },
+      "checklist": ["C89"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement AgentRegistry, Mailbox, Fork logic, Monitor, or Goals — those are N-014",
+    "SHALL NOT implement tree-sitter grammar loading — reuse the grammar infrastructure from N-010",
+    "SHALL NOT implement heavy Rhai orchestration (workflow engine) — RunScript is lightweight ad-hoc only",
+    "SHALL NOT implement semantic/vector search in ToolSearch — BM25 keyword only",
+    "SHALL NOT implement handle-returning Rhai host functions (spawn_agent) — those require N-014 integration and are deferred to N-016",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all tools/ tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "No file over 500 lines of code (excluding tests, comments, whitespace)",
+    "tools/mod.rs contains only pub mod declarations and pub use re-exports",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/tools/ returns no matches outside test code",
+    "grep -rn 'todo!\\|unimplemented!' crates/norn/src/tools/ returns no matches"
+  ]
+}

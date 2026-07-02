@@ -1,0 +1,147 @@
+{
+  "id": "NTC-001",
+  "cluster": "norn-tools/conventions",
+  "title": "CONVENTIONS.toml parsing, ConventionsConfig type, and DiagnosticInfra integration",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C10", "C50", "C51", "C52", "C53"],
+  "stories": ["S1", "S2", "S7"],
+  "purpose": "CONVENTIONS.toml is the foundation of the entire conventions system. Without a parsed config type and its integration into DiagnosticInfra, no convention group can be matched, no advisory/blocking distinction can be applied, and no convention-driven checks can run. This brief delivers the config parsing layer and wires it into the existing diagnostic infrastructure so subsequent briefs can read the config and act on it.",
+  "task": "Create a conventions module under crates/norn/src/tools/ containing the ConventionsConfig, ConventionGroup, LocCheck, Handling, and ConventionsError types. Implement TOML parsing with glob pattern pre-compilation. Add the conventions: Option<ConventionsConfig> field to DiagnosticInfra. Wire the CONVENTIONS.toml load into session startup in all three driver paths (TUI, REPL, print). When no CONVENTIONS.toml exists, conventions is None and no convention-driven checks run. When the file exists but is malformed, session startup logs an error and continues with None.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Conventions module structure",
+      "spec": "A conventions/ folder module SHALL exist at crates/norn/src/tools/conventions/ with mod.rs containing only pub mod and pub use statements. The module SHALL contain config.rs (types and parsing) and error.rs (ConventionsError type).",
+      "acceptance": [
+        "crates/norn/src/tools/conventions/ directory exists",
+        "crates/norn/src/tools/conventions/mod.rs contains only pub mod and pub use statements",
+        "crates/norn/src/tools/conventions/config.rs contains ConventionsConfig, ConventionGroup, LocCheck, Handling types",
+        "crates/norn/src/tools/conventions/error.rs contains ConventionsError type",
+        "crates/norn/src/tools/mod.rs declares pub mod conventions and re-exports ConventionsConfig"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/conventions/mod.rs",
+          "crates/norn/src/tools/conventions/config.rs",
+          "crates/norn/src/tools/conventions/error.rs"
+        ],
+        "modify": ["crates/norn/src/tools/mod.rs"]
+      },
+      "checklist": ["C1", "C53"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "ConventionGroup struct",
+      "spec": "ConventionGroup SHALL have fields: tools (Vec<String>), paths (Vec<String>), loc (Option<LocCheck>), advise_on (Vec<String> defaulting to empty), block_on (Vec<String> defaulting to empty), bypass_detection (Option<bool>), adapters_dir (Option<PathBuf>), priority (i32 defaulting to 0). LocCheck SHALL have fields: limit (u64), handling (Handling). Handling SHALL be an enum with Advise and Block variants. All types SHALL derive Deserialize, Debug, and Clone.",
+      "acceptance": [
+        "ConventionGroup has all 8 fields with correct types",
+        "LocCheck has limit: u64 and handling: Handling fields",
+        "Handling enum has Advise and Block variants",
+        "advise_on, block_on default to empty Vec via serde(default)",
+        "priority defaults to 0 via serde(default)",
+        "All types derive Deserialize, Debug, Clone",
+        "Test: deserialize a TOML string with all fields populated, verify struct values match"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/conventions/config.rs"]
+      },
+      "checklist": ["C3", "C4"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R3",
+      "title": "ConventionsConfig parsing",
+      "spec": "ConventionsConfig SHALL be a struct wrapping a BTreeMap<String, ConventionGroup> (group name to group). ConventionsConfig::load(path: &Path) SHALL read the file and parse it with the toml crate. On success it SHALL pre-compile all glob patterns from each group's paths field using the globset crate, storing CompiledConventionGroup values alongside the parsed data. On failure it SHALL return ConventionsError with variants: FileNotFound, ParseError(String), InvalidGlob { group: String, pattern: String, reason: String }.",
+      "acceptance": [
+        "ConventionsConfig::load reads a TOML file from disk and parses it into ConventionsConfig",
+        "ConventionsConfig stores compiled glob matchers alongside parsed groups",
+        "ConventionsError::FileNotFound returned when CONVENTIONS.toml does not exist",
+        "ConventionsError::ParseError returned when TOML is malformed",
+        "ConventionsError::InvalidGlob returned when a paths glob cannot compile",
+        "ConventionsError derives Debug and implements std::error::Error via thiserror",
+        "Test: load a valid CONVENTIONS.toml from a tempfile, verify groups and compiled matchers",
+        "Test: load a nonexistent path, verify FileNotFound",
+        "Test: load malformed TOML, verify ParseError"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/conventions/config.rs",
+          "crates/norn/src/tools/conventions/error.rs"
+        ]
+      },
+      "checklist": ["C2", "C5", "C6", "C10", "C52"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R4",
+      "title": "LOC counting via tokei",
+      "spec": "ConventionsConfig SHALL use the file_length adapter's count_code_lines function from the diagnostics crate for LOC counting. This is the same tokei-based counting already used by the current hardcoded check. The ConventionGroup's loc.limit SHALL be compared against this count.",
+      "acceptance": [
+        "LOC counting delegates to diagnostics::languages::file_length::count_code_lines",
+        "No raw line counting (wc -l style) anywhere in conventions code",
+        "Test: create a Rust file with known LOC, verify count_code_lines returns the expected value"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/conventions/config.rs"]
+      },
+      "checklist": ["C51"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "DiagnosticInfra gains conventions field",
+      "spec": "DiagnosticInfra in crates/norn/src/tools/diagnostics_check.rs SHALL gain a pub conventions: Option<ConventionsConfig> field. The field SHALL be None when no CONVENTIONS.toml exists.",
+      "acceptance": [
+        "DiagnosticInfra has pub conventions: Option<ConventionsConfig> field",
+        "Existing code that constructs DiagnosticInfra compiles with the new field set to None",
+        "All existing tests pass unchanged"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/diagnostics_check.rs"]
+      },
+      "checklist": ["C7"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Session startup wiring",
+      "spec": "WHEN session startup constructs DiagnosticInfra, it SHALL attempt to load CONVENTIONS.toml from the workspace root. IF the file exists and parses successfully, conventions SHALL be set to Some(config). IF the file does not exist, conventions SHALL be None. IF the file exists but fails to parse, a warning SHALL be logged via tracing::warn and conventions SHALL be None. All three driver paths (TUI driver.rs, REPL driver.rs, print orchestrator.rs) or the shared wiring function they call SHALL include this logic.",
+      "acceptance": [
+        "CONVENTIONS.toml is loaded during session startup from workspace_root",
+        "Missing file results in conventions: None with no warning",
+        "Malformed file results in conventions: None with tracing::warn",
+        "Valid file results in conventions: Some(parsed_config)",
+        "All three drivers (TUI, REPL, print) construct DiagnosticInfra with the conventions field",
+        "grep for 'ConventionsConfig::load' in the startup path returns matches"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/diagnostics_check.rs",
+          "crates/norn-cli/src/runtime/mod.rs"
+        ]
+      },
+      "checklist": ["C8", "C50"],
+      "stories": ["S7"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement convention matching logic — that is NTC-002",
+    "SHALL NOT implement advisory/blocking pathway or PostCheckResult — that is NTC-003",
+    "SHALL NOT modify DiagnosticsPostCheck::check() behavior — that is NTC-002",
+    "SHALL NOT implement the init command — that is NTC-004",
+    "SHALL NOT remove the hardcoded checks from diagnostics_check.rs — that is NTC-002",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "crates/norn/src/tools/conventions/ directory exists with mod.rs, config.rs, error.rs",
+    "crates/norn/src/tools/conventions/mod.rs contains only pub mod and pub use statements",
+    "grep -r 'ConventionsConfig' crates/norn/src/tools/diagnostics_check.rs returns matches",
+    "grep -r 'ConventionsConfig::load' returns matches in session startup wiring",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

@@ -1,0 +1,202 @@
+{
+  "id": "N-007",
+  "cluster": "norn",
+  "title": "Define rules engine types and trigger evaluation",
+  "depends_on": ["N-001", "N-003"],
+  "blocked_by": [],
+  "checklist": ["C56", "C57", "C58", "C59", "C60", "C61", "C62", "C63"],
+  "stories": ["S12", "S25", "S41"],
+  "purpose": "Define the rules engine data model and trigger evaluation logic. Rules are contextual guidance that fires based on conditions — path globs, tool invocations, command matches — and delivers content via one of three modes. The rules engine is a passive consumer: it does not modify prompt construction. It consumes generic path-change and tool-invocation events, tracks which rules are currently in context via a presence set rebuilt from content tags, and produces injection requests. This brief covers the types, parsing, trigger evaluation, delivery mode definitions, and lifecycle tracking mechanism. It does not implement the shell execution feature for dynamic rule content (deferred to N-008 if scoped separately).",
+  "task": "Define Rule struct with RuleId, trigger conditions, delivery mode, timing (before/after), and body content. Implement rule file parsing from YAML front matter (trigger globs, command patterns, delivery mode, timing) plus plain text body. Implement TriggerCondition evaluation against RuntimeEvent (path-change and tool-invocation events). Define DeliveryMode enum with three variants matching D7. Define RulePresenceSet that tracks which rules are currently in the active context, rebuilt synchronously from content tags during prompt construction. Define RuleInjection as the output type representing a rule ready for delivery. Testing layer: unit tests (Layer 1) — all components testable with synthetic events, no provider needed.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define Rule struct and RuleId",
+      "spec": "The rules module SHALL define a Rule struct containing a unique RuleId, a human-readable name, a list of trigger conditions, a delivery mode, timing (before or after matched action), and the rule body content as a string. RuleId SHALL be a newtype over String with Display and FromStr implementations.",
+      "acceptance": [
+        "Rule struct has fields: id (RuleId), name (String), triggers (Vec<TriggerCondition>), delivery (DeliveryMode), timing (TriggerTiming), body (String)",
+        "RuleId is a newtype over String with Display and FromStr",
+        "TriggerTiming enum has variants: Before, After",
+        "Rule derives Clone, Debug, Serialize, Deserialize",
+        "RuleId derives Clone, Debug, Hash, Eq, PartialEq, Serialize, Deserialize"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/rules/types.rs"
+        ],
+        "modify": [
+          "crates/norn/src/rules/mod.rs"
+        ]
+      },
+      "checklist": ["C56"],
+      "stories": ["S25"]
+    },
+    {
+      "id": "R2",
+      "title": "Define TriggerCondition enum",
+      "spec": "TriggerCondition SHALL be an enum with variants for path glob matches and command/tool invocation matches. Path glob triggers match against file paths on read or write events. Command triggers match against bash command strings. Tool triggers match against tool invocation names. Each variant SHALL carry its match pattern as a string.",
+      "acceptance": [
+        "TriggerCondition enum has variants: PathGlob { pattern: String }, BashCommand { pattern: String }, ToolInvocation { tool_name: String }",
+        "TriggerCondition derives Clone, Debug, Serialize, Deserialize",
+        "PathGlob pattern is a glob pattern (supports *, **, ?)",
+        "BashCommand pattern is a substring match pattern for command matching",
+        "ToolInvocation tool_name is an exact tool name match"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/rules/types.rs"
+        ]
+      },
+      "checklist": ["C57", "C58"],
+      "stories": ["S25"]
+    },
+    {
+      "id": "R3",
+      "title": "Define DeliveryMode enum",
+      "spec": "DeliveryMode SHALL be an enum with three variants matching the three delivery modes from D7. SystemContextAppend adds the rule to the system prompt for the session. ContextInjection delivers the rule at the next input boundary. MessageDelivery sends the rule as a conversation message.",
+      "acceptance": [
+        "DeliveryMode enum has variants: SystemContextAppend, ContextInjection, MessageDelivery",
+        "DeliveryMode derives Clone, Debug, Serialize, Deserialize, PartialEq, Eq",
+        "Each variant carries no additional data — the rule body provides the content"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/rules/types.rs"
+        ]
+      },
+      "checklist": ["C60", "C61", "C62"],
+      "stories": ["S25"]
+    },
+    {
+      "id": "R4",
+      "title": "Define RuntimeEvent for trigger evaluation",
+      "spec": "The rules module SHALL define a RuntimeEvent enum representing the generic events that the rules engine consumes. The rules engine SHALL NOT subscribe to rule-specific events — it consumes generic path-change and tool-invocation events per D7's dependency inversion principle.",
+      "acceptance": [
+        "RuntimeEvent enum has variants: PathChanged { path: String, operation: PathOperation }, ToolInvoked { tool_name: String, arguments: Option<serde_json::Value> }, BashCommandRun { command: String }",
+        "PathOperation enum has variants: Read, Write",
+        "RuntimeEvent derives Clone, Debug",
+        "No rule-specific event types — the rules engine is a passive consumer of generic events"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/rules/types.rs"
+        ]
+      },
+      "checklist": ["C57", "C58"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Implement rule file parsing from YAML front matter",
+      "spec": "The parser module SHALL parse rule files consisting of YAML front matter (delimited by ---) followed by a plain text body. The front matter SHALL specify trigger conditions (path globs, command patterns, tool names), delivery mode, timing, and an optional rule name. The parser SHALL return a Result<Rule, RulesError>.",
+      "acceptance": [
+        "parse_rule_file function signature: fn parse_rule_file(id: RuleId, content: &str) -> Result<Rule, RulesError>",
+        "YAML front matter is delimited by --- on its own line at the start and end of the header",
+        "Front matter supports keys: name (optional String), triggers (array of trigger objects), delivery (string: system_context, context_injection, message), timing (string: before, after — defaults to before)",
+        "Trigger objects in YAML have a type field (path_glob, bash_command, tool) and a pattern field",
+        "Text after the closing --- delimiter is the rule body",
+        "Missing required fields produce RulesError::ParseFailed with a descriptive message",
+        "Cargo.toml includes serde_yaml = { workspace = true }",
+        "A unit test parses a rule file with two triggers (one path glob, one tool invocation), delivery mode context_injection, timing after, and verifies all fields"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/rules/parser.rs",
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C56"],
+      "stories": ["S25"]
+    },
+    {
+      "id": "R6",
+      "title": "Implement trigger evaluation against runtime events",
+      "spec": "The triggers module SHALL implement evaluation of TriggerConditions against RuntimeEvents. PathGlob triggers SHALL match using glob pattern matching against file paths. BashCommand triggers SHALL match using substring containment against command strings. ToolInvocation triggers SHALL match using exact tool name equality. Evaluation SHALL return whether the trigger matched and the timing (before/after).",
+      "acceptance": [
+        "evaluate_triggers function signature: fn evaluate_triggers(rule: &Rule, event: &RuntimeEvent) -> Option<TriggerMatch>",
+        "TriggerMatch struct has fields: rule_id (RuleId), timing (TriggerTiming), delivery (DeliveryMode)",
+        "PathGlob { pattern: \"**/*.rs\" } matches RuntimeEvent::PathChanged { path: \"src/main.rs\", operation: Read }",
+        "PathGlob { pattern: \"**/mod.rs\" } does not match RuntimeEvent::PathChanged { path: \"src/main.rs\", operation: Read }",
+        "BashCommand { pattern: \"cargo test\" } matches RuntimeEvent::BashCommandRun { command: \"cargo test --workspace\" }",
+        "ToolInvocation { tool_name: \"Write\" } matches RuntimeEvent::ToolInvoked { tool_name: \"Write\", .. }",
+        "ToolInvocation { tool_name: \"Write\" } does not match RuntimeEvent::ToolInvoked { tool_name: \"Read\", .. }",
+        "Cargo.toml includes glob = { workspace = true } for glob pattern matching",
+        "A unit test exercises all three trigger types with matching and non-matching events"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/rules/triggers.rs",
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C57", "C58", "C59"],
+      "stories": ["S12", "S41"]
+    },
+    {
+      "id": "R7",
+      "title": "Define RulePresenceSet for lifecycle tracking",
+      "spec": "The lifecycle module SHALL define a RulePresenceSet that tracks which rules are currently present in the active context. The presence set SHALL be rebuilt synchronously from content tags during each prompt construction pass. WHEN a rule was previously in context but is absent from the current tag set, AND the rule's trigger fires again, the rules engine SHALL produce a re-injection request. WHEN a rule is already in context, the engine SHALL NOT re-inject it.",
+      "acceptance": [
+        "RulePresenceSet struct wraps HashSet<RuleId>",
+        "rebuild method signature: fn rebuild(&mut self, tags: &[ContentTag]) — extracts RuleIds from ContentTag::Rule variants",
+        "is_present method signature: fn is_present(&self, id: &RuleId) -> bool",
+        "Rebuilding from tags containing ContentTag::Rule(\"rust-conventions\") marks that rule as present",
+        "Rebuilding from tags NOT containing a previously present rule marks it as absent",
+        "A unit test: build presence set with rule A present, rebuild without rule A, verify is_present returns false"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/rules/lifecycle.rs"
+        ]
+      },
+      "checklist": ["C63"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "Define RuleEngine and RuleInjection output",
+      "spec": "The rules module SHALL define a RuleEngine struct that holds loaded rules and the presence set. WHEN a RuntimeEvent is submitted, the engine SHALL evaluate all rule triggers, check the presence set, and return a list of RuleInjection values for rules that matched and are not already in context. RuleInjection SHALL carry the rule ID, delivery mode, timing, and the rule body content.",
+      "acceptance": [
+        "RuleEngine struct has fields: rules (Vec<Rule>), presence (RulePresenceSet)",
+        "RuleEngine::new accepts Vec<Rule>",
+        "RuleEngine::add_rule appends a rule",
+        "process_event method signature: fn process_event(&self, event: &RuntimeEvent) -> Vec<RuleInjection>",
+        "RuleInjection struct has fields: rule_id (RuleId), delivery (DeliveryMode), timing (TriggerTiming), content (String)",
+        "process_event returns empty vec when no triggers match",
+        "process_event returns empty vec when a trigger matches but the rule is already in context (presence set)",
+        "process_event returns a RuleInjection when a trigger matches and the rule is not in context",
+        "A unit test: add a rule, process a matching event twice — first returns an injection, call rebuild with the rule present, second returns empty"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/rules/engine.rs"
+        ],
+        "modify": [
+          "crates/norn/src/rules/mod.rs"
+        ]
+      },
+      "checklist": ["C56", "C63"],
+      "stories": ["S12", "S25", "S41"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement shell execution in rules for dynamic content generation — deferred to N-008",
+    "SHALL NOT implement prompt construction integration — N-003 defines ContentTag and prompt construction; this brief consumes ContentTag but does not modify prompt construction",
+    "SHALL NOT implement hook behavior (blocking, modification, interception) — rules provide information per D7",
+    "SHALL NOT implement rule file discovery or directory scanning — rules are loaded by the caller",
+    "SHALL NOT implement MCP or extension integration for rules",
+    "SHALL NOT add provider or agent loop dependencies — rules module is self-contained"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo test -p norn succeeds — all rules unit tests pass",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/rules/ returns no matches outside test code",
+    "grep -rn 'todo!\\|unimplemented!' crates/norn/src/rules/ returns no matches",
+    "Rule file parsing correctly handles YAML front matter with multiple trigger types",
+    "All three delivery modes are defined and distinguishable",
+    "PathGlob trigger correctly matches glob patterns against file paths",
+    "Presence set correctly tracks rule presence and absence across rebuilds",
+    "RuleEngine suppresses re-injection for rules already in context"
+  ]
+}

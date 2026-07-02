@@ -1,0 +1,189 @@
+{
+  "id": "NT-011",
+  "cluster": "norn-tui",
+  "title": "Event loop and streaming integration",
+  "depends_on": ["NT-003", "NT-004", "NT-008", "NT-009"],
+  "blocked_by": [],
+  "checklist": ["C11", "C12", "C13", "C14", "C15", "C16"],
+  "stories": ["S5"],
+  "purpose": "This is the integration brief that connects all TUI subsystems into a working application. It implements the main tokio::select! event loop that multiplexes terminal input events, ProviderEvent broadcasts, agent status updates, and render ticks. When this brief lands, the TUI is functional end-to-end: the user types a prompt, the agent responds with streaming text and tool calls, and the output renders in the scroll region with the fixed panel showing status.",
+  "task": "Implement AppState in app/state.rs as the central state object connecting all subsystems: input editor, display toggles (verbosity, thinking), streaming indicator, agent status panel, tab state. Implement the main event loop in app/event_loop.rs using tokio::select! over: termina's async event reader (keyboard, resize), the ProviderEvent broadcast channel, agent status watch channels, and a periodic render tick for elapsed time updates. Wire ProviderEvent dispatch: TextDelta → markdown buffer → scroll region, ThinkingDelta → dim render (ephemeral, not persisted), ToolCallDelta → accumulate per ID → tool renderer on completion, Done → clear streaming indicator + show usage summary, Error → error style in scroll region. Wire terminal resize to DECSTBM recalculation and fixed panel redraw. Complete the run_tui() entry point in lib.rs that builds the runtime (via norn-cli's build_runtime), constructs the provider, sets up the terminal (NT-001), and enters the event loop.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "AppState central state object",
+      "spec": "AppState SHALL hold references to all TUI subsystems and provide the state that the event loop reads and mutates.",
+      "acceptance": [
+        "AppState struct holds: input_editor (InputEditor), display_toggles (DisplayToggles + VerbosityState), streaming_indicator (StreamingIndicator), agent_panel (AgentStatusPanel), tab_state (TabState), fixed_panel (FixedPanel), terminal_caps (TerminalCaps)",
+        "AppState::new(caps) constructs with default subsystem states",
+        "Test: AppState::new creates valid default state"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/app/state.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "TextDelta streaming to scroll region",
+      "spec": "WHEN a TextDelta event arrives from the ProviderEvent broadcast, THE SYSTEM SHALL pass the text through the markdown renderer and write the styled output to the scroll region.",
+      "acceptance": [
+        "TextDelta text is accumulated in the markdown renderer's buffer",
+        "Plain text flushes immediately to the scroll region",
+        "Incomplete markdown spans buffer until their closing marker (per NT-003)",
+        "The scroll region cursor advances with each write",
+        "Test: TextDelta with 'hello' produces 'hello' in the scroll region output"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/app/event_loop.rs"]
+      },
+      "checklist": ["C11"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "ThinkingDelta rendering (ephemeral)",
+      "spec": "WHEN a ThinkingDelta event arrives, THE SYSTEM SHALL render it with ANSI dim attribute when thinking is visible AND discard it when thinking is hidden. ThinkingDelta is ephemeral — it SHALL NOT be persisted.",
+      "acceptance": [
+        "When display_toggles.thinking_visible is true, ThinkingDelta text renders dimmed in the scroll region",
+        "When display_toggles.thinking_visible is false, ThinkingDelta text is silently discarded",
+        "ThinkingDelta content is NOT written to the EventStore — it exists only in the streaming broadcast",
+        "Test: ThinkingDelta with thinking_visible=false produces no scroll region output"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/app/event_loop.rs"]
+      },
+      "checklist": ["C12"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "ToolCallDelta accumulation and ToolResult rendering",
+      "spec": "WHEN ToolCallDelta events arrive, THE SYSTEM SHALL accumulate arguments per tool-call ID. WHEN ToolCallComplete arrives, THE SYSTEM SHALL write the streaming_header to the scroll region. WHEN ToolResult arrives, THE SYSTEM SHALL render the full tool output through the per-tool renderer using both the call arguments and the result.",
+      "acceptance": [
+        "Pending tool calls tracked by ID in a HashMap<String, PendingToolCall>",
+        "PendingToolCall accumulates: name (from first delta), arguments (concatenated deltas)",
+        "ToolCallComplete finalises the accumulated arguments and writes streaming_header(name, args, caps) to the scroll region (tool name with spinner)",
+        "ToolResult triggers per-tool rendering: header_line(args, result.output, result.duration_ms, caps) and optional body(args, result.output, caps) are appended to the scroll region",
+        "ToolCallDelta without a subsequent ToolCallComplete still works — accumulated deltas serve as the args fallback",
+        "Test: ToolCallDelta events followed by ToolResult produce a rendered tool call with both args and result data"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/app/event_loop.rs"]
+      },
+      "checklist": ["C13"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Done event handling",
+      "spec": "WHEN a Done event arrives, THE SYSTEM SHALL flush pending tool calls, clear the streaming indicator, and show the usage summary.",
+      "acceptance": [
+        "All pending tool calls are flushed and rendered",
+        "StreamingIndicator transitions from Generating to Complete with the usage summary",
+        "The fixed panel redraws to show the usage summary in place of the streaming indicator",
+        "If text was streamed, a newline is appended after the final text",
+        "Test: Done event transitions StreamingIndicator to Complete"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/app/event_loop.rs"]
+      },
+      "checklist": ["C14"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Error event rendering",
+      "spec": "WHEN an Error event arrives, THE SYSTEM SHALL render the error message with a distinct error style in the scroll region.",
+      "acceptance": [
+        "Error messages render with red foreground (or bold red on 256-colour terminals)",
+        "Schema validation errors include 'Schema validation failed:' prefix with retry indication",
+        "Other errors show 'error: {message}'",
+        "Pending tool calls are flushed before the error is rendered",
+        "Test: Error event produces red-styled output in the scroll region"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/app/event_loop.rs"]
+      },
+      "checklist": ["C15"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Streaming indicator lifecycle",
+      "spec": "The streaming indicator SHALL show '● generating...' with elapsed time while the model is producing output AND transition to the usage summary on completion.",
+      "acceptance": [
+        "When the first ProviderEvent arrives for a turn, StreamingIndicator transitions to Generating",
+        "The fixed panel redraws periodically (via render tick) to update the elapsed time",
+        "Note: run_agent_step runs a full multi-iteration loop — the broadcast channel emits events from ALL iterations, including tool results between provider calls. The streaming indicator should show 'generating...' during provider calls and may briefly show tool execution state between iterations",
+        "On Done, transitions to Complete with usage summary",
+        "After a configurable delay (e.g. 5 seconds), transitions back to Idle",
+        "Test: receiving a TextDelta when Idle transitions to Generating"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/app/event_loop.rs"]
+      },
+      "checklist": ["C16"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R8",
+      "title": "Event loop with tokio::select!",
+      "spec": "The main event loop SHALL multiplex terminal events, ProviderEvent broadcasts, and render ticks using tokio::select!.",
+      "acceptance": [
+        "tokio::select! branches: terminal events (termina async reader), provider events (broadcast receiver), render tick (tokio::time::interval for elapsed time updates)",
+        "Provider event branch handles all 9 ProviderEvent variants: TextDelta, ThinkingDelta, ToolCallDelta (accumulate), TextComplete (no-op or verification), ThinkingComplete (no-op or verification), ToolCallComplete (finalise pending call, write streaming header), ToolResult (render through per-tool renderer), Done (clear indicator, show usage), Error (render error)",
+        "Terminal resize events trigger DECSTBM recalculation and fixed panel redraw",
+        "Keyboard events dispatch through the keybinding mapper (NT-004) to actions",
+        "Submit action sends the input text to run_agent_step and subscribes to its broadcast channel",
+        "Ctrl+O, Ctrl+E keybindings update display toggles",
+        "The loop exits on Exit action (Ctrl+C on empty input)",
+        "Test: the event loop function compiles and accepts the required channel types"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/app/event_loop.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R9",
+      "title": "run_tui() entry point",
+      "spec": "The run_tui() function in lib.rs SHALL build the runtime, construct the provider, set up the terminal, and enter the event loop.",
+      "acceptance": [
+        "run_tui(cli: &Cli) -> ExitCode is the public entry point called from norn-cli's main.rs",
+        "Calls build_runtime() (from norn-cli) to assemble the RuntimeBundle",
+        "Calls build_provider() (from norn-cli) to construct the provider",
+        "Calls terminal setup (NT-001) to enter raw mode and establish scroll regions",
+        "Enters the event loop (R8) with the runtime components",
+        "On exit, restores terminal state and returns the appropriate ExitCode",
+        "Test: run_tui compiles with the correct signature"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/lib.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the norn runtime (libnorn) — the TUI is a consumer of existing APIs",
+    "SHALL NOT modify the existing print mode path — print mode continues to work independently",
+    "SHALL NOT persist ThinkingDelta content — it is ephemeral (streaming only, no EventStore)",
+    "SHALL NOT implement rendering logic that belongs in other briefs (markdown in NT-003, tools in NT-006/NT-007, events in NT-008, agents in NT-009/NT-010)",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "TextDelta events produce styled output in scroll region — verified by test",
+    "ThinkingDelta is discarded when thinking_visible is false — verified by test",
+    "ToolCallDelta accumulation produces single rendered tool call — verified by test",
+    "Done event clears streaming indicator — verified by test",
+    "Error event produces error-styled output — verified by test",
+    "Terminal resize triggers DECSTBM recalculation — verified by integration test",
+    "run_tui() entry point compiles with correct signature"
+  ]
+}

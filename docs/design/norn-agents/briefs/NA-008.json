@@ -1,0 +1,81 @@
+{
+  "id": "NA-008",
+  "cluster": "norn-agents",
+  "title": "Sub-agent observability",
+  "depends_on": ["NA-006"],
+  "blocked_by": [],
+  "checklist": ["C37", "C38", "C39"],
+  "stories": ["S11", "S25"],
+  "purpose": "Parents have no visibility into what sub-agents are doing mid-execution. This brief configures sub-agents with EventType::Progress schemas for structured status updates, makes tool_use_description on child tool calls accessible to the parent, and links child EventStores to the parent session for audit trail purposes.",
+  "task": "When spawning a sub-agent with a profile, configure the child's EventSchemaSet with an EventType::Progress schema if the profile specifies one. Ensure tool_use_description on child tool calls flows into the child's EventStore where the parent can read it. Link the child's EventStore to the parent's session tree so all events are part of a single audit trail.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Progress schema configuration for sub-agents",
+      "spec": "Sub-agents SHALL be configurable with an EventType::Progress schema via the existing EventSchemaSet mechanism.",
+      "acceptance": [
+        "SpawnAgentTool checks profile for a progress_schema in settings (or a dedicated profile field)",
+        "If present, builds an EventSchemaSet with EventType::Progress mapped to the schema",
+        "EventSchemaSet installed on child's LoopContext.event_schemas",
+        "Child model can emit structured progress updates validated against the schema",
+        "When no progress schema configured: child runs without event schema validation (existing behaviour)",
+        "Test: spawn with progress schema, child emits valid progress event, validate passes"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/agent/spawn.rs"]
+      },
+      "checklist": ["C37"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R2",
+      "title": "tool_use_description visibility",
+      "spec": "tool_use_description on sub-agent tool calls SHALL be accessible to the parent for progress visibility.",
+      "acceptance": [
+        "Child's ToolEnvelope metadata includes tool_use_description when present",
+        "tool_use_description is recorded in the child's EventStore as part of the tool call event",
+        "Parent can read child's EventStore to see tool_use_descriptions (EventStore is accessible via the child's agent_id in the registry or via the AgentHandle)",
+        "Test: child makes a tool call with description metadata, parent reads it from child EventStore"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/agent/spawn.rs"]
+      },
+      "checklist": ["C38"],
+      "stories": ["S25"]
+    },
+    {
+      "id": "R3",
+      "title": "EventStore linking for audit trail",
+      "spec": "The child's EventStore SHALL be linked to the parent's session for audit trail purposes.",
+      "acceptance": [
+        "Child EventStore created as a named branch in the parent's SessionTree (if SessionTree is in use)",
+        "Branch metadata includes: child agent_id, parent agent_id, profile name (if any), spawn timestamp",
+        "If SessionTree is not in use (standalone mode): child EventStore is standalone but stored on the AgentHandle for parent access",
+        "Parent can enumerate child EventStores via AgentHandle",
+        "Test: spawn child, child produces events, parent can read child events through the handle"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/agent/spawn.rs",
+          "crates/norn/src/tools/agent/handle.rs"
+        ]
+      },
+      "checklist": ["C39"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the EventSchemaSet validation logic — use it as-is",
+    "SHALL NOT implement a Progress-specific tool (progress events flow through the existing event mechanism)",
+    "SHALL NOT add real-time streaming of child events to the parent — parent reads on demand",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "Progress schema validates structured child events — verified by test",
+    "Parent reads child tool_use_descriptions from EventStore — verified by test",
+    "Child EventStore accessible from parent via AgentHandle — verified by test"
+  ]
+}

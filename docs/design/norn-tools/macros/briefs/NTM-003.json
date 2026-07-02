@@ -1,0 +1,184 @@
+{
+  "id": "NTM-003",
+  "cluster": "norn-tools/macros",
+  "title": "Implement serde attribute integration, override attributes, and compile-time validation",
+  "depends_on": ["NTM-001", "NTM-002"],
+  "blocked_by": [],
+  "checklist": ["C34", "C35", "C36", "C37", "C38", "C39", "C40", "C41", "C42", "C43", "C44", "C45", "C46", "C47", "C48"],
+  "stories": ["S3", "S4", "S5", "S13", "S15"],
+  "purpose": "Complete the ToolArgs derive macro by adding full serde attribute integration (rename, rename_all, flatten), the #[tool_args(...)] escape-hatch attributes for manual schema overrides, and compile-time validation that enforces doc comments on all schema-visible fields. After this brief, the derive macro handles every pattern needed for the existing tool codebase.",
+  "task": "Extend tool_args/parse.rs to extract serde rename, rename_all, skip_serializing, and flatten attributes. Extend tool_args/schema.rs to apply rename transformations and flatten nested struct properties. Create tool_args/validate.rs for compile-time checks. Implement #[tool_args(schema = {...})], #[tool_args(description = \"...\")], #[tool_args(skip)], #[tool_args(required)], and #[tool_args(additional_properties)] override attributes. Add compile_error! for fields missing doc comments.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Parse serde rename attributes",
+      "spec": "The parser SHALL extract #[serde(rename = \"x\")] on fields and #[serde(rename_all = \"...\")] on structs. The rename_all value SHALL be parsed as a case-transformation rule supporting: lowercase, UPPERCASE, camelCase, snake_case, PascalCase, SCREAMING_SNAKE_CASE, kebab-case, SCREAMING-KEBAB-CASE.",
+      "acceptance": [
+        "#[serde(rename = \"custom_name\")] on a field records \"custom_name\" as the schema property name",
+        "#[serde(rename_all = \"camelCase\")] on a struct records camelCase as the container-level rename rule",
+        "All 8 rename_all case transformations are supported",
+        "An unrecognized rename_all value produces compile_error!"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/parse.rs"
+        ]
+      },
+      "checklist": ["C34", "C35"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R2",
+      "title": "Apply rename transformations in schema generation",
+      "spec": "WHEN a field has #[serde(rename = \"x\")], the schema property name SHALL be \"x\" instead of the Rust field name. WHEN the struct has #[serde(rename_all = \"...\")], all field names SHALL be transformed according to the case rule. Field-level rename SHALL take precedence over struct-level rename_all.",
+      "acceptance": [
+        "A struct with #[serde(rename_all = \"camelCase\")] and field my_field produces property \"myField\"",
+        "A field with #[serde(rename = \"custom\")] produces property \"custom\" regardless of rename_all",
+        "The required array uses the renamed names, not the Rust field names",
+        "A struct with rename_all = \"snake_case\" and field MyField produces property \"my_field\""
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C34", "C35"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R3",
+      "title": "Handle skip_serializing and skip_deserializing distinction",
+      "spec": "#[serde(skip_serializing)] on a field SHALL keep the field in the schema because it still deserializes. #[serde(skip)] and #[serde(skip_deserializing)] SHALL omit the field from the schema entirely. This distinction SHALL be correct: skip_serializing fields accept model input, skip_deserializing fields do not.",
+      "acceptance": [
+        "A field with #[serde(skip_serializing)] appears in the schema properties and may appear in required",
+        "A field with #[serde(skip)] does not appear in properties",
+        "A field with #[serde(skip_deserializing)] does not appear in properties",
+        "A field with both #[serde(skip_serializing)] and #[serde(skip_deserializing)] does not appear in properties"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/parse.rs",
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C36", "C37", "C38"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R4",
+      "title": "Implement serde flatten support",
+      "spec": "WHEN a field has #[serde(flatten)], the macro SHALL merge the flattened struct's properties into the parent schema instead of nesting them. The flattened struct's required fields SHALL be added to the parent's required array. IF #[serde(flatten)] is applied to a non-struct type, the macro SHALL emit compile_error!.",
+      "acceptance": [
+        "A struct with a #[serde(flatten)] field of type Inner merges Inner's properties into the parent properties",
+        "Inner's required fields appear in the parent's required array",
+        "The flattened field itself does not appear as a named property",
+        "#[serde(flatten)] on a field of type String produces compile_error! mentioning that flatten requires a struct type",
+        "The error span points to the flatten attribute"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/parse.rs",
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C39", "C40"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R5",
+      "title": "Implement #[tool_args(...)] override attributes",
+      "spec": "The parser SHALL recognize #[tool_args(schema = {...})], #[tool_args(description = \"...\")], #[tool_args(skip)], #[tool_args(required)], and #[tool_args(additional_properties)] attributes on fields. schema replaces the generated schema entirely. description overrides the doc-comment description. skip excludes from schema without affecting deserialization. required forces inclusion in required even with #[serde(default)]. additional_properties sets additionalProperties: true on the field's object schema.",
+      "acceptance": [
+        "#[tool_args(schema = {\"type\": \"string\", \"enum\": [\"strict\", \"auto\"]})] produces the literal JSON as the field schema",
+        "#[tool_args(description = \"Custom desc\")] overrides the doc comment",
+        "#[tool_args(skip)] excludes the field from properties without adding #[serde(skip)]",
+        "#[tool_args(required)] on a #[serde(default)] field puts the field back in required",
+        "#[tool_args(additional_properties)] on a struct field adds \"additionalProperties\": true to that field's schema"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/parse.rs",
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C41", "C42", "C43", "C44", "C45"],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R6",
+      "title": "Compile-time doc comment enforcement",
+      "spec": "IF a field has no doc comment AND no #[tool_args(skip)] AND no #[serde(skip)] AND no #[serde(skip_deserializing)], THEN the macro SHALL emit compile_error!(\"ToolArgs: field `{name}` has no doc comment. Add a /// comment to provide the schema description.\"). The error SHALL point to the field via syn::Error::new_spanned.",
+      "acceptance": [
+        "A field without a doc comment and without skip produces a compile error naming the field",
+        "A field with #[tool_args(skip)] but no doc comment does not produce an error",
+        "A field with #[serde(skip)] but no doc comment does not produce an error",
+        "A field with #[tool_args(description = \"...\")] but no doc comment does not produce an error",
+        "The error message includes the field name",
+        "The error span highlights the field, not the struct or derive"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-macros/src/tool_args/validate.rs"
+        ],
+        "modify": [
+          "crates/norn-macros/src/tool_args/mod.rs"
+        ]
+      },
+      "checklist": ["C46", "C47"],
+      "stories": ["S3", "S15"]
+    },
+    {
+      "id": "R7",
+      "title": "Verify derive does not interfere with Deserialize",
+      "spec": "The ToolArgs derive SHALL NOT modify the struct definition, add attributes, or conflict with #[derive(Deserialize)]. Both derives SHALL be applicable to the same struct independently. The ToolArgs derive reads serde attributes but does not write them.",
+      "acceptance": [
+        "A struct with #[derive(Deserialize, ToolArgs)] compiles without errors",
+        "Deserializing a JSON object into the struct works identically with and without ToolArgs",
+        "A struct with #[derive(ToolArgs)] only (no Deserialize) also compiles",
+        "The generated json_schema() method does not conflict with any serde-generated methods"
+      ],
+      "files": {
+        "modify": []
+      },
+      "checklist": ["C48"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R8",
+      "title": "Integration tests for serde attributes, overrides, and validation",
+      "spec": "Integration tests SHALL verify all serde attribute handling, override attributes, and compile-time validation. Compile-fail tests SHALL verify that missing doc comments and flatten on non-structs produce the expected errors.",
+      "acceptance": [
+        "Test: #[serde(rename = \"x\")] produces property \"x\"",
+        "Test: #[serde(rename_all = \"camelCase\")] transforms all property names",
+        "Test: #[serde(flatten)] merges properties from inner struct",
+        "Test: #[tool_args(schema = {...})] replaces the field schema",
+        "Test: #[tool_args(description = \"...\")] overrides doc comment",
+        "Test: #[tool_args(required)] overrides #[serde(default)]",
+        "Test: field without doc comment produces compile_error!",
+        "Test: #[derive(Deserialize, ToolArgs)] on same struct compiles and both work",
+        "All tests pass with cargo test -p norn-macros"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/tests/tool_args.rs"
+        ]
+      },
+      "checklist": ["C34", "C35", "C39", "C41", "C42", "C44", "C46", "C48"],
+      "stories": ["S3", "S4", "S5"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the tool_follow_ups! macro — that is NTM-004",
+    "SHALL NOT modify any existing tool implementations — migration is NTM-005",
+    "SHALL NOT implement custom deserialize_with schema inference — fields with custom deserializers use their declared Rust type for schema, or #[tool_args(schema = {...})] for override",
+    "SHALL NOT support serde(with = \"...\") for schema generation — the macro uses the field's declared type"
+  ],
+  "verification": [
+    "cargo check -p norn-macros succeeds with zero errors",
+    "cargo clippy -p norn-macros -- -D warnings produces zero errors",
+    "cargo test -p norn-macros passes all tests",
+    "A struct combining rename_all, flatten, tool_args overrides, and doc comments produces the expected schema",
+    "A struct with a doc-less field (and no skip) fails to compile with a clear error pointing to the field",
+    "#[derive(Deserialize, ToolArgs)] on the same struct compiles and both derives produce correct behavior"
+  ]
+}

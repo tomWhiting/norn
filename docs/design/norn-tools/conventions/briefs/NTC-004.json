@@ -1,0 +1,164 @@
+{
+  "id": "NTC-004",
+  "cluster": "norn-tools/conventions",
+  "title": "norn init conventions command — project scanning and starter generation",
+  "depends_on": ["NTC-001"],
+  "blocked_by": [],
+  "checklist": ["C40", "C41", "C42", "C43", "C44", "C45", "C46", "C47"],
+  "stories": ["S4", "S9", "S10", "S11", "S12"],
+  "purpose": "Without an easy way to create a CONVENTIONS.toml, projects start with no post-mutation checks and users must write the TOML from scratch. The init command scans the project for file types and available tools, then generates a starter configuration with sensible per-language defaults. This makes adoption frictionless — run one command, get a working config, customize from there.",
+  "task": "Add an Init { subcommand: InitCmd } variant to the CLI Command enum with an InitCmd::Conventions subcommand. Implement the conventions init handler in a new crates/norn-cli/src/commands/init/ module. The handler walks the project file tree to collect file extensions and counts, checks for compiled adapter availability per language, probes for external tools (mypy, ruff, eslint, shellcheck, biome, etc.) via which/where, generates convention groups with ecosystem-appropriate LOC limits and advise_on populated with available adapters (block_on empty by default), and writes a commented CONVENTIONS.toml. The command never overwrites an existing file.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "CLI subcommand registration",
+      "spec": "The CLI Command enum SHALL gain an Init variant with a nested InitCmd subcommand enum. InitCmd SHALL have a Conventions variant. Dispatching norn init conventions SHALL invoke the conventions init handler.",
+      "acceptance": [
+        "Command::Init { command: InitCmd } variant exists in cli/args.rs",
+        "InitCmd::Conventions variant exists",
+        "norn init conventions dispatches to the handler",
+        "norn init without a subcommand shows help listing available init targets",
+        "norn --help shows init as a subcommand"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/cli/args.rs",
+          "crates/norn-cli/src/commands/mod.rs"
+        ],
+        "create": [
+          "crates/norn-cli/src/commands/init/mod.rs",
+          "crates/norn-cli/src/commands/init/conventions.rs"
+        ]
+      },
+      "checklist": ["C40"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R2",
+      "title": "Project file tree scanning",
+      "spec": "The init handler SHALL walk the project file tree from the current working directory, collecting file extensions and their counts. It SHALL skip hidden directories (starting with .), target/ directories, node_modules/ directories, and .git/ directories. The scan SHALL produce a map of extension to file count.",
+      "acceptance": [
+        "File tree walk starts from current working directory",
+        "Hidden directories skipped",
+        "target/ directory skipped",
+        "node_modules/ directory skipped",
+        ".git/ directory skipped",
+        "Result is a map of extension (e.g. rs, ts, py) to file count",
+        "Test: temp directory with 3 .rs files and 2 .ts files — map has rs:3, ts:2"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/commands/init/conventions.rs"]
+      },
+      "checklist": ["C41"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R3",
+      "title": "Compiled adapter detection",
+      "spec": "For each detected file type, the init handler SHALL check which compiled adapters are available. The mapping SHALL be: rs → clippy, nextest; ts/tsx → biome; gleam → gleam_check, gleam_test. The file_length adapter is always available for all file types that tokei supports.",
+      "acceptance": [
+        "rs files map to clippy adapter",
+        "ts/tsx files map to biome adapter",
+        "gleam files map to gleam_check adapter",
+        "file_length is always available",
+        "Detection does not invoke external commands — it checks the compiled adapter list"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/commands/init/conventions.rs"]
+      },
+      "checklist": ["C42"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R4",
+      "title": "External tool probing",
+      "spec": "The init handler SHALL probe for external tools using std::process::Command to check if they exist on PATH. Tools to probe: mypy, ruff (Python), eslint (TypeScript/JavaScript), shellcheck (shell), biome (TypeScript/JavaScript). WHEN a tool is found, it SHALL be included in the advise_on list for the matching language group. WHEN a tool is not found, it SHALL be omitted.",
+      "acceptance": [
+        "External tools probed via which or where equivalent (Command::new(tool).arg(--version).output())",
+        "Found tools included in advise_on for matching language group",
+        "Missing tools omitted silently — no warning or error",
+        "Test: mock scenario where mypy is available — python group advise_on includes mypy"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/commands/init/conventions.rs"]
+      },
+      "checklist": ["C43"],
+      "stories": ["S4", "S10"]
+    },
+    {
+      "id": "R5",
+      "title": "Convention group generation with ecosystem defaults",
+      "spec": "The init handler SHALL generate convention groups with language-appropriate LOC limits: Rust general 500, Rust entrypoints (mod.rs/lib.rs/main.rs) 200, TypeScript 400, Python 300, shell no LOC limit. All handling SHALL be advise. advise_on SHALL be populated with available adapters. block_on SHALL be empty. bypass_detection SHALL not be specified (uses the runtime default from NTC-002 R7).",
+      "acceptance": [
+        "Rust general group has LOC limit 500, handling advise",
+        "Rust entrypoints group has LOC limit 200, handling advise, priority 10",
+        "TypeScript group has LOC limit 400, handling advise",
+        "Python group has LOC limit 300, handling advise",
+        "Shell group has no LOC check",
+        "All groups have advise_on populated, block_on empty",
+        "Groups only generated for detected file types — no empty groups"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/commands/init/conventions.rs"]
+      },
+      "checklist": ["C44", "C45"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R6",
+      "title": "CONVENTIONS.toml output with comments",
+      "spec": "The init handler SHALL write the generated CONVENTIONS.toml file. The output SHALL include TOML comments (# lines) explaining each field: tools, paths, loc.limit, loc.handling, advise_on, block_on, bypass_detection, adapters_dir, and priority. The file SHALL have a header comment explaining what CONVENTIONS.toml does.",
+      "acceptance": [
+        "Output file is valid TOML that parses with ConventionsConfig::load",
+        "Header comment present explaining CONVENTIONS.toml purpose",
+        "Each convention group has comments explaining its fields",
+        "Comments use # prefix (TOML comment syntax)",
+        "Test: generate a file, parse it back with ConventionsConfig::load — round-trips successfully"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/commands/init/conventions.rs"]
+      },
+      "checklist": ["C46"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R7",
+      "title": "Never overwrite existing file",
+      "spec": "The init handler SHALL check if CONVENTIONS.toml already exists before writing. IF it exists, the handler SHALL NOT overwrite it. It SHALL print a message suggesting a different output path and exit without error. An --output flag SHALL allow writing to an alternate path.",
+      "acceptance": [
+        "Existing CONVENTIONS.toml is not overwritten",
+        "Message printed: CONVENTIONS.toml already exists, use --output to write to a different path",
+        "Exit code is success (not an error)",
+        "--output <path> writes to the specified path instead of CONVENTIONS.toml",
+        "Test: CONVENTIONS.toml exists — handler prints message and does not overwrite",
+        "Test: --output alt.toml — writes to alt.toml even when CONVENTIONS.toml exists"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/init/conventions.rs",
+          "crates/norn-cli/src/cli/args.rs"
+        ]
+      },
+      "checklist": ["C47"],
+      "stories": ["S11"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify ConventionsConfig parsing — that was NTC-001",
+    "SHALL NOT modify convention matching — that was NTC-002",
+    "SHALL NOT modify the advisory/blocking pathway — that was NTC-003",
+    "SHALL NOT add convention inheritance, per-directory overrides, or include directives (NG2)",
+    "SHALL NOT read CI configs to infer conventions (NG5)",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "norn init conventions in a Rust project generates a valid CONVENTIONS.toml",
+    "Generated file round-trips through ConventionsConfig::load",
+    "norn init conventions with existing CONVENTIONS.toml does not overwrite",
+    "crates/norn-cli/src/commands/init/ directory exists with mod.rs and conventions.rs",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

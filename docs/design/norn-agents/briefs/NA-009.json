@@ -1,0 +1,99 @@
+{
+  "id": "NA-009",
+  "cluster": "norn-agents",
+  "title": "Thinking content capture on AssistantMessage",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": [],
+  "purpose": "ThinkingDelta events from the provider are silently dropped in assembly.rs. The model's reasoning content is lost — it cannot be replayed, audited, or displayed by the TUI. This brief captures thinking content as a field on AssistantMessage, accumulates it during assembly, and threads it through session conversion so multi-turn conversations that echo thinking back to the provider work correctly.",
+  "task": "Add a thinking field (String, not Option — empty string when no thinking produced) to AssistantMessage in session/events.rs. Accumulate ThinkingDelta text in assembly.rs alongside the existing text buffer. Add a thinking field to AssembledResponse. Thread thinking through classify.rs into the SessionEvent. Update events_to_messages in conversion.rs to include thinking content in the provider message when non-empty. Clean up zombie Option wrappers on AssistantMessage.content (change from Option<String> to String — empty string when no text produced) and remove the #[serde(default)] on usage since there are no existing serialised sessions to migrate.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Thinking field on AssistantMessage and AssembledResponse",
+      "spec": "AssistantMessage SHALL carry accumulated thinking content as a String field. AssembledResponse SHALL carry accumulated thinking content as a String field.",
+      "acceptance": [
+        "SessionEvent::AssistantMessage gains field: thinking: String (empty string when no thinking)",
+        "AssembledResponse gains field: thinking: String",
+        "AssistantMessage.content changes from Option<String> to String (empty string when no text — no backwards compat needed)",
+        "#[serde(default)] removed from AssistantMessage.usage (no existing sessions to migrate)",
+        "All construction sites for AssistantMessage updated (events.rs tests, conversion.rs, classify.rs, fork.rs, any test files)",
+        "Test: AssistantMessage serde round-trip with thinking content",
+        "Test: AssistantMessage serde round-trip with empty thinking and empty content"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/events.rs",
+          "crates/norn/src/loop/assembly.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "ThinkingDelta accumulation in assembly.rs",
+      "spec": "assemble_response SHALL accumulate ThinkingDelta text into the thinking field instead of discarding it.",
+      "acceptance": [
+        "ThinkingDelta match arm at line 76 accumulates text into a thinking_buffer (same pattern as text buffer)",
+        "AssembledResponse.thinking populated from the buffer",
+        "Text-only responses have empty thinking string",
+        "Thinking-only responses have empty text string",
+        "Mixed responses (thinking + text + tool calls) accumulate all three independently",
+        "Test: ThinkingDelta events produce non-empty thinking on AssembledResponse",
+        "Test: mixed ThinkingDelta + TextDelta events accumulate independently"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/loop/assembly.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Thinking threaded through classify.rs to SessionEvent",
+      "spec": "The classification step SHALL thread thinking content from AssembledResponse into the SessionEvent::AssistantMessage.",
+      "acceptance": [
+        "classify.rs (or wherever AssembledResponse is converted to SessionEvent) maps assembled.thinking to the AssistantMessage thinking field",
+        "Test: provider turn with ThinkingDelta produces SessionEvent::AssistantMessage with thinking populated"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/loop/classify.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Thinking in events_to_messages conversion",
+      "spec": "events_to_messages SHALL include thinking content in the provider message when non-empty, for multi-turn conversations where reasoning is echoed back.",
+      "acceptance": [
+        "When AssistantMessage.thinking is non-empty, the converted Message includes thinking content (provider-specific handling — may need a thinking field on Message or a separate message)",
+        "When thinking is empty, conversion behaves exactly as before",
+        "Test: AssistantMessage with thinking produces a Message that preserves the thinking content"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/session/conversion.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT add Option wrappers for backwards compatibility — this crate has no existing serialised sessions",
+    "SHALL NOT modify the ProviderEvent enum — ThinkingDelta continues to flow through the broadcast channel unchanged",
+    "SHALL NOT modify how the TUI or print mode consume ProviderEvents — they subscribe to the broadcast channel independently",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "ThinkingDelta events produce non-empty thinking on AssembledResponse — verified by test",
+    "AssistantMessage with thinking round-trips through serde — verified by test",
+    "events_to_messages preserves thinking content — verified by test",
+    "No Option<String> on AssistantMessage.content — verified by inspection",
+    "No #[serde(default)] on AssistantMessage.usage — verified by inspection"
+  ]
+}

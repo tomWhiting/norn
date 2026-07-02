@@ -1,0 +1,115 @@
+{
+  "id": "NTI-001",
+  "cluster": "norn-tools",
+  "title": "PostValidationFailed carries committed output alongside error",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": [],
+  "purpose": "When a Gate-mode tool commits a mutation to disk and post-validation then fails (e.g. diagnostics report clippy errors), the current code discards the entire structured ToolOutput — committed flag, files_modified list, diagnostics, blast radius — and returns only a bare error string. The model has no way to know the file was modified. This brief fixes the transparency gap so that PostValidationFailed carries the committed output alongside the error, and the dispatch layer surfaces both to the model.",
+  "task": "Add an optional committed_output field to ToolError::PostValidationFailed. At both call sites where this error is constructed (registry.rs and infra.rs), capture output.content before returning the error. In tool_dispatch.rs, when formatting a PostValidationFailed error for the model, merge the committed output into the error JSON so the model sees both the error and the committed state. Update the DiagnosticCollector's PostValidationFailed handler to extract diagnostics from the committed output when present. Update all test assertions that match on PostValidationFailed.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Add committed_output field to ToolError::PostValidationFailed",
+      "spec": "ToolError::PostValidationFailed SHALL carry a committed_output: Option<serde_json::Value> field alongside the existing reason: String field. The Display impl SHALL continue to format only the reason (the committed_output is structured data, not display text). The field SHALL be None when post-validation fails on a tool that did not commit (e.g. a hypothetical pre-commit gate), and Some(content) when the tool already wrote to disk before post-validation ran.",
+      "acceptance": [
+        "ToolError::PostValidationFailed has fields reason: String and committed_output: Option<serde_json::Value>",
+        "Display output for PostValidationFailed is unchanged (shows only reason)",
+        "cargo check -p norn succeeds with the new field"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/error.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Capture committed output at both Gate-mode error sites",
+      "spec": "WHEN post-validation fails and the resolved mode is Gate, the code in ToolRegistry::execute (registry.rs) and SubAgentExecutor::execute (infra.rs) SHALL clone output.content into the PostValidationFailed error's committed_output field. The clone SHALL happen after append_check_override has been applied to output.content so that any check override records are included in the committed output.",
+      "acceptance": [
+        "registry.rs Gate-mode error path constructs PostValidationFailed with committed_output: Some(output.content.clone())",
+        "infra.rs Gate-mode error path constructs PostValidationFailed with committed_output: Some(output.content.clone())",
+        "The clone occurs after append_check_override modifies output.content"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/registry.rs",
+          "crates/norn/src/tools/agent/infra.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Surface committed output in tool dispatch error formatting",
+      "spec": "WHEN tool_dispatch.rs formats a PostValidationFailed error as JSON for the model, IF committed_output is Some, the JSON SHALL include both an \"error\" key with the reason string AND the committed output's fields merged at the top level (committed, files_modified, diagnostics, etc.). IF committed_output is None, the JSON SHALL be the current {\"error\": \"...\"} format. The model SHALL NOT need to parse a nested structure to find committed state — committed: true SHALL be a top-level key.",
+      "acceptance": [
+        "PostValidationFailed with committed_output: Some produces JSON with both \"error\" and \"committed\": true at top level",
+        "PostValidationFailed with committed_output: None produces {\"error\": \"...\"} unchanged from current behavior",
+        "files_modified array from committed output is present at top level when available"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/loop/tool_dispatch.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Update DiagnosticCollector PostValidationFailed handler",
+      "spec": "WHEN DiagnosticCollector::from_tool_error receives a PostValidationFailed with committed_output containing a diagnostics array, it SHALL extract those diagnostics into the NornDiagnostic. It SHALL NOT silently drop diagnostic detail that was captured in the committed output.",
+      "acceptance": [
+        "from_tool_error extracts diagnostics from committed_output when present",
+        "Existing behavior preserved when committed_output is None"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/integration/diagnostics.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Update test assertions for PostValidationFailed",
+      "spec": "All existing tests that construct or match on ToolError::PostValidationFailed SHALL be updated to include the committed_output field. Tests in registry.rs that verify Gate-mode behavior SHALL assert that committed_output is Some and contains expected fields. Tests that construct PostValidationFailed directly (diagnostics.rs) SHALL include committed_output: None or the appropriate value.",
+      "acceptance": [
+        "All tests in registry.rs that match PostValidationFailed destructure the committed_output field",
+        "Gate-mode tests assert committed_output is Some with committed: true in the value",
+        "diagnostics.rs test constructs PostValidationFailed with committed_output: None",
+        "integration.rs PushingCheck test updated for new field",
+        "cargo test -p norn passes all tests"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/registry.rs",
+          "crates/norn/src/integration/diagnostics.rs",
+          "crates/norn/src/tests/integration.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT change PostValidateOutcome or RuntimePostValidateCheck — those are NTI-002 scope",
+    "SHALL NOT change how Report-mode errors are surfaced — only Gate-mode is affected",
+    "SHALL NOT add new post-validation checks — only fix the error propagation for existing ones",
+    "SHALL NOT modify any tool implementations (patch.rs, edit.rs, write.rs) — they already produce correct ToolOutput; the bug is in the registry/dispatch layer"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero warnings",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'PostValidationFailed' crates/norn/src/ shows committed_output field at all construction sites",
+    "No construction of PostValidationFailed uses .. (struct update syntax) to silently default committed_output"
+  ]
+}

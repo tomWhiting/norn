@@ -1,0 +1,141 @@
+{
+  "id": "NH-003",
+  "cluster": "norn-hooks",
+  "title": "Config types, matchers, and settings loading",
+  "depends_on": ["NC-002"],
+  "blocked_by": [],
+  "checklist": ["C16", "C17", "C18", "C19", "C20", "C21", "C22", "C23", "C24", "C25", "C46", "C47", "C48", "C49", "C50", "C51", "C52", "C53"],
+  "stories": ["S3", "S4", "S5", "S6", "S8", "S9"],
+  "purpose": "Config-driven hooks require typed config structures, regex-based matchers, and settings file loading. This brief defines the HookEventType taxonomy that maps config names to traits, extends NC-002's HookSettings with the 8 additional event types from the norn-hooks design, implements regex-compiled matchers, and builds the 3-tier settings loader. NH-005 (ShellCommandHook) and NH-006 (CLI wiring) consume these types.",
+  "task": "Create config.rs with HookEventType enum (13 variants) and any bridge types needed beyond NC-002's HookSettings/HookEntry. Extend HookSettings in norn::config::types with the 8 new event type fields (user_prompt, stop, subagent_start, subagent_stop, session_start, session_end, pre_compaction, post_tool_failure). Create matchers.rs with HookMatcher: compile regex at load time, match against per-event-type inputs. Create loader.rs with load_hooks_from_settings: read 3 settings files, merge hook arrays, validate required timeout, return parsed config. All in crates/norn/src/integration/hooks/.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "HookEventType enum",
+      "spec": "HookEventType SHALL be a closed enum with 13 variants matching the snake_case config names: PreTool, PostTool, PostToolFailure, PreLlm, PostLlm, SessionEvent, UserPrompt, Stop, SubagentStart, SubagentStop, SessionStart, SessionEnd, PreCompaction. Each variant SHALL map to a specific hook trait for dispatch.",
+      "acceptance": [
+        "HookEventType enum with 13 variants in crates/norn/src/integration/hooks/config.rs",
+        "Derives Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize",
+        "Serde renames to snake_case (e.g. PreTool serializes as \"pre_tool\")",
+        "Test: round-trip all 13 variants through serde_json"
+      ],
+      "files": {
+        "create": ["crates/norn/src/integration/hooks/config.rs"]
+      },
+      "checklist": ["C16"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Extend HookSettings with new event types",
+      "spec": "HookSettings in norn::config::types SHALL gain 8 new Optional fields: user_prompt, stop, subagent_start, subagent_stop, session_start, session_end, pre_compaction, post_tool_failure. Each is Option<Vec<HookEntry>>. The 5 existing fields from NC-002 SHALL NOT be modified.",
+      "acceptance": [
+        "HookSettings has 13 total fields (5 from NC-002 + 8 new)",
+        "All new fields are Option<Vec<HookEntry>>",
+        "Default yields all-None for new fields",
+        "Existing HookSettings tests pass unchanged",
+        "Test: deserialize JSON with new fields populated, verify values"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/types.rs"]
+      },
+      "checklist": ["C17"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Required timeout validation",
+      "spec": "WHEN loading hook entries from settings, IF a HookEntry has timeout set to None, THEN the loader SHALL reject it with a config error. The timeout field is structurally optional in the HookEntry type (for deserialization) but validated as required at load time.",
+      "acceptance": [
+        "Loader rejects HookEntry with timeout: None, producing a descriptive error message",
+        "Error message includes the event type and command for identification",
+        "HookEntry with timeout: Some(30) passes validation",
+        "Test: settings JSON with missing timeout field produces ConfigError"
+      ],
+      "files": {
+        "create": ["crates/norn/src/integration/hooks/loader.rs"]
+      },
+      "checklist": ["C18", "C19"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R4",
+      "title": "HookMatcher regex compilation",
+      "spec": "HookMatcher SHALL compile a regex pattern at construction time. WHEN the pattern is None, empty, or \"*\", the matcher SHALL match all inputs. IF the pattern is not valid regex, THEN construction SHALL return a config error.",
+      "acceptance": [
+        "HookMatcher::new(pattern: Option<&str>) -> Result<Self, ConfigError>",
+        "None, empty string, and \"*\" all produce a match-all matcher",
+        "Valid regex compiled via regex::Regex",
+        "Invalid regex returns ConfigError with the regex error message",
+        "matches(&self, input: &str) -> bool uses regex full-match semantics",
+        "Test: exact match (\"Write\" matches \"Write\", not \"WriteFile\")",
+        "Test: regex match (\"Edit|Write\" matches both)",
+        "Test: wildcard match (\"*\" matches anything)",
+        "Test: invalid regex rejected at construction"
+      ],
+      "files": {
+        "create": ["crates/norn/src/integration/hooks/matchers.rs"]
+      },
+      "checklist": ["C46", "C47", "C52"],
+      "stories": ["S3", "S8"]
+    },
+    {
+      "id": "R5",
+      "title": "Per-event-type matcher inputs",
+      "spec": "Each HookEventType SHALL define what string the matcher is tested against. Tool events match tool name. LLM events match model name. Subagent events match profile name or agent type. Session events match event variant name. Events without matcher support always fire.",
+      "acceptance": [
+        "Tool events (pre_tool, post_tool, post_tool_failure): matcher tested against tool_name",
+        "LLM events (pre_llm, post_llm): matcher tested against model name",
+        "Subagent events (subagent_start, subagent_stop): matcher tested against agent type string",
+        "Session event: matcher tested against event variant name (e.g. \"UserMessage\", \"ToolResult\")",
+        "No-matcher events (user_prompt, stop, session_start, session_end, pre_compaction): always fire regardless of matcher value",
+        "A method or function maps HookEventType to whether matchers are supported",
+        "Test: verify each event type category returns the correct matcher input behavior"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/config.rs"]
+      },
+      "checklist": ["C48", "C49", "C50", "C51", "C53"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R6",
+      "title": "Settings file loading and 3-tier merge",
+      "spec": "load_hooks_from_settings SHALL read hook configuration from up to 3 files: ~/.norn/settings.json (user-global), .norn/settings.json (project), .norn/settings.local.json (local project). WHEN multiple files exist, hook arrays SHALL be concatenated per event type (user-global first, local-project last). Missing files SHALL be silently skipped.",
+      "acceptance": [
+        "load_hooks_from_settings(cwd: &Path) -> Result<HookSettings, ConfigError>",
+        "Reads ~/.norn/settings.json via norn::config::paths::norn_dir()",
+        "Reads {cwd}/.norn/settings.json",
+        "Reads {cwd}/.norn/settings.local.json",
+        "Missing files silently skipped (not errors)",
+        "Per event type: arrays concatenated in order (user-global, project, local)",
+        "Invalid JSON in any file produces ConfigError with file path in message",
+        "Settings captured as a snapshot — the function reads once and returns",
+        "Test: 3-tier merge with overlapping event types produces concatenated arrays",
+        "Test: missing files produce empty HookSettings (not error)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/loader.rs"]
+      },
+      "checklist": ["C20", "C21", "C22", "C23", "C24", "C25"],
+      "stories": ["S4", "S5", "S9"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement ShellCommandHook — that is NH-005",
+    "SHALL NOT wire hooks into the CLI builder — that is NH-006",
+    "SHALL NOT modify existing HookSettings fields from NC-002",
+    "SHALL NOT add default timeout values — timeout is validated as required at load time",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "HookEventType round-trips all 13 variants through serde_json",
+    "HookSettings has 13 total fields (grep for 'Option<Vec<HookEntry>>' in types.rs)",
+    "HookMatcher rejects invalid regex at construction time — verified by test",
+    "3-tier merge concatenates arrays — verified by test",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

@@ -1,0 +1,160 @@
+{
+  "id": "NT-006",
+  "cluster": "norn-tui",
+  "title": "Per-tool renderers — Tier 1 (rich)",
+  "depends_on": ["NT-002", "NT-003"],
+  "blocked_by": [],
+  "checklist": ["C28", "C29", "C30", "C31", "C32", "C33", "C34", "C35"],
+  "stories": ["S3", "S6", "S25"],
+  "purpose": "Tool calls are the primary activity of an agent session. Without per-tool rendering, all tool output is unstructured text. This brief defines the ToolRenderer trait and implements the Tier 1 (rich) renderers for tools that produce substantial, structured output: Bash, Edit (including rollback and override cases), ApplyPatch, Search, and Read.",
+  "task": "Define the ToolRenderer trait in tools/mod.rs with header_line() and body() methods. Implement Tier 1 renderers in tools/rich.rs: Bash (streaming ANSI passthrough, exit code, duration), Edit (unified diff with red/green, blast-radius, AST BLOCKED rollback case, COMMITTED override case), ApplyPatch (diff hunks), Search (file:line:content with highlighted matches), Read (path + line range, body hidden by default). Each renderer produces a compact header line that doubles as the collapsed view.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "ToolRenderer trait",
+      "spec": "The ToolRenderer trait SHALL define the interface for all tool renderers with header_line() and body() for completed tool output (taking both call arguments and result), plus streaming_header() for in-progress display during ToolCallDelta accumulation.",
+      "acceptance": [
+        "ToolRenderer trait with: header_line(&self, args: &Value, result: &Value, duration_ms: u64, caps: &TerminalCaps) -> String — args from ToolCallComplete or accumulated ToolCallDelta, result from ProviderEvent::ToolResult.output",
+        "ToolRenderer trait with: body(&self, args: &Value, result: &Value, caps: &TerminalCaps) -> Option<String>",
+        "ToolRenderer trait with: streaming_header(&self, name: &str, partial_args: &str, caps: &TerminalCaps) -> String — shown in the scroll region while the tool is executing, before ToolResult arrives",
+        "body() returns None for tools that have no expanded view",
+        "renderer_for(tool_name: &str) -> Option<Box<dyn ToolRenderer>> factory function",
+        "Test: renderer_for('bash') returns Some, renderer_for('unknown') returns None"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/tools/mod.rs"]
+      },
+      "checklist": ["C28"],
+      "stories": ["S25"]
+    },
+    {
+      "id": "R2",
+      "title": "Bash renderer",
+      "spec": "The Bash renderer SHALL show the command with a $ prefix, stream output with ANSI passthrough, and display exit code and duration on completion.",
+      "acceptance": [
+        "Header: '$ {command_preview}' truncated to terminal width, with exit code and duration on completion",
+        "Body: full command output with ANSI escape sequences passed through (subprocess colours preserved)",
+        "While running: header shows a spinner character",
+        "On completion: header shows exit code (0 or non-zero) and duration in seconds",
+        "Non-zero exit codes render with error styling",
+        "Test: header_line for a completed bash call includes exit code and duration"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/tools/rich.rs"]
+      },
+      "checklist": ["C29"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R3",
+      "title": "Edit renderer — success case",
+      "spec": "WHEN an edit succeeds (committed: true, no AST errors), THE SYSTEM SHALL render a unified diff with red/green colouring and blast-radius symbols.",
+      "acceptance": [
+        "Header: '~ {path}' with duration",
+        "Body: unified diff with removed lines in red (- prefix) and added lines in green (+ prefix)",
+        "Blast-radius section shows containing symbols from the tool output's blast_radius field",
+        "Test: header_line for a successful edit includes the file path"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/rich.rs"]
+      },
+      "checklist": ["C30"],
+      "stories": ["S25"]
+    },
+    {
+      "id": "R4",
+      "title": "Edit renderer — AST rollback case",
+      "spec": "WHEN an edit is rolled back due to AST validation failure (kind: 'edit_blocked_by_ast', committed: false), THE SYSTEM SHALL render the header with '✗' prefix and 'AST BLOCKED (not committed)' AND the body SHALL show diagnostic errors, NOT the diff.",
+      "acceptance": [
+        "Header: '✗ ~ {path}  AST BLOCKED (not committed)'",
+        "Body: diagnostic error messages from the tool output's diagnostics array",
+        "The diff is NOT shown — showing a diff of uncommitted changes would be misleading",
+        "Test: header_line for a rolled-back edit contains 'AST BLOCKED'"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/rich.rs"]
+      },
+      "checklist": ["C31"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R5",
+      "title": "Edit renderer — AST override case",
+      "spec": "WHEN an edit is committed despite AST errors via AllowBrokenAst (committed: true, check_overrides non-empty), THE SYSTEM SHALL render the header with '⚠' prefix and show the override source attribution.",
+      "acceptance": [
+        "Header: '⚠ ~ {path}  COMMITTED (AST override: {source})'",
+        "Source attribution comes from the first CheckOverride entry's source field",
+        "Body: unified diff (same as success case) plus diagnostic warnings below the diff",
+        "Test: header_line for an overridden edit contains the override source"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/rich.rs"]
+      },
+      "checklist": ["C32"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R6",
+      "title": "ApplyPatch renderer",
+      "spec": "The ApplyPatch renderer SHALL show diff hunks with +/- colouring.",
+      "acceptance": [
+        "Header: 'patch {path}' with hunk count and duration",
+        "Body: diff hunks with + lines in green and - lines in red",
+        "Test: header_line includes the file path and hunk count"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/rich.rs"]
+      },
+      "checklist": ["C33"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Search renderer",
+      "spec": "The Search renderer SHALL show file:line:content results with highlighted matches grouped by file.",
+      "acceptance": [
+        "Header: '? {query}' with result count and duration",
+        "Body: results grouped by file path, each result showing line number and content with the matched term highlighted",
+        "File path headers are styled distinctly from content lines",
+        "Test: header_line includes the query and result count"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/rich.rs"]
+      },
+      "checklist": ["C34"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "Read renderer",
+      "spec": "The Read renderer SHALL show file path and line range AND SHALL hide the body by default.",
+      "acceptance": [
+        "Header: '> {path}' with line range (e.g. 'lines 1-50') and duration",
+        "Body: returns Some (file content with line numbers) but the default verbosity level hides it",
+        "Body is shown only when the user has toggled verbose mode (Ctrl+O in NT-007)",
+        "Test: header_line includes the file path"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/rich.rs"]
+      },
+      "checklist": ["C35"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement Tier 2 (compact) or Tier 3 (minimal) renderers — that is NT-007",
+    "SHALL NOT implement the verbosity toggle (Ctrl+O) — that is NT-007",
+    "SHALL NOT implement the streaming event loop — that is NT-011",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "ToolRenderer trait is object-safe — verified by Box<dyn ToolRenderer> compilation",
+    "renderer_for returns correct renderer for each Tier 1 tool — verified by test",
+    "Edit rollback shows AST BLOCKED, not diff — verified by test",
+    "Edit override shows source attribution — verified by test",
+    "Bash header includes exit code — verified by test"
+  ]
+}

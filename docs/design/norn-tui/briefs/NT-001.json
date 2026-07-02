@@ -1,0 +1,176 @@
+{
+  "id": "NT-001",
+  "cluster": "norn-tui",
+  "title": "Crate scaffold and terminal setup",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10"],
+  "stories": ["S2", "S20", "S21", "S27", "S28"],
+  "purpose": "Establish the norn-tui crate, terminal capability detection, raw mode management, and DECSTBM scroll region architecture. This is the foundation that every other TUI brief builds on — no rendering, input, or streaming can happen without the terminal being correctly configured and the scroll region established.",
+  "task": "Create the norn-tui crate at crates/norn-tui/ with Cargo.toml declaring termina, pulldown-cmark, syntect, unicode-width, and tokio dependencies. Create lib.rs with the seven public module declarations (app, input, render, tools, agents, events, terminal). Add norn-tui as a path dependency in norn-cli's Cargo.toml. Modify norn-cli's mode detection to dispatch to norn-tui's entry point when stdin+stdout are TTYs and --print is not set. Implement TerminalCaps detection via termina's capability probing. Implement raw mode enter/exit with a panic hook that restores terminal state. Set up DECSTBM scroll regions on startup and provide a reissue helper for dynamic panel height changes. Implement the fallback path: when DECSTBM or 256-colour are not available, print an explanatory message and delegate to --print mode.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Crate scaffold",
+      "spec": "The norn-tui crate SHALL exist as a workspace member with the correct dependency declarations and module structure.",
+      "acceptance": [
+        "crates/norn-tui/ directory exists with Cargo.toml and src/",
+        "Cargo.toml declares dependencies: termina, pulldown-cmark, syntect, unicode-width, tokio, norn (path)",
+        "Workspace Cargo.toml lists norn-tui as a member",
+        "Test: cargo check -p norn-tui succeeds"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/Cargo.toml", "crates/norn-tui/src/lib.rs"],
+        "modify": ["Cargo.toml"]
+      },
+      "checklist": ["C1", "C2"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Module structure",
+      "spec": "lib.rs SHALL declare seven public modules matching the DESIGN.md file structure: app, input, render, tools, agents, events, terminal.",
+      "acceptance": [
+        "lib.rs contains pub mod declarations for: app, input, render, tools, agents, events, terminal",
+        "Each module directory exists with a mod.rs containing only pub mod declarations",
+        "lib.rs exposes a public run_tui() entry point function (signature only — body in NT-011)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-tui/src/app/mod.rs",
+          "crates/norn-tui/src/input/mod.rs",
+          "crates/norn-tui/src/render/mod.rs",
+          "crates/norn-tui/src/tools/mod.rs",
+          "crates/norn-tui/src/agents/mod.rs",
+          "crates/norn-tui/src/events/mod.rs",
+          "crates/norn-tui/src/terminal/mod.rs"
+        ]
+      },
+      "checklist": ["C3"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "norn-cli dependency and mode detection",
+      "spec": "norn-cli SHALL depend on norn-tui as a path dependency AND its mode detection SHALL dispatch to norn-tui when stdin and stdout are both TTYs and --print is not set.",
+      "acceptance": [
+        "norn-cli/Cargo.toml lists norn-tui as a path dependency",
+        "detect_mode() returns a TUI variant (replacing Repl) when stdin+stdout are TTYs and --print is not set",
+        "main.rs dispatches to norn_tui::run_tui() for the TUI mode variant",
+        "--print flag still forces print mode regardless of TTY state",
+        "Piped stdin or stdout still triggers print mode",
+        "Test: detect_mode(print=false, stdin_tty=true, stdout_tty=true) returns TUI mode",
+        "Test: detect_mode(print=true, stdin_tty=true, stdout_tty=true) returns Print mode"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/Cargo.toml", "crates/norn-cli/src/cli/mode.rs", "crates/norn-cli/src/main.rs"]
+      },
+      "checklist": ["C4", "C5"],
+      "stories": ["S27", "S28"]
+    },
+    {
+      "id": "R4",
+      "title": "TerminalCaps detection",
+      "spec": "WHEN the TUI starts, THE SYSTEM SHALL probe the terminal for capabilities and store results in a TerminalCaps struct with fields for true_colour, kitty_keyboard, synchronized_rendering, osc_hyperlinks, and italic_support.",
+      "acceptance": [
+        "TerminalCaps struct with bool fields: true_colour, kitty_keyboard, synchronized_rendering, osc_hyperlinks, italic_support",
+        "Detection uses termina's capability probing (DA1 response, COLORTERM env var, terminal identification)",
+        "true_colour detected via COLORTERM=truecolor/24bit or termina DA1",
+        "kitty_keyboard detected via termina's Kitty keyboard protocol probe",
+        "synchronized_rendering detected via DCS 2026 support probe",
+        "TerminalCaps::detect() returns the populated struct",
+        "Test: TerminalCaps fields default to false when constructed without detection"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/terminal/caps.rs"]
+      },
+      "checklist": ["C6"],
+      "stories": ["S20"]
+    },
+    {
+      "id": "R5",
+      "title": "Raw mode and cleanup",
+      "spec": "WHEN the TUI starts, THE SYSTEM SHALL enter raw mode AND restore terminal state on exit, including on panic.",
+      "acceptance": [
+        "Terminal enters raw mode via termina on TUI startup",
+        "Terminal state is restored on normal exit (drop guard or explicit cleanup)",
+        "A custom panic hook restores terminal state before the default panic handler runs",
+        "Cleanup restores: cooked mode, cursor visibility, scroll region reset (DECSTBM full screen), line wrap re-enabled",
+        "Test: panic cleanup function is callable and does not itself panic"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/terminal/setup.rs"]
+      },
+      "checklist": ["C7"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "DECSTBM scroll region setup",
+      "spec": "WHEN the TUI starts, THE SYSTEM SHALL set a DECSTBM scroll region covering rows 0 through (terminal_height - fixed_panel_height - 1), establishing a scroll region at the top and a fixed panel at the bottom.",
+      "acceptance": [
+        "DECSTBM escape sequence emitted on startup: ESC [ top ; bottom r",
+        "Scroll region covers rows 0 through (height - initial_panel_height - 1)",
+        "Initial fixed panel height is the minimum: 1 row input + 1 row status bar = 2 rows",
+        "Cursor positioned within the scroll region after setup",
+        "Test: scroll region setup function produces correct DECSTBM sequence for a given terminal height and panel height"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/terminal/setup.rs"]
+      },
+      "checklist": ["C8"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R7",
+      "title": "DECSTBM reissue on panel height change",
+      "spec": "WHEN the fixed panel height changes (input area grows, agent status lines appear, autocomplete popup opens), THE SYSTEM SHALL reissue DECSTBM with the new boundary AND reposition the cursor appropriately.",
+      "acceptance": [
+        "reissue_scroll_region(new_panel_height) emits the updated DECSTBM sequence",
+        "Cursor is saved before reissue and restored after",
+        "Content already in the scroll region is preserved (scroll region shrinks from the bottom, not the top)",
+        "Test: reissue with a larger panel height produces a smaller scroll region"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/terminal/setup.rs"]
+      },
+      "checklist": ["C9"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "Capability fallback to print mode",
+      "spec": "IF DECSTBM support or 256-colour support cannot be confirmed, THEN THE SYSTEM SHALL print an explanatory message to stderr and fall back to --print mode instead of launching the TUI.",
+      "acceptance": [
+        "When DECSTBM is not supported, a clear message names the missing capability and suggests --print",
+        "When 256-colour is not available ($TERM lacks 256color and COLORTERM is unset), same fallback",
+        "Fallback delegates to the existing print::run() path in norn-cli",
+        "No partial TUI state is left behind (raw mode not entered if fallback fires)",
+        "Test: fallback path returns the correct exit code to norn-cli"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/terminal/setup.rs", "crates/norn-tui/src/lib.rs"]
+      },
+      "checklist": ["C10"],
+      "stories": ["S21"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement any rendering logic (scroll region writes, fixed panel drawing) — that is NT-002",
+    "SHALL NOT implement the event loop or ProviderEvent handling — that is NT-011",
+    "SHALL NOT implement input handling — that is NT-004",
+    "SHALL NOT remove the existing reedline REPL code — it continues to exist alongside the TUI until the TUI is complete",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "norn-tui crate compiles as a workspace member",
+    "norn-cli compiles with norn-tui dependency",
+    "Mode detection returns TUI variant for TTY stdin+stdout with no --print flag",
+    "TerminalCaps::detect() returns a valid struct (tested via unit test)",
+    "DECSTBM sequence generation verified by unit tests",
+    "Panic hook cleanup function does not panic when called"
+  ]
+}

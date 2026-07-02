@@ -1,0 +1,113 @@
+{
+  "id": "N-023",
+  "cluster": "norn",
+  "title": "Production hardening — retry policy, step timeout, token estimation, compaction trigger, variable expansion",
+  "depends_on": ["N-005", "N-016", "N-017"],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": ["S4", "S27"],
+  "purpose": "Five production-grade gaps identified during the thoroughness audit. Without these, the runtime works but lacks the resilience and polish needed for real deployment: provider calls don't retry on transient failures, there's no overall step timeout, no client-side token estimation for context window planning, no automatic compaction trigger when context grows large, and session variable {{var}} expansion isn't integrated into system instructions or tool descriptions.",
+  "task": "Implement provider retry policy with configurable backoff for transient errors. Add step-level timeout wrapping the entire run_agent_step call. Add client-side token estimation using tiktoken-compatible counting for context window planning. Add automatic compaction trigger when token usage crosses a threshold. Wire session variable expand() into system instruction and tool description rendering. Testing: unit tests for each feature plus integration tests for retry and timeout.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Provider retry policy for transient failures",
+      "spec": "When a provider call fails with a transient error (network timeout, 502/503/504, connection reset), the loop SHALL retry with configurable backoff instead of immediately failing.",
+      "acceptance": [
+        "RetryPolicy struct: max_retries (u32, default 2), initial_backoff (Duration, default 1s), backoff_multiplier (f64, default 2.0), retryable_errors (Vec<RetryableError>)",
+        "RetryableError enum: NetworkTimeout, ConnectionReset, ServerError { status: u16 }, RateLimited (already handled by rate limiter but included for completeness)",
+        "retry_with_backoff(policy, provider_call) -> Result<AssembledResponse, ProviderError>",
+        "Each retry logs at warn level with attempt number and error",
+        "Non-retryable errors (400, 401, 422) fail immediately without retry",
+        "Total retry duration capped at max_retries * max_backoff to prevent unbounded waits",
+        "LoopContext gains field: retry_policy (Option<RetryPolicy>)",
+        "Test: mock provider fails twice with 503 then succeeds, verify 3 attempts made with backoff"
+      ],
+      "files": { "modify": ["crates/norn/src/loop/runner.rs", "crates/norn/src/loop/classify.rs", "crates/norn/src/provider/events.rs"] },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Step-level timeout",
+      "spec": "run_agent_step SHALL support an overall timeout that kills the entire step if it exceeds a configurable duration, regardless of what the loop is doing.",
+      "acceptance": [
+        "AgentLoopConfig gains field: step_timeout (Option<Duration>)",
+        "When set, run_agent_step wraps its main loop in tokio::time::timeout",
+        "Timeout produces AgentStepResult::TimedOut { elapsed: Duration, iterations: usize, partial_output: Option<Value> }",
+        "TimedOut variant added to AgentStepResult enum",
+        "Partial output captures whatever the model produced before timeout (last assistant text, if any)",
+        "Test: mock provider that sleeps 5s, step_timeout 100ms, verify TimedOut returned"
+      ],
+      "files": { "modify": ["crates/norn/src/loop/runner.rs"] },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Client-side token estimation",
+      "spec": "Before sending a provider request, the loop SHALL estimate the token count of the prompt to detect context window overflow before it happens.",
+      "acceptance": [
+        "TokenEstimator trait: fn estimate(&self, text: &str) -> usize",
+        "SimpleTokenEstimator: chars / 4 as a rough approximation (no external dependency)",
+        "LoopContext gains field: token_estimator (Option<Box<dyn TokenEstimator>>)",
+        "Before call_provider, estimate total prompt tokens from messages",
+        "If estimated tokens exceed a configurable context_window_limit (from AgentLoopConfig), emit a TokenWarning event and optionally trigger compaction",
+        "Estimation is advisory — does not block the call (the provider returns the actual error if context overflows)",
+        "Test: set context_window_limit to 100 tokens, send a 200-token prompt, verify TokenWarning emitted"
+      ],
+      "files": { "create": ["crates/norn/src/loop/tokens.rs"], "modify": ["crates/norn/src/loop/runner.rs", "crates/norn/src/loop/mod.rs"] },
+      "checklist": [],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R4",
+      "title": "Automatic compaction trigger",
+      "spec": "When token usage crosses a configurable threshold, the loop SHALL automatically trigger context compaction using the session's ContextEdits.",
+      "acceptance": [
+        "AgentLoopConfig gains field: auto_compact_threshold_pct (Option<f64>, e.g. 0.75 for 75% of context window)",
+        "When estimated tokens > threshold * context_window_limit, trigger auto-compaction",
+        "Auto-compaction: suppress all events before the most recent N turns (configurable, default 10), append a Compaction event summarizing suppressed content",
+        "Compaction summary is a structured JSON with: event_count_suppressed, token_estimate_freed, turn_range",
+        "Compaction only fires once per threshold crossing (not every iteration while over threshold)",
+        "Test: fill session with events exceeding threshold, verify Compaction event appended and older events suppressed"
+      ],
+      "files": { "modify": ["crates/norn/src/loop/runner.rs", "crates/norn/src/session/context_edit.rs"] },
+      "checklist": [],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R5",
+      "title": "Wire variable expansion into system instructions and tool descriptions",
+      "spec": "Session variable {{var_name}} patterns SHALL be expanded in system instructions and tool descriptions before they reach the provider. The expand() function from N-016 exists but is not called anywhere in the loop.",
+      "acceptance": [
+        "LoopContext gains field: variables (Option<VariableStore>)",
+        "Before call_provider, expand {{var}} patterns in the system instruction sections",
+        "Before call_provider, expand {{var}} patterns in tool descriptions (ToolDefinition.description field)",
+        "Expansion failures (unknown variable, shell command timeout) produce diagnostic warnings but do not block the call — unexpanded {{var}} patterns pass through unchanged",
+        "Built-in variables (session_id, working_dir, home_dir) available without explicit registration",
+        "Test: set variable 'project' to 'norn', system instruction contains '{{project}}', verify expanded to 'norn' in provider request"
+      ],
+      "files": { "modify": ["crates/norn/src/loop/runner.rs", "crates/norn/src/loop/classify.rs"] },
+      "checklist": [],
+      "stories": ["S27"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement tiktoken or cl100k_base tokenizer — SimpleTokenEstimator (chars/4) is sufficient for v1",
+    "SHALL NOT implement LLM-based compaction summaries — auto-compaction uses structured metadata, not model summarization",
+    "SHALL NOT implement retry for non-transient errors (auth failures, invalid requests)",
+    "SHALL NOT implement circuit-breaker patterns — retry policy is per-call, not per-provider",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "Provider retry retries on 503 and succeeds on third attempt — verified by test",
+    "Step timeout returns TimedOut — verified by test",
+    "Token estimation detects context window overflow — verified by test",
+    "Auto-compaction fires at threshold — verified by test",
+    "Variable expansion replaces {{var}} in system instruction — verified by test"
+  ]
+}

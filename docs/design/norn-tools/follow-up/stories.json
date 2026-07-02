@@ -1,0 +1,50 @@
+{
+  "cluster": "norn-tools/follow-up",
+  "personas": [
+    {
+      "name": "AI Agent",
+      "role": "Executing Follow-Up Actions",
+      "stories": [
+        {"id": "S1", "text": "As an AI agent, I want to execute a follow-up action by providing the tool_call_id and action name so that I can act on a deferred option without re-generating the original tool call's arguments."},
+        {"id": "S2", "text": "As an AI agent, I want a clear error when a follow-up action has expired so that I know why it failed and what to do instead (re-read the file and re-generate the edit)."},
+        {"id": "S3", "text": "As an AI agent, I want the follow-up tool to return results in the same format as the target tool so that I can process the outcome identically to a direct tool call."},
+        {"id": "S4", "text": "As an AI agent, I want to undo a committed edit by calling follow_up with the tool_call_id and action 'undo' so that I can revert a mistake without manually re-reading the file and writing back the original content."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Recovering from Patch Failures",
+      "stories": [
+        {"id": "S5", "text": "As an AI agent, I want to retry a strict-mode patch with structural matching by calling a follow-up action so that I do not re-emit hundreds of lines of diff text."},
+        {"id": "S6", "text": "As an AI agent, I want to apply a dry-run patch result by calling a follow-up action so that I do not re-transmit the full patch content."},
+        {"id": "S7", "text": "As an AI agent, I want to apply an edit at a specific occurrence when the original matched multiple locations so that I can resolve ambiguity without re-specifying old_string and new_string."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Discovering Available Follow-Ups",
+      "stories": [
+        {"id": "S8", "text": "As an AI agent, I want to see available follow-up actions in the tool result immediately after a tool call so that I can decide whether to act on them in the same turn."},
+        {"id": "S9", "text": "As an AI agent, I want to discover follow-up actions via the action log after context compaction removed the original result so that deferred options remain accessible regardless of conversation length."}
+      ]
+    },
+    {
+      "name": "Tool Author",
+      "role": "Registering Follow-Up Actions",
+      "stories": [
+        {"id": "S10", "text": "As a tool author, I want to register follow-up actions in a register_follow_ups lifecycle phase so that my tool can offer deferred options without mixing follow-up logic into execute()."},
+        {"id": "S11", "text": "As a tool author, I want the register_follow_ups phase to be optional with a default empty implementation so that existing tools require no changes."},
+        {"id": "S12", "text": "As a tool author, I want to register follow-ups on both success and error outcomes so that failure-recovery actions (like switching from strict to structural mode) are available."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Auditing Undo and Revert Operations",
+      "stories": [
+        {"id": "S13", "text": "As a developer reviewing an agent's session, I want follow-up executions logged in the action log with a reference to the original tool_call_id so that I can trace the chain from original call to follow-up."},
+        {"id": "S14", "text": "As a developer, I want undo operations backed by Yggdrasil operation tracking so that multi-file reverts are atomic and appear in the operation audit trail."},
+        {"id": "S15", "text": "As a developer working outside a Yggdrasil repo, I want undo to fall back to stored content so that the follow-up tool works without requiring Yggdrasil infrastructure."}
+      ]
+    }
+  ]
+}

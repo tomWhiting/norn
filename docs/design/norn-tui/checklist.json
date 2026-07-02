@@ -1,0 +1,142 @@
+{
+  "cluster": "norn-tui",
+  "sections": [
+    {
+      "name": "Crate Setup",
+      "items": [
+        {"id": "C1", "text": "norn-tui crate exists as a workspace member at crates/norn-tui/"},
+        {"id": "C2", "text": "Cargo.toml declares termina, pulldown-cmark, syntect, unicode-width, tokio dependencies"},
+        {"id": "C3", "text": "src/lib.rs declares public modules: app, input, render, tools, agents, events, terminal"},
+        {"id": "C4", "text": "norn-cli depends on norn-tui as a path dependency"},
+        {"id": "C5", "text": "norn-cli mode detection dispatches to norn-tui when stdin+stdout are TTYs and --print is not set"}
+      ]
+    },
+    {
+      "name": "Terminal Setup and Capabilities",
+      "items": [
+        {"id": "C6", "text": "TerminalCaps struct detects and stores: true_colour, kitty_keyboard, synchronized_rendering, osc_hyperlinks, italic_support"},
+        {"id": "C7", "text": "Terminal enters raw mode on startup and restores on exit (including panic cleanup)"},
+        {"id": "C8", "text": "DECSTBM scroll region is set on startup, splitting the terminal into scroll region and fixed panel"},
+        {"id": "C9", "text": "DECSTBM is reissued whenever the fixed panel height changes"},
+        {"id": "C10", "text": "TUI refuses to start if DECSTBM or 256-colour are not available, printing an explanatory message and falling back to --print mode"}
+      ]
+    },
+    {
+      "name": "Scroll Region and Streaming",
+      "items": [
+        {"id": "C11", "text": "TextDelta events write styled markdown output into the scroll region"},
+        {"id": "C12", "text": "ThinkingDelta events render with ANSI dim attribute in the scroll region"},
+        {"id": "C13", "text": "ToolCallDelta events accumulate per tool-call ID and render through the per-tool renderer on completion"},
+        {"id": "C14", "text": "Done events clear the streaming indicator and show usage summary in the fixed panel"},
+        {"id": "C15", "text": "Error events render with a distinct error style in the scroll region"},
+        {"id": "C16", "text": "Streaming indicator in the fixed panel shows generating status with elapsed time while the model is producing output"}
+      ]
+    },
+    {
+      "name": "Markdown Rendering",
+      "items": [
+        {"id": "C17", "text": "Bold text (**bold**) renders with ANSI bold attribute"},
+        {"id": "C18", "text": "Italic text (*italic*) renders with ANSI italic attribute, falling back to underline"},
+        {"id": "C19", "text": "Headers (# H1, ## H2) render with bold and size-appropriate formatting"},
+        {"id": "C20", "text": "Inline code (`code`) renders with distinct foreground colour"},
+        {"id": "C21", "text": "Fenced code blocks render with syntect syntax highlighting using the language hint"},
+        {"id": "C22", "text": "Unlabeled code blocks fall back to syntect find_syntax_by_first_line"},
+        {"id": "C23", "text": "Lists (bullet and numbered) render with appropriate indentation"},
+        {"id": "C24", "text": "Horizontal rules render as a line spanning the terminal width"},
+        {"id": "C25", "text": "Links render as OSC 8 hyperlinks when supported, bracketed text otherwise"},
+        {"id": "C26", "text": "Incomplete inline spans (bold, italic) buffer until the closing marker arrives before rendering"},
+        {"id": "C27", "text": "Code fences buffer from opening to closing marker, then render the complete block with highlighting"}
+      ]
+    },
+    {
+      "name": "Per-Tool Renderers",
+      "items": [
+        {"id": "C28", "text": "ToolRenderer trait defines the interface for all tool renderers: header_line() and body()"},
+        {"id": "C29", "text": "Bash renderer streams output with ANSI passthrough, shows exit code and duration on completion"},
+        {"id": "C30", "text": "Edit renderer shows unified diff with red/green colouring and blast-radius symbols on success"},
+        {"id": "C31", "text": "Edit renderer shows AST BLOCKED header with diagnostic errors (not diff) when edit is rolled back"},
+        {"id": "C32", "text": "Edit renderer shows COMMITTED with override attribution when AllowBrokenAst is active"},
+        {"id": "C33", "text": "ApplyPatch renderer shows diff hunks with +/- colouring"},
+        {"id": "C34", "text": "Search renderer shows file:line:content with highlighted matches grouped by file"},
+        {"id": "C35", "text": "Read renderer shows file path and line range, body hidden by default"},
+        {"id": "C36", "text": "Write renderer shows file path, line count, and AST status on one line"},
+        {"id": "C37", "text": "WebSearch renderer shows query and result count on one line"},
+        {"id": "C38", "text": "WebFetch renderer shows URL and content length on one line"},
+        {"id": "C39", "text": "SpawnAgent renderer creates a status line in the fixed panel, not the scroll region"},
+        {"id": "C40", "text": "WaitAgent is not rendered as a tool call — the wait is invisible to the user"},
+        {"id": "C41", "text": "Ctrl+O toggles global verbosity for future tool calls without affecting scrollback content"}
+      ]
+    },
+    {
+      "name": "Input System",
+      "items": [
+        {"id": "C42", "text": "Enter submits input to the agent loop"},
+        {"id": "C43", "text": "Shift+Enter (Kitty keyboard) or Alt+Enter (fallback) inserts a newline and expands the input area"},
+        {"id": "C44", "text": "Input area grows upward, reissuing DECSTBM to shrink the scroll region"},
+        {"id": "C45", "text": "Escape clears the current input"},
+        {"id": "C46", "text": "Ctrl+C on empty input exits the TUI"},
+        {"id": "C47", "text": "Up/Down arrows cycle through input history when no autocomplete popup is open"},
+        {"id": "C48", "text": "Input history persists to ~/.norn/history.txt"}
+      ]
+    },
+    {
+      "name": "Autocomplete",
+      "items": [
+        {"id": "C49", "text": "/ at column 0 triggers slash command and skill completion"},
+        {"id": "C50", "text": "Slash command popup shows name, source tag (builtin/profile), and description"},
+        {"id": "C51", "text": "@ triggers file/directory path completion via nucleo fuzzy matching (nucleo-matcher dependency comes through the norn crate)"},
+        {"id": "C52", "text": "Autocomplete popup renders inside the fixed panel, growing upward with DECSTBM reissue"},
+        {"id": "C53", "text": "Autocomplete popup shows at most 8 rows with a count indicator for additional candidates"},
+        {"id": "C54", "text": "Tab accepts the current popup selection"},
+        {"id": "C55", "text": "Escape dismisses the autocomplete popup"}
+      ]
+    },
+    {
+      "name": "Agent Tree and Multi-Agent Tabs",
+      "items": [
+        {"id": "C56", "text": "No agent status lines appear in the single-agent case"},
+        {"id": "C57", "text": "Agent status lines show indent, icon, name, activity, token count, and elapsed time"},
+        {"id": "C58", "text": "Agent status icons distinguish running, idle, done, failed, and spawning states"},
+        {"id": "C59", "text": "Agent tree collapses to at most 5 visible lines with overflow summary"},
+        {"id": "C60", "text": "Root agent is always visible when children exist"},
+        {"id": "C61", "text": "Completed/failed agents hold their status line for 3 seconds before reclaim"},
+        {"id": "C62", "text": "Tab cycles focus between agents in the fixed panel"},
+        {"id": "C63", "text": "Enter on a focused agent switches the active tab to that agent"},
+        {"id": "C64", "text": "Tab switch replays the last N events from the target agent's EventStore into the scroll region"},
+        {"id": "C65", "text": "A separator line marks each tab switch in the scroll region"}
+      ]
+    },
+    {
+      "name": "Session Event Rendering",
+      "items": [
+        {"id": "C66", "text": "Assistant messages render as markdown through the D6 rendering pipeline"},
+        {"id": "C67", "text": "Thinking content renders with ANSI dim attribute, collapsed by default"},
+        {"id": "C68", "text": "Ctrl+E toggles thinking visibility and secondary schema fields for future output"},
+        {"id": "C69", "text": "Tool calls render through per-tool renderers (D7) with appropriate visual treatment per tool type"},
+        {"id": "C70", "text": "User messages render with a distinct prefix separating them from assistant output"},
+        {"id": "C71", "text": "Structured assistant messages with multiple schema fields render the primary field by default with secondary fields toggleable"},
+        {"id": "C72", "text": "Secondary schema fields render with labeled separators between sections"},
+        {"id": "C73", "text": "New event types with EventSchemaSet schemas render automatically via the labeled-section pattern"}
+      ]
+    },
+    {
+      "name": "Fixed Panel Compositor",
+      "items": [
+        {"id": "C74", "text": "Fixed panel height is the sum of its active components (agent lines + indicator + popup + input + status bar)"},
+        {"id": "C75", "text": "Fixed panel redraws use synchronized rendering when available, cursor hide/show otherwise"},
+        {"id": "C76", "text": "Status bar shows model name, session info, token usage, and key hints"},
+        {"id": "C77", "text": "Fixed panel redraws do not affect scroll region content"}
+      ]
+    },
+    {
+      "name": "Progressive Enhancement",
+      "items": [
+        {"id": "C78", "text": "True colour detected via COLORTERM or termina DA1, falls back to 256-colour palette mapping"},
+        {"id": "C79", "text": "Kitty keyboard protocol used for Shift+Enter when available, Alt+Enter otherwise"},
+        {"id": "C80", "text": "Synchronized rendering wraps fixed-panel redraws when available"},
+        {"id": "C81", "text": "OSC 8 hyperlinks used for file paths when available, bracketed text otherwise"},
+        {"id": "C82", "text": "Italic attribute used for markdown emphasis when available, underline otherwise"}
+      ]
+    }
+  ]
+}

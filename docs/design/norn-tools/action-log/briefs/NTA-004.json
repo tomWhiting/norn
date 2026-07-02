@@ -1,0 +1,125 @@
+{
+  "id": "NTA-004",
+  "cluster": "norn-tools/action-log",
+  "title": "Follow-up action storage in action log + discovery query",
+  "depends_on": ["NTA-001", "NTA-002"],
+  "blocked_by": ["NTF-001"],
+  "checklist": ["C14", "C17", "C18", "C19", "C20", "C34"],
+  "stories": ["S5", "S6", "S7"],
+  "purpose": "Add follow-up action storage and discovery to the action log. When tools register follow-up actions (via NTF-002's lifecycle phase), the action log indexes them by tool_call_id + action name for O(1) lookup. The follow_ups query on the action_log tool returns unexpired follow-up actions, with expiry checked at query time. This enables agents to discover deferred options even after context compaction removes the original tool result.",
+  "task": "Extend ActionLog to store Vec<FollowUpAction> per tool_call_id (already partially wired in NTA-001). Add a follow_ups index (HashMap<(String, String), usize> mapping (tool_call_id, action_name) to index into the Vec for O(1) lookup). Add the follow_ups query to the action_log tool that filters by tool name and outcome, checks expiry at query time, and returns only valid actions. Expiry checking delegates to the same hash-based logic used in the follow-up tool's expiry module.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Follow-up action indexing by tool_call_id + action name",
+      "spec": "ActionLog SHALL maintain an index that maps (tool_call_id, action_name) pairs to the corresponding FollowUpAction for O(1) lookup. When follow-ups are recorded via record_completion, each action's (tool_call_id, action_name) pair is inserted into the index. Duplicate action names for the same tool_call_id are rejected with a warning (should not happen in practice — tools register unique action names).",
+      "acceptance": [
+        "ActionLog.follow_up_index maps (tool_call_id, action_name) to FollowUpAction",
+        "Lookup by (tool_call_id, action_name) returns Some(FollowUpAction) or None",
+        "Duplicate (tool_call_id, action_name) logged as warning, first value kept",
+        "Index is populated during record_completion"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C17", "C18"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Follow-up action expiry checking at query time",
+      "spec": "When follow-up actions are queried (via the follow_ups query or via direct lookup for the follow_up tool), expiry SHALL be checked at query time. The expiry check reads the file, computes its content hash, and compares against the stored content_hash on the ExpiryCondition. Expired actions are filtered out of query results. The expiry checking logic SHALL reuse the same hash computation used in NTF-003's expiry module (or implement a compatible function that NTF-003 can later import).",
+      "acceptance": [
+        "follow_ups query returns only unexpired actions",
+        "FileModified expiry checked by hashing file and comparing to stored hash",
+        "AnyFileModified expiry checked by hashing all files",
+        "TurnScoped expiry checked against current turn_id",
+        "Never expiry always passes",
+        "Expired actions excluded silently (no error — just filtered)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C19", "C20", "C34"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R3",
+      "title": "Add follow_ups query to the action_log tool",
+      "spec": "The action_log tool (NTA-002) SHALL accept query=\"follow_ups\". The follow_ups query returns all unexpired follow-up actions matching the filter. The filter object's tool field filters by the tool that registered the follow-ups (not the target tool). The outcome field filters by the original tool call's outcome. Output structure: {\"query\": \"follow_ups\", \"count\": N, \"actions\": [{tool_call_id, action, description, tool, expires}, ...]}. Each action includes the tool_call_id so the agent can pass it directly to the follow_up tool.",
+      "acceptance": [
+        "action_log tool accepts query=\"follow_ups\"",
+        "follow_ups query returns unexpired actions with tool_call_id included",
+        "filter.tool filters by the registering tool's name",
+        "filter.outcome filters by the original call's outcome",
+        "Expired actions excluded from results",
+        "Output has query, count, actions fields",
+        "Each action has tool_call_id, action, description, tool, expires"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/action_log.rs"
+        ]
+      },
+      "checklist": ["C14"],
+      "stories": ["S5", "S7"]
+    },
+    {
+      "id": "R4",
+      "title": "Direct lookup for follow_up tool consumption",
+      "spec": "ActionLog SHALL expose a get_follow_up(tool_call_id, action_name) method that returns Option<&FollowUpAction> using the O(1) index. This method does NOT check expiry — the caller (follow_up tool, NTF-003) handles expiry checking because it needs the full ExpiredError for its error response. The method also returns the original tool call arguments from original_args.",
+      "acceptance": [
+        "get_follow_up returns Some for known (tool_call_id, action_name)",
+        "get_follow_up returns None for unknown combinations",
+        "get_follow_up does NOT check expiry",
+        "Original args accessible alongside the follow-up action"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs"
+        ]
+      },
+      "checklist": ["C18"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Tests for follow-up storage and discovery",
+      "spec": "Tests SHALL verify: (1) follow-up actions stored during record_completion are retrievable by (tool_call_id, action_name), (2) follow_ups query returns only unexpired actions, (3) expired FileModified action excluded after file change, (4) Never-expiry action always included, (5) filter.tool scopes to registering tool, (6) get_follow_up returns correct action for follow_up tool consumption.",
+      "acceptance": [
+        "Test: stored follow-up retrievable by get_follow_up",
+        "Test: follow_ups query excludes expired FileModified action",
+        "Test: follow_ups query includes Never-expiry action",
+        "Test: follow_ups query with filter.tool returns only matching tool's actions",
+        "Test: get_follow_up returns None for unknown action name",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/action_log.rs",
+          "crates/norn/src/tools/action_log.rs"
+        ]
+      },
+      "checklist": ["C14", "C17", "C18", "C19", "C20"],
+      "stories": ["S5", "S6", "S7"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the follow_up tool — that is NTF-003",
+    "SHALL NOT implement register_follow_ups on any tools — that is NTF-002/NTF-004",
+    "SHALL NOT implement the mutation ledger — that is NTA-003",
+    "SHALL NOT implement cross-session follow-up storage — session-scoped only (NG2 from follow-up design)"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "cargo fmt -p norn -- --check produces no diff",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'todo!\\|unimplemented!\\|FIXME\\|HACK\\|TODO' crates/norn/src/session/action_log.rs crates/norn/src/tools/action_log.rs returns no matches",
+    "action_log tool accepts query=\"follow_ups\" and returns only unexpired actions"
+  ]
+}

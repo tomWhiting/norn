@@ -1,0 +1,201 @@
+{
+  "id": "NC-004",
+  "cluster": "norn-cli",
+  "title": "Agent configuration flags and profile integration",
+  "depends_on": ["NC-001"],
+  "blocked_by": [],
+  "checklist": ["C10", "C11", "C12", "C13", "C14", "C15", "C16", "C17", "C18", "C19", "C20", "C21", "C22", "C23", "C76", "C77", "C78", "C79", "C80", "C81"],
+  "stories": ["S24", "S25", "S26", "S27", "S28", "S29", "S30", "S31", "S32"],
+  "purpose": "Every agent invocation needs a model, system prompt, tools, and runtime configuration. This brief builds the bridge from CLI flags and profile files to the runtime types that run_agent_step consumes. It resolves profiles from file paths or the profiles directory by name, applies CLI flag overrides on top of profile values, maps -c key=value pairs to the correct AgentLoopConfig and ProviderConfig fields, loads rules, wires variables, connects MCP extensions, and merges per-event schemas from profile and CLI flags. The result is a fully populated LoopContext and ToolRegistry ready for either print mode or REPL execution.",
+  "task": "Implement profile resolution (file path containing / or . loaded via Profile::from_file, bare name resolved from ~/.config/norn/profiles/{name}.toml or .json, no profile gives a minimal default). Implement CLI flag override mapping: --model overrides profile.model, --system-prompt overrides profile system_instructions, --append-system-prompt appends to them, --allowed-tools / --disallowed-tools override / extend profile tool lists, --reasoning-effort overrides profile.reasoning_effort, --max-turns maps to AgentLoopConfig::max_iterations, --timeout maps to AgentLoopConfig::step_timeout. Implement -c key=value config override mapping per the NC20 table in DESIGN.md. Implement --rules loading into a RuleEngine. Implement --variables loading into a VariableStore on LoopContext. Implement -e / --extension MCP extension URI collection. Implement per-event schema merging from profile and --event-schema CLI flags. Call from_profile() with the resolved profile, constructed ToolRegistry, optional RuleEngine, and optional HookRegistry to produce the final LoopContext and gated ToolRegistry.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Profile resolution from path or name",
+      "spec": "WHEN --profile is provided with a value containing '/' or '.', THE SYSTEM SHALL treat it as a file path and call Profile::from_file(path) to load it. WHEN --profile is a bare name (no '/' or '.'), THE SYSTEM SHALL resolve it by searching ~/.config/norn/profiles/{name}.toml then ~/.config/norn/profiles/{name}.json (using the config_dir from paths.rs, respecting XDG_CONFIG_HOME). THE SYSTEM SHALL return the first file that exists, or an error if neither is found. WHEN no --profile is specified, THE SYSTEM SHALL construct a minimal default Profile with an empty name, model set to 'gpt-4.1' (or the value of --model if provided), empty system_instructions, no capabilities, and no tools gated.",
+      "acceptance": [
+        "--profile ./my-profile.toml loads from the file path directly",
+        "--profile coding resolves to ~/.config/norn/profiles/coding.toml (if it exists) or coding.json",
+        "--profile nonexistent produces an error naming the searched paths",
+        "No --profile produces a default Profile with model 'gpt-4.1'",
+        "XDG_CONFIG_HOME is respected for profile directory resolution",
+        "Profile resolution test verifies .toml takes precedence over .json when both exist"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/profile_loader.rs"
+        ]
+      },
+      "checklist": ["C11", "C76"],
+      "stories": ["S24"]
+    },
+    {
+      "id": "R2",
+      "title": "CLI flag overrides on profile values",
+      "spec": "WHEN --model is provided, THE SYSTEM SHALL override the profile's model field with the flag value. WHEN --system-prompt is provided, THE SYSTEM SHALL replace the profile's system_instructions with a single-element vector containing the flag value. WHEN --append-system-prompt is provided, THE SYSTEM SHALL append the flag value to the profile's system_instructions vector. WHEN --allowed-tools is provided (comma-separated), THE SYSTEM SHALL set the profile's tools field to Some(parsed_list), overriding any profile or capability tools. WHEN --disallowed-tools is provided, THE SYSTEM SHALL add the parsed patterns to a disallowed list applied after tool resolution. WHEN --reasoning-effort is provided, THE SYSTEM SHALL override the profile's reasoning_effort with the parsed ReasoningEffort variant (low, medium, high). WHEN --max-turns is provided, THE SYSTEM SHALL set AgentLoopConfig::max_iterations to Some(value). WHEN --timeout is provided, THE SYSTEM SHALL parse it as a duration string (e.g. '30s', '2m') and set AgentLoopConfig::step_timeout to Some(duration). WHEN -C / --working-dir is provided, THE SYSTEM SHALL change the process working directory to the specified path before agent execution.",
+      "acceptance": [
+        "--model gpt-5.5 overrides profile.model to 'gpt-5.5'",
+        "--system-prompt 'Be concise' replaces profile system_instructions with ['Be concise']",
+        "--append-system-prompt 'Also be clear' adds to existing instructions",
+        "--allowed-tools read,edit sets profile.tools to Some([\"read\", \"edit\"])",
+        "--disallowed-tools write adds 'write' to the disallowed patterns",
+        "--reasoning-effort high sets profile.reasoning_effort to Some(ReasoningEffort::High)",
+        "--max-turns 10 sets AgentLoopConfig::max_iterations to Some(10)",
+        "--timeout 30s sets AgentLoopConfig::step_timeout to Some(Duration::from_secs(30))",
+        "--timeout 2m sets AgentLoopConfig::step_timeout to Some(Duration::from_secs(120))",
+        "-C /tmp changes the working directory before execution"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/config.rs"
+        ]
+      },
+      "checklist": ["C10", "C12", "C13", "C14", "C15", "C16", "C17", "C18", "C19"],
+      "stories": ["S25", "S26", "S27"]
+    },
+    {
+      "id": "R3",
+      "title": "Config override mapping (-c key=value)",
+      "spec": "WHEN -c / --config key=value pairs are provided, THE SYSTEM SHALL parse each pair and map the key to the appropriate runtime field per the NC20 mapping table: 'timeout' maps to AgentLoopConfig::step_timeout (Duration), 'max_turns' maps to AgentLoopConfig::max_iterations (u32), 'schema_budget' maps to AgentLoopConfig::schema_attempt_budget (u32), 'context_window' maps to AgentLoopConfig::context_window_limit (u64), 'compact_threshold' maps to AgentLoopConfig::auto_compact_threshold_pct (f64), 'compact_keep_turns' maps to AgentLoopConfig::auto_compact_keep_recent_turns (usize), 'base_url' maps to ProviderConfig::base_url (String), 'max_retries' maps to ProviderConfig::max_retries (u32), 'request_timeout' maps to ProviderConfig::timeout (Duration), 'retry_max' maps to RetryPolicy::max_retries (u32), 'retry_base_delay' maps to RetryPolicy::initial_backoff (Duration), 'provider_options' maps to ProviderConfig::provider_options (parsed as JSON). WHEN a key is unknown, THE SYSTEM SHALL emit a warning via tracing::warn and ignore the pair. WHEN a value fails to parse for its expected type, THE SYSTEM SHALL return an error naming the key, expected type, and actual value.",
+      "acceptance": [
+        "-c timeout=30s sets AgentLoopConfig::step_timeout to Some(30s)",
+        "-c max_turns=5 sets AgentLoopConfig::max_iterations to Some(5)",
+        "-c schema_budget=10 sets AgentLoopConfig::schema_attempt_budget to 10",
+        "-c context_window=200000 sets AgentLoopConfig::context_window_limit to Some(200000)",
+        "-c compact_threshold=0.75 sets auto_compact_threshold_pct to Some(0.75)",
+        "-c compact_keep_turns=5 sets auto_compact_keep_recent_turns to 5",
+        "-c base_url=http://localhost:8080 sets ProviderConfig::base_url",
+        "-c max_retries=3 sets ProviderConfig::max_retries to 3",
+        "-c request_timeout=10s sets ProviderConfig::timeout to 10 seconds",
+        "-c retry_max=4 sets RetryPolicy::max_retries to 4 (distinct from max_retries)",
+        "-c retry_base_delay=2s sets RetryPolicy::initial_backoff to 2 seconds",
+        "-c provider_options='{\"key\":\"val\"}' parses as JSON and sets ProviderConfig::provider_options",
+        "-c unknown_key=value emits a warning and is ignored",
+        "-c max_turns=abc returns an error naming 'max_turns', expected 'u32', actual 'abc'"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/config.rs"
+        ]
+      },
+      "checklist": ["C20"],
+      "stories": ["S31"]
+    },
+    {
+      "id": "R4",
+      "title": "Rules loading from file",
+      "spec": "WHEN --rules is provided with a file path, THE SYSTEM SHALL read the file and construct a RuleEngine from its contents. THE SYSTEM SHALL pass the RuleEngine to from_profile() so it is installed on the LoopContext. IF the file cannot be read or parsed, THE SYSTEM SHALL return an error and exit with code 2.",
+      "acceptance": [
+        "--rules rules.yaml loads a RuleEngine from the file",
+        "--rules nonexistent.yaml exits with code 2 and an error message",
+        "The RuleEngine is present on LoopContext::rules after from_profile()",
+        "Without --rules, LoopContext::rules is None"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/config.rs"
+        ]
+      },
+      "checklist": ["C21"],
+      "stories": ["S32"]
+    },
+    {
+      "id": "R5",
+      "title": "Variables loading into LoopContext",
+      "spec": "WHEN --variables key=value pairs are provided, THE SYSTEM SHALL parse each pair and populate a VariableStore. THE SYSTEM SHALL set LoopContext::variables to Some(Arc::new(store)) so that {{key}} placeholders in system instructions and tool descriptions are expanded during each iteration.",
+      "acceptance": [
+        "--variables project=yggdrasil --variables env=staging creates a VariableStore with two entries",
+        "LoopContext::variables is Some after wiring with --variables",
+        "Without --variables, LoopContext::variables is None",
+        "A test verifies that the store contains the correct key-value pairs"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/config.rs"
+        ]
+      },
+      "checklist": ["C22"],
+      "stories": ["S29"]
+    },
+    {
+      "id": "R6",
+      "title": "MCP extension URI collection",
+      "spec": "WHEN -e / --extension URIs are provided (repeatable), THE SYSTEM SHALL collect all URIs into a Vec<String> and make them available for MCP client connection during tool registry construction. THE SYSTEM SHALL validate that each URI is non-empty. IF an empty URI is provided, THE SYSTEM SHALL return an error.",
+      "acceptance": [
+        "-e stdio://path/to/server -e http://localhost:3000 collects two URIs",
+        "An empty -e '' returns an error",
+        "The collected URIs are available for MCP client wiring"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/config.rs"
+        ]
+      },
+      "checklist": ["C23"],
+      "stories": ["S30"]
+    },
+    {
+      "id": "R7",
+      "title": "Per-event schema merging from profile and CLI",
+      "spec": "WHEN a profile contains an event_schemas section, THE SYSTEM SHALL load each per-event-type schema into an EventSchemaSet. WHEN --event-schema CLI flags are also provided, THE SYSTEM SHALL merge them on top of the profile schemas, with CLI flags taking precedence for the same EventType. THE SYSTEM SHALL set LoopContext::event_schemas to Some(merged_set). WHEN the profile provides prompt_commands, THE SYSTEM SHALL set LoopContext::prompt_commands from the profile.",
+      "acceptance": [
+        "Profile with event_schemas for spoken_response and assistant_message populates EventSchemaSet",
+        "CLI --event-schema spoken_response='{...}' overrides the profile's spoken_response schema",
+        "CLI --event-schema for a type not in the profile adds it to the set",
+        "LoopContext::event_schemas is Some after merging",
+        "LoopContext::prompt_commands carries the profile's prompt commands"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/config.rs",
+          "crates/norn-cli/src/profile_loader.rs"
+        ]
+      },
+      "checklist": ["C79", "C80", "C81"],
+      "stories": ["S28"]
+    },
+    {
+      "id": "R8",
+      "title": "from_profile integration — produce LoopContext and gated ToolRegistry",
+      "spec": "WHEN all flags and profile values have been resolved, THE SYSTEM SHALL call norn::profile::from_profile() with the resolved Profile, the constructed ToolRegistry, the optional RuleEngine, and the optional HookRegistry. THE SYSTEM SHALL then apply additional CLI-driven mutations to the returned LoopContext: set reasoning_effort from the flag override if provided, set event_schemas from R7, set variables from R5, set retry_policy from R3, set token_estimator and context_edits from NC-003 R3's wiring. THE SYSTEM SHALL return the final LoopContext and gated ToolRegistry ready for run_agent_step.",
+      "acceptance": [
+        "from_profile() is called with the resolved profile, registry, rules, and hooks",
+        "The returned LoopContext has system_sections[0] containing the merged profile instructions",
+        "The returned ToolRegistry gates tools to the profile's resolved_tools list",
+        "CLI --model override is reflected in the model passed to run_agent_step, not in LoopContext",
+        "All LoopContext fields are populated: reasoning_effort, event_schemas, variables, retry_policy, token_estimator, context_edits, prompt_commands, iteration_monitor"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/config.rs"
+        ]
+      },
+      "checklist": ["C77", "C78"],
+      "stories": ["S25"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement profile management subcommands — profile management is not in scope per DESIGN.md NG",
+    "SHALL NOT implement the REPL — this builds the config objects that both print mode and REPL consume",
+    "SHALL NOT implement provider construction — that is NC-003 R1/R2",
+    "SHALL NOT implement output formatting — that is NC-003 R6/R7/R8",
+    "SHALL NOT implement session persistence — that is NC-002",
+    "SHALL NOT hardcode default values for configurable parameters without explicit specification in DESIGN.md"
+  ],
+  "verification": [
+    "cargo check -p norn-cli succeeds",
+    "cargo clippy -p norn-cli -- -D warnings produces zero warnings",
+    "cargo fmt -p norn-cli -- --check produces no diff",
+    "cargo test -p norn-cli passes all tests",
+    "No file exceeds 500 lines of code",
+    "No code in mod.rs beyond pub mod declarations and re-exports",
+    "Profile resolution test covers file path, bare name (.toml and .json), and default",
+    "Flag override tests verify each flag independently modifies the correct field",
+    "Config override mapping tests cover all 12 keys from the NC20 table",
+    "Unknown -c key produces a tracing::warn (verified by log capture or mock)",
+    "Invalid -c value produces a descriptive error",
+    "from_profile integration test verifies the final LoopContext and ToolRegistry",
+    "Duration parsing test covers '30s', '2m', '1h' formats",
+    "grep -rn 'TODO\\|FIXME\\|HACK\\|unimplemented!' crates/norn-cli/src/ returns no matches"
+  ]
+}

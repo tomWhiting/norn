@@ -1,0 +1,174 @@
+{
+  "id": "NH-005",
+  "cluster": "norn-hooks",
+  "title": "ShellCommandHook implementation",
+  "depends_on": ["NH-002", "NH-003", "NH-004"],
+  "blocked_by": [],
+  "checklist": ["C26", "C27", "C28", "C29", "C30", "C31", "C32", "C43", "C44", "C45"],
+  "stories": ["S1", "S10", "S15", "S16", "S21"],
+  "purpose": "This is the bridge between config-driven hooks and the trait-based dispatch system. ShellCommandHook is a single struct that implements all 11 hook traits, spawning an external process for each hook invocation. It handles the stdin/stdout JSON protocol, exit code interpretation, timeout enforcement, matcher filtering, and the fire-and-forget semantics for session event shell hooks. After this brief, config entries can be translated into registered hooks.",
+  "task": "Create crates/norn/src/integration/hooks/shell.rs with ShellCommandHook struct. Implement all 11 hook traits (5 existing + 6 new). Each trait method: check matcher, build HookInput, spawn sh -c, pipe stdin, enforce timeout, interpret exit code, parse HookOutput, return HookOutcome. Add fire-and-forget dispatch for session event shell hooks via tokio::spawn. Add non-reentrant guard on HookRegistry session event dispatch. Update hooks/mod.rs.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "ShellCommandHook struct",
+      "spec": "ShellCommandHook SHALL hold a command string, a compiled HookMatcher, a timeout Duration, the HookEventType it targets, and a set of common context fields (session_id, cwd, agent_id, profile_name) for HookInput construction.",
+      "acceptance": [
+        "ShellCommandHook struct with fields: command (String), matcher (HookMatcher), timeout (Duration), event_type (HookEventType), context (HookContext or equivalent holding session_id, cwd, agent_id, profile_name)",
+        "Constructor: new(command, matcher, timeout, event_type, context) -> Self",
+        "No Default implementation (all fields are meaningful)"
+      ],
+      "files": {
+        "create": ["crates/norn/src/integration/hooks/shell.rs"]
+      },
+      "checklist": ["C26"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R2",
+      "title": "Process spawn and stdin pipe",
+      "spec": "WHEN a ShellCommandHook fires, it SHALL spawn sh -c <command> via tokio::process::Command, pipe HookInput JSON to the child's stdin, and set the 5 NORN_* environment variables on the child process.",
+      "acceptance": [
+        "Child process spawned via Command::new(\"sh\").arg(\"-c\").arg(&self.command)",
+        "HookInput serialized to JSON string via serde_json::to_string",
+        "JSON written to child stdin before stdin is dropped",
+        "NORN_PROJECT_DIR, NORN_SESSION_ID, NORN_AGENT_ID, NORN_PROFILE, NORN_HOOK_EVENT set via .env()",
+        "Test: shell hook receives JSON on stdin (e.g. command = 'cat > /tmp/test.json', verify file contents)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/shell.rs"]
+      },
+      "checklist": ["C26"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R3",
+      "title": "Timeout enforcement",
+      "spec": "WHEN the child process does not complete within the configured timeout, the ShellCommandHook SHALL kill the child process and return HookOutcome::Proceed with a warning logged.",
+      "acceptance": [
+        "tokio::time::timeout wraps wait_with_output()",
+        "On timeout: child.kill() called, warning logged with command and timeout duration",
+        "HookOutcome::Proceed returned on timeout (non-blocking failure)",
+        "Test: command = 'sleep 60' with 1s timeout, verify Proceed returned within ~1s"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/shell.rs"]
+      },
+      "checklist": ["C27"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R4",
+      "title": "Exit code protocol",
+      "spec": "WHEN exit code is 0, stdout SHALL be parsed as HookOutput JSON and mapped to HookOutcome. WHEN exit code is 2, HookOutcome::Block SHALL be returned with stderr as reason. WHEN exit code is any other value, HookOutcome::Proceed SHALL be returned with stderr logged at warn level.",
+      "acceptance": [
+        "Exit 0: parse stdout as HookOutput, call to_hook_outcome(self.event_type)",
+        "Exit 0 with empty stdout: HookOutcome::Proceed (no JSON to parse)",
+        "Exit 0 with invalid JSON stdout: HookOutcome::Proceed, warning logged",
+        "Exit 2: HookOutcome::Block { reason: stderr_string }",
+        "Exit 2 with empty stderr: Block with empty reason string",
+        "Other exit codes: HookOutcome::Proceed, stderr logged at warn",
+        "Test: script exits 0 with '{\"decision\":\"block\",\"reason\":\"test\"}' → Block",
+        "Test: script exits 2 with 'denied' on stderr → Block { reason: 'denied' }",
+        "Test: script exits 1 → Proceed with warning",
+        "Test: script exits 0 with empty stdout → Proceed"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/shell.rs"]
+      },
+      "checklist": ["C28", "C29", "C30", "C31"],
+      "stories": ["S12", "S15", "S16"]
+    },
+    {
+      "id": "R5",
+      "title": "Matcher check before spawn",
+      "spec": "WHEN a ShellCommandHook fires for an event type that supports matchers, it SHALL check the matcher against the event's matcher input BEFORE spawning the child process. IF the matcher does not match, the hook SHALL return HookOutcome::Proceed immediately without spawning.",
+      "acceptance": [
+        "Pre-tool hook checks matcher against envelope.tool_name",
+        "Pre-LLM hook checks matcher against request.model",
+        "Session event hook checks matcher against event variant name",
+        "No-matcher events (user_prompt, stop, etc.) skip the matcher check",
+        "Non-matching events return Proceed without spawning a process",
+        "Test: ShellCommandHook with matcher 'Write' does not fire for tool name 'Read'"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/shell.rs"]
+      },
+      "checklist": ["C32"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R6",
+      "title": "Implement all 11 hook traits",
+      "spec": "ShellCommandHook SHALL implement all 11 hook traits: PreToolHook, PostToolHook, PreLlmHook, PostLlmHook, SessionEventHook, UserPromptHook, StopHook, SubagentHook, SessionLifecycleHook, CompactionHook, PostToolFailureHook. Each implementation SHALL follow the same pattern: check matcher, build HookInput, execute, interpret result.",
+      "acceptance": [
+        "impl PreToolHook for ShellCommandHook — builds tool-event HookInput, returns Proceed/Block/Modify",
+        "impl PostToolHook for ShellCommandHook — builds post-tool HookInput, ignores output (observational)",
+        "impl PreLlmHook for ShellCommandHook — builds LLM HookInput, returns Proceed/Block",
+        "impl PostLlmHook for ShellCommandHook — builds LLM HookInput, ignores output",
+        "impl SessionEventHook for ShellCommandHook — fire-and-forget (see R7)",
+        "impl UserPromptHook for ShellCommandHook — builds prompt HookInput, returns Proceed/Block",
+        "impl StopHook for ShellCommandHook — builds stop HookInput, returns Proceed/Block",
+        "impl SubagentHook for ShellCommandHook — builds subagent HookInput, start is observational, stop returns Proceed/Block",
+        "impl SessionLifecycleHook for ShellCommandHook — observational",
+        "impl CompactionHook for ShellCommandHook — returns Proceed/Block",
+        "impl PostToolFailureHook for ShellCommandHook — builds failure HookInput, observational"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/shell.rs"]
+      },
+      "checklist": ["C26"],
+      "stories": ["S21"]
+    },
+    {
+      "id": "R7",
+      "title": "Fire-and-forget session event shell hooks",
+      "spec": "WHEN a ShellCommandHook implements SessionEventHook, the on_event method SHALL spawn the shell command via tokio::spawn with timeout rather than awaiting it inline. Trait-based SessionEventHook implementations (non-shell) SHALL continue to dispatch synchronously.",
+      "acceptance": [
+        "ShellCommandHook's SessionEventHook::on_event uses tokio::spawn internally",
+        "The spawned task has its own timeout enforcement",
+        "on_event returns immediately without waiting for the child process",
+        "Existing trait-based SessionEventHook dispatch in HookRegistry remains synchronous (awaited in order)",
+        "Test: slow shell session event hook does not block the calling async context"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/shell.rs"]
+      },
+      "checklist": ["C43", "C44"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R8",
+      "title": "Non-reentrant session event dispatch guard",
+      "spec": "HookRegistry SHALL have a non-reentrant guard on run_on_event that prevents recursive dispatch. IF run_on_event is called while already inside a run_on_event dispatch, the inner call SHALL skip hook dispatch silently.",
+      "acceptance": [
+        "HookRegistry gains a dispatching_session_events: AtomicBool field (or equivalent)",
+        "run_on_event checks and sets the flag before dispatching, clears after",
+        "Nested calls while flag is set skip dispatch and return immediately",
+        "Flag is always cleared even if a hook panics (guard pattern)",
+        "Test: SessionEventHook that calls append_and_notify (triggering run_on_event) does not recurse"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/integration/hooks/traits.rs"]
+      },
+      "checklist": ["C45"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT load settings files — that is NH-003 (loader) and NH-006 (CLI wiring)",
+    "SHALL NOT wire dispatch points for new traits into the agent loop — that is NH-007",
+    "SHALL NOT modify existing hook dispatch methods in tool_dispatch.rs or runner.rs beyond what NH-001 already changed",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "ShellCommandHook implements all 11 hook traits — verified by cargo check (trait bounds)",
+    "Exit code 0/2/other all produce correct HookOutcome — verified by test",
+    "Matcher filtering prevents unnecessary process spawns — verified by test",
+    "Non-reentrant guard prevents recursive session event dispatch — verified by test",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

@@ -1,0 +1,191 @@
+{
+  "id": "N-003",
+  "cluster": "norn",
+  "title": "Define session event model and append-only store",
+  "depends_on": ["N-001"],
+  "blocked_by": [],
+  "checklist": ["C74", "C75", "C76", "C77", "C78", "C79"],
+  "stories": ["S29", "S30", "S32"],
+  "purpose": "Define the immutable session event model that underpins Norn's audit trail and context construction. Session events are append-only — context editing marks events as suppressed, summarized, or superseded but never deletes them. Prompt construction is a view over the event stream. This is the data model for D11 and the foundation for the rules engine lifecycle (D7), forking (D9), and all session intelligence.",
+  "task": "Define session event types as a tagged enum (message, model change, compaction, fork, label, custom) with a common EventBase (id, parent_id, timestamp). Define the append-only EventStore that persists events and supports ID-based lookup. Define context editing operations (suppress, summarize, inject, compact) that mark events without deleting them. Define prompt construction as a read-only view that assembles a prompt from the event stream respecting editing marks, and returns content tags for rules engine lifecycle tracking. Reference material: crates/norn/reference/pi/session.rs (SessionEntry, EntryBase, JSONL format). Testing layer: unit tests (Layer 1) — all components testable in isolation without a provider.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define EventBase and event ID generation",
+      "spec": "Every session event SHALL have an EventBase containing a unique event ID, an optional parent event ID (forming a tree), and a timestamp. Event IDs SHALL be unique within a session.",
+      "acceptance": [
+        "EventBase struct has fields: id (EventId), parent_id (Option<EventId>), timestamp (chrono::DateTime<Utc>)",
+        "EventId is a newtype over String with Display and FromStr implementations",
+        "EventId::new() generates a unique ID using uuid v7 for time-sortability",
+        "EventBase derives Clone, Debug, Serialize, Deserialize",
+        "Cargo.toml includes uuid = { workspace = true, features = [\"v7\"] } and chrono = { workspace = true, features = [\"serde\"] }"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/session/events.rs"
+        ],
+        "modify": [
+          "crates/norn/src/session/mod.rs",
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C74"],
+      "stories": ["S29"]
+    },
+    {
+      "id": "R2",
+      "title": "Define SessionEvent enum",
+      "spec": "SessionEvent SHALL be a tagged enum with variants for every event type in the design. Each variant SHALL embed EventBase via a base field. SessionEvent SHALL NOT contain accumulated state — each event is self-contained.",
+      "acceptance": [
+        "SessionEvent enum has variants: UserMessage, AssistantMessage, ToolResult, ModelChange, Compaction, Fork, Label, Custom",
+        "UserMessage has fields: base (EventBase), content (String)",
+        "AssistantMessage has fields: base (EventBase), content (Option<String>), tool_calls (Vec<ToolCallEvent>)",
+        "ToolCallEvent struct has fields: id (String), name (String), arguments (String)",
+        "ToolResult has fields: base (EventBase), tool_call_id (String), tool_name (String), output (serde_json::Value), duration_ms (u64) — duration in milliseconds as u64 for serialization compatibility",
+        "ModelChange has fields: base (EventBase), old_model (String), new_model (String)",
+        "Compaction has fields: base (EventBase), summary (String), replaced_event_ids (Vec<EventId>)",
+        "Fork has fields: base (EventBase), source_event_id (EventId), forked_session_id (String)",
+        "Label has fields: base (EventBase), label (String), description (Option<String>)",
+        "Custom has fields: base (EventBase), event_type (String), data (serde_json::Value)",
+        "SessionEvent derives Clone, Debug, Serialize, Deserialize",
+        "SessionEvent has a base() method returning &EventBase"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/events.rs"
+        ]
+      },
+      "checklist": ["C74"],
+      "stories": ["S29", "S32"]
+    },
+    {
+      "id": "R3",
+      "title": "Define append-only EventStore",
+      "spec": "EventStore SHALL provide append-only storage for session events. Events can be appended but SHALL NOT be deleted, modified, or replaced. The initial implementation SHALL be in-memory (Vec-backed with HashMap index for ID lookup). EventStore SHALL be Send + Sync for concurrent read access.",
+      "acceptance": [
+        "EventStore has an append method: fn append(&self, event: SessionEvent) -> Result<EventId, SessionError>",
+        "EventStore has a get method: fn get(&self, id: &EventId) -> Option<SessionEvent> (returns clone)",
+        "EventStore has an events method returning all events in insertion order",
+        "EventStore has a len method returning event count",
+        "EventStore has NO delete, remove, update, or replace methods",
+        "EventStore uses parking_lot::RwLock internally for Send + Sync (parking_lot does not poison on panic, satisfying CO4 without explicit poison handling)",
+        "Cargo.toml includes parking_lot = { workspace = true }",
+        "A unit test appends 5 events and verifies all are retrievable by ID and in insertion order"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/session/store.rs"
+        ],
+        "modify": [
+          "crates/norn/src/session/mod.rs"
+        ]
+      },
+      "checklist": ["C74"],
+      "stories": ["S29"]
+    },
+    {
+      "id": "R4",
+      "title": "Define suppress context editing operation",
+      "spec": "WHEN a suppress operation is applied to an event ID, THE SYSTEM SHALL mark that event as suppressed in a ContextEdits index. Suppressed events SHALL remain in the EventStore unchanged but SHALL be excluded from prompt construction.",
+      "acceptance": [
+        "ContextEdits struct has a suppress method: fn suppress(&mut self, event_id: EventId)",
+        "ContextEdits has an is_suppressed method: fn is_suppressed(&self, id: &EventId) -> bool",
+        "Suppressing an event does not modify the EventStore",
+        "A unit test suppresses an event, verifies is_suppressed returns true, and verifies the original event in the store is unchanged"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/session/context_edit.rs"
+        ],
+        "modify": [
+          "crates/norn/src/session/mod.rs"
+        ]
+      },
+      "checklist": ["C75"],
+      "stories": ["S29"]
+    },
+    {
+      "id": "R5",
+      "title": "Define summarize and compact context editing operations",
+      "spec": "Summarize SHALL mark a sequence of event IDs as superseded and append a Compaction event. Compact SHALL summarize all events before a cut point. Both operations mark replaced events as superseded in the ContextEdits index. Neither operation deletes or modifies original events.",
+      "acceptance": [
+        "ContextEdits has a summarize method: fn summarize(&mut self, store: &EventStore, event_ids: Vec<EventId>, summary: String) -> Result<EventId, SessionError>",
+        "summarize appends a Compaction event to the store and marks originals as superseded",
+        "ContextEdits has a compact method: fn compact(&mut self, store: &EventStore, cut_point: &EventId, summary: String) -> Result<EventId, SessionError>",
+        "compact marks all events before the cut point as superseded and appends a Compaction event",
+        "is_superseded(event_id) returns true for superseded events",
+        "Superseded events are tracked separately from suppressed events",
+        "Original events remain in the store unchanged after summarize/compact",
+        "A unit test appends 10 events, compacts at event 7, verifies events 1-6 are superseded and a Compaction event exists"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/context_edit.rs"
+        ]
+      },
+      "checklist": ["C76", "C78"],
+      "stories": ["S29"]
+    },
+    {
+      "id": "R6",
+      "title": "Define inject context editing operation",
+      "spec": "Inject SHALL append a new event into the EventStore with an injection source marker. Injected events participate in prompt construction like any other event.",
+      "acceptance": [
+        "ContextEdits has an inject method: fn inject(&mut self, store: &EventStore, event: SessionEvent) -> Result<EventId, SessionError>",
+        "Injected events are appended to the store normally",
+        "ContextEdits tracks which event IDs were injected (for identification in prompt construction)",
+        "is_injected(event_id) returns true for injected events",
+        "A unit test injects an event and verifies it appears in the store and is marked as injected"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/session/context_edit.rs"
+        ]
+      },
+      "checklist": ["C77"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Define prompt construction as a view over events",
+      "spec": "Prompt construction SHALL be a pure function that takes references to an EventStore and ContextEdits, produces an ordered list of events to include in the prompt, and returns content tags listing what was included. Suppressed and superseded events SHALL be excluded. The function SHALL NOT mutate its inputs.",
+      "acceptance": [
+        "construct_prompt function signature: fn construct_prompt(store: &EventStore, edits: &ContextEdits) -> PromptView",
+        "PromptView struct contains: events (Vec<SessionEvent>) and tags (Vec<ContentTag>)",
+        "ContentTag enum has variants: Message, ToolResult, Compaction, Injection, Rule(String), Custom(String)",
+        "Suppressed events are excluded from PromptView.events",
+        "Superseded events are excluded; their replacement Compaction events are included",
+        "Injected events are included and tagged with ContentTag::Injection",
+        "The function takes only shared references — no mutation",
+        "A unit test with 10 events (2 suppressed, 3 in a compacted range) verifies correct inclusion/exclusion and tag generation"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/loop/context.rs"
+        ],
+        "modify": [
+          "crates/norn/src/loop/mod.rs"
+        ]
+      },
+      "checklist": ["C79"],
+      "stories": ["S29", "S30"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement JSONL or SQLite persistence — initial store is in-memory only",
+    "SHALL NOT implement the rules engine or rule injection logic — only define ContentTag::Rule as a variant",
+    "SHALL NOT implement conversation-to-provider-message formatting — that is agent loop scope",
+    "SHALL NOT implement session loading, resumption, or disk serialization",
+    "SHALL NOT add provider or tool dependencies — session module is self-contained",
+    "SHALL NOT implement forking logic — only define the Fork event variant"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo test -p norn succeeds — all session unit tests pass",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "EventStore has no delete/remove/update methods — grep confirms",
+    "Suppress and summarize do not modify original events — test verifies originals unchanged",
+    "construct_prompt takes only shared references — function signature confirms",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/session/ returns no matches outside test code"
+  ]
+}

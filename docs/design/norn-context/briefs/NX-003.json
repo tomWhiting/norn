@@ -1,0 +1,128 @@
+{
+  "id": "NX-003",
+  "cluster": "norn-context",
+  "title": "Claude Code rule format compatibility",
+  "depends_on": ["NX-002"],
+  "blocked_by": [],
+  "checklist": ["C32", "C33", "C34", "C35", "C36", "C37", "C38", "C39"],
+  "stories": ["S8", "S14", "S15"],
+  "purpose": "Users should be able to drop Claude Code rule files (with globs: frontmatter) into .norn/rules/ without modification. This brief adds format detection and auto-mapping to the rules parser so both Norn's native format and Claude Code's simpler format are supported.",
+  "task": "Modify rules/parser.rs to detect the rule format by examining frontmatter keys. When triggers: is present, use the existing Norn parser path. When globs: or paths: is present, auto-map to Norn types: each glob becomes a PathGlob trigger, delivery defaults to SystemContextAppend, timing defaults to After, description maps to Rule.name. When both triggers: and globs:/paths: are present, return a parse error.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Norn format detection",
+      "spec": "WHEN the frontmatter YAML contains a triggers: key, the parser SHALL use the existing Norn format parsing path.",
+      "acceptance": [
+        "A file with triggers: key is parsed via the existing path",
+        "All existing rules/parser.rs tests continue to pass unchanged",
+        "The detection checks for key presence, not key value"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/rules/parser.rs"]
+      },
+      "checklist": ["C32"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R2",
+      "title": "Claude Code format detection",
+      "spec": "WHEN the frontmatter YAML contains a globs: or paths: key (and no triggers: key), the parser SHALL use the Claude Code compatibility path.",
+      "acceptance": [
+        "A file with globs: key and no triggers: key is detected as Claude Code format",
+        "A file with paths: key and no triggers: key is detected as Claude Code format",
+        "paths: is treated as an alias for globs:"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/rules/parser.rs"]
+      },
+      "checklist": ["C33"],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R3",
+      "title": "Ambiguous format rejection",
+      "spec": "IF the frontmatter contains both triggers: and globs: (or paths:), parse_rule_file() SHALL return RulesError::ParseFailed with a message indicating ambiguous format.",
+      "acceptance": [
+        "A file with both triggers: and globs: returns RulesError::ParseFailed",
+        "The error message contains 'ambiguous' or similar indication",
+        "A file with triggers: and paths: also returns an error"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/rules/parser.rs"]
+      },
+      "checklist": ["C34"],
+      "stories": ["S15"]
+    },
+    {
+      "id": "R4",
+      "title": "Single glob string mapping",
+      "spec": "WHEN globs: is a single string, it SHALL be mapped to one TriggerCondition::PathGlob with that string as the pattern.",
+      "acceptance": [
+        "globs: '**/*.rs' produces one PathGlob trigger with pattern '**/*.rs'",
+        "The resulting rule has exactly one trigger in its triggers vec"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/rules/parser.rs"]
+      },
+      "checklist": ["C35"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R5",
+      "title": "Glob array mapping",
+      "spec": "WHEN globs: is an array of strings, each string SHALL be mapped to a separate TriggerCondition::PathGlob.",
+      "acceptance": [
+        "globs: ['**/*.rs', '**/*.toml'] produces two PathGlob triggers",
+        "Each trigger has the correct pattern from the array",
+        "Order is preserved"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/rules/parser.rs"]
+      },
+      "checklist": ["C36"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R6",
+      "title": "Description to Rule.name mapping",
+      "spec": "WHEN the Claude Code format frontmatter contains a description: field, it SHALL be mapped to Rule.name.",
+      "acceptance": [
+        "description: 'Rust coding standards' sets Rule.name to 'Rust coding standards'",
+        "When description: is absent, Rule.name defaults to empty string"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/rules/parser.rs"]
+      },
+      "checklist": ["C37"],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R7",
+      "title": "Implicit delivery and timing defaults",
+      "spec": "Claude Code format rules SHALL default to DeliveryMode::SystemContextAppend and TriggerTiming::After.",
+      "acceptance": [
+        "A Claude Code format rule has delivery == DeliveryMode::SystemContextAppend",
+        "A Claude Code format rule has timing == TriggerTiming::After",
+        "These defaults are applied regardless of other frontmatter fields"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/rules/parser.rs"]
+      },
+      "checklist": ["C38", "C39"],
+      "stories": ["S8"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the Rule type or TriggerCondition type — only the parser",
+    "SHALL NOT modify the RuleEngine — it already accepts any well-formed Rule",
+    "SHALL NOT add new trigger types for Claude Code compatibility"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn -- rules::parser passes all tests (existing + new)",
+    "cargo clippy -p norn -- -D warnings clean",
+    "All existing Norn-format rule tests pass unchanged (backward compatible)",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

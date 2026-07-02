@@ -1,0 +1,144 @@
+{
+  "id": "NT-007",
+  "cluster": "norn-tui",
+  "title": "Per-tool renderers — Tier 2, Tier 3, and verbosity toggle",
+  "depends_on": ["NT-006"],
+  "blocked_by": [],
+  "checklist": ["C36", "C37", "C38", "C39", "C40", "C41"],
+  "stories": ["S4"],
+  "purpose": "Complete the tool renderer set with compact and minimal renderers for the remaining tools, and implement the Ctrl+O verbosity toggle that controls whether future tool calls render in collapsed or expanded mode.",
+  "task": "Implement Tier 2 compact renderers in tools/compact.rs: Write, WebSearch, WebFetch, and one-line renderers for LSP, Task, Skill, RunScript, ToolSearch. Implement Tier 3 minimal renderers in tools/minimal.rs: SpawnAgent (creates a status line in the fixed panel), Fork, SignalAgent, WaitAgent (invisible), CloseAgent. Add the Ctrl+O verbosity toggle to the rendering state, affecting whether future tool calls show header-only (collapsed) or header+body (expanded). Register all renderers in the renderer_for factory from NT-006.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Write renderer",
+      "spec": "The Write renderer SHALL show file path, line count, and AST status on one line.",
+      "acceptance": [
+        "Header: '+ {path}' with line count and AST status (ok / error)",
+        "body() returns None (no expanded view)",
+        "Test: header_line for a write call includes path and line count"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/tools/compact.rs"]
+      },
+      "checklist": ["C36"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Web renderers",
+      "spec": "WebSearch SHALL show query and result count. WebFetch SHALL show URL and content length. Both on one line.",
+      "acceptance": [
+        "WebSearch header: 'web: {query}' with result count",
+        "WebFetch header: 'fetch: {url}' with content length",
+        "Both return None for body()",
+        "Test: WebSearch header includes query text"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/compact.rs"]
+      },
+      "checklist": ["C37", "C38"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Remaining Tier 2 compact renderers",
+      "spec": "LSP, Task, Skill, RunScript, and ToolSearch SHALL each render as a one-line summary.",
+      "acceptance": [
+        "LSP: 'lsp: {action}' with target",
+        "Task: 'task: {action} \"{title}\"' with status",
+        "Skill: 'skill: {name} loaded'",
+        "RunScript: 'script: {name}' with output preview",
+        "ToolSearch: 'search tools: {query}' with match count",
+        "All return None for body()",
+        "Test: Task header includes action and title"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/compact.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "SpawnAgent renderer — fixed panel status line",
+      "spec": "WHEN SpawnAgent completes, THE SYSTEM SHALL create an agent status line in the fixed panel rather than rendering in the scroll region. A brief note in the scroll region confirms the spawn.",
+      "acceptance": [
+        "SpawnAgent does NOT render a tool output block in the scroll region",
+        "Instead, it emits an AgentSpawned signal that NT-009's status line system consumes",
+        "A single-line note ('spawned: {agent_name}') renders in the scroll region for awareness",
+        "Test: SpawnAgent renderer returns a SpawnSignal action instead of scroll region content"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/tools/minimal.rs"]
+      },
+      "checklist": ["C39"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "WaitAgent — invisible rendering",
+      "spec": "WaitAgent SHALL NOT render as a tool call. The wait is invisible to the user; the result appears when the awaited agent completes.",
+      "acceptance": [
+        "renderer_for('wait_agent') returns a renderer whose header_line returns an empty string",
+        "The renderer signals to the rendering pipeline that no output should be written to the scroll region",
+        "Test: WaitAgent renderer produces no visible output"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/minimal.rs"]
+      },
+      "checklist": ["C40"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Remaining Tier 3 minimal renderers",
+      "spec": "Fork, SignalAgent, and CloseAgent SHALL render as minimal one-line entries in the scroll region.",
+      "acceptance": [
+        "Fork: 'fork → {model}' with task preview",
+        "SignalAgent: '→ {agent_path}: {message_preview}'",
+        "CloseAgent: '✕ {agent_path}' with cascade count",
+        "All return None for body()",
+        "Test: CloseAgent header includes cascade count"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/minimal.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Verbosity toggle (Ctrl+O)",
+      "spec": "WHEN the user presses Ctrl+O, THE SYSTEM SHALL toggle the global verbosity setting, affecting whether future tool calls render header-only (collapsed) or header+body (expanded). Content already in scrollback SHALL NOT be affected.",
+      "acceptance": [
+        "VerbosityState enum: Collapsed (default), Expanded",
+        "Ctrl+O flips between Collapsed and Expanded",
+        "When Collapsed, tool calls render header_line only (body is not written to scroll region)",
+        "When Expanded, tool calls render header_line followed by body (if body() returns Some)",
+        "The toggle does not modify or rewrite any content already in the scroll region",
+        "A brief status message ('verbose: on' / 'verbose: off') appears in the streaming indicator area momentarily",
+        "Test: toggling from Collapsed to Expanded changes the state"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/tools/mod.rs"]
+      },
+      "checklist": ["C41"],
+      "stories": ["S4"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the ToolRenderer trait or Tier 1 renderers — those are NT-006",
+    "SHALL NOT implement agent status line rendering — that is NT-009",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "renderer_for returns correct renderer for all tool names — verified by test",
+    "WaitAgent produces no visible output — verified by test",
+    "SpawnAgent produces a spawn signal instead of scroll content — verified by test",
+    "Verbosity toggle changes state — verified by test"
+  ]
+}

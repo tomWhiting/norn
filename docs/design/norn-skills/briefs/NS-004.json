@@ -1,0 +1,102 @@
+{
+  "id": "NS-004",
+  "cluster": "norn-skills",
+  "title": "Argument handling, SkillTool integration, and resource listing",
+  "depends_on": ["NS-003"],
+  "blocked_by": [],
+  "checklist": ["C47", "C48", "C49", "C50", "C62"],
+  "stories": ["S2", "S7", "S8", "S9"],
+  "purpose": "The SkillTool needs to accept arguments, parse them with shell-style quoting, map named arguments from frontmatter, apply the $ARGUMENTS auto-append, and include the skill directory and bundled resource listing in the activation result. This brief modifies the existing tools/skill.rs to use the new skill module infrastructure.",
+  "task": "Modify tools/skill.rs to add an optional arguments parameter. Implement shell-style argument parsing (double-quoted, single-quoted, backslash escapes). After loading and parsing the skill, call skill/template.rs expansion with the parsed arguments. Implement $ARGUMENTS auto-append. Include skill directory path and bundled resource listing (capped at 20 entries) in the tool result.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Arguments parameter on SkillTool",
+      "spec": "The SkillTool input schema SHALL accept an optional 'arguments' field (string type).",
+      "acceptance": [
+        "SkillTool input_schema() includes an 'arguments' field with type 'string'",
+        "The field is not in the 'required' array",
+        "Invoking with {\"name\": \"deploy\", \"arguments\": \"prod\"} passes 'prod' as arguments"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/skill.rs"]
+      },
+      "checklist": ["C48"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R2",
+      "title": "Shell-style argument parsing",
+      "spec": "Arguments SHALL be parsed using shell-style quoting: double-quoted and single-quoted strings are single arguments (quotes stripped), unquoted words split on whitespace, backslash escapes within quotes.",
+      "acceptance": [
+        "'hello world' parses to ['hello', 'world']",
+        "'\"hello world\" second' parses to ['hello world', 'second']",
+        "\"'hello world' second\" parses to ['hello world', 'second']",
+        "Empty string parses to empty vec"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/skill.rs"]
+      },
+      "checklist": ["C49"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R3",
+      "title": "Named argument mapping",
+      "spec": "WHEN the skill's SkillMetadata has a non-empty arguments list, positional arguments SHALL be mapped to named arguments in order.",
+      "acceptance": [
+        "With arguments=['issue','branch'] and args ['123','main'], named map contains issue='123' and branch='main'",
+        "With more names than args, excess names map to empty string",
+        "With more args than names, excess args accessible only by $N"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/skill.rs"]
+      },
+      "checklist": ["C50"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R4",
+      "title": "$ARGUMENTS auto-append",
+      "spec": "IF $ARGUMENTS does not appear in the skill body (before expansion), the raw arguments string SHALL be appended as 'ARGUMENTS: <value>' after expansion.",
+      "acceptance": [
+        "A skill body containing '$ARGUMENTS' does NOT get the auto-append",
+        "A skill body without '$ARGUMENTS', invoked with arguments='hello', has '\\nARGUMENTS: hello' appended",
+        "A skill body without '$ARGUMENTS', invoked without arguments, does NOT get the auto-append"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/skill.rs"]
+      },
+      "checklist": ["C47"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R5",
+      "title": "SkillTool uses skill module and includes resource listing",
+      "spec": "The SkillTool execute method SHALL use skill/loader.rs for loading, skill/template.rs for expansion, strip frontmatter, and include the skill directory path and bundled resource listing (capped at 20 entries) in the JSON result.",
+      "acceptance": [
+        "SkillTool imports from crate::skill::loader and crate::skill::template",
+        "Returned content has frontmatter stripped",
+        "Returned JSON includes name, path, content, skill_dir, and resources fields",
+        "resources lists files in the skill directory (excluding SKILL.md), capped at 20"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/skill.rs"]
+      },
+      "checklist": ["C62"],
+      "stories": ["S2", "S7"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement slash command registration — that is NS-006",
+    "SHALL NOT implement effort override — that is NS-005",
+    "SHALL NOT implement the SkillCatalog query — that is NS-007"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn -- tools::skill passes all tests (new and existing)",
+    "cargo clippy -p norn -- -D warnings clean",
+    "Existing skill tool tests continue to pass (backward compatible for basic load-by-name)",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

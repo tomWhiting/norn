@@ -1,0 +1,218 @@
+{
+  "repo_root": "/Users/tom/Developer/ablative/meridian",
+  "brief_id": "NR-011",
+  "reviewers": [
+    "Waffles the Terrible"
+  ],
+  "base_ref": "main",
+  "placement": "local",
+  "isolation": "worktree",
+  "brief_document": {
+    "id": "NR-011",
+    "cluster": "norn-runtime",
+    "title": "In-process notification check at tool batch boundaries",
+    "depends_on": [
+      "NR-002"
+    ],
+    "blocked_by": [],
+    "checklist": [
+      "C78",
+      "C79",
+      "C80",
+      "C81"
+    ],
+    "stories": [
+      "S23"
+    ],
+    "purpose": "Active Norn agents never learn about new notifications (channel mentions, group messages, system alerts) unless they explicitly call meridian_messaging inbox. The Claude Runner path uses a PreToolUse shell hook that runs 'meridian message notify check' between every tool call. Norn needs an in-process equivalent that checks pending notifications at tool batch boundaries and injects them via InboundSender, without subprocess overhead. This is a new mechanism \u2014 the notification check infrastructure does not exist today for Norn sessions.",
+    "task": "Add two missing service wrapper methods (get_pending_notifications, count_pending_notifications) to the messaging wrapper. Create a NotificationChecker that queries pending notifications after each tool batch completes and injects them as structured content via InboundSender with DeliveryMode::Steer. The checker is constructed per-session from ServiceContext and CallerContext member_id. Notifications are formatted as XML matching the existing notify check --xml output. Injected notifications are marked as delivered to prevent re-injection.",
+    "requirements": [
+      {
+        "id": "R1",
+        "title": "MessagingService notification wrapper methods",
+        "spec": "WHEN a Norn session component needs to query pending notifications THE SYSTEM SHALL call MessagingService wrapper methods that delegate to the existing NotificationStore trait AND it SHALL NOT require direct storage trait access from outside the messaging service.",
+        "acceptance": [
+          "get_pending_notifications(member_id: &Uuid, limit: Option<usize>) -> ServiceResult<Vec<Notification>> exists on MessagingService wrapper",
+          "count_pending_notifications(member_id: &Uuid) -> ServiceResult<usize> exists on MessagingService wrapper",
+          "Both delegate to NotificationStore trait methods at crates/meridian-storage-pg/src/stores/notification_store.rs (lines 163-188 and 234-247)",
+          "Both return ServiceResult, not StorageResult \u2014 error mapping at the wrapper boundary"
+        ],
+        "files": {
+          "create": [],
+          "modify": [
+            "crates/meridian-services/src/messaging/wrapper/inbox.rs"
+          ]
+        },
+        "checklist": [
+          "C78"
+        ],
+        "stories": []
+      },
+      {
+        "id": "R2",
+        "title": "NotificationChecker constructed per-session",
+        "spec": "WHEN a Norn member-facing session is constructed in spawn_norn_loop THE SYSTEM SHALL create a NotificationChecker that holds a reference to the MessagingService and the caller's member_id AND the NotificationChecker SHALL be accessible at tool batch drain points in the agent loop.",
+        "acceptance": [
+          "NotificationChecker struct holds Arc<MessagingService> (or the service wrapper) and member_id: Uuid",
+          "NotificationChecker has async fn check(&self) -> Vec<Notification> that calls get_pending_notifications with limit 20",
+          "NotificationChecker has fn format_xml(&self, notifications: &[Notification]) -> String that produces XML matching the existing notify check --xml output format",
+          "NotificationChecker is constructed in spawn_norn_loop (service.rs) using ServiceContext and CallerContext.member_id",
+          "NotificationChecker is published as an Arc extension on ToolContext via AgentBuilder::extension(), making it accessible during tool dispatch"
+        ],
+        "files": {
+          "create": [
+            "crates/meridian-services/src/assistant/notification_checker.rs"
+          ],
+          "modify": [
+            "crates/meridian-services/src/assistant/service.rs",
+            "crates/meridian-services/src/assistant/mod.rs"
+          ]
+        },
+        "checklist": [
+          "C79"
+        ],
+        "stories": [
+          "S23"
+        ]
+      },
+      {
+        "id": "R3",
+        "title": "Post-tool-batch notification injection",
+        "spec": "WHEN a tool batch completes in a Norn session THE SYSTEM SHALL check for pending notifications via NotificationChecker AND WHEN notifications exist THE SYSTEM SHALL format them and inject as a ChannelMessage with DeliveryMode::Steer via InboundSender AND it SHALL NOT inject when zero notifications are pending.",
+        "acceptance": [
+          "Notification check runs after execute_tool_batch returns, at or near the existing drain point (runner.rs around line 709)",
+          "Pending notifications are formatted as XML and sent as a ChannelMessage { author: 'system', content: xml, delivery: DeliveryMode::Steer, timestamp: Utc::now() }",
+          "The agent receives notification content at the next drain_and_partition call, before the LLM turn",
+          "No ChannelMessage is sent when zero notifications are pending",
+          "The check does not run during the first tool batch after wake \u2014 build_wake_prompt already delivers pending notifications in the wake prompt"
+        ],
+        "files": {
+          "modify": [
+            "crates/norn/src/loop/runner.rs",
+            "crates/norn/src/loop/helpers.rs"
+          ]
+        },
+        "checklist": [
+          "C80"
+        ],
+        "stories": [
+          "S23"
+        ]
+      },
+      {
+        "id": "R4",
+        "title": "Mark injected notifications as delivered",
+        "spec": "WHEN notifications are injected into the agent's inbound channel THE SYSTEM SHALL mark them as delivered so they are not re-injected on the next tool batch AND it SHALL NOT mark notifications if the InboundSender.send() call fails.",
+        "acceptance": [
+          "After successful InboundSender.send(), the injected notification IDs are passed to mark_notifications_delivered on the MessagingService",
+          "Failed send (channel full or closed) skips the mark \u2014 notifications remain pending for next check",
+          "Notifications are not double-injected across consecutive tool batches within the same session"
+        ],
+        "files": {
+          "modify": [
+            "crates/meridian-services/src/assistant/notification_checker.rs"
+          ]
+        },
+        "checklist": [
+          "C81"
+        ],
+        "stories": []
+      }
+    ],
+    "boundaries": [
+      "SHALL NOT modify the InboundChannel or InboundSender types in the norn crate \u2014 uses the existing send API",
+      "SHALL NOT remove or modify the CLI notify check hook \u2014 it continues to work for Claude Runner sessions",
+      "SHALL NOT poll notifications on a timer \u2014 runs only at tool batch boundaries",
+      "SHALL NOT inject notifications during the first tool batch of a wake session"
+    ],
+    "verification": [
+      "cargo check --workspace passes with the new notification_checker module",
+      "cargo clippy --workspace -- -D warnings passes clean",
+      "NotificationChecker.check() returns pending notifications from the service layer",
+      "Notifications injected via InboundSender appear in the agent's next drain_and_partition result",
+      "Injected notifications are marked as delivered and not re-injected on subsequent tool batches",
+      "No file exceeds 500 lines of code"
+    ]
+  },
+  "resolved_context": {
+    "adrs": [],
+    "checklist": [
+      {
+        "id": "C78",
+        "text": "MessagingService exposes get_pending_notifications and count_pending_notifications wrapper methods delegating to NotificationStore"
+      },
+      {
+        "id": "C79",
+        "text": "NotificationChecker struct holds Arc<MessagingService> and member_id, constructed in spawn_norn_loop, published as ToolContext extension"
+      },
+      {
+        "id": "C80",
+        "text": "Post-tool-batch notification check injects pending notifications as ChannelMessage with DeliveryMode::Steer via InboundSender at the runner drain point"
+      },
+      {
+        "id": "C81",
+        "text": "Injected notifications are marked as delivered so they are not re-injected on subsequent tool batches"
+      }
+    ],
+    "stories": [
+      {
+        "id": "S23",
+        "text": "As an AI agent, I want pending notifications injected at tool batch boundaries so that I see new messages without relying on a CLI subprocess hook, and I want them marked as delivered so I don't see them twice."
+      }
+    ],
+    "constraints": [
+      {
+        "id": "CO1",
+        "text": "No new external dependencies. Namespace tools call service-layer functions via ServiceContext, not HTTP."
+      },
+      {
+        "id": "CO2",
+        "text": "AssistantEvent is the single event type for all downstream consumers. Both runtimes produce it."
+      },
+      {
+        "id": "CO3",
+        "text": "JSONL session files are Norn's source of truth for resume. PG is the UI's source of truth. Neither replaces the other."
+      },
+      {
+        "id": "CO4",
+        "text": "The model sees at most 25 tools (16 standard Norn + up to 7 namespace + 2 optional web). Profile filtering reduces this in practice."
+      },
+      {
+        "id": "CO5",
+        "text": "Session IDs are UUIDs shared between the JSONL filename, PG assistant_session_events key, and SessionHandle registry key."
+      },
+      {
+        "id": "CO6",
+        "text": "Wake prompt delivery mechanism changes, format does not."
+      },
+      {
+        "id": "CO7",
+        "text": "mod.rs contains only pub mod declarations and re-exports."
+      },
+      {
+        "id": "CO8",
+        "text": "No file over 500 lines of code (excluding tests, comments, whitespace)."
+      },
+      {
+        "id": "CO9",
+        "text": "All errors handled via thiserror in library code. No .unwrap() or .expect() in library code."
+      },
+      {
+        "id": "CO10",
+        "text": "Namespace tools implement the existing Tool trait. No changes to the trait interface."
+      }
+    ],
+    "intention": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude Runner stays only for legacy background task dispatch until it can be retired entirely. Member-facing sessions run as typed, observable, in-process agent loops rather than opaque subprocess invocations. Session state persists across visits without relying on a CLI binary's internal persistence. The model sees a focused set of domain tools instead of a raw shell with 175 CLI commands. This is the June 15 deadline work.",
+    "design_path": "docs/design/norn-runtime",
+    "provenance": {
+      "requested_by": "Tom",
+      "quote": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude R"
+    }
+  },
+  "verify_fix_cap": 3,
+  "review_cap": 1,
+  "round_backoff_ms": 2000,
+  "review_deadline_ms": 300000,
+  "workspace_id": "2d5fdd51-1f25-45a4-8f86-4d4c978d1355",
+  "clone_url": "https://github.com/tomWhiting/meridian.git"
+}

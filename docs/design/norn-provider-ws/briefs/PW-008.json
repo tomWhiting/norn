@@ -1,0 +1,104 @@
+{
+  "id": "PW-008",
+  "cluster": "norn-provider-ws",
+  "title": "Connection lifecycle — age tracking, reconnection, and warm floor",
+  "depends_on": ["PW-005"],
+  "blocked_by": [],
+  "checklist": ["C34", "C35", "C36", "C37", "C38"],
+  "stories": ["S2", "S7"],
+  "purpose": "Implement connection lifecycle management so that WS connections survive long sessions. Each slot tracks its connection age and proactively reconnects before the 60-minute server limit. Unexpected server Close frames trigger reconnection. The warm floor is established lazily on first pool access, not eagerly at provider construction.",
+  "task": "Extend the pool's take path to check connection age before handing a connection to a caller. If age exceeds (60 min - reconnect_margin), close the connection, establish fresh, and hand the new one to the caller. Handle websocket_connection_limit_reached errors during a request by closing, re-establishing, and retrying once. Handle unexpected WS Close frames by marking the slot Disconnected. Establish warm floor connections on first pool access.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Per-slot age tracking",
+      "spec": "Each WsSlot SHALL track established_at: Option<Instant> set when a WS connection is successfully established. The age SHALL be computed as Instant::now() - established_at.",
+      "acceptance": [
+        "established_at set on successful WsConnection establishment",
+        "established_at is None for slots in Disconnected state",
+        "Age computable for Available slots"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C34"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Proactive reconnection before server limit",
+      "spec": "WHEN a caller takes an Available connection AND the connection age exceeds (60 min - reconnect_margin) THE SYSTEM SHALL close the old connection, establish a fresh one in the same slot, and hand the fresh connection to the caller.",
+      "acceptance": [
+        "Connection older than (60 min - reconnect_margin) is closed before use",
+        "Fresh connection established in the same slot",
+        "Caller receives the fresh connection, not the stale one",
+        "established_at updated to reflect the new connection"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C35"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R3",
+      "title": "60-minute limit error handling",
+      "spec": "IF the server sends websocket_connection_limit_reached during a request THE SYSTEM SHALL mark the connection broken, establish a fresh connection in the slot, and retry the request once on the new connection.",
+      "acceptance": [
+        "websocket_connection_limit_reached error detected from WS error envelope",
+        "Old connection closed, fresh one established",
+        "Request retried once on the new connection",
+        "If retry also fails, error propagated to caller"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C36"],
+      "stories": ["S2", "S7"]
+    },
+    {
+      "id": "R4",
+      "title": "Unexpected Close frame handling",
+      "spec": "IF the server sends an unexpected WS Close frame THE SYSTEM SHALL mark the slot as Disconnected. The next caller to encounter the Disconnected slot SHALL establish a fresh connection.",
+      "acceptance": [
+        "WS Close frame sets slot state to Disconnected",
+        "Connection resources are released",
+        "Next request on this slot triggers fresh establishment"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C37"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Lazy warm floor establishment",
+      "spec": "WHEN the pool is accessed for the first time THE SYSTEM SHALL establish the warm floor via parallel tokio::spawn tasks — one per warm slot. The first caller waits only for its own connection; the remaining warm floor connections establish in the background. The pool SHALL NOT establish connections eagerly at provider construction.",
+      "acceptance": [
+        "No WS connections established during OpenAiProvider::new()",
+        "First call to the pool triggers warm floor establishment",
+        "First caller's connection established synchronously; remaining slots spawn as background tasks",
+        "Background warm floor tasks complete and set their slots to Available without blocking any caller"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C38"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the WsState enum or pool structure — use what PW-005 provides",
+    "SHALL NOT implement request framing — use PW-007 send/receive functions",
+    "SHALL NOT hardcode the 55-minute threshold — derive from the 60-minute limit with configurable margin"
+  ],
+  "verification": [
+    "cargo check --workspace passes",
+    "cargo test -p norn passes clean",
+    "Tests verify proactive reconnection at 55-minute age boundary",
+    "Tests verify websocket_connection_limit_reached triggers retry on fresh connection",
+    "Tests verify Close frame marks slot Disconnected",
+    "Tests verify warm floor established on first pool access, not at construction"
+  ]
+}

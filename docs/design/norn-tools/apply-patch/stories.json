@@ -1,0 +1,53 @@
+{
+  "cluster": "norn-tools/apply-patch",
+  "personas": [
+    {
+      "name": "AI Agent",
+      "role": "Applying Code Changes",
+      "stories": [
+        {"id": "S1", "text": "As an AI agent applying a patch, I want the tool to resolve hunks using structural understanding of the code so that my patches apply correctly even when my line numbers are stale."},
+        {"id": "S2", "text": "As an AI agent creating a new file, I want to generate a standard unified diff with --- /dev/null so that file creation works through the same tool as file modification."},
+        {"id": "S3", "text": "As an AI agent removing a file, I want to generate a unified diff with +++ /dev/null so that file deletion works through the same tool and gets proper undo tracking."},
+        {"id": "S4", "text": "As an AI agent, I want the tool result to tell me which resolution tier was used for each hunk so that I can calibrate my patch accuracy over time."},
+        {"id": "S5", "text": "As an AI agent, I want to know the exact committed state of files even when post-validation fails so that I can decide whether to fix forward or undo."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Verifying Patch Accuracy",
+      "stories": [
+        {"id": "S6", "text": "As an AI agent verifying my own accuracy, I want to apply a patch in strict mode so that I can confirm my line numbers are correct before committing."},
+        {"id": "S7", "text": "As an AI agent whose strict-mode patch failed, I want to see what structural matching would have done so that I can either accept the structural match or regenerate with correct line numbers."},
+        {"id": "S8", "text": "As an AI agent, I want to dry-run a patch before applying so that I can preview the blast radius and diagnostics without modifying any files."},
+        {"id": "S9", "text": "As an AI agent, I want dry-run to use the same resolution code path as actual application so that a successful dry-run guarantees successful application."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Coordinating Fork Results",
+      "stories": [
+        {"id": "S10", "text": "As a parent agent receiving patches from forks, I want to assign an artifact ID to a patch so that I can inspect and manipulate it without re-generating the full patch text."},
+        {"id": "S11", "text": "As a parent agent, I want to inspect individual files or hunks within a stored patch artifact so that I can review fork output selectively."},
+        {"id": "S12", "text": "As a parent agent, I want to edit a specific hunk in a stored artifact before applying so that I can fix fork errors without regenerating the entire patch."},
+        {"id": "S13", "text": "As a parent agent, I want to dry-run a stored artifact so that I can preview the result before committing fork changes to disk."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Reviewing Agent Patches",
+      "stories": [
+        {"id": "S14", "text": "As a developer reviewing agent output, I want to see per-hunk resolution details so that I can understand how each change was placed and whether structural matching was needed."},
+        {"id": "S15", "text": "As a developer, I want the tool to support 18+ languages for entity resolution so that patches to Go, Java, C, and other codebases apply with the same structural accuracy as Rust."},
+        {"id": "S16", "text": "As a developer, I want dry-run output to include file length impact so that I can catch patches that would push files over the 500-line limit before they commit."}
+      ]
+    },
+    {
+      "name": "Tool Author",
+      "role": "Integrating Entity Extraction",
+      "stories": [
+        {"id": "S17", "text": "As a tool author, I want entity extraction behind an optional cargo feature flag so that I can use norn without pulling in libyggd's full dependency tree."},
+        {"id": "S18", "text": "As a tool author, I want the EntityExtractor trait to be testable with mock implementations so that I can write tests without needing real AST parsing infrastructure."}
+      ]
+    }
+  ]
+}

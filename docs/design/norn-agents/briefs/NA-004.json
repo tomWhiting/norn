@@ -1,0 +1,120 @@
+{
+  "id": "NA-004",
+  "cluster": "norn-agents",
+  "title": "DiskTaskStore and named task groups",
+  "depends_on": ["NA-003"],
+  "blocked_by": [],
+  "checklist": ["C11", "C12"],
+  "stories": ["S13", "S24"],
+  "purpose": "Tasks are in-memory only — they vanish when the session ends. Multi-session work and cross-session handoffs require persistent storage. This brief implements DiskTaskStore, which persists tasks to ~/.norn/tasks/{group-slug}/ as individual JSON files with atomic writes and lock-file-based claiming. It also wires DiskTaskStore into builder.rs so it becomes the default production implementation.",
+  "task": "Implement DiskTaskStore in tools/task/disk.rs that implements the full TaskStore trait (including all hierarchy extensions from NA-003). Tasks persist as {task-id}.json files within ~/.norn/tasks/{group-slug}/ directories. Use atomic writes (write to temp file, rename into place) for crash safety. Implement claim() using O_CREAT|O_EXCL lock files for POSIX-atomic mutual exclusion. Add create_group and list_groups support for named task groups. Wire DiskTaskStore into norn-cli builder.rs as the default SharedTaskStore implementation.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "DiskTaskStore implementation",
+      "spec": "DiskTaskStore SHALL persist tasks to ~/.norn/tasks/{group-slug}/ as individual JSON files with atomic writes.",
+      "acceptance": [
+        "DiskTaskStore struct in tools/task/disk.rs with root_dir: PathBuf and group_slug: String",
+        "Tasks stored as {root_dir}/{group-slug}/{task-id}.json",
+        "create() writes task JSON atomically: write to {task-id}.tmp.{uuid}, rename to {task-id}.json",
+        "get() reads and deserialises from {task-id}.json",
+        "list() reads all .json files in the group directory, optionally filters by status",
+        "update() reads, modifies, writes atomically",
+        "complete() delegates to update with Completed status",
+        "Directory created on first write if it does not exist",
+        "Test: create, get, list, update, complete cycle with a tempdir"
+      ],
+      "files": {
+        "create": ["crates/norn/src/tools/task/disk.rs"],
+        "modify": ["crates/norn/src/tools/task/mod.rs"]
+      },
+      "checklist": ["C11"],
+      "stories": ["S24"]
+    },
+    {
+      "id": "R2",
+      "title": "Hierarchy operations on DiskTaskStore",
+      "spec": "DiskTaskStore SHALL implement all hierarchy operations from the extended TaskStore trait.",
+      "acceptance": [
+        "create_subtask writes a task with parent_task_id set",
+        "children scans directory and filters by parent_task_id match",
+        "ancestors walks parent_task_id chain by reading each task file",
+        "Test: create 3-level hierarchy on disk, verify children and ancestors"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/task/disk.rs"]
+      },
+      "checklist": ["C12"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Atomic claim with lock files",
+      "spec": "DiskTaskStore::claim SHALL use O_CREAT|O_EXCL lock files for POSIX-atomic mutual exclusion to prevent TOCTOU races.",
+      "acceptance": [
+        "claim(task_id, agent_path) attempts to create {task-id}.lock via OpenOptions::new().write(true).create_new(true)",
+        "If lock creation succeeds: read task, verify assigned_agent is None, write updated task atomically, remove lock file",
+        "If lock creation fails (file exists): return error indicating task is being claimed",
+        "If task already has assigned_agent set: remove lock file, return error indicating already claimed",
+        "Lock file is always removed in the success and error paths (use a guard/Drop pattern)",
+        "Test: first claim succeeds, second claim on same task fails",
+        "Test: claim on already-assigned task fails even without lock contention"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/task/disk.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Named task groups",
+      "spec": "DiskTaskStore SHALL support named task groups as subdirectories of the tasks root.",
+      "acceptance": [
+        "create_group(slug) creates ~/.norn/tasks/{slug}/ directory",
+        "list_groups() lists subdirectories of ~/.norn/tasks/",
+        "Group slug validated: alphanumeric, hyphens, underscores only",
+        "TaskTool's create_group and list_groups actions delegate to DiskTaskStore",
+        "Test: create_group and list_groups round-trip with tempdir"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/task/disk.rs", "crates/norn/src/tools/task/tool.rs"]
+      },
+      "checklist": [],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R5",
+      "title": "Wire DiskTaskStore in builder.rs",
+      "spec": "norn-cli builder.rs SHALL configure SharedTaskStore to wrap DiskTaskStore as the production implementation.",
+      "acceptance": [
+        "build_runtime constructs a DiskTaskStore with root_dir from paths::norn_dir()/tasks/ and a default group slug derived from the session",
+        "SharedTaskStore wrapping DiskTaskStore is available for installation (NA-005 installs it on ToolContext)",
+        "RuntimeBundle gains a shared_task_store field or the store is passed through to the extension wiring path",
+        "Test: build_runtime with defaults produces a bundle that includes a DiskTaskStore-backed SharedTaskStore"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs", "crates/norn-cli/src/runtime/bundle.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the TaskStore trait — that was done in NA-003",
+    "SHALL NOT install SharedTaskStore on ToolContext — that is NA-005",
+    "SHALL NOT add hardcoded limits on task count, group count, or file size (CO1)",
+    "SHALL NOT use a database — filesystem only (CO4)",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn -p norn-cli succeeds",
+    "cargo test -p norn -p norn-cli — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "DiskTaskStore CRUD cycle works with tempdir — verified by test",
+    "Atomic claim prevents double-claiming — verified by test",
+    "Task files survive process restart (read back after write) — verified by test",
+    "Named task groups round-trip — verified by test",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

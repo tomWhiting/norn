@@ -1,0 +1,110 @@
+{
+  "id": "NC-005",
+  "cluster": "norn-config",
+  "title": "Downstream config surfaces — skills, context, session, rate limit",
+  "depends_on": ["NC-004"],
+  "blocked_by": [],
+  "checklist": ["C42", "C43", "C44", "C45", "C46", "C47", "C48"],
+  "stories": ["S1", "S12", "S15", "S20"],
+  "purpose": "Wire the remaining settings fields into their consumers: skill search paths, context search paths, session history capacity, and provider rate limit. These are the last-mile connections that make the config system end-to-end functional. After this brief, every settings field defined in NC-002 has a consumer.",
+  "task": "Wire skills.search_paths from merged settings into the SkillSearchPaths extension on ToolContext. Wire context.search_paths into a discoverable extension. Wire session.history_capacity into REPL history construction. Wire provider.rate_limit into the OpenAI provider rate limiter. Verify all linting and quality gates pass.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Skill search paths from settings",
+      "spec": "WHEN merged settings contain skills.search_paths, THE SYSTEM SHALL include those directories in the SkillSearchPaths extension installed on the shared ToolContext, alongside the default scan directories.",
+      "acceptance": [
+        "Settings skills.search_paths values are prepended to the SkillSearchPaths vec",
+        "Default scan directories (.norn/skills/, ~/.norn/skills/) are still included",
+        "Settings paths are resolved relative to the working directory",
+        "Test: settings skill paths appear in SkillSearchPaths extension"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/wiring.rs"]
+      },
+      "checklist": ["C42"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R2",
+      "title": "Context search paths from settings",
+      "spec": "WHEN merged settings contain context.search_paths, THE SYSTEM SHALL make them available as a discoverable ToolContext extension so the context cluster can read them.",
+      "acceptance": [
+        "ContextSearchPaths struct defined (newtype over Vec<PathBuf>)",
+        "ContextSearchPaths installed on the shared ToolContext when settings provide context.search_paths",
+        "Settings paths are resolved relative to the working directory",
+        "Test: settings context paths accessible via ToolContext extension"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/wiring.rs"]
+      },
+      "checklist": ["C43"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R3",
+      "title": "Session history capacity from settings",
+      "spec": "WHEN merged settings contain session.history_capacity, THE SYSTEM SHALL use that value for REPL history construction instead of the hardcoded HISTORY_CAPACITY constant.",
+      "acceptance": [
+        "REPL history construction reads session.history_capacity from merged settings",
+        "Absent setting falls back to the existing HISTORY_CAPACITY constant",
+        "Test: settings history_capacity overrides the default"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/repl/history.rs"]
+      },
+      "checklist": ["C44"],
+      "stories": ["S15"]
+    },
+    {
+      "id": "R4",
+      "title": "Provider rate limit from settings",
+      "spec": "WHEN merged settings contain provider.rate_limit, THE SYSTEM SHALL use that value for the OpenAI provider rate limiter permits-per-minute instead of the hardcoded DEFAULT_PERMITS_PER_INTERVAL constant. The actual default value is a Tom-decision.",
+      "acceptance": [
+        "OpenAI provider construction reads rate_limit from merged settings or ProviderConfigOverrides",
+        "Absent setting falls back to the existing DEFAULT_PERMITS_PER_INTERVAL constant",
+        "The default constant value is unchanged (pending Tom's decision on whether to adjust)",
+        "Test: settings rate_limit overrides the default"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/print/provider.rs", "crates/norn/src/provider/openai/mod.rs"]
+      },
+      "checklist": ["C45"],
+      "stories": ["S20"]
+    },
+    {
+      "id": "R5",
+      "title": "Linting and quality verification",
+      "spec": "THE SYSTEM SHALL pass all linting gates across the workspace after all NC-001 through NC-005 changes.",
+      "acceptance": [
+        "cargo clippy --workspace --all-targets -- -D warnings passes clean",
+        "cargo fmt --check passes clean",
+        "No file exceeds 500 lines of code (excluding tests, comments, whitespace)",
+        "No .unwrap() or .expect() in norn crate library code",
+        "No TODO, FIXME, or HACK markers in production code"
+      ],
+      "files": {},
+      "checklist": ["C46", "C47", "C48"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement skill loading or activation — that is the skills cluster",
+    "SHALL NOT implement context injection or context file parsing — that is the context cluster",
+    "SHALL NOT implement hook execution — that is the hooks cluster",
+    "SHALL NOT modify NornSettings types or merge logic — those were NC-002 and NC-003",
+    "SHALL NOT change the rate limit default value without Tom's approval (Tom-decision)"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace --all-targets -- -D warnings clean",
+    "cargo fmt --check clean",
+    "SkillSearchPaths includes settings paths (verified by test)",
+    "ContextSearchPaths extension installed when settings provide paths (verified by test)",
+    "REPL history respects settings capacity (verified by test)",
+    "Rate limiter respects settings rate_limit (verified by test)",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)",
+    "grep -r 'TODO\\|FIXME\\|HACK\\|unimplemented!' crates/norn/src/ crates/norn-cli/src/ returns no matches in production code"
+  ]
+}

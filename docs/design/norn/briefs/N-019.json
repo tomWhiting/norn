@@ -1,0 +1,80 @@
+{
+  "id": "N-019",
+  "cluster": "norn",
+  "title": "Incremental SSE streaming for OpenAI provider",
+  "depends_on": ["N-004"],
+  "blocked_by": [],
+  "checklist": [],
+  "stories": ["S27"],
+  "purpose": "The OpenAI provider currently buffers the entire HTTP response body before parsing SSE events (response.text().await then parse_sse_bytes). The consumer sees a stream, but only after the full response completes — losing the real-time token-by-token streaming that makes agent work observable. This brief replaces buffered reading with incremental chunk processing via reqwest bytes_stream().",
+  "task": "Create a stateful SseParser that accepts partial byte chunks and yields complete SSE events as they become available. Replace response.text().await with response.bytes_stream() in SenderProvider::execute. Feed chunks through SseParser incrementally, sending mapped ProviderEvents through the channel as each SSE frame completes. Handle frames that span chunk boundaries. Testing: unit tests with deliberately fragmented SSE payloads.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Stateful incremental SSE parser",
+      "spec": "SseParser SHALL accept arbitrary byte chunks and yield complete SSE events as frames become available. It SHALL correctly handle frames split across chunk boundaries.",
+      "acceptance": [
+        "SseParser struct in crates/norn/src/provider/openai/sse.rs",
+        "SseParser::new() creates empty parser state",
+        "SseParser::feed(&mut self, chunk: &[u8]) -> Vec<SseEvent> yields zero or more complete events",
+        "Handles event: and data: fields spanning chunk boundaries",
+        "Handles double-newline frame delimiter split across chunks",
+        "Handles multiple complete frames in a single chunk",
+        "Handles empty chunks (yields nothing)",
+        "Handles UTF-8 codepoints split across chunks",
+        "Test: feed 'data: {\"text\":\"hel' then 'lo\"}\\n\\n', verify one complete event",
+        "Test: feed 'data: a\\n\\ndata: b\\n\\n' in one chunk, verify two events",
+        "Test: feed empty chunk between valid chunks, verify no crash and events still parse"
+      ],
+      "files": { "modify": ["crates/norn/src/provider/openai/sse.rs"] },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Replace buffered reading with bytes_stream",
+      "spec": "SenderProvider::execute SHALL use response.bytes_stream() instead of response.text().await. Each chunk is fed to SseParser and resulting events are sent immediately through the channel.",
+      "acceptance": [
+        "response.text().await removed from SenderProvider::execute",
+        "response.bytes_stream() used instead — reqwest stream feature already enabled",
+        "Each chunk fed to parser.feed(), resulting events mapped via map_sse_event and sent via tx.send",
+        "Events arrive at the consumer as they are parsed, not after full response completes",
+        "HTTP errors (non-200 status) still detected before streaming begins",
+        "Connection drops mid-stream produce a ProviderError::StreamInterrupted",
+        "Existing parse_sse_bytes function retained for test utilities but no longer used in production path",
+        "Test: mock HTTP response delivering 3 events in 3 separate chunks, verify consumer receives each before the next arrives"
+      ],
+      "files": { "modify": ["crates/norn/src/provider/openai/mod.rs"] },
+      "checklist": [],
+      "stories": ["S27"]
+    },
+    {
+      "id": "R3",
+      "title": "Rate limiter interaction with streaming",
+      "spec": "The token-bucket rate limiter SHALL acquire before the streaming request begins, not after. 429 responses SHALL still be handled with Retry-After header parsing.",
+      "acceptance": [
+        "Rate limiter acquire() called before HTTP request, same as current behavior",
+        "429 responses detected from status code before bytes_stream() is consumed",
+        "Retry-After header parsed and respected on 429",
+        "Rate limiter is not held during streaming — only during the initial request",
+        "Test: verify 429 with Retry-After retries correctly with incremental streaming"
+      ],
+      "files": { "modify": ["crates/norn/src/provider/openai/mod.rs"] },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the ProviderEvent enum or Provider trait",
+    "SHALL NOT modify the consumer-side stream interface (ProviderStream stays the same)",
+    "SHALL NOT implement SSE for the Claude Runner adapter (it uses its own streaming format)",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all provider tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "SseParser correctly handles fragmented frames — verified by 3+ unit tests",
+    "Events stream incrementally (not buffered) — verified by test with multi-chunk delivery"
+  ]
+}

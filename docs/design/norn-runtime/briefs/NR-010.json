@@ -1,0 +1,81 @@
+{
+  "id": "NR-010",
+  "cluster": "norn-runtime",
+  "title": "Frontend runtime awareness and session tab differentiation",
+  "depends_on": ["NR-001"],
+  "blocked_by": [],
+  "checklist": ["C85", "C86", "C87"],
+  "stories": ["S15", "S24"],
+  "purpose": "The frontend currently has no concept of which runtime backs an agent session. The session API already returns runtime_kind (SessionInfoResponse at api/assistant.rs:103) but the frontend never reads it. Two model fallback strings hardcode 'claude'. The session tab in CommsInput renders identical content for both runtimes. This brief adds runtime awareness to the frontend so Tom can distinguish Norn from Claude Runner sessions and the UI adapts appropriately.",
+  "task": "Add runtime_kind to the frontend session types and surface it in the assistant hooks. Fix the two hardcoded 'claude' model fallbacks in AssistantPanel.tsx. Add a runtime indicator to the session toolbar so the active runtime is visible. The SessionStartedEvent from the WebSocket should include runtime_kind if available, and the REST session response already provides it.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Runtime kind in frontend session types",
+      "spec": "WHEN the frontend receives session data from REST or WebSocket THE SYSTEM SHALL include a runtime_kind field ('norn' or 'claude_runner') AND it SHALL surface runtime_kind through useAssistantSession and useActiveAgentSessions hooks.",
+      "acceptance": [
+        "SessionStartedEvent type in features/assistant/types.ts includes optional runtime_kind?: 'norn' | 'claude_runner' field",
+        "useAssistantSession hook exposes runtimeKind from the session_started event",
+        "REST session response type includes runtime_kind field matching the backend SessionInfoResponse",
+        "useActiveAgentSessions includes runtime_kind in the session info returned to consumers"
+      ],
+      "files": {
+        "modify": [
+          "apps/web/src/features/assistant/types.ts",
+          "apps/web/src/features/assistant/hooks/useAssistantSession.ts"
+        ]
+      },
+      "checklist": ["C85"],
+      "stories": ["S15"]
+    },
+    {
+      "id": "R2",
+      "title": "Fix hardcoded model fallback strings",
+      "spec": "WHEN displaying the model name for an agent session THE SYSTEM SHALL use the model field from the session data AND it SHALL NOT fall back to a hardcoded 'claude' string. WHEN the model field is null or undefined, THE SYSTEM SHALL display the runtime kind as fallback ('Norn' or 'Claude Runner').",
+      "acceptance": [
+        "AssistantPanel.tsx line 118 no longer uses ?? 'claude' — uses runtime-aware fallback",
+        "AssistantPanel.tsx line 334 no longer uses ?? 'claude' — uses runtime-aware fallback",
+        "A Norn session with no model field displays 'Norn' not 'claude'",
+        "A Claude Runner session with no model field displays 'Claude Runner' not 'claude'"
+      ],
+      "files": {
+        "modify": [
+          "apps/web/src/features/assistant/components/AssistantPanel.tsx"
+        ]
+      },
+      "checklist": ["C86"],
+      "stories": ["S15"]
+    },
+    {
+      "id": "R3",
+      "title": "Runtime indicator in session toolbar",
+      "spec": "WHEN the session toolbar renders for an active session THE SYSTEM SHALL display a runtime badge showing 'Norn' or 'Claude Runner' alongside the model and context window badges in the ProfileRow AND it SHALL use distinct visual treatment (color or icon) so the runtime is identifiable at a glance.",
+      "acceptance": [
+        "Session toolbar (session-toolbar.tsx ProfileRow, around line 73-82) includes a runtime badge",
+        "Badge displays 'Norn' for Norn sessions and 'Claude Runner' for Claude Runner sessions",
+        "Badge uses distinct color: Norn sessions get a different badge color than Claude Runner",
+        "Badge is visible without expanding the profile row — it appears on the same row as model and context window badges"
+      ],
+      "files": {
+        "modify": [
+          "apps/web/src/components/comms-input/session-toolbar.tsx"
+        ]
+      },
+      "checklist": ["C87"],
+      "stories": ["S15", "S24"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT change the backend SessionInfoResponse or AssistantEvent types — they already include runtime_kind",
+    "SHALL NOT add Norn-specific event processing to useAssistantSession — the event stream is runtime-agnostic by design",
+    "SHALL NOT change the session toolbar layout structure — only add the runtime badge within the existing ProfileRow"
+  ],
+  "verification": [
+    "TypeScript build passes with no errors (bun run build)",
+    "Biome lint passes on all modified files",
+    "Norn sessions display 'Norn' runtime badge in session toolbar",
+    "Claude Runner sessions display 'Claude Runner' runtime badge",
+    "No hardcoded 'claude' fallback strings remain in AssistantPanel.tsx",
+    "runtime_kind is accessible from useAssistantSession hook"
+  ]
+}

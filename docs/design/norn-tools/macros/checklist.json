@@ -1,0 +1,107 @@
+{
+  "cluster": "norn-tools/macros",
+  "sections": [
+    {
+      "name": "Crate Setup",
+      "items": [
+        {"id": "C1", "text": "norn-macros crate exists as a workspace member with proc-macro = true in Cargo.toml", "done": false},
+        {"id": "C2", "text": "norn-macros depends only on proc-macro2, quote, and syn (full + extra-traits features)", "done": false},
+        {"id": "C3", "text": "norn-macros Cargo.toml declares unsafe_code = deny and pedantic clippy lints matching workspace standard", "done": false},
+        {"id": "C4", "text": "norn crate declares norn-macros as a dependency", "done": false},
+        {"id": "C5", "text": "norn crate re-exports ToolArgs derive macro via pub use norn_macros::ToolArgs in tool module", "done": false},
+        {"id": "C6", "text": "norn crate re-exports tool_follow_ups macro via pub use norn_macros::tool_follow_ups", "done": false}
+      ]
+    },
+    {
+      "name": "ToolArgs Derive — Core Schema Generation",
+      "items": [
+        {"id": "C7", "text": "ToolArgs derive generates a json_schema() -> serde_json::Value inherent method on the annotated struct", "done": false},
+        {"id": "C8", "text": "Generated schema has type: object with properties matching struct field names", "done": false},
+        {"id": "C9", "text": "Generated schema has additionalProperties: false by default", "done": false},
+        {"id": "C10", "text": "Fields without #[serde(default)] and not Option<T> appear in the required array", "done": false},
+        {"id": "C11", "text": "Fields with #[serde(default)] are omitted from the required array", "done": false},
+        {"id": "C12", "text": "Fields with #[serde(default = \"fn\")] are omitted from the required array", "done": false},
+        {"id": "C13", "text": "Doc comments on struct fields become description values on the corresponding schema properties", "done": false},
+        {"id": "C14", "text": "Multi-line doc comments are joined with spaces into a single description string", "done": false},
+        {"id": "C15", "text": "Property order in generated schema matches field declaration order", "done": false}
+      ]
+    },
+    {
+      "name": "ToolArgs Derive — Type Mapping",
+      "items": [
+        {"id": "C16", "text": "String and &str fields generate {\"type\": \"string\"}", "done": false},
+        {"id": "C17", "text": "bool fields generate {\"type\": \"boolean\"}", "done": false},
+        {"id": "C18", "text": "Signed integer fields (i8 through i64, isize) generate {\"type\": \"integer\"}", "done": false},
+        {"id": "C19", "text": "Unsigned integer fields (u8 through u64, usize) generate {\"type\": \"integer\", \"minimum\": 0}", "done": false},
+        {"id": "C20", "text": "Float fields (f32, f64) generate {\"type\": \"number\"}", "done": false},
+        {"id": "C21", "text": "Option<T> fields generate the inner type's schema and omit the field from required", "done": false},
+        {"id": "C22", "text": "Vec<T> fields generate {\"type\": \"array\", \"items\": <schema of T>}", "done": false},
+        {"id": "C23", "text": "HashMap<String, T> fields generate {\"type\": \"object\", \"additionalProperties\": <schema of T>}", "done": false},
+        {"id": "C24", "text": "serde_json::Value fields generate {} (any type accepted)", "done": false},
+        {"id": "C25", "text": "Nested structs with #[derive(ToolArgs)] generate inline object schemas with their own properties", "done": false},
+        {"id": "C26", "text": "Unsupported types produce compile_error! with a message naming the type and suggesting #[tool_args(schema = {...})]", "done": false}
+      ]
+    },
+    {
+      "name": "ToolArgs Derive — Enum Support",
+      "items": [
+        {"id": "C27", "text": "Unit-variant-only enums generate {\"type\": \"string\", \"enum\": [...]} with variant names", "done": false},
+        {"id": "C28", "text": "Enum variant doc comments are collected into the enum-level description", "done": false},
+        {"id": "C29", "text": "#[serde(rename_all)] on enums transforms variant names in the enum array", "done": false},
+        {"id": "C30", "text": "#[serde(rename)] on individual variants overrides the variant name in the enum array", "done": false},
+        {"id": "C31", "text": "Tagged enums (#[serde(tag = \"...\")]) generate oneOf with discriminator const on each variant", "done": false},
+        {"id": "C32", "text": "Untagged enums (#[serde(untagged)]) generate oneOf without discriminator", "done": false},
+        {"id": "C33", "text": "Adjacently tagged enums (#[serde(tag = \"t\", content = \"c\")]) generate the correct two-field schema per variant", "done": false}
+      ]
+    },
+    {
+      "name": "ToolArgs Derive — Serde Attribute Integration",
+      "items": [
+        {"id": "C34", "text": "#[serde(rename = \"x\")] on a field changes the property name in the schema to x", "done": false},
+        {"id": "C35", "text": "#[serde(rename_all = \"...\")] on the struct transforms all property names", "done": false},
+        {"id": "C36", "text": "#[serde(skip)] omits the field from the schema entirely", "done": false},
+        {"id": "C37", "text": "#[serde(skip_deserializing)] omits the field from the schema entirely", "done": false},
+        {"id": "C38", "text": "#[serde(skip_serializing)] keeps the field in the schema (it still deserializes)", "done": false},
+        {"id": "C39", "text": "#[serde(flatten)] merges the nested struct's properties into the parent schema", "done": false},
+        {"id": "C40", "text": "#[serde(flatten)] on a non-struct type produces compile_error!", "done": false}
+      ]
+    },
+    {
+      "name": "ToolArgs Derive — Override Attributes",
+      "items": [
+        {"id": "C41", "text": "#[tool_args(schema = {...})] replaces the generated schema for that field with the literal JSON", "done": false},
+        {"id": "C42", "text": "#[tool_args(description = \"...\")] overrides the doc-comment description", "done": false},
+        {"id": "C43", "text": "#[tool_args(skip)] excludes the field from the schema without affecting deserialization", "done": false},
+        {"id": "C44", "text": "#[tool_args(required)] forces inclusion in required even with #[serde(default)]", "done": false},
+        {"id": "C45", "text": "#[tool_args(additional_properties)] sets additionalProperties: true on the field's object schema", "done": false}
+      ]
+    },
+    {
+      "name": "ToolArgs Derive — Compile-Time Validation",
+      "items": [
+        {"id": "C46", "text": "Fields without doc comments and without #[tool_args(skip)] or #[serde(skip)] produce compile_error!", "done": false},
+        {"id": "C47", "text": "Compile errors from the macro point to the offending field via syn::Error::new_spanned", "done": false},
+        {"id": "C48", "text": "ToolArgs derive does not interfere with #[derive(Deserialize)] applied to the same struct", "done": false}
+      ]
+    },
+    {
+      "name": "Follow-Up Action Macro",
+      "items": [
+        {"id": "C49", "text": "tool_follow_ups! macro generates code that constructs Vec<FollowUpAction> from declarative action definitions", "done": false},
+        {"id": "C50", "text": "Each action declaration supports name, description, when (condition closure), expires, and overrides fields", "done": false},
+        {"id": "C51", "text": "Description field supports interpolation from output fields via format-string syntax", "done": false},
+        {"id": "C52", "text": "Expiry shorthand (FileModified(path), AnyFileModified, TurnScoped, Never) expands to ExpiryCondition construction", "done": false},
+        {"id": "C53", "text": "when condition is evaluated against ToolOutput at runtime to filter applicable follow-ups", "done": false},
+        {"id": "C54", "text": "Overrides are expressed as JSON literal that gets stored on the FollowUpAction", "done": false}
+      ]
+    },
+    {
+      "name": "Migration Compatibility",
+      "items": [
+        {"id": "C55", "text": "Existing tools can use #[derive(ToolArgs)] without changing their Tool trait implementation beyond input_schema()", "done": false},
+        {"id": "C56", "text": "Hand-written input_schema() methods coexist with ToolArgs-derived json_schema() during incremental migration", "done": false},
+        {"id": "C57", "text": "Generated schemas for EditArgs, BashArgs, and PatchArgs are byte-identical to current hand-written schemas", "done": false}
+      ]
+    }
+  ]
+}

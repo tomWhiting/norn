@@ -1,0 +1,177 @@
+{
+  "id": "PW-005",
+  "cluster": "norn-provider-ws",
+  "title": "Connection pool and per-slot state machine",
+  "depends_on": ["PW-004"],
+  "blocked_by": [],
+  "checklist": ["C14", "C15", "C16", "C17", "C18", "C19", "C20", "C21", "C22", "C23", "C24", "C25", "C26", "C27"],
+  "stories": ["S1", "S13"],
+  "purpose": "Build the connection pool that manages multiple WS connections for concurrent callers. The pool provides demand-driven scaling with a configurable warm floor (min_connections) and ceiling (max_connections), per-slot state management via the WsState enum, take-use-return locking that holds the Mutex for microseconds, and idle connection cleanup. This is the central coordination layer between the raw WS connection (PW-004) and the transport dispatch (PW-010).",
+  "task": "Create the WsPool, WsSlot, and WsState types in openai/websocket.rs. WsPool holds Vec<WsSlot> protected by tokio::sync::Mutex. Each WsSlot has a WsState (Available/InUse/Disconnected/Disabled), establishment timestamp, and last-used timestamp. Implement the take-use-return pattern: callers scan for Available slots, swap to InUse, use the connection, then return it. When all slots are InUse and pool is below max, create a new slot and establish. When pool is at max, caller falls back to HTTP. Idle connections above min_connections are closed after idle_timeout.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "WsState enum",
+      "spec": "WsState SHALL have four variants: Available(WsConnection) for idle connections ready for use, InUse for connections claimed by a caller, Disconnected for slots awaiting fresh establishment, and Disabled for slots that have been permanently retired by the circuit breaker.",
+      "acceptance": [
+        "WsState enum defined with Available(WsConnection), InUse, Disconnected, and Disabled variants",
+        "Enum is not pub — internal to the pool module"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C16"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "WsSlot struct",
+      "spec": "WsSlot SHALL hold a WsState, an Option<Instant> for establishment time, and an Instant for last-used time.",
+      "acceptance": [
+        "WsSlot struct defined with state, established_at, and last_used fields",
+        "last_used updated on every take and return operation"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C15"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "WsPool struct with Mutex",
+      "spec": "WsPool SHALL hold Vec<WsSlot>, pool config (min_connections, max_connections, idle_timeout), and pool-wide recovery state. The pool SHALL be protected by tokio::sync::Mutex.",
+      "acceptance": [
+        "WsPool struct defined with slots vec, config, and recovery state",
+        "Protected by tokio::sync::Mutex on OpenAiProvider",
+        "min_connections, max_connections, idle_timeout, headroom, base_backoff, max_backoff, reconnect_margin configurable via ProviderConfig"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C14", "C22"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Take-use-return pattern",
+      "spec": "WHEN a caller requests a connection from the pool THE SYSTEM SHALL lock the Mutex, scan for the first Available slot, swap it to InUse, and unlock. The Mutex lock SHALL be held only for the state scan and swap — never for the streaming duration.",
+      "acceptance": [
+        "Mutex lock duration is bounded to the scan+swap operation",
+        "Caller receives a WsConnection taken from an Available slot",
+        "Slot state is InUse while the caller holds the connection"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C17", "C23"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R5",
+      "title": "InUse guard against double establishment",
+      "spec": "WHEN a caller finds a Disconnected slot THE SYSTEM SHALL swap it to InUse before unlocking, then attempt establishment outside the lock. A concurrent caller finding the same slot as InUse SHALL move to the next slot.",
+      "acceptance": [
+        "Disconnected slot swapped to InUse before Mutex unlock",
+        "Concurrent caller seeing InUse skips to next available slot or scales up",
+        "No two callers attempt establishment on the same slot"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C24", "C25"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Connection return",
+      "spec": "WHEN a caller finishes using a connection THE SYSTEM SHALL lock the pool and swap the slot back to Available(conn) if healthy or Disconnected if broken.",
+      "acceptance": [
+        "Healthy connection returned as Available",
+        "Broken connection marked Disconnected",
+        "last_used timestamp updated on return"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C26"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Warm floor establishment",
+      "spec": "WHEN the pool is first accessed THE SYSTEM SHALL establish connections to reach the dynamic warm floor: target pool size is max(min_connections, active_count + headroom). The pool proactively establishes connections to maintain this headroom above the current active count.",
+      "acceptance": [
+        "Target pool size computed as max(min_connections, active_count + headroom)",
+        "Warm floor connections not subject to idle cleanup",
+        "Warm floor slots persist as Available when not in use"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C18"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "Demand-driven scale up",
+      "spec": "WHEN the pool determines that active_count + headroom exceeds current pool size and pool size is below max_connections THE SYSTEM SHALL proactively establish connections to maintain headroom. New slots SHALL be created as InUse when demanded, then return to Available to serve as headroom.",
+      "acceptance": [
+        "Pool proactively establishes connections to maintain headroom above active count",
+        "New slot starts in InUse state when demanded",
+        "Pool size does not exceed max_connections"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C19"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R9",
+      "title": "Idle cleanup",
+      "spec": "Connections above min_connections that have not been used for longer than idle_timeout SHALL be closed and their slots removed from the pool.",
+      "acceptance": [
+        "Slots above min_connections with last_used older than idle_timeout are removed",
+        "Warm floor slots (first min_connections) are never removed by idle cleanup",
+        "Cleanup runs lazily on pool access, not via background task"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C20"],
+      "stories": []
+    },
+    {
+      "id": "R10",
+      "title": "Pool-full fallback",
+      "spec": "WHEN all slots are InUse and pool is at max_connections THE SYSTEM SHALL signal the caller to fall back to HTTP for that request. The caller SHALL try the pool again on subsequent requests.",
+      "acceptance": [
+        "Pool returns a signal (None or error variant) when full",
+        "Caller is not blocked waiting — immediate fallback",
+        "Subsequent request from the same caller can acquire a freed slot"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C21", "C27"],
+      "stories": ["S13"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement pool recovery/cooldown — that is PW-006 scope",
+    "SHALL NOT implement connection age tracking or 55-minute reconnection — that is PW-008 scope",
+    "SHALL NOT implement request/response framing — that is PW-007 scope",
+    "SHALL NOT implement transport selection or the Provider::stream() dispatch — that is PW-010 scope",
+    "SHALL NOT hardcode min_connections, max_connections, or idle_timeout values — all from config"
+  ],
+  "verification": [
+    "cargo check --workspace passes",
+    "cargo test -p norn passes clean",
+    "WsPool, WsSlot, WsState types exist in openai/websocket.rs",
+    "Tests verify take-use-return pattern: take Available → InUse, return → Available",
+    "Tests verify scale-up: new slot created when all InUse and below max",
+    "Tests verify pool-full: signal returned when at max and all InUse",
+    "Tests verify idle cleanup: old slots above min removed"
+  ]
+}

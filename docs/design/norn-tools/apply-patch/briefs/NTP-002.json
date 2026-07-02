@@ -1,0 +1,138 @@
+{
+  "id": "NTP-002",
+  "cluster": "norn-tools/apply-patch",
+  "title": "Reorder resolution tiers to entity-first",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3", "C4", "C5", "C6"],
+  "stories": ["S1", "S4", "S14"],
+  "purpose": "The current three-tier resolution applies hunks in the weakest-signal-first order: header correction + diffy (line numbers), then context-anchored search, then entity-guided placement. This brief inverts the order so the strongest signal (structural entity matching) is tried first, context search is the fallback, and line-number-based diffy is the last resort. This improves patch reliability for model-generated diffs where line numbers are almost always stale but @@ semantic anchors are almost always correct.",
+  "task": "Restructure apply_unified_tiered in patch_apply.rs to try entity-guided placement first when a semantic anchor exists, then full-file context search, then header correction + diffy. Add per-hunk resolution metadata to the return type so callers can report which tier was used, what entity was matched, and how much line drift occurred. Keep the existing entity-finding code (SupportedLanguage, find_entity_range, collect_named_containers) — NTP-003 replaces it with libyggd. This brief reorders the tiers; NTP-003 replaces the tier 1 implementation.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define HunkResolution metadata type",
+      "spec": "A HunkResolution struct SHALL capture per-hunk resolution details: tier_used (1, 2, or 3), entity_matched (Option<String> — the entity name from the @@ anchor), matched_at_line (Option<usize>), stated_line (usize — from the @@ header), drift (i64 — difference between matched_at_line and stated_line), and confidence (High, Medium, Low based on tier and match quality). The struct SHALL be in patch_apply.rs.",
+      "acceptance": [
+        "HunkResolution struct exists with tier_used, entity_matched, matched_at_line, stated_line, drift, confidence fields",
+        "Confidence enum has High (entity match), Medium (context match), Low (diffy fallback) variants",
+        "HunkResolution derives Debug, Clone, Serialize"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C6"],
+      "stories": ["S4", "S14"]
+    },
+    {
+      "id": "R2",
+      "title": "Extract semantic anchor from @@ header",
+      "spec": "A parse_semantic_anchor function SHALL extract the text after the second @@ in a unified diff hunk header. For example, from '@@ -10,5 +10,6 @@ fn process_event' it SHALL return Some(\"fn process_event\"). If there is no text after the second @@, it SHALL return None. Leading/trailing whitespace SHALL be trimmed.",
+      "acceptance": [
+        "parse_semantic_anchor('@@ -10,5 +10,6 @@ fn process_event') returns Some('fn process_event')",
+        "parse_semantic_anchor('@@ -1,3 +1,4 @@') returns None",
+        "parse_semantic_anchor('@@ -1,3 +1,4 @@  ') returns None (whitespace-only treated as empty)",
+        "parse_semantic_anchor('@@ -1,3 +1,4 @@ impl Display for Foo') returns Some('impl Display for Foo')"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C2"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Implement entity-first tier ordering",
+      "spec": "apply_unified_tiered SHALL be restructured so that for each hunk: (1) IF a semantic anchor exists AND find_entity_range succeeds, scope the context search to that entity's line range; (2) IF no semantic anchor or entity not found, run full-file context-anchored search (exact, whitespace-insensitive, trim-insensitive); (3) IF context search fails, fall back to header correction + diffy. The function signature SHALL change to return Vec<HunkResolution> alongside the applied content. The existing find_entity_range and collect_named_containers functions SHALL continue to be used — NTP-003 replaces them.",
+      "acceptance": [
+        "A hunk with a valid @@ semantic anchor matching an entity in the file is resolved at tier 1 (entity-guided)",
+        "A hunk with no semantic anchor is resolved at tier 2 (context search) or tier 3 (diffy)",
+        "A hunk where entity is found but context does not match within entity range falls through to tier 2",
+        "A hunk where context search fails falls through to tier 3 (diffy)",
+        "The return type includes Vec<HunkResolution> with one entry per hunk"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C1", "C3", "C5"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R4",
+      "title": "Context search with three fallback levels",
+      "spec": "Tier 2 context-anchored search SHALL try three matching strategies in order: exact match (current find_context_match), whitespace-insensitive match (collapse all runs of whitespace to single space before comparison), and trim-insensitive match (trim each line before comparison). Each strategy SHALL search the full file (or entity range if scoped by tier 1). The first successful match wins.",
+      "acceptance": [
+        "Exact match succeeds when context lines are byte-identical",
+        "Whitespace-insensitive match succeeds when context differs only in whitespace quantity",
+        "Trim-insensitive match succeeds when context has leading/trailing whitespace differences",
+        "Strategies are tried in order: exact first, then whitespace-insensitive, then trim-insensitive",
+        "Match confidence is Medium for exact, Medium for whitespace-insensitive, Low for trim-insensitive"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C4"],
+      "stories": ["S1"]
+    },
+    {
+      "id": "R5",
+      "title": "Surface resolution metadata in tool output",
+      "spec": "patch.rs execute SHALL include the per-hunk HunkResolution data in the tool output JSON under a resolution_details key. Each entry SHALL include the file path, hunk index, tier used, entity matched, line drift, and confidence. This data is informational — it does not affect pass/fail.",
+      "acceptance": [
+        "Tool output JSON contains a resolution_details array",
+        "Each entry has file, hunk_index, tier_used, entity_matched, matched_at_line, stated_line, drift, confidence",
+        "A single-hunk single-file patch produces one resolution_details entry",
+        "A multi-file patch produces one entry per hunk across all files"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C6"],
+      "stories": ["S4", "S14"]
+    },
+    {
+      "id": "R6",
+      "title": "Tests for reordered tier logic",
+      "spec": "Tests SHALL verify: a hunk with a valid entity anchor resolves at tier 1, a hunk with no anchor resolves at tier 2 or 3, a hunk where entity range is found but context does not match within it falls to tier 2, the fallback chain works end to end, resolution metadata is populated correctly for each tier.",
+      "acceptance": [
+        "Test: Rust fn anchor resolves at tier 1 with entity_matched populated",
+        "Test: no-anchor hunk resolves at tier 2 via context search",
+        "Test: context mismatch within entity range falls through to full-file context search",
+        "Test: complete fallback to tier 3 diffy when context search fails",
+        "Test: resolution metadata correctly reflects which tier was used",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C1", "C2", "C3", "C4", "C5"],
+      "stories": ["S1"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT replace the existing entity-finding code (SupportedLanguage, find_entity_range) — NTP-003 replaces it with libyggd",
+    "SHALL NOT add dry_run or mode parameters — those are NTP-004 and NTP-005",
+    "SHALL NOT add /dev/null handling — that is NTP-001",
+    "SHALL NOT add artifact storage — that is NTP-006",
+    "SHALL NOT modify the Claude Code format parser — CC format has its own resolution"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero warnings",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'HunkResolution' crates/norn/src/tools/patch_apply.rs confirms the metadata type exists",
+    "The tier ordering in apply_unified_tiered is: entity first, context second, diffy third (visual inspection)"
+  ]
+}

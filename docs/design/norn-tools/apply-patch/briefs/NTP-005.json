@@ -1,0 +1,160 @@
+{
+  "id": "NTP-005",
+  "cluster": "norn-tools/apply-patch",
+  "title": "Strict and structural resolution modes",
+  "depends_on": ["NTP-002"],
+  "blocked_by": [],
+  "checklist": ["C35", "C36", "C37", "C38", "C39", "C40", "C41"],
+  "stories": ["S6", "S7"],
+  "purpose": "Models need a way to verify their own patch accuracy (strict mode: did I get the line numbers right?) and to force structural resolution (structural mode: always use entity matching, never fall back to line numbers). Strict mode is a confidence tool — when it fails but structural would have succeeded, the result tells the model exactly what structural matching found, including the drift and a follow-up action to apply with structural matching. This feedback loop lets models calibrate their accuracy over time.",
+  "task": "Add a mode parameter to the apply_patch input schema with three values: auto (default, current behavior after NTP-002 reorder), strict (exact line-position match only), and structural (entity resolution required for every hunk, no diffy fallback). When strict mode fails, check whether structural matching would have succeeded and include a structural_alternative object in the result. Include a follow-up action ID for applying the patch with structural matching without re-generating it.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Add mode parameter to input schema and PatchArgs",
+      "spec": "The apply_patch input schema SHALL include a mode string parameter with enum values [\"auto\", \"strict\", \"structural\"] and default \"auto\". PatchArgs SHALL gain a #[serde(default)] mode: PatchMode field. PatchMode SHALL be an enum with Auto, Strict, Structural variants, with Auto as the Default impl. The parameter description SHALL explain each mode's purpose.",
+      "acceptance": [
+        "input_schema() JSON includes mode property with enum constraint and default auto",
+        "PatchMode enum exists with Auto, Strict, Structural variants",
+        "PatchMode implements Default returning Auto",
+        "Omitting mode from arguments defaults to Auto (backward compatible)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C35"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Implement auto mode as the reordered default",
+      "spec": "WHEN mode is Auto, apply_unified_tiered SHALL use the entity-first resolution order established by NTP-002: tier 1 (entity-guided), tier 2 (context search), tier 3 (diffy). This is the existing behavior after NTP-002 lands. No changes needed beyond passing the mode through.",
+      "acceptance": [
+        "Auto mode behavior is identical to the NTP-002 tier ordering",
+        "Auto mode is the default when mode parameter is omitted"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C36"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Implement strict mode with exact position matching",
+      "spec": "WHEN mode is Strict, apply_unified_tiered SHALL only apply a hunk when context lines match exactly at the stated line position (the @@ header's line numbers). It SHALL NOT fall back to context search or entity-guided placement. If exact matching fails, the hunk is NOT applied and the result includes applied: false for that hunk. The tool continues processing remaining hunks (does not abort the entire patch on first strict failure).",
+      "acceptance": [
+        "Strict mode applies a hunk only when context matches at the exact stated line",
+        "Strict mode does not fall back to context search",
+        "Strict mode does not fall back to entity-guided placement",
+        "A strict-mode failure for one hunk does not abort the entire patch",
+        "HunkResolution for a failed strict hunk has tier_used: 0 (none) and applied: false"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C37"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R4",
+      "title": "Report structural alternative when strict fails",
+      "spec": "WHEN strict mode fails for a hunk, the system SHALL check whether entity-guided or context-search resolution would have succeeded. IF structural matching would have succeeded, the result SHALL include a structural_alternative object with: would_apply (bool), entity (matched entity name), entity_range (line range), matched_at_line (where context was found), drift (signed offset from stated line), and confidence (High/Medium/Low). IF structural matching would also have failed, structural_alternative SHALL be null.",
+      "acceptance": [
+        "Failed strict-mode hunk with a viable structural match includes structural_alternative object",
+        "structural_alternative.would_apply is true when entity or context match succeeded",
+        "structural_alternative.drift is the signed difference between matched_at_line and stated_line",
+        "structural_alternative.entity is the entity name from the @@ anchor",
+        "Failed strict-mode hunk with no viable structural match has structural_alternative: null"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs",
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C38", "C39"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R5",
+      "title": "Implement structural mode",
+      "spec": "WHEN mode is Structural, apply_unified_tiered SHALL require entity resolution for every hunk. It SHALL NOT fall back to diffy (tier 3). If a hunk has no semantic anchor or the entity is not found, the hunk fails. Context search (tier 2) is still available within the entity's scoped range. The tool continues processing remaining hunks on failure (same as strict mode).",
+      "acceptance": [
+        "Structural mode requires entity resolution — hunks without semantic anchors fail",
+        "Structural mode does not fall back to diffy",
+        "Structural mode allows context search within the entity's scoped range",
+        "A hunk with a valid entity anchor and context match within the entity succeeds",
+        "A hunk without a semantic anchor fails with a clear error message"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs"
+        ]
+      },
+      "checklist": ["C40"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Follow-up action for strict-to-structural upgrade",
+      "spec": "WHEN a strict-mode patch fails with a viable structural_alternative, the result SHALL include a follow_up_id referencing a follow-up action that re-applies the patch with mode: auto (which will use structural matching). The follow-up action SHALL reuse the same patch text — no re-generation needed. This depends on the follow-up types from NTF-001 being available; if they are not yet landed, this requirement SHALL register the follow-up data in the tool output under a pending_follow_up key that can be wired once NTF-001 lands.",
+      "acceptance": [
+        "Failed strict-mode result with structural_alternative includes follow_up_id or pending_follow_up",
+        "The follow-up references the same patch text with mode changed to auto",
+        "The model can invoke the follow-up without re-specifying the patch content",
+        "If NTF-001 is not yet landed, pending_follow_up contains the data needed to create the follow-up later"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C41"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R7",
+      "title": "Tests for strict and structural modes",
+      "spec": "Tests SHALL verify: strict mode applies when context matches at exact position, strict mode fails when context is at a different position, strict failure with viable structural match includes structural_alternative, strict failure without viable match has null structural_alternative, structural mode succeeds with entity anchor, structural mode fails without entity anchor, auto mode continues to work as before (regression).",
+      "acceptance": [
+        "Test: strict mode succeeds when lines are at exact stated position",
+        "Test: strict mode fails when context has drifted by N lines",
+        "Test: strict failure reports structural_alternative with correct drift",
+        "Test: strict failure without any match reports structural_alternative: null",
+        "Test: structural mode succeeds with valid entity anchor",
+        "Test: structural mode fails for hunk without semantic anchor",
+        "Test: auto mode regression — existing behavior unchanged",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_apply.rs",
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C35", "C36", "C37", "C38", "C40"],
+      "stories": ["S6", "S7"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT add dry_run parameter — that is NTP-004 (can be combined with mode, but parameter is NTP-004 scope)",
+    "SHALL NOT add artifact storage — that is NTP-006",
+    "SHALL NOT modify entity extraction logic — that is NTP-003",
+    "SHALL NOT add /dev/null handling — that is NTP-001",
+    "SHALL NOT implement the full follow-up tool wiring — only prepare the data; NTF-002 wires it"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero warnings",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'PatchMode' crates/norn/src/tools/patch.rs confirms the enum exists",
+    "grep -rn 'structural_alternative' crates/norn/src/tools/patch_apply.rs confirms the feedback object is constructed"
+  ]
+}

@@ -1,0 +1,51 @@
+{
+  "cluster": "norn-tools/macros",
+  "personas": [
+    {
+      "name": "AI Agent",
+      "role": "Tool Author Implementing a New Tool",
+      "stories": [
+        {"id": "S1", "text": "As a tool author, I want to derive the JSON Schema from my args struct so that I do not have to write and maintain a separate json!({...}) block that mirrors the struct."},
+        {"id": "S2", "text": "As a tool author, I want doc comments on struct fields to become schema descriptions so that documentation and the model-visible schema stay in sync automatically."},
+        {"id": "S3", "text": "As a tool author, I want a compile error when I add a field without a doc comment so that I cannot accidentally ship a schema property with no description."},
+        {"id": "S4", "text": "As a tool author, I want to override the generated schema for a single field so that I can handle cases where the Rust type does not directly map to the desired JSON Schema."},
+        {"id": "S5", "text": "As a tool author, I want the macro to respect my serde attributes so that the schema matches how the struct actually deserializes, without manual synchronization."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Tool Author Registering Follow-Up Actions",
+      "stories": [
+        {"id": "S6", "text": "As a tool author, I want to declare follow-up actions on my tool result using a declarative macro so that I do not have to manually construct FollowUpAction structs."},
+        {"id": "S7", "text": "As a tool author, I want to specify when a follow-up action is available using a condition on the output so that only relevant actions appear in the tool result."},
+        {"id": "S8", "text": "As a tool author, I want to specify expiry conditions in shorthand so that I do not have to construct ExpiryCondition enum variants by hand."},
+        {"id": "S9", "text": "As a tool author, I want follow-up descriptions to interpolate values from the tool output so that the model sees concrete, actionable descriptions."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Using a Tool with Follow-Up Actions",
+      "stories": [
+        {"id": "S10", "text": "As an AI agent, I want to see follow-up actions in a tool result so that I can act on deferred options without re-generating the original tool call."},
+        {"id": "S11", "text": "As an AI agent, I want follow-up action descriptions to name the specific file or operation so that I can make informed decisions about whether to invoke the follow-up."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Maintaining the Tool Codebase",
+      "stories": [
+        {"id": "S12", "text": "As a developer maintaining tools, I want schema generation to be derived from the args struct so that adding or removing a field automatically updates the schema."},
+        {"id": "S13", "text": "As a developer reviewing a tool PR, I want to see the schema defined by struct fields and doc comments so that I can review the schema and the deserialization target in one place."},
+        {"id": "S14", "text": "As a developer migrating an existing tool, I want to add #[derive(ToolArgs)] without changing anything else about the tool so that I can migrate tools one at a time."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Debugging Tool Schema Issues",
+      "stories": [
+        {"id": "S15", "text": "As a developer debugging a schema mismatch, I want the macro to produce compile errors that point to the specific field with the problem so that I do not have to guess which field caused the issue."},
+        {"id": "S16", "text": "As a developer using an unsupported type, I want a compile error that names the type and suggests the override syntax so that I know exactly how to fix it."}
+      ]
+    }
+  ]
+}

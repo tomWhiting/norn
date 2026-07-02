@@ -1,0 +1,105 @@
+{
+  "cluster": "norn-skills",
+  "sections": [
+    {
+      "name": "Shared Frontmatter Utility",
+      "items": [
+        {"id": "C1", "text": "util/mod.rs exists with pub mod frontmatter and re-exports.", "done": false},
+        {"id": "C2", "text": "util/frontmatter.rs exports a split_frontmatter() function that splits YAML frontmatter from markdown body.", "done": false},
+        {"id": "C3", "text": "split_frontmatter() handles the empty-frontmatter edge case (consecutive --- delimiters with no YAML content).", "done": false},
+        {"id": "C4", "text": "split_frontmatter() handles Windows line endings (\\r\\n) in both the opening and closing delimiters.", "done": false},
+        {"id": "C5", "text": "split_frontmatter() returns an error when the opening --- delimiter is missing.", "done": false},
+        {"id": "C6", "text": "split_frontmatter() returns an error when the closing --- delimiter is missing.", "done": false},
+        {"id": "C7", "text": "profile/loader.rs calls util::frontmatter::split_frontmatter() instead of its own implementation.", "done": false},
+        {"id": "C8", "text": "rules/parser.rs calls util::frontmatter::split_frontmatter() instead of its own split_front_matter().", "done": false},
+        {"id": "C9", "text": "No other split_frontmatter or split_front_matter function exists in the codebase outside util/frontmatter.rs.", "done": false}
+      ]
+    },
+    {
+      "name": "Skill Discovery",
+      "items": [
+        {"id": "C10", "text": "skill/mod.rs exists with pub mod declarations and re-exports only.", "done": false},
+        {"id": "C11", "text": "skill/types.rs defines SkillMetadata with serde rename_all = kebab-case and all fields from D2 (name, description, when_to_use, license, compatibility, metadata, argument_hint, arguments, disable_model_invocation, user_invocable, allowed_tools, model, effort, context, agent, paths, shell, hooks).", "done": false},
+        {"id": "C12", "text": "skill/types.rs defines SkillEffort enum with Low, Medium, High, XHigh, Max variants.", "done": false},
+        {"id": "C13", "text": "skill/types.rs defines SkillContext enum with Fork variant.", "done": false},
+        {"id": "C14", "text": "skill/types.rs defines SkillShell enum with Bash and PowerShell variants.", "done": false},
+        {"id": "C15", "text": "skill/types.rs defines a StringOrList custom deserializer that accepts both a space-separated string and a YAML list.", "done": false},
+        {"id": "C16", "text": "skill/loader.rs parses SKILL.md frontmatter into SkillMetadata using util::frontmatter::split_frontmatter().", "done": false},
+        {"id": "C17", "text": "skill/loader.rs defaults name to the directory name when the name field is absent from frontmatter.", "done": false},
+        {"id": "C18", "text": "skill/loader.rs silently ignores unknown frontmatter fields.", "done": false},
+        {"id": "C19", "text": "skill/loader.rs discovers skills via <name>/SKILL.md and <name>.md patterns in search directories.", "done": false},
+        {"id": "C20", "text": "skill/loader.rs skips skills with missing or empty description and records a diagnostic.", "done": false},
+        {"id": "C21", "text": "skill/loader.rs warns via diagnostics when name does not match directory name or exceeds 64 characters, but still loads the skill.", "done": false}
+      ]
+    },
+    {
+      "name": "Skill Catalog",
+      "items": [
+        {"id": "C22", "text": "skill/catalog.rs defines SkillCatalog with scan(), list(), get(), system_prompt_listing(), and is_empty() methods.", "done": false},
+        {"id": "C23", "text": "SkillCatalog.scan() discovers skills from an ordered list of 7 directories with first-match-wins on name collision.", "done": false},
+        {"id": "C24", "text": "SkillCatalog.system_prompt_listing() excludes skills where disable_model_invocation is true.", "done": false},
+        {"id": "C25", "text": "SkillCatalog.system_prompt_listing() concatenates description and when_to_use per skill entry.", "done": false},
+        {"id": "C26", "text": "SkillCatalog.system_prompt_listing() includes a behavioral instruction line telling the model when and how to call the skill tool.", "done": false},
+        {"id": "C27", "text": "SkillCatalog.system_prompt_listing() returns empty string when no skills exist.", "done": false},
+        {"id": "C28", "text": "Each skill where user_invocable is true is registered in the SlashCommandRegistry.", "done": false}
+      ]
+    },
+    {
+      "name": "Template Processing",
+      "items": [
+        {"id": "C29", "text": "skill/template.rs implements three-stage expansion in order: backtick-bang, dollar-sign, mustache.", "done": false},
+        {"id": "C30", "text": "Stage 1 finds and executes inline !`command` patterns, replacing with trimmed stdout.", "done": false},
+        {"id": "C31", "text": "Stage 1 finds and executes ```! fenced blocks, replacing with trimmed stdout.", "done": false},
+        {"id": "C32", "text": "Stage 1 does not execute standard markdown code blocks (without the ! marker).", "done": false},
+        {"id": "C33", "text": "Stage 1 replaces failed commands with [skill shell command failed: {error}], not silent drops.", "done": false},
+        {"id": "C34", "text": "Stage 1 respects the shell frontmatter field (Bash or PowerShell) when executing commands.", "done": false},
+        {"id": "C35", "text": "Stage 1 enforces a 5-second timeout per command.", "done": false},
+        {"id": "C36", "text": "Stage 1 respects disableSkillShellExecution setting — replaces commands with policy-disabled marker.", "done": false},
+        {"id": "C37", "text": "Stage 1 runs commands from the agent's working directory (cwd), not the skill directory.", "done": false},
+        {"id": "C38", "text": "Stage 1 truncates stdout at 32KB with a truncation marker appended.", "done": false},
+        {"id": "C39", "text": "Stage 1 on failure includes the first 1KB of stderr in the failure marker.", "done": false},
+        {"id": "C40", "text": "Stage 2 resolves $ARGUMENTS to the full arguments string.", "done": false},
+        {"id": "C41", "text": "Stage 2 resolves $N and $ARGUMENTS[N] to positional arguments (0-based).", "done": false},
+        {"id": "C42", "text": "Stage 2 resolves named $name arguments from the arguments frontmatter list.", "done": false},
+        {"id": "C43", "text": "Stage 2 resolves ${CLAUDE_SESSION_ID}, ${CLAUDE_EFFORT}, and ${CLAUDE_SKILL_DIR}.", "done": false},
+        {"id": "C44", "text": "$$ escapes to a literal $ in stage 2.", "done": false},
+        {"id": "C45", "text": "Unrecognized $name references that do not match an argument or built-in are left as-is.", "done": false},
+        {"id": "C46", "text": "Stage 3 resolves {{name}} via the VariableStore using the existing expand() function.", "done": false},
+        {"id": "C47", "text": "If $ARGUMENTS does not appear in the skill body, the raw arguments string is appended as 'ARGUMENTS: <value>'.", "done": false}
+      ]
+    },
+    {
+      "name": "Argument Handling",
+      "items": [
+        {"id": "C48", "text": "SkillTool accepts an optional arguments parameter (string).", "done": false},
+        {"id": "C49", "text": "Arguments are parsed using shell-style quoting (double-quoted and single-quoted strings as single arguments, unquoted split on whitespace).", "done": false},
+        {"id": "C50", "text": "Named arguments from the arguments frontmatter list are mapped positionally.", "done": false}
+      ]
+    },
+    {
+      "name": "Runtime Integration",
+      "items": [
+        {"id": "C51", "text": "SkillEffort maps to ReasoningEffort: low->Low, medium->Medium, high->High, xhigh->XHigh, max->XHigh.", "done": false},
+        {"id": "C52", "text": "Skill effort overrides LoopContext.reasoning_effort for the activation turn, then restores the previous value.", "done": false},
+        {"id": "C53", "text": "The allowed_tools field is parsed and stored in SkillMetadata but not enforced.", "done": false},
+        {"id": "C54", "text": "The hooks frontmatter field is parsed and stored in SkillMetadata but not acted upon.", "done": false},
+        {"id": "C55", "text": "The paths frontmatter field is parsed and stored in SkillMetadata but not enforced.", "done": false},
+        {"id": "C56", "text": "Fork mode: the agent field selects the subagent configuration; the expanded skill body becomes the task input, not the system prompt.", "done": false}
+      ]
+    },
+    {
+      "name": "Wiring and Diagnostics",
+      "items": [
+        {"id": "C57", "text": "SkillSearchPaths is constructed and installed on the ToolContext during build_runtime.", "done": false},
+        {"id": "C58", "text": "SkillTool is registered in the tool registry during build_runtime only when the catalog is non-empty.", "done": false},
+        {"id": "C59", "text": "SkillCatalog is constructed by scanning search paths during build_runtime.", "done": false},
+        {"id": "C60", "text": "SkillCatalog is stored on the ToolContext as an Arc<SkillCatalog> extension.", "done": false},
+        {"id": "C61", "text": "The skill catalog listing is included in the base system instruction.", "done": false},
+        {"id": "C62", "text": "SkillTool activation result includes the skill directory path and a listing of bundled resources.", "done": false},
+        {"id": "C63", "text": "Skill diagnostics record: skipped (unparseable/missing description), warning (name mismatch/shadowed), info (deferred fields).", "done": false},
+        {"id": "C64", "text": "cargo clippy --workspace --all-targets -- -D warnings passes clean.", "done": false},
+        {"id": "C65", "text": "cargo fmt --check passes clean.", "done": false}
+      ]
+    }
+  ]
+}

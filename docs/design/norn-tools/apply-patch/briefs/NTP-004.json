@@ -1,0 +1,142 @@
+{
+  "id": "NTP-004",
+  "cluster": "norn-tools/apply-patch",
+  "title": "Dry-run mode for patch preview without disk writes",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C26", "C27", "C28", "C29", "C30", "C31", "C32", "C33", "C34", "C49", "C50", "C53"],
+  "stories": ["S5", "S8", "S9", "S13", "S16"],
+  "purpose": "Models need to preview patch impact before committing — blast radius, diagnostics, resolution details — without modifying any files on disk. Dry-run mode runs the exact same resolution and validation code path as actual application but skips the disk-write step, ensuring that a successful dry-run guarantees successful application. Results are stored in the action log for reference and can be applied via follow-up without re-specifying the patch.",
+  "task": "Add a dry_run boolean parameter to the apply_patch input schema. When dry_run is true, execute runs the full resolution pipeline (entity matching, context search, AST validation, diagnostics preview) but does not write any files to disk. The tool output includes per-file resolution details, AST validation results, blast radius, file length impact, and diagnostics preview. committed is always false in dry-run mode. The code path SHALL be identical to the non-dry-run path up to the point of disk writes — there is no separate dry-run pipeline. Dry-run results are stored in the action log.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Add dry_run parameter to input schema and PatchArgs",
+      "spec": "The apply_patch input schema SHALL include a dry_run boolean parameter with default false. PatchArgs SHALL gain a #[serde(default)] dry_run: bool field. The parameter description SHALL state that dry-run previews the patch result without writing to disk.",
+      "acceptance": [
+        "input_schema() JSON includes dry_run property with type boolean and default false",
+        "PatchArgs has dry_run: bool field with #[serde(default)]",
+        "Omitting dry_run from the tool call arguments defaults to false (backward compatible)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C26"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Skip disk writes when dry_run is true",
+      "spec": "WHEN dry_run is true, execute SHALL run the full resolution and staging pipeline (read files, apply hunks, run AST validation, collect diagnostics) but SHALL NOT write staged files to disk, SHALL NOT call tokio::fs::write, SHALL NOT create parent directories, and SHALL NOT delete files. The tool output SHALL have committed: false. All resolution metadata and diagnostics SHALL still be computed and returned.",
+      "acceptance": [
+        "Dry-run does not modify any files on disk",
+        "Dry-run does not create any directories",
+        "Dry-run output has committed: false",
+        "Dry-run output contains the same resolution_details as a real application would",
+        "Dry-run output contains diagnostics array (if any would have been produced)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C27", "C33", "C53"],
+      "stories": ["S8", "S9"]
+    },
+    {
+      "id": "R3",
+      "title": "Include blast radius in dry-run output",
+      "spec": "Dry-run output SHALL include a blast_radius object with: per-file entries (lines_added, lines_removed, lines_modified, containing_symbols list), and totals (total_files, total_added, total_removed). containing_symbols SHALL list the names of entities (functions, structs, etc.) that contain the changed lines — derived from entity extraction if available, empty list if not. File length impact SHALL be included as file_length_before and file_length_after per file.",
+      "acceptance": [
+        "Dry-run output contains blast_radius.files array with per-file metrics",
+        "Each file entry has lines_added, lines_removed, containing_symbols",
+        "Each file entry has file_length_before and file_length_after (line counts)",
+        "blast_radius.totals has total_files, total_added, total_removed",
+        "containing_symbols is populated when entity extractor is available",
+        "containing_symbols is empty array when entity extractor is not available"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C28", "C30", "C31"],
+      "stories": ["S16"]
+    },
+    {
+      "id": "R4",
+      "title": "Include AST validation and diagnostics preview",
+      "spec": "Dry-run output SHALL include AST validation results per file (pass or fail with error details). Dry-run output SHALL include a diagnostics_preview array showing what DiagnosticsPostCheck would report if the patch were applied — the same diagnostics that would run in non-dry-run mode. The diagnostics preview SHALL run the same check_single_file logic on the staged content (in memory) without writing to disk first.",
+      "acceptance": [
+        "Dry-run output contains ast_validation array with per-file pass/fail",
+        "AST failures include error position and message",
+        "Dry-run output contains diagnostics_preview array",
+        "Diagnostics preview produces the same output as post-validation would on a real apply",
+        "Diagnostics that require the file to be on disk (e.g. clippy) report what they can from static analysis"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C29", "C32"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R5",
+      "title": "Non-dry-run path includes blast radius and resolution details",
+      "spec": "The blast radius and resolution detail output SHALL also be included in non-dry-run mode (not only dry-run). This ensures the code path is truly shared — the same output structure is built regardless of dry_run, and only the disk-write step is conditional. This is critical for CO3 (identical resolution guarantee).",
+      "acceptance": [
+        "Non-dry-run tool output includes blast_radius with the same structure as dry-run",
+        "Non-dry-run tool output includes resolution_details per hunk",
+        "The output-building code path is the same for both modes",
+        "Only the disk-write step is gated by the dry_run flag"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C33", "C49", "C50"],
+      "stories": ["S5", "S9"]
+    },
+    {
+      "id": "R6",
+      "title": "Tests for dry-run mode and committed state transparency",
+      "spec": "Tests SHALL verify: dry-run does not modify files on disk, dry-run output contains blast_radius with correct metrics, dry-run output contains resolution_details per hunk, dry-run output has committed: false, dry-run AST validation catches syntax errors without writing, non-dry-run output also contains blast_radius, dry-run on a multi-file patch produces per-file metrics, and non-dry-run with post-validation failure reports committed: true alongside the error (verifying NTI-001's transparency fix is working end-to-end).",
+      "acceptance": [
+        "Test: dry-run on a valid patch produces committed: false and does not modify the file",
+        "Test: dry-run blast_radius matches expected lines_added/lines_removed",
+        "Test: dry-run on a patch with syntax errors includes ast_validation failure",
+        "Test: non-dry-run output also includes blast_radius",
+        "Test: dry-run on multi-file patch produces per-file blast_radius entries",
+        "Test: file content on disk is unchanged after dry-run",
+        "Test: non-dry-run with Gate-mode post-validation failure includes committed: true in error output (C49/C50 integration verification)",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C27", "C33", "C49", "C50"],
+      "stories": ["S5", "S8", "S9"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT add mode (strict/structural) parameter — that is NTP-005",
+    "SHALL NOT add artifact storage — that is NTP-006",
+    "SHALL NOT add follow-up actions for applying dry-run results — that depends on NTF-001 (follow-up types)",
+    "SHALL NOT modify the resolution tier logic itself — only consume the resolution metadata it produces (from NTP-002)",
+    "SHALL NOT run diagnostics that require the file to be on disk in dry-run mode — only static analysis diagnostics"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero warnings",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'dry_run' crates/norn/src/tools/patch.rs confirms the parameter exists",
+    "The disk-write code path has a single if !dry_run guard (not scattered conditionals)"
+  ]
+}

@@ -1,0 +1,105 @@
+{
+  "id": "NA-002",
+  "cluster": "norn-agents",
+  "title": "Profile scanner, libnorn resolution, and CLI delegation",
+  "depends_on": ["NA-001"],
+  "blocked_by": [],
+  "checklist": ["C3", "C4", "C5", "C6", "C7", "C8"],
+  "stories": ["S20", "S21", "S22"],
+  "purpose": "Profile resolution is currently CLI-only (norn-cli profile_loader.rs) and only supports TOML/JSON at ~/.norn/config/profiles/. Sub-agents need to load profiles by name at runtime from within libnorn (SpawnAgentTool lives in libnorn, not norn-cli). This brief implements two-tier directory scanning in libnorn, changes the profile directory to ~/.norn/profiles/, adds .meridian/profiles/ as an additional scan tier, and delegates the CLI's profile_loader to the new libnorn API.",
+  "task": "Implement a Scanner in norn::profile::loader that walks workspace-level ({cwd}/.norn/profiles/) then user-level (~/.norn/profiles/) directories, with .meridian/profiles/ as an additional tier. Workspace profiles win on name collision. The scanner finds .md files (primary) and falls back to .toml/.json for backwards compatibility. Implement resolve_profile(name, scan_dirs) as a libnorn API. Update norn-cli paths.rs to return ~/.norn/profiles/ instead of ~/.norn/config/profiles/. Update norn-cli profile_loader.rs to delegate to the libnorn scanner instead of its own file-based resolution.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Profile Scanner in libnorn",
+      "spec": "The profile Scanner SHALL walk a list of directories in priority order, returning the first matching profile file for a given name.",
+      "acceptance": [
+        "Scanner struct in profile/loader.rs with scan_dirs: Vec<PathBuf>",
+        "Scanner::new(scan_dirs) constructs from an ordered list of directories",
+        "Scanner::resolve(name) -> Option<PathBuf> finds the first match across directories",
+        "For each directory, checks: {name}.md first, then {name}.toml, then {name}.json",
+        "First directory with a match wins (workspace beats user)",
+        "Scanner::list_profiles() -> Vec<String> returns all available profile names (deduplicated, first-directory-wins)",
+        "Test: two directories with same profile name, first directory wins",
+        "Test: .md preferred over .toml in same directory"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/profile/loader.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Two-tier scanning with Meridian fallback",
+      "spec": "Profile resolution SHALL check workspace-level first, then user-level, with .meridian/profiles/ as an additional scan tier for Meridian-integrated workspaces.",
+      "acceptance": [
+        "default_scan_dirs(cwd) -> Vec<PathBuf> returns: [{cwd}/.norn/profiles/, {cwd}/.meridian/profiles/, ~/.norn/profiles/]",
+        "Workspace .norn/profiles/ has highest priority",
+        ".meridian/profiles/ is second (Meridian integration)",
+        "~/.norn/profiles/ is the user-level fallback",
+        "Non-existent directories are silently skipped (no error)",
+        "Test: profile found in .meridian/profiles/ when not in .norn/profiles/"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/profile/loader.rs"]
+      },
+      "checklist": ["C4", "C5"],
+      "stories": ["S21", "S22"]
+    },
+    {
+      "id": "R3",
+      "title": "resolve_profile as libnorn API",
+      "spec": "Profile resolution SHALL be available as a libnorn API so SpawnAgentTool can load profiles by name at runtime without depending on norn-cli.",
+      "acceptance": [
+        "pub fn resolve_profile(name: &str, scan_dirs: &[PathBuf]) -> Result<Profile, ConfigError> in profile/loader.rs",
+        "Uses Scanner internally to find the file path",
+        "Calls Profile::from_file on the resolved path (supports .md, .toml, .json)",
+        "Returns ConfigError when profile not found (lists searched directories)",
+        "Test: resolve_profile finds a markdown profile by bare name",
+        "Test: resolve_profile returns error with searched paths when not found"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/profile/loader.rs"]
+      },
+      "checklist": ["C3", "C6"],
+      "stories": ["S20"]
+    },
+    {
+      "id": "R4",
+      "title": "CLI profile path and delegation",
+      "spec": "norn-cli SHALL delegate profile resolution to libnorn's scanner and update the profiles directory path.",
+      "acceptance": [
+        "paths.rs profiles_dir() returns ~/.norn/profiles/ instead of ~/.norn/config/profiles/",
+        "profile_loader.rs resolve_profile delegates to norn::profile::loader::resolve_profile for bare names",
+        "Explicit path resolution (contains / or .) still calls Profile::from_file directly",
+        "Default profile construction (no --profile flag) unchanged",
+        "Test: bare name resolves through libnorn scanner (using tempdir with .md profile)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/config/paths.rs",
+          "crates/norn-cli/src/config/profile_loader.rs"
+        ]
+      },
+      "checklist": ["C7", "C8"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement profile parsing — that is NA-001",
+    "SHALL NOT modify SpawnAgentTool — that is NA-006",
+    "SHALL NOT remove support for explicit file path profile loading (./path/to/profile.toml)",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn -p norn-cli succeeds",
+    "cargo test -p norn -p norn-cli — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "Scanner resolves profile from workspace .norn/profiles/ — verified by test",
+    "Scanner resolves from .meridian/profiles/ when not in .norn/ — verified by test",
+    "Workspace profile overrides user-level on name collision — verified by test",
+    "CLI bare name resolves through libnorn scanner — verified by test",
+    "Existing CLI path-based resolution still works — verified by existing test"
+  ]
+}

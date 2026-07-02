@@ -1,0 +1,119 @@
+{
+  "id": "NX-001",
+  "cluster": "norn-context",
+  "title": "Context types and NORN.md file loader",
+  "depends_on": ["NC-001"],
+  "blocked_by": [],
+  "checklist": ["C10", "C11", "C12", "C13", "C14", "C15", "C16", "C17"],
+  "stories": ["S1", "S5", "S6", "S10"],
+  "purpose": "Establish the context module's type system and file loading infrastructure. This brief creates the context/ folder module, defines the ContextFile type, and implements discovery and loading of always-on NORN.md files from user-level (~/.norn/NORN.md) and project-root ({cwd}/NORN.md). The loaded content is concatenated and prepared for injection into the base system instruction.",
+  "task": "Create context/mod.rs, context/types.rs, and context/loader.rs. The loader reads both always-on context file locations, records initial mtime for staleness detection, and returns concatenated content. User-level content comes first, project-root second (project has higher effective precedence). The loader produces content suitable for appending to system_sections[0].",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Context module structure",
+      "spec": "context/mod.rs SHALL contain only pub mod declarations and pub use re-exports. It SHALL NOT contain functions, structs, traits, or enums.",
+      "acceptance": [
+        "crates/norn/src/context/mod.rs exists",
+        "mod.rs has pub mod types, pub mod loader",
+        "crates/norn/src/lib.rs declares pub mod context"
+      ],
+      "files": {
+        "create": ["crates/norn/src/context/mod.rs"],
+        "modify": ["crates/norn/src/lib.rs"]
+      },
+      "checklist": ["C10"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "ContextFile type",
+      "spec": "context/types.rs SHALL define a ContextFile struct with path (PathBuf), content (String), and mtime (Option<SystemTime>) fields.",
+      "acceptance": [
+        "ContextFile has path: PathBuf field",
+        "ContextFile has content: String field",
+        "ContextFile has mtime: Option<std::time::SystemTime> field",
+        "ContextFile derives Clone and Debug"
+      ],
+      "files": {
+        "create": ["crates/norn/src/context/types.rs"]
+      },
+      "checklist": ["C11"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "User-level NORN.md loading",
+      "spec": "WHEN ~/.norn/NORN.md exists, the loader SHALL read its content and record its mtime. WHEN it does not exist, the loader SHALL skip it without error.",
+      "acceptance": [
+        "With ~/.norn/NORN.md present, loader returns a ContextFile with content and mtime",
+        "With ~/.norn/NORN.md absent, loader returns no user-level context file",
+        "Path resolution uses norn::config::paths::norn_dir() from NC-001"
+      ],
+      "files": {
+        "create": ["crates/norn/src/context/loader.rs"]
+      },
+      "checklist": ["C12", "C15"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R4",
+      "title": "Project-root NORN.md loading",
+      "spec": "WHEN {cwd}/NORN.md exists, the loader SHALL read its content and record its mtime. WHEN it does not exist, the loader SHALL skip it without error.",
+      "acceptance": [
+        "With {cwd}/NORN.md present, loader returns a ContextFile with content and mtime",
+        "With {cwd}/NORN.md absent, loader returns no project-root context file",
+        "The cwd path is provided as a parameter, not hardcoded"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/loader.rs"]
+      },
+      "checklist": ["C13", "C15"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R5",
+      "title": "Content concatenation with user-first ordering",
+      "spec": "The loader SHALL concatenate loaded context files with user-level first, then project-root. The two sections SHALL be separated by a double newline.",
+      "acceptance": [
+        "With both files present, user-level content appears before project-root content",
+        "The two sections are separated by '\\n\\n'",
+        "With only project-root present, only project-root content is returned",
+        "With neither present, empty string is returned"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/loader.rs"]
+      },
+      "checklist": ["C14"],
+      "stories": ["S1", "S5"]
+    },
+    {
+      "id": "R6",
+      "title": "Base instruction injection point",
+      "spec": "The concatenated context content SHALL be appended to system_sections[0] after profile instructions and before the skill catalog listing. The loader SHALL provide a method that returns the formatted content string ready for appending.",
+      "acceptance": [
+        "Loader provides a method returning the formatted context string",
+        "The returned string is suitable for direct concatenation into system_sections[0]",
+        "When no context files exist, the method returns an empty string (appending nothing)"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/context/loader.rs"]
+      },
+      "checklist": ["C16", "C17"],
+      "stories": ["S1"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement mtime staleness detection — that is NX-002",
+    "SHALL NOT implement nested NORN.md detection — that is NX-005",
+    "SHALL NOT implement rule file discovery — that is NX-003",
+    "SHALL NOT wire into build_runtime — that is NX-006"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn -- context passes all new tests",
+    "cargo clippy -p norn -- -D warnings clean",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)",
+    "context/mod.rs contains only pub mod and pub use — no logic"
+  ]
+}

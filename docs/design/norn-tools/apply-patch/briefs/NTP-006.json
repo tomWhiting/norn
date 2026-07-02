@@ -1,0 +1,152 @@
+{
+  "id": "NTP-006",
+  "cluster": "norn-tools/apply-patch",
+  "title": "Patch artifact storage, inspection, editing, and application",
+  "depends_on": ["NTP-002"],
+  "blocked_by": [],
+  "checklist": ["C42", "C43", "C44", "C45", "C46", "C47", "C48"],
+  "stories": ["S10", "S11", "S12", "S13"],
+  "purpose": "When a parent model receives patches from forks or subagents, it needs to inspect, edit, dry-run, and apply them without re-generating the full patch text. Patch artifacts give patches an ID that can be referenced across turns within a session. This enables selective inspection (view one file or one hunk), targeted editing (amend a specific hunk before applying), and staged application (dry-run then commit). Artifacts are stored in the session event stream and do not persist across sessions.",
+  "task": "Add an artifact_id parameter to the apply_patch input schema. When present without a patch parameter, look up the stored artifact and apply it. When present WITH a patch parameter, store the patch as an artifact under that ID before applying. Add follow-up actions for inspect_patch and edit_patch that operate on stored artifacts. Artifact storage uses the existing session event stream (SessionEvent). Artifacts include a summary (file count, hunk count, blast radius estimate) returned at creation time.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define PatchArtifact storage type",
+      "spec": "A PatchArtifact struct SHALL hold: artifact_id (String), patch_text (String), format (unified or claude_code), created_at (timestamp), and summary (PatchArtifactSummary with file_count, hunk_count, total_added, total_removed, file_paths). The struct SHALL be Serialize + Deserialize. PatchArtifact SHALL be stored as a SessionEvent variant or as a JSON payload within an existing variant.",
+      "acceptance": [
+        "PatchArtifact struct exists with artifact_id, patch_text, format, created_at, summary fields",
+        "PatchArtifactSummary exists with file_count, hunk_count, total_added, total_removed, file_paths",
+        "PatchArtifact implements Serialize and Deserialize",
+        "Artifact can be stored in and retrieved from the session event stream"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/patch_artifact.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": ["C42", "C43"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Add artifact_id parameter and store-on-create behavior",
+      "spec": "The apply_patch input schema SHALL include an optional artifact_id string parameter. WHEN artifact_id is present AND patch is also present, the tool SHALL store the patch as a PatchArtifact in the session event stream before applying it. The tool output SHALL include the artifact_id and a summary of the stored artifact. WHEN artifact_id is present AND patch is absent, the tool SHALL look up the stored artifact by ID and apply its patch_text.",
+      "acceptance": [
+        "input_schema() includes optional artifact_id parameter",
+        "Providing both artifact_id and patch stores the artifact and applies the patch",
+        "Providing only artifact_id retrieves and applies the stored artifact",
+        "Providing only patch (no artifact_id) works as before (backward compatible)",
+        "Providing neither artifact_id nor patch returns an error",
+        "Tool output includes artifact_id and summary when an artifact is stored"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C42", "C47", "C48"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R3",
+      "title": "Artifact retrieval from session event stream",
+      "spec": "A lookup function SHALL search the session event stream for a PatchArtifact with the given artifact_id. It SHALL return the most recent artifact with that ID (artifacts can be overwritten by storing a new one with the same ID after edit). Retrieval SHALL return a clear error if no artifact with that ID exists. Artifacts SHALL NOT persist across sessions (they reference working-tree state).",
+      "acceptance": [
+        "Retrieving a stored artifact by ID returns the correct patch_text",
+        "Retrieving a non-existent artifact_id returns a structured error",
+        "Storing a new artifact with an existing ID replaces the previous version",
+        "Artifacts are scoped to the current session"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_artifact.rs",
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C43", "C44"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Inspect artifact follow-up action",
+      "spec": "An inspect_patch follow-up action SHALL allow viewing a stored artifact by ID. Optional filters: file (PathBuf — show only blocks targeting that file) and hunk_index (usize — show only the specified hunk within the filtered file). Without filters, the full patch text is returned. With filters, only the matching blocks/hunks are returned plus the artifact summary. The follow-up SHALL be registered when an artifact is stored.",
+      "acceptance": [
+        "inspect_patch with just artifact_id returns the full patch text and summary",
+        "inspect_patch with file filter returns only blocks targeting that file",
+        "inspect_patch with hunk_index filter returns only the specified hunk",
+        "inspect_patch with file + hunk_index returns the specific hunk in the specific file",
+        "inspect_patch on a non-existent artifact_id returns a structured error"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_artifact.rs",
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C45"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R5",
+      "title": "Edit artifact follow-up action",
+      "spec": "An edit_patch follow-up action SHALL allow amending a specific hunk in a stored artifact before applying. Parameters: artifact_id, file (target file path), hunk_index (0-based index within that file's blocks), and new_content (the replacement hunk text in unified diff format). The edit SHALL update the stored artifact in place (store a new version). The response SHALL include the updated summary.",
+      "acceptance": [
+        "edit_patch replaces the specified hunk's content in the stored artifact",
+        "The updated artifact is stored as a new version (retrievable by the same ID)",
+        "edit_patch returns the updated summary (hunk counts may change if additions/removals differ)",
+        "edit_patch with invalid file or hunk_index returns a structured error",
+        "The original artifact is no longer retrievable after edit (replaced)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_artifact.rs",
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C46"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R6",
+      "title": "Tests for artifact lifecycle",
+      "spec": "Tests SHALL verify: store artifact on create, retrieve by ID, apply from artifact_id, inspect full artifact, inspect filtered by file, inspect filtered by hunk, edit a hunk and verify update, apply edited artifact, non-existent ID error, backward compatibility (no artifact_id works as before).",
+      "acceptance": [
+        "Test: store and retrieve artifact by ID",
+        "Test: apply patch from artifact_id without providing patch text",
+        "Test: inspect full artifact returns patch text and summary",
+        "Test: inspect with file filter returns only matching blocks",
+        "Test: edit_patch updates the stored artifact",
+        "Test: apply edited artifact produces the amended result",
+        "Test: non-existent artifact_id returns structured error",
+        "Test: omitting artifact_id works as before (backward compatible)",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch_artifact.rs",
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C42", "C43", "C44", "C45", "C46", "C47"],
+      "stories": ["S10", "S11", "S12", "S13"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement multi-artifact composition or conflict detection — that is fork-patches design scope (D7 deferred)",
+    "SHALL NOT persist artifacts across sessions — artifacts reference working-tree state",
+    "SHALL NOT modify the resolution tier logic — only consume patches stored as artifacts",
+    "SHALL NOT implement entity-level conflict detection between artifacts — deferred to fork-patches",
+    "SHALL NOT add a standalone inspect_patch or edit_patch tool — these are follow-up actions on the artifact, not independent tools"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero warnings",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'PatchArtifact' crates/norn/src/tools/patch_artifact.rs confirms the type exists",
+    "grep -rn 'artifact_id' crates/norn/src/tools/patch.rs confirms the parameter is wired",
+    "Artifacts stored in session event stream are not visible after session restart"
+  ]
+}

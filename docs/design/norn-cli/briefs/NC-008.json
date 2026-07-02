@@ -1,0 +1,302 @@
+{
+  "id": "NC-008",
+  "cluster": "norn-cli",
+  "title": "Subcommands -- session, auth, mcp, doctor, completion",
+  "depends_on": ["NC-001", "NC-002"],
+  "blocked_by": [],
+  "checklist": ["C82", "C83", "C84", "C85", "C86", "C87", "C88", "C89", "C90", "C91", "C92", "C93", "C94", "C95", "C96", "C97", "C98", "C99", "C100"],
+  "stories": ["S11", "S12", "S14", "S33", "S39", "S40", "S41", "S42", "S43"],
+  "purpose": "The CLI's subcommands provide essential non-conversational operations: session management (list, show, resume, fork, export, remove), authentication (login, logout, status), MCP server mode, system health checks, and shell completion generation. Without these, users cannot manage sessions outside the REPL, authenticate, expose Norn as an MCP server, diagnose setup problems, or generate shell completions. Each subcommand is a thin handler that delegates to libnorn APIs.",
+  "task": "Replace the stub subcommand handlers from NC-001 with real implementations, organized as a folder module at crates/norn-cli/src/commands/ with session.rs, auth.rs, mcp.rs, doctor.rs, and completion.rs. Session subcommands read and manipulate the JSONL session store (from NC-002). Auth subcommands delegate to norn::provider::auth::login(), logout(), and read ~/.codex/auth.json for status. MCP serve delegates to norn::integration::mcp_server::McpServer::serve_stdio() with the full tool registry. MCP connect performs an initialize handshake and tools/list against an external server. Doctor checks auth status, provider connectivity, and working directory permissions. Completion uses clap_complete to generate scripts for bash, zsh, and fish.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Commands folder module structure",
+      "spec": "The system SHALL organize subcommand handlers as a folder module at crates/norn-cli/src/commands/ with mod.rs containing only pub mod declarations and re-exports. Each subcommand group SHALL have its own file: session.rs, auth.rs, mcp.rs, doctor.rs, completion.rs.",
+      "acceptance": [
+        "crates/norn-cli/src/commands/mod.rs contains only pub mod and pub use statements",
+        "Each handler file exists and compiles",
+        "No handler file exceeds 500 lines of code"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/commands/mod.rs",
+          "crates/norn-cli/src/commands/session.rs",
+          "crates/norn-cli/src/commands/auth.rs",
+          "crates/norn-cli/src/commands/mcp.rs",
+          "crates/norn-cli/src/commands/doctor.rs",
+          "crates/norn-cli/src/commands/completion.rs"
+        ],
+        "modify": [
+          "crates/norn-cli/src/main.rs",
+          "crates/norn-cli/src/mod.rs"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Session list subcommand",
+      "spec": "WHEN the user runs 'norn session list', the system SHALL read the session index and display sessions from the current working directory, sorted newest-first. IF --all is set, the system SHALL show sessions from all directories. IF --limit is set, the system SHALL display at most that many sessions. IF --format is 'json', the system SHALL output a JSON array to stdout. IF --format is 'table' (default), the system SHALL output a formatted table with columns: ID (first 8 characters), name, model, turns, updated, working directory.",
+      "acceptance": [
+        "'norn session list' shows sessions filtered to the current directory",
+        "'norn session list --all' shows all sessions",
+        "'norn session list --limit 5' shows at most 5 sessions",
+        "'norn session list --format json' outputs valid JSON array to stdout",
+        "Sessions are sorted newest-first by updated timestamp",
+        "When no sessions exist, the table output shows a 'No sessions found.' message"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/session.rs"
+        ]
+      },
+      "checklist": ["C86", "C87"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R3",
+      "title": "Session show subcommand",
+      "spec": "WHEN the user runs 'norn session show <ID|NAME>', the system SHALL look up the session by full ID, partial prefix (minimum 8 characters), or name and display its metadata: ID, name, model, working directory, created/updated timestamps, event count, and status. IF the session is not found, the system SHALL exit with code 1 and print an error message.",
+      "acceptance": [
+        "'norn session show <full-uuid>' displays session metadata",
+        "'norn session show <8-char-prefix>' resolves by partial ID",
+        "'norn session show refactor-auth' resolves by name",
+        "Ambiguous partial prefix (matches multiple sessions) produces an error listing the candidates",
+        "Non-existent session produces 'Session not found: <input>' on stderr with exit code 1"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/session.rs"
+        ]
+      },
+      "checklist": ["C88", "C93"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R4",
+      "title": "Session resume subcommand",
+      "spec": "WHEN the user runs 'norn session resume <ID|NAME>', the system SHALL load the session's events from the JSONL file, reconstruct the EventStore and message history, and enter the REPL with the resumed session. This is functionally equivalent to 'norn --resume <ID>'.",
+      "acceptance": [
+        "'norn session resume <ID>' loads the session and enters the REPL with prior context",
+        "The resumed session's history is visible to the agent in subsequent turns",
+        "Non-existent session ID produces an error and exits with code 1"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/session.rs"
+        ]
+      },
+      "checklist": ["C89"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R5",
+      "title": "Session fork subcommand",
+      "spec": "WHEN the user runs 'norn session fork <ID|NAME>', the system SHALL copy the source session's events into a new session file, append a Fork event, and enter the REPL with the forked session. The new session gets a new UUID v7 ID. This is functionally equivalent to 'norn --fork <ID>'.",
+      "acceptance": [
+        "'norn session fork <ID>' creates a new session with copied events and enters the REPL",
+        "The forked session has a new ID distinct from the source",
+        "A Fork event is present in the new session's event list",
+        "The source session is not modified"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/session.rs"
+        ]
+      },
+      "checklist": ["C90"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R6",
+      "title": "Session export subcommand",
+      "spec": "WHEN the user runs 'norn session export <ID|NAME>', the system SHALL serialize the session to stdout. IF --format is 'jsonl' (default), the system SHALL output the raw JSONL events. IF --format is 'json', the system SHALL output a single JSON object with session metadata and events array. IF --format is 'markdown', the system SHALL render a human-readable markdown transcript with user and assistant messages formatted as dialogue.",
+      "acceptance": [
+        "'norn session export <ID>' outputs JSONL to stdout by default",
+        "'norn session export <ID> --format json' outputs a JSON object",
+        "'norn session export <ID> --format markdown' outputs readable markdown",
+        "Markdown format shows user/assistant turns as headed sections",
+        "Output is valid for redirection to a file (stdout only, no stderr mixing)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/session.rs"
+        ]
+      },
+      "checklist": ["C91"],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R7",
+      "title": "Session remove subcommand",
+      "spec": "WHEN the user runs 'norn session remove <ID|NAME>', the system SHALL delete the session's JSONL file and remove its entry from the session index. The system SHALL print 'Removed session <ID>.' to stderr. IF the session is not found, the system SHALL exit with code 1.",
+      "acceptance": [
+        "'norn session remove <ID>' deletes the session file and index entry",
+        "'Removed session <ID>.' is printed to stderr",
+        "The session no longer appears in 'norn session list'",
+        "Non-existent session produces an error with exit code 1"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/session.rs"
+        ]
+      },
+      "checklist": ["C92"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "Auth login subcommand",
+      "spec": "WHEN the user runs 'norn auth login', the system SHALL invoke norn::provider::auth::login() with a LoginConfig constructed from CLI flags. IF --codex-home is set, the system SHALL pass it to LoginConfig::codex_home. The login flow opens the system browser for OAuth PKCE authentication. On success, the system SHALL print 'Login successful.' to stderr. On failure, the system SHALL print the error and exit with code 3.",
+      "acceptance": [
+        "'norn auth login' triggers the OAuth PKCE flow (browser opens)",
+        "'norn auth login --codex-home /tmp/test' uses the custom codex home directory",
+        "Successful login prints 'Login successful.' to stderr and exits with code 0",
+        "Failed login prints error details and exits with code 3"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/auth.rs"
+        ]
+      },
+      "checklist": ["C82", "C85"],
+      "stories": ["S39"]
+    },
+    {
+      "id": "R9",
+      "title": "Auth logout subcommand",
+      "spec": "WHEN the user runs 'norn auth logout', the system SHALL invoke norn::provider::auth::logout() with the default LoginConfig. The system SHALL print 'Logged out.' to stderr on success. On failure, the system SHALL print the error and exit with code 3.",
+      "acceptance": [
+        "'norn auth logout' clears stored credentials",
+        "'Logged out.' is printed to stderr on success",
+        "Failed logout prints error details and exits with code 3"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/auth.rs"
+        ]
+      },
+      "checklist": ["C83"],
+      "stories": []
+    },
+    {
+      "id": "R10",
+      "title": "Auth status subcommand",
+      "spec": "WHEN the user runs 'norn auth status', the system SHALL read the auth.json file from the codex home directory (~/.codex/auth.json or $CODEX_HOME/auth.json) and report the authentication state: whether the user is logged in, the token expiry time (if available), and the account ID (if available). The system SHALL NOT display raw tokens. IF no auth.json exists, the system SHALL print 'Not logged in.' and exit with code 0.",
+      "acceptance": [
+        "'norn auth status' when logged in shows 'Logged in' with expiry and account ID",
+        "'norn auth status' when not logged in shows 'Not logged in.'",
+        "Raw access/refresh tokens are never displayed",
+        "Exit code is 0 in both cases (status check is informational)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/auth.rs"
+        ]
+      },
+      "checklist": ["C84"],
+      "stories": ["S40"]
+    },
+    {
+      "id": "R11",
+      "title": "MCP serve subcommand",
+      "spec": "WHEN the user runs 'norn mcp serve', the system SHALL construct an McpServer with the full ToolRegistry and call serve_stdio(). The server SHALL run on the process's stdin/stdout, handling JSON-RPC requests until EOF. The server name SHALL be 'norn' and the version SHALL match the crate version.",
+      "acceptance": [
+        "'norn mcp serve' starts an MCP server on stdio",
+        "Sending an 'initialize' JSON-RPC request receives a valid response with server info",
+        "Sending 'tools/list' returns all registered tools",
+        "Sending 'tools/call' dispatches the named tool and returns the result",
+        "The server exits cleanly on EOF (stdin closes)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/mcp.rs"
+        ]
+      },
+      "checklist": ["C94"],
+      "stories": ["S33"]
+    },
+    {
+      "id": "R12",
+      "title": "MCP connect subcommand",
+      "spec": "WHEN the user runs 'norn mcp connect <URI>', the system SHALL establish a connection to the MCP server at the given URI, send an 'initialize' handshake, then send 'tools/list' to enumerate the server's capabilities. The system SHALL print the server name, version, protocol version, and a list of available tools to stderr. IF the connection fails, the system SHALL print the error and exit with code 1.",
+      "acceptance": [
+        "'norn mcp connect stdio://path/to/server' connects and prints server info",
+        "Available tools from the remote server are listed with names and descriptions",
+        "Connection failure produces an error message and exit code 1",
+        "The connection is closed after enumeration (this is a test/probe, not a persistent connection)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/mcp.rs"
+        ]
+      },
+      "checklist": ["C95"],
+      "stories": ["S33"]
+    },
+    {
+      "id": "R13",
+      "title": "Doctor subcommand",
+      "spec": "WHEN the user runs 'norn doctor', the system SHALL perform the following checks and report pass/fail for each with actionable remediation messages: (1) Auth status: whether OAuth credentials exist and the token is valid. (2) Provider connectivity: attempt an HTTP HEAD or lightweight request to the provider API endpoint to verify reachability. (3) Working directory permissions: verify the current directory is readable and writable. Each check SHALL print a status line to stderr in the format '[PASS] description' or '[FAIL] description: remediation'.",
+      "acceptance": [
+        "'norn doctor' prints status for auth, connectivity, and permissions checks",
+        "Each check shows [PASS] or [FAIL] with a clear description",
+        "[FAIL] lines include actionable remediation advice (e.g., 'Run `norn auth login` to authenticate.')",
+        "Exit code is 0 if all checks pass, 1 if any check fails"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/doctor.rs"
+        ]
+      },
+      "checklist": ["C96", "C97", "C98", "C99"],
+      "stories": ["S41", "S43"]
+    },
+    {
+      "id": "R14",
+      "title": "Completion subcommand",
+      "spec": "WHEN the user runs 'norn completion <SHELL>' where SHELL is one of bash, zsh, or fish, the system SHALL generate a shell completion script via clap_complete and write it to stdout. The completion script SHALL cover all top-level flags, subcommands, and subcommand flags defined in the clap argument structure.",
+      "acceptance": [
+        "'norn completion bash' outputs a valid bash completion script to stdout",
+        "'norn completion zsh' outputs a valid zsh completion script to stdout",
+        "'norn completion fish' outputs a valid fish completion script to stdout",
+        "The generated script includes completions for all subcommands and flags",
+        "Output is suitable for redirection to a shell config file (e.g., 'norn completion zsh > ~/.zsh/_norn')"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands/completion.rs"
+        ]
+      },
+      "checklist": ["C100"],
+      "stories": ["S42"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement session persistence internals (JSONL read/write, index management) -- that is NC-002; this brief uses the NC-002 API",
+    "SHALL NOT implement the interactive REPL loop -- that is NC-005; session resume and fork dispatch into the REPL",
+    "SHALL NOT implement streaming display -- that is NC-007",
+    "SHALL NOT implement tool execution logic -- MCP serve delegates to the existing McpServer and ToolRegistry",
+    "SHALL NOT implement profile management subcommands -- per DESIGN.md, profile management via subcommand is premature",
+    "SHALL NOT expose raw OAuth tokens in auth status output"
+  ],
+  "verification": [
+    "cargo check -p norn-cli succeeds",
+    "cargo clippy -p norn-cli -- -D warnings produces zero warnings",
+    "cargo fmt -p norn-cli -- --check produces no diff",
+    "cargo test -p norn-cli passes all tests",
+    "'norn session list' shows sessions (or 'No sessions found.')",
+    "'norn session show <ID>' displays session metadata",
+    "'norn session export <ID> --format markdown' outputs readable markdown",
+    "'norn auth login' triggers the OAuth flow",
+    "'norn auth logout' clears credentials",
+    "'norn auth status' reports login state without exposing tokens",
+    "'norn doctor' runs all health checks and reports results",
+    "'norn completion zsh' outputs a valid completion script",
+    "No file exceeds 500 lines of code",
+    "No code in mod.rs beyond pub mod declarations and re-exports",
+    "grep -rn 'TODO\\|FIXME\\|HACK\\|unimplemented!' crates/norn-cli/src/ returns no matches"
+  ]
+}

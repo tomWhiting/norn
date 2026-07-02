@@ -1,0 +1,129 @@
+{
+  "id": "NX-005",
+  "cluster": "norn-context",
+  "title": "Context layering wiring",
+  "depends_on": ["NX-001", "NX-002", "NX-004"],
+  "blocked_by": [],
+  "checklist": ["C40", "C41", "C42", "C43", "C44", "C45", "C46"],
+  "stories": ["S17", "S18", "S19"],
+  "purpose": "All context infrastructure is built but nothing is connected. This brief wires context file loading, rule directory scanning, and mtime staleness detection into build_runtime. It assembles the base system instruction in the correct layering order and verifies that compaction survival works via the existing split-prompt architecture.",
+  "task": "In norn-cli's build_runtime: load always-on context files via the context loader, scan rule directories and populate the RuleEngine, assemble system_sections[0] in the correct order (Norn base prompt, profile instructions, user NORN.md, project NORN.md, skill catalog listing). Wire mtime staleness checking into the iteration loop. Verify that always-on context survives compaction (part of system_sections[0]) and that active rules re-activate via presence tracking.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Context file loading in build_runtime",
+      "spec": "WHEN build_runtime executes, it SHALL construct a context loader, load always-on NORN.md files, and store the loader on LoopContext for staleness checking.",
+      "acceptance": [
+        "build_runtime calls context::loader to load ~/.norn/NORN.md and {cwd}/NORN.md",
+        "The context loader is stored on LoopContext (accessible for mtime checks)",
+        "Missing context files do not cause build_runtime to fail"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C42"],
+      "stories": ["S17"]
+    },
+    {
+      "id": "R2",
+      "title": "Rule directory scanning in build_runtime",
+      "spec": "WHEN build_runtime executes, it SHALL scan rule directories and add all parsed rules to the RuleEngine on LoopContext.",
+      "acceptance": [
+        "build_runtime calls context::scanner to scan {cwd}/.norn/rules/ and ~/.norn/rules/",
+        "All successfully parsed rules are added to LoopContext.rules via add_rule()",
+        "Parse failures for individual rule files are logged but do not block startup"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C42"],
+      "stories": ["S17"]
+    },
+    {
+      "id": "R3",
+      "title": "Base instruction layering order",
+      "spec": "system_sections[0] SHALL be assembled in this order: (1) Norn base prompt from build_system_prompt(), (2) profile system_instructions, (3) user-level NORN.md content, (4) project-root NORN.md content, (5) skill catalog listing (when norn-skills is wired).",
+      "acceptance": [
+        "The base instruction contains the Norn identity line before any NORN.md content",
+        "Profile instructions appear before NORN.md content",
+        "User NORN.md content appears before project NORN.md content",
+        "When no context files exist, the order is base prompt + profile instructions only"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C40"],
+      "stories": ["S18", "S19"]
+    },
+    {
+      "id": "R4",
+      "title": "Dynamic sections contain rules and prompt commands",
+      "spec": "system_sections[1..] SHALL contain only dynamic content: prompt command outputs, rule injections, nested NORN.md injections, and skill bodies. These sections SHALL be cleared and rebuilt each iteration.",
+      "acceptance": [
+        "After clear_dynamic_sections(), system_sections has length 1 (base only)",
+        "Rule injections appear in system_sections[1..] after process_event()",
+        "Prompt command outputs appear in system_sections[1..] after evaluate_prompt_commands()"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C41"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Compaction survival verification",
+      "spec": "Always-on context files SHALL survive compaction because they are part of system_sections[0]. Active rules SHALL re-activate after compaction via the RuleEngine's presence tracking.",
+      "acceptance": [
+        "After simulated compaction (clear_dynamic_sections), system_sections[0] still contains NORN.md content",
+        "After compaction, a PathChanged event re-triggers a previously-active rule",
+        "No special compaction logic is added — the existing split-prompt architecture handles this"
+      ],
+      "files": {},
+      "checklist": ["C43", "C44"],
+      "stories": ["S19"]
+    },
+    {
+      "id": "R6",
+      "title": "Mtime check wiring",
+      "spec": "The agent loop's iteration setup SHALL call the context loader's staleness check at the start of each iteration. WHEN staleness is detected, system_sections[0] SHALL be rebuilt.",
+      "acceptance": [
+        "The staleness check runs alongside clear_dynamic_sections and evaluate_prompt_commands",
+        "A modified NORN.md file is picked up within one iteration",
+        "The mtime check adds no more than two stat() syscalls per iteration"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Clean lint and format gates",
+      "spec": "cargo clippy --workspace --all-targets -- -D warnings SHALL pass clean. cargo fmt --check SHALL pass clean.",
+      "acceptance": [
+        "cargo clippy --workspace --all-targets -- -D warnings exits 0",
+        "cargo fmt --check exits 0"
+      ],
+      "files": {},
+      "checklist": ["C45", "C46"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify the context module internals (types, loader, scanner) — only wire them",
+    "SHALL NOT modify the rules engine internals — only populate it via add_rule()",
+    "SHALL NOT modify the rules parser — NX-003 handles format compatibility",
+    "SHALL NOT run in parallel with NS-006 (both modify builder.rs)"
+  ],
+  "verification": [
+    "cargo check -p norn -p norn-cli succeeds",
+    "cargo test -p norn -p norn-cli passes all tests",
+    "cargo clippy --workspace --all-targets -- -D warnings clean",
+    "cargo fmt --check passes",
+    "A test NORN.md at project root appears in the system prompt (integration test)",
+    "A test rule in .norn/rules/ activates when a matching file is read (integration test)",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

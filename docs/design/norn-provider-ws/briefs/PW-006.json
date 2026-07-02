@@ -1,0 +1,133 @@
+{
+  "id": "PW-006",
+  "cluster": "norn-provider-ws",
+  "title": "Pool recovery with exponential-backoff cooldown",
+  "depends_on": ["PW-005"],
+  "blocked_by": [],
+  "checklist": ["C28", "C29", "C30", "C31", "C32", "C33"],
+  "stories": ["S14"],
+  "purpose": "Add recovery semantics to the connection pool so that WS connectivity is restored after transient failures. When all establishment attempts fail, the pool enters a cooldown with exponential backoff. After the cooldown expires, the pool tries WS again. WS is permanently disabled only after the full cooldown escalation reaches max_backoff and the final attempt fails (circuit breaker).",
+  "task": "Extend WsPool with cooldown_until (Option<Instant>), consecutive_all_failures counter, and current backoff duration. When establishment fails and all slots are Disconnected, enter cooldown. During cooldown, all callers use HTTP. After cooldown expires, reset and try WS on next request. Double the backoff on each consecutive all-fail cycle. Reset backoff on successful establishment.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Cooldown state on WsPool",
+      "spec": "WsPool SHALL track cooldown_until: Option<Instant>, consecutive_all_failures: u32, and current_backoff: Duration for managing recovery timing.",
+      "acceptance": [
+        "cooldown_until, consecutive_all_failures, and current_backoff fields on WsPool",
+        "Initial state: cooldown_until is None, consecutive_all_failures is 0"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C28"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Enter cooldown on all-fail",
+      "spec": "WHEN a WS establishment attempt fails AND all slots in the pool are Disconnected THE SYSTEM SHALL increment consecutive_all_failures, compute the next backoff (exponential doubling), and set cooldown_until to now + backoff.",
+      "acceptance": [
+        "Cooldown entered only when all slots are Disconnected (not when some are Available or InUse)",
+        "Backoff doubles on each consecutive all-fail: base, 2x, 4x, 8x, etc.",
+        "cooldown_until set to Instant::now() + current_backoff"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C28"],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R3",
+      "title": "HTTP during cooldown",
+      "spec": "WHILE the pool is in cooldown (Instant::now() < cooldown_until) WHEN a caller requests a connection THE SYSTEM SHALL signal HTTP fallback without attempting WS establishment.",
+      "acceptance": [
+        "Callers during cooldown get HTTP fallback signal immediately",
+        "No WS establishment attempted during cooldown",
+        "Cooldown check happens before slot scan"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C29"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Recovery after cooldown",
+      "spec": "WHEN cooldown expires (Instant::now() >= cooldown_until) THE SYSTEM SHALL clear cooldown_until and allow the next caller to attempt WS establishment normally.",
+      "acceptance": [
+        "After cooldown expiry, next caller attempts WS establishment",
+        "cooldown_until set to None on expiry",
+        "Pool returns to normal take-use-return behavior"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C31"],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R5",
+      "title": "Reset on success",
+      "spec": "WHEN a WS connection is successfully established THE SYSTEM SHALL reset consecutive_all_failures to zero and current_backoff to the base value.",
+      "acceptance": [
+        "Successful establishment resets failure counter and backoff",
+        "Next failure cycle starts from base backoff, not from the previous escalated value"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C30"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Pool-full callers rotate back",
+      "spec": "WHEN a caller used HTTP because the pool was full (all InUse, at max) THE SYSTEM SHALL allow that caller to acquire a freed slot on subsequent requests.",
+      "acceptance": [
+        "No sticky per-caller HTTP state — every request checks the pool fresh",
+        "Caller that got HTTP on request N can get WS on request N+1 if a slot freed"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C32"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Circuit breaker: escalation to Disabled",
+      "spec": "WHEN backoff reaches max_backoff AND the final attempt fails THE SYSTEM SHALL transition the pool to a Disabled state. In the Disabled state, all callers receive HTTP fallback without any further WS establishment attempts for the remainder of the session.",
+      "acceptance": [
+        "Pool tracks whether current_backoff has reached max_backoff",
+        "Final failed attempt when at max_backoff sets pool state to Disabled",
+        "Disabled pool returns HTTP fallback signal immediately on every subsequent request",
+        "No WS establishment attempted while pool is Disabled",
+        "Disabled state is not reversible within a session"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/provider/openai/websocket.rs"]
+      },
+      "checklist": ["C33"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT hardcode the base backoff duration — configurable via ProviderConfig as base_backoff",
+    "SHALL NOT hardcode the maximum backoff — configurable via ProviderConfig as max_backoff",
+    "SHALL NOT make cooldown permanent before max_backoff is reached — Disabled is only entered after final failure at max_backoff"
+  ],
+  "verification": [
+    "cargo check --workspace passes",
+    "cargo test -p norn passes clean",
+    "Tests verify cooldown entry after all-fail scenario",
+    "Tests verify HTTP fallback during cooldown",
+    "Tests verify recovery after cooldown expiry",
+    "Tests verify backoff doubles on consecutive all-fail cycles",
+    "Tests verify reset on successful establishment",
+    "Tests verify circuit breaker: pool enters Disabled after max_backoff is reached and final attempt fails",
+    "Tests verify Disabled pool returns HTTP fallback immediately on all subsequent requests"
+  ]
+}

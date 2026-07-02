@@ -1,0 +1,83 @@
+{
+  "cluster": "norn-tools/action-log",
+  "sections": [
+    {
+      "name": "Types — Detail Levels and Outcome",
+      "items": [
+        {"id": "C1", "text": "ActionLogEntry struct holds Level 1 fields: tool_name, tool_call_id, tool_use_description, timestamp, outcome, summary_line", "done": false},
+        {"id": "C2", "text": "Outcome enum with Success, Error, Blocked variants", "done": false},
+        {"id": "C3", "text": "Level 2 detail includes full tool output JSON, input arguments, resolution details, duration, and follow-up actions", "done": false},
+        {"id": "C4", "text": "Level 3 full context includes raw tool output before compaction, pre-validate and post-validate outcomes, DiagnosticsPostCheck results, caught-and-recovered errors, and before/after file content for mutation tools", "done": false},
+        {"id": "C5", "text": "Level 1 summary computed at tool-call completion and attached to the event", "done": false},
+        {"id": "C6", "text": "Level 2 structured result stored as the tool output already in EventStore — no duplication", "done": false},
+        {"id": "C7", "text": "Level 3 before-content for mutation tools captured eagerly at register_follow_ups time (FollowUpAction carries its own before-content)", "done": false},
+        {"id": "C8", "text": "Level 3 for non-mutation tools populated lazily on first context query", "done": false}
+      ]
+    },
+    {
+      "name": "Query Tool — Interface and Filters",
+      "items": [
+        {"id": "C9", "text": "action_log tool registered with query parameter accepting list, detail, context, mutations, follow_ups values", "done": false},
+        {"id": "C10", "text": "filter object supports tool (tool name), outcome (success/error/blocked), file (affected file path), since (tool_call_id), and last (count) fields", "done": false},
+        {"id": "C11", "text": "list query returns Level 1 summaries matching the filter", "done": false},
+        {"id": "C12", "text": "detail query requires call_id parameter and returns Level 2 for that specific tool call", "done": false},
+        {"id": "C13", "text": "context query requires call_id parameter and returns Level 3 for that specific tool call", "done": false},
+        {"id": "C14", "text": "follow_ups query returns follow-up actions matching the filter with expired actions filtered out at query time", "done": false},
+        {"id": "C15", "text": "mutations query returns mutation ledger entries (see Mutation Ledger section)", "done": false},
+        {"id": "C16", "text": "Invalid query values or missing required parameters (call_id for detail/context) return structured errors", "done": false}
+      ]
+    },
+    {
+      "name": "Follow-Up Action Storage",
+      "items": [
+        {"id": "C17", "text": "Follow-up actions stored on action log entries with action_id, description, tool, args, expires, and confidence fields", "done": false},
+        {"id": "C18", "text": "Follow-up actions indexed by tool_call_id + action name for O(1) lookup", "done": false},
+        {"id": "C19", "text": "follow_ups query returns only unexpired follow-up actions — expired ones filtered out at query time", "done": false},
+        {"id": "C20", "text": "Expiry checking at query time compares file modification timestamp or content hash against stored value", "done": false}
+      ]
+    },
+    {
+      "name": "Mutation Ledger",
+      "items": [
+        {"id": "C21", "text": "MutationLedgerEntry struct tracks file_path, operation (created/modified/deleted), first_tool_call_id, last_tool_call_id, revert_status, and diff_stats (lines added/removed)", "done": false},
+        {"id": "C22", "text": "Mutation ledger is a derived view over action log entries — not a separate store", "done": false},
+        {"id": "C23", "text": "External revert detection: at query time, hash each entry's file and compare against post-mutation hash recorded at tool-call completion", "done": false},
+        {"id": "C24", "text": "If file hash differs and no subsequent tool call in the log touched that file, entry marked externally_reverted", "done": false},
+        {"id": "C25", "text": "No filesystem watching or polling — detection only at query time", "done": false},
+        {"id": "C26", "text": "Mutation ledger shows only mutations from the current session's tool calls, not pre-existing dirty files or changes from other agents", "done": false}
+      ]
+    },
+    {
+      "name": "Storage — Event Stream Integration",
+      "items": [
+        {"id": "C27", "text": "Action log data stored as events in the session's EventStore — no new storage backend", "done": false},
+        {"id": "C28", "text": "Structured metadata (Level 1 summary, follow-up actions) attached to existing tool-call events", "done": false},
+        {"id": "C29", "text": "Storage uses existing EventStore and PersistenceSink exclusively — no new database or file format", "done": false}
+      ]
+    },
+    {
+      "name": "Compaction Interaction",
+      "items": [
+        {"id": "C30", "text": "Action log retains full data regardless of context compaction state", "done": false},
+        {"id": "C31", "text": "Agent can drill into any prior tool call via detail or context query even if the tool result was compacted from conversation", "done": false},
+        {"id": "C32", "text": "action_log tool output is compact by design — Level 1 is a few tokens per entry, safe to call frequently without bloating context", "done": false}
+      ]
+    },
+    {
+      "name": "Constraints",
+      "items": [
+        {"id": "C33", "text": "Level 1 list query for 100 tool calls produces under 1000 tokens of output (CO1)", "done": false},
+        {"id": "C34", "text": "Follow-up action expiry checked at query time, not maintained in real-time (CO2)", "done": false},
+        {"id": "C35", "text": "Level 3 file snapshots for mutation tools are opt-in or lazily populated — not eagerly stored for every edit (CO3)", "done": false},
+        {"id": "C36", "text": "action_log tool queries logged at Level 1 only — no Level 2/3 self-referential entries that create recursive noise (CO4)", "done": false},
+        {"id": "C37", "text": "No new database or file format — storage via existing EventStore and PersistenceSink only (CO5)", "done": false}
+      ]
+    },
+    {
+      "name": "Prerequisites",
+      "items": [
+        {"id": "C38", "text": "ToolError::PostValidationFailed carries an optional committed_output field so that action log entries for failed-but-committed mutations include the structured output (PR0)", "done": false}
+      ]
+    }
+  ]
+}

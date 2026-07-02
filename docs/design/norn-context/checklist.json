@@ -1,0 +1,86 @@
+{
+  "cluster": "norn-context",
+  "sections": [
+    {
+      "name": "Shared Frontmatter Utility",
+      "items": [
+        {"id": "C1", "text": "util/mod.rs exists with pub mod frontmatter and re-exports.", "done": false},
+        {"id": "C2", "text": "util/frontmatter.rs exports a split_frontmatter() function that splits YAML frontmatter from markdown body.", "done": false},
+        {"id": "C3", "text": "split_frontmatter() handles the empty-frontmatter edge case (consecutive --- delimiters with no YAML content).", "done": false},
+        {"id": "C4", "text": "split_frontmatter() handles Windows line endings.", "done": false},
+        {"id": "C5", "text": "split_frontmatter() returns an error when the opening --- delimiter is missing.", "done": false},
+        {"id": "C6", "text": "split_frontmatter() returns an error when the closing --- delimiter is missing.", "done": false},
+        {"id": "C7", "text": "profile/loader.rs calls util::frontmatter::split_frontmatter() instead of its own implementation.", "done": false},
+        {"id": "C8", "text": "rules/parser.rs calls util::frontmatter::split_frontmatter() instead of its own split_front_matter().", "done": false},
+        {"id": "C9", "text": "No other split_frontmatter or split_front_matter function exists in the codebase outside util/frontmatter.rs.", "done": false}
+      ]
+    },
+    {
+      "name": "NORN.md Context Files",
+      "items": [
+        {"id": "C10", "text": "context/mod.rs exists with pub mod declarations and re-exports only.", "done": false},
+        {"id": "C11", "text": "context/types.rs defines ContextFile with path, content, and mtime fields.", "done": false},
+        {"id": "C12", "text": "context/loader.rs reads ~/.norn/NORN.md when it exists.", "done": false},
+        {"id": "C13", "text": "context/loader.rs reads {cwd}/NORN.md when it exists.", "done": false},
+        {"id": "C14", "text": "context/loader.rs concatenates user-level content before project-root content.", "done": false},
+        {"id": "C15", "text": "context/loader.rs records initial mtime for both context files.", "done": false},
+        {"id": "C16", "text": "Always-on context file content is appended to system_sections[0] (base instruction).", "done": false},
+        {"id": "C17", "text": "Always-on context appears after profile system_instructions and before the skill catalog listing in the base instruction.", "done": false}
+      ]
+    },
+    {
+      "name": "Mtime Staleness Detection",
+      "items": [
+        {"id": "C18", "text": "At the start of each iteration, the context loader stats both always-on context files.", "done": false},
+        {"id": "C19", "text": "If a context file's mtime differs from the last-seen mtime, the file is re-read.", "done": false},
+        {"id": "C20", "text": "When a context file changes, system_sections[0] is rebuilt with the new content.", "done": false},
+        {"id": "C21", "text": "If a context file does not exist, the stat check completes without error.", "done": false}
+      ]
+    },
+    {
+      "name": "Nested NORN.md",
+      "items": [
+        {"id": "C22", "text": "context/scanner.rs detects NORN.md files in directory ancestry when a PathChanged event occurs.", "done": false},
+        {"id": "C23", "text": "A nested NORN.md creates a synthetic Rule with a PathGlob trigger matching the directory and its descendants.", "done": false},
+        {"id": "C24", "text": "Synthetic rules use DeliveryMode::SystemContextAppend and TriggerTiming::After.", "done": false},
+        {"id": "C25", "text": "Synthetic rule IDs use the format norn-md:{relative-path}.", "done": false},
+        {"id": "C26", "text": "A nested NORN.md is only registered as a synthetic rule once (not re-registered on subsequent PathChanged events in the same directory).", "done": false},
+        {"id": "C27", "text": "Nested NORN.md content re-activates after compaction via the rules engine's presence tracking.", "done": false}
+      ]
+    },
+    {
+      "name": "Rule File Discovery",
+      "items": [
+        {"id": "C28", "text": "Rule files are discovered from {cwd}/.norn/rules/, ~/.norn/rules/, and optionally {cwd}/.claude/rules/.", "done": false},
+        {"id": "C29", "text": "All .md files in each rules directory are parsed and added to the RuleEngine.", "done": false},
+        {"id": "C30", "text": "Rule IDs are derived from the file stem (e.g. rust-conventions.md becomes RuleId(\"rust-conventions\")).", "done": false},
+        {"id": "C31", "text": "If the same rule ID exists in multiple directories, the first-found wins.", "done": false}
+      ]
+    },
+    {
+      "name": "Claude Code Rule Format Compatibility",
+      "items": [
+        {"id": "C32", "text": "rules/parser.rs detects Norn format when the triggers: key is present in frontmatter.", "done": false},
+        {"id": "C33", "text": "rules/parser.rs detects Claude Code format when the globs: or paths: key is present in frontmatter.", "done": false},
+        {"id": "C34", "text": "Both triggers: and globs:/paths: present in the same file produces a parse error.", "done": false},
+        {"id": "C35", "text": "Claude Code globs: string maps to a single TriggerCondition::PathGlob.", "done": false},
+        {"id": "C36", "text": "Claude Code globs: array maps to one TriggerCondition::PathGlob per pattern.", "done": false},
+        {"id": "C37", "text": "Claude Code description: maps to Rule.name.", "done": false},
+        {"id": "C38", "text": "Claude Code format rules default to DeliveryMode::SystemContextAppend.", "done": false},
+        {"id": "C39", "text": "Claude Code format rules default to TriggerTiming::After.", "done": false}
+      ]
+    },
+    {
+      "name": "Context Layering and Wiring",
+      "items": [
+        {"id": "C40", "text": "system_sections[0] contains: Norn base prompt, profile instructions, user NORN.md, project NORN.md, skill catalog listing — in that order.", "done": false},
+        {"id": "C41", "text": "system_sections[1..] contains: prompt commands, rule injections, nested NORN.md, skill bodies — as dynamic sections.", "done": false},
+        {"id": "C42", "text": "Context files and rule files are loaded during build_runtime.", "done": false},
+        {"id": "C43", "text": "Always-on context survives compaction (part of system_sections[0]).", "done": false},
+        {"id": "C44", "text": "Active rules re-activate after compaction via the rules engine's presence tracking.", "done": false},
+        {"id": "C45", "text": "cargo clippy --workspace --all-targets -- -D warnings passes clean.", "done": false},
+        {"id": "C46", "text": "cargo fmt --check passes clean.", "done": false}
+      ]
+    }
+  ]
+}

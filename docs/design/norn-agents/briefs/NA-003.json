@@ -1,0 +1,156 @@
+{
+  "id": "NA-003",
+  "cluster": "norn-agents",
+  "title": "Task module restructuring, hierarchy, Failed variant, and status roll-up",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C13", "C14", "C15", "C16", "C17", "C18", "C19", "C21"],
+  "stories": ["S12", "S14", "S15", "S16", "S17"],
+  "purpose": "The task system is currently flat (no parent/child), in-memory only, and missing a Failed status. Multi-agent coordination requires hierarchical tasks where parents decompose work into subtasks, agents claim tasks atomically, and parent status reflects children. This brief restructures task.rs (591 lines, at the limit) into a task/ folder module and implements the full hierarchy with status roll-up, establishing the foundation for DiskTaskStore (NA-004) and extension wiring (NA-005).",
+  "task": "Convert tools/task.rs into a tools/task/ folder module with types.rs (TaskStatus, TaskEntry, TaskStore trait), memory.rs (InMemoryTaskStore), rollup.rs (status roll-up logic), and tool.rs (TaskTool). Add Failed as a fifth TaskStatus variant. Add parent_task_id and assigned_agent fields to TaskEntry. Extend TaskStore trait with create_subtask, children, ancestors, claim, create_group, list_groups. Implement status roll-up with priority ordering Failed > Blocked > InProgress > Pending > Completed. Extend TaskTool with new action handlers for all new operations.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Task folder module structure",
+      "spec": "The task module SHALL be restructured from a single file into a folder module with separate files for types, in-memory store, roll-up logic, and tool implementation.",
+      "acceptance": [
+        "tools/task/ directory exists with mod.rs, types.rs, memory.rs, rollup.rs, tool.rs",
+        "mod.rs contains only pub mod declarations and re-exports",
+        "tools/task.rs is deleted",
+        "tools/mod.rs updated to reference task as folder module",
+        "All existing task tests pass (import paths preserved via re-exports)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/task/mod.rs",
+          "crates/norn/src/tools/task/types.rs",
+          "crates/norn/src/tools/task/memory.rs",
+          "crates/norn/src/tools/task/rollup.rs",
+          "crates/norn/src/tools/task/tool.rs"
+        ],
+        "modify": ["crates/norn/src/tools/mod.rs"],
+        "delete": ["crates/norn/src/tools/task.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Failed status variant and extended TaskEntry",
+      "spec": "TaskStatus SHALL gain a Failed variant as the highest-priority status. TaskEntry SHALL gain parent_task_id and assigned_agent fields for hierarchical task trees.",
+      "acceptance": [
+        "TaskStatus enum has five variants: Pending, InProgress, Completed, Blocked, Failed",
+        "Failed serialises as \"failed\" (serde rename_all = snake_case)",
+        "TaskEntry gains parent_task_id: Option<String>",
+        "TaskEntry gains assigned_agent: Option<String>",
+        "parse_status handles \"failed\" input",
+        "Test: TaskStatus serde round-trip includes Failed",
+        "Test: TaskEntry with parent_task_id and assigned_agent serialises correctly"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/task/types.rs"]
+      },
+      "checklist": ["C13", "C14"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Extended TaskStore trait with hierarchy operations",
+      "spec": "The TaskStore trait SHALL support hierarchical task operations: creating subtasks, querying children and ancestors, atomic claiming, and named task groups.",
+      "acceptance": [
+        "TaskStore::create_subtask(parent_id, entry) creates a task with parent_task_id set",
+        "TaskStore::children(parent_id) returns direct child tasks",
+        "TaskStore::ancestors(task_id) returns the chain from task to root (inclusive)",
+        "TaskStore::claim(task_id, agent_path) atomically sets assigned_agent only if currently None, returns error if already claimed",
+        "TaskStore::create_group(slug) creates a named task group",
+        "TaskStore::list_groups() returns all group slugs",
+        "All methods have default implementations returning NotSupported errors so existing trait impls compile"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/task/types.rs"]
+      },
+      "checklist": ["C15", "C16", "C17", "C19"],
+      "stories": ["S14", "S15", "S16"]
+    },
+    {
+      "id": "R4",
+      "title": "InMemoryTaskStore with hierarchy support",
+      "spec": "InMemoryTaskStore SHALL implement all extended TaskStore operations for testing and ephemeral sessions.",
+      "acceptance": [
+        "create_subtask sets parent_task_id on the new entry",
+        "children filters by parent_task_id match",
+        "ancestors walks parent_task_id chain to root",
+        "claim uses interior mutability (Mutex) for atomic check-and-set",
+        "create_group and list_groups track group names in-memory",
+        "Test: create parent, create 3 subtasks, verify children returns 3",
+        "Test: create 3-level hierarchy, verify ancestors walks to root",
+        "Test: claim succeeds once, second claim on same task fails",
+        "Test: create_group and list_groups round-trip"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/task/memory.rs"]
+      },
+      "checklist": ["C21"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R5",
+      "title": "Status roll-up logic",
+      "spec": "Parent task effective status SHALL be computed from children's statuses with priority ordering: Failed > Blocked > InProgress > Pending > Completed.",
+      "acceptance": [
+        "effective_status(children_statuses) -> TaskStatus function in rollup.rs",
+        "Any child Failed -> parent Failed",
+        "Any child Blocked (none Failed) -> parent Blocked",
+        "Any child InProgress (none Failed/Blocked) -> parent InProgress",
+        "Mix of Pending and Completed (no Failed/Blocked/InProgress) -> parent InProgress",
+        "All children Pending -> parent Pending",
+        "All children Completed -> parent Completed",
+        "Empty children list -> returns the parent's own status unchanged",
+        "Test: each priority case verified individually",
+        "Test: mixed states (one Blocked + one InProgress) -> Blocked"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/task/rollup.rs"]
+      },
+      "checklist": ["C18"],
+      "stories": ["S17"]
+    },
+    {
+      "id": "R6",
+      "title": "Extended TaskTool with hierarchy and group actions",
+      "spec": "TaskTool SHALL expose all new hierarchy and group operations through the tool's action dispatch.",
+      "acceptance": [
+        "action enum gains: create_subtask, children, ancestors, claim, create_group, list_groups",
+        "create_subtask requires parent_task_id and description, returns created task with parent link",
+        "children requires parent_task_id, returns list of direct children with effective_status applied",
+        "ancestors requires task_id, returns ordered chain to root",
+        "claim requires task_id, returns updated task or error if already claimed",
+        "create_group requires group_slug, returns confirmation",
+        "list_groups returns all group slugs",
+        "input_schema updated with new actions and parameters",
+        "Test: full cycle — create group, create parent, create subtasks, claim, verify roll-up"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/task/tool.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement DiskTaskStore — that is NA-004",
+    "SHALL NOT modify norn-cli builder.rs or wiring.rs — that is NA-005",
+    "SHALL NOT install SharedTaskStore on ToolContext — that is NA-005",
+    "SHALL NOT add hardcoded limits on task count, hierarchy depth, or group count (CO1)",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all tests pass including all existing task tests",
+    "cargo clippy -p norn -- -D warnings clean",
+    "Status roll-up priority ordering verified for all 7 cases — verified by tests",
+    "Atomic claim prevents double-claiming — verified by test",
+    "Hierarchy traversal (children, ancestors) correct at 3+ levels — verified by test",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

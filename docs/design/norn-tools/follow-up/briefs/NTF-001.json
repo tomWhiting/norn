@@ -1,0 +1,149 @@
+{
+  "id": "NTF-001",
+  "cluster": "norn-tools/follow-up",
+  "title": "Follow-up action types: FollowUpAction, ExpiryCondition, BeforeContentSource",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3", "C4"],
+  "stories": ["S10", "S11"],
+  "purpose": "Define the foundational types for the follow-up system in norn::tool::follow_up. These types are the vocabulary that every subsequent brief in both the follow-up and action-log clusters depends on. FollowUpAction describes a deferred action the agent can take. ExpiryCondition describes when an action becomes invalid. BeforeContentSource describes where undo content is stored. The macros cluster (NTM-004) generates code that constructs these types — it depends on this brief.",
+  "task": "Create crates/norn/src/tool/follow_up.rs with three types: FollowUpAction (the serializable follow-up action descriptor), ExpiryCondition (an enum of expiry conditions), and BeforeContentSource (an enum of undo content sources). Add the follow_up module to crates/norn/src/tool/mod.rs with appropriate re-exports. All types must derive Clone, Debug, Serialize, Deserialize. FollowUpAction must serialize to the JSON shape that tool results expose to the model.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Define FollowUpAction struct",
+      "spec": "FollowUpAction SHALL be defined in crates/norn/src/tool/follow_up.rs with fields: action (String — the short action name like \"undo\" or \"apply_structural\"), description (String — human-readable description for the model), tool (String — name of the target tool to invoke), args (serde_json::Value — pre-populated argument overrides to merge with the original call's args), expires (ExpiryCondition — when this action becomes invalid), confidence (String — \"high\", \"medium\", or \"low\"), and before_content (BeforeContentSource — where undo content is sourced from). FollowUpAction SHALL derive Clone, Debug, Serialize, Deserialize.",
+      "acceptance": [
+        "crates/norn/src/tool/follow_up.rs exists",
+        "FollowUpAction has fields: action: String, description: String, tool: String, args: serde_json::Value, expires: ExpiryCondition, confidence: String, before_content: BeforeContentSource",
+        "FollowUpAction derives Clone, Debug, Serialize, Deserialize",
+        "FollowUpAction is pub and accessible via norn::tool::follow_up::FollowUpAction",
+        "serde round-trip test passes for FollowUpAction with all fields populated"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tool/follow_up.rs"
+        ],
+        "modify": [
+          "crates/norn/src/tool/mod.rs"
+        ]
+      },
+      "checklist": ["C1"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R2",
+      "title": "Define ExpiryCondition enum",
+      "spec": "ExpiryCondition SHALL be defined in crates/norn/src/tool/follow_up.rs with variants: FileModified { path: PathBuf, content_hash: String } (expires when the file's content hash no longer matches), AnyFileModified { paths: Vec<PathBuf>, content_hash_map: HashMap<PathBuf, String> } (expires when any file's hash no longer matches), TurnScoped { turn_id: String } (expires at end of the named turn), and Never (does not expire). ExpiryCondition SHALL derive Clone, Debug, Serialize, Deserialize. The content_hash fields store the hash recorded at registration time — expiry checking compares against the file's current hash.",
+      "acceptance": [
+        "ExpiryCondition has exactly 4 variants: FileModified, AnyFileModified, TurnScoped, Never",
+        "FileModified carries path: PathBuf and content_hash: String",
+        "AnyFileModified carries paths: Vec<PathBuf> and content_hash_map: HashMap<PathBuf, String>",
+        "TurnScoped carries turn_id: String",
+        "Never has no fields",
+        "ExpiryCondition derives Clone, Debug, Serialize, Deserialize",
+        "serde round-trip test passes for all 4 variants"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/follow_up.rs"
+        ]
+      },
+      "checklist": ["C2"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Define BeforeContentSource enum",
+      "spec": "BeforeContentSource SHALL be defined in crates/norn/src/tool/follow_up.rs with variants: YggdrasilOp { operation_id: String } (undo via libyggd operation revert), StoredContent { files: HashMap<PathBuf, String> } (undo by writing stored content directly), and Unavailable (no undo source — returns clear error on attempt). BeforeContentSource SHALL derive Clone, Debug, Serialize, Deserialize. Default SHALL be Unavailable.",
+      "acceptance": [
+        "BeforeContentSource has exactly 3 variants: YggdrasilOp, StoredContent, Unavailable",
+        "YggdrasilOp carries operation_id: String",
+        "StoredContent carries files: HashMap<PathBuf, String>",
+        "Unavailable has no fields",
+        "BeforeContentSource derives Clone, Debug, Serialize, Deserialize",
+        "BeforeContentSource implements Default returning Unavailable",
+        "serde round-trip test passes for all 3 variants"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/follow_up.rs"
+        ]
+      },
+      "checklist": ["C3"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Model-facing serialization shape for tool results",
+      "spec": "FollowUpAction SHALL serialize to JSON matching the follow_ups array format visible to the model. The model-facing fields are: action, description, and expires. The args, confidence, before_content, and tool fields are internal — they SHALL be serialized for storage but the tool result builder (future briefs) is responsible for filtering to the model-facing subset. A helper method model_facing_json(&self) -> serde_json::Value SHALL return only {action, description, expires} for embedding in tool results.",
+      "acceptance": [
+        "FollowUpAction has a pub fn model_facing_json(&self) -> serde_json::Value method",
+        "model_facing_json returns a JSON object with exactly 3 keys: action, description, expires",
+        "Full serde serialization of FollowUpAction includes all fields (action, description, tool, args, expires, confidence, before_content)",
+        "model_facing_json output for a FileModified expiry includes the path but not the content_hash (the model does not need implementation details)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/follow_up.rs"
+        ]
+      },
+      "checklist": ["C4"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R5",
+      "title": "Module wiring and re-exports",
+      "spec": "crates/norn/src/tool/mod.rs SHALL declare pub mod follow_up and re-export FollowUpAction, ExpiryCondition, and BeforeContentSource. The types SHALL be accessible as norn::tool::FollowUpAction, norn::tool::ExpiryCondition, and norn::tool::BeforeContentSource.",
+      "acceptance": [
+        "crates/norn/src/tool/mod.rs contains pub mod follow_up",
+        "crates/norn/src/tool/mod.rs re-exports FollowUpAction, ExpiryCondition, BeforeContentSource from follow_up",
+        "use norn::tool::FollowUpAction compiles",
+        "use norn::tool::ExpiryCondition compiles",
+        "use norn::tool::BeforeContentSource compiles",
+        "cargo check -p norn succeeds with zero errors"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/mod.rs"
+        ]
+      },
+      "checklist": ["C1", "C2", "C3"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Unit tests for type construction and serde round-trips",
+      "spec": "Tests SHALL verify construction and serde round-trip for all three types. Tests SHALL be in a #[cfg(test)] mod tests block within follow_up.rs. Each ExpiryCondition variant SHALL have a round-trip test. Each BeforeContentSource variant SHALL have a round-trip test. FollowUpAction SHALL have a test with all fields populated and a test verifying model_facing_json output shape.",
+      "acceptance": [
+        "At least 8 tests: FollowUpAction round-trip, FollowUpAction model_facing_json, 4 ExpiryCondition variant round-trips, 3 BeforeContentSource variant round-trips (Unavailable default test can combine)",
+        "Tests verify deserialized values match originals",
+        "model_facing_json test asserts exactly 3 keys in output",
+        "All tests pass with cargo test -p norn -- follow_up"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/follow_up.rs"
+        ]
+      },
+      "checklist": ["C1", "C2", "C3", "C4"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement expiry checking logic (comparing hashes against current file state) — that is NTF-003",
+    "SHALL NOT implement the follow_up tool — that is NTF-003",
+    "SHALL NOT implement the register_follow_ups lifecycle phase — that is NTF-002",
+    "SHALL NOT implement undo registration on mutation tools — that is NTF-004",
+    "SHALL NOT implement Yggdrasil operation tracking integration — that is NTF-004",
+    "SHALL NOT implement the tool_follow_ups! macro — that is NTM-004 in the macros cluster"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "cargo fmt -p norn -- --check produces no diff",
+    "cargo test -p norn -- follow_up passes all tests",
+    "grep -rn 'todo!\\|unimplemented!\\|FIXME\\|HACK\\|TODO' crates/norn/src/tool/follow_up.rs returns no matches",
+    "FollowUpAction, ExpiryCondition, and BeforeContentSource are accessible via norn::tool::{FollowUpAction, ExpiryCondition, BeforeContentSource}"
+  ]
+}

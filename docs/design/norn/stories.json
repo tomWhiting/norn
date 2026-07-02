@@ -1,0 +1,117 @@
+{
+  "cluster": "norn",
+  "personas": [
+    {
+      "name": "AI Agent",
+      "role": "Executing a Workflow Step",
+      "stories": [
+        {"id": "S1", "text": "As an AI agent dispatched by a workflow, I want to receive a typed instruction with an output schema so that I know exactly what structured result to produce."},
+        {"id": "S2", "text": "As an AI agent, I want the runtime to validate my output against the schema before returning so that I get a chance to fix schema errors rather than failing silently."},
+        {"id": "S3", "text": "As an AI agent, I want to receive inbound messages and diagnostics at tool boundaries so that I can adjust my approach without being interrupted mid-thought."},
+        {"id": "S4", "text": "As an AI agent approaching a token budget, I want the runtime to tell me to wrap up and summarize progress so that I can hand off cleanly to a continuation."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Editing Code",
+      "stories": [
+        {"id": "S5", "text": "As an AI agent editing a file, I want the Edit tool to validate the AST after my edit so that I learn immediately if I introduced a syntax error."},
+        {"id": "S6", "text": "As an AI agent, I want the Write tool to block me from overwriting a file I have not read so that I do not destroy content I have not seen."},
+        {"id": "S7", "text": "As an AI agent editing Rust code, I want the tool to run configured diagnostics (clippy, cargo check) after my edit so that I see compilation errors in the same tool response."},
+        {"id": "S8", "text": "As an AI agent, I want the Edit tool to report the blast radius of my change (affected symbols, references, related tests) so that I know what else might need updating."},
+        {"id": "S9", "text": "As an AI agent, I want to be told my file exceeds the length limit after writing so that I can refactor it into modules rather than submitting oversized files."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Searching and Navigating Code",
+      "stories": [
+        {"id": "S10", "text": "As an AI agent, I want a single Search tool that combines content search, file finding, fuzzy matching, and structural search so that I do not need to learn multiple search tools."},
+        {"id": "S11", "text": "As an AI agent, I want the LSP tool to show me definitions, references, and diagnostics for a symbol so that I can understand the code structure before editing."},
+        {"id": "S12", "text": "As an AI agent entering a new directory, I want to see a file tree listing activated by a rule so that I know the directory structure before I start editing."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Coordinating Sub-Agents",
+      "stories": [
+        {"id": "S13", "text": "As an AI agent, I want to spawn a sub-agent with a specific task and model so that I can delegate work without losing my own context."},
+        {"id": "S14", "text": "As an AI agent, I want to fork myself onto a cheaper model for a bounded task like committing code so that expensive model time is not wasted on mechanical work."},
+        {"id": "S15", "text": "As an AI agent, I want to wait for a sub-agent to complete and receive its structured result so that I can incorporate its findings without reading its full transcript."},
+        {"id": "S16", "text": "As an AI agent with a long-running background task, I want a lightweight monitor to watch the output and answer my questions about progress so that I do not have to consume the full output myself."},
+        {"id": "S17", "text": "As an AI agent, I want to send a message to another agent by path so that I can coordinate without going through the orchestrator."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Communicating via Meridian",
+      "stories": [
+        {"id": "S18", "text": "As an AI agent in the Meridian collective, I want to send DMs to humans and other agents so that I can report progress and ask questions."},
+        {"id": "S19", "text": "As an AI agent, I want my DM exchanges to be linked to my session events in the graph so that the high-level conversation and low-level tool calls form a connected audit trail."},
+        {"id": "S20", "text": "As an AI agent, I want to tag my tool calls with task references so that downstream consumers can trace my work back to specific requirements."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Orchestrating Agents via Workflows",
+      "stories": [
+        {"id": "S21", "text": "As a workflow developer, I want to invoke an agent step as a Rhai function call that returns typed output so that I can route results to the next step without parsing text."},
+        {"id": "S22", "text": "As a workflow developer, I want to configure which tools an agent has access to based on its profile so that I can enforce role discipline (e.g., team leads cannot edit files)."},
+        {"id": "S23", "text": "As a workflow developer, I want to configure post-edit diagnostics (clippy, tests, formatters) per profile so that different workspaces get appropriate validation without changing tool code."},
+        {"id": "S24", "text": "As a workflow developer, I want to declare output schemas for each workflow step so that every step produces predictable, typed output."},
+        {"id": "S25", "text": "As a workflow developer, I want to write rules that fire before or after specific tools or commands so that agents receive contextual guidance without me modifying the tools themselves."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Steering a Running Agent",
+      "stories": [
+        {"id": "S26", "text": "As a human operator, I want to send a steering message to a running agent that gets delivered at the next tool boundary so that I can redirect without interrupting."},
+        {"id": "S27", "text": "As a human operator, I want to see token-by-token streaming output from the agent so that I can follow its reasoning in real time."},
+        {"id": "S28", "text": "As a human operator, I want the agent to produce both a written and a spoken version of its response so that I can listen via text-to-speech without awkward dot-point cadence."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Reviewing and Auditing Agent Work",
+      "stories": [
+        {"id": "S29", "text": "As a reviewer, I want the session audit trail to be immutable so that I can see exactly what happened even if context was later compacted."},
+        {"id": "S30", "text": "As a reviewer, I want to trace from a DM summary down to specific tool calls and edits so that I can understand why an agent made a particular decision."},
+        {"id": "S31", "text": "As a reviewer, I want the agent's structured output to include per-requirement developer notes so that I can assess how each requirement was addressed."},
+        {"id": "S32", "text": "As a compliance officer, I want every file edit tracked with session ID and reasoning metadata so that I can produce a complete decision audit for regulatory review."}
+      ]
+    },
+    {
+      "name": "System Integrator",
+      "role": "Connecting Norn to Other Tools",
+      "stories": [
+        {"id": "S33", "text": "As a system integrator, I want Norn to run as an MCP server so that I can give any MCP-compatible agent access to Norn's tools without modifying the agent."},
+        {"id": "S34", "text": "As a system integrator, I want Norn to connect to external MCP tool servers so that I can extend the tool set without modifying Norn."},
+        {"id": "S35", "text": "As a system integrator, I want to use Norn as a library crate without depending on Meridian so that I can integrate it into standalone projects."},
+        {"id": "S36", "text": "As a system integrator, I want Norn to wrap Claude Code (stripped to bare metal with Norn tools via MCP) so that Claude models can use enhanced tools while staying within Anthropic's terms."}
+      ]
+    },
+    {
+      "name": "Extension Developer",
+      "role": "Building Norn Extensions",
+      "stories": [
+        {"id": "S37", "text": "As an extension developer, I want to register custom tools via the Meridian extension protocol so that my extension's tools appear alongside Norn's native tools."},
+        {"id": "S38", "text": "As an extension developer, I want my extension process to be shared across multiple agents so that expensive resources (models, databases) are loaded once."},
+        {"id": "S39", "text": "As an extension developer, I want to subscribe to agent lifecycle events (tool calls, messages, completions) so that my extension can react to agent behavior."},
+        {"id": "S40", "text": "As an extension developer, I want to write extensions in Python, TypeScript, or Rust so that I can use the language and ecosystem best suited to my extension's purpose."}
+      ]
+    },
+    {
+      "name": "Orchestrator Developer",
+      "role": "Configuring Tool Validation",
+      "stories": [
+        {"id": "S41", "text": "As an orchestrator developer, I want to set file length thresholds per profile so that different teams can enforce different standards without code changes."},
+        {"id": "S42", "text": "As an orchestrator developer, I want file length measured in code lines (excluding comments and blanks) so that enforcement matches what developers expect from their style guides."},
+        {"id": "S43", "text": "As an orchestrator developer, I want the DiagnosticCollector to capture all tool-level violations during a step so that I can observe agent behavior without parsing individual tool results."},
+        {"id": "S44", "text": "As an orchestrator developer, I want to configure whether a tool's post-validation gates execution or reports findings so that I can tune strictness per workflow."},
+        {"id": "S45", "text": "As an orchestrator developer, I want tool validation results in structured JSON so that I can programmatically filter, aggregate, and route violations."},
+        {"id": "S46", "text": "As an orchestrator developer, I want to publish diagnostics infrastructure on the ToolContext so that any RuntimePostValidateCheck can access shared registries without coupling to specific tools."}
+      ]
+    }
+  ]
+}

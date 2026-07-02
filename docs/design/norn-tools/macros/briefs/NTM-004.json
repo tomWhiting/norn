@@ -1,0 +1,164 @@
+{
+  "id": "NTM-004",
+  "cluster": "norn-tools/macros",
+  "title": "Implement tool_follow_ups! macro for follow-up action registration",
+  "depends_on": ["NTM-001", "NTF-001"],
+  "blocked_by": [],
+  "checklist": ["C49", "C50", "C51", "C52", "C53", "C54"],
+  "stories": ["S6", "S7", "S8", "S9", "S10", "S11"],
+  "purpose": "Implement the tool_follow_ups! proc macro that generates follow-up action registration code. Using the FollowUpAction and ExpiryCondition types from norn::tool::follow_up (defined by NTF-001), this macro lets tool authors declare follow-up actions declaratively. The macro generates Vec<FollowUpAction> construction with condition evaluation, expiry tracking, and description interpolation.",
+  "task": "Using the FollowUpAction and ExpiryCondition types from norn::tool::follow_up (defined by NTF-001), replace the NTM-001 no-op tool_follow_ups placeholder with the real proc macro implementation in crates/norn-macros/src/follow_up/. The macro parses declarative action definitions with name, description, when (condition closure), expires (shorthand syntax), and overrides (JSON literal). It generates code that evaluates conditions against ToolOutput and constructs Vec<FollowUpAction>.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Parse follow-up action declarations",
+      "spec": "The follow_up/parse.rs module SHALL parse the tool_follow_ups! macro input into a structured representation. Each action declaration has: tool (type path), and an actions array. Each action has: name (string literal), description (string literal or format string), when (closure taking &ToolOutput -> bool), expires (shorthand expression), and overrides (JSON literal via braces).",
+      "acceptance": [
+        "crates/norn-macros/src/follow_up/parse.rs exists",
+        "Parses tool: EditTool as a type path",
+        "Parses name: \"undo\" as a string literal",
+        "Parses description with format-string-style interpolation like \"Revert {path}\"",
+        "Parses when: |output| output.content[\"committed\"] == true as a closure expression",
+        "Parses expires: FileModified(expr) as a shorthand",
+        "Parses overrides: { \"key\": \"value\" } as a JSON-like token tree"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-macros/src/follow_up/parse.rs"
+        ]
+      },
+      "checklist": ["C50"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R2",
+      "title": "Generate follow-up action construction code",
+      "spec": "The follow_up/codegen.rs module SHALL generate a function that accepts &ToolOutput and returns Vec<FollowUpAction>. For each action, the generated code SHALL: evaluate the when condition, and if true, construct a FollowUpAction with the name, interpolated description, expiry condition, and overrides. The generated code SHALL reference ::norn::tool::follow_up::FollowUpAction and ::norn::tool::follow_up::ExpiryCondition by absolute path.",
+      "acceptance": [
+        "crates/norn-macros/src/follow_up/codegen.rs exists",
+        "Generated code evaluates when closures against the ToolOutput reference",
+        "Actions whose when condition returns false are excluded from the result Vec",
+        "Generated code constructs FollowUpAction with all 4 fields populated",
+        "Generated code references types by absolute path (::norn::tool::follow_up::...)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-macros/src/follow_up/codegen.rs"
+        ]
+      },
+      "checklist": ["C49", "C53"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R3",
+      "title": "Implement expiry shorthand expansion",
+      "spec": "The macro SHALL provide shorthand syntax for expiry conditions: FileModified(path_expr) expands to ExpiryCondition::FileModified { path: path_expr.to_string(), modified_at: ... }. AnyFileModified expands to ExpiryCondition::AnyFileModified { ... }. TurnScoped expands to ExpiryCondition::TurnScoped { ... }. Never expands to ExpiryCondition::Never. The modified_at timestamp SHALL be captured at registration time via chrono::Utc::now().",
+      "acceptance": [
+        "FileModified(output.content[\"path\"].as_str()) generates ExpiryCondition::FileModified with the path extracted from output",
+        "AnyFileModified generates ExpiryCondition::AnyFileModified",
+        "TurnScoped generates ExpiryCondition::TurnScoped",
+        "Never generates ExpiryCondition::Never",
+        "The shorthand names match the ExpiryCondition variant names exactly"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/follow_up/codegen.rs"
+        ]
+      },
+      "checklist": ["C52"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R4",
+      "title": "Implement description interpolation",
+      "spec": "WHEN a follow-up action description contains {field_name} placeholders, the generated code SHALL interpolate them using values extracted from the ToolOutput content. Interpolation SHALL use format!() with values obtained via output.content[\"field_name\"]. Missing fields SHALL produce the literal string \"<missing>\" rather than panicking.",
+      "acceptance": [
+        "Description \"Revert {path} to pre-edit content\" generates format!(\"Revert {} to pre-edit content\", output.content[\"path\"].as_str().unwrap_or(\"<missing>\"))",
+        "Description with no placeholders passes through as a plain string literal",
+        "Multiple placeholders in one description all get interpolated",
+        "A placeholder referencing a missing output field produces \"<missing>\" in the description"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/follow_up/codegen.rs"
+        ]
+      },
+      "checklist": ["C51"],
+      "stories": ["S9", "S11"]
+    },
+    {
+      "id": "R5",
+      "title": "Implement overrides as JSON literal",
+      "spec": "The overrides field in an action declaration SHALL accept a JSON-like literal in braces. The macro SHALL expand it to a serde_json::json!({...}) call in the generated code. An empty overrides ({}) SHALL produce serde_json::json!({}).",
+      "acceptance": [
+        "overrides: { \"mode\": \"structural\" } generates serde_json::json!({\"mode\": \"structural\"})",
+        "overrides: {} generates serde_json::json!({})",
+        "Nested overrides { \"flags\": [\"allow_broken_ast\"] } generate the correct nested JSON"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/follow_up/codegen.rs"
+        ]
+      },
+      "checklist": ["C54"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Wire follow_up/mod.rs and replace NTM-001 placeholder",
+      "spec": "follow_up/mod.rs SHALL export the proc macro implementation function. The #[proc_macro] tool_follow_ups entry point in lib.rs SHALL delegate to follow_up::expand instead of returning an empty TokenStream. The NTM-001 placeholder SHALL be fully replaced.",
+      "acceptance": [
+        "crates/norn-macros/src/follow_up/mod.rs exports pub fn expand(input: TokenStream) -> TokenStream",
+        "lib.rs tool_follow_ups calls follow_up::expand",
+        "The placeholder empty TokenStream from NTM-001 is removed",
+        "cargo check -p norn-macros succeeds"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/follow_up/mod.rs",
+          "crates/norn-macros/src/lib.rs"
+        ]
+      },
+      "checklist": ["C49"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Integration tests for follow-up macro",
+      "spec": "Integration tests SHALL verify the tool_follow_ups! macro generates correct follow-up action registration code. Tests SHALL cover: single action, multiple actions with conditions, description interpolation, all four expiry shorthands, and overrides.",
+      "acceptance": [
+        "Test: single action with when: |_| true produces Vec with 1 FollowUpAction",
+        "Test: two actions where one condition is false produces Vec with 1 FollowUpAction",
+        "Test: description with {field} placeholder interpolates from mock ToolOutput",
+        "Test: FileModified expiry shorthand produces ExpiryCondition::FileModified",
+        "Test: Never expiry shorthand produces ExpiryCondition::Never",
+        "Test: overrides with {\"mode\": \"structural\"} produces correct serde_json::Value",
+        "All tests pass with cargo test -p norn-macros"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-macros/tests/follow_up.rs"
+        ]
+      },
+      "checklist": ["C49", "C50", "C51", "C52", "C53", "C54"],
+      "stories": ["S6", "S7", "S8", "S9"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the follow-up tool itself (follow_up tool that executes actions by tool_call_id) — that is a separate norn-tools/follow-up brief",
+    "SHALL NOT implement expiry checking logic (comparing timestamps, detecting file modifications) — that is follow-up tool execution logic",
+    "SHALL NOT implement action log storage or indexing — that is norn-tools/action-log",
+    "SHALL NOT modify any existing tool implementations to add follow-up actions — individual tool follow-up wiring is future work after the follow-up tool itself is built",
+    "SHALL NOT add the register_follow_ups method to the Tool trait — that lifecycle extension is part of the follow-up design cluster, not this crate setup",
+    "SHALL NOT define FollowUpAction or ExpiryCondition types — those are defined by NTF-001 in norn::tool::follow_up"
+  ],
+  "verification": [
+    "cargo check -p norn-macros succeeds with zero errors",
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn-macros -- -D warnings produces zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "cargo test -p norn-macros passes all follow-up tests",
+    "The tool_follow_ups! macro compiles and generates correct Vec<FollowUpAction> construction code referencing types from norn::tool::follow_up",
+    "grep -rn 'todo!\\|unimplemented!' crates/norn-macros/src/ returns no matches"
+  ]
+}

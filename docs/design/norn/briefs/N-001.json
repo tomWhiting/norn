@@ -1,0 +1,185 @@
+{
+  "id": "N-001",
+  "cluster": "norn",
+  "title": "Define crate error types and validate module scaffold",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3", "C4"],
+  "stories": ["S35"],
+  "purpose": "Establish the norn crate as a compilable workspace member with the correct module structure, lint configuration, and a comprehensive error type hierarchy. This is the foundation that every subsequent brief depends on — nothing can be built until the crate compiles cleanly with proper error propagation.",
+  "task": "The crate scaffold already exists (created during reference extraction): Cargo.toml, lib.rs with module declarations, and the full directory tree with empty files. This brief validates that scaffold against C1-C3, then fills in C4 by defining the NornError type hierarchy in error.rs. All error types are defined in error.rs (matching DESIGN.md: 'error.rs -- crate error types (thiserror)'). Each module re-exports its relevant error type via pub use. Testing layer: unit tests (Layer 1) — error types are testable in isolation.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Validate workspace membership and edition",
+      "spec": "The norn crate SHALL be a workspace member with edition matching the workspace default. Cargo.toml SHALL declare version.workspace, edition.workspace, and license.workspace.",
+      "acceptance": [
+        "`cargo check -p norn` succeeds with zero errors",
+        "Cargo.toml uses version.workspace = true, edition.workspace = true, license.workspace = true",
+        "The crate appears in the root Cargo.toml workspace members list"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C1"],
+      "stories": ["S35"]
+    },
+    {
+      "id": "R2",
+      "title": "Validate lint configuration",
+      "spec": "Cargo.toml SHALL declare `[lints] workspace = true` inheriting the workspace-level unsafe_code = deny and pedantic clippy lints. The crate SHALL NOT define its own lint overrides.",
+      "acceptance": [
+        "`cargo clippy -p norn -- -D warnings` produces zero errors on the scaffolded crate",
+        "Cargo.toml contains `[lints] workspace = true` and no `[lints.clippy]` or `[lints.rust]` sections"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C2"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Validate lib.rs module declarations",
+      "spec": "src/lib.rs SHALL declare public modules matching the DESIGN.md Structure section: provider, loop, tool, tools, rules, agent, session, integration, error. The `loop` module SHALL use raw identifier syntax (`r#loop`). lib.rs SHALL contain only module declarations and crate-level documentation.",
+      "acceptance": [
+        "lib.rs contains exactly 9 `pub mod` declarations: agent, error, integration, r#loop, provider, rules, session, tool, tools",
+        "lib.rs contains no struct, enum, fn, impl, trait, const, or static declarations",
+        "Every declared module resolves to a directory with a mod.rs file"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/lib.rs"
+        ]
+      },
+      "checklist": ["C3"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Define NornError with domain-specific variants",
+      "spec": "error.rs SHALL define a `NornError` enum using thiserror with variants covering every error domain in the design. Each variant SHALL carry a domain-specific inner error type also defined in error.rs. The enum SHALL NOT use anyhow, Box<dyn Error>, or String-only variants.",
+      "acceptance": [
+        "NornError has variants: Provider(ProviderError), Schema(SchemaError), Tool(ToolError), Rules(RulesError), Agent(AgentError), Session(SessionError), Integration(IntegrationError), Config(ConfigError)",
+        "Each variant wraps a dedicated error enum defined in the same error.rs file",
+        "All variants have `#[error(...)]` attributes with descriptive messages via thiserror",
+        "`NornError` implements `std::error::Error` via thiserror derive",
+        "No `anyhow` import in error.rs",
+        "No `.unwrap()` or `.expect()` in error.rs"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/error.rs"
+        ]
+      },
+      "checklist": ["C4"],
+      "stories": ["S35"]
+    },
+    {
+      "id": "R5",
+      "title": "Define ProviderError and SchemaError",
+      "spec": "ProviderError and SchemaError SHALL be defined in error.rs. ProviderError covers provider-level failures. SchemaError covers schema enforcement failures including the SchemaUnreachable terminal path. Both SHALL use thiserror. Both SHALL be re-exported from their respective module's mod.rs via `pub use crate::error::ProviderError` and `pub use crate::error::SchemaError`.",
+      "acceptance": [
+        "ProviderError defined in crates/norn/src/error.rs with variants: ConnectionFailed, AuthenticationFailed, RateLimited { retry_after: Option<std::time::Duration> }, StreamError, ResponseParseError, UnsupportedFeature",
+        "SchemaError defined in crates/norn/src/error.rs with variants: ValidationFailed { schema: serde_json::Value, output: serde_json::Value, errors: Vec<String> }, Unreachable { best_attempt: Option<serde_json::Value>, validation_errors: Vec<String>, attempts: u32 }, InvalidSchema { reason: String }",
+        "provider/mod.rs contains `pub use crate::error::ProviderError;`",
+        "loop/mod.rs contains `pub use crate::error::SchemaError;`",
+        "Both types use thiserror derive"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/error.rs",
+          "crates/norn/src/provider/mod.rs",
+          "crates/norn/src/loop/mod.rs"
+        ]
+      },
+      "checklist": ["C4"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Define ToolError, AgentError, SessionError, RulesError, IntegrationError, ConfigError",
+      "spec": "Each remaining error domain SHALL have a dedicated error enum defined in error.rs with variants reflecting the design's error scenarios. All SHALL use thiserror. Each module SHALL re-export its relevant error type from mod.rs via `pub use crate::error::XxxError`.",
+      "acceptance": [
+        "ToolError defined in error.rs with variants: PreValidationFailed, ExecutionFailed, PostValidationFailed, ToolNotFound",
+        "AgentError defined in error.rs with variants: SpawnFailed, NotFound, MailboxClosed, PathInvalid",
+        "SessionError defined in error.rs with variants: EventAppendFailed, InvalidEventId, StorageError",
+        "RulesError defined in error.rs with variants: ParseFailed, TriggerEvalError, DeliveryFailed",
+        "IntegrationError defined in error.rs with variants: ClaudeRunnerError, McpError, RhaiError, HookError",
+        "ConfigError defined in error.rs with variants: InvalidConfig, MissingField",
+        "tool/mod.rs contains `pub use crate::error::ToolError;`",
+        "agent/mod.rs contains `pub use crate::error::AgentError;`",
+        "session/mod.rs contains `pub use crate::error::SessionError;`",
+        "rules/mod.rs contains `pub use crate::error::RulesError;`",
+        "integration/mod.rs contains `pub use crate::error::IntegrationError;`",
+        "cargo check -p norn succeeds with zero errors"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/error.rs",
+          "crates/norn/src/tool/mod.rs",
+          "crates/norn/src/agent/mod.rs",
+          "crates/norn/src/session/mod.rs",
+          "crates/norn/src/rules/mod.rs",
+          "crates/norn/src/integration/mod.rs"
+        ]
+      },
+      "checklist": ["C4"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Add serde_json dependency",
+      "spec": "Cargo.toml SHALL add serde and serde_json as workspace dependencies. These are required for SchemaError's Value fields and will be used throughout the crate. serde's derive feature SHALL be enabled.",
+      "acceptance": [
+        "Cargo.toml [dependencies] includes serde = { workspace = true, features = [\"derive\"] }",
+        "Cargo.toml [dependencies] includes serde_json = { workspace = true }",
+        "cargo check -p norn succeeds with zero errors"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C4"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "Validate mod.rs discipline across all modules",
+      "spec": "This is a verification-only requirement — it validates a constraint without modifying files. Every mod.rs file in the crate SHALL contain only `pub mod` declarations, `pub use` re-exports, and module-level documentation. mod.rs SHALL NOT contain functions, traits, struct definitions, enum definitions, or implementations. Error enums are defined in error.rs and re-exported via pub use in mod.rs, which satisfies this constraint.",
+      "acceptance": [
+        "grep -rn 'fn \\|struct \\|enum \\|trait \\|impl ' crates/norn/src/*/mod.rs returns no matches (pub use re-exports of error enums are not definitions)",
+        "Every mod.rs file contains only pub mod, pub use, and doc comments"
+      ],
+      "files": {
+        "modify": []
+      },
+      "checklist": ["C3"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT define any provider implementations — only the ProviderError type",
+    "SHALL NOT define the Tool trait or any tool implementations — only the ToolError type",
+    "SHALL NOT define the Provider trait — only the ProviderError type",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere",
+    "SHALL NOT modify the module directory structure — only fill in existing scaffold files",
+    "SHALL NOT define error types outside error.rs — all error enums live in error.rs, modules re-export via pub use"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "grep -rn 'anyhow' crates/norn/src/ returns no matches",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/ returns no matches",
+    "grep -rn 'todo!\\|unimplemented!' crates/norn/src/ returns no matches",
+    "Every NornError variant wraps a dedicated error enum, not String",
+    "All domain error types are defined in error.rs",
+    "Each module re-exports its error type via pub use crate::error::XxxError",
+    "Every mod.rs contains only pub mod/pub use — no logic"
+  ]
+}

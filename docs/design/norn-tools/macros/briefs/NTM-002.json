@@ -1,0 +1,213 @@
+{
+  "id": "NTM-002",
+  "cluster": "norn-tools/macros",
+  "title": "Implement type mapping and enum support for ToolArgs derive",
+  "depends_on": ["NTM-001"],
+  "blocked_by": [],
+  "checklist": ["C16", "C17", "C18", "C19", "C20", "C21", "C22", "C23", "C24", "C25", "C26", "C27", "C28", "C29", "C30", "C31", "C32", "C33"],
+  "stories": ["S5", "S16"],
+  "purpose": "Extend the ToolArgs derive macro to handle all Rust types that appear in tool args structs: integers, floats, Option<T>, Vec<T>, HashMap<String, T>, serde_json::Value, nested structs, and enums (string, tagged, untagged, adjacently tagged). After this brief, the macro can generate correct JSON Schema for every type used across the existing 17+ tools.",
+  "task": "Add type-to-JSON-Schema mapping logic in tool_args/schema.rs and create tool_args/enum_schema.rs for enum handling. The type mapping is closed — unsupported types produce compile_error! with a message suggesting #[tool_args(schema = {...})]. Enum support covers four serde representations: unit-variant-only (string enum), internally tagged, externally tagged/untagged (oneOf), and adjacently tagged. Nested structs with #[derive(ToolArgs)] generate inline object schemas via recursive json_schema() calls.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Integer type mapping",
+      "spec": "Signed integer types (i8, i16, i32, i64, isize) SHALL generate {\"type\": \"integer\"}. Unsigned integer types (u8, u16, u32, u64, usize) SHALL generate {\"type\": \"integer\", \"minimum\": 0}.",
+      "acceptance": [
+        "A field of type i64 generates {\"type\": \"integer\"} with no minimum",
+        "A field of type u64 generates {\"type\": \"integer\", \"minimum\": 0}",
+        "A field of type u32 generates {\"type\": \"integer\", \"minimum\": 0}",
+        "All signed types (i8, i16, i32, i64, isize) produce identical schema",
+        "All unsigned types (u8, u16, u32, u64, usize) produce identical schema with minimum: 0"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C18", "C19"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Float type mapping",
+      "spec": "Float types (f32, f64) SHALL generate {\"type\": \"number\"}.",
+      "acceptance": [
+        "A field of type f64 generates {\"type\": \"number\"}",
+        "A field of type f32 generates {\"type\": \"number\"}"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C20"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Option<T> handling",
+      "spec": "Fields of type Option<T> SHALL generate the inner type T's schema and SHALL omit the field from the required array. Option<T> SHALL NOT produce a nullable schema — absent means None.",
+      "acceptance": [
+        "A field offset: Option<u64> generates {\"type\": \"integer\", \"minimum\": 0} and is absent from required",
+        "A field name: Option<String> generates {\"type\": \"string\"} and is absent from required",
+        "Option<Option<T>> produces the same schema as Option<T> (double-unwrap)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C21"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R4",
+      "title": "Vec<T> and HashMap<String, T> mapping",
+      "spec": "Vec<T> fields SHALL generate {\"type\": \"array\", \"items\": <schema of T>}. HashMap<String, T> fields SHALL generate {\"type\": \"object\", \"additionalProperties\": <schema of T>}. HashMap keys that are not String SHALL produce compile_error!.",
+      "acceptance": [
+        "A field tags: Vec<String> generates {\"type\": \"array\", \"items\": {\"type\": \"string\"}}",
+        "A field counts: Vec<u64> generates {\"type\": \"array\", \"items\": {\"type\": \"integer\", \"minimum\": 0}}",
+        "A field metadata: HashMap<String, String> generates {\"type\": \"object\", \"additionalProperties\": {\"type\": \"string\"}}",
+        "A field with HashMap<i32, String> produces a compile error mentioning String key requirement"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C22", "C23"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "serde_json::Value escape hatch",
+      "spec": "Fields of type serde_json::Value (or Value if imported) SHALL generate {} (empty schema, accepting any JSON value).",
+      "acceptance": [
+        "A field content: serde_json::Value generates {} (empty object schema)",
+        "A field content: Value generates {} when Value resolves to serde_json::Value",
+        "The field still appears in required unless #[serde(default)] is present"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C24"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "Nested struct support",
+      "spec": "Fields whose type is a struct with #[derive(ToolArgs)] SHALL generate an inline object schema by calling T::json_schema() in the generated code. The generated code SHALL emit T::json_schema() as a function call, not attempt to introspect the nested struct at macro expansion time.",
+      "acceptance": [
+        "A struct Inner with #[derive(ToolArgs)] used as a field type in Outer generates Inner::json_schema() call in the expanded code",
+        "The resulting schema nests Inner's properties inside Outer's properties",
+        "Nested structs respect their own required/additionalProperties rules",
+        "cargo check succeeds when both Outer and Inner have #[derive(ToolArgs)]"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C25"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Unsupported type compile error",
+      "spec": "IF a field's type does not match any entry in the type mapping table AND the field has no #[tool_args(schema = {...})] override, THEN the macro SHALL emit compile_error! with a message naming the unsupported type and suggesting the override syntax.",
+      "acceptance": [
+        "A field of type PathBuf produces compile_error!(\"ToolArgs: unsupported type `PathBuf`. Use #[tool_args(schema = {...})] to provide a manual schema.\")",
+        "The error span points to the field, not the derive invocation",
+        "The error message includes the exact type name from the source"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/schema.rs"
+        ]
+      },
+      "checklist": ["C26"],
+      "stories": ["S16"]
+    },
+    {
+      "id": "R8",
+      "title": "String enum schema generation",
+      "spec": "WHEN ToolArgs is derived on an enum with only unit variants, the macro SHALL generate {\"type\": \"string\", \"enum\": [<variant names>]}. Variant names SHALL respect #[serde(rename_all)] on the enum and #[serde(rename)] on individual variants. Doc comments on variants SHALL be collected into a top-level description listing each option.",
+      "acceptance": [
+        "An enum with variants A, B, C generates {\"type\": \"string\", \"enum\": [\"A\", \"B\", \"C\"]}",
+        "An enum with #[serde(rename_all = \"snake_case\")] and variants MyVariant generates enum: [\"my_variant\"]",
+        "An enum with #[serde(rename = \"custom\")] on a variant uses \"custom\" in the enum array",
+        "Doc comments on variants produce a description like \"A: docs for A. B: docs for B.\""
+      ],
+      "files": {
+        "create": [
+          "crates/norn-macros/src/tool_args/enum_schema.rs"
+        ]
+      },
+      "checklist": ["C27", "C28", "C29", "C30"],
+      "stories": []
+    },
+    {
+      "id": "R9",
+      "title": "Tagged and untagged enum schema generation",
+      "spec": "WHEN ToolArgs is derived on an enum with #[serde(tag = \"...\")], the macro SHALL generate a oneOf schema where each variant is an object with the tag field as a const value. WHEN #[serde(untagged)] is used, the macro SHALL generate oneOf without a discriminator. WHEN #[serde(tag = \"t\", content = \"c\")] is used (adjacent tagging), the macro SHALL generate a two-field object per variant with the tag as const and the content wrapping the variant data.",
+      "acceptance": [
+        "A tagged enum with #[serde(tag = \"type\")] and variants Create{title: String} and Update{id: String} generates oneOf with two objects, each having a const type field",
+        "An untagged enum generates oneOf without any discriminator const fields",
+        "An adjacently tagged enum with tag = \"t\", content = \"c\" generates objects with t as const and c wrapping the variant data",
+        "Enum variants with named fields generate object schemas with properties matching the field names"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/src/tool_args/enum_schema.rs"
+        ]
+      },
+      "checklist": ["C31", "C32", "C33"],
+      "stories": []
+    },
+    {
+      "id": "R10",
+      "title": "Integration tests for type mapping and enums",
+      "spec": "Integration tests SHALL verify correct schema generation for all type mappings and enum representations. Tests SHALL cover: integer types (signed and unsigned), floats, Option<T>, Vec<T>, HashMap<String, T>, serde_json::Value, nested structs, unsupported types (compile-fail), string enums, tagged enums, and untagged enums.",
+      "acceptance": [
+        "At least 12 new test cases added to crates/norn-macros/tests/tool_args.rs",
+        "Test: i64 field → integer schema",
+        "Test: u32 field → integer schema with minimum 0",
+        "Test: f64 field → number schema",
+        "Test: Option<String> field → string schema, absent from required",
+        "Test: Vec<String> field → array schema with string items",
+        "Test: HashMap<String, i64> field → object schema with integer additionalProperties",
+        "Test: serde_json::Value field → empty schema {}",
+        "Test: nested #[derive(ToolArgs)] struct → inline object schema",
+        "Test: string enum with rename_all → correct enum values",
+        "Test: tagged enum → oneOf with discriminator",
+        "All tests pass with cargo test -p norn-macros"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-macros/tests/tool_args.rs"
+        ]
+      },
+      "checklist": ["C16", "C17", "C18", "C19", "C20", "C21", "C22", "C23", "C24", "C25", "C27", "C31", "C32"],
+      "stories": ["S5"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement #[serde(rename)] or #[serde(rename_all)] on struct fields — field-level rename is NTM-003 (enum variant rename IS in scope for this brief since it's part of enum schema generation)",
+    "SHALL NOT implement #[serde(flatten)] — that is NTM-003",
+    "SHALL NOT implement #[tool_args(...)] override attributes — those are NTM-003",
+    "SHALL NOT implement compile-time doc comment enforcement — that is NTM-003",
+    "SHALL NOT modify any existing tool implementations — migration is NTM-005"
+  ],
+  "verification": [
+    "cargo check -p norn-macros succeeds with zero errors",
+    "cargo clippy -p norn-macros -- -D warnings produces zero errors",
+    "cargo test -p norn-macros passes all tests including new type mapping and enum tests",
+    "A struct using every supported type (String, bool, i64, u64, f64, Option<String>, Vec<String>, HashMap<String, String>, serde_json::Value) compiles and produces a valid schema",
+    "An enum with #[serde(rename_all = \"snake_case\")] unit variants produces correct enum values",
+    "A tagged enum produces oneOf with discriminator fields",
+    "An unsupported type (e.g., PathBuf) produces a compile error with a helpful message"
+  ]
+}

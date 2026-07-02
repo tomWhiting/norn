@@ -1,0 +1,182 @@
+{
+  "id": "NH-006",
+  "cluster": "norn-hooks",
+  "title": "CLI settings integration, hook registration, and dispatch wiring",
+  "depends_on": ["NC-001", "NH-002", "NH-003", "NH-005"],
+  "blocked_by": [],
+  "checklist": ["C20", "C21", "C22", "C23", "C24", "C25", "C54", "C55", "C56", "C57", "C58", "C59", "C60", "C61"],
+  "stories": ["S1", "S2", "S4", "S5", "S7", "S9", "S19", "S20"],
+  "purpose": "This brief wires the entire hook system end-to-end: load config from settings files, build ShellCommandHook instances, register them on HookRegistry, and wire all 6 new hook traits into their dispatch points in the agent loop. Loading without wiring is useless — both halves form one logical operation that makes hooks work at runtime.",
+  "task": "Update norn-cli runtime builder to call load_hooks_from_settings during build_runtime, construct ShellCommandHook instances from the loaded HookEntry values, and register them on the HookRegistry. Then wire dispatch points for all 6 new hook traits: UserPromptHook at run_agent_step entry, StopHook at loop exit, SubagentHook in spawn.rs, CompactionHook in compaction.rs, PostToolFailureHook in tool_dispatch.rs, SessionLifecycleHook in norn-cli wiring. Handle the case where no settings files exist (no hooks, no error). Use NC-001's path resolution for locating ~/.norn/settings.json.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Load hook settings during build_runtime",
+      "spec": "WHEN build_runtime executes, it SHALL call load_hooks_from_settings with the working directory to obtain the merged HookSettings. IF load_hooks_from_settings returns an error, the error SHALL be propagated. IF no settings files exist, an empty HookSettings SHALL be used (no hooks, no error).",
+      "acceptance": [
+        "build_runtime or a new wiring function calls load_hooks_from_settings(cwd)",
+        "Uses norn::config::paths for ~/.norn/settings.json resolution",
+        "Error from load_hooks_from_settings propagates as BuildError",
+        "No settings files → empty HookSettings → no hooks registered → no error",
+        "Test: builder with no settings files produces a HookRegistry with 0 hooks"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C25"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R2",
+      "title": "Build ShellCommandHook instances and register on HookRegistry",
+      "spec": "For each HookEntry in the loaded HookSettings, the builder SHALL construct a ShellCommandHook with the entry's command, compiled matcher, validated timeout, and the appropriate HookEventType. Built instances SHALL be registered on the HookRegistry via Hook enum variants. Registration order SHALL reflect the 3-tier merge order.",
+      "acceptance": [
+        "Each HookEntry produces one ShellCommandHook instance",
+        "HookEntry.matcher compiled via HookMatcher::new — invalid regex is a startup error",
+        "HookEntry.timeout converted to Duration",
+        "HookEventType determined by which field of HookSettings the entry came from",
+        "ShellCommandHook context populated with session ID, working directory, root agent ID, and profile name from the runtime bundle",
+        "Each ShellCommandHook boxed and wrapped in the appropriate Hook variant",
+        "All 13 event types mapped to their Hook variants",
+        "Registration order matches concatenation order from load_hooks_from_settings",
+        "HookRegistry installed on LoopContext.hooks (shell hooks append to any existing programmatic hooks, not replace)",
+        "Settings captured once at startup — no re-loading mechanism",
+        "Test: HookSettings with 2 pre_tool entries produces HookRegistry with pre_tool_len() == 2"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C20", "C21", "C22", "C23", "C24"],
+      "stories": ["S1", "S4", "S5"]
+    },
+    {
+      "id": "R3",
+      "title": "UserPromptHook dispatch at loop entry",
+      "spec": "WHEN run_agent_step begins, WHILE LoopContext.hooks is Some, the runner SHALL call run_user_prompt with the user prompt and session ID. IF the result is Block, the runner SHALL return NornError::HookBlocked with HookType::UserPrompt.",
+      "acceptance": [
+        "run_user_prompt called in run_agent_step_inner before build_initial_messages",
+        "Block returns NornError::HookBlocked { hook_type: HookType::UserPrompt, reason }",
+        "Proceed continues normal execution",
+        "When hooks is None, dispatch is skipped",
+        "Test: register UserPromptHook that blocks, verify HookBlocked error returned"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/loop/runner.rs"]
+      },
+      "checklist": ["C54"],
+      "stories": ["S20"]
+    },
+    {
+      "id": "R4",
+      "title": "StopHook dispatch at loop exit",
+      "spec": "WHEN the agent loop determines the model wants to stop (no tool calls, final text produced), WHILE LoopContext.hooks is Some, the runner SHALL call run_stop with the final text. IF the result is Block, the runner SHALL inject the block reason as a user message and continue the loop instead of returning.",
+      "acceptance": [
+        "run_stop called after classifying the response as terminal (no tool calls)",
+        "Block causes the loop to inject the block reason as a follow-up user message",
+        "Block prevents AgentStepResult from being returned on this iteration",
+        "Proceed allows normal stop (AgentStepResult returned)",
+        "When hooks is None, dispatch is skipped",
+        "Test: register StopHook that blocks, verify the loop continues with injected reason"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/loop/runner.rs"]
+      },
+      "checklist": ["C55"],
+      "stories": ["S2", "S19"]
+    },
+    {
+      "id": "R5",
+      "title": "SubagentHook dispatch in spawn.rs",
+      "spec": "WHEN a sub-agent is spawned via SpawnAgentTool, the runner SHALL call run_subagent_start with the child's agent ID and type. WHEN a sub-agent completes (in the finish function), the runner SHALL call run_subagent_stop. IF run_subagent_stop returns Block, the child SHALL NOT be marked as completed.",
+      "acceptance": [
+        "run_subagent_start called in launch_child after the child agent is spawned",
+        "run_subagent_stop called in finish_child before marking terminal status",
+        "Block from run_subagent_stop prevents status transition to Completed/Failed",
+        "Agent ID and profile name (or agent type) passed to both hooks",
+        "Hooks retrieved from parent's LoopContext (if available) or from ToolContext extension",
+        "Test: register SubagentHook, verify start fires on spawn, stop fires on completion"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/tools/agent/spawn.rs"]
+      },
+      "checklist": ["C56", "C57"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "CompactionHook dispatch in compaction.rs",
+      "spec": "WHEN auto-compaction triggers, WHILE LoopContext.hooks is Some, the compaction logic SHALL call run_pre_compaction with the current event count. IF the result is Block, compaction SHALL be skipped for this trigger (not an error).",
+      "acceptance": [
+        "run_pre_compaction called in maybe_auto_compact before the compaction event is created",
+        "Block causes maybe_auto_compact to return without compacting (Ok, no compaction)",
+        "Proceed allows compaction to proceed normally",
+        "Event count passed to the hook is the number of events currently in the store",
+        "When hooks is None, dispatch is skipped",
+        "Test: register CompactionHook that blocks, verify compaction is skipped"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/loop/compaction.rs"]
+      },
+      "checklist": ["C58"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "PostToolFailureHook dispatch in tool_dispatch.rs",
+      "spec": "WHEN a tool execution produces an error output (output contains 'error' key or is_error is true), WHILE LoopContext.hooks is Some, tool_dispatch SHALL call run_post_tool_failure with the envelope and output. This is observational — no return value affects control flow.",
+      "acceptance": [
+        "run_post_tool_failure called in execute_tool_call when the tool output indicates an error",
+        "Fires in addition to (not instead of) the existing PostToolHook",
+        "PostToolHook fires for all tool completions; PostToolFailureHook fires only for errors",
+        "Receives the same ToolEnvelope and ToolOutput as PostToolHook",
+        "When hooks is None, dispatch is skipped",
+        "Test: register PostToolFailureHook with counter, trigger tool error, verify counter incremented"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/loop/tool_dispatch.rs"]
+      },
+      "checklist": ["C59"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R8",
+      "title": "SessionLifecycleHook dispatch in norn-cli runtime",
+      "spec": "WHEN the norn-cli runtime creates a session, it SHALL call run_session_start with the session ID. WHEN the session ends (normal exit or error), it SHALL call run_session_end with the session ID. Both are observational.",
+      "acceptance": [
+        "run_session_start called after HookRegistry is built and installed on LoopContext, before the first run_agent_step",
+        "run_session_end called during session teardown (in a drop guard or explicit cleanup path)",
+        "Session ID passed to both hooks",
+        "Both hooks fire even if no shell hooks are configured (trait hooks may be registered programmatically)",
+        "When hooks is None, dispatch is skipped",
+        "Test: register SessionLifecycleHook, run a session, verify start and end both fire"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/wiring.rs"]
+      },
+      "checklist": ["C60", "C61"],
+      "stories": ["S20"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify hook trait definitions — those are NH-001 and NH-002",
+    "SHALL NOT modify ShellCommandHook internals — that is NH-005",
+    "SHALL NOT implement settings file parsing or merge logic — that is NH-003",
+    "SHALL NOT change existing pre/post tool or pre/post LLM dispatch semantics",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "norn-cli builds and runs with no settings files (no error, no hooks)",
+    "norn-cli builds and runs with a valid settings.json containing hook entries",
+    "Invalid regex in settings.json produces a startup error",
+    "grep for 'run_user_prompt' in runner.rs returns matches",
+    "grep for 'run_stop' in runner.rs returns matches",
+    "grep for 'run_subagent_start\\|run_subagent_stop' in spawn.rs returns matches",
+    "grep for 'run_pre_compaction' in compaction.rs returns matches",
+    "grep for 'run_post_tool_failure' in tool_dispatch.rs returns matches",
+    "grep for 'run_session_start\\|run_session_end' in wiring.rs returns matches",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

@@ -1,0 +1,106 @@
+{
+  "id": "NC-009",
+  "cluster": "norn-cli",
+  "title": "Diagnostics CLI integration — per-tool config, collector wiring, threshold overrides",
+  "depends_on": ["NC-001", "NC-004"],
+  "blocked_by": [],
+  "checklist": ["C112", "C118", "C119", "C120", "C121", "C122", "C123"],
+  "stories": ["S34", "S38", "S54", "S55", "S56"],
+  "purpose": "The CLI needs to wire the DiagnosticCollector into LoopContext and ToolContext, configure per-tool validation thresholds from profiles and CLI overrides, and render diagnostics in all three output formats. N-025 adds the LoopContext field and runner push sites in libnorn. This brief wires them from the CLI side: construct the collector, set it on LoopContext, publish it on ToolContext, load tool_config from profiles, apply -c overrides for tool thresholds, and drain/render at step completion.",
+  "task": "Construct an Arc<DiagnosticCollector> and set it on LoopContext::diagnostics before calling run_agent_step. Publish the same collector on ToolContext via ToolRegistry's shared context (insert_extension). Parse a tool_config section from the profile to configure per-tool thresholds (write.max_code_lines, glob overrides). Support -c write.max_code_lines=N CLI overrides that take precedence over profile values. Construct WriteTool with the resolved LengthLimit (None when no threshold configured). Drain the collector after run_agent_step and render per output format: text mode renders on stderr, json mode includes in the diagnostics envelope field, stream-json mode emits as diagnostic NDJSON events before the completed event.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Construct and wire DiagnosticCollector",
+      "spec": "THE SYSTEM SHALL construct an `Arc<DiagnosticCollector>` at CLI startup (before the first `run_agent_step` call). THE SYSTEM SHALL set it on `LoopContext::diagnostics` as `Some(Arc::clone(&collector))`. THE SYSTEM SHALL publish the same collector on the `ToolRegistry`'s shared `ToolContext` via `insert_extension(Arc::clone(&collector))`. THE SYSTEM SHALL retain a clone of the `Arc` for draining after step completion.",
+      "acceptance": [
+        "LoopContext::diagnostics is Some when run_agent_step is called",
+        "ToolContext has a DiagnosticCollector available via get_extension after registry construction",
+        "The same collector instance is shared between LoopContext and ToolContext",
+        "The CLI can drain the collector after run_agent_step returns"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/wiring.rs"
+        ]
+      },
+      "checklist": ["C112", "C118", "C119"],
+      "stories": ["S56"]
+    },
+    {
+      "id": "R2",
+      "title": "Profile tool_config section for per-tool thresholds",
+      "spec": "THE SYSTEM SHALL parse an optional `tool_config` section from the profile. WHEN `tool_config.write.max_code_lines` is set, THE SYSTEM SHALL construct a `LengthLimit` with `default: Some(value)`. WHEN `tool_config.write.length_overrides` is an array of `{pattern, limit}` objects, THE SYSTEM SHALL add them as glob overrides to the `LengthLimit`. WHEN `tool_config.write` is absent, THE SYSTEM SHALL construct `LengthLimit::none()`. THE SYSTEM SHALL construct `WriteTool::with_length_limit(limit)` using the resolved `LengthLimit`.",
+      "acceptance": [
+        "Profile with tool_config.write.max_code_lines = 500 constructs LengthLimit with default Some(500)",
+        "Profile with tool_config.write.length_overrides = [{pattern: 'tests/**', limit: 800}] adds glob override",
+        "Profile without tool_config section constructs LengthLimit::none()",
+        "WriteTool is constructed with the resolved LengthLimit"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/wiring.rs"
+        ]
+      },
+      "checklist": ["C120", "C122"],
+      "stories": ["S54"]
+    },
+    {
+      "id": "R3",
+      "title": "CLI -c overrides for tool thresholds",
+      "spec": "THE SYSTEM SHALL recognise `-c write.max_code_lines=N` as a tool-specific config override. WHEN this override is present, THE SYSTEM SHALL set `LengthLimit.default` to `Some(N)`, taking precedence over the profile value. Unknown `-c write.*` keys SHALL produce a warning and be ignored. THE SYSTEM SHALL NOT accept `-c` tool overrides for tool names that are not registered.",
+      "acceptance": [
+        "-c write.max_code_lines=800 sets LengthLimit.default to Some(800)",
+        "-c write.max_code_lines=800 overrides profile value of 500",
+        "-c write.unknown_key=foo produces a warning and is ignored",
+        "Without -c write.max_code_lines, profile value is used; without profile, LengthLimit::none()"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/wiring.rs"
+        ]
+      },
+      "checklist": ["C121"],
+      "stories": ["S55"]
+    },
+    {
+      "id": "R4",
+      "title": "Drain and render diagnostics per output format",
+      "spec": "AFTER `run_agent_step` returns, THE SYSTEM SHALL drain the `DiagnosticCollector`. IN text mode: non-empty diagnostics SHALL be rendered on stderr with severity, code, message, and suggestion. IN json mode: diagnostics SHALL be included in the output envelope under a `diagnostics` key as an array of objects with severity, code, message, source_tool, file_path, and suggestion fields. IN stream-json mode: diagnostics SHALL be emitted as `{\"type\":\"diagnostic\",\"severity\":\"...\",\"code\":\"...\",\"message\":\"...\"}` NDJSON events before the completed event. WHEN diagnostics are empty, no diagnostic output SHALL be produced.",
+      "acceptance": [
+        "Text mode with diagnostics renders them on stderr with severity prefix",
+        "Text mode with no diagnostics produces no diagnostic output on stderr",
+        "JSON mode includes diagnostics array (empty when none present)",
+        "Stream-json mode emits diagnostic events before completed event",
+        "Each diagnostic object includes severity, code, and message at minimum"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/output.rs"
+        ]
+      },
+      "checklist": ["C123"],
+      "stories": ["S34", "S38"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement RuntimePostValidateCheck for external linters — that is future work",
+    "SHALL NOT implement bypass detection — that is a separate libnorn brief",
+    "SHALL NOT modify libnorn types — this brief only consumes the LoopContext::diagnostics field added by N-025",
+    "SHALL NOT implement REPL-specific diagnostic display — print mode only in this brief",
+    "SHALL NOT add diagnostics crate as a dependency of norn-cli — uses only libnorn's NornDiagnostic and DiagnosticCollector"
+  ],
+  "verification": [
+    "cargo check -p norn-cli succeeds",
+    "cargo clippy -p norn-cli -- -D warnings produces zero warnings",
+    "cargo fmt -p norn-cli -- --check produces no diff",
+    "cargo test -p norn-cli passes all tests",
+    "No file exceeds 500 lines of code",
+    "No code in mod.rs beyond pub mod declarations and re-exports",
+    "DiagnosticCollector wiring test verifies it is set on both LoopContext and ToolContext",
+    "Profile tool_config test verifies LengthLimit construction from profile values",
+    "-c override test verifies CLI override takes precedence over profile",
+    "Diagnostic rendering test verifies text, json, and stream-json formats",
+    "grep -rn 'TODO\\|FIXME\\|HACK\\|unimplemented!' crates/norn-cli/src/ returns no matches"
+  ]
+}

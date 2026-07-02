@@ -1,0 +1,134 @@
+{
+  "id": "NT-009",
+  "cluster": "norn-tui",
+  "title": "Agent status lines and tree collapse",
+  "depends_on": ["NT-002"],
+  "blocked_by": [],
+  "checklist": ["C56", "C57", "C58", "C59", "C60", "C61"],
+  "stories": ["S12", "S13", "S16", "S26"],
+  "purpose": "When sub-agents spawn, the user needs to see what they're doing without attaching to each one. This brief builds the agent status line system that appears in the fixed panel — one line per active child, with a tree collapse heuristic that keeps the panel compact even with many agents running.",
+  "task": "Implement agent status line rendering in agents/status_line.rs and tree collapse logic in agents/tree.rs. Status lines show indent, icon, name, activity, token count, and elapsed time. Icons distinguish running, idle, done, failed, and spawning states. The single-agent case shows no status lines (zero chrome). When children spawn, status lines appear above the input area. The tree collapse heuristic limits visible lines to 5, with root always visible, most recently spawned active agents filling slots, and overflow collapsed into a summary line. Completed/failed agents hold for 3 seconds before their line is reclaimed. Subscribe to AgentRegistry for live status updates.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Zero chrome in single-agent case",
+      "spec": "WHEN only the root agent is running with no children, THE SYSTEM SHALL show no agent status lines in the fixed panel.",
+      "acceptance": [
+        "AgentStatusPanel::height() returns 0 when the registry contains only the root agent",
+        "No agent-related rendering occurs in the fixed panel",
+        "The fixed panel height does not include any agent status rows",
+        "Test: single-agent registry produces height 0"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/agents/status_line.rs"]
+      },
+      "checklist": ["C56"],
+      "stories": ["S16"]
+    },
+    {
+      "id": "R2",
+      "title": "Status line rendering",
+      "spec": "Each agent status line SHALL show indent, icon, name, activity summary, token count, and elapsed time.",
+      "acceptance": [
+        "Format: '{indent}{icon} {name}  {activity}  {tokens}  {elapsed}'",
+        "Indent: 2 spaces per tree depth level",
+        "Name: agent's registered name or the last path segment",
+        "Activity: current tool name if running, 'idle' if waiting, result summary if completed",
+        "Tokens: formatted input+output token count (e.g. '12k')",
+        "Elapsed: duration since spawn (e.g. '2m', '30s')",
+        "Test: status line for a running agent at depth 1 has 2-space indent and running icon"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/agents/status_line.rs"]
+      },
+      "checklist": ["C57"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R3",
+      "title": "Status icons per agent state",
+      "spec": "Agent status icons SHALL distinguish running, idle, done, failed, and spawning states.",
+      "acceptance": [
+        "● for Active (running)",
+        "◌ for Active but idle (waiting for child/tool)",
+        "✓ for Completed",
+        "✗ for Failed",
+        "⊙ for Spawning",
+        "Icons use colour: running=green, idle=dim, done=green, failed=red, spawning=yellow",
+        "Test: icon_for(AgentStatus::Active) returns ●"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/agents/status_line.rs"]
+      },
+      "checklist": ["C58"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Tree collapse heuristic",
+      "spec": "WHEN the agent tree exceeds 5 lines, THE SYSTEM SHALL collapse to at most 5 visible lines with an overflow summary.",
+      "acceptance": [
+        "Maximum 5 visible agent lines in the fixed panel",
+        "Priority order: (1) root always visible, (2) most recently spawned active agents, (3) agents with status changes in last 5 seconds, (4) oldest active agents fill remaining slots",
+        "Overflow line: '⋯ N more active agents' (focusable)",
+        "Test: 8-agent tree produces 5 visible lines plus overflow summary"
+      ],
+      "files": {
+        "create": ["crates/norn-tui/src/agents/tree.rs"]
+      },
+      "checklist": ["C59", "C60"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R5",
+      "title": "Terminal status hold and reclaim",
+      "spec": "WHEN an agent reaches a terminal status (Completed or Failed), THE SYSTEM SHALL hold its status line for 3 seconds showing the final state, THEN reclaim the line.",
+      "acceptance": [
+        "Completed agents show ✓ icon and result summary for 3 seconds",
+        "Failed agents show ✗ icon and error summary for 3 seconds",
+        "After 3 seconds, the line is removed and the fixed panel height decreases (DECSTBM reissue)",
+        "Multiple agents completing within the hold window stack correctly",
+        "Test: completed agent is visible immediately after completion, removed after hold duration"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/agents/status_line.rs"]
+      },
+      "checklist": ["C61"],
+      "stories": []
+    },
+    {
+      "id": "R6",
+      "title": "AgentRegistry subscription",
+      "spec": "The agent status panel SHALL subscribe to AgentRegistry changes to update status lines in real-time.",
+      "acceptance": [
+        "AgentStatusPanel accepts an Arc<RwLock<AgentRegistry>> reference",
+        "On each fixed panel redraw cycle, the panel reads the current registry state",
+        "New agents appearing in the registry create new status lines",
+        "Status transitions (Spawning → Active → Completing → Completed) update the icon and activity",
+        "Agents removed from the registry (after hold) remove their status lines",
+        "Test: adding an agent to the registry increases the status panel's height"
+      ],
+      "files": {
+        "modify": ["crates/norn-tui/src/agents/status_line.rs"]
+      },
+      "checklist": [],
+      "stories": ["S26"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement tab switching or EventStore replay — that is NT-010",
+    "SHALL NOT implement the agent focus cycling (Tab key) — that is NT-010",
+    "SHALL NOT implement the event loop — that is NT-011",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "Single-agent case produces zero status lines — verified by test",
+    "Status icons map correctly to agent states — verified by test",
+    "Tree collapse produces at most 5 lines for large trees — verified by test",
+    "Terminal status hold lasts 3 seconds — verified by test",
+    "Registry subscription detects new agents — verified by test"
+  ]
+}

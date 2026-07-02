@@ -1,0 +1,154 @@
+{
+  "id": "N-014",
+  "cluster": "norn",
+  "title": "Multi-agent infrastructure — registry, mailbox, fork, monitor, goals",
+  "depends_on": ["N-003", "N-005", "N-006"],
+  "blocked_by": [],
+  "checklist": ["C65", "C66", "C67", "C68", "C69", "C70", "C71", "C72", "C73"],
+  "stories": ["S13", "S14", "S16", "S17"],
+  "purpose": "Build the multi-agent infrastructure that all agent coordination depends on. AgentRegistry tracks active agents with hierarchical paths and no concurrency limits. Mailbox provides inter-agent messaging with sequence numbers. Fork logic inherits filtered context and returns structured audit results. RunMonitored delegates background task watching to a lightweight model. Goal tracking manages objectives, budgets, and continuation policies. This is infrastructure — the tools that wrap it (SpawnAgent, Fork tool, etc.) are in N-015.",
+  "task": "Implement the five agent/ modules: registry.rs (AgentRegistry with two-phase spawn, RAII cleanup, hierarchical paths, no concurrency cap), mailbox.rs (Mailbox with trigger_turn flag and sequence numbers for wait-for-any), fork.rs (fork logic with filtered context inheritance, model switching, structured ForkAudit result), monitor.rs (RunMonitored with lightweight model delegation and query handle), goals.rs (GoalTracker with objectives, token/time budgets, continuation policies). Testing: Layer 1 unit tests for each module.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "AgentRegistry with hierarchical paths and statuses",
+      "spec": "AgentRegistry SHALL track active agents by path (hierarchical, e.g. /workflow/dev/agent-1) with statuses (Spawning, Active, Completing, Completed, Failed). No hardcoded concurrency limits.",
+      "acceptance": [
+        "AgentRegistry struct in crates/norn/src/agent/registry.rs",
+        "AgentEntry struct: id (Uuid), path (String), role (String), status (AgentStatus), model (String), spawned_at (DateTime<Utc>), parent_id (Option<Uuid>)",
+        "AgentStatus enum: Spawning, Active, Completing, Completed, Failed",
+        "get(id) returns Option<&AgentEntry>",
+        "get_by_path(path) returns Option<&AgentEntry>",
+        "list() returns iterator over all entries",
+        "children(parent_id) returns iterator over direct children",
+        "No field or constant caps agent count (C66)",
+        "Test: register 100 agents, verify all accessible"
+      ],
+      "files": { "modify": ["crates/norn/src/agent/registry.rs", "crates/norn/src/agent/mod.rs"] },
+      "checklist": ["C65", "C66"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Two-phase spawn reservation with RAII cleanup",
+      "spec": "Spawning an agent SHALL be two-phase: reserve (allocates ID, sets Spawning status, returns SpawnGuard) then confirm (sets Active). If the SpawnGuard drops without confirm, the entry is removed.",
+      "acceptance": [
+        "reserve(path, role, model, parent_id) returns Result<SpawnGuard>",
+        "SpawnGuard holds Arc<parking_lot::RwLock<AgentRegistry>> and agent ID",
+        "SpawnGuard::confirm(self) transitions status to Active and consumes the guard",
+        "Drop impl on SpawnGuard removes the entry if not confirmed",
+        "Duplicate path during reserve returns error",
+        "Test: reserve without confirm — verify entry cleaned up on drop",
+        "Test: reserve then confirm — verify entry persists with Active status"
+      ],
+      "files": { "modify": ["crates/norn/src/agent/registry.rs"] },
+      "checklist": ["C67"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R3",
+      "title": "Mailbox with trigger_turn and sequence numbers",
+      "spec": "Mailbox SHALL support inter-agent messaging with a trigger_turn flag for immediate vs deferred delivery. Sequence numbers on each mailbox SHALL enable efficient wait-for-any without polling.",
+      "acceptance": [
+        "Mailbox struct in crates/norn/src/agent/mailbox.rs",
+        "MailboxMessage struct: id (Uuid), from (Uuid), to (Uuid), content (serde_json::Value), trigger_turn (bool), sequence (u64), timestamp (DateTime<Utc>)",
+        "send(from, to, content, trigger_turn) appends message and increments sequence",
+        "recv(agent_id) returns Vec<MailboxMessage> draining pending messages",
+        "peek(agent_id) returns count of pending messages without draining",
+        "wait_for_any(agent_ids, since_sequences) returns when any mailbox has new messages past the given sequence numbers — uses tokio::sync::Notify",
+        "Test: send 3 messages, recv drains all 3, second recv returns empty",
+        "Test: wait_for_any wakes when message arrives"
+      ],
+      "files": { "modify": ["crates/norn/src/agent/mailbox.rs", "crates/norn/src/agent/mod.rs"] },
+      "checklist": ["C68", "C69"],
+      "stories": ["S17"]
+    },
+    {
+      "id": "R4",
+      "title": "Fork logic with filtered context and audit result",
+      "spec": "Fork SHALL create a child agent that inherits filtered parent context (selected events, suppressed tool calls), executes on a potentially different model, and returns a structured ForkAudit to the parent.",
+      "acceptance": [
+        "ForkConfig struct: task (String), model (String), context_filter (ContextFilter), tools (Option<Vec<String>>)",
+        "ContextFilter struct: include_system (bool), include_recent_n (Option<usize>), exclude_tool_calls (bool)",
+        "ForkAudit struct: fork_id (Uuid), model (String), result (serde_json::Value), usage (Usage), duration (Duration), events_count (usize)",
+        "fork(parent_session, config, provider, registry) returns Result<ForkAudit>",
+        "Fork registers as a child in the AgentRegistry with parent_id set",
+        "Fork entry cleaned up (Completed/Failed) when fork returns",
+        "Test: fork with context filter that excludes tool calls, verify filtered events"
+      ],
+      "files": { "modify": ["crates/norn/src/agent/fork.rs", "crates/norn/src/agent/mod.rs"] },
+      "checklist": ["C70"],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R5",
+      "title": "RunMonitored with lightweight model delegation",
+      "spec": "RunMonitored SHALL delegate monitoring of a long-running task to a lightweight model. The parent receives a MonitorHandle for querying progress without consuming full output.",
+      "acceptance": [
+        "MonitorConfig struct: task_description (String), monitor_model (String), poll_interval (Duration)",
+        "MonitorHandle struct wraps a tokio::sync::watch::Receiver<MonitorStatus>",
+        "MonitorStatus struct: summary (String), progress_pct (Option<f32>), is_complete (bool), last_updated (DateTime<Utc>)",
+        "MonitorHandle::query() returns current MonitorStatus",
+        "MonitorHandle::wait_complete() awaits is_complete == true",
+        "run_monitored(config, task_future, provider) returns (JoinHandle<TaskResult>, MonitorHandle)",
+        "Test: run_monitored on a mock task, verify MonitorHandle returns status updates"
+      ],
+      "files": { "modify": ["crates/norn/src/agent/monitor.rs", "crates/norn/src/agent/mod.rs"] },
+      "checklist": ["C71"],
+      "stories": ["S16"]
+    },
+    {
+      "id": "R6",
+      "title": "Goal tracking with budgets and continuation",
+      "spec": "GoalTracker SHALL manage objectives, token budgets, time budgets, and continuation policies. When a budget threshold is reached, it signals the appropriate continuation action.",
+      "acceptance": [
+        "GoalTracker struct in crates/norn/src/agent/goals.rs",
+        "Goal struct: description (String), token_budget (Option<u64>), time_budget (Option<Duration>), continuation (ContinuationPolicy)",
+        "ContinuationPolicy enum: Stop, Handoff { summary_prompt: String }, Continue { recapitulate: bool }",
+        "GoalTracker::check(usage, elapsed) returns GoalSignal",
+        "GoalSignal enum: OnTrack, BudgetWarning { pct_used: f32 }, BudgetExceeded { policy: ContinuationPolicy }",
+        "BudgetWarning triggers at configurable threshold (default 80%)",
+        "Test: set token budget 1000, report 800 used, verify BudgetWarning",
+        "Test: set token budget 1000, report 1100 used, verify BudgetExceeded with correct policy"
+      ],
+      "files": { "modify": ["crates/norn/src/agent/goals.rs", "crates/norn/src/agent/mod.rs"] },
+      "checklist": ["C72"],
+      "stories": []
+    },
+    {
+      "id": "R7",
+      "title": "Session-dispatched cron scheduling",
+      "spec": "ScheduleEntry SHALL define cron-like schedules that re-launch agent sessions without keeping them alive between runs. The scheduler stores entries; execution is handled by the integration layer.",
+      "acceptance": [
+        "ScheduleEntry struct: id (Uuid), cron_expr (String), agent_config (serde_json::Value), enabled (bool), last_run (Option<DateTime<Utc>>), next_run (Option<DateTime<Utc>>)",
+        "Scheduler struct stores entries in a HashMap<Uuid, ScheduleEntry>",
+        "Scheduler::add(entry) registers a schedule",
+        "Scheduler::remove(id) removes a schedule",
+        "Scheduler::due_entries(now) returns entries where next_run <= now and enabled",
+        "Scheduler::advance(id, now) updates last_run and computes next_run from cron_expr",
+        "Cargo.toml adds cron crate for expression parsing",
+        "Test: add entry with '*/5 * * * *', verify due_entries fires at correct interval"
+      ],
+      "files": { "modify": ["crates/norn/src/agent/goals.rs", "crates/norn/Cargo.toml"] },
+      "checklist": ["C73"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement agent tools (SpawnAgent, Fork tool, SendMessage, etc.) — those are N-015",
+    "SHALL NOT implement the agent loop — only the infrastructure it uses",
+    "SHALL NOT implement provider selection or model routing — fork uses a provider passed by the caller",
+    "SHALL NOT implement session persistence to disk — registry and mailbox are in-memory",
+    "SHALL NOT implement actual cron execution — only the schedule store and due-entry queries",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all agent module tests pass",
+    "cargo clippy -p norn -- -D warnings clean",
+    "No file over 500 lines of code (excluding tests, comments, whitespace)",
+    "agent/mod.rs contains only pub mod declarations and pub use re-exports",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/agent/ returns no matches outside test code",
+    "grep -rn 'todo!\\|unimplemented!' crates/norn/src/agent/ returns no matches"
+  ]
+}

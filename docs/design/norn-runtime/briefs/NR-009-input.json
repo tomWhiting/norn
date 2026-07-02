@@ -1,0 +1,186 @@
+{
+  "repo_root": "/Users/tom/Developer/ablative/meridian",
+  "brief_id": "NR-009",
+  "reviewers": [
+    "Waffles the Terrible"
+  ],
+  "base_ref": "main",
+  "placement": "local",
+  "isolation": "worktree",
+  "brief_document": {
+    "id": "NR-009",
+    "cluster": "norn-runtime",
+    "title": "Mid-session DM delivery to active Norn agents",
+    "depends_on": [
+      "NR-002"
+    ],
+    "blocked_by": [],
+    "checklist": [
+      "C76",
+      "C77"
+    ],
+    "stories": [
+      "S4",
+      "S22"
+    ],
+    "purpose": "When a DM arrives for an agent that is already running a Norn session, the message is silently dropped. The wake_trigger catches ServiceEvent::MessageSent, checks active_session_for_member, finds the session active, and returns WakeSkipped \u2014 nobody delivers the DM. The InboundChannel plumbing exists (SessionCommand::SendMessage works, norn_session.rs:325-356 constructs ChannelMessages with DeliveryMode::Steer), but the wake_trigger never calls it for active sessions. This brief connects the existing plumbing so DMs reach running agents immediately.",
+    "task": "Modify the wake_trigger WakeSkipped path to deliver the DM content to the active session via registry.send_command(SessionCommand::SendMessage). The DM must be formatted using the same format_agent_dm_envelope function used by build_wake_prompt, so the agent sees identical DM format regardless of whether it was idle or active when the message arrived. The formatted envelope is delivered as a String via SessionCommand::SendMessage; the norn_session.rs handler wraps it as a ChannelMessage with DeliveryMode::Steer and author='user', and the agent picks it up at the next inbound drain point (runner.rs:589, 709, 723, or 839).",
+    "requirements": [
+      {
+        "id": "R1",
+        "title": "Deliver DM to active session instead of WakeSkipped",
+        "spec": "WHEN a DM triggers the wake_trigger AND the recipient has an active session THE SYSTEM SHALL deliver the DM content to the active session via SessionCommand::SendMessage instead of returning WakeSkipped AND it SHALL format the DM using format_agent_dm_envelope to match the wake prompt format.",
+        "acceptance": [
+          "wake_trigger.rs WakeSkipped path (around line 159) now calls registry.send_command(session_id, SessionCommand::SendMessage(formatted_dm))",
+          "The formatted DM uses format_agent_dm_envelope(content, sender_name, timestamp, subject, Some(session_id), exchange_origin) \u2014 same function used by build_wake_prompt at wake_prompt.rs:118",
+          "The DM content and sender name are fetched from storage before formatting \u2014 not using raw ServiceEvent fields which may lack full content",
+          "The agent sees '--- DM from {sender} at {time} ---\\n{content}\\n---\\n<reply_instructions>...' regardless of idle vs active delivery path"
+        ],
+        "files": {
+          "modify": [
+            "crates/meridian-services/src/assistant/wake_trigger.rs"
+          ]
+        },
+        "checklist": [
+          "C76"
+        ],
+        "stories": [
+          "S4",
+          "S22"
+        ]
+      },
+      {
+        "id": "R2",
+        "title": "Fetch DM content for mid-session formatting",
+        "spec": "WHEN the wake_trigger delivers a DM to an active session THE SYSTEM SHALL fetch the full DM content from storage via DirectMessageStore::get_direct_message AND it SHALL resolve the sender name via MemberStore AND it SHALL NOT use truncated preview text from the notification.",
+        "acceptance": [
+          "Full DM content retrieved via storage.get_direct_message(&message_id)",
+          "Sender name resolved from sender member record, not from notification preview",
+          "If storage fetch fails, falls back to a brief notification-style message directing the agent to check its inbox (matching build_wake_prompt fallback at wake_prompt.rs:41-47)",
+          "Subject extracted from DM if present, passed to format_agent_dm_envelope"
+        ],
+        "files": {
+          "modify": [
+            "crates/meridian-services/src/assistant/wake_trigger.rs"
+          ]
+        },
+        "checklist": [
+          "C77"
+        ],
+        "stories": []
+      },
+      {
+        "id": "R3",
+        "title": "Mark notification as delivered after mid-session injection",
+        "spec": "WHEN a DM is successfully delivered to an active session via SendMessage THE SYSTEM SHALL mark the corresponding notification as delivered so it does not resurface in future notification checks or wake prompts AND it SHALL NOT mark the notification if the send_command call fails.",
+        "acceptance": [
+          "After successful send_command, the notification ID is passed to storage.mark_notifications_delivered",
+          "Failed send_command (session gone, channel closed) skips the mark \u2014 notification remains pending for next wake",
+          "The notification does not appear in subsequent get_rich_inbox or get_pending_notifications calls for this member"
+        ],
+        "files": {
+          "modify": [
+            "crates/meridian-services/src/assistant/wake_trigger.rs"
+          ]
+        },
+        "checklist": [
+          "C77"
+        ],
+        "stories": []
+      }
+    ],
+    "boundaries": [
+      "SHALL NOT modify the InboundChannel, InboundSender, or ChannelMessage types in the norn crate",
+      "SHALL NOT modify norn_session.rs \u2014 the existing SessionCommand::SendMessage handler already constructs the correct ChannelMessage",
+      "SHALL NOT change the wake path for idle sessions \u2014 build_wake_prompt and resume_session are untouched",
+      "SHALL NOT change format_agent_dm_envelope \u2014 use it as-is for format consistency",
+      "SHALL NOT deliver DMs to Claude Runner sessions via this path \u2014 Claude Runner mid-session delivery uses the existing stdin write mechanism"
+    ],
+    "verification": [
+      "cargo check --workspace passes",
+      "cargo clippy --workspace -- -D warnings passes clean",
+      "DM sent to an active Norn session is delivered via InboundChannel within the current tool batch cycle",
+      "Delivered DM format matches wake prompt DM format exactly (same envelope shape)",
+      "Notification for the delivered DM is marked as delivered",
+      "Idle session wake path is unaffected \u2014 build_wake_prompt + resume_session still work",
+      "No file exceeds 500 lines of code"
+    ]
+  },
+  "resolved_context": {
+    "adrs": [],
+    "checklist": [
+      {
+        "id": "C76",
+        "text": "wake_trigger delivers DMs to active Norn sessions via SessionCommand::SendMessage instead of returning WakeSkipped"
+      },
+      {
+        "id": "C77",
+        "text": "Mid-session DM formatted via format_agent_dm_envelope \u2014 identical envelope shape to wake prompt delivery, notification marked delivered after successful send"
+      }
+    ],
+    "stories": [
+      {
+        "id": "S4",
+        "text": "As an AI agent, I want mid-session DMs to arrive via my inbound channel so that I can respond to messages while actively working."
+      },
+      {
+        "id": "S22",
+        "text": "As an AI agent with an active session, I want DMs that arrive mid-session to be delivered to my inbound channel immediately so that I can respond without waiting for a wake cycle."
+      }
+    ],
+    "constraints": [
+      {
+        "id": "CO1",
+        "text": "No new external dependencies. Namespace tools call service-layer functions via ServiceContext, not HTTP."
+      },
+      {
+        "id": "CO2",
+        "text": "AssistantEvent is the single event type for all downstream consumers. Both runtimes produce it."
+      },
+      {
+        "id": "CO3",
+        "text": "JSONL session files are Norn's source of truth for resume. PG is the UI's source of truth. Neither replaces the other."
+      },
+      {
+        "id": "CO4",
+        "text": "The model sees at most 25 tools (16 standard Norn + up to 7 namespace + 2 optional web). Profile filtering reduces this in practice."
+      },
+      {
+        "id": "CO5",
+        "text": "Session IDs are UUIDs shared between the JSONL filename, PG assistant_session_events key, and SessionHandle registry key."
+      },
+      {
+        "id": "CO6",
+        "text": "Wake prompt delivery mechanism changes, format does not."
+      },
+      {
+        "id": "CO7",
+        "text": "mod.rs contains only pub mod declarations and re-exports."
+      },
+      {
+        "id": "CO8",
+        "text": "No file over 500 lines of code (excluding tests, comments, whitespace)."
+      },
+      {
+        "id": "CO9",
+        "text": "All errors handled via thiserror in library code. No .unwrap() or .expect() in library code."
+      },
+      {
+        "id": "CO10",
+        "text": "Namespace tools implement the existing Tool trait. No changes to the trait interface."
+      }
+    ],
+    "intention": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude Runner stays only for legacy background task dispatch until it can be retired entirely. Member-facing sessions run as typed, observable, in-process agent loops rather than opaque subprocess invocations. Session state persists across visits without relying on a CLI binary's internal persistence. The model sees a focused set of domain tools instead of a raw shell with 175 CLI commands. This is the June 15 deadline work.",
+    "design_path": "docs/design/norn-runtime",
+    "provenance": {
+      "requested_by": "Tom",
+      "quote": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude R"
+    }
+  },
+  "verify_fix_cap": 3,
+  "review_cap": 1,
+  "round_backoff_ms": 2000,
+  "review_deadline_ms": 300000,
+  "workspace_id": "2d5fdd51-1f25-45a4-8f86-4d4c978d1355",
+  "clone_url": "https://github.com/tomWhiting/meridian.git"
+}

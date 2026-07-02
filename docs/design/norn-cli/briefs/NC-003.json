@@ -1,0 +1,217 @@
+{
+  "id": "NC-003",
+  "cluster": "norn-cli",
+  "title": "Print mode — headless execution with output formats",
+  "depends_on": ["NC-001", "NC-002"],
+  "blocked_by": [],
+  "checklist": ["C24", "C25", "C26", "C27", "C28", "C29", "C30", "C31", "C32", "C33", "C34", "C35", "C44", "C45", "C46", "C105", "C106", "C107", "C108", "C109", "C110", "C111", "C112", "C113", "C114", "C115", "C116", "C117"],
+  "stories": ["S16", "S17", "S18", "S19", "S20", "S22", "S34", "S35", "S36", "S37", "S38", "S44", "S45"],
+  "purpose": "Print mode is the headless execution path that makes Norn usable in shell pipelines, automation, and orchestration workflows. This brief wires the full path from CLI arguments through provider construction, runtime component assembly (token estimator, context edits, retry policy, diagnostics), stdin handling, agent execution via run_agent_step, and formatted output in text/json/stream-json modes. Without this, Norn cannot execute a prompt and produce output — it is the first brief that actually calls libnorn.",
+  "task": "Implement provider construction (OpenAiProvider default with OAuth, ClaudeRunnerAdapter via --provider flag), runtime wiring (SimpleTokenEstimator into LoopContext::token_estimator, ContextEdits::new() into LoopContext::context_edits, RetryPolicy from -c overrides, DiagnosticCollector, IterationMonitorConfig from profile), stdin handling (auto-detect piped stdin, read all, prepend with <stdin> delimiters when positional PROMPT also present), output schema parsing (inline JSON detection by leading {, else file path), per-event schema parsing (--event-schema TYPE=JSON|PATH), and three output formatters: text (final output to stdout, progress to stderr), json (single envelope to stdout), stream-json (NDJSON events to stdout). Also implement -o file output and -q quiet mode.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Provider construction — OpenAI default",
+      "spec": "WHEN the CLI executes in print mode and no --provider flag is set or --provider is 'openai', THE SYSTEM SHALL construct an OpenAiProvider by building a ProviderConfig with auth_source set to AuthSource::OAuth { codex_home: None }, base_url derived from -c base_url override or None (letting OpenAiProvider auto-detect from auth source), timeout from -c request_timeout override or a default of 120 seconds, max_retries from -c max_retries override or a default of 2, and provider_options from -c provider_options override parsed as JSON or None. THE SYSTEM SHALL call OpenAiProvider::new(config).await and propagate any ProviderError as exit code 3 for auth failures or exit code 1 for other provider errors.",
+      "acceptance": [
+        "With no flags, provider is constructed with AuthSource::OAuth { codex_home: None }",
+        "With -c base_url=http://localhost:8080, ProviderConfig.base_url is Some(\"http://localhost:8080\")",
+        "With -c max_retries=5, ProviderConfig.max_retries is 5",
+        "With -c request_timeout=30s, ProviderConfig.timeout is Duration::from_secs(30)",
+        "With -c provider_options='{\"key\":\"val\"}', ProviderConfig.provider_options is Some(json)",
+        "AuthenticationFailed errors produce exit code 3"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/provider.rs"
+        ]
+      },
+      "checklist": ["C105", "C106", "C107"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Provider construction — ClaudeRunner via --provider flag",
+      "spec": "WHEN --provider is set to 'claude-runner', THE SYSTEM SHALL construct a ClaudeRunnerAdapter using ClaudeRunnerConfig with defaults. THE SYSTEM SHALL NOT construct an OpenAiProvider. IF --provider is set to any value other than 'openai' or 'claude-runner', THE SYSTEM SHALL return an error naming the unsupported provider and exit with code 2.",
+      "acceptance": [
+        "With --provider claude-runner, a ClaudeRunnerAdapter is constructed instead of OpenAiProvider",
+        "With --provider unknown, the CLI exits with code 2 and an error message naming 'unknown'",
+        "The constructed adapter implements the Provider trait and can be passed to run_agent_step"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/provider.rs"
+        ]
+      },
+      "checklist": ["C108"],
+      "stories": ["S37"]
+    },
+    {
+      "id": "R3",
+      "title": "Runtime wiring — token estimator, context edits, retry, diagnostics",
+      "spec": "WHEN the CLI prepares a LoopContext for agent execution, THE SYSTEM SHALL unconditionally set LoopContext::token_estimator to Arc::new(SimpleTokenEstimator) and LoopContext::context_edits to Some(ContextEdits::new()). WHEN -c retry_max is set, THE SYSTEM SHALL construct a RetryPolicy with max_retries set to the parsed value and initial_backoff set from -c retry_base_delay (default 1 second), and set LoopContext::retry_policy to Some(policy). THE SYSTEM SHALL construct an Arc<DiagnosticCollector> and set it on LoopContext::diagnostics as Some(Arc::clone(&collector)), retaining a clone for draining after step completion. THE SYSTEM SHALL also publish the collector on ToolContext via insert_extension so that RuntimePostValidateCheck implementations can push diagnostics directly. Detailed wiring is specified in NC-009. WHEN a profile provides an iteration_monitor section, THE SYSTEM SHALL set LoopContext::iteration_monitor to Some(config). THE SYSTEM SHALL distinguish -c retry_max (loop-level RetryPolicy::max_retries) from -c max_retries (HTTP-level ProviderConfig::max_retries) and -c request_timeout (HTTP-level ProviderConfig::timeout) from --timeout (step-level AgentLoopConfig::step_timeout).",
+      "acceptance": [
+        "LoopContext::token_estimator is always Some after wiring",
+        "LoopContext::context_edits is always Some after wiring",
+        "With -c retry_max=3, LoopContext::retry_policy is Some with max_retries == 3",
+        "With -c retry_base_delay=2s, RetryPolicy::initial_backoff is Duration::from_secs(2)",
+        "Without -c retry_max, LoopContext::retry_policy is None",
+        "DiagnosticCollector is constructed and accessible for draining",
+        "With profile iteration_monitor section, LoopContext::iteration_monitor is Some",
+        "-c max_retries maps to ProviderConfig, not RetryPolicy"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/wiring.rs"
+        ]
+      },
+      "checklist": ["C109", "C110", "C111", "C112", "C114", "C115", "C116", "C117"],
+      "stories": []
+    },
+    {
+      "id": "R4",
+      "title": "Stdin handling — auto-detect and prepend with delimiters",
+      "spec": "WHEN stdin is not a TTY (detected via std::io::IsTerminal), THE SYSTEM SHALL read all content from stdin before execution begins. IF positional PROMPT arguments are also provided, THE SYSTEM SHALL construct the effective prompt by prepending the stdin content wrapped in <stdin> delimiters: '<stdin>\\n{stdin_content}\\n</stdin>\\n\\n{positional_prompt}'. IF no positional PROMPT is provided, THE SYSTEM SHALL use the stdin content as the prompt directly. WHEN stdin is a TTY, THE SYSTEM SHALL NOT read from stdin in print mode.",
+      "acceptance": [
+        "echo 'data' | norn -p 'Summarise' produces effective prompt '<stdin>\\ndata\\n</stdin>\\n\\nSummarise'",
+        "echo 'data' | norn -p (no positional prompt) uses 'data' as the prompt",
+        "In a TTY with -p 'hello', stdin is not read",
+        "Large stdin input (1MB) is read in full before execution",
+        "A unit test verifies delimiter formatting with both stdin and positional prompt present"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/print.rs"
+        ]
+      },
+      "checklist": ["C44", "C45", "C46"],
+      "stories": ["S16", "S22"]
+    },
+    {
+      "id": "R5",
+      "title": "Output schema parsing — inline JSON and file path",
+      "spec": "WHEN -s / --output-schema is provided with a value starting with '{', THE SYSTEM SHALL parse the value as inline JSON using serde_json::from_str and use the parsed Value as the output schema for run_agent_step. WHEN -s is provided with a value not starting with '{', THE SYSTEM SHALL treat it as a file path, read the file, and parse its contents as JSON. IF parsing fails (inline or file), THE SYSTEM SHALL return an error and exit with code 2. WHEN --event-schema TYPE=VALUE is provided, THE SYSTEM SHALL parse TYPE as an EventType variant (assistant_message, spoken_response, tool_call_envelope, stop_output, question, handoff, review, progress), parse VALUE as inline JSON (starts with '{') or file path, and build an EventSchemaSet with the per-type schemas. THE SYSTEM SHALL merge profile event schemas with CLI --event-schema flags, with CLI flags taking precedence.",
+      "acceptance": [
+        "-s '{\"type\":\"object\"}' parses as inline JSON schema",
+        "-s schema.json reads and parses the file at schema.json",
+        "-s '{invalid' exits with code 2 and an error message",
+        "--event-schema spoken_response=tts.json reads the file and maps to EventType::SpokenResponse",
+        "--event-schema assistant_message='{\"type\":\"object\"}' parses inline JSON for EventType::AssistantMessage",
+        "Profile event schemas are present in the final EventSchemaSet when no CLI override exists for that type",
+        "CLI --event-schema overrides profile event schemas for the same EventType"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/print.rs"
+        ]
+      },
+      "checklist": ["C24", "C25"],
+      "stories": ["S17", "S28"]
+    },
+    {
+      "id": "R6",
+      "title": "Output format — text mode",
+      "spec": "WHEN --output-format is 'text' or not specified, THE SYSTEM SHALL write the final model output to stdout after run_agent_step completes. IF an output schema was set and structured output was produced, THE SYSTEM SHALL pretty-print the JSON value. WHILE the agent step is executing, THE SYSTEM SHALL write tool call summaries and progress information to stderr. IF -q / --quiet is set, THE SYSTEM SHALL suppress all stderr output. IF -o / --output is set, THE SYSTEM SHALL write the final output to the specified file path instead of stdout. WHEN diagnostics are present after step completion, THE SYSTEM SHALL render them on stderr with severity, code, message, and suggestion fields.",
+      "acceptance": [
+        "norn -p 'hello' writes the model's text output to stdout",
+        "norn -p -s '{\"type\":\"object\"}' 'extract' pretty-prints the structured JSON output",
+        "Tool progress appears on stderr, not stdout",
+        "norn -p -q 'hello' produces no stderr output",
+        "norn -p -o out.txt 'hello' writes to out.txt",
+        "Diagnostics with severity=warning appear on stderr in text mode"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/output.rs"
+        ]
+      },
+      "checklist": ["C26", "C27", "C30", "C31"],
+      "stories": ["S20", "S35"]
+    },
+    {
+      "id": "R7",
+      "title": "Output format — json mode",
+      "spec": "WHEN --output-format is 'json', THE SYSTEM SHALL write a single JSON object to stdout after run_agent_step completes, containing: output (the model output value), usage (object with input_tokens and output_tokens), model (string), session_id (UUID string or null if --no-session), events (array of SessionEvent objects from the step), result (string: 'completed', 'schema_unreachable', 'max_iterations', or 'timed_out'), and diagnostics (array of diagnostic objects, empty if none). THE SYSTEM SHALL NOT write any other output to stdout. IF -o is set, THE SYSTEM SHALL write the JSON envelope to the file.",
+      "acceptance": [
+        "--output-format json produces a single JSON object on stdout",
+        "The JSON object contains all required fields: output, usage, model, session_id, events, result, diagnostics",
+        "usage.input_tokens and usage.output_tokens are integers",
+        "result is 'completed' on successful completion",
+        "result is 'schema_unreachable' when AgentStepResult::SchemaUnreachable is returned",
+        "diagnostics array is empty when no diagnostics are collected",
+        "diagnostics array contains objects with severity, code, message when present",
+        "With --no-session, session_id is null"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/output.rs"
+        ]
+      },
+      "checklist": ["C28"],
+      "stories": ["S18", "S34", "S38"]
+    },
+    {
+      "id": "R8",
+      "title": "Output format — stream-json mode",
+      "spec": "WHEN --output-format is 'stream-json', THE SYSTEM SHALL subscribe to the broadcast::Sender<ProviderEvent> channel and write NDJSON events to stdout as they arrive: {\"type\":\"text_delta\",\"text\":\"...\"} for TextDelta events, {\"type\":\"tool_call\",\"id\":\"...\",\"name\":\"...\",\"arguments\":\"...\"} for complete tool calls, {\"type\":\"tool_result\",\"id\":\"...\",\"output\":{...}} for tool results, {\"type\":\"thinking_delta\",\"text\":\"...\"} for ThinkingDelta events, and {\"type\":\"completed\",\"output\":{...},\"usage\":{...}} as the final event. WHEN diagnostics are present, THE SYSTEM SHALL emit {\"type\":\"diagnostic\",...} events before the completed event. IF -q is set, THE SYSTEM SHALL still write all events to stdout (quiet only affects stderr in text mode).",
+      "acceptance": [
+        "--output-format stream-json produces one JSON object per line on stdout",
+        "TextDelta events appear as {\"type\":\"text_delta\",\"text\":\"...\"}",
+        "The final line is a completed event with output and usage",
+        "Each line is valid JSON parseable by serde_json::from_str",
+        "Events arrive incrementally — not buffered until completion",
+        "Diagnostic events appear before the completed event when present"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/output.rs"
+        ]
+      },
+      "checklist": ["C29"],
+      "stories": ["S19"]
+    },
+    {
+      "id": "R9",
+      "title": "Print mode orchestration — end-to-end execution path",
+      "spec": "WHEN the CLI determines print mode via mode detection, THE SYSTEM SHALL execute the following sequence: (1) read stdin if piped and construct effective prompt, (2) parse output schema if -s is set, (3) construct the provider via R1/R2, (4) wire the LoopContext via R3 and NC-004's config/profile integration, (5) construct an EventStore (empty for new session, populated for --resume/--fork via NC-002), (6) call run_agent_step with the provider, executor, store, prompt, tools, schema, model, config, event broadcast sender, and loop context, (7) handle the AgentStepResult by routing to the appropriate output formatter (R6/R7/R8), (8) persist session events via NC-002 (unless --no-session), (9) exit with the appropriate exit code (0 for Completed, 1 for SchemaUnreachable/MaxIterationsReached/TimedOut). THE SYSTEM SHALL construct a broadcast::Sender<ProviderEvent> and pass it to run_agent_step for streaming output in stream-json mode.",
+      "acceptance": [
+        "norn -p 'hello' executes the full path and produces output on stdout",
+        "norn -p --output-format json 'hello' produces a JSON envelope",
+        "norn -p --output-format stream-json 'hello' produces NDJSON",
+        "Exit code is 0 on Completed, 1 on SchemaUnreachable",
+        "Session events are persisted after execution (unless --no-session)",
+        "The broadcast sender is created and passed to run_agent_step"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/print.rs",
+          "crates/norn-cli/src/main.rs"
+        ]
+      },
+      "checklist": ["C113"],
+      "stories": ["S36"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the interactive REPL — this is print mode only",
+    "SHALL NOT implement slash command processing — that is a REPL brief concern",
+    "SHALL NOT implement streaming display for REPL mode (dimmed thinking, tool summaries) — those are REPL brief concerns",
+    "SHALL NOT implement session subcommands (list, show, export, remove) — those are in NC-008",
+    "SHALL NOT implement reedline integration — print mode reads stdin once and exits",
+    "SHALL NOT hardcode rate limits, token caps, or context window defaults — all configurable values come from flags, -c overrides, or profile"
+  ],
+  "verification": [
+    "cargo check -p norn-cli succeeds",
+    "cargo clippy -p norn-cli -- -D warnings produces zero warnings",
+    "cargo fmt -p norn-cli -- --check produces no diff",
+    "cargo test -p norn-cli passes all tests",
+    "No file exceeds 500 lines of code",
+    "No code in mod.rs beyond pub mod declarations and re-exports",
+    "Provider construction test verifies OpenAiProvider is built with correct config from -c overrides",
+    "Stdin handling test verifies delimiter formatting",
+    "Output format tests verify text, json, and stream-json formatting independently",
+    "Wiring test verifies token_estimator and context_edits are always set",
+    "Exit code mapping test verifies each AgentStepResult variant maps to the correct exit code",
+    "grep -rn 'TODO\\|FIXME\\|HACK\\|unimplemented!' crates/norn-cli/src/ returns no matches"
+  ]
+}

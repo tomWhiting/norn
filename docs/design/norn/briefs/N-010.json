@@ -1,0 +1,215 @@
+{
+  "id": "N-010",
+  "cluster": "norn",
+  "title": "Implement Read, Write, and Edit core tools with AST validation",
+  "depends_on": ["N-006"],
+  "blocked_by": [],
+  "checklist": ["C37", "C38", "C39", "C40", "C41", "C42", "C43"],
+  "stories": ["S5", "S6", "S8", "S9"],
+  "purpose": "Implement the three file tools that define Norn's differentiators: Read (with line numbers, binary detection), Write (with read-before-overwrite, AST validation, file length limits), and Edit (with read-before-edit, staged AST validation with rollback, blast radius reporting). These are the first tools to exercise the Tool trait lifecycle from N-006 with real compile-time pre-validate and post-validate phases. Write uses report semantics (commit then report errors). Edit uses gate semantics (stage in memory, rollback on AST failure). This is where medical-grade code quality starts.",
+  "task": "Implement three tools in the tools module, each implementing the Tool trait from N-006. Read is straightforward: read a file, return content with line numbers, detect binary files and images. Write enforces read-before-overwrite in pre-validate (compile-time check using ToolContext to track read files), validates AST via tree-sitter in post-validate (report semantics: file written, error reported), and enforces file length limits. Edit enforces read-before-edit in pre-validate, applies string replacement, validates AST in post-validate (gate semantics: staged in memory, rollback on failure), and reports blast radius via symbol analysis. tree-sitter is required for AST parsing. Testing: Layer 1 unit tests with real files in temp directories.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Implement Read tool",
+      "spec": "Read tool SHALL implement the Tool trait. It SHALL read a file and return its content with line numbers (cat -n format). It SHALL detect binary files and return a message instead of binary content. It SHALL support offset and limit parameters for partial reads. It SHALL detect image files by extension and return an appropriate indicator.",
+      "acceptance": [
+        "ReadTool implements Tool trait with name 'read', effect ReadOnly",
+        "Input schema: { path: String, offset: Option<u64>, limit: Option<u64> }",
+        "Output includes line numbers in 'N\\t<content>' format",
+        "Binary files (detected by null bytes in first 8192 bytes) return ToolOutput with is_error=false and content indicating binary file",
+        "Image files (.png, .jpg, .jpeg, .gif, .svg, .webp) return indicator with file path",
+        "offset=10, limit=5 returns lines 10-14 of a file",
+        "Reading a nonexistent file returns ToolOutput with is_error=true",
+        "Unit test: write a temp file, read it, verify line numbers in output"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/read.rs",
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": ["C37"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Implement read-tracking in ToolContext",
+      "spec": "ToolContext (from N-006) SHALL track which file paths have been read during the session. WHEN the Read tool successfully reads a file, it SHALL register the path in the context. Write and Edit pre-validate checks query this state.",
+      "acceptance": [
+        "ToolContext has a method: fn mark_file_read(&mut self, path: &Path)",
+        "ToolContext has a method: fn has_read_file(&self, path: &Path) -> bool",
+        "Read tool's on_success phase calls mark_file_read with the read path",
+        "Unit test: read a file via Read tool, verify has_read_file returns true for that path"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/context.rs",
+          "crates/norn/src/tools/read.rs"
+        ]
+      },
+      "checklist": ["C38", "C41"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R3",
+      "title": "Implement Write tool with read-before-overwrite",
+      "spec": "Write tool SHALL implement the Tool trait. Pre-validate SHALL block writes to existing files that have not been read (checked via ToolContext.has_read_file). Writing new files (file does not exist) SHALL be allowed without a prior read. This check SHALL respect the AllowOverwrite context flag. WHEN AllowOverwrite is set, the check is skipped and a CheckOverride is recorded.",
+      "acceptance": [
+        "WriteTool implements Tool trait with name 'write', effect Write",
+        "Input schema: { path: String, content: String }",
+        "Pre-validate blocks if file exists AND has_read_file is false: returns PreValidateOutcome::Block with reason",
+        "Pre-validate allows if file does not exist (new file creation)",
+        "Pre-validate allows if file exists AND has_read_file is true",
+        "WHEN AllowOverwrite flag is set, pre-validate allows even without prior read, and records CheckOverride with check='read_before_overwrite', flag=AllowOverwrite, source from FlagEntry",
+        "Unit test: attempt write to existing unread file, verify Block. Read file, retry, verify Proceed"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/write.rs",
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": ["C38"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R4",
+      "title": "Implement Write tool AST validation (report semantics)",
+      "spec": "Write tool post-validate SHALL parse the written file with tree-sitter and check for syntax errors. Post-validate uses report semantics: the file IS written to disk, then errors are reported in the tool result. The post-validate phase SHALL NOT prevent the file from being written. tree-sitter language detection SHALL be based on file extension.",
+      "acceptance": [
+        "WriteTool.post_validate_mode() returns PostValidateMode::Report",
+        "After writing, tree-sitter parses the file content using the language grammar matching the file extension",
+        "If tree-sitter finds ERROR nodes: PostValidateOutcome::Fail with errors listing line/column and error description",
+        "If no ERROR nodes: PostValidateOutcome::Pass",
+        "Supported extensions for v1: .rs, .py, .js, .ts, .json (focused set — additional grammars added in later briefs)",
+        "Unsupported extensions: post-validate returns Pass (no validation, not failure)",
+        "Unit test: write a .rs file with missing brace, verify Fail with line number. Write valid .rs, verify Pass"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/write.rs"
+        ]
+      },
+      "checklist": ["C39"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R5",
+      "title": "Implement Write tool file length enforcement",
+      "spec": "Write tool post-validate SHALL check the written file's line count against a configurable limit (default 500, matching CO5). Path-specific overrides SHALL be supported (e.g., test files can be longer). Exceeding the limit SHALL be reported as a PostValidateOutcome::Fail.",
+      "acceptance": [
+        "Default file length limit is 500 lines (excluding blank lines only — comment detection deferred to a later brief when tree-sitter line classification is built out)",
+        "Limit is configurable via ToolContext or WriteTool configuration",
+        "Path-specific overrides: patterns like '**/tests/**' or '**/*_test.rs' can have different limits",
+        "Exceeding the limit produces Fail with message including current count and limit",
+        "Unit test: write a 600-line file with default limit, verify Fail. Write a 400-line file, verify Pass"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/write.rs"
+        ]
+      },
+      "checklist": ["C40"],
+      "stories": ["S9"]
+    },
+    {
+      "id": "R6",
+      "title": "Implement Edit tool with read-before-edit",
+      "spec": "Edit tool SHALL implement the Tool trait. It SHALL apply exact string replacement (old_string → new_string). Pre-validate SHALL block edits on files that have not been read. Pre-validate SHALL verify old_string appears exactly once in the file content (ambiguous match = block).",
+      "acceptance": [
+        "EditTool implements Tool trait with name 'edit', effect Write",
+        "Input schema: { path: String, old_string: String, new_string: String }",
+        "Pre-validate blocks if has_read_file is false: returns Block with reason",
+        "Pre-validate blocks if old_string is not found in the file: returns Block with 'old_string not found'",
+        "Pre-validate blocks if old_string appears more than once: returns Block with 'old_string is ambiguous (N matches)'",
+        "Execute replaces the single occurrence of old_string with new_string",
+        "Unit test: create file, read it, edit with valid old_string, verify content changed"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/edit.rs",
+          "crates/norn/src/tools/mod.rs"
+        ]
+      },
+      "checklist": ["C41"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R7",
+      "title": "Implement Edit tool AST validation (gate semantics)",
+      "spec": "Edit tool post-validate SHALL parse the edited content with tree-sitter. Post-validate uses gate semantics: the edit is staged in memory. IF AST validation fails, the original file is preserved — the edit is NOT committed to disk. IF AST validation passes, the edited content is committed. WHEN AllowBrokenAst flag is set, gate semantics downgrade to report semantics and a CheckOverride is recorded.",
+      "acceptance": [
+        "EditTool.post_validate_mode() returns PostValidateMode::Gate",
+        "Edit is staged: old_string → new_string applied to in-memory content, NOT written to disk during execute",
+        "Post-validate parses the staged content with tree-sitter",
+        "If ERROR nodes found: PostValidateOutcome::Fail, original file content preserved on disk, tool result reports the syntax error with line/column",
+        "If no ERROR nodes: PostValidateOutcome::Pass, edited content committed to disk",
+        "WHEN AllowBrokenAst is set: edit is committed even on AST failure, CheckOverride recorded with check='ast_validation', flag=AllowBrokenAst, source from FlagEntry",
+        "Unit test: edit a valid .rs file to introduce syntax error, verify original file unchanged on disk. Edit with valid change, verify file updated"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/edit.rs"
+        ]
+      },
+      "checklist": ["C42"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R8",
+      "title": "Implement Edit tool blast radius reporting",
+      "spec": "Edit tool on-success SHALL report the blast radius of the change: which symbols were affected, approximate scope of impact. Initial implementation SHALL report the diff (lines changed) and affected functions/structs based on tree-sitter node analysis of the changed region.",
+      "acceptance": [
+        "On-success reports: lines added, lines removed, lines modified",
+        "On-success identifies tree-sitter nodes (functions, structs, impls) that contain the changed region",
+        "Blast radius info is included in the ToolOutput content alongside the edit confirmation",
+        "Unit test: edit inside a function, verify the function name appears in blast radius report"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/edit.rs"
+        ]
+      },
+      "checklist": ["C43"],
+      "stories": ["S8"]
+    },
+    {
+      "id": "R9",
+      "title": "Add tree-sitter dependencies",
+      "spec": "Cargo.toml SHALL add tree-sitter and language grammar crates for supported languages.",
+      "acceptance": [
+        "Cargo.toml includes tree-sitter",
+        "Cargo.toml includes tree-sitter-rust, tree-sitter-python, tree-sitter-javascript, tree-sitter-typescript, tree-sitter-json",
+        "Cargo.toml includes tempfile as dev-dependency for test file creation",
+        "cargo check -p norn succeeds"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/Cargo.toml"
+        ]
+      },
+      "checklist": ["C39", "C42"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement ApplyPatch tool — separate brief",
+    "SHALL NOT implement Search, Bash, Web, LSP, or agent tools — separate briefs",
+    "SHALL NOT implement LSP-based blast radius (C43 mentions LSP) — initial implementation uses tree-sitter node analysis only. LSP integration is a separate brief",
+    "SHALL NOT implement diagnostics integration (clippy/cargo check after edit) — separate brief",
+    "SHALL NOT implement file watching or filesystem event emission",
+    "SHALL NOT add RejectBrokenAst handling for Write — Write's default is report semantics, RejectBrokenAst upgrade is a future enhancement"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo test -p norn succeeds — all tool tests pass",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "Read tool tests with real temp files verify line numbers and binary detection",
+    "Write tool test with invalid .rs syntax verifies AST error is reported but file exists on disk (report semantics)",
+    "Edit tool test with invalid .rs syntax verifies original file is preserved (gate semantics)",
+    "Edit tool test with AllowBrokenAst flag verifies file IS written and CheckOverride is recorded",
+    "Write read-before-overwrite test verifies Block without prior read, Proceed with prior read",
+    "grep -rn 'unwrap()\\|expect(' crates/norn/src/tools/{read,write,edit}.rs returns no matches outside test code"
+  ]
+}

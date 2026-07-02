@@ -1,0 +1,98 @@
+{
+  "id": "NS-006",
+  "cluster": "norn-skills",
+  "title": "Wiring — SkillSearchPaths, SkillCatalog, and conditional registration",
+  "depends_on": ["NS-002", "NS-005"],
+  "blocked_by": [],
+  "checklist": ["C57", "C58", "C59", "C60", "C61", "C64", "C65"],
+  "stories": ["S2"],
+  "purpose": "All skill infrastructure is built but nothing is connected. This brief wires the 7-tier search paths, SkillCatalog, and conditional SkillTool registration into build_runtime. When no skills exist, the SkillTool is not registered and no catalog section appears in the system prompt.",
+  "task": "In norn-cli's build_runtime: construct the 7-tier skill search path list, build SkillSearchPaths and install on ToolContext, scan to build SkillCatalog and install as Arc<SkillCatalog>, conditionally register the SkillTool (only when catalog is non-empty), inject catalog listing into base system instruction, register skill slash commands.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "skills_dir path helpers",
+      "spec": "norn::config::paths SHALL provide a skills_dir() returning norn_dir()/skills/. norn-cli SHALL add project_skills_dir() and the .agents/skills/ and .claude/skills/ project paths.",
+      "acceptance": [
+        "norn::config::paths::skills_dir() returns ~/.norn/skills/",
+        "norn-cli exposes project path helpers for all 7 tiers"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/config/paths.rs", "crates/norn-cli/src/config/paths.rs"]
+      },
+      "checklist": ["C57"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "SkillSearchPaths and SkillCatalog construction",
+      "spec": "WHEN build_runtime executes, it SHALL construct SkillSearchPaths from the 7-tier list, scan to build SkillCatalog, and install both on ToolContext.",
+      "acceptance": [
+        "ToolContext::get_extension::<SkillSearchPaths>() returns Some after build_runtime",
+        "ToolContext::get_extension::<Arc<SkillCatalog>>() returns Some after build_runtime",
+        "Paths are ordered per D1 (project .norn first, .meridian last)"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C57", "C59", "C60"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Conditional SkillTool registration",
+      "spec": "The SkillTool SHALL be registered in the tool registry ONLY when the SkillCatalog is non-empty. When no skills exist, the tool is not registered.",
+      "acceptance": [
+        "With skills present, tool registry contains 'skill'",
+        "With no skills present, tool registry does NOT contain 'skill'",
+        "With no skills, no '# Available Skills' section in system prompt"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C58"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R4",
+      "title": "Catalog listing in base system instruction",
+      "spec": "WHEN the catalog is non-empty, its system_prompt_listing() SHALL be appended to system_sections[0] after profile instructions and context files.",
+      "acceptance": [
+        "The base instruction contains '# Available Skills' when skills exist",
+        "The listing appears after NORN.md context (when present)",
+        "When catalog is empty, no skills section appears"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C61"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R5",
+      "title": "Clean lint and format gates",
+      "spec": "cargo clippy --workspace --all-targets -- -D warnings SHALL pass clean. cargo fmt --check SHALL pass clean.",
+      "acceptance": [
+        "cargo clippy --workspace --all-targets -- -D warnings exits 0",
+        "cargo fmt --check exits 0"
+      ],
+      "files": {},
+      "checklist": ["C64", "C65"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify skill module internals — only wire them",
+    "SHALL NOT implement fork/subagent execution",
+    "SHALL NOT run in parallel with NX-005 (both modify builder.rs)"
+  ],
+  "verification": [
+    "cargo check -p norn -p norn-cli succeeds",
+    "cargo test -p norn -p norn-cli passes all tests",
+    "cargo clippy --workspace --all-targets -- -D warnings clean",
+    "cargo fmt --check passes",
+    "With test SKILL.md files, SkillTool returns expanded content (integration test)",
+    "With no skill files, SkillTool is not in registry and no catalog section in prompt",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

@@ -1,0 +1,125 @@
+{
+  "id": "NA-001",
+  "cluster": "norn-agents",
+  "title": "Profile module restructuring and markdown frontmatter parser",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C9", "C10"],
+  "stories": ["S19"],
+  "purpose": "Norn profiles currently use TOML/JSON via a flat profile.rs file. The norn-agents design requires markdown profiles with YAML frontmatter, matching the 31 existing Meridian profiles at .meridian/profiles/. This brief converts profile.rs into a profile/ folder module and implements frontmatter parsing and capability resolution as libnorn APIs, establishing the foundation for profile scanning (NA-002) and spawn-with-profile (NA-006).",
+  "task": "Convert profile.rs into a profile/ folder module with types.rs, loader.rs, and resolve.rs. Implement split_frontmatter (own 30-line implementation, not imported from claude-runner) to parse --- delimited YAML frontmatter from markdown files. Implement parse_profile to deserialise YAML frontmatter into a norn-specific RawNornProfileFrontmatter struct and map it to the existing Profile type, with the markdown body becoming the system prompt. Implement parse_capability for markdown capability files. Move capability resolution logic (resolved_tools, resolved_instructions, resolved_disallowed, from_profile) into resolve.rs. Preserve all existing TOML/JSON loading via from_file for backwards compatibility during migration.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Profile folder module structure",
+      "spec": "The profile module SHALL be restructured from a single file into a folder module with separate files for types, loading, and resolution.",
+      "acceptance": [
+        "profile/ directory exists with mod.rs, types.rs, loader.rs, resolve.rs",
+        "mod.rs contains only pub mod declarations and re-exports",
+        "profile.rs is deleted",
+        "lib.rs pub mod profile declaration still works (folder module replaces file module transparently)",
+        "All existing tests pass without modification to their import paths (re-exports preserve the public API)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/profile/mod.rs",
+          "crates/norn/src/profile/types.rs",
+          "crates/norn/src/profile/loader.rs",
+          "crates/norn/src/profile/resolve.rs"
+        ],
+        "delete": ["crates/norn/src/profile.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Profile and Capability types in types.rs",
+      "spec": "The Profile, Capability, and PromptCommand structs SHALL be moved to types.rs with all existing fields preserved and the existing serde derives maintained.",
+      "acceptance": [
+        "Profile struct in profile/types.rs with all current fields: name, model, reasoning_effort, reasoning_summary, tools, system_instructions, capabilities, settings, prompt_commands",
+        "Capability struct in profile/types.rs with all current fields: name, tools, system_instructions, disallowed_patterns",
+        "PromptCommand struct with name, command, cache_ttl fields and duration_secs serde adapter",
+        "Profile::from_file dispatches on extension (.toml, .json, .md) — .md added in R3",
+        "Existing TOML and JSON round-trip tests pass"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/profile/types.rs"]
+      },
+      "checklist": ["C2"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "split_frontmatter and markdown profile parser",
+      "spec": "The loader SHALL parse markdown files with YAML frontmatter delimited by --- lines, extracting structured fields from the YAML and the markdown body as the system prompt.",
+      "acceptance": [
+        "split_frontmatter(content) -> Result<(&str, &str), ParseError> splits on --- delimiters, returns (yaml, body)",
+        "Self-contained implementation (~30 lines), does not import from claude-runner",
+        "Handles edge cases: no closing ---, empty body, empty frontmatter, CRLF line endings",
+        "parse_profile(content, path) -> Result<Profile, ParseError> calls split_frontmatter, deserialises YAML via serde_yaml into RawNornProfileFrontmatter, maps to Profile",
+        "RawNornProfileFrontmatter supports fields: name, description, model, tools (list or comma-separated string), disallowedTools (alias disallowed_tools), reasoning_effort, reasoning_summary, capabilities",
+        "Markdown body after frontmatter becomes the first entry in Profile.system_instructions",
+        "Profile::from_file with .md extension delegates to parse_profile",
+        "Test: parse a markdown profile with all fields, verify Profile struct populated correctly",
+        "Test: parse a markdown profile with only name and model, verify defaults for optional fields",
+        "Test: split_frontmatter with missing closing --- returns error"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/profile/loader.rs", "crates/norn/src/profile/types.rs"]
+      },
+      "checklist": ["C1", "C2"],
+      "stories": ["S19"]
+    },
+    {
+      "id": "R4",
+      "title": "Capability parser for markdown capabilities",
+      "spec": "The loader SHALL parse markdown capability files with YAML frontmatter, extracting tools, disallowedTools, and prompt_fragment fields.",
+      "acceptance": [
+        "parse_capability(content, path) -> Result<Capability, ParseError> calls split_frontmatter",
+        "RawCapabilityFrontmatter supports: name, tools, disallowedTools",
+        "Markdown body becomes the capability's system_instructions entry (prompt_fragment)",
+        "Test: parse a capability with tools list and body text, verify Capability struct"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/profile/loader.rs"]
+      },
+      "checklist": ["C9"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Capability resolution in resolve.rs",
+      "spec": "Capability resolution logic SHALL be extracted into resolve.rs, preserving the existing resolved_tools, resolved_instructions, resolved_disallowed, and from_profile APIs.",
+      "acceptance": [
+        "resolved_tools, resolved_instructions, resolved_disallowed methods remain on Profile (delegating to resolve.rs functions or kept as methods)",
+        "from_profile(profile, registry, rules, hooks) -> (LoopContext, ToolRegistry) moved to resolve.rs",
+        "Capability resolution merges capabilities into profile: tools union (deduplicated), disallowedTools append, prompt_fragment appends to system instructions",
+        "All existing tests for capability composition and from_profile pass without modification",
+        "Test: profile with 2 markdown-parsed capabilities, verify merged tools and instructions"
+      ],
+      "files": {
+        "modify": ["crates/norn/src/profile/resolve.rs"]
+      },
+      "checklist": ["C10"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement directory scanning or two-tier resolution — that is NA-002",
+    "SHALL NOT modify norn-cli profile_loader.rs or paths.rs — that is NA-002",
+    "SHALL NOT remove TOML/JSON support from Profile::from_file — existing profiles must continue to load",
+    "SHALL NOT import split_frontmatter or any parsing function from claude-runner",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn — all tests pass including existing profile tests",
+    "cargo clippy -p norn -- -D warnings clean",
+    "Markdown profile with YAML frontmatter parses to correct Profile struct — verified by test",
+    "Markdown capability parses to correct Capability struct — verified by test",
+    "Existing TOML profile round-trip still works — verified by existing test",
+    "split_frontmatter edge cases covered — verified by tests",
+    "from_profile produces correct LoopContext and gated registry — verified by existing test"
+  ]
+}

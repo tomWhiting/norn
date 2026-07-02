@@ -1,0 +1,93 @@
+{
+  "cluster": "norn-config",
+  "sections": [
+    {
+      "name": "Settings Types and Schema",
+      "items": [
+        {"id": "C1", "text": "NornSettings struct defined in norn::config::types with all top-level sections: model, provider, agent, retry, permissions, hooks, tools, mcp_servers, skills, session, tui, env.", "done": false},
+        {"id": "C2", "text": "ProviderSettings struct with fields: base_url, timeout, max_retries, options, auth, rate_limit, runner_path, debug_dump_dir.", "done": false},
+        {"id": "C3", "text": "AgentSettings struct with fields: max_turns, step_timeout, schema_budget, context_window, compact_threshold, compact_keep_turns, reasoning_effort, reasoning_summary, prompt_command_timeout.", "done": false},
+        {"id": "C4", "text": "RetrySettings struct with fields: max_retries, base_delay, backoff_multiplier.", "done": false},
+        {"id": "C5", "text": "PermissionSettings struct with fields: allow (Vec<String>), deny (Vec<String>), ask (Vec<String>).", "done": false},
+        {"id": "C6", "text": "HookSettings struct with fields matching the five HookRegistry traits: pre_tool, post_tool, pre_llm, post_llm, session_event.", "done": false},
+        {"id": "C7", "text": "HookEntry struct with fields: matcher (Option<String>), command (String), timeout (Option<u64>).", "done": false},
+        {"id": "C8", "text": "ToolSettings struct with namespaced sub-objects: write, bash, edit (each Option, open to future tools).", "done": false},
+        {"id": "C9", "text": "All duration fields in settings structs are Option<String> deserialized via humantime::parse_duration.", "done": false},
+        {"id": "C10", "text": "All settings structs derive Serialize, Deserialize, Debug, Default. Default yields all-None/empty fields (no assumed defaults).", "done": false}
+      ]
+    },
+    {
+      "name": "Settings Loading and Merging",
+      "items": [
+        {"id": "C11", "text": "load_settings() discovers and parses settings from up to three files: ~/.norn/settings.json, .norn/settings.json, .norn/settings.local.json.", "done": false},
+        {"id": "C12", "text": "Missing settings files are treated as empty (all-None) — no error on absent file.", "done": false},
+        {"id": "C13", "text": "Malformed JSON in a settings file returns a typed error with the file path and parse error, not a panic.", "done": false},
+        {"id": "C14", "text": "merge_settings() implements five-layer precedence: compiled defaults < user settings < project settings < local settings < CLI overrides.", "done": false},
+        {"id": "C15", "text": "Scalar fields: higher-precedence non-None value wins.", "done": false},
+        {"id": "C16", "text": "Permission deny arrays: union across all layers (additive, cannot un-deny).", "done": false},
+        {"id": "C17", "text": "Permission allow arrays: concatenate across layers, deduplicate.", "done": false},
+        {"id": "C18", "text": "Hook arrays: merge by event type. Project hooks extend user hooks, not replace.", "done": false},
+        {"id": "C19", "text": "MCP servers: merge by name. Same-name project server overrides user server.", "done": false},
+        {"id": "C20", "text": "Tool config: deep merge. Specific key override, sibling keys preserved.", "done": false}
+      ]
+    },
+    {
+      "name": "Path Resolution Migration",
+      "items": [
+        {"id": "C21", "text": "norn_dir() defined in norn::config::paths, returns Option<PathBuf>, honours NORN_HOME env var.", "done": false},
+        {"id": "C22", "text": "profiles_dir() defined in norn::config::paths, returns Option<PathBuf>.", "done": false},
+        {"id": "C23", "text": "session_data_dir() defined in norn::config::paths, returns Option<PathBuf> (not Result, not panic).", "done": false},
+        {"id": "C24", "text": "settings_file() defined in norn::config::paths for user-level settings path (~/.norn/settings.json).", "done": false},
+        {"id": "C25", "text": "norn-cli paths.rs delegates to norn::config::paths for all path resolution.", "done": false},
+        {"id": "C26", "text": "REPL history path uses norn::config::paths::norn_dir(), honouring NORN_HOME.", "done": false},
+        {"id": "C27", "text": "config_dir() helper and CONFIG_SUBDIR constant removed from norn-cli paths.rs.", "done": false}
+      ]
+    },
+    {
+      "name": "Shared Frontmatter Utility",
+      "items": [
+        {"id": "C28", "text": "split_frontmatter defined in norn::util::frontmatter, returns Result<(&str, &str), FrontmatterError>.", "done": false},
+        {"id": "C29", "text": "FrontmatterError enum with MissingOpening and MissingClosing variants.", "done": false},
+        {"id": "C30", "text": "profile/loader.rs delegates to norn::util::frontmatter::split_frontmatter.", "done": false},
+        {"id": "C31", "text": "rules/parser.rs delegates to norn::util::frontmatter::split_frontmatter.", "done": false},
+        {"id": "C32", "text": "No duplicate split_frontmatter implementations remain in the codebase.", "done": false}
+      ]
+    },
+    {
+      "name": "Settings Validation",
+      "items": [
+        {"id": "C33", "text": "Duration strings validated via humantime::parse_duration at load time. Invalid duration produces a typed error naming the field and value.", "done": false},
+        {"id": "C34", "text": "Permission patterns validated at load time (syntactically well-formed tool patterns).", "done": false},
+        {"id": "C35", "text": "Unknown top-level keys in settings.json emit tracing::warn, not an error (forward compatibility).", "done": false}
+      ]
+    },
+    {
+      "name": "Builder Integration",
+      "items": [
+        {"id": "C36", "text": "build_runtime loads and merges settings before constructing the RuntimeBundle.", "done": false},
+        {"id": "C37", "text": "Merged settings populate AgentLoopConfig fields that were previously only CLI-settable.", "done": false},
+        {"id": "C38", "text": "Merged settings populate ProviderConfigOverrides fields that were previously only CLI-settable.", "done": false},
+        {"id": "C39", "text": "Merged settings populate RetryPolicy fields that were previously only CLI-settable.", "done": false},
+        {"id": "C40", "text": "CLI -c overrides take precedence over settings file values.", "done": false},
+        {"id": "C41", "text": "Profile reasoning_effort takes precedence over settings agent.reasoning_effort.", "done": false}
+      ]
+    },
+    {
+      "name": "Downstream Config Surfaces",
+      "items": [
+        {"id": "C42", "text": "skills.search_paths in settings provides additional skill search directories.", "done": false},
+        {"id": "C43", "text": "context.search_paths in settings provides context discovery directories.", "done": false},
+        {"id": "C44", "text": "session.history_capacity in settings overrides the REPL history capacity.", "done": false},
+        {"id": "C45", "text": "provider.rate_limit in settings overrides the hardcoded 60 req/min (Tom-decision value for default).", "done": false}
+      ]
+    },
+    {
+      "name": "Linting and Quality",
+      "items": [
+        {"id": "C46", "text": "cargo clippy -p norn -p norn-cli -- -D warnings passes clean.", "done": false},
+        {"id": "C47", "text": "No file exceeds 500 lines of code (excluding tests, comments, whitespace).", "done": false},
+        {"id": "C48", "text": "No .unwrap() or .expect() in library code (norn crate).", "done": false}
+      ]
+    }
+  ]
+}

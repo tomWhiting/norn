@@ -1,0 +1,173 @@
+{
+  "repo_root": "/Users/tom/Developer/ablative/meridian",
+  "brief_id": "NR-PERF-001",
+  "reviewers": [
+    "Waffles the Terrible"
+  ],
+  "base_ref": "main",
+  "placement": "local",
+  "isolation": "worktree",
+  "brief_document": {
+    "id": "NR-PERF-001",
+    "title": "Workflow executor performance \u2014 connection pool, profile cache, runtime contention",
+    "cluster": "norn-runtime",
+    "design_anchor": "",
+    "prerequisite_briefs": [],
+    "context": "The in-process Norn workflow path (run_step_norn via imperative_callbacks.rs) is 3x slower than the headless CLI running identical prompts, profiles, and schemas. Six independent investigators traced the execution path and converged on the same root causes. This brief addresses the four highest-impact fixes.",
+    "why": "A dev step that takes 15 minutes through the CLI takes 45 minutes through the workflow executor. Same model, same prompts, same API. The overhead is entirely in our infrastructure layer \u2014 connection pool disabled, redundant profile resolution, synchronous DB writes, and per-step infra rebuild.",
+    "rule": "No behavioral changes. The agent must produce identical output before and after these fixes. This is a pure performance optimization \u2014 same prompts reach the API, same responses come back, same tools are available.",
+    "purpose": "Eliminate the 3x performance gap between the norn headless CLI and the in-process workflow executor path by fixing connection pooling, caching resolved profiles, removing synchronous DB writes from the critical path, and sharing diagnostic infrastructure across steps.",
+    "task": "Fix the four highest-impact performance bottlenecks in the workflow executor's Norn step runner. Each fix is isolated \u2014 they can be applied independently. Verify with cargo check, clippy, and tests on meridian-services and norn crates after each change.",
+    "boundaries": [
+      "Do NOT change any prompts, schemas, or profile content",
+      "Do NOT change the Norn agent loop or tool dispatch logic",
+      "Do NOT change the Rhai evaluator or workflow script format",
+      "Do NOT change the OpenAI API request/response format",
+      "Do NOT remove session persistence (JSONL) \u2014 it must still write session files",
+      "Do NOT remove step metadata persistence (add_step/complete_step) \u2014 just make it non-blocking"
+    ],
+    "requirements": [
+      {
+        "id": "R1",
+        "title": "Enable HTTP connection pool reuse",
+        "spec": "Remove or change pool_max_idle_per_host(0) at crates/norn/src/provider/openai/mod.rs:127. The current setting forces a new TCP+TLS handshake for every API call. Set it to a reasonable value (e.g. 4) or remove the line entirely to use reqwest's default connection pooling. Verify that the existing http2_keep_alive_interval and http2_keep_alive_timeout settings on lines 128-130 are still applied.",
+        "files": {
+          "modify": [
+            "crates/norn/src/provider/openai/mod.rs"
+          ]
+        },
+        "acceptance": [
+          "pool_max_idle_per_host is NOT set to 0",
+          "HTTP/2 keepalive settings are preserved",
+          "Existing provider tests pass",
+          "No new unsafe code"
+        ],
+        "checklist": [],
+        "stories": []
+      },
+      {
+        "id": "R2",
+        "title": "Cache resolved profile across step setup",
+        "spec": "In make_norn_step_runner (crates/meridian-services/src/workflow/imperative_callbacks.rs), the profile is resolved via norn::profile::resolve_profile three times per step: line 488 for prompt metadata, line 623 via profile_tool_names for Meridian tool gating, and again inside AgentBuilder::build at crates/norn/src/agent/builder.rs:405. Resolve the profile ONCE at the start of the step callback, then pass the resolved Profile object to all three consumers. AgentBuilder needs a method that accepts a resolved Profile instead of a profile name string \u2014 add .profile(resolved: Profile) alongside the existing .profile_name(name).",
+        "files": {
+          "modify": [
+            "crates/meridian-services/src/workflow/imperative_callbacks.rs",
+            "crates/norn/src/agent/builder.rs"
+          ]
+        },
+        "acceptance": [
+          "Profile is resolved exactly once per step (not three times)",
+          "AgentBuilder accepts a pre-resolved Profile via a new .profile() method",
+          "profile_tool_names uses the already-resolved profile instead of re-resolving",
+          "Prompt metadata uses the already-resolved profile instead of re-resolving",
+          "Existing tests pass \u2014 agent behavior is identical"
+        ],
+        "checklist": [],
+        "stories": []
+      },
+      {
+        "id": "R3",
+        "title": "Make step metadata DB writes non-blocking",
+        "spec": "In make_norn_step_runner (imperative_callbacks.rs), the calls to storage.add_step (line 466) and storage.complete_step (line 688) use runtime_handle.block_on() which blocks the thread synchronously. Move add_step to fire-and-forget via the existing event_sink channel or a spawned task \u2014 the step_row_id it returns is only used for optional metadata (prompt payload), not for agent execution. Move complete_step to a spawned async task that runs after the step result is returned to the Rhai script.",
+        "files": {
+          "modify": [
+            "crates/meridian-services/src/workflow/imperative_callbacks.rs"
+          ]
+        },
+        "acceptance": [
+          "add_step no longer blocks the step thread before agent execution begins",
+          "complete_step no longer blocks the step thread before returning to Rhai",
+          "Step metadata is still persisted (rows still appear in the database)",
+          "Prompt metadata (expanded_command) is still persisted when step_row_id is available",
+          "Existing tests pass"
+        ],
+        "checklist": [],
+        "stories": []
+      },
+      {
+        "id": "R4",
+        "title": "Share diagnostic infrastructure across steps",
+        "spec": "In make_norn_step_runner (imperative_callbacks.rs:580), build_diagnostic_infra(&wd) is called every step, rebuilding adapter registries, policy registries, and re-parsing CONVENTIONS.toml. Move the construction outside the per-step callback \u2014 build it once when make_norn_step_runner is called, wrap in Arc, and clone into each step invocation.",
+        "files": {
+          "modify": [
+            "crates/meridian-services/src/workflow/imperative_callbacks.rs"
+          ]
+        },
+        "acceptance": [
+          "build_diagnostic_infra is called once per execution, not once per step",
+          "The diagnostic infra is shared via Arc across all steps in the same execution",
+          "Diagnostic behavior is identical \u2014 same adapters, same policies, same CONVENTIONS.toml",
+          "Existing tests pass"
+        ],
+        "checklist": [],
+        "stories": []
+      }
+    ],
+    "verification": [
+      "cargo check -p norn -p meridian-services --all-targets",
+      "cargo clippy -p norn -p meridian-services -- -D warnings",
+      "cargo test -p norn -p meridian-services",
+      "Verify pool_max_idle_per_host is not 0 in the built reqwest client",
+      "Verify profile resolution happens exactly once per step via tracing output or debug logging"
+    ]
+  },
+  "resolved_context": {
+    "adrs": [],
+    "checklist": [],
+    "stories": [],
+    "constraints": [
+      {
+        "id": "CO1",
+        "text": "No new external dependencies. Namespace tools call service-layer functions via ServiceContext, not HTTP."
+      },
+      {
+        "id": "CO2",
+        "text": "AssistantEvent is the single event type for all downstream consumers. Both runtimes produce it."
+      },
+      {
+        "id": "CO3",
+        "text": "JSONL session files are Norn's source of truth for resume. PG is the UI's source of truth. Neither replaces the other."
+      },
+      {
+        "id": "CO4",
+        "text": "The model sees at most 25 tools (16 standard Norn + up to 7 namespace + 2 optional web). Profile filtering reduces this in practice."
+      },
+      {
+        "id": "CO5",
+        "text": "Session IDs are UUIDs shared between the JSONL filename, PG assistant_session_events key, and SessionHandle registry key."
+      },
+      {
+        "id": "CO6",
+        "text": "Wake prompt delivery mechanism changes, format does not."
+      },
+      {
+        "id": "CO7",
+        "text": "mod.rs contains only pub mod declarations and re-exports."
+      },
+      {
+        "id": "CO8",
+        "text": "No file over 500 lines of code (excluding tests, comments, whitespace)."
+      },
+      {
+        "id": "CO9",
+        "text": "All errors handled via thiserror in library code. No .unwrap() or .expect() in library code."
+      },
+      {
+        "id": "CO10",
+        "text": "Namespace tools implement the existing Tool trait. No changes to the trait interface."
+      }
+    ],
+    "intention": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude Runner stays only for legacy background task dispatch until it can be retired entirely. Member-facing sessions run as typed, observable, in-process agent loops rather than opaque subprocess invocations. Session state persists across visits without relying on a CLI binary's internal persistence. The model sees a focused set of domain tools instead of a raw shell with 175 CLI commands. This is the June 15 deadline work.",
+    "design_path": "docs/design/norn-runtime",
+    "provenance": {
+      "requested_by": "Tom",
+      "quote": "Norn becomes the primary runtime for all member-facing work in Meridian. Every DM, wake prompt, inbox triage, and interactive assistant session runs through Norn in-process within the server. Claude R"
+    }
+  },
+  "verify_fix_cap": 3,
+  "review_cap": 1,
+  "round_backoff_ms": 2000,
+  "review_deadline_ms": 300000,
+  "workspace_id": "2d5fdd51-1f25-45a4-8f86-4d4c978d1355",
+  "clone_url": "https://github.com/tomWhiting/meridian.git"
+}

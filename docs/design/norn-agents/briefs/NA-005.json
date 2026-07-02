@@ -1,0 +1,132 @@
+{
+  "id": "NA-005",
+  "cluster": "norn-agents",
+  "title": "ToolContext extension wiring and signal_agent rename",
+  "depends_on": ["NA-003"],
+  "blocked_by": [],
+  "checklist": ["C20", "C22", "C23", "C24", "C25", "C26"],
+  "stories": ["S18", "S23"],
+  "purpose": "Seven of seventeen registered tools fail because three ToolContext extensions are never installed: AgentToolInfra, SharedTaskStore, SharedToolCatalog. This brief wires all three extensions in builder.rs, making every registered tool functional. It also renames send_message to signal_agent to disambiguate from Meridian's collective messaging, and installs the AgentHandles extension for NA-006.",
+  "task": "In norn-cli builder.rs, construct and install AgentToolInfra (AgentRegistry, Mailbox, Provider, EventStore, root agent UUID, ToolRegistry), SharedTaskStore (wrapping the store from NA-004 or InMemoryTaskStore as fallback), SharedToolCatalog (built from registry tool definitions), and AgentHandles (empty collection). Rename SendMessageTool to SignalAgentTool, rename the tool name from send_message to signal_agent, update guidance files, and update coord.rs.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Install AgentToolInfra on ToolContext",
+      "spec": "builder.rs SHALL construct AgentToolInfra with all required fields and install it on the ToolRegistry's shared ToolContext.",
+      "acceptance": [
+        "AgentToolInfra constructed with: AgentRegistry::shared(), Mailbox::new(), provider (from bundle), EventStore (from session), root agent UUID (generated or from session), ToolRegistry (Arc clone of the registry)",
+        "Installed via registry.shared_context().insert_extension(infra)",
+        "spawn_agent tool call no longer returns 'agent runtime not configured' error",
+        "fork tool call no longer returns 'agent runtime not configured' error",
+        "Test: build_runtime, invoke spawn_agent tool, verify it gets past infra_from(ctx)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/runtime/builder.rs",
+          "crates/norn-cli/src/runtime/wiring.rs"
+        ]
+      },
+      "checklist": ["C22", "C24"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Install SharedTaskStore on ToolContext",
+      "spec": "builder.rs SHALL install SharedTaskStore on the ToolContext so the task tool is functional.",
+      "acceptance": [
+        "SharedTaskStore wrapping the DiskTaskStore from RuntimeBundle (if NA-004 has landed) or InMemoryTaskStore as fallback",
+        "Installed via registry.shared_context().insert_extension(shared_task_store)",
+        "task tool call no longer returns 'task store not configured' error",
+        "Test: build_runtime, invoke task tool create action, verify success"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C20", "C25"],
+      "stories": ["S23"]
+    },
+    {
+      "id": "R3",
+      "title": "Install SharedToolCatalog on ToolContext",
+      "spec": "builder.rs SHALL build a SharedToolCatalog from the registry's tool definitions and install it on the ToolContext.",
+      "acceptance": [
+        "Iterate registry.names(), build Vec<ToolCatalogEntry> with name and description",
+        "Wrap in SharedToolCatalog and install via insert_extension",
+        "tool_search tool call no longer returns 'tool catalog not configured' error",
+        "Test: build_runtime, invoke tool_search with empty query, verify alphabetical results returned"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": ["C23", "C26"],
+      "stories": ["S18"]
+    },
+    {
+      "id": "R4",
+      "title": "Install AgentHandles on ToolContext",
+      "spec": "builder.rs SHALL install an empty AgentHandles collection on the ToolContext for NA-006 to populate at spawn time.",
+      "acceptance": [
+        "AgentHandles type defined (re-exported from tools/agent/handle.rs or a temporary stub until NA-006 creates handle.rs)",
+        "Installed as empty collection via insert_extension",
+        "If handle.rs does not exist yet, use a minimal stub type that NA-006 will replace"
+      ],
+      "files": {
+        "modify": ["crates/norn-cli/src/runtime/builder.rs"]
+      },
+      "checklist": [],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Rename send_message to signal_agent",
+      "spec": "The send_message tool SHALL be renamed to signal_agent to disambiguate from Meridian's collective messaging system.",
+      "acceptance": [
+        "SendMessageTool renamed to SignalAgentTool in coord.rs",
+        "Tool::name() returns \"signal_agent\" instead of \"send_message\"",
+        "SendMessageArgs renamed to SignalAgentArgs",
+        "tools/agent/mod.rs re-exports SignalAgentTool instead of SendMessageTool",
+        "register_standard_tools in wiring.rs registers SignalAgentTool",
+        "send_message.description.md renamed to signal_agent.description.md",
+        "send_message.usage.md renamed to signal_agent.usage.md",
+        "Tool description updated: 'Send a signal to another running agent. Signals are ephemeral intra-session communication. With trigger_turn enabled, the recipient reacts at its next tool boundary.'",
+        "All tests updated with new name",
+        "Test: SignalAgentTool delivers to target mailbox (existing test adapted)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/agent/coord.rs",
+          "crates/norn/src/tools/agent/mod.rs",
+          "crates/norn-cli/src/runtime/wiring.rs"
+        ],
+        "create": [
+          "crates/norn/src/tools/guidance/signal_agent.description.md",
+          "crates/norn/src/tools/guidance/signal_agent.usage.md"
+        ],
+        "delete": [
+          "crates/norn/src/tools/guidance/send_message.description.md",
+          "crates/norn/src/tools/guidance/send_message.usage.md"
+        ]
+      },
+      "checklist": [],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT modify SpawnAgentTool execution logic — that is NA-006",
+    "SHALL NOT modify WaitAgentTool or CloseAgentTool logic — that is NA-007",
+    "SHALL NOT implement DiskTaskStore — that is NA-004",
+    "SHALL NOT implement profile loading — that is NA-001/NA-002",
+    "SHALL NOT rename MailboxMessage to AgentSignal — Mailbox is internal infrastructure, renaming internals is out of scope",
+    "SHALL NOT add todo!() or unimplemented!() macros anywhere"
+  ],
+  "verification": [
+    "cargo check --workspace succeeds",
+    "cargo test --workspace — all tests pass",
+    "cargo clippy --workspace -- -D warnings clean",
+    "spawn_agent invocation does not return extension-missing error — verified by test",
+    "task invocation does not return store-missing error — verified by test",
+    "tool_search invocation does not return catalog-missing error — verified by test",
+    "signal_agent delivers to mailbox — verified by test",
+    "No references to 'send_message' remain in tool names or guidance file names"
+  ]
+}

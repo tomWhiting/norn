@@ -1,0 +1,123 @@
+{
+  "id": "NR-005",
+  "cluster": "norn-runtime",
+  "title": "Wake config integration and authentication wiring",
+  "depends_on": ["NR-001"],
+  "blocked_by": [],
+  "checklist": ["C42", "C43", "C44", "C45", "C46", "C47", "C48", "C49", "C50", "C51", "C52"],
+  "stories": ["S3", "S12", "S14", "S18", "S20"],
+  "purpose": "Wire the RuntimeKind selection into the wake config pipeline and authentication flow so that members can be configured for Norn or Claude Runner via their wake config, and Norn sessions draw from the same TokenPool as Claude Runner sessions. This is the configuration bridge that makes the runtime transition operational.",
+  "task": "Add a runtime column to the wake_configs table, update session_config_from_wake_config to read it, add a default_runtime setting to server config, and wire token acquisition for Norn sessions through the existing TokenPool. The wake prompt delivery, WakeupService, and wake trigger remain unchanged — they call start_session which branches on RuntimeKind (wired in NR-001).",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "wake_configs runtime column",
+      "spec": "The wake_configs table SHALL have a runtime column (TEXT, nullable, default NULL). WHEN runtime is NULL, the session SHALL use the server default. WHEN runtime is 'norn' or 'claude_runner', the session SHALL use that runtime. The column SHALL be added via a new migration.",
+      "acceptance": [
+        "Migration adds runtime TEXT column to wake_configs with default NULL",
+        "Existing rows have runtime = NULL after migration",
+        "WakeConfig Rust struct has runtime: Option<String> field",
+        "Storage trait includes runtime in wake config queries"
+      ],
+      "files": {
+        "modify": [
+          "crates/meridian-services/src/assistant/wake_config_session.rs",
+          "crates/meridian-services/src/assistant/types.rs"
+        ]
+      },
+      "checklist": ["C50"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R2",
+      "title": "session_config_from_wake_config reads runtime",
+      "spec": "WHEN session_config_from_wake_config builds a SessionConfig from a WakeConfig, THE SYSTEM SHALL read the runtime field and map it to SessionConfig.runtime. 'norn' maps to Some(RuntimeKind::Norn), 'claude_runner' maps to Some(RuntimeKind::ClaudeRunner), NULL or unrecognized maps to None (server default).",
+      "acceptance": [
+        "WakeConfig with runtime='norn' produces SessionConfig with runtime=Some(Norn)",
+        "WakeConfig with runtime='claude_runner' produces SessionConfig with runtime=Some(ClaudeRunner)",
+        "WakeConfig with runtime=NULL produces SessionConfig with runtime=None",
+        "Unrecognized runtime values produce runtime=None with a warn log"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/wake_config_session.rs"]
+      },
+      "checklist": ["C51"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Server default runtime setting",
+      "spec": "Server configuration SHALL include a default_runtime field (string, default 'claude_runner'). WHEN SessionConfig.runtime is None, start_session SHALL resolve the runtime from this server default. The default ensures existing deployments continue to use Claude Runner until explicitly switched.",
+      "acceptance": [
+        "Server config struct has default_runtime: String field defaulting to 'claude_runner'",
+        "start_session resolves None runtime to the server default",
+        "Setting default_runtime to 'norn' makes all new sessions use Norn unless overridden"
+      ],
+      "files": {
+        "modify": [
+          "crates/meridian-services/src/assistant/service.rs"
+        ]
+      },
+      "checklist": ["C52"],
+      "stories": ["S14"]
+    },
+    {
+      "id": "R4",
+      "title": "Token acquisition for Norn sessions",
+      "spec": "WHEN a Norn session starts, THE SYSTEM SHALL acquire a token from the same TokenPool used by Claude Runner sessions via AssistantService::acquire_token(). Token acquisition SHALL happen in start_session (NR-001 R5 scope) before spawn_norn_loop is called, matching the Claude Runner path where start_session acquires the token before spawning the session loop. The acquired token SHALL be passed to spawn_norn_loop, which passes it to the Norn ProviderConfig as AuthSource::Token(token_string). THE SYSTEM SHALL NOT create an independent OAuth flow for Norn sessions.",
+      "acceptance": [
+        "acquire_token() is called in start_session, not in spawn_norn_loop (matches Claude Runner path)",
+        "Token is passed from start_session to spawn_norn_loop as an argument",
+        "Token is passed to ProviderConfig.auth_source as AuthSource::Token",
+        "Pool rotation state is coherent across both runtime paths",
+        "TokenPool exhaustion errors are propagated as AssistantError::TokenPoolExhausted"
+      ],
+      "files": {
+        "modify": ["crates/meridian-services/src/assistant/service.rs"]
+      },
+      "checklist": ["C42", "C43", "C44"],
+      "stories": ["S18"]
+    },
+    {
+      "id": "R5",
+      "title": "Wake prompt delivery unchanged",
+      "spec": "build_wake_prompt SHALL remain unchanged. WHILE the WakeupService wakes a member, THE SYSTEM SHALL build the wake prompt text identically for both runtimes. For Norn, the text is passed to AgentBuilder::prompt(). For Claude Runner, it remains SessionConfig.initial_message.",
+      "acceptance": [
+        "build_wake_prompt is not modified",
+        "Wake prompt text is passed to AgentBuilder::prompt() for Norn sessions",
+        "WakeupService calls start_session/resume_session without runtime-specific logic"
+      ],
+      "files": {},
+      "checklist": ["C45", "C46", "C48"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R6",
+      "title": "Mid-session DM delivery and atomic claim",
+      "spec": "Mid-session DMs SHALL be delivered via SessionCommand::SendMessage regardless of runtime. The Norn session loop (NR-002) forwards these to InboundChannel. The atomic claim mechanism (try_claim_for_wakeup) SHALL work identically for Norn sessions since it operates on member activity status, not runtime internals.",
+      "acceptance": [
+        "SessionCommand::SendMessage works for both runtimes",
+        "Atomic claim via try_claim_for_wakeup is runtime-agnostic",
+        "Idle timeout resets on SendMessage for both runtimes"
+      ],
+      "files": {},
+      "checklist": ["C47", "C49"],
+      "stories": ["S20"]
+    }
+  ],
+  "dependency_setup": "No new cargo dependencies. Requires one SQL migration file for the wake_configs runtime column — create via: sqlx migrate add -r add_wake_config_runtime (in crates/meridian-storage-pg/).",
+  "boundaries": [
+    "SHALL NOT modify build_wake_prompt or the wake prompt format",
+    "SHALL NOT modify WakeupService or spawn_wake_listener beyond reading the resolved RuntimeKind",
+    "SHALL NOT modify TokenPool — the pool itself is unchanged, only the consumer path differs",
+    "SHALL NOT implement the Norn session loop or event translation (NR-002 and NR-003 scope)"
+  ],
+  "verification": [
+    "wake_configs migration applies cleanly on existing data",
+    "WakeConfig with runtime='norn' produces a Norn session",
+    "WakeConfig with runtime=NULL uses the server default",
+    "Server default_runtime='claude_runner' preserves existing behavior",
+    "Token acquisition works for both runtime paths from the same pool",
+    "cargo check --workspace passes after migration"
+  ]
+}

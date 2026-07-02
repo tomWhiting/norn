@@ -1,0 +1,122 @@
+{
+  "id": "NTF-002",
+  "cluster": "norn-tools/follow-up",
+  "title": "register_follow_ups lifecycle phase on the Tool trait",
+  "depends_on": ["NTF-001"],
+  "blocked_by": [],
+  "checklist": ["C35", "C36", "C37", "C38", "C39"],
+  "stories": ["S10", "S11", "S12"],
+  "purpose": "Extend the tool lifecycle with a register_follow_ups phase that runs after on-success (and after error for failure-recovery follow-ups). This is the mechanism by which tools declare what follow-up actions are available on their result. The phase is optional — tools that do not override it return an empty Vec. The registry attaches returned follow-ups to the tool result under a follow_ups key.",
+  "task": "Add a register_follow_ups method to the Tool trait in traits.rs with a default implementation returning empty Vec<FollowUpAction>. Modify the lifecycle dispatch in registry.rs to call register_follow_ups after on_success (on success path) and after execute error handling (on error path for failure-recovery follow-ups). The registry SHALL attach the returned Vec<FollowUpAction> to the tool output by injecting a follow_ups array (using model_facing_json) into the output content. When the follow-ups Vec is empty, no follow_ups key is added.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Add register_follow_ups to the Tool trait",
+      "spec": "The Tool trait in crates/norn/src/tool/traits.rs SHALL gain a new async method: async fn register_follow_ups(&self, output: &ToolOutput, ctx: &ToolContext) -> Vec<FollowUpAction>. The default implementation SHALL return Vec::new(). The method receives the tool output and context so it can inspect the result to decide which follow-ups to offer.",
+      "acceptance": [
+        "Tool trait in traits.rs declares register_follow_ups with the specified signature",
+        "Default implementation returns Vec::new()",
+        "Existing tools that do not override register_follow_ups continue to compile without changes",
+        "The method is async and takes &self, &ToolOutput, &ToolContext",
+        "cargo check -p norn succeeds"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/traits.rs"
+        ]
+      },
+      "checklist": ["C35", "C39"],
+      "stories": ["S11"]
+    },
+    {
+      "id": "R2",
+      "title": "Call register_follow_ups on the success path in registry dispatch",
+      "spec": "The ToolExecutor impl in registry.rs SHALL call tool.register_follow_ups(&output, &ctx) after the on_success phase completes. The returned Vec<FollowUpAction> SHALL be attached to the tool output: if non-empty, inject a follow_ups array into output.content (which is a serde_json::Value) containing the model_facing_json() of each FollowUpAction. If the Vec is empty, output.content is unchanged.",
+      "acceptance": [
+        "register_follow_ups is called after on_success in the lifecycle dispatch",
+        "A tool returning 2 FollowUpActions has output.content[\"follow_ups\"] with 2 entries",
+        "Each entry in follow_ups has exactly action, description, expires keys (from model_facing_json)",
+        "A tool returning empty Vec has no follow_ups key in output.content",
+        "The full Vec<FollowUpAction> is retained internally for action log storage (not discarded after serialization)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/registry.rs"
+        ]
+      },
+      "checklist": ["C38"],
+      "stories": ["S10"]
+    },
+    {
+      "id": "R3",
+      "title": "Call register_follow_ups on the error path for failure-recovery follow-ups",
+      "spec": "When a tool's execute() returns an error, or when post-validate fails, the registry SHALL still call register_follow_ups if the error is a domain error (not a system/infrastructure error). Specifically: after PostValidateOutcome::Fail in Gate mode, before returning ToolError::PostValidationFailed, the registry SHALL call register_follow_ups with the output that was produced (the output exists — it was committed before post-validate ran). The returned follow-ups SHALL be stored for action log indexing. For execute-phase errors (ToolError), register_follow_ups is NOT called — there is no output to inspect.",
+      "acceptance": [
+        "Gate-mode post-validate failure still calls register_follow_ups with the committed output",
+        "Follow-ups from failure path are stored for action log indexing (retained on the internal result, not discarded)",
+        "Execute-phase errors do NOT trigger register_follow_ups",
+        "Pre-validate blocks do NOT trigger register_follow_ups"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/registry.rs"
+        ]
+      },
+      "checklist": ["C36"],
+      "stories": ["S12"]
+    },
+    {
+      "id": "R4",
+      "title": "Expose follow-ups alongside dispatch result for action log consumption",
+      "spec": "The ToolExecutor dispatch method SHALL return the Vec<FollowUpAction> alongside the ToolOutput. The return type changes from Result<ToolOutput, ToolError> to Result<(ToolOutput, Vec<FollowUpAction>), ToolError>. Callers that do not need follow-ups can destructure and discard. For PostValidationFailed errors, the follow-ups SHALL be accessible via a new committed_follow_ups field on ToolError::PostValidationFailed (or a separate side-channel). The action log (future brief NTA-001) indexes these.",
+      "acceptance": [
+        "ToolExecutor::execute returns Result<(ToolOutput, Vec<FollowUpAction>), ToolError>",
+        "All callers of ToolExecutor::execute updated to handle the new return type",
+        "Follow-ups from the failure path are not silently dropped",
+        "cargo check -p norn succeeds with all callers updated"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/registry.rs",
+          "crates/norn/src/loop/tool_dispatch.rs"
+        ]
+      },
+      "checklist": ["C37", "C38"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Tests for lifecycle extension",
+      "spec": "Tests SHALL verify: (1) a tool with no register_follow_ups override produces empty follow-ups and no follow_ups key in output, (2) a tool that returns follow-ups has them injected into output.content[\"follow_ups\"], (3) Gate-mode post-validate failure still produces follow-ups, (4) execute-phase error does not call register_follow_ups. Tests SHALL use the existing test stub pattern from registry.rs tests.",
+      "acceptance": [
+        "Test: default register_follow_ups returns empty Vec and output has no follow_ups key",
+        "Test: tool returning 2 follow-ups has output.content[\"follow_ups\"].as_array().len() == 2",
+        "Test: Gate post-validate failure returns follow-ups alongside the error",
+        "Test: execute error does not trigger register_follow_ups",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tool/registry.rs"
+        ]
+      },
+      "checklist": ["C35", "C36", "C37", "C38", "C39"],
+      "stories": ["S10", "S11", "S12"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement any tool's register_follow_ups override — individual tool follow-up registration is NTF-004",
+    "SHALL NOT implement the follow_up tool — that is NTF-003",
+    "SHALL NOT implement action log storage of follow-ups — that is NTA-001/NTA-004",
+    "SHALL NOT implement expiry checking — that is NTF-003",
+    "SHALL NOT modify ToolError::PostValidationFailed to add committed_output — that is a shared prerequisite (PR0) handled by the conventions cluster"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero errors",
+    "cargo fmt -p norn -- --check produces no diff",
+    "cargo test -p norn passes all tests (existing and new)",
+    "grep -rn 'todo!\\|unimplemented!\\|FIXME\\|HACK\\|TODO' crates/norn/src/tool/traits.rs crates/norn/src/tool/registry.rs returns no matches",
+    "Existing tools compile without modifications (default register_follow_ups returns empty Vec)"
+  ]
+}

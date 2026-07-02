@@ -1,0 +1,58 @@
+{
+  "cluster": "norn-hooks",
+  "personas": [
+    {
+      "name": "Human Developer",
+      "role": "Configuring Hooks",
+      "stories": [
+        {"id": "S1", "text": "As a human developer, I want to define pre-tool hooks in .norn/settings.json so that I can validate tool arguments before execution without writing Rust code."},
+        {"id": "S2", "text": "As a human developer, I want to define stop hooks so that I can prevent the agent from finishing prematurely when tasks are incomplete."},
+        {"id": "S3", "text": "As a human developer, I want to target hooks at specific tools by name pattern so that my validation script only runs for the tools it applies to."},
+        {"id": "S4", "text": "As a human developer, I want project-level hooks to combine with user-level hooks so that project-specific validations layer on top of my global hooks."},
+        {"id": "S5", "text": "As a human developer, I want local overrides in .norn/settings.local.json so that I can add hooks for my own workflow without affecting the shared project config."},
+        {"id": "S6", "text": "As a human developer, I want hook timeouts to be explicit in the config so that I know exactly how long a hook can run before being killed."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Debugging and Maintaining Hooks",
+      "stories": [
+        {"id": "S7", "text": "As a human developer, I want to see which hook blocked a tool call in the error output so that I can identify which script caused the block and why."},
+        {"id": "S8", "text": "As a human developer, I want invalid regex patterns in hook matchers rejected at startup so that I find config errors immediately, not during execution."},
+        {"id": "S9", "text": "As a human developer, I want hooks captured at startup so that I can modify settings files without destabilising a running session."},
+        {"id": "S10", "text": "As a human developer, I want session event hooks to not block the agent loop so that a slow logging script does not degrade agent performance."}
+      ]
+    },
+    {
+      "name": "Shell Script Author",
+      "role": "Writing Hook Commands",
+      "stories": [
+        {"id": "S11", "text": "As a shell script author, I want to receive hook context as JSON on stdin so that my script can parse the session ID, tool name, and tool arguments."},
+        {"id": "S12", "text": "As a shell script author, I want to block a tool call by exiting with code 2 so that I have a simple protocol for rejecting operations."},
+        {"id": "S13", "text": "As a shell script author, I want to modify tool arguments by writing JSON to stdout so that I can rewrite inputs before execution."},
+        {"id": "S14", "text": "As a shell script author, I want standard environment variables for the project directory and session ID so that my scripts can locate project files without parsing stdin."},
+        {"id": "S15", "text": "As a shell script author, I want a simple exit-code protocol so that I can write basic hooks without complex JSON output parsing."},
+        {"id": "S16", "text": "As a shell script author, I want empty stdout on exit 0 treated as proceed so that my simplest hooks are just scripts that check a condition and exit 0 or 2."}
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Operating Under Hooks",
+      "stories": [
+        {"id": "S17", "text": "As an AI agent, I want pre-tool hook blocks to include the hook's reason so that I can adjust my approach based on why the tool was rejected."},
+        {"id": "S18", "text": "As an AI agent, I want modified tool arguments to flow through pre_validate so that hook modifications are still subject to safety checks."},
+        {"id": "S19", "text": "As an AI agent, I want stop hooks to be able to force me to continue working so that external logic can override my stopping decision when tasks remain."},
+        {"id": "S20", "text": "As an AI agent, I want hook blocks to surface as clear error messages so that I understand why an operation was prevented and can try an alternative."}
+      ]
+    },
+    {
+      "name": "Norn Integrator",
+      "role": "Building Programmatic Hooks",
+      "stories": [
+        {"id": "S21", "text": "As a Norn integrator, I want to register trait-based hooks alongside config-driven hooks so that my Rust hook implementations coexist with shell hooks in the same registry."},
+        {"id": "S22", "text": "As a Norn integrator, I want the existing 5 hook traits unchanged after module promotion so that my programmatic hooks compile without modification."},
+        {"id": "S23", "text": "As a Norn integrator, I want new hook traits for user prompt, stop, sub-agent lifecycle, session lifecycle, and compaction so that I can observe and gate all lifecycle boundaries."}
+      ]
+    }
+  ]
+}

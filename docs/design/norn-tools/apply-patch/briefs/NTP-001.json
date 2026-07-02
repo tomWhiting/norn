@@ -1,0 +1,142 @@
+{
+  "id": "NTP-001",
+  "cluster": "norn-tools/apply-patch",
+  "title": "Support /dev/null for file creation and deletion in patches",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C15", "C16", "C17", "C18", "C19", "C20", "C21", "C22", "C23", "C24", "C25", "C51", "C54"],
+  "stories": ["S2", "S3"],
+  "purpose": "Models generate standard unified diffs with --- /dev/null for new file creation and +++ /dev/null for file deletion. The current tool rejects these because pre-validate checks that every target file exists on disk. This brief adds /dev/null support so that patches can create new files, delete existing files, and mix creation/deletion with modification in a single multi-file patch — the most common pattern when adding a new module and wiring it into existing code.",
+  "task": "Modify the patch parsing layer to detect /dev/null in --- and +++ headers during block parsing (not as a special case in pre-validate). For creation blocks (--- /dev/null), skip file-exists and read-before-edit checks in pre-validate, start from an empty string in execute, create parent directories, and run AST validation on the new content. For deletion blocks (+++ /dev/null), capture before-content, validate no later hunk targets the same file, remove the file after all other blocks commit, and skip convention checks on deleted files. Record deletion in action log mutation ledger with before-content for undo.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Detect /dev/null during block parsing",
+      "spec": "The PatchBlock struct SHALL gain a block_kind field: enum PatchBlockKind { Modify, Create, Delete }. parse_blocks() SHALL detect --- /dev/null (or --- a/dev/null) as PatchBlockKind::Create and +++ /dev/null (or +++ b/dev/null) as PatchBlockKind::Delete during parsing. For Create blocks, the target path SHALL be extracted from the +++ header. For Delete blocks, the target path SHALL be extracted from the --- header. Detection SHALL happen in parse_blocks, not in pre_validate or execute. The extract_target function SHALL be renamed or extended to extract_headers returning both source and target paths along with the block kind.",
+      "acceptance": [
+        "PatchBlockKind enum exists with Modify, Create, Delete variants",
+        "PatchBlock has a kind: PatchBlockKind field",
+        "A block with '--- /dev/null' and '+++ b/src/new.rs' produces PatchBlockKind::Create with target 'src/new.rs'",
+        "A block with '--- a/src/old.rs' and '+++ /dev/null' produces PatchBlockKind::Delete with target 'src/old.rs'",
+        "A block with '--- a/dev/null' (git prefix stripping) is still detected as /dev/null",
+        "Normal blocks produce PatchBlockKind::Modify with target from +++ header"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C20"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "Skip pre-validate gates for creation blocks",
+      "spec": "WHEN pre_validate encounters a PatchBlockKind::Create block, it SHALL skip the file-exists check and the read-before-edit check for that block. It SHALL still validate that the target path is non-empty and syntactically valid. Other blocks in the same patch SHALL continue to be validated normally.",
+      "acceptance": [
+        "A patch with one Create block and one Modify block: Create block skips file-exists, Modify block still checked",
+        "A Create block targeting an already-existing file does NOT skip the checks (it is reclassified as Modify or rejected)",
+        "pre_validate returns Proceed for a valid single-file creation patch"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C16"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R3",
+      "title": "Execute creation blocks from empty string",
+      "spec": "WHEN execute encounters a PatchBlockKind::Create block, it SHALL start from an empty string instead of reading the file from disk. Parent directories SHALL be created if needed (tokio::fs::create_dir_all on the parent). AST validation SHALL run on the new file content before writing. The staged file SHALL have original set to an empty string. The file SHALL be written to disk alongside other staged files in the atomic write phase.",
+      "acceptance": [
+        "A /dev/null creation patch applied to a non-existent file creates the file with the patch content",
+        "Parent directories are created automatically (e.g., creating src/new_module/types.rs creates src/new_module/)",
+        "AST validation runs on the new content (a creation patch with invalid syntax is rejected when AST gate is active)",
+        "StagedFile.original is empty string for creation blocks",
+        "The new file appears in files_modified in the tool output"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C15", "C17", "C18", "C19", "C54"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R4",
+      "title": "Validate cross-hunk deletion dependencies",
+      "spec": "WHEN pre_validate encounters a PatchBlockKind::Delete block, it SHALL check that no later block in the same patch targets the same file for modification. IF a later block modifies the file being deleted, pre_validate SHALL return Block with a clear error message identifying both blocks. This validation SHALL happen after all blocks are parsed, as a second pass over the block list.",
+      "acceptance": [
+        "A patch with hunk A (delete foo.rs) followed by hunk B (modify foo.rs) is rejected in pre_validate",
+        "A patch with hunk A (modify foo.rs) followed by hunk B (delete foo.rs) is allowed (modify then delete is valid)",
+        "The error message names both the deletion block and the conflicting modification block",
+        "A patch with only deletion blocks passes validation"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C22"],
+      "stories": []
+    },
+    {
+      "id": "R5",
+      "title": "Execute deletion blocks with before-content capture",
+      "spec": "WHEN execute encounters a PatchBlockKind::Delete block, it SHALL read the file's full content as before-content and store it. It SHALL remove the file from disk after all non-delete blocks have been written successfully. Convention checks SHALL NOT run on deleted files. The deletion SHALL be reported in the tool output with status 'deleted' and the file path in files_modified. StagedFile for a deletion SHALL have staged set to an empty string.",
+      "acceptance": [
+        "A deletion patch removes the target file from disk",
+        "The file's content is captured before deletion",
+        "Deletion occurs after all modification/creation blocks are written (no partial state)",
+        "files_modified in the tool output includes the deleted file with a deleted status indicator",
+        "Convention checks do not run on deleted file paths",
+        "If the file does not exist at deletion time, execute returns an error (file was expected)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C21", "C23", "C24", "C25"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R6",
+      "title": "Integration tests for /dev/null creation and deletion",
+      "spec": "Integration tests SHALL verify: single-file creation from /dev/null, single-file deletion to /dev/null, mixed creation + modification in one patch, mixed deletion + modification in one patch, rejection of delete-then-modify on same file, parent directory creation for nested paths, AST validation on new files. Tests SHALL use the tool's execute method with a ToolContext, not the parsing functions directly.",
+      "acceptance": [
+        "Test: single-file creation from /dev/null produces the expected file",
+        "Test: single-file deletion removes the file from disk",
+        "Test: mixed create + modify patch applies both operations",
+        "Test: delete-then-modify on same file is rejected in pre_validate",
+        "Test: creation of deeply nested path creates intermediate directories",
+        "Test: creation patch with invalid syntax is rejected by AST gate",
+        "All tests pass with cargo test -p norn"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/patch.rs"
+        ]
+      },
+      "checklist": ["C15", "C21", "C22", "C51"],
+      "stories": ["S2", "S3"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT change the resolution tier logic (entity-first, context search, diffy) — that is NTP-002 scope",
+    "SHALL NOT add dry_run or mode parameters — those are NTP-004 and NTP-005 scope",
+    "SHALL NOT add artifact storage — that is NTP-006 scope",
+    "SHALL NOT integrate with libyggd — that is NTP-003 scope",
+    "SHALL NOT modify the Claude Code format parser for /dev/null — CC format uses *** Create File and *** Delete File markers which are separate from unified diff /dev/null handling"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds with zero errors",
+    "cargo clippy -p norn -- -D warnings produces zero warnings",
+    "cargo test -p norn passes all tests",
+    "grep -rn 'PatchBlockKind' crates/norn/src/tools/patch.rs confirms the enum exists",
+    "grep -rn '/dev/null' crates/norn/src/tools/patch.rs shows detection in parse_blocks, not in pre_validate"
+  ]
+}

@@ -1,0 +1,268 @@
+{
+  "id": "NC-006",
+  "cluster": "norn-cli",
+  "title": "Slash commands",
+  "depends_on": ["NC-001", "NC-004"],
+  "blocked_by": [],
+  "checklist": ["C57", "C58", "C59", "C60", "C61", "C62", "C63", "C64", "C65", "C66", "C67", "C68"],
+  "stories": ["S3", "S4", "S13", "S15", "S23", "S47", "S48"],
+  "purpose": "Slash commands are the primary in-session control interface. They let users inspect and modify agent state (model, schema, session info, variables) without leaving the conversation. This brief registers all CLI built-in slash commands in the SlashCommandRegistry, implements their handlers, loads profile-registered commands, and ensures preprocess_input() is called in both REPL and print mode so slash commands work everywhere.",
+  "task": "Create a commands module that registers CLI-specific slash command handlers in the SlashCommandRegistry. Each command uses SlashCommandHandler::Custom with a closure that performs the action and returns appropriate messages. /help lists all registered commands. /tools lists tools from the ToolRegistry. /model shows or switches the active model. /schema shows or sets the output schema. /compact triggers real compaction via ContextEdits::auto_compact_keeping_recent_turns. /clear resets the EventStore. /session shows session metadata. /name sets the session name. /variables lists session variables. /exit and /quit signal REPL exit. Profile-registered slash commands are loaded from the profile's SlashCommandRegistry and merged. Wire preprocess_input() into both the REPL input path and the print mode input path.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Register CLI built-in slash commands",
+      "spec": "WHEN the CLI initializes the SlashCommandRegistry, the system SHALL register the following built-in commands: help, tools, model, schema, compact, clear, session, name, variables, exit, quit. These SHALL replace the default builtins registered by SlashCommandRegistry::register_builtins() with CLI-specific implementations that have access to runtime state.",
+      "acceptance": [
+        "SlashCommandRegistry contains entries for all 11 built-in commands after initialization",
+        "Each command is registered with SlashCommandHandler::Custom",
+        "Built-in commands override any same-named defaults from register_builtins()"
+      ],
+      "files": {
+        "create": [
+          "crates/norn-cli/src/commands.rs"
+        ],
+        "modify": [
+          "crates/norn-cli/src/mod.rs"
+        ]
+      },
+      "checklist": ["C57"],
+      "stories": []
+    },
+    {
+      "id": "R2",
+      "title": "/help command",
+      "spec": "WHEN the user types '/help', the system SHALL print to stderr a formatted list of all registered slash commands with their names and one-line descriptions. The output SHALL include both CLI built-in and profile-registered commands. The system SHALL NOT send the help text to the model.",
+      "acceptance": [
+        "'/help' prints a list of commands to stderr",
+        "Each command shows its name and a short description",
+        "Profile-registered commands appear in the list alongside built-ins",
+        "No message is sent to the model (the command is fully handled client-side)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C58"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R3",
+      "title": "/tools command",
+      "spec": "WHEN the user types '/tools', the system SHALL print to stderr a formatted list of all available tools from the ToolRegistry, showing each tool's name and description. The system SHALL NOT send the tool list to the model.",
+      "acceptance": [
+        "'/tools' prints tool names and descriptions to stderr",
+        "All registered tools appear (built-in and MCP extension tools)",
+        "No message is sent to the model"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C59"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R4",
+      "title": "/model command",
+      "spec": "WHEN the user types '/model' with no argument, the system SHALL print the currently active model name to stderr. WHEN the user types '/model <NAME>', the system SHALL update the active model identifier used for subsequent run_agent_step calls. The system SHALL NOT send a message to the model for either form.",
+      "acceptance": [
+        "'/model' prints the current model name to stderr",
+        "'/model gpt-5.5' switches the model; subsequent agent steps use the new model",
+        "The prompt updates to reflect the new model name after switching"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C60"],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R5",
+      "title": "/schema command",
+      "spec": "WHEN the user types '/schema' with no argument, the system SHALL print the current output schema (pretty-printed JSON) to stderr, or 'No output schema set.' if none is active. WHEN the user types '/schema <JSON|PATH>', the system SHALL parse the argument as inline JSON (if it starts with '{') or as a file path, validate it as a JSON Schema, and set it as the active output schema for subsequent agent steps.",
+      "acceptance": [
+        "'/schema' prints the current schema or 'No output schema set.'",
+        "'/schema {\"type\":\"object\",\"properties\":{\"answer\":{\"type\":\"string\"}}}' sets the schema",
+        "'/schema analysis-schema.json' loads the schema from file",
+        "Invalid JSON or unreadable file path produces an error message on stderr"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C61"],
+      "stories": ["S47", "S48"]
+    },
+    {
+      "id": "R6",
+      "title": "/compact command",
+      "spec": "WHEN the user types '/compact', the system SHALL invoke ContextEdits::auto_compact_keeping_recent_turns on the current EventStore with the configured compact_keep_turns value (from AgentLoopConfig, default 10). The system SHALL print to stderr the number of events compacted and the estimated tokens freed. IF there are not enough turns to compact, the system SHALL print 'Nothing to compact.' to stderr.",
+      "acceptance": [
+        "'/compact' in a session with >10 turns compacts older events and prints summary to stderr",
+        "'/compact' in a session with <=10 turns prints 'Nothing to compact.'",
+        "After compaction, subsequent agent steps use the compacted context",
+        "A Compaction event is appended to the EventStore"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C62"],
+      "stories": ["S15"]
+    },
+    {
+      "id": "R7",
+      "title": "/clear command",
+      "spec": "WHEN the user types '/clear', the system SHALL create a new empty EventStore, replacing the current one. The system SHALL print 'Conversation cleared.' to stderr. The session continues with the same session ID but a fresh conversation history.",
+      "acceptance": [
+        "'/clear' resets the conversation; subsequent turns have no prior context",
+        "'Conversation cleared.' is printed to stderr",
+        "The session ID does not change after /clear",
+        "The prompt turn count resets to 0"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C63"],
+      "stories": []
+    },
+    {
+      "id": "R8",
+      "title": "/session command",
+      "spec": "WHEN the user types '/session', the system SHALL print to stderr the current session's ID, name (or 'unnamed'), turn count (number of UserMessage events), and cumulative token usage (total input and output tokens across all steps).",
+      "acceptance": [
+        "'/session' prints session ID, name, turn count, and token totals to stderr",
+        "Token usage reflects cumulative totals from all steps in the session",
+        "Unnamed sessions display 'unnamed' for the name field"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C64"],
+      "stories": ["S50"]
+    },
+    {
+      "id": "R9",
+      "title": "/name command",
+      "spec": "WHEN the user types '/name <TEXT>', the system SHALL set the session name to the provided text. The system SHALL print 'Session named: <TEXT>' to stderr. IF no text is provided, the system SHALL print 'Usage: /name <text>' to stderr.",
+      "acceptance": [
+        "'/name refactor-auth' sets the session name and prints confirmation",
+        "'/name' with no argument prints usage hint",
+        "The session name persists across turns and appears in '/session' output",
+        "The session name is written to the session index when session persistence is active"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C65"],
+      "stories": ["S13"]
+    },
+    {
+      "id": "R10",
+      "title": "/variables command",
+      "spec": "WHEN the user types '/variables', the system SHALL print to stderr a formatted list of all active session variables (from the VariableStore) showing each variable's name and current value. IF no variables are set, the system SHALL print 'No session variables set.' to stderr.",
+      "acceptance": [
+        "'/variables' lists all session variables with names and values",
+        "Variables set via --variables flag appear in the list",
+        "'No session variables set.' printed when the VariableStore is empty"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C66"],
+      "stories": []
+    },
+    {
+      "id": "R11",
+      "title": "/exit and /quit commands",
+      "spec": "WHEN the user types '/exit' or '/quit', the system SHALL exit the REPL loop cleanly, flush any pending session persistence, and exit with code 0. The commands SHALL be handled entirely client-side without sending a message to the model.",
+      "acceptance": [
+        "'/exit' exits the REPL with code 0",
+        "'/quit' exits the REPL with code 0",
+        "Session is persisted before exit (if session persistence is enabled)",
+        "No message is sent to the model"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C67"],
+      "stories": []
+    },
+    {
+      "id": "R12",
+      "title": "Profile-registered slash commands loaded",
+      "spec": "WHEN a profile is loaded that contains a SlashCommandRegistry with additional commands, the system SHALL merge those commands into the CLI's registry. Profile commands SHALL NOT override CLI built-in commands. The merged registry SHALL be used for both preprocess_input() dispatch and tab completion.",
+      "acceptance": [
+        "A profile with a custom '/deploy' command makes '/deploy' available in the REPL",
+        "Profile commands appear in '/help' output",
+        "Profile commands appear in tab completion",
+        "A profile command named 'help' does not override the CLI's built-in '/help'"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/commands.rs"
+        ]
+      },
+      "checklist": ["C68"],
+      "stories": []
+    },
+    {
+      "id": "R13",
+      "title": "preprocess_input() wired in both modes",
+      "spec": "WHEN user input is received in either REPL mode or print mode, the system SHALL pass it through preprocess_input() with the active SlashCommandRegistry before execution. In REPL mode, every line of user input is preprocessed. In print mode, the assembled prompt (stdin content + positional args) is preprocessed.",
+      "acceptance": [
+        "'/compact' works in print mode: `norn -p '/compact' 'Now summarize'` preprocesses the slash command",
+        "'/help' in print mode prints help to stderr and exits",
+        "Unknown slash commands pass through to the model in both modes"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn-cli/src/repl.rs",
+          "crates/norn-cli/src/main.rs"
+        ]
+      },
+      "checklist": ["C57"],
+      "stories": ["S23"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement session persistence operations (list, show, export, remove) -- those are NC-008 subcommands",
+    "SHALL NOT implement streaming display -- that is NC-007",
+    "SHALL NOT implement auth commands (login, logout, status) -- that is NC-008",
+    "SHALL NOT implement new slash command handler types beyond SlashCommandHandler::Custom -- the existing handler types from libnorn are sufficient",
+    "SHALL NOT modify the SlashCommandRegistry API in libnorn -- work with the existing public interface, adding only a names() accessor if needed for tab completion"
+  ],
+  "verification": [
+    "cargo check -p norn-cli succeeds",
+    "cargo clippy -p norn-cli -- -D warnings produces zero warnings",
+    "cargo fmt -p norn-cli -- --check produces no diff",
+    "cargo test -p norn-cli passes all tests",
+    "'/help' in the REPL lists all 11 built-in commands",
+    "'/tools' lists tools from the registry",
+    "'/model' shows the current model; '/model gpt-5.5' switches it",
+    "'/schema' shows current schema; '/schema {\"type\":\"object\"}' sets it",
+    "'/compact' compacts context or reports nothing to compact",
+    "'/exit' and '/quit' exit cleanly",
+    "Slash commands work in print mode via `norn -p '/help'`",
+    "No file exceeds 500 lines of code",
+    "No code in mod.rs beyond pub mod declarations and re-exports",
+    "grep -rn 'TODO\\|FIXME\\|HACK\\|unimplemented!' crates/norn-cli/src/ returns no matches"
+  ]
+}
