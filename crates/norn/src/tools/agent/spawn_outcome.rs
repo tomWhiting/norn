@@ -82,7 +82,7 @@ pub(super) struct ChildOutcomeSummary {
     /// loop delivered (W3.6 usage rollup) — from the
     /// [`AgentStepResult`] arm on every loop outcome, and from the
     /// wrapper's shared
-    /// [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+    /// [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)
     /// handle on the hard-error and panic paths (where no arm exists
     /// but the delivered grandchild spend is still real). Disjoint from
     /// [`Self::usage`]: `usage + children_usage` is the child's subtree
@@ -100,7 +100,7 @@ pub(super) struct ChildOutcomeSummary {
 /// branch on the reason without parsing strings.
 ///
 /// `delivered_children_usage` is the wrapper's snapshot of the child's
-/// shared [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+/// shared [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)
 /// accumulator, used only on the hard-error arm where no step result
 /// exists to carry `children_usage` out of the loop — the child's own
 /// usage is honestly unknown there, but grandchild subtrees its loop had

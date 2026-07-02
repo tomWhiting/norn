@@ -10,19 +10,25 @@
 //!    `{`, otherwise a file path — both via the
 //!    [`crate::event_schemas::parse_inline_or_file`] helper.
 //! 3. **Provider construction**: dispatched through [`crate::provider::build_provider`].
-//! 4. **Runtime wiring**: via [`crate::runtime::build_runtime`] which
-//!    already wires token estimator, context edits, retry policy, and
-//!    NC-003 R3 augmentations (diagnostics + iteration monitor).
+//! 4. **Runtime wiring**: via [`builder_from_cli`](crate::runtime::builder_from_cli)
+//!    → `AgentBuilder::build` → [`AgentParts`](norn::agent::AgentParts), which
+//!    wires token estimator, context edits, retry policy, diagnostics, and
+//!    the iteration monitor.
 //! 5. **Session persistence**: empty store on a fresh run, populated
 //!    when `--resume` / `--fork` is supplied. Events are flushed to disk
 //!    by the attached `JsonlSink` (write-through). The sink is
 //!    index-registered: it accumulates the matching `index.jsonl` delta
 //!    (event count, token totals, `updated_at`) per persisted event and
-//!    flushes it at `EventStore::checkpoint` — which the orchestrator
-//!    calls after the turn and after `/compact` — so the orchestrator
-//!    never hand-reconciles the index.
+//!    flushes it at `EventStore::checkpoint_off_executor` — which the
+//!    orchestrator awaits after the turn and after `/compact` — so the
+//!    orchestrator never hand-reconciles the index and never blocks an
+//!    executor thread on the index lock.
 //! 6. **Output dispatch**: text / json / stream-json (per
-//!    [`crate::cli::OutputFormat`]).
+//!    [`crate::cli::OutputFormat`]), via [`super::step_output`].
+//!
+//! The driven duplex path (`--protocol jsonrpc`) is owned by
+//! [`super::driven`] and specified in
+//! `docs/design/norn-cli/DRIVEN-PROTOCOL.md`.
 //!
 //! The result of every path is an [`crate::exit::ExitCode`] which the
 //! binary converts into the OS process exit code.
@@ -31,21 +37,21 @@ use std::io::{IsTerminal, Read};
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use norn::agent::AgentParts;
+use norn::agent::registry::AgentRegistry;
 use norn::agent_loop::config::AgentStepResult;
+use norn::agent_loop::runner::{AgentStepRequest, driver_executor, run_agent_step};
 use norn::error::{NornError, ProviderError};
-use norn::provider::usage::Usage;
 use norn::session::events::SessionEvent;
 use norn::session::store::EventStore;
+use norn::system_prompt::ExecutionMode;
 use serde_json::Value;
-use tokio::sync::broadcast;
 
-use super::intervene::NornInterventionHandler;
-use super::jsonrpc::{self, DrivenRun, PreRunOutcome, RunDriver, SharedRunDriver};
-use super::output::{
-    JsonEnvelope, UsageOut, drain_diagnostics, emit_stream_completed, extract_output_and_usage,
-    render_json, render_text, result_label, spawn_stream_renderer,
-};
+use super::driven::{execute_driven, finish_intervene_loop, spawn_intervene_loop};
+use super::jsonrpc::{DrivenRun, SharedRunDriver};
+use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage, spawn_stream_renderer};
 use super::provider::build_provider;
+use super::step_output::{StepOutput, driven_result_value, write_handled_locally, write_output};
 use crate::cli::BuildError;
 use crate::cli::ExitCode;
 use crate::cli::{Cli, OutputFormat, Protocol};
@@ -53,22 +59,16 @@ use crate::commands::slash::{
     DispatchOutcome, apply_clear_request, apply_compact_request, dispatch_input,
 };
 use crate::config::parse_inline_or_file;
-use crate::runtime::build_runtime;
-use crate::runtime::build_slash_state_with_schema;
-use norn::tools::lsp::build_lsp_backend;
-
 use crate::runtime::{
-    RuntimeBundle, RuntimeInputs, apply_system_prompt, install_agent_tool_infra,
-    install_pending_agent_messages_for_loop, register_standard_tools,
+    SlashStateInputs, build_slash_state_with_schema, builder_from_cli, cli_coordination_envelope,
+    resolve_invocation, warn_unmatched_tool_flag_names,
 };
 use crate::session::SessionPersistError;
-use uuid::Uuid;
+use norn::tools::lsp::build_lsp_backend;
 
-use super::session::open_session;
-
-/// Buffer size for the streaming-event broadcast channel. Sized so a
-/// brief burst of provider events does not push a slow consumer into
-/// `Lagged`.
+/// Buffer size for the streaming-event broadcast channel the builder
+/// creates via `.event_channel_capacity`. Sized so a brief burst of
+/// provider events does not push a slow consumer into `Lagged`.
 const BROADCAST_BUFFER_CAPACITY: usize = 256;
 
 /// Entry point used by `main.rs::run_print`. Spins up a multi-threaded
@@ -191,79 +191,76 @@ async fn execute(cli: &Cli) -> Result<ExitCode, PrintError> {
 
     let output_schema = parse_output_schema(cli.output_schema.as_deref())?;
 
-    let mut inputs = RuntimeInputs::default();
-    let lsp_backend = build_lsp_backend();
-    register_standard_tools(&mut inputs.registry, Some(lsp_backend));
-    let mut bundle = build_runtime(cli, inputs)?;
-    apply_system_prompt(&mut bundle, norn::system_prompt::ExecutionMode::Headless);
-    orchestrate(cli, bundle, effective_prompt, output_schema, None).await
+    let parts = assemble_print_agent(cli).await?;
+    orchestrate(cli, parts, effective_prompt, output_schema, None).await
 }
 
-/// Driven-mode entry (NOI-1): own the stdin+stdout JSON-RPC 2.0 duplex.
+/// Assemble the headless print agent through the single library-owned
+/// assembler: resolve the CLI invocation, build the provider up front from
+/// the resolved model (the model still travels per-request through
+/// `run_agent_step`, so `/model` keeps working), map the resolved state
+/// onto the [`AgentBuilder`](norn::agent::AgentBuilder) via
+/// [`builder_from_cli`], chain the CLI's headless coordination envelope,
+/// build, and decompose into [`AgentParts`] the step-loop drives.
 ///
-/// Spawns the single serializing stdout writer, answers the `initialize`
-/// handshake, and waits for one `run/execute` request. The prompt is
-/// sourced from that request's params — stdin is the JSON-RPC channel, so
-/// it is never read as a prompt. The agent then runs with a live `event/*`
-/// notification emitter (in place of the stream renderer), and the final
-/// result is returned as the id-matched `run/execute` response.
-async fn execute_driven(cli: &Cli) -> Result<ExitCode, PrintError> {
-    let (writer, writer_task) = jsonrpc::spawn_writer();
-    let mut reader = jsonrpc::stdin_reader();
+/// Terminal reclamation is `true` here: print mode has no agent status
+/// panel, so a finished child's terminal registry entry and parent-held
+/// handle are reclaimed once its result is delivered. (The TUI passes
+/// `false` — its status panel owns reclamation.)
+///
+/// # Errors
+///
+/// [`PrintError::Argument`] / [`PrintError::Auth`] when resolution,
+/// provider construction, or `build()` reject the invocation.
+pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<AgentParts, PrintError> {
+    let resolved = resolve_invocation(cli)?;
 
-    let outcome = jsonrpc::drive_pre_run(&mut reader, &writer)
-        .await
-        .map_err(|err| PrintError::Io(err.to_string()))?;
-
-    let (id, prompt) = match outcome {
-        PreRunOutcome::Run { id, prompt } => (id, prompt),
-        PreRunOutcome::Closed => {
-            // The peer disconnected before requesting a run. Shut the
-            // writer down cleanly and exit success — nothing to do.
-            drop(writer);
-            let _ = writer_task.await;
-            return Ok(ExitCode::Success);
-        }
-    };
-
-    let driver: SharedRunDriver = Arc::new(RunDriver::new(writer, id));
-
-    let output_schema = parse_output_schema(cli.output_schema.as_deref())?;
-
-    let mut inputs = RuntimeInputs::default();
-    let lsp_backend = build_lsp_backend();
-    register_standard_tools(&mut inputs.registry, Some(lsp_backend));
-    let mut bundle = build_runtime(cli, inputs)?;
-    apply_system_prompt(&mut bundle, norn::system_prompt::ExecutionMode::Headless);
-
-    // The stdin reader that carried initialize/run/execute keeps being read
-    // during the run so mid-run intervene/* requests reach the agent (NOI-2).
-    let driven_run = DrivenRun {
-        driver: Arc::clone(&driver),
-        reader,
-    };
-
-    let result = orchestrate(cli, bundle, prompt, output_schema, Some(driven_run)).await;
-
-    // On a run-assembly / provider error that never reached the step, the
-    // orchestrator returns Err before emitting a run response. Surface it
-    // as the id-matched error response so the peer is never left hanging,
-    // then still shut the writer down and drain it.
-    if let Err(ref err) = result
-        && let Err(send_err) = driver.finish_with_error(err.to_string())
-    {
-        tracing::warn!("failed to send run/execute error response: {send_err}");
+    // Debug-dump file naming (D4): the provider is built before the
+    // session id is minted, so the dump file is named from the only
+    // pre-resolvable identifier — the explicit `--session-id`, else the
+    // `--session-name`, else `unnamed`. Debug-only; never load-bearing.
+    let mut provider_overrides = resolved.provider_overrides;
+    if let Some(dir) = provider_overrides.debug_dump_dir.clone() {
+        let hint = cli
+            .session_id
+            .as_deref()
+            .or(cli.session_name.as_deref())
+            .unwrap_or("unnamed");
+        provider_overrides.debug_dump_file = Some(dir.join(format!("{hint}.jsonl")));
     }
 
-    // Drop every writer handle so the single serializing writer task drains
-    // its queue and exits; then join it so all frames are flushed to stdout
-    // before the process exits (terminal-response shutdown handshake).
-    drop(driver);
-    if let Err(join_err) = writer_task.await {
-        tracing::warn!("jsonrpc writer task did not exit cleanly: {join_err}");
-    }
+    let built_provider =
+        build_provider(resolved.provider_kind, &provider_overrides, &resolved.model)
+            .await
+            .map_err(|err| match err.exit_code() {
+                ExitCode::AuthError => PrintError::Auth(err.to_string()),
+                _ => PrintError::Agent(err.to_string()),
+            })?;
 
-    result
+    let envelope = cli_coordination_envelope();
+    let agent = builder_from_cli(
+        cli,
+        built_provider.as_arc(),
+        resolved.profile,
+        &resolved.settings,
+        &resolved.applied,
+    )?
+    .execution_mode(ExecutionMode::Headless)
+    .lsp_backend(build_lsp_backend())
+    .agent_registry(AgentRegistry::shared())
+    .child_policy(envelope.child_policy.clone())
+    .child_result_capacity(envelope.child_result_capacity)
+    .event_channel_capacity(BROADCAST_BUFFER_CAPACITY)
+    .inbound_capacity(envelope.child_policy.inbound_capacity)
+    .register_root("/root".to_string(), "lead".to_string())
+    .terminal_reclamation(true)
+    .build()?;
+    let parts = agent.into_parts();
+    // Deferred until here (not inside `builder_from_cli`) because gating
+    // happens during `build()`: the assembled registry is the authoritative
+    // reference for which flag-named tools exist.
+    warn_unmatched_tool_flag_names(&parts.registry, &resolved.applied);
+    Ok(parts)
 }
 
 /// Read stdin in full when it is not a TTY. Returns [`None`] when stdin
@@ -298,15 +295,15 @@ pub fn compose_prompt(stdin: Option<&str>, positional: &str) -> String {
 
 /// Parse `-s` / `--output-schema` if provided. Failures are mapped to
 /// [`PrintError::Argument`] so they surface as exit code 2.
-fn parse_output_schema(raw: Option<&str>) -> Result<Option<Value>, PrintError> {
+pub(super) fn parse_output_schema(raw: Option<&str>) -> Result<Option<Value>, PrintError> {
     let Some(value) = raw else { return Ok(None) };
     let parsed = parse_inline_or_file(value)?;
     Ok(Some(parsed))
 }
 
-async fn orchestrate(
+pub(super) async fn orchestrate(
     cli: &Cli,
-    mut bundle: RuntimeBundle,
+    mut parts: AgentParts,
     prompt: String,
     output_schema: Option<Value>,
     driven_run: Option<DrivenRun>,
@@ -319,18 +316,16 @@ async fn orchestrate(
         Some(DrivenRun { driver, reader }) => (Some(driver), Some(reader)),
         None => (None, None),
     };
-    let session = open_session(cli, &bundle)?;
-    crate::runtime::install_action_log(&bundle.registry, &session.store, &mut bundle.loop_context);
-    let session_id = session.id().map(str::to_owned);
-    bundle.agent_config.cache_key = session_id.clone();
-    if let Some(env) = bundle.loop_context.environment.as_mut() {
-        env.session_id.clone_from(&session_id);
-    }
-    if let Some(ref dir) = bundle.provider_overrides.debug_dump_dir {
-        let file_name = session_id.as_deref().unwrap_or("unnamed");
-        bundle.provider_overrides.debug_dump_file = Some(dir.join(format!("{file_name}.jsonl")));
-    }
-    let pre_event_count = session.store.len();
+    // The builder opened the session (`.open_session`), installed the
+    // action log, and stamped the cache key, environment session id, and
+    // debug-dump naming during `build()`; `AgentParts` hands back the same
+    // store the loop persists into. A managed session carries a
+    // `session_entry`; `--no-session` has none, so the output envelope's
+    // session id is `None` there exactly as before.
+    let store = Arc::clone(&parts.event_store);
+    let output_session_id: Option<String> =
+        parts.session_entry.as_ref().map(|entry| entry.id.clone());
+    let pre_event_count = store.len();
 
     // Build the slash-command surface and install the merged registry
     // on the loop context so profile-registered commands still fire
@@ -339,12 +334,17 @@ async fn orchestrate(
     // effects never double-fire.
     let (slash_state, slash_registry) = build_slash_state_with_schema(
         cli,
-        &bundle,
-        Arc::clone(&session.store),
-        session_id.clone(),
+        SlashStateInputs {
+            registry: &parts.registry,
+            model: &parts.model,
+            service_tier: parts.loop_context.service_tier,
+            reasoning_effort: parts.loop_context.reasoning_effort,
+        },
+        Arc::clone(&store),
+        output_session_id.clone(),
         output_schema,
     );
-    bundle.loop_context.slash_commands = Some(slash_registry.clone());
+    parts.loop_context.slash_commands = Some(slash_registry.clone());
 
     let outcome = match dispatch_input(&prompt, &slash_registry) {
         Ok(out) => out,
@@ -355,23 +355,35 @@ async fn orchestrate(
     // real `ContextEdits::auto_compact_keeping_recent_turns` against the
     // live store; /clear replaces the in-memory store (the JSONL on
     // disk is unaffected); /exit short-circuits with success.
-    if let Some(outcome) = apply_compact_request(&mut bundle, &session.store, &slash_state)? {
+    if let Some(outcome) = apply_compact_request(
+        parts.config.auto_compact_keep_recent_turns,
+        &mut parts.loop_context,
+        &store,
+        &slash_state,
+    )? {
         outcome.log_to_stderr();
         // Flush the sink's pending index delta so the Compaction event is
         // reflected in index.jsonl even when this invocation returns
         // before the post-turn checkpoint (e.g. a bare `/compact` prompt).
-        checkpoint_session(&session.store)?;
+        checkpoint_session(&store).await?;
     }
     if apply_clear_request(&slash_state) {
         tracing::debug!("conversation cleared via /clear in print mode");
     }
 
-    if slash_state.exit_requested.swap(false, Ordering::Relaxed) {
-        return Ok(ExitCode::Success);
-    }
-
     let format = cli.output_format.unwrap_or(OutputFormat::Text);
 
+    // A locally-handled prompt is ALWAYS answered before any exit request
+    // is honoured. The `/exit` and `/quit` CLI builtins resolve to
+    // `HandledLocally` AND set `exit_requested` during dispatch; emitting
+    // the local response first guarantees a driven-mode peer receives the
+    // id-matched `run/execute` response (a null result) instead of EOF,
+    // and plain `-f json`/`stream-json` still write the local envelope.
+    // (`DRIVEN-PROTOCOL.md`: "Every accepted run/execute is answered ... a
+    // prompt resolving entirely to a local slash command is answered with a
+    // success Response whose result is null.") The old ordering checked
+    // `exit_requested` first and short-circuited both, violating the
+    // protocol for `/exit`/`/quit` prompts.
     let effective_prompt = match outcome {
         DispatchOutcome::HandledLocally => {
             // A run/execute whose prompt resolved to a local slash command
@@ -383,91 +395,49 @@ async fn orchestrate(
                     .finish_with_result(Value::Null)
                     .map_err(|err| PrintError::Io(err.to_string()))?;
             } else {
-                write_handled_locally(cli, format, &bundle, session.id())?;
+                write_handled_locally(cli, format, &parts.model, output_session_id.as_deref())?;
             }
             return Ok(ExitCode::Success);
         }
         DispatchOutcome::PassToAgent(text) => text,
     };
 
+    // Honour `/exit` / `/quit` for any command that set the flag but did
+    // NOT resolve to a local dispatch. The CLI builtins are `HandledLocally`
+    // and are answered above; this is the defensive terminal path for a
+    // future exit-setting command whose text is passed to the agent.
+    if slash_state.exit_requested.swap(false, Ordering::Relaxed) {
+        return Ok(ExitCode::Success);
+    }
+
     let active_schema = slash_state.output_schema_snapshot();
     let active_model = slash_state.model_snapshot();
-    bundle.loop_context.service_tier = slash_state.service_tier_snapshot();
-    bundle.loop_context.reasoning_effort = slash_state.reasoning_effort_snapshot();
+    parts.loop_context.service_tier = slash_state.service_tier_snapshot();
+    parts.loop_context.reasoning_effort = slash_state.reasoning_effort_snapshot();
 
-    let built_provider = build_provider(
-        bundle.provider_kind,
-        &bundle.provider_overrides,
-        &active_model,
-    )
-    .await
-    .map_err(|err| match err.exit_code() {
-        ExitCode::AuthError => PrintError::Auth(err.to_string()),
-        _ => PrintError::Agent(err.to_string()),
-    })?;
-
-    // The CLI's deliberate coordination envelope: child policy for every
-    // spawn/fork plus the result-channel capacity, published alongside the
-    // infra so spawn-time policy reads resolve (W3.2).
-    let envelope = crate::runtime::cli_coordination_envelope();
-    let (child_tx, child_rx) = tokio::sync::mpsc::channel::<
-        norn::agent::result_channel::ChildAgentResult,
-    >(envelope.child_result_capacity);
-    let child_sender = norn::agent::result_channel::ChildResultSender(Arc::new(child_tx));
-    bundle.loop_context.child_result_rx = Some(child_rx);
-
-    // Register a depth-0 root agent so the agent registry has the same
-    // shape headless as it does in the TUI. The single `root_id` is then
-    // used for `AgentToolInfra.agent_id` and the root `AgentEventSender`
-    // below, so spawned children record a real parent id rather than a
-    // throwaway UUID or the nil UUID.
-    let agent_registry = norn::agent::registry::AgentRegistry::shared();
-    let root_id = register_root_agent(&agent_registry, &active_model)?;
-    // W3.7 root inbound wiring: the returned receiver is the root's
-    // inbound channel — its sender is registered in the MessageRouter
-    // under `root_id`, so a child's `signal_agent(to: "parent")` lands
-    // here. The orchestrator owns the receiver for the whole run and
-    // threads it into the root step below; the route is process-lifetime
-    // (never deregistered — the router lazily removes it on the first
-    // delivery after this function returns and drops the receiver).
-    let mut root_inbound = install_agent_tool_infra(
-        &bundle.registry,
-        built_provider.as_arc(),
-        Arc::clone(&session.store),
-        root_id,
-        Arc::clone(&bundle.registry),
-        agent_registry,
-        envelope,
-    );
-    install_pending_agent_messages_for_loop(&bundle.registry, &mut bundle.loop_context);
-    crate::runtime::install_child_result_sender(&bundle.registry, child_sender);
-    // Headless reclamation: print mode has no agent status panel, so once
-    // a child's result is delivered through the channel above, its
-    // terminal registry entry and parent-held handle are reclaimed by the
-    // launch wrapper. The TUI driver deliberately does NOT install this —
-    // its status panel owns reclamation through the hold window.
-    crate::runtime::install_headless_reclamation(&bundle.registry);
-
-    // NH-006 R8 / C60: fire SessionLifecycleHook::on_session_start once
-    // the runtime has been fully assembled and the HookRegistry is live
-    // on bundle.loop_context.hooks. Programmatic trait-based lifecycle
-    // hooks may be registered even when no shell hooks are configured.
-    crate::runtime::wiring::run_session_start(
-        bundle.loop_context.hooks.as_ref(),
-        session_id.as_deref().unwrap_or(""),
-    )
-    .await;
-
-    let tools = collect_tool_definitions(&bundle);
+    // Session-lifecycle hooks (D1 / R1.7): the `into_parts` step-loop
+    // driver fires them explicitly around the run with the resolved
+    // `info.session_id` — never the empty string the pre-migration path
+    // passed on `--no-session`. `Agent::run` fires these itself; a custom
+    // driver like this one uses the `AgentParts` helpers.
+    parts.fire_session_start().await;
 
     let current_prompt = effective_prompt;
     let final_exit_code;
 
     {
-        let (tx, _rx) = broadcast::channel::<norn::provider::AgentEvent>(BROADCAST_BUFFER_CAPACITY);
-        let root_sender =
-            norn::provider::AgentEventSender::new(tx.clone(), root_id, "root".to_string());
-        crate::runtime::install_shared_agent_event_channel(&bundle.registry, tx.clone());
+        // The builder created the event broadcast channel and the root
+        // sender (`.event_channel_capacity`) and published the shared
+        // channel extension so fork/spawn children stream through it. A
+        // missing channel is an assembly invariant violation, surfaced
+        // rather than silently dropping every streamed event.
+        let Some(tx) = parts.events_tx.clone() else {
+            return Err(PrintError::Agent(
+                "event broadcast channel missing after assembly (event_channel_capacity \
+                 was not wired)"
+                    .to_string(),
+            ));
+        };
         // Driven mode replaces the stream renderer with the live `event/*`
         // notification emitter subscribed off the SAME broadcast channel;
         // otherwise the stream renderer runs exactly as before. The two are
@@ -480,35 +450,48 @@ async fn orchestrate(
             (None, None)
         };
 
-        // Driven-mode WRITE direction (NOI-2): while the run is in flight,
+        // Driven-mode WRITE direction: while the run is in flight,
         // concurrently read in-band `intervene/*` requests off the same
         // stdin reader and map them onto Norn's control channel — inject via
-        // the harness router to the root, cancel via a token threaded into
-        // the step below. The reader task is spawned only in driven mode; a
-        // plain CLI run has `cancel: None` and no reader, unchanged.
-        let (cancel_token, intervene_task, intervene_stop) =
-            spawn_intervene_loop(driven.as_ref(), driven_reader, &bundle.registry, root_id);
+        // the harness router to the root, cancel via the builder's root
+        // cancellation token (the same token published as `AgentCancellation`
+        // so a cancel cascades to every spawned descendant). The reader task
+        // is spawned only in driven mode; a plain CLI run has no reader.
+        let (intervene_task, intervene_stop) = spawn_intervene_loop(
+            driven.as_ref(),
+            driven_reader,
+            &parts.registry,
+            parts.id,
+            &parts.cancel,
+        );
 
-        let executor: &dyn norn::agent_loop::runner::ToolExecutor = &*bundle.registry;
-        let result =
-            norn::agent_loop::runner::run_agent_step(norn::agent_loop::runner::AgentStepRequest {
-                provider: built_provider.as_dyn(),
-                executor,
-                store: &session.store,
-                user_prompt: &current_prompt,
-                tools: &tools,
-                output_schema: active_schema.as_ref(),
-                model: &active_model,
-                config: &bundle.agent_config,
-                event_tx: Some(&root_sender),
-                // The root's inbound channel from install_agent_tool_infra:
-                // child→root messages drain at this step's boundaries
-                // through the framed <agent_message> injection path.
-                inbound: root_inbound.as_mut(),
-                loop_context: &mut bundle.loop_context,
-                cancel: cancel_token,
-            })
-            .await;
+        // `driver_executor` coerces the registry to `Arc<dyn ToolExecutor>`,
+        // passed below as `&Arc<dyn ToolExecutor>` (not `&*registry`) so the
+        // loop's concurrent batch steps get an owned handle
+        // (`ToolExecutor::owned_handle` via the blanket `Arc<dyn
+        // ToolExecutor>` impl) and can spawn each batch member on its own
+        // task for true parallelism — mirroring `Agent::run`
+        // (`agent/instance.rs`), so the library and CLI drivers share
+        // identical concurrent-batch semantics after assembly unification.
+        let executor = driver_executor(&parts.registry);
+        let result = run_agent_step(AgentStepRequest {
+            provider: parts.provider.as_ref(),
+            executor: &executor,
+            store: &store,
+            user_prompt: &current_prompt,
+            tools: &parts.tool_defs,
+            output_schema: active_schema.as_ref(),
+            model: &active_model,
+            config: &parts.config,
+            event_tx: parts.event_sender.as_ref(),
+            // The root's inbound channel the builder wired: child→root
+            // messages drain at this step's boundaries through the framed
+            // <agent_message> injection path.
+            inbound: parts.inbound.as_mut(),
+            loop_context: &mut parts.loop_context,
+            cancel: Some(parts.cancel.clone()),
+        })
+        .await;
 
         // The run has ended (completed, cancelled, or errored). Signal the
         // intervene reader to stop and join it, so no reader task outlives
@@ -517,11 +500,10 @@ async fn orchestrate(
         // it applied) makes the stop-send a no-op; join still completes.
         finish_intervene_loop(intervene_task, intervene_stop).await;
 
-        drop(root_sender);
         drop(tx);
         // REVIEW C1: the registry's shared ToolContext still holds the
-        // SharedAgentEventChannel sender installed above (subagent event
-        // forwarding), so the broadcast channel never closes here.
+        // SharedAgentEventChannel sender the builder installed (subagent
+        // event forwarding), so the broadcast channel never closes here.
         // finish() signals the renderer explicitly; it drains the events
         // already buffered and exits instead of awaiting closure forever.
         // A JoinError (renderer panic or cancellation) means the streamed
@@ -541,7 +523,7 @@ async fn orchestrate(
         if let Some(handle) = event_emitter
             && let Err(err) = handle.finish().await
         {
-            return Err(emitter_failure(&err));
+            return Err(super::driven::emitter_failure(&err));
         }
 
         let result = match result {
@@ -551,7 +533,16 @@ async fn orchestrate(
             }
         };
 
-        let diagnostics = drain_diagnostics(&bundle.diagnostics);
+        // The diagnostic collector the builder wired onto the loop context
+        // (via `load_runtime_base`) is the one runtime post-checks report
+        // into; drain it for the output envelope. Absent only on a
+        // library agent built without the runtime base — never here.
+        let diagnostics = parts
+            .loop_context
+            .diagnostics
+            .as_ref()
+            .map(drain_diagnostics)
+            .unwrap_or_default();
         // The attached `JsonlSink` already wrote every event of this turn
         // through to disk (write-through) and — being index-registered —
         // accumulated the matching index delta (event count, token
@@ -562,11 +553,11 @@ async fn orchestrate(
         // store so the sink flushes its own pending delta now rather
         // than at drop. The slice is collected only for the output
         // envelope.
-        checkpoint_session(&session.store)?;
-        let new_events = collect_new_events(&session.store, pre_event_count);
+        checkpoint_session(&store).await?;
+        let new_events = collect_new_events(&store, pre_event_count);
 
         let (output, usage) = extract_output_and_usage(&result);
-        let label = result_label(&result);
+        let stop_info = StopInfo::from_result(&result);
         slash_state.add_usage(usage.clone());
 
         final_exit_code = match &result {
@@ -587,16 +578,17 @@ async fn orchestrate(
             output: output.as_ref(),
             usage: &usage,
             model: &active_model,
-            session_id: session.id(),
+            session_id: output_session_id.as_deref(),
             events: &new_events,
-            result: label,
+            stop: &stop_info,
             diagnostics: &diagnostics,
         };
         // Driven mode returns the SAME structured result as the `-f json`
         // envelope, but as the id-matched `run/execute` response — the
         // single replay-authoritative output — instead of writing it to
         // stdout. This is the ONLY place the driven result is emitted, and
-        // it is emitted as a Response (never a notification).
+        // it is emitted as a Response (never a notification)
+        // (`DRIVEN-PROTOCOL.md` "One-shot run lifecycle").
         if let Some(driver) = driven.as_ref() {
             let result_value = driven_result_value(&step)?;
             driver
@@ -611,194 +603,23 @@ async fn orchestrate(
     // single normal-exit path. Errors return early above and skip this
     // hook by design — the brief's acceptance does not require firing
     // on panic, and explicit cleanup is preferred over a drop guard.
-    crate::runtime::wiring::run_session_end(
-        bundle.loop_context.hooks.as_ref(),
-        session_id.as_deref().unwrap_or(""),
-    )
-    .await;
+    parts.fire_session_end().await;
 
-    drop(built_provider);
     Ok(final_exit_code)
-}
-
-/// The join handle + stop signal for the mid-run intervene reader task.
-type InterveneTask = tokio::task::JoinHandle<Result<(), jsonrpc::TransportError>>;
-
-/// Spawn the driven-mode `intervene/*` reader loop for the duration of the
-/// run (NOI-2).
-///
-/// Returns the [`CancellationToken`] to thread into the step's `cancel`
-/// (so an `intervene/cancel` stops the run), the reader task's join handle,
-/// and the `stop` sender used to wind it down when the run finishes on its
-/// own. In non-driven mode all three are `None`: the step runs with
-/// `cancel: None` and no reader task, exactly as before.
-///
-/// The reader is fed the Norn control adapter ([`NornInterventionHandler`])
-/// built from the harness [`MessageRouter`] (looked up on the shared tool
-/// context installed by `install_agent_tool_infra`) and the fresh token, so
-/// injects reach the root agent and a cancel trips the same token the step
-/// observes. If the router cannot be resolved — an assembly invariant that
-/// should never fail on the driven path — the loop is not spawned and the
-/// run proceeds without interventions rather than panicking; the condition
-/// is error-logged, never silently dropped.
-fn spawn_intervene_loop(
-    run_driver: Option<&SharedRunDriver>,
-    reader: Option<jsonrpc::StdinReader>,
-    registry: &Arc<norn::tool::registry::ToolRegistry>,
-    root_id: Uuid,
-) -> (
-    Option<tokio_util::sync::CancellationToken>,
-    Option<InterveneTask>,
-    Option<tokio::sync::oneshot::Sender<()>>,
-) {
-    let (Some(run_driver), Some(mut reader)) = (run_driver, reader) else {
-        return (None, None, None);
-    };
-    let Some(router) = resolve_router(registry) else {
-        tracing::error!(
-            "driven mode: the harness MessageRouter is unavailable; \
-             intervene/* requests will not be served this run",
-        );
-        return (None, None, None);
-    };
-    let token = tokio_util::sync::CancellationToken::new();
-    let handler = NornInterventionHandler::new(router, root_id, token.clone());
-    let writer = run_driver.writer();
-    let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
-    let task = tokio::spawn(async move {
-        jsonrpc::drive_interventions(&mut reader, &writer, &handler, stop_rx).await
-    });
-    (Some(token), Some(task), Some(stop_tx))
-}
-
-/// Look up the harness [`MessageRouter`] on the registry's shared tool
-/// context (published by `install_agent_tool_infra` as the
-/// `AgentToolInfra` extension). `None` only when the shared context or the
-/// infra extension is absent — never on the assembled driven path.
-fn resolve_router(
-    registry: &Arc<norn::tool::registry::ToolRegistry>,
-) -> Option<Arc<norn::agent::message_router::MessageRouter>> {
-    use norn::agent_loop::runner::ToolExecutor;
-    let shared = registry.shared_context()?;
-    let infra = shared.get_extension::<norn::tools::agent::AgentToolInfra>()?;
-    Some(Arc::clone(&infra.router))
-}
-
-/// Wind down the intervene reader after the run: signal `stop` and join the
-/// task, logging (never swallowing) a join panic or a transport error it
-/// surfaced. A `None` task (non-driven mode) is a no-op.
-async fn finish_intervene_loop(
-    task: Option<InterveneTask>,
-    stop: Option<tokio::sync::oneshot::Sender<()>>,
-) {
-    if let Some(stop) = stop {
-        // A failed send means the reader already returned (EOF or an applied
-        // cancel) — not an error; the join below still completes.
-        let _ = stop.send(());
-    }
-    let Some(task) = task else { return };
-    match task.await {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => {
-            tracing::warn!("driven-mode intervene reader ended with a transport error: {err}");
-        }
-        Err(join_err) => {
-            tracing::warn!("driven-mode intervene reader task did not exit cleanly: {join_err}");
-        }
-    }
-}
-
-/// Render the "no agent call" output for a dispatch that was handled
-/// locally. For `text` mode this is a no-op (the closure already wrote
-/// to stderr); for `json` it produces a minimal envelope with no model
-/// output; for `stream-json` it emits a single `completed` event.
-fn write_handled_locally(
-    cli: &Cli,
-    format: OutputFormat,
-    bundle: &RuntimeBundle,
-    session_id: Option<&str>,
-) -> Result<(), PrintError> {
-    let usage = Usage::default();
-    let diagnostics: Vec<norn::integration::NornDiagnostic> = Vec::new();
-    match format {
-        OutputFormat::Text => Ok(()),
-        OutputFormat::Json => {
-            let envelope = JsonEnvelope {
-                output: None,
-                usage: UsageOut::from(&usage),
-                model: &bundle.model,
-                session_id,
-                events: &[],
-                result: "completed",
-                diagnostics: &diagnostics,
-            };
-            if let Some(path) = cli.output.as_ref() {
-                let mut file = std::fs::File::create(path)?;
-                render_json(&mut file, &envelope)?;
-            } else {
-                let mut stdout = std::io::stdout().lock();
-                render_json(&mut stdout, &envelope)?;
-            }
-            Ok(())
-        }
-        OutputFormat::StreamJson => {
-            if let Some(path) = cli.output.as_ref() {
-                let mut file = std::fs::File::create(path)?;
-                emit_stream_completed(&mut file, None, &usage, "completed", &diagnostics)?;
-            } else {
-                let mut stdout = std::io::stdout().lock();
-                emit_stream_completed(&mut stdout, None, &usage, "completed", &diagnostics)?;
-            }
-            Ok(())
-        }
-    }
-}
-
-/// Register a depth-0 root agent in the shared [`AgentRegistry`], mirroring
-/// the TUI driver, so headless runs expose the same agent hierarchy (a
-/// known root for spawned children to parent against). Returns the
-/// registry-assigned id.
-///
-/// # Errors
-///
-/// Returns [`PrintError::Agent`] when the registry rejects the reservation
-/// or confirmation (e.g. a duplicate root path within the process).
-fn register_root_agent(
-    registry: &Arc<parking_lot::RwLock<norn::agent::registry::AgentRegistry>>,
-    model: &str,
-) -> Result<Uuid, PrintError> {
-    // The root entry carries the CLI envelope's child policy — the root's
-    // own granted budget, the ground truth its spawn/fork reservations are
-    // checked against (W3.4).
-    let guard = norn::agent::registry::AgentRegistry::reserve(
-        registry,
-        "/root".to_string(),
-        "lead".to_string(),
-        model.to_string(),
-        None,
-        crate::runtime::cli_coordination_envelope().child_policy,
-        None,
-    )
-    .map_err(|err| PrintError::Agent(err.to_string()))?;
-    let id = guard.id();
-    guard
-        .confirm()
-        .map_err(|err| PrintError::Agent(err.to_string()))?;
-    Ok(id)
-}
-
-fn collect_tool_definitions(
-    bundle: &RuntimeBundle,
-) -> Vec<norn::provider::request::ToolDefinition> {
-    norn::provider::collect_function_definitions(&bundle.registry, None)
 }
 
 /// Flush the store's persistence sink: pending durability work and the
 /// sink's accumulated index delta land now instead of at drop. A no-op
 /// for sink-less stores (`--no-session`).
-fn checkpoint_session(store: &EventStore) -> Result<(), PrintError> {
-    store
-        .checkpoint()
+///
+/// Runs [`EventStore::checkpoint_off_executor`] — the blocking critical
+/// section (inter-process index lock + full index rewrite + fsync)
+/// belongs on Tokio's blocking pool, never on the executor thread the
+/// orchestrator's async path runs on.
+async fn checkpoint_session(store: &Arc<EventStore>) -> Result<(), PrintError> {
+    Arc::clone(store)
+        .checkpoint_off_executor()
+        .await
         .map_err(|err| PrintError::Session(err.to_string()))
 }
 
@@ -813,119 +634,12 @@ fn renderer_failure(err: &tokio::task::JoinError) -> PrintError {
     ))
 }
 
-/// Map a driven-mode event-emitter [`tokio::task::JoinError`] onto the
-/// agent-error path: a panicked/cancelled emitter means the live `event/*`
-/// transcript is torn, so the run must surface the failure rather than send
-/// a clean terminal result over an incomplete stream.
-fn emitter_failure(err: &tokio::task::JoinError) -> PrintError {
-    PrintError::Agent(format!(
-        "jsonrpc event emitter task failed ({kind}): {err}; the live event stream is incomplete",
-        kind = if err.is_panic() { "panic" } else { "cancelled" },
-    ))
-}
-
-/// Build the `run/execute` response result value from the completed step.
-///
-/// The shape is the SAME structured envelope `-f json` produces
-/// ([`JsonEnvelope`]), serialised to a [`Value`] so it rides the JSON-RPC
-/// response `result` field. This keeps the driven result byte-compatible
-/// with the one-shot capture path (§4.1).
-fn driven_result_value(step: &StepOutput<'_>) -> Result<Value, PrintError> {
-    let envelope = JsonEnvelope {
-        output: step.output,
-        usage: UsageOut::from(step.usage),
-        model: step.model,
-        session_id: step.session_id,
-        events: step.events,
-        result: step.result,
-        diagnostics: step.diagnostics,
-    };
-    serde_json::to_value(&envelope).map_err(|err| PrintError::Agent(err.to_string()))
-}
-
 fn collect_new_events(store: &EventStore, since: usize) -> Vec<SessionEvent> {
     let all = store.events();
     if since >= all.len() {
         return Vec::new();
     }
     all[since..].to_vec()
-}
-
-/// Post-step output data bundled for the output writers. Eliminates
-/// the `too_many_arguments` lint without sacrificing the named-field
-/// clarity that the orchestrator needs.
-struct StepOutput<'a> {
-    output: Option<&'a Value>,
-    usage: &'a norn::provider::usage::Usage,
-    model: &'a str,
-    session_id: Option<&'a str>,
-    events: &'a [SessionEvent],
-    result: &'static str,
-    diagnostics: &'a [norn::integration::NornDiagnostic],
-}
-
-fn write_output(cli: &Cli, format: OutputFormat, step: &StepOutput<'_>) -> Result<(), PrintError> {
-    match format {
-        OutputFormat::Text => write_text(cli, step.output, step.diagnostics),
-        OutputFormat::Json => write_json(cli, step),
-        OutputFormat::StreamJson => {
-            write_stream_completed(cli, step.output, step.usage, step.result, step.diagnostics)
-        }
-    }
-}
-
-fn write_text(
-    cli: &Cli,
-    output: Option<&Value>,
-    diagnostics: &[norn::integration::NornDiagnostic],
-) -> Result<(), PrintError> {
-    if let Some(path) = cli.output.as_ref() {
-        let mut file = std::fs::File::create(path)?;
-        let mut stderr = std::io::stderr().lock();
-        render_text(&mut file, &mut stderr, output, diagnostics, cli.quiet)?;
-        return Ok(());
-    }
-    let mut stdout = std::io::stdout().lock();
-    let mut stderr = std::io::stderr().lock();
-    render_text(&mut stdout, &mut stderr, output, diagnostics, cli.quiet)?;
-    Ok(())
-}
-
-fn write_json(cli: &Cli, step: &StepOutput<'_>) -> Result<(), PrintError> {
-    let envelope = JsonEnvelope {
-        output: step.output,
-        usage: UsageOut::from(step.usage),
-        model: step.model,
-        session_id: step.session_id,
-        events: step.events,
-        result: step.result,
-        diagnostics: step.diagnostics,
-    };
-    if let Some(path) = cli.output.as_ref() {
-        let mut file = std::fs::File::create(path)?;
-        render_json(&mut file, &envelope)?;
-        return Ok(());
-    }
-    let mut stdout = std::io::stdout().lock();
-    render_json(&mut stdout, &envelope)?;
-    Ok(())
-}
-
-fn write_stream_completed(
-    cli: &Cli,
-    output: Option<&Value>,
-    usage: &norn::provider::usage::Usage,
-    result: &'static str,
-    diagnostics: &[norn::integration::NornDiagnostic],
-) -> Result<(), PrintError> {
-    if let Some(path) = cli.output.as_ref() {
-        let mut file = std::fs::File::create(path)?;
-        emit_stream_completed(&mut file, output, usage, result, diagnostics)?;
-        return Ok(());
-    }
-    let mut stdout = std::io::stdout().lock();
-    emit_stream_completed(&mut stdout, output, usage, result, diagnostics)?;
-    Ok(())
 }
 
 #[cfg(test)]
@@ -1164,6 +878,7 @@ mod tests {
     fn norn_error_connection_failed_maps_to_agent() {
         let err: PrintError = NornError::Provider(ProviderError::ConnectionFailed {
             reason: "refused".to_owned(),
+            kind: norn::error::TransientKind::ConnectionReset,
         })
         .into();
         assert!(matches!(err, PrintError::Agent(_)));

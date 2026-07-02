@@ -32,7 +32,7 @@ pub use permissions::{PermissionDecision, PermissionPolicy};
 pub use types::{
     AgentSettings, ContextSettings, HookEntry, HookSettings, LengthOverrideEntry,
     McpServerSettings, ModelAliasSelection, ModelAliasSettings, NornSettings, PermissionSettings,
-    ProviderProfileSettings, ProviderSettings, RetrySettings, SessionSettings, SkillsSettings,
-    ToolSettings, WriteToolSettings,
+    ProviderProfileSettings, ProviderSettings, RetrySettings, SessionSettings, SkillToolSettings,
+    SkillsSettings, ToolSettings, WriteToolSettings,
 };
 pub use validate::validate_settings;

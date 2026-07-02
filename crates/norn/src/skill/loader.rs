@@ -65,15 +65,29 @@ pub struct DiscoveryResult {
 
 /// Discover all skills across `dirs` in priority order.
 ///
-/// Within a single directory, `<name>/SKILL.md` is preferred over a flat
-/// `<name>.md` of the same name. Across directories the first match
-/// wins (matching the design's first-match-wins precedence rule).
-/// Files that fail to load are dropped with a skip diagnostic attached
-/// to [`DiscoveryResult::diagnostics`].
+/// # Shadowing precedence
 ///
-/// Missing or unreadable directories are silently skipped (logged at
-/// `tracing::debug!` level) so an absent `~/.norn/skills/` does not
-/// produce noise.
+/// Precedence is fully deterministic — `read_dir`'s platform-dependent
+/// ordering never decides a winner:
+///
+/// 1. Across directories, the earlier entry in `dirs` wins on name
+///    collision (first-match-wins).
+/// 2. Within a single directory, every `<name>/SKILL.md` (directory
+///    form) beats every flat `<name>.md`.
+/// 3. Within each of those two groups, candidates are visited in
+///    lexicographic path order, so when two files declare the same
+///    frontmatter `name`, the lexicographically smaller path wins.
+///
+/// The same ordering governs [`DiscoveryResult::skills`], which flows
+/// into the system-prompt skill listing — a stable listing is required
+/// for prompt caching.
+///
+/// Files that fail to load are dropped with a skip diagnostic attached
+/// to [`DiscoveryResult::diagnostics`]. Missing or unreadable
+/// directories are silently skipped (logged at `tracing::debug!` level)
+/// so an absent `~/.norn/skills/` does not produce noise; unreadable
+/// individual entries are logged at `tracing::warn!` — never silently
+/// dropped.
 #[must_use]
 pub fn discover_skills(dirs: &[PathBuf]) -> DiscoveryResult {
     let mut skills: Vec<LoadedSkill> = Vec::new();
@@ -101,8 +115,15 @@ pub fn discover_skills(dirs: &[PathBuf]) -> DiscoveryResult {
                 }
             };
             let path = entry.path();
-            let Ok(file_type) = entry.file_type() else {
-                continue;
+            let file_type = match entry.file_type() {
+                Ok(t) => t,
+                Err(e) => {
+                    tracing::warn!(
+                        "Skipping skill candidate {}: failed to read file type: {e}",
+                        path.display(),
+                    );
+                    continue;
+                }
             };
             if file_type.is_dir() {
                 let candidate = path.join("SKILL.md");
@@ -117,6 +138,12 @@ pub fn discover_skills(dirs: &[PathBuf]) -> DiscoveryResult {
                 }
             }
         }
+
+        // Deterministic within-directory order: `read_dir` order is
+        // platform-dependent, which would make both the prompt listing
+        // and same-name shadowing nondeterministic.
+        dir_skill_paths.sort();
+        flat_skill_paths.sort();
 
         // Directory-form first so that within a single directory the
         // dir form wins over a same-name flat .md file.
@@ -541,6 +568,58 @@ mod tests {
         assert_eq!(
             result.skills[0].metadata.description.as_deref(),
             Some("from A")
+        );
+    }
+
+    /// Discovery order must be lexicographic within a directory (dir
+    /// forms first, then flat files) regardless of `read_dir`'s
+    /// platform-dependent order — the system-prompt listing is built
+    /// from this order and must be stable for prompt caching.
+    #[test]
+    fn discover_skills_orders_deterministically_within_a_directory() {
+        let dir = tempdir().unwrap();
+        // Written in a scrambled order on purpose.
+        write_file(
+            &dir.path().join("zeta").join("SKILL.md"),
+            "---\ndescription: z\n---\n",
+        );
+        write_file(&dir.path().join("beta.md"), "---\ndescription: fb\n---\n");
+        write_file(
+            &dir.path().join("alpha").join("SKILL.md"),
+            "---\ndescription: a\n---\n",
+        );
+        write_file(&dir.path().join("acme.md"), "---\ndescription: fa\n---\n");
+
+        let result = discover_skills(&[dir.path().to_path_buf()]);
+        let names: Vec<&str> = result.skills.iter().map(|s| s.name.as_str()).collect();
+        assert_eq!(
+            names,
+            vec!["alpha", "zeta", "acme", "beta"],
+            "dir forms sorted first, then flat files sorted",
+        );
+    }
+
+    /// Same-name shadowing within a directory has a deterministic
+    /// winner: two flat files declaring the same frontmatter `name`
+    /// resolve to the lexicographically smaller path.
+    #[test]
+    fn discover_skills_same_name_shadowing_is_deterministic() {
+        let dir = tempdir().unwrap();
+        write_file(
+            &dir.path().join("bbb.md"),
+            "---\nname: clash\ndescription: from bbb\n---\n",
+        );
+        write_file(
+            &dir.path().join("aaa.md"),
+            "---\nname: clash\ndescription: from aaa\n---\n",
+        );
+
+        let result = discover_skills(&[dir.path().to_path_buf()]);
+        assert_eq!(result.skills.len(), 1);
+        assert_eq!(
+            result.skills[0].metadata.description.as_deref(),
+            Some("from aaa"),
+            "lexicographically smaller path must win the name clash",
         );
     }
 

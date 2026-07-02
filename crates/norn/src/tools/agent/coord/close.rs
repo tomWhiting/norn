@@ -34,7 +34,7 @@ use crate::tools::agent::infra::{ResolvedAgent, infra_from, resolve_agent};
 /// The walk itself is DFS post-order — leaves first, the target last
 /// (depth-unbounded since W3.4 recursion). For the target — whose handle
 /// the closer holds — the shutdown sends a best-effort Steer message via
-/// the child's [`crate::r#loop::inbound::InboundChannel`] (best-effort
+/// the child's [`crate::agent_loop::inbound::InboundChannel`] (best-effort
 /// twice over: with the token already fired the loop may end before its
 /// next inbound drain), cancels the token again (idempotent), and joins
 /// the wrapper task before touching the registry, so the closer and the
@@ -124,7 +124,7 @@ fn collect_subtree(registry: &AgentRegistry, root: Uuid) -> Vec<Uuid> {
 /// **With a held handle** — best-effort Steer, then trigger the handle's
 /// cooperative cancellation token and **join the wrapper before touching
 /// the registry**. The token is the same one the launching tool threaded
-/// into the child's [`run_agent_step`](crate::r#loop::runner::run_agent_step)
+/// into the child's [`run_agent_step`](crate::agent_loop::runner::run_agent_step)
 /// request, so cancelling it terminates the *run itself*: the loop
 /// observes the token at the top of every iteration and races it
 /// (cancel-priority, `biased` select) against the in-flight provider

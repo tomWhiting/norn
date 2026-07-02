@@ -6,17 +6,19 @@
 
 use std::collections::HashMap;
 use std::fs;
+use std::io::ErrorKind;
 use std::path::Path;
 
 use serde::Serialize;
 use serde_json::json;
-use tree_sitter::{Query as TsQuery, QueryCursor, StreamingIterator};
+use tree_sitter::{Parser, Query as TsQuery, QueryCursor, StreamingIterator};
 
 use crate::error::ToolError;
+use crate::tool::failure::ToolErrorKind;
 use crate::tool::traits::ToolOutput;
 use crate::tools::ast::SyntaxLanguage;
 
-use super::helpers::{GlobFilter, compile_glob, walk_collect_paths};
+use super::helpers::{GlobFilter, SkippedEntry, compile_glob, walk_tree};
 
 /// A single AST-query hit.
 #[derive(Debug, Serialize)]
@@ -29,33 +31,51 @@ pub(super) struct AstMatch {
     text: String,
 }
 
+/// A per-language query-compilation failure surfaced to the model.
+#[derive(Debug, Serialize)]
+struct QueryError {
+    language: String,
+    error: String,
+}
+
 /// Run a tree-sitter structural search under `root`.
 ///
-/// Lazily compiles the `query_source` S-expression per language. Compile
-/// failures are absorbed into the cache so other languages can still
-/// produce matches -- the brief's boundary "AST search across languages
-/// in a single query" explicitly allows this graceful degradation.
+/// Lazily compiles the `query_source` S-expression per language. A compile
+/// failure for one language does not abort the search — other languages can
+/// still produce matches — but every failure is reported in the output's
+/// `query_errors` array. When the query fails to compile for *every*
+/// language present under `root`, the call fails with a typed error
+/// carrying the per-language messages, so an invalid query is never
+/// mistaken for "no matches".
 pub(super) fn run_ast_search(
     query_source: &str,
     root: &Path,
     glob_filter: Option<&str>,
     max_results: u32,
+    include_ignored: bool,
 ) -> Result<ToolOutput, ToolError> {
     let compiled_filter: Option<GlobFilter> = compile_glob(glob_filter)?;
 
-    let mut paths: Vec<std::path::PathBuf> = Vec::new();
-    walk_collect_paths(root, compiled_filter.as_ref(), &mut paths);
+    let walked = walk_tree(root, include_ignored);
+    let mut skipped = walked.skipped;
 
     let mut compiled: HashMap<SyntaxLanguage, Result<TsQuery, String>> = HashMap::new();
+    let mut parser = Parser::new();
     let mut out: Vec<AstMatch> = Vec::new();
     let mut truncated = false;
     let cap = max_results as usize;
 
-    for path in paths {
+    for entry in walked.entries.iter().filter(|e| e.is_file) {
         if truncated {
             break;
         }
-        let Some(language) = SyntaxLanguage::from_path(&path) else {
+        let path = &entry.path;
+        if let Some(filter) = compiled_filter.as_ref()
+            && !filter.matches(path)
+        {
+            continue;
+        }
+        let Some(language) = SyntaxLanguage::from_path(path) else {
             continue;
         };
 
@@ -72,11 +92,25 @@ pub(super) fn run_ast_search(
             continue;
         };
 
-        let Ok(source) = fs::read_to_string(&path) else {
-            continue;
+        let source = match fs::read_to_string(path) {
+            Ok(source) => source,
+            // Binary / non-UTF-8 content cannot be parsed as source code,
+            // so it is not a lost result.
+            Err(e) if e.kind() == ErrorKind::InvalidData => continue,
+            Err(e) => {
+                skipped.push(SkippedEntry {
+                    path: path.to_string_lossy().into_owned(),
+                    reason: format!("unreadable: {e}"),
+                });
+                continue;
+            }
         };
 
-        let Some(tree) = crate::tools::ast::parse(&source, language) else {
+        let Some(tree) = crate::tools::ast::parse_with(&mut parser, &source, language) else {
+            skipped.push(SkippedEntry {
+                path: path.to_string_lossy().into_owned(),
+                reason: format!("tree-sitter failed to parse the file as {language:?}"),
+            });
             continue;
         };
 
@@ -119,8 +153,35 @@ pub(super) fn run_ast_search(
         }
     }
 
+    let mut query_errors: Vec<QueryError> = compiled
+        .iter()
+        .filter_map(|(language, result)| {
+            result.as_ref().err().map(|error| QueryError {
+                language: format!("{language:?}"),
+                error: error.clone(),
+            })
+        })
+        .collect();
+    query_errors.sort_by(|a, b| a.language.cmp(&b.language));
+
+    if !compiled.is_empty() && query_errors.len() == compiled.len() {
+        let details: Vec<String> = query_errors
+            .into_iter()
+            .map(|qe| format!("{}: {}", qe.language, qe.error))
+            .collect();
+        return Err(ToolError::pre_validation(
+            ToolErrorKind::InvalidArguments,
+            format!(
+                "ast_query failed to compile for every candidate language -- {}",
+                details.join("; ")
+            ),
+        ));
+    }
+
     Ok(ToolOutput::success(json!({
         "matches": out,
         "truncated": truncated,
+        "skipped": skipped,
+        "query_errors": query_errors,
     })))
 }

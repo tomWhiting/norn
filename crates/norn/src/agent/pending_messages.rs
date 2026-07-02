@@ -362,8 +362,8 @@ impl PendingAgentMessages {
 ///
 /// # Errors
 ///
-/// Returns [`SessionError::EventAppendFailed`] if the payload cannot be
-/// serialized, or any [`SessionError`] propagated by [`EventStore::append`].
+/// Returns [`SessionError::EventAppendFailed`](crate::error::SessionError::EventAppendFailed) if the payload cannot be
+/// serialized, or any [`SessionError`](crate::error::SessionError) propagated by [`EventStore::append`].
 pub fn append_pending_message_audit(
     store: &EventStore,
     event: &PendingAgentMessageLifecycle,
@@ -377,11 +377,17 @@ pub fn append_pending_message_audit(
             ),
         }
     })?;
-    store.append(SessionEvent::Custom {
-        base: EventBase::new(store.last_event_id()),
-        event_type: event_type.to_owned(),
-        data,
-    })
+    // Audit appends ride the loop's hot path (pending drains, requeue
+    // sweeps), so the sink I/O is kept off the executor exactly like
+    // every other loop append.
+    crate::r#loop::append_off_executor(
+        store,
+        SessionEvent::Custom {
+            base: EventBase::new(store.last_event_id()),
+            event_type: event_type.to_owned(),
+            data,
+        },
+    )
 }
 
 #[cfg(test)]

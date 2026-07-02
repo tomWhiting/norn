@@ -42,10 +42,36 @@ pub struct PromptView {
 /// Injected events are included and tagged with [`ContentTag::Injection`].
 #[must_use]
 pub fn construct_prompt(store: &EventStore, edits: &ContextEdits) -> PromptView {
-    let mut events = Vec::new();
-    let mut tags = Vec::new();
+    store.with_events(|events| {
+        let mut included = Vec::new();
+        let mut tags = Vec::new();
+        for_each_visible_event(events, edits, |event, tag| {
+            tags.push(tag);
+            included.push(event.clone());
+        });
+        PromptView {
+            events: included,
+            tags,
+        }
+    })
+}
 
-    for event in store.events() {
+/// Visit each event that the prompt view includes, in insertion order,
+/// without cloning event bodies.
+///
+/// This is the single source of truth for prompt visibility: suppressed
+/// and superseded events are skipped, injected events are tagged
+/// [`ContentTag::Injection`], and everything else is tagged via
+/// [`tag_for_event`]. [`construct_prompt`] materializes owned events on top
+/// of this; callers that only need tags or a filtered subset (the rules
+/// engine's presence rebuild and system-context re-materialization) walk it
+/// directly and pay no per-event body clone.
+pub fn for_each_visible_event(
+    events: &[SessionEvent],
+    edits: &ContextEdits,
+    mut visit: impl FnMut(&SessionEvent, ContentTag),
+) {
+    for event in events {
         let id = &event.base().id;
 
         if edits.is_suppressed(id) || edits.is_superseded(id) {
@@ -55,14 +81,11 @@ pub fn construct_prompt(store: &EventStore, edits: &ContextEdits) -> PromptView 
         let tag = if edits.is_injected(id) {
             ContentTag::Injection
         } else {
-            tag_for_event(&event)
+            tag_for_event(event)
         };
 
-        tags.push(tag);
-        events.push(event);
+        visit(event, tag);
     }
-
-    PromptView { events, tags }
 }
 
 fn tag_for_event(event: &SessionEvent) -> ContentTag {
@@ -77,6 +100,7 @@ fn tag_for_event(event: &SessionEvent) -> ContentTag {
         SessionEvent::ToolResult { .. } => ContentTag::ToolResult,
         SessionEvent::Compaction { .. } => ContentTag::Compaction,
         SessionEvent::Custom { event_type, .. } => ContentTag::Custom(event_type.clone()),
+        SessionEvent::RuleInjection { rule_id, .. } => ContentTag::Rule(rule_id.clone()),
     }
 }
 

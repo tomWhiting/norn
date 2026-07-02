@@ -675,3 +675,178 @@ unset means exactly the pre-R5 behavior.
 - rhai parity: host-granted `loop_config` rides script-spawn derivation
   and binds; script children that stop on a cap now record registry
   `Failed` (matching the spawn/fork wrappers), never a fake `Completed`.
+
+---
+
+# 9. Hardening campaign (`hardening/final-state`) — impact on meridian
+
+Everything below is from the norn hardening campaign, Waves 1–4, on the
+`hardening/final-state` branch (HEAD `3c84682`). §1–8 above are the Phase
+0–2 + Wave-3 coordination story and remain accurate; §9 is the hardening
+delta. Every norn claim is cited to a file path at HEAD; every meridian
+claim was verified by reading meridian source at
+`/Users/tom/Developer/ablative/meridian` (paths cited). Where the plan for
+this section did not match what the meridian code actually does, the entry
+says so explicitly rather than asserting the plan.
+
+## 9.1 Breaking changes (adapt when you bump past `3c84682`)
+
+- **`ToolCategory::Meridian` is REMOVED.** norn's `ToolCategory` enum
+  (`crates/norn/src/tool/traits.rs:24-44`) now has no `Meridian` variant
+  (`FileSystem | Search | Shell | Web | Agent | Development | Scripting |
+  TaskManagement | Discovery | Skills`). **This breaks meridian at every
+  `Tool::category()` impl that returns it** — verified production sites:
+  `meridian-tools/src/review.rs:430`, `.../source/tool.rs:153`,
+  `.../branch.rs:83`, `.../workflow/tool.rs:137`, `.../exchange/tool.rs:105`,
+  `.../workspace/mod.rs:88`, `.../member/mod.rs:102`,
+  `.../messaging/tool.rs:135`, plus the invariant assertion in
+  `.../registration.rs:365-366` ("must report ToolCategory::Meridian"). Pick
+  an existing variant per tool (most map to `Discovery`/`Web`/`Agent`) or, if
+  a meridian-owned category is genuinely wanted, that is a norn design ask —
+  the variant was deleted deliberately, not by accident.
+- **Typed JSON-RPC stop envelope.** The driven-mode stop is now a typed,
+  per-variant envelope (`schema_unreachable{attempts, validation_errors}`,
+  `timed_out{elapsed_ms, iterations}`, `truncated{truncation, iterations}`),
+  `ENVELOPE_VERSION = 1`, no `retryable` field. **Contract doc:
+  `docs/design/norn-cli/DRIVEN-PROTOCOL.md`** (NOT `docs/DRIVEN-PROTOCOL.md`
+  — that path does not exist). If meridian drives norn over `--protocol
+  jsonrpc`, branch on `stop.reason` and its variant detail, not on a bare
+  `{reason}` string.
+- **Structured error taxonomy replaces string matching.** `err.class() ->
+  ErrorClass` on `NornError` (`crates/norn/src/error.rs:165`) and
+  `ProviderError` (`crates/norn/src/error.rs:364`); the enum is at
+  `error.rs:29` (`Retryable{kind}` / `RateLimited{retry_after}` / `Auth` /
+  `Terminal`). The `"timed out"` / `"HTTP 503:"` magic-string matching is
+  gone (see §7.1 for the aion retry pattern). Any meridian code that
+  classified norn errors by substring must switch to `class()` /
+  `is_retryable()`.
+- **Session hooks now auto-fire from `Agent::run`** (R1 decision D1;
+  `crates/norn/src/agent/instance.rs:247-257,295-297`). `Agent::run` fires
+  `on_session_start` before the step and `on_session_end` on the normal-exit
+  path (an error short-circuits via `?` and skips the end hook, matching the
+  driver contract). Every embedded/library caller — including all meridian
+  paths that go through `AgentBuilder`/`Agent::run` — now gets session hooks
+  without hand-firing.
+  - **Meridian nuance — verified, and it corrects a naive reading:**
+    meridian's `finalize_norn_session`
+    (`meridian-services/src/assistant/norn_session.rs:435`, called from
+    `run_norn_session_loop` at `norn_session.rs:137`) does NOT invoke norn
+    session hooks by hand — it performs its own bespoke exit side-effects
+    (`emit_status(Stopped)` :440, `mark_session_finished` :451,
+    `update_member_activity(Available)` :465,
+    `ServiceEvent::SessionCompleted/Failed` :485/:492, `sessions.remove`
+    :502, `clear_session_alive` :515). Meridian registers **no**
+    `SessionLifecycleHook` today, so **there is no double-fire today.** The
+    real adoption/hazard: if meridian migrates those finalize side-effects
+    into a registered `SessionLifecycleHook` (the clean way to get them on
+    every path, including the aion/embedded routes that never call
+    `finalize_norn_session`), it must then STOP hand-calling
+    `finalize_norn_session`, or the side-effects fire twice. Adopt the hook
+    OR keep the hand-call — never both.
+
+## 9.2 Adoption wins (deletions/simplifications meridian can make)
+
+- **Skill tool now registers on the `load_runtime_base` path** (R1 decision
+  D5; `crates/norn/src/agent/builder.rs:360-366`, gated on
+  `!base.skill_catalog.is_empty()`). Any meridian builder that calls
+  `.load_runtime_base()` gets the skill tool automatically — that includes
+  the aion activity path (`meridian-aion/src/activities/agent.rs:188`) and
+  the workflow step runner
+  (`meridian-services/.../workflow/imperative_callbacks/norn_step.rs:594-595`).
+  If meridian registered a skill tool by hand anywhere, delete that; if it
+  did not, embedded agents now get skills for free.
+- **`.open_session` front door → delete `NornSessionStore`.**
+  `AgentBuilder::open_session(&SessionManager, SessionSpec,
+  DurabilityPolicy)` plus `SessionManager` (§7.2) subsume meridian's
+  `NornSessionStore` — verified at
+  `meridian-services/src/assistant/norn_session_store.rs`, **527 lines**
+  (struct at :41, impl :46–185: `new`/`open`/`open_new`/`open_resume`/
+  `open_fork`/path resolution; tests :230–527). All of it is now a thin
+  wrapper over what `SessionManager` + `.open_session` do natively.
+  - **CORRECTION to the §9 brief:** the brief also asked me to cite a
+    "workflow session-index copy" meridian could delete. **No such copy
+    exists in meridian** — there is no `reconcile_session_index`, no
+    `SessionIndex`, no hand-rolled workflow session index anywhere in the
+    repo (the only `reconcile*` symbols are unrelated: vm-daemon branch
+    return, libcorpus link-hub, server extension deployment). The only real
+    deletion here is `NornSessionStore` (527 L). Do not go looking for a
+    session-index duplicate; there isn't one.
+- **`SessionSpec::ResumeLatestInWorkingDir` / `ForkLatestInWorkingDir`**
+  (`crates/norn/src/agent/session_spec.rs:39,56`) give working-dir-scoped
+  "latest" resume/fork — the most-recently-updated session whose indexed
+  working directory matches the current project, never the globally-latest
+  session across all directories. If meridian ever wants "resume the last
+  session for this workspace" semantics, this is the primitive (and it will
+  not cross-contaminate unrelated projects).
+
+## 9.3 Latency adoptions
+
+- **Keep sessions open across steps — SUPPORTED.** Reuse one
+  `SessionManager` and resume the same deterministic id each step via
+  `SessionSpec::OpenOrResume{id}` (`open_session` at build, §7.2) /
+  `SessionManager::open_or_resume`; call `store.checkpoint()` at turn
+  boundaries. Today meridian's workflow runner rebuilds the whole agent per
+  step (`norn_step.rs:594`), consuming a fresh `AgentBuilder` each time;
+  resuming the same session id keeps history without a store rebuild.
+- **Cache the runtime base per execution — NOT currently supported through
+  `AgentBuilder` (this is a gap, not an available adoption — CORRECTION to
+  the brief).** `AgentBuilder` exposes only the boolean
+  `.load_runtime_base()` flag (`crates/norn/src/agent/builder_setters.rs:46`),
+  which re-runs the full disk scan (settings merge, skill-catalog scan, rule
+  discovery, hook assembly, context load) **inside `build()` every time**
+  (`crates/norn/src/agent/builder.rs:287-289`). The free function
+  `norn::runtime_init::load_runtime_base(...) -> LoadedRuntimeBase`
+  (`crates/norn/src/runtime_init/base.rs:189`) IS public and its result is
+  `Arc`-shareable, but **there is no builder setter that accepts a prebuilt
+  `LoadedRuntimeBase`** — so meridian cannot currently load once and inject.
+  Verified current cost: the aion path rebuilds the base per activity
+  (`meridian-aion/src/activities/agent.rs:182,188`); the workflow path
+  rebuilds it per step (`norn_step.rs:594-595`). To actually cache
+  per-execution, norn needs a builder injection point (an
+  `AgentBuilder::runtime_base(LoadedRuntimeBase)` setter) — flag it as a
+  norn ask; do not assume it exists today.
+- **Provider knobs are wired, but confirm the *settings* set them.**
+  meridian already forwards `rate_limit` / `rate_limit_interval` /
+  `retry_backoff` / `retry_after_ceiling` onto `ProviderConfig` from merged
+  settings (`meridian-services/src/workflow/provider.rs:76-86` via
+  `provider_settings_from_settings`) — so the plumbing is NOT missing
+  (CORRECTION to the brief's "set them explicitly"). The residual risk is at
+  the settings layer: if those keys are unset, `rate_limit` falls back to
+  norn's compiled default of **60 permits / 60 s** for the OpenAI backend
+  (`crates/norn/src/provider/request.rs:296-308`), and that limiter gates
+  **whole executions** (each provider call acquires a permit). For a
+  workflow that fans many activities/steps at one provider, set an explicit
+  `rate_limit` in the meridian provider settings; `retry_after_ceiling`
+  defaults to `None` (honor server header as-is) and is worth an explicit
+  ceiling if a provider can request absurd `Retry-After` waits.
+- **Per-activity provider rebuild (aion path) — confirmed cost.** Each aion
+  activity builds a fresh OAuth provider
+  (`meridian-aion/src/activities/agent.rs:164`, `build_norn_provider`) with
+  no caching — an OAuth/client construction per activity. The workflow path
+  already shares one provider per execution
+  (`norn_step.rs:404`/`:570` Arc-clone; `workflow/provider.rs:7-9` doc). If
+  the aion per-activity provider build shows up in latency, hoist it to a
+  per-execution cache the way the workflow path does.
+- **NOTE — the brief's "duplicate `resolve_profile` in `norn_step.rs`" does
+  NOT exist (CORRECTION).** There is exactly one `resolve_profile` call in
+  all of meridian (`norn_step.rs:466`); its result is reused, not
+  re-resolved (`profile_for_agent = resolved_profile` :576, `.profile(...)`
+  :597). The aion path uses `.profile_name(...)` and lets norn resolve
+  inside the builder. There is nothing to dedupe here — omitted rather than
+  written as a false adoption.
+
+## 9.4 Prompt caching (free win after upgrading)
+
+- **Deterministic tool ordering makes system prompts and provider tool
+  arrays byte-stable across runs.** `ToolRegistry::names()` now returns
+  lexicographically-sorted names
+  (`crates/norn/src/tool/registry.rs:174-183`); the backing `HashMap` has
+  per-instance randomised iteration order, so previously every projection
+  built from it (the system prompt `# Tools` section, the provider
+  tool-definition array via `collect_function_definitions`, the tool
+  catalog, the MCP listing) reshuffled on **every process restart**, busting
+  provider prompt-cache prefixes each time. Sorting makes those projections
+  byte-identical run-to-run — the registry doc comment calls this out
+  explicitly as preserving provider prompt caching. **Meridian gets provider
+  prompt-cache hits for free after bumping the pin**, with no meridian-side
+  change, as long as the tool set itself is stable across runs.

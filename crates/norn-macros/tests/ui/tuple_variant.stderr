@@ -1,0 +1,6 @@
+error: ToolArgs: tuple variants are not supported — use a named-field variant
+ --> tests/ui/tuple_variant.rs:7:5
+  |
+7 | /     /// A pair payload.
+8 | |     Pair(String, u32),
+  | |_____________________^

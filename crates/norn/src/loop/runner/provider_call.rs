@@ -1,0 +1,205 @@
+//! Provider-call phase: the pre/post-LLM hooks, the (cancellable)
+//! provider call itself, usage accounting, response persistence, and the
+//! iteration monitor.
+
+use serde_json::Value;
+
+use crate::error::{HookType, NornError};
+use crate::integration::hooks::{HookOutcome, LlmCallSummary};
+use crate::r#loop::assembly::AssembledResponse;
+use crate::r#loop::classify::call_provider_with_retry;
+use crate::r#loop::config::AgentStepResult;
+use crate::r#loop::helpers::{append_and_notify, handle_iteration_signals};
+use crate::r#loop::iteration::evaluate_iteration;
+use crate::provider::events::StopReason;
+use crate::provider::request::{AssistantToolCall, Message, MessageRole, ProviderRequest};
+use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
+
+use super::machine::{StepFlow, StepMachine, StepState};
+
+impl StepMachine<'_> {
+    /// Call the provider (racing cancellation when a token is supplied),
+    /// persist the assistant response, and feed the iteration monitor.
+    pub(super) async fn call_provider(
+        &mut self,
+        request: ProviderRequest,
+    ) -> Result<StepFlow, NornError> {
+        if let Some(hooks) = self.loop_context.hooks.as_deref()
+            && let HookOutcome::Block { reason } = hooks.run_pre_llm(&request).await
+        {
+            return Err(NornError::HookBlocked {
+                hook_type: HookType::PreLlm,
+                reason,
+            });
+        }
+
+        // Race the provider call (including its retry-with-backoff
+        // wrapper) against cancellation when a token is supplied. The
+        // `biased` select gives the cancel arm priority so a token that
+        // fires while the provider future is also ready resolves as
+        // cancellation. Dropping the provider future cleanly aborts the
+        // in-flight HTTP stream (reqwest is cancel-safe). When `cancel`
+        // is `None` the call falls through to a direct await with no
+        // select overhead (R3 acceptance).
+        let response = {
+            let provider_fut = call_provider_with_retry(
+                &self.loop_context.retry_policy,
+                self.provider,
+                request,
+                self.event_tx,
+            );
+            match self.cancel.as_ref() {
+                Some(token) => tokio::select! {
+                    biased;
+                    () = token.cancelled() => {
+                        return Ok(StepFlow::Done(AgentStepResult::Cancelled {
+                            usage: std::mem::take(&mut self.total_usage),
+                            children_usage: self.loop_context.children_usage.snapshot(),
+                        }));
+                    }
+                    result = provider_fut => result?,
+                },
+                None => provider_fut.await?,
+            }
+        };
+
+        self.total_usage += response.usage.clone();
+        {
+            // Keep the timeout snapshot's usage in lock-step with the
+            // running total so a timed-out step reports real spend.
+            let mut snapshot = self.timeout_state.lock();
+            snapshot.usage = self.total_usage.clone();
+            if !response.text.is_empty() {
+                snapshot.last_assistant_text = Some(response.text.clone());
+            }
+        }
+
+        if let Some(hooks) = self.loop_context.hooks.as_deref() {
+            let summary = LlmCallSummary {
+                stop_reason: Some(response.stop_reason.clone()),
+                usage: response.usage.clone(),
+                event_count: u64::try_from(response.tool_calls.len()).unwrap_or(u64::MAX),
+                error: None,
+            };
+            hooks.run_post_llm(&summary).await;
+        }
+
+        self.persist_assistant_turn(&response).await?;
+        self.monitor_iteration(&response).await?;
+
+        Ok(StepFlow::Next(StepState::Dispatch(Box::new(response))))
+    }
+
+    /// Append the `AssistantMessage` session event and mirror the turn
+    /// into the live conversation.
+    async fn persist_assistant_turn(
+        &mut self,
+        response: &AssembledResponse,
+    ) -> Result<(), NornError> {
+        let assistant_tool_calls: Vec<AssistantToolCall> = response
+            .tool_calls
+            .iter()
+            .map(|tc| AssistantToolCall {
+                call_id: tc.call_id.clone(),
+                name: tc.name.clone(),
+                arguments: tc.arguments.clone(),
+                kind: tc.kind,
+            })
+            .collect();
+
+        let tool_call_events: Vec<ToolCallEvent> = response
+            .tool_calls
+            .iter()
+            .map(|tc| ToolCallEvent {
+                call_id: tc.call_id.clone(),
+                name: tc.name.clone(),
+                arguments: serde_json::from_str(&tc.arguments)
+                    .unwrap_or_else(|_| Value::String(tc.arguments.clone())),
+                kind: tc.kind,
+            })
+            .collect();
+
+        let content = response.text.clone();
+        let thinking = response.thinking.clone();
+        let message_content = if content.is_empty() {
+            None
+        } else {
+            Some(content.clone())
+        };
+
+        append_and_notify(
+            self.store,
+            SessionEvent::AssistantMessage {
+                base: EventBase::new(self.store.last_event_id()),
+                content,
+                thinking: thinking.clone(),
+                tool_calls: tool_call_events,
+                usage: EventUsage {
+                    input_tokens: response.usage.input_tokens,
+                    output_tokens: response.usage.output_tokens,
+                    cache_read_tokens: response.usage.cache_read_tokens,
+                    cache_write_tokens: response.usage.cache_write_tokens,
+                    cost_usd: response.usage.cost_usd,
+                },
+                stop_reason: match &response.stop_reason {
+                    StopReason::EndTurn => "end_turn",
+                    StopReason::ToolUse => "tool_use",
+                    StopReason::MaxTokens => "max_tokens",
+                    StopReason::ContentFilter => "content_filter",
+                }
+                .to_string(),
+                response_id: response.response_id.clone(),
+            },
+            self.loop_context.hooks.as_deref(),
+        )
+        .await?;
+
+        self.messages.push(Message {
+            role: MessageRole::Assistant,
+            content: message_content,
+            thinking,
+            // Structured reasoning items ride on the local replay message so
+            // stateless backends (`response_threading: false`) can replay
+            // encrypted reasoning across tool-call iterations.
+            reasoning: response.reasoning.clone(),
+            tool_calls: assistant_tool_calls,
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        });
+        self.conversation_state
+            .observe_response(response.response_id.as_deref(), self.messages.len());
+        Ok(())
+    }
+
+    /// Feed the iteration monitor (when configured) with this turn's text
+    /// and the failures the previous iteration produced.
+    async fn monitor_iteration(&mut self, response: &AssembledResponse) -> Result<(), NornError> {
+        if let Some(monitor_cfg) = self.loop_context.iteration_monitor.as_ref() {
+            let latest_text = if response.text.is_empty() {
+                None
+            } else {
+                Some(response.text.as_str())
+            };
+            // REVIEW item 4: drain the failures the previous iteration
+            // produced (tool errors, schema-validation failures) into the
+            // monitor so RepeatedFailure detection has real input.
+            let failures = std::mem::take(&mut self.latest_failures);
+            let signals = evaluate_iteration(
+                &mut self.iteration_state,
+                &self.total_usage,
+                latest_text,
+                Some(&failures),
+                monitor_cfg,
+            );
+            handle_iteration_signals(
+                self.store,
+                &mut self.messages,
+                signals,
+                self.loop_context.hooks.as_deref(),
+            )
+            .await?;
+        }
+        Ok(())
+    }
+}

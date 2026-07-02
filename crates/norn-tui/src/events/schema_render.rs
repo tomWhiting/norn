@@ -181,6 +181,16 @@ pub fn render_event(
             ));
             out
         }
+        SessionEvent::RuleInjection {
+            rule_id, content, ..
+        } => {
+            let header = render_dim_status_line(&format!("rule: {rule_id}"));
+            if content.is_empty() {
+                header
+            } else {
+                format!("{header}\n{content}")
+            }
+        }
     }
 }
 

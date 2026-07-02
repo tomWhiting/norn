@@ -8,9 +8,14 @@
 //! - **Duration fields** must parse as `humantime` durations
 //!   (`provider.timeout`, `agent.step_timeout`,
 //!   `agent.prompt_command_timeout`, `retry.base_delay`).
-//! - **Permission patterns** must be syntactically well-formed: non-empty,
-//!   balanced parentheses, no embedded control characters. The full
-//!   matcher logic lives downstream (Boundary in brief NC-003).
+//! - **Permission patterns** must parse under the SAME grammar the
+//!   enforcement compiler uses
+//!   (`crate::config::permissions::parse_permission_pattern`) — any
+//!   pattern the matcher would treat as an inert tool-name literal is a
+//!   typed error here.
+//! - **Hook entries** must carry a non-empty `command` (the required
+//!   `timeout` is enforced at the type level — see
+//!   [`crate::config::types::HookEntry`]).
 //! - **MCP server definitions** must specify at least one of `command` or
 //!   `url`; an entry that has neither has no executable shape.
 //!
@@ -32,8 +37,9 @@ use crate::error::ConfigError;
 /// # Errors
 ///
 /// - A duration string is not parseable by `humantime`.
-/// - A permission pattern is empty, has unbalanced parentheses, or
-///   contains control characters.
+/// - A permission pattern is rejected by the shared enforcement grammar
+///   (`crate::config::permissions::parse_permission_pattern`).
+/// - A hook entry's `command` is empty or whitespace-only.
 /// - An MCP server definition has neither `command` nor `url`.
 pub fn validate_settings(settings: &NornSettings) -> Result<(), ConfigError> {
     validate_durations(settings)?;
@@ -41,6 +47,7 @@ pub fn validate_settings(settings: &NornSettings) -> Result<(), ConfigError> {
     validate_provider_profiles(settings)?;
     validate_model_aliases(settings)?;
     validate_permissions(settings)?;
+    validate_hooks(settings)?;
     validate_mcp_servers(settings)?;
     Ok(())
 }
@@ -140,7 +147,7 @@ fn validate_numeric_ranges(settings: &NornSettings) -> Result<(), ConfigError> {
     {
         return Err(ConfigError::InvalidConfig {
             reason: format!(
-                "invalid value for agent.conversation_state: {mode} (expected auto, manual, or provider_threaded)",
+                "invalid value for agent.conversation_state: {mode} (expected auto, manual, manual_replay, or provider_threaded)",
             ),
         });
     }
@@ -265,49 +272,80 @@ fn validate_permissions(settings: &NornSettings) -> Result<(), ConfigError> {
     Ok(())
 }
 
-/// Permissive syntactic check for a Claude-Code-style permission pattern.
-///
-/// Rejects only patterns that cannot be matched by any reasonable engine:
-/// empty strings, unbalanced parentheses, and embedded control characters.
-/// Anything beyond that — wildcard semantics, tool-name validity — is the
-/// responsibility of the downstream matcher (Boundary: NC-003 SHALL NOT
-/// implement matching).
+/// Syntactic check for a Claude-Code-style permission pattern, delegated
+/// to `crate::config::permissions::parse_permission_pattern` — the SAME
+/// grammar the enforcement compiler uses, so no pattern can validate here
+/// and then compile to an inert tool-name literal downstream. Wildcard
+/// semantics and tool-name validity remain the matcher's responsibility.
 fn check_permission_pattern(field: &str, pattern: &str) -> Result<(), ConfigError> {
-    if pattern.is_empty() {
-        return Err(ConfigError::InvalidConfig {
-            reason: format!("invalid permission pattern in {field}: empty string"),
-        });
-    }
-    if pattern.chars().any(char::is_control) {
-        return Err(ConfigError::InvalidConfig {
-            reason: format!(
-                "invalid permission pattern in {field}: '{pattern}' contains control characters",
-            ),
-        });
-    }
-    let mut depth: i32 = 0;
-    for ch in pattern.chars() {
-        match ch {
-            '(' => depth += 1,
-            ')' => {
-                depth -= 1;
-                if depth < 0 {
-                    return Err(ConfigError::InvalidConfig {
-                        reason: format!(
-                            "invalid permission pattern in {field}: '{pattern}' has unbalanced parentheses",
-                        ),
-                    });
-                }
+    crate::config::permissions::parse_permission_pattern(pattern)
+        .map(|_| ())
+        .map_err(|err| ConfigError::InvalidConfig {
+            reason: format!("invalid permission pattern in {field}: '{pattern}' {err}"),
+        })
+}
+
+// ---------------------------------------------------------------------------
+// Hooks
+// ---------------------------------------------------------------------------
+
+/// Reject hook entries whose `command` is empty or whitespace-only — a
+/// hook without a command has no behaviour, and silently registering one
+/// would hide an operator typo. The required `timeout` is enforced at the
+/// type level ([`crate::config::types::HookEntry::timeout`] is a plain
+/// `u64`), so only the command needs a semantic check here.
+///
+/// The [`crate::config::types::HookSettings`] value is destructured
+/// exhaustively: adding an event slot without extending this walk is a
+/// compile error, not a silently unvalidated slot.
+fn validate_hooks(settings: &NornSettings) -> Result<(), ConfigError> {
+    let Some(hooks) = settings.hooks.as_ref() else {
+        return Ok(());
+    };
+    let crate::config::types::HookSettings {
+        pre_tool,
+        post_tool,
+        post_tool_failure,
+        pre_llm,
+        post_llm,
+        session_event,
+        user_prompt,
+        stop,
+        subagent_start,
+        subagent_stop,
+        session_start,
+        session_end,
+        pre_compaction,
+    } = hooks;
+    let slots: &[(&str, &Option<Vec<crate::config::types::HookEntry>>)] = &[
+        ("pre_tool", pre_tool),
+        ("post_tool", post_tool),
+        ("post_tool_failure", post_tool_failure),
+        ("pre_llm", pre_llm),
+        ("post_llm", post_llm),
+        ("session_event", session_event),
+        ("user_prompt", user_prompt),
+        ("stop", stop),
+        ("subagent_start", subagent_start),
+        ("subagent_stop", subagent_stop),
+        ("session_start", session_start),
+        ("session_end", session_end),
+        ("pre_compaction", pre_compaction),
+    ];
+    for (event_name, slot) in slots {
+        let Some(entries) = slot.as_ref() else {
+            continue;
+        };
+        for entry in entries {
+            if entry.command.trim().is_empty() {
+                return Err(ConfigError::InvalidConfig {
+                    reason: format!(
+                        "hook entry for hooks.{event_name} has an empty command; a hook \
+                         without a command has no behaviour",
+                    ),
+                });
             }
-            _ => {}
         }
-    }
-    if depth != 0 {
-        return Err(ConfigError::InvalidConfig {
-            reason: format!(
-                "invalid permission pattern in {field}: '{pattern}' has unbalanced parentheses",
-            ),
-        });
     }
     Ok(())
 }
@@ -773,6 +811,114 @@ mod tests {
             panic!("expected InvalidConfig variant");
         };
         assert!(reason.to_lowercase().contains("unbalanced"));
+    }
+
+    /// The review's exact reproduction: `"bash(rm *) "` used to pass
+    /// validation and then compile to an inert tool-name literal in the
+    /// enforcement parser. Validation now shares that parser, so the
+    /// trailing space is a typed error at the settings boundary.
+    #[test]
+    fn trailing_space_after_closing_paren_caught() {
+        let s = NornSettings {
+            permissions: Some(PermissionSettings {
+                deny: Some(vec!["bash(rm *) ".to_owned()]),
+                ..PermissionSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(reason.contains("permissions.deny"), "{reason}");
+        assert!(reason.contains("bash(rm *) "), "{reason}");
+        assert!(
+            reason.contains("whitespace"),
+            "reason must explain the defect: {reason}"
+        );
+    }
+
+    /// Empty argument patterns and trailing text after the closing paren
+    /// compile to rules that can never match — both are now typed errors
+    /// via the shared grammar.
+    #[test]
+    fn inert_pattern_shapes_caught() {
+        for pattern in ["bash()", "bash(x)y", "(x)"] {
+            let s = NornSettings {
+                permissions: Some(PermissionSettings {
+                    allow: Some(vec![pattern.to_owned()]),
+                    ..PermissionSettings::default()
+                }),
+                ..NornSettings::default()
+            };
+            let err = validate_settings(&s).expect_err("inert pattern shape must be rejected");
+            let ConfigError::InvalidConfig { reason } = err else {
+                panic!("expected InvalidConfig variant");
+            };
+            assert!(reason.contains(pattern), "{reason}");
+        }
+    }
+
+    #[test]
+    fn hook_entry_with_empty_command_caught() {
+        use crate::config::types::{HookEntry, HookSettings};
+        for command in ["", "   "] {
+            let s = NornSettings {
+                hooks: Some(HookSettings {
+                    stop: Some(vec![HookEntry {
+                        matcher: None,
+                        command: command.to_owned(),
+                        timeout: 5,
+                    }]),
+                    ..HookSettings::default()
+                }),
+                ..NornSettings::default()
+            };
+            let err = validate_settings(&s).expect_err("empty command must be rejected");
+            let ConfigError::InvalidConfig { reason } = err else {
+                panic!("expected InvalidConfig variant");
+            };
+            assert!(reason.contains("hooks.stop"), "{reason}");
+            assert!(reason.contains("empty command"), "{reason}");
+        }
+    }
+
+    #[test]
+    fn hook_entry_with_command_passes_validation() {
+        use crate::config::types::{HookEntry, HookSettings};
+        let s = NornSettings {
+            hooks: Some(HookSettings {
+                pre_tool: Some(vec![HookEntry {
+                    matcher: Some("Write".to_owned()),
+                    command: "lint.sh".to_owned(),
+                    timeout: 5,
+                }]),
+                ..HookSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        validate_settings(&s).unwrap();
+    }
+
+    /// The rejection message must enumerate every accepted value —
+    /// `manual_replay` was previously omitted even though it is accepted.
+    #[test]
+    fn conversation_state_error_lists_manual_replay() {
+        let s = NornSettings {
+            agent: Some(AgentSettings {
+                conversation_state: Some("bogus".to_string()),
+                ..AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(
+            reason.contains("manual_replay"),
+            "message must list manual_replay: {reason}"
+        );
     }
 
     #[test]

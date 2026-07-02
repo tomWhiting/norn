@@ -80,7 +80,7 @@ pub(super) struct SubagentCompletion {
     /// which carries no usage) — or when the child's wrapper task itself
     /// panicked — this is [`Usage::default`] (all zeros), meaning
     /// "unknown", not "no tokens consumed". Every early-stop
-    /// [`AgentStepResult`](crate::r#loop::runner::AgentStepResult) arm
+    /// [`AgentStepResult`](crate::agent_loop::runner::AgentStepResult) arm
     /// (timeout, cancellation, truncation, schema exhaustion, max
     /// iterations) does carry real accumulated usage.
     pub(super) usage: Usage,
@@ -90,7 +90,7 @@ pub(super) struct SubagentCompletion {
     /// `usage + children_usage`; on the panic/hard-error paths the own
     /// component is unknown-zeros while delivered descendant subtrees
     /// are still folded in (read from the shared
-    /// [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+    /// [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)
     /// accumulator, which survives the unwound task).
     pub(super) subtree_usage: Usage,
     /// Whether the child's run completed successfully.

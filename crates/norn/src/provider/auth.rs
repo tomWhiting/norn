@@ -16,7 +16,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use super::openai_oauth::{
-    AuthCredentialsStoreMode, AuthManager, CLIENT_ID, RefreshTokenError, ServerOptions,
+    AuthCredentialsStoreMode, AuthManager, CLIENT_ID, OAuthHttpOptions, RefreshTokenError,
+    ServerOptions,
 };
 use super::startup_trace;
 use async_trait::async_trait;
@@ -107,12 +108,16 @@ impl std::fmt::Debug for OAuthAuthProvider {
 
 impl OAuthAuthProvider {
     /// Constructs a new OAuth provider, initialising the underlying
-    /// `AuthManager`.
+    /// `AuthManager` with the documented default [`OAuthHttpOptions`].
+    /// Embedders that need non-default OAuth timeouts construct the
+    /// manager themselves and use [`OAuthAuthProvider::from_manager`].
     ///
     /// # Errors
     ///
     /// Returns [`ProviderError::AuthenticationFailed`] if the codex
-    /// home directory cannot be resolved.
+    /// home directory cannot be resolved, or
+    /// [`ProviderError::ConnectionFailed`] if the manager's HTTP client
+    /// cannot be built.
     pub async fn new(codex_home: Option<PathBuf>) -> Result<Self, ProviderError> {
         let provider_started = startup_trace::start("oauth_auth_provider_new_start");
         let codex_home = resolve_codex_home(codex_home)?;
@@ -120,11 +125,14 @@ impl OAuthAuthProvider {
         let manager_started = startup_trace::start("oauth_auth_manager_shared_start");
         let manager = AuthManager::shared(
             codex_home,
-            /* enable_codex_api_key_env */ false,
             AuthCredentialsStoreMode::File,
-            /* chatgpt_base_url */ None,
+            OAuthHttpOptions::default(),
         )
-        .await;
+        .await
+        .map_err(|err| ProviderError::ConnectionFailed {
+            reason: err.to_string(),
+            kind: crate::error::TransientKind::ConnectionReset,
+        })?;
         startup_trace::elapsed("oauth_auth_manager_shared_done", manager_started);
         startup_trace::elapsed("oauth_auth_provider_new_done", provider_started);
         Ok(Self { manager })
@@ -186,6 +194,7 @@ impl AuthProvider for OAuthAuthProvider {
                     "OAuth token refresh failed transiently: {failed}; the stored refresh \
                      credential remains valid and the request may be retried"
                 ),
+                kind: crate::error::TransientKind::ConnectionReset,
             }),
         }
     }
@@ -263,7 +272,8 @@ pub struct LoginConfig {
 /// Triggers the OAuth PKCE login flow.
 ///
 /// Opens a browser, runs a local callback server, and persists tokens
-/// to `auth.json` on success.
+/// to `auth.json` on success. Uses the documented default
+/// [`OAuthHttpOptions`] (10s exchange deadline, 5-minute callback wait).
 ///
 /// # Errors
 ///
@@ -281,8 +291,8 @@ pub async fn login(config: LoginConfig) -> Result<(), NornError> {
     let opts = ServerOptions::new(
         codex_home,
         CLIENT_ID.to_string(),
-        None,
         AuthCredentialsStoreMode::File,
+        OAuthHttpOptions::default(),
     );
     let server = super::openai_oauth::run_login_server(opts).map_err(|e| {
         NornError::Provider(ProviderError::AuthenticationFailed {
@@ -297,7 +307,8 @@ pub async fn login(config: LoginConfig) -> Result<(), NornError> {
     Ok(())
 }
 
-/// Revokes any stored OAuth tokens and clears local auth storage.
+/// Revokes any stored OAuth tokens and clears local auth storage. Uses
+/// the documented default [`OAuthHttpOptions`] (10s revoke deadline).
 ///
 /// # Errors
 ///
@@ -305,13 +316,17 @@ pub async fn login(config: LoginConfig) -> Result<(), NornError> {
 /// call fails.
 pub async fn logout(config: LoginConfig) -> Result<(), NornError> {
     let codex_home = resolve_codex_home(config.codex_home)?;
-    super::openai_oauth::logout_with_revoke(&codex_home, AuthCredentialsStoreMode::File)
-        .await
-        .map_err(|e| {
-            NornError::Provider(ProviderError::AuthenticationFailed {
-                reason: format!("logout failed: {e}"),
-            })
-        })?;
+    super::openai_oauth::logout_with_revoke(
+        &codex_home,
+        AuthCredentialsStoreMode::File,
+        OAuthHttpOptions::default(),
+    )
+    .await
+    .map_err(|e| {
+        NornError::Provider(ProviderError::AuthenticationFailed {
+            reason: format!("logout failed: {e}"),
+        })
+    })?;
     Ok(())
 }
 
@@ -433,6 +448,7 @@ impl AuthProvider for MockAuthProvider {
             .lock()
             .map_err(|e| ProviderError::StreamError {
                 reason: format!("mock auth lock poisoned: {e}"),
+                transient: None,
             })?;
         let token = if tokens.len() <= 1 {
             tokens
@@ -453,6 +469,7 @@ impl AuthProvider for MockAuthProvider {
             .lock()
             .map_err(|e| ProviderError::StreamError {
                 reason: format!("mock auth lock poisoned: {e}"),
+                transient: None,
             })?;
         if seq.len() <= 1 {
             match seq.last() {
@@ -615,7 +632,11 @@ mod tests {
         // with access_token = "Access Token" and
         // account_id = Some("account_id").
         let auth = super::super::openai_oauth::CodexAuth::create_dummy_chatgpt_auth_for_testing();
-        let manager = super::super::openai_oauth::AuthManager::from_static_auth(auth);
+        let manager = super::super::openai_oauth::AuthManager::from_static_auth(
+            auth,
+            OAuthHttpOptions::default(),
+        )
+        .expect("manager construction");
         let provider = OAuthAuthProvider::from_manager(manager);
 
         let client = reqwest::Client::new();
@@ -669,7 +690,8 @@ mod tests {
         let manager = super::super::openai_oauth::AuthManager::from_static_auth_with_token_url(
             auth,
             server.uri(),
-        );
+        )
+        .expect("manager construction");
         let provider = OAuthAuthProvider::from_manager(manager);
 
         let err = provider
@@ -677,7 +699,12 @@ mod tests {
             .await
             .expect_err("transient refresh failure must surface as an error, not Ok(false)");
         match &err {
-            ProviderError::ConnectionFailed { reason } => {
+            ProviderError::ConnectionFailed { reason, kind } => {
+                assert_eq!(
+                    *kind,
+                    crate::error::TransientKind::ConnectionReset,
+                    "a transient refresh failure carries the reset kind"
+                );
                 assert!(
                     reason.contains("transiently"),
                     "reason must say the refresh failed transiently: {reason}"
@@ -701,7 +728,11 @@ mod tests {
     #[tokio::test]
     async fn missing_refresh_credential_remains_non_retryable_auth_failure() {
         let auth = super::super::openai_oauth::CodexAuth::from_api_key("vm-injected-key");
-        let manager = super::super::openai_oauth::AuthManager::from_static_auth(auth);
+        let manager = super::super::openai_oauth::AuthManager::from_static_auth(
+            auth,
+            OAuthHttpOptions::default(),
+        )
+        .expect("manager construction");
         let provider = OAuthAuthProvider::from_manager(manager);
 
         let err = provider
@@ -728,7 +759,11 @@ mod tests {
     #[tokio::test]
     async fn oauth_provider_omits_account_id_when_absent() {
         let auth = super::super::openai_oauth::CodexAuth::from_api_key("test-api-key-value");
-        let manager = super::super::openai_oauth::AuthManager::from_static_auth(auth);
+        let manager = super::super::openai_oauth::AuthManager::from_static_auth(
+            auth,
+            OAuthHttpOptions::default(),
+        )
+        .expect("manager construction");
         let provider = OAuthAuthProvider::from_manager(manager);
 
         let client = reqwest::Client::new();

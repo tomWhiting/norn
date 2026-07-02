@@ -238,6 +238,32 @@ pub enum SessionEvent {
         /// Arbitrary structured data.
         data: serde_json::Value,
     },
+
+    /// A rules-engine injection that fired and entered the active context.
+    ///
+    /// Persisted for every fired rule regardless of delivery mode so the
+    /// event stream is the single source of truth for rule presence: the
+    /// prompt view tags this event
+    /// [`ContentTag::Rule`](crate::agent_loop::context::ContentTag::Rule),
+    /// the rules engine rebuilds its presence set from those tags, and a
+    /// rule is only re-injected once its event has been compacted or
+    /// suppressed out of the view. Also the immutable audit record of which
+    /// rule fired and how its content was delivered.
+    RuleInjection {
+        /// Common event metadata.
+        base: EventBase,
+        /// Identifier of the rule that fired.
+        rule_id: String,
+        /// How the rule content was delivered to the model.
+        delivery: crate::rules::types::DeliveryMode,
+        /// Whether the rule fired before or after the matched action.
+        timing: crate::rules::types::TriggerTiming,
+        /// The raw (unformatted) rule content that was delivered. The
+        /// delivery-mode prefix is applied at render time via
+        /// [`DeliveryMode::format_conversation_content`](crate::rules::types::DeliveryMode::format_conversation_content)
+        /// so the stored content stays canonical.
+        content: String,
+    },
 }
 
 impl SessionEvent {
@@ -254,7 +280,8 @@ impl SessionEvent {
             | Self::Fork { base, .. }
             | Self::ForkComplete { base, .. }
             | Self::Label { base, .. }
-            | Self::Custom { base, .. } => base,
+            | Self::Custom { base, .. }
+            | Self::RuleInjection { base, .. } => base,
         }
     }
 }
@@ -382,6 +409,35 @@ mod tests {
     }
 
     #[test]
+    fn rule_injection_serde_roundtrip() {
+        let event = SessionEvent::RuleInjection {
+            base: EventBase::new(None),
+            rule_id: "rust-conventions".to_owned(),
+            delivery: crate::rules::types::DeliveryMode::SystemContextAppend,
+            timing: crate::rules::types::TriggerTiming::After,
+            content: "Follow conventions.".to_owned(),
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let parsed: SessionEvent = serde_json::from_str(&json).expect("deserialize");
+        match parsed {
+            SessionEvent::RuleInjection {
+                rule_id,
+                delivery,
+                content,
+                ..
+            } => {
+                assert_eq!(rule_id, "rust-conventions");
+                assert_eq!(
+                    delivery,
+                    crate::rules::types::DeliveryMode::SystemContextAppend
+                );
+                assert_eq!(content, "Follow conventions.");
+            }
+            _ => panic!("expected RuleInjection"),
+        }
+    }
+
+    #[test]
     fn all_variants_base_accessor() {
         let base = || EventBase::new(None);
         let id = EventId::new();
@@ -441,6 +497,13 @@ mod tests {
                 base: base(),
                 event_type: String::new(),
                 data: serde_json::Value::Null,
+            },
+            SessionEvent::RuleInjection {
+                base: base(),
+                rule_id: String::new(),
+                delivery: crate::rules::types::DeliveryMode::ContextInjection,
+                timing: crate::rules::types::TriggerTiming::Before,
+                content: String::new(),
             },
         ];
         for e in &events {

@@ -47,7 +47,7 @@ use super::child_results::{ChildResultRx, PendingChildPrompts, drain_ready_child
 use super::dispatch::handle_agent_event;
 use super::edit::apply_edit_action;
 use super::render::{
-    redraw_all, redraw_panel, render_input, sync_input_area, with_scroll_region_cursor,
+    redraw_all, redraw_panel, render_input, sync_input_area, with_scroll_region_cursor_async,
     write_user_message,
 };
 use super::session_replay::replay_visible_session_history;
@@ -63,7 +63,7 @@ use super::turn::{run_pending_child_prompts, run_ready_root_inbound, run_turn_an
 pub struct TuiInputs {
     /// Concrete provider built by `norn-cli::print::build_provider`.
     pub provider: Arc<dyn Provider>,
-    /// Tool executor (the gated `ToolRegistry` from `RuntimeBundle`).
+    /// Tool executor (the gated `ToolRegistry` from the agent's `AgentParts`).
     pub executor: Arc<dyn ToolExecutor>,
     /// Session event store.
     pub store: Arc<EventStore>,
@@ -503,9 +503,10 @@ async fn handle_action(
             // fall through to the normal run_turn pipeline. Some =
             // handled here; skip run_turn. Exit short-circuits the
             // outer loop directly.
-            let slash = with_scroll_region_cursor(guard, |guard| {
-                try_dispatch_slash(&text, state, runtime, guard)
-            })?;
+            let slash = with_scroll_region_cursor_async(guard, async |guard| {
+                try_dispatch_slash(&text, state, runtime, guard).await
+            })
+            .await?;
             match slash {
                 Some(SlashOutcome::Exit) => return Ok(InputOutcome::Exit),
                 Some(SlashOutcome::Continue) => {}

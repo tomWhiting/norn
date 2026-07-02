@@ -10,11 +10,14 @@
 //! `.norn/fetched/` resolved against the session's working directory
 //! (through the tool context), never the process CWD.
 //!
-//! Every request passes the [`super::ssrf`] guard: private/internal
+//! Every request passes the `super::ssrf` guard: private/internal
 //! destinations (loopback, link-local/metadata, RFC 1918, IPv6 ULA) are
-//! denied by default for literal and resolved hosts. Redirects are
-//! followed *manually* so the guard re-validates every hop; the opt-out
-//! is [`WebFetchTool::allow_private_hosts`].
+//! denied by default for literal and resolved hosts, and hostname
+//! destinations are **pinned** — the connection is restricted to the
+//! exact addresses the guard validated, closing the DNS-rebinding
+//! window between validation and connect. Redirects are followed
+//! *manually* so the guard re-validates (and re-pins) every hop; the
+//! opt-out is [`WebFetchTool::allow_private_hosts`].
 //!
 //! `effect()` is [`ToolEffect::Network`] so the scheduler may run fetches
 //! concurrently with other read-only / network tools.
@@ -32,7 +35,7 @@ use crate::error::ToolError;
 use crate::internal::extraction::{self, DetailLevel, SharedProvider};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
-use crate::tool::failure::ToolErrorKind;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
@@ -72,49 +75,48 @@ struct WebFetchArgs {
 }
 
 /// `WebFetch` tool: bounded streaming HTTP GET with HTML-to-markdown.
+///
+/// The tool owns its HTTP client construction: the redirect policy MUST
+/// be `none` (redirects are followed manually so the SSRF guard
+/// re-validates every hop), and a built `reqwest::Client` cannot be
+/// inspected to verify that — so no pre-built client is accepted.
 pub struct WebFetchTool {
+    /// Client used for unpinned (literal-IP / opt-out) requests.
     client: reqwest::Client,
     /// SSRF-guard opt-out; see [`Self::allow_private_hosts`].
     allow_private_hosts: bool,
 }
 
+/// Builds the tool's HTTP client: fixed user agent, redirects disabled
+/// (followed manually for per-hop SSRF validation), and — when `pin` is
+/// supplied — DNS resolution for that hostname overridden to the exact
+/// addresses the SSRF guard validated, so the checked address is the
+/// connected address.
+fn build_http_client(
+    pin: Option<(&str, &[std::net::SocketAddr])>,
+) -> Result<reqwest::Client, ToolError> {
+    let mut builder = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
+        .redirect(reqwest::redirect::Policy::none());
+    if let Some((domain, addrs)) = pin {
+        builder = builder.resolve_to_addrs(domain, addrs);
+    }
+    builder.build().map_err(|e| ToolError::ExecutionFailed {
+        reason: format!("failed to build HTTP client: {e}"),
+    })
+}
+
 impl WebFetchTool {
-    /// Creates a `WebFetchTool` with a fresh `reqwest::Client`.
-    ///
-    /// Automatic redirect following is disabled on the client: the tool
-    /// follows redirects manually so the SSRF guard re-validates the
-    /// host of every hop.
+    /// Creates a `WebFetchTool`.
     ///
     /// # Errors
     ///
     /// Returns an error if the underlying HTTP client cannot be built.
     pub fn new() -> Result<Self, ToolError> {
-        let client = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .redirect(reqwest::redirect::Policy::none())
-            .build()
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("failed to build HTTP client: {e}"),
-            })?;
         Ok(Self {
-            client,
+            client: build_http_client(None)?,
             allow_private_hosts: false,
         })
-    }
-
-    /// Constructs a `WebFetchTool` from a pre-built `reqwest::Client`.
-    ///
-    /// The client should be built with
-    /// `reqwest::redirect::Policy::none()`: the tool follows redirects
-    /// manually so the SSRF guard can re-validate every hop. A client
-    /// that follows redirects internally bypasses that per-hop
-    /// validation (only the initial URL is checked).
-    #[must_use]
-    pub fn with_client(client: reqwest::Client) -> Self {
-        Self {
-            client,
-            allow_private_hosts: false,
-        }
     }
 
     /// Explicit opt-out from the SSRF guard's default-deny of
@@ -129,17 +131,25 @@ impl WebFetchTool {
 
     /// Performs the GET for `url`, following up to [`MAX_REDIRECT_HOPS`]
     /// redirects manually. Every hop — including the initial URL — is
-    /// validated by the SSRF guard and restricted to http(s).
+    /// validated by the SSRF guard, restricted to http(s), and (for
+    /// hostname destinations) connected through a client pinned to the
+    /// validated addresses.
     async fn fetch_following_redirects(
         &self,
         mut current: url::Url,
         timeout: Duration,
     ) -> Result<reqwest::Response, ToolError> {
         for _hop in 0..=MAX_REDIRECT_HOPS {
-            super::ssrf::check_url_host(&current, self.allow_private_hosts).await?;
+            let validation =
+                super::ssrf::validate_url_host(&current, self.allow_private_hosts).await?;
+            let client = match &validation {
+                super::ssrf::HostValidation::Unpinned => self.client.clone(),
+                super::ssrf::HostValidation::Pinned { domain, addrs } => {
+                    build_http_client(Some((domain.as_str(), addrs.as_slice())))?
+                }
+            };
 
-            let response = self
-                .client
+            let response = client
                 .get(current.clone())
                 .header(reqwest::header::USER_AGENT, USER_AGENT)
                 .timeout(timeout)
@@ -310,26 +320,15 @@ impl Tool for WebFetchTool {
 
         let provider = ctx.require_extension::<SharedProvider>()?;
 
-        let numbered = prepend_line_numbers(&converted);
-        let answers = extraction::extract(
-            provider.0.as_ref(),
-            &numbered,
-            &questions,
-            extraction_detail,
-        )
-        .await?;
-
         let line_count = converted.lines().count();
-
-        let mut content = json!({
+        let mut page_fields = json!({
             "url": args.url,
             "content_type": content_type,
             "line_count": line_count,
             "truncated": truncated,
-            "answers": answers,
             "saved_to": saved_path.to_string_lossy(),
         });
-        if truncated && let Some(map) = content.as_object_mut() {
+        if truncated && let Some(map) = page_fields.as_object_mut() {
             map.insert(
                 "truncation_note".to_owned(),
                 Value::String(format!(
@@ -340,7 +339,39 @@ impl Tool for WebFetchTool {
             );
         }
 
-        Ok(ToolOutput::success(content))
+        let numbered = prepend_line_numbers(&converted);
+        let answers = match extraction::extract(
+            provider.0.as_ref(),
+            &numbered,
+            &questions,
+            extraction_detail,
+        )
+        .await
+        {
+            Ok(answers) => answers,
+            // The page was fetched and archived successfully; an
+            // extraction failure must not discard that work. The model
+            // gets the archive location alongside the typed error so it
+            // can read the saved page or retry the questions.
+            Err(e) => {
+                return Ok(ToolOutput::failure_with_content(
+                    page_fields,
+                    ToolErrorPayload::new(
+                        ToolErrorKind::ExecutionFailed,
+                        format!("page fetched and archived, but answer extraction failed: {e}"),
+                    )
+                    .with_detail(json!({
+                        "saved_to": saved_path.to_string_lossy(),
+                        "url": args.url,
+                    })),
+                ));
+            }
+        };
+
+        if let Some(map) = page_fields.as_object_mut() {
+            map.insert("answers".to_owned(), answers);
+        }
+        Ok(ToolOutput::success(page_fields))
     }
 }
 
@@ -429,27 +460,43 @@ fn html_conversion_options(
 }
 
 fn html_to_text(html: &str) -> String {
-    html_to_markdown_rs::convert(
-        html,
-        Some(html_conversion_options(
-            html_to_markdown_rs::OutputFormat::Plain,
-        )),
-    )
-    .ok()
-    .and_then(|result| result.content)
-    .unwrap_or_else(|| html.to_owned())
+    convert_html(html, html_to_markdown_rs::OutputFormat::Plain, "text")
 }
 
 fn html_to_markdown(html: &str) -> String {
-    html_to_markdown_rs::convert(
+    convert_html(
         html,
-        Some(html_conversion_options(
-            html_to_markdown_rs::OutputFormat::Markdown,
-        )),
+        html_to_markdown_rs::OutputFormat::Markdown,
+        "markdown",
     )
-    .ok()
-    .and_then(|result| result.content)
-    .unwrap_or_else(|| html.to_owned())
+}
+
+/// Convert HTML via the parser-backed converter. When conversion fails
+/// (or produces no content) the raw HTML is returned so the page is
+/// never lost — but the fallback is logged, never silent: raw HTML in a
+/// `markdown`/`text` result is a degraded outcome the operator must be
+/// able to trace.
+fn convert_html(html: &str, format: html_to_markdown_rs::OutputFormat, label: &str) -> String {
+    match html_to_markdown_rs::convert(html, Some(html_conversion_options(format))) {
+        Ok(result) => {
+            let Some(content) = result.content else {
+                tracing::warn!(
+                    target_format = label,
+                    "HTML conversion produced no content; returning raw HTML",
+                );
+                return html.to_owned();
+            };
+            content
+        }
+        Err(error) => {
+            tracing::warn!(
+                target_format = label,
+                error = ?error,
+                "HTML conversion failed; returning raw HTML",
+            );
+            html.to_owned()
+        }
+    }
 }
 
 /// Archive the converted page under `.norn/fetched/` resolved against the
@@ -466,11 +513,12 @@ async fn save_fetched_content(
         .map_err(|e| ToolError::ExecutionFailed {
             reason: format!("failed to create {}: {e}", dir.display()),
         })?;
+    // SHA-256 of the URL: stable across processes and Rust releases, so
+    // re-fetching a page always lands on the same archive file
+    // (`DefaultHasher` guarantees neither).
     let hash = {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        url.hash(&mut h);
-        format!("{:016x}", h.finish())
+        use sha2::{Digest as _, Sha256};
+        format!("{:x}", Sha256::digest(url.as_bytes()))
     };
     let filename = format!("{hash}.md");
     let path = dir.join(&filename);
@@ -806,6 +854,118 @@ mod tests {
             .as_str()
             .expect("truncation note present for a truncated body");
         assert!(note.contains("truncated"), "{note}");
+    }
+
+    /// Archive filenames must be the SHA-256 of the URL: stable across
+    /// processes and Rust releases (`DefaultHasher` is neither), so the
+    /// same page always maps to the same archive file.
+    #[tokio::test]
+    async fn archive_filename_is_stable_sha256_of_url() {
+        use sha2::{Digest as _, Sha256};
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ctx = ToolContext::with_working_dir(SharedWorkingDir::new(dir.path().to_path_buf()));
+        let url = "https://example.com/some/page?q=1";
+
+        let first = save_fetched_content(&ctx, url, "converted body")
+            .await
+            .expect("save succeeds");
+        let second = save_fetched_content(&ctx, url, "converted body again")
+            .await
+            .expect("save succeeds");
+        assert_eq!(first, second, "same URL must map to the same archive file");
+
+        let expected = format!("{:x}.md", Sha256::digest(url.as_bytes()));
+        assert_eq!(
+            first.file_name().and_then(|n| n.to_str()),
+            Some(expected.as_str()),
+        );
+    }
+
+    /// Extraction failure must not discard the archived page: the result
+    /// is a typed failure that still carries `saved_to` (and the archive
+    /// file exists) so the model can read the page or retry.
+    #[tokio::test]
+    async fn extraction_failure_preserves_archived_page() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/page"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/html")
+                    .set_body_string("<h1>Title</h1><p>Body.</p>"),
+            )
+            .mount(&server)
+            .await;
+
+        let dir = tempfile::tempdir().expect("tempdir");
+        // Provider whose response is not the JSON array the extraction
+        // agent requires — extract() fails after the page was archived.
+        let ctx = ToolContext::with_working_dir(SharedWorkingDir::new(dir.path().to_path_buf()));
+        let provider: Arc<dyn crate::provider::traits::Provider> =
+            Arc::new(MockProvider::new(vec![vec![
+                crate::provider::events::ProviderEvent::TextDelta {
+                    text: "this is not json".to_owned(),
+                },
+                crate::provider::events::ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    usage: Usage::default(),
+                    response_id: None,
+                },
+            ]]));
+        ctx.insert_extension(Arc::new(SharedProvider(provider)));
+
+        let tool = WebFetchTool::new()
+            .expect("client builds")
+            .allow_private_hosts(true);
+        let out = tool
+            .execute(
+                &envelope(json!({ "url": format!("{}/page", server.uri()) })),
+                &ctx,
+            )
+            .await
+            .expect("fetch itself succeeds");
+
+        assert!(out.is_error(), "extraction failure is a tool failure");
+        let saved = out.content["saved_to"]
+            .as_str()
+            .expect("saved_to survives extraction failure");
+        assert!(Path::new(saved).exists(), "archived page exists at {saved}");
+        let error_message = out.content["error"]["message"].as_str().unwrap_or_default();
+        assert!(
+            error_message.contains("archived"),
+            "error must tell the model the page was preserved: {error_message}",
+        );
+    }
+
+    /// DNS-pinning wiring: a client pinned to validated addresses
+    /// connects to exactly those addresses regardless of what the name
+    /// would resolve to (here, a name that does not resolve at all).
+    #[tokio::test]
+    async fn pinned_client_connects_to_validated_addrs() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/pinned"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("pinned ok"))
+            .mount(&server)
+            .await;
+        let addr: std::net::SocketAddr = server.address().to_owned();
+
+        let client = build_http_client(Some(("pinned-host.invalid", &[addr])))
+            .expect("pinned client builds");
+        let response = client
+            .get(format!("http://pinned-host.invalid:{}/pinned", addr.port()))
+            .send()
+            .await
+            .expect("pinned request must bypass DNS and hit the validated addr");
+        assert_eq!(response.status(), 200);
+        assert_eq!(response.text().await.expect("body"), "pinned ok");
     }
 
     // --- SSRF guard ---------------------------------------------------------

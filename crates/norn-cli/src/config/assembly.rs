@@ -67,8 +67,9 @@ pub fn parse_duration(input: &str) -> Result<Duration, BuildError> {
 ///
 /// Each field corresponds to a row in DESIGN.md NC20 and stays `Option`
 /// so callers can fold only the values the user actually set. The struct
-/// is consumed by [`crate::runtime::build_runtime`] (R8) and split across
-/// `AgentLoopConfig`, [`ProviderConfigOverrides`], and `RetryPolicy`.
+/// is consumed by the CLI resolution pipeline (`resolve_invocation` +
+/// `builder_from_cli`) and split across `AgentLoopConfig`,
+/// [`ProviderConfigOverrides`], and `RetryPolicy`.
 #[derive(Debug, Default, Clone)]
 pub struct ConfigOverrides {
     // -- AgentLoopConfig fields ------------------------------------------

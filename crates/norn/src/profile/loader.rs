@@ -6,8 +6,8 @@
 //!
 //! Self-contained: this module does NOT import any parsing helpers from
 //! `claude-runner` (per brief Boundary). The shape of
-//! [`crate::util::frontmatter::split_frontmatter`], [`ToolsValue`], and
-//! [`split_comma_paren_aware`] is modelled after the reference
+//! [`crate::util::frontmatter::split_frontmatter`], `ToolsValue`, and
+//! `split_comma_paren_aware` is modelled after the reference
 //! implementation in `claude-runner/src/capabilities/parser.rs` but
 //! written fresh against Norn's [`Profile`] / [`Capability`] types and
 //! the project-wide [`ConfigError`] error type.
@@ -152,35 +152,100 @@ impl Scanner {
 ///
 /// 1. `{cwd}/.norn/profiles/` — workspace-level Norn profiles (highest).
 /// 2. `{cwd}/.meridian/profiles/` — Meridian-integrated workspaces.
-/// 3. `{home}/.norn/profiles/` — user-level fallback.
+/// 3. `{NORN_HOME|~/.norn}/profiles/` — user-level fallback, resolved via
+///    [`crate::config::paths::profiles_dir`] so the `NORN_HOME` override
+///    is honoured exactly like every other `~/.norn/` path.
 ///
-/// The user-level entry is omitted entirely when [`dirs::home_dir`]
-/// cannot resolve a home directory. Existence-filtering is
-/// [`Scanner`]'s responsibility — this function only produces the ordered
-/// candidate list.
+/// The user-level entry is omitted entirely when neither `NORN_HOME` nor
+/// the home directory resolves. Existence-filtering is [`Scanner`]'s
+/// responsibility — this function only produces the ordered candidate
+/// list.
 #[must_use]
 pub fn default_scan_dirs(cwd: &Path) -> Vec<PathBuf> {
     let mut dirs = vec![
         cwd.join(".norn").join("profiles"),
         cwd.join(".meridian").join("profiles"),
     ];
-    if let Some(home) = dirs::home_dir() {
-        dirs.push(home.join(".norn").join("profiles"));
+    if let Some(user) = crate::config::paths::profiles_dir() {
+        dirs.push(user);
     }
     dirs
 }
 
-/// Loads a profile by bare name from the given scan directories.
+/// Derive the capability search directories from a profile scan-dir list.
+///
+/// Capabilities live in a `capabilities/` directory that is a sibling of
+/// each `profiles/` directory (`{prefix}/profiles/` ↔
+/// `{prefix}/capabilities/`), matching both the norn-agents `DESIGN.md`
+/// layout (`~/.norn/capabilities/`) and the claude-runner reference
+/// scanner. Scan dirs without a parent directory are skipped — they
+/// cannot have a sibling.
+#[must_use]
+pub fn capability_scan_dirs(profile_scan_dirs: &[PathBuf]) -> Vec<PathBuf> {
+    profile_scan_dirs
+        .iter()
+        .filter_map(|dir| dir.parent().map(|parent| parent.join("capabilities")))
+        .collect()
+}
+
+/// Resolve a capability by bare name across the capability scan dirs.
+///
+/// Capabilities are markdown-only (`{dir}/{name}.md` — the NA-001 format);
+/// the first directory with a match wins, mirroring profile shadowing.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::InvalidConfig`] enumerating every searched
+/// directory when no match is found (a capability reference is a
+/// restriction surface — it must never be silently dropped), and
+/// propagates parse errors from [`parse_capability`].
+pub fn resolve_capability(name: &str, scan_dirs: &[PathBuf]) -> Result<Capability, ConfigError> {
+    if !is_safe_name(name) {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!("capability name '{name}' is not a safe file stem"),
+        });
+    }
+    for dir in scan_dirs {
+        let candidate = dir.join(format!("{name}.md"));
+        if candidate.is_file() {
+            let contents =
+                std::fs::read_to_string(&candidate).map_err(|e| ConfigError::InvalidConfig {
+                    reason: format!("failed to read capability at {}: {e}", candidate.display()),
+                })?;
+            return parse_capability(&contents, &candidate);
+        }
+    }
+    let searched = scan_dirs
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect::<Vec<_>>()
+        .join(", ");
+    Err(ConfigError::InvalidConfig {
+        reason: format!("capability '{name}' not found; searched: {searched}"),
+    })
+}
+
+/// Loads a profile by bare name from the given scan directories,
+/// resolving any `capabilities:` frontmatter references.
 ///
 /// Walks `scan_dirs` via [`Scanner::resolve`] and dispatches the resolved
 /// path through [`Profile::from_file`] (which itself dispatches on
-/// extension: `.md` → frontmatter, `.toml` → toml, `.json` → JSON).
+/// extension: `.md` → frontmatter, `.toml` → toml, `.json` → JSON). Each
+/// name in [`Profile::capability_names`] is then resolved against the
+/// sibling `capabilities/` directories (see [`capability_scan_dirs`]) and
+/// appended to [`Profile::capabilities`], so capability-declared tools,
+/// instructions, and `disallowedTools` all flow through the standard
+/// `resolved_*` merge (norn-agents C10).
 ///
 /// # Errors
 ///
 /// Returns [`ConfigError::InvalidConfig`] with a `reason` that enumerates
-/// every searched directory when no match is found; propagates any parse
-/// error from [`Profile::from_file`] otherwise.
+/// every searched directory when the profile — or any referenced
+/// capability — is not found; propagates any parse error from
+/// [`Profile::from_file`] or [`parse_capability`] otherwise. An
+/// unresolvable capability is an error rather than a warning because
+/// capabilities carry `disallowedTools` restrictions that must never be
+/// silently dropped.
 pub fn resolve_profile(name: &str, scan_dirs: &[PathBuf]) -> Result<Profile, ConfigError> {
     let scanner = Scanner::new(scan_dirs.to_vec());
     let Some(path) = scanner.resolve(name) else {
@@ -193,7 +258,40 @@ pub fn resolve_profile(name: &str, scan_dirs: &[PathBuf]) -> Result<Profile, Con
             reason: format!("profile '{name}' not found; searched: {searched}"),
         });
     };
-    Profile::from_file(path)
+    let mut profile = Profile::from_file(path)?;
+    resolve_profile_capabilities(&mut profile, scan_dirs)?;
+    Ok(profile)
+}
+
+/// Resolve every pending [`Profile::capability_names`] entry into a
+/// [`Capability`] appended to [`Profile::capabilities`].
+///
+/// Names are searched in the sibling `capabilities/` directories of
+/// `profile_scan_dirs`. Duplicate references to a capability already
+/// resolved (by name) are skipped so a profile listing the same
+/// capability twice does not double its contribution.
+///
+/// # Errors
+///
+/// Propagates [`resolve_capability`] errors — an unresolvable name is a
+/// typed error, never a dropped restriction.
+pub fn resolve_profile_capabilities(
+    profile: &mut Profile,
+    profile_scan_dirs: &[PathBuf],
+) -> Result<(), ConfigError> {
+    if profile.capability_names.is_empty() {
+        return Ok(());
+    }
+    let capability_dirs = capability_scan_dirs(profile_scan_dirs);
+    let names = std::mem::take(&mut profile.capability_names);
+    for name in names {
+        if profile.capabilities.iter().any(|c| c.name == name) {
+            continue;
+        }
+        let capability = resolve_capability(&name, &capability_dirs)?;
+        profile.capabilities.push(capability);
+    }
+    Ok(())
 }
 
 /// The `tools` and `disallowedTools` frontmatter fields can be either a
@@ -296,20 +394,21 @@ struct RawCapabilityFrontmatter {
 ///
 /// `path` is used only for error messages. The markdown body (trimmed)
 /// becomes the first entry in [`Profile::system_instructions`]. The raw
-/// `description` and `capabilities` (names) fields are accepted but not
-/// projected onto [`Profile`] — `description` because norn has no such
-/// field, and `capabilities: [name1, name2]` because resolving names into
-/// the [`Capability`] structs is the scanner's job (NA-002). The
-/// `disallowedTools` field is preserved by appending a synthetic
-/// [`Capability`] named `_profile_disallowed` to
+/// `description` field is accepted but not projected onto [`Profile`] —
+/// norn has no description field. `capabilities: [name1, name2]` is
+/// preserved on [`Profile::capability_names`] for
+/// [`resolve_profile_capabilities`] to resolve against the capability
+/// scan dirs. The `disallowedTools` field is preserved by appending a
+/// synthetic [`Capability`] named `_profile_disallowed` to
 /// [`Profile::capabilities`], so capability resolution still applies the
 /// patterns downstream.
 ///
 /// # Errors
 ///
 /// Returns [`ConfigError::InvalidConfig`] for malformed frontmatter or
-/// invalid YAML; returns [`ConfigError::MissingField`] when `name` is
-/// missing or empty.
+/// invalid YAML; returns [`ConfigError::MissingField`] when `name` or
+/// `model` is missing or empty — matching the TOML/JSON forms, where
+/// serde rejects a missing `model` at deserialisation.
 pub fn parse_profile(content: &str, path: &Path) -> Result<Profile, ConfigError> {
     let (yaml, body) = crate::util::frontmatter::split_frontmatter(content).map_err(|e| {
         ConfigError::InvalidConfig {
@@ -329,7 +428,13 @@ pub fn parse_profile(content: &str, path: &Path) -> Result<Profile, ConfigError>
             field: "name".to_owned(),
         })?;
 
-    let model = raw.model.map(|s| s.trim().to_owned()).unwrap_or_default();
+    let model = raw
+        .model
+        .map(|s| s.trim().to_owned())
+        .filter(|s| !s.is_empty())
+        .ok_or_else(|| ConfigError::MissingField {
+            field: "model".to_owned(),
+        })?;
 
     let tools = raw.tools.map(ToolsValue::into_vec);
 
@@ -355,10 +460,11 @@ pub fn parse_profile(content: &str, path: &Path) -> Result<Profile, ConfigError>
         }
     }
 
-    // Accepted for forward compatibility with NA-002's scanner; not
-    // projected onto Profile in NA-001 — Profile.capabilities is
-    // `Vec<Capability>` not `Vec<String>`.
-    let _ = raw.capabilities;
+    let capability_names = raw
+        .capabilities
+        .map(ToolsValue::into_vec)
+        .unwrap_or_default();
+
     let _ = raw.description;
 
     Ok(Profile {
@@ -370,6 +476,7 @@ pub fn parse_profile(content: &str, path: &Path) -> Result<Profile, ConfigError>
         tools,
         system_instructions,
         capabilities,
+        capability_names,
         settings: std::collections::HashMap::new(),
         prompt_commands: Vec::new(),
     })
@@ -437,7 +544,8 @@ pub fn parse_capability(content: &str, path: &Path) -> Result<Capability, Config
     clippy::panic,
     clippy::missing_const_for_fn,
     clippy::uninlined_format_args,
-    clippy::needless_raw_string_hashes
+    clippy::needless_raw_string_hashes,
+    unsafe_code
 )]
 mod tests {
     use std::path::PathBuf;
@@ -520,6 +628,11 @@ Multiple lines of system prompt.
             synthetic.disallowed_patterns,
             vec!["rm".to_owned(), "shutdown".to_owned()]
         );
+        assert_eq!(
+            profile.capability_names,
+            vec!["research".to_owned(), "code-intelligence".to_owned()],
+            "capability references must be preserved for resolution, not dropped",
+        );
     }
 
     #[test]
@@ -533,8 +646,29 @@ Multiple lines of system prompt.
         assert!(profile.tools.is_none());
         assert!(profile.system_instructions.is_empty());
         assert!(profile.capabilities.is_empty());
+        assert!(profile.capability_names.is_empty());
         assert!(profile.prompt_commands.is_empty());
         assert!(profile.settings.is_empty());
+    }
+
+    /// `.md` profiles must reject a missing or blank `model` exactly like
+    /// the TOML/JSON forms (where serde enforces the field) — an empty
+    /// model previously slipped through as `""` and failed much later at
+    /// provider binding.
+    #[test]
+    fn parse_profile_missing_model_errors() {
+        for content in [
+            "---\nname: nomodel\n---\nbody\n",
+            "---\nname: nomodel\nmodel: \"   \"\n---\nbody\n",
+        ] {
+            let err = parse_profile(content, &p("nomodel.md")).unwrap_err();
+            match err {
+                ConfigError::MissingField { field } => assert_eq!(field, "model"),
+                ConfigError::InvalidConfig { .. } => {
+                    panic!("expected MissingField, got InvalidConfig")
+                }
+            }
+        }
     }
 
     /// Covers both "no name field" and "blank name field" cases — both
@@ -765,17 +899,157 @@ Focus on correctness over aesthetics.
 
     // ── default_scan_dirs ──────────────────────────────────────────────
 
+    /// Guard that swaps `NORN_HOME` for the duration of a test and
+    /// restores the prior value on drop. Paired with
+    /// `#[serial_test::serial]` on every consumer.
+    struct NornHomeGuard {
+        prior: Option<std::ffi::OsString>,
+    }
+
+    impl NornHomeGuard {
+        fn set(path: &Path) -> Self {
+            let prior = std::env::var_os("NORN_HOME");
+            // SAFETY: paired with `#[serial_test::serial]`; no concurrent
+            // reader observes the mutated env.
+            unsafe { std::env::set_var("NORN_HOME", path) }
+            Self { prior }
+        }
+    }
+
+    impl Drop for NornHomeGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(val) => unsafe { std::env::set_var("NORN_HOME", val) },
+                None => unsafe { std::env::remove_var("NORN_HOME") },
+            }
+        }
+    }
+
+    /// The user tier must honour `NORN_HOME` exactly like every other
+    /// `~/.norn/` path — it previously hardcoded `dirs::home_dir()`.
     #[test]
-    fn default_scan_dirs_orders_workspace_meridian_then_home() {
+    #[serial_test::serial]
+    fn default_scan_dirs_orders_workspace_meridian_then_norn_home() {
+        let norn_home = tempfile::tempdir().unwrap();
+        let _guard = NornHomeGuard::set(norn_home.path());
         let cwd = PathBuf::from("/tmp/some/project");
         let dirs = default_scan_dirs(&cwd);
-        // Must always include at least the two workspace entries; home is
-        // best-effort and may be absent on extreme test environments.
-        assert!(dirs.len() >= 2);
+        assert_eq!(dirs.len(), 3);
         assert_eq!(dirs[0], cwd.join(".norn").join("profiles"));
         assert_eq!(dirs[1], cwd.join(".meridian").join("profiles"));
-        if let Some(home) = dirs::home_dir() {
-            assert_eq!(dirs[2], home.join(".norn").join("profiles"));
+        assert_eq!(dirs[2], norn_home.path().join("profiles"));
+    }
+
+    // ── capability resolution ──────────────────────────────────────────
+
+    #[test]
+    fn capability_scan_dirs_are_siblings_of_profile_dirs() {
+        let dirs = capability_scan_dirs(&[
+            PathBuf::from("/w/.norn/profiles"),
+            PathBuf::from("/w/.meridian/profiles"),
+        ]);
+        assert_eq!(
+            dirs,
+            vec![
+                PathBuf::from("/w/.norn/capabilities"),
+                PathBuf::from("/w/.meridian/capabilities"),
+            ]
+        );
+    }
+
+    /// A profile's `capabilities:` frontmatter references resolve from the
+    /// sibling `capabilities/` directory — including `disallowedTools`,
+    /// which previously vanished with the entire capability list.
+    #[test]
+    fn resolve_profile_resolves_capability_references() {
+        let workspace = tempfile::tempdir().unwrap();
+        let profiles = workspace.path().join(".norn").join("profiles");
+        let capabilities = workspace.path().join(".norn").join("capabilities");
+        std::fs::create_dir_all(&profiles).unwrap();
+        std::fs::create_dir_all(&capabilities).unwrap();
+
+        std::fs::write(
+            profiles.join("dev.md"),
+            "---\nname: dev\nmodel: gpt-5\ncapabilities:\n  - reviewer\n---\nBe a dev.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            capabilities.join("reviewer.md"),
+            "---\nname: reviewer\ntools: Read, Grep\ndisallowedTools: bash(rm *)\n---\nReview closely.\n",
+        )
+        .unwrap();
+
+        let profile = resolve_profile("dev", &[profiles]).unwrap();
+        assert!(profile.capability_names.is_empty(), "names consumed");
+        let reviewer = profile
+            .capabilities
+            .iter()
+            .find(|c| c.name == "reviewer")
+            .expect("referenced capability resolved");
+        assert_eq!(reviewer.tools, vec!["Read".to_owned(), "Grep".to_owned()]);
+        assert_eq!(reviewer.disallowed_patterns, vec!["bash(rm *)".to_owned()]);
+        assert_eq!(
+            reviewer.system_instructions,
+            vec!["Review closely.".to_owned()]
+        );
+        // The merged views observe the capability's contribution (C10).
+        let disallowed = profile.resolved_disallowed();
+        assert!(disallowed.contains(&"bash(rm *)".to_owned()));
+    }
+
+    /// An unresolvable capability reference is a typed error naming the
+    /// searched directories — never a silently dropped restriction.
+    #[test]
+    fn resolve_profile_errors_on_missing_capability() {
+        let workspace = tempfile::tempdir().unwrap();
+        let profiles = workspace.path().join(".norn").join("profiles");
+        std::fs::create_dir_all(&profiles).unwrap();
+        std::fs::write(
+            profiles.join("dev.md"),
+            "---\nname: dev\nmodel: gpt-5\ncapabilities:\n  - ghost\n---\nBody.\n",
+        )
+        .unwrap();
+
+        let err = resolve_profile("dev", &[profiles]).unwrap_err();
+        match err {
+            ConfigError::InvalidConfig { reason } => {
+                assert!(reason.contains("ghost"), "reason: {reason}");
+                assert!(reason.contains("capabilities"), "reason: {reason}");
+            }
+            ConfigError::MissingField { .. } => panic!("expected InvalidConfig"),
+        }
+    }
+
+    /// First capability dir wins on name collision, mirroring profile
+    /// shadowing.
+    #[test]
+    fn resolve_capability_first_directory_wins() {
+        let a = tempfile::tempdir().unwrap();
+        let b = tempfile::tempdir().unwrap();
+        std::fs::write(
+            a.path().join("shared.md"),
+            "---\nname: shared\n---\nFrom A.\n",
+        )
+        .unwrap();
+        std::fs::write(
+            b.path().join("shared.md"),
+            "---\nname: shared\n---\nFrom B.\n",
+        )
+        .unwrap();
+        let cap = resolve_capability("shared", &[a.path().to_path_buf(), b.path().to_path_buf()])
+            .unwrap();
+        assert_eq!(cap.system_instructions, vec!["From A.".to_owned()]);
+    }
+
+    #[test]
+    fn resolve_capability_rejects_unsafe_names() {
+        let dir = tempfile::tempdir().unwrap();
+        let err = resolve_capability("../etc/passwd", &[dir.path().to_path_buf()]).unwrap_err();
+        match err {
+            ConfigError::InvalidConfig { reason } => {
+                assert!(reason.contains("safe"), "reason: {reason}");
+            }
+            ConfigError::MissingField { .. } => panic!("expected InvalidConfig"),
         }
     }
 

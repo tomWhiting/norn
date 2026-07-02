@@ -23,6 +23,7 @@
 pub mod index;
 pub mod io;
 mod lock;
+pub mod replay;
 pub mod types;
 
 #[cfg(test)]
@@ -38,7 +39,8 @@ pub use io::{
     RESERVED_SESSION_ID_STEMS, append_events, is_reserved_session_id, read_session_events,
     session_file_path,
 };
+pub use replay::ReplayArtifacts;
 pub use types::{
-    SESSION_FORMAT_VERSION, SessionFileHeader, SessionFileRead, SessionIndexEntry,
-    SessionPersistError, SessionStatus,
+    SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,
+    SessionStatus,
 };

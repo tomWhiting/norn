@@ -2,13 +2,19 @@
 //!
 //! All mutating entry points ([`append_index_entry`],
 //! [`update_index_entry`], [`remove_index_entry`]) serialise across
-//! processes via the advisory lock in [`super::lock`] (H18), and
+//! processes via the advisory lock in `super::lock` (H18), and
 //! rewrites stay atomic (write-to-tmp + fsync + rename) for torn-write
 //! protection.
+//!
+//! Every lock-taking function accepts an optional acquisition deadline:
+//! `None` waits indefinitely (the OS lock primitive's own behaviour),
+//! `Some(d)` fails with [`SessionPersistError::IndexLockTimeout`] when
+//! the lock cannot be acquired within `d`, leaving the index untouched.
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 use crate::provider::usage::Usage;
 use crate::session::events::SessionEvent;
@@ -134,11 +140,16 @@ fn write_jsonl_atomic<T: Serialize>(
 /// Append `entry` to the session index in `O_APPEND` mode, holding the
 /// inter-process index lock so the append cannot interleave with a
 /// concurrent read-modify-rewrite from another process.
+///
+/// `lock_deadline` bounds the lock wait (`None` = wait indefinitely;
+/// exceeding a deadline returns
+/// [`SessionPersistError::IndexLockTimeout`] with nothing written).
 pub fn append_index_entry(
     data_dir: &Path,
     entry: &SessionIndexEntry,
+    lock_deadline: Option<Duration>,
 ) -> Result<(), SessionPersistError> {
-    let _lock = lock_index(data_dir)?;
+    let _lock = lock_index(data_dir, lock_deadline)?;
     append_entry_assuming_locked(data_dir, entry)
 }
 
@@ -152,11 +163,13 @@ pub fn append_index_entry(
 /// Returns `Ok(Some(existing))` with the already-indexed entry when the
 /// ID is taken (nothing is written), and `Ok(None)` when `entry` was
 /// appended.
+/// `lock_deadline` bounds the lock wait (`None` = wait indefinitely).
 pub fn insert_index_entry_if_absent(
     data_dir: &Path,
     entry: &SessionIndexEntry,
+    lock_deadline: Option<Duration>,
 ) -> Result<Option<SessionIndexEntry>, SessionPersistError> {
-    let _lock = lock_index(data_dir)?;
+    let _lock = lock_index(data_dir, lock_deadline)?;
     if let Some(existing) = read_index(data_dir)?.into_iter().find(|e| e.id == entry.id) {
         return Ok(Some(existing));
     }
@@ -177,11 +190,14 @@ pub fn insert_index_entry_if_absent(
 ///
 /// [`SessionPersistError::IdExists`] when the ID is taken (nothing is
 /// written), plus index I/O failures.
+///
+/// `lock_deadline` bounds the lock wait (`None` = wait indefinitely).
 pub fn insert_index_entry_for_new_session(
     data_dir: &Path,
     entry: &SessionIndexEntry,
+    lock_deadline: Option<Duration>,
 ) -> Result<(), SessionPersistError> {
-    let _lock = lock_index(data_dir)?;
+    let _lock = lock_index(data_dir, lock_deadline)?;
     if read_index(data_dir)?.iter().any(|e| e.id == entry.id)
         || super::io::session_file_path(data_dir, &entry.id).exists()
     {
@@ -226,12 +242,17 @@ fn append_entry_assuming_locked(
 /// inter-process index lock so concurrent creates and updates from other
 /// processes are never lost to a stale-snapshot rewrite (H18). Returns
 /// [`SessionPersistError::NotFound`] when no entry matches.
+///
+/// `lock_deadline` bounds the lock wait (`None` = wait indefinitely;
+/// exceeding a deadline returns
+/// [`SessionPersistError::IndexLockTimeout`] with the index untouched).
 pub fn update_index_entry(
     data_dir: &Path,
     session_id: &str,
+    lock_deadline: Option<Duration>,
     mutator: impl FnOnce(&mut SessionIndexEntry),
 ) -> Result<(), SessionPersistError> {
-    let _lock = lock_index(data_dir)?;
+    let _lock = lock_index(data_dir, lock_deadline)?;
     let mut entries = read_index(data_dir)?;
     let pos = entries
         .iter()
@@ -267,11 +288,15 @@ pub fn update_index_entry(
 /// zero, the call is a no-op that returns `Ok(())` without touching the
 /// index. The index entry MUST already exist; a missing entry returns
 /// [`SessionPersistError::NotFound`].
+///
+/// `lock_deadline` bounds the index-lock wait (`None` = wait
+/// indefinitely).
 pub fn update_session_index(
     data_dir: &Path,
     session_id: &str,
     new_event_count: u64,
     usage_delta: &Usage,
+    lock_deadline: Option<Duration>,
 ) -> Result<(), SessionPersistError> {
     if new_event_count == 0
         && usage_delta.input_tokens == 0
@@ -280,7 +305,7 @@ pub fn update_session_index(
     {
         return Ok(());
     }
-    update_index_entry(data_dir, session_id, |entry| {
+    update_index_entry(data_dir, session_id, lock_deadline, |entry| {
         entry.event_count = entry.event_count.saturating_add(new_event_count);
         entry.updated_at = Utc::now();
         entry.total_input_tokens = entry
@@ -442,8 +467,14 @@ fn resolve_in_entries(
 /// Remove the entry with `session_id` from the index, holding the
 /// inter-process index lock across the read-modify-rewrite. Returns
 /// [`SessionPersistError::NotFound`] when no entry matches.
-pub fn remove_index_entry(data_dir: &Path, session_id: &str) -> Result<(), SessionPersistError> {
-    let _lock = lock_index(data_dir)?;
+///
+/// `lock_deadline` bounds the lock wait (`None` = wait indefinitely).
+pub fn remove_index_entry(
+    data_dir: &Path,
+    session_id: &str,
+    lock_deadline: Option<Duration>,
+) -> Result<(), SessionPersistError> {
+    let _lock = lock_index(data_dir, lock_deadline)?;
     let mut entries = read_index(data_dir)?;
     let pos = entries
         .iter()

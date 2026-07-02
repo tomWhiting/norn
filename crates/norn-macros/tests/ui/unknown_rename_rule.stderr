@@ -1,0 +1,11 @@
+error: unknown rename rule `rename_all = "camel-Case"`, expected one of "lowercase", "UPPERCASE", "PascalCase", "camelCase", "snake_case", "SCREAMING_SNAKE_CASE", "kebab-case", "SCREAMING-KEBAB-CASE"
+ --> tests/ui/unknown_rename_rule.rs:7:22
+  |
+7 | #[serde(rename_all = "camel-Case")]
+  |                      ^^^^^^^^^^^^
+
+error: ToolArgs: unsupported rename_all rule `camel-Case` — expected one of lowercase, UPPERCASE, camelCase, snake_case, PascalCase, SCREAMING_SNAKE_CASE, kebab-case, SCREAMING-KEBAB-CASE
+ --> tests/ui/unknown_rename_rule.rs:7:22
+  |
+7 | #[serde(rename_all = "camel-Case")]
+  |                      ^^^^^^^^^^^^

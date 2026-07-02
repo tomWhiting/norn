@@ -15,7 +15,7 @@
 //!   back to [`CompositeTool::conservative_effect`] when they don't parse.
 //! * **Catalog entries** — one subcommand entry per command, with field
 //!   hints extracted from the schema
-//!   (see [`composite_commands`](super::catalog::composite_commands)).
+//!   (see [`composite_commands`]).
 //! * **Invalid-command handling** — arguments that don't deserialize into
 //!   the command enum produce a typed
 //!   [`ToolErrorKind::InvalidArguments`] failure naming the valid

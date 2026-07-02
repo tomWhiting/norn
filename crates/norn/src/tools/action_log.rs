@@ -1,7 +1,7 @@
 //! `action_log` — queryable memory of the agent's own tool calls.
 //!
 //! The tool is a thin read-only view over the session
-//! [`ActionLog`](crate::session::action_log::ActionLog), published on the
+//! [`ActionLog`], published on the
 //! shared [`ToolContext`] as an [`Arc<ActionLog>`] extension by the agent
 //! builder. It never holds the log itself, mirroring `tool_search`'s use of
 //! a context-published catalogue.

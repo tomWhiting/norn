@@ -116,7 +116,7 @@ impl GoalTracker {
     /// throughput, not pre-warmed context). Budget exhaustion is decided
     /// by exact integer comparison (`used >= budget`); the fractional
     /// percentage is only computed for the under-budget warning band, via
-    /// [`under_budget_fraction`].
+    /// `under_budget_fraction`.
     #[must_use]
     pub fn check(&self, usage: &Usage, elapsed: Duration) -> GoalSignal {
         let token_pct = self.goal.token_budget.map_or(0.0_f64, |budget| {

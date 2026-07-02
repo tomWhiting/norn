@@ -134,7 +134,7 @@ impl RateLimiter {
     /// arithmetic is performed anywhere it flows: the window is stored
     /// as a `(imposed_at, window)` pair and compared with saturating
     /// `Duration` arithmetic, making a panic impossible for any header
-    /// value (see [`Cooldown`]). Callers that need to bound the
+    /// value (see `Cooldown`). Callers that need to bound the
     /// accepted window apply their configured ceiling *before* calling
     /// this method.
     pub async fn impose_cooldown(&self, retry_after: Duration) {

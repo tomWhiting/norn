@@ -5,7 +5,7 @@
 //! The router is a directory of live inbound senders keyed by agent id,
 //! with a per-recipient monotonic sequence counter minted at enqueue.
 //! All messages travel the recipient's existing
-//! [`InboundChannel`](crate::r#loop::inbound::InboundChannel) and drain
+//! [`InboundChannel`](crate::agent_loop::inbound::InboundChannel) and drain
 //! at the recipient loop's step boundaries — the router adds no second
 //! queue and no sidecar storage. A message the router accepts is a
 //! message some loop will drain; everything else is a typed
@@ -31,14 +31,14 @@
 //!
 //! The router routes by **capability of the harness**: any harness code
 //! holding the router and a recipient id can deliver. *Permissioning* —
-//! who may message whom ([`MessagingScope`] on `ChildPolicy`) — is
+//! who may message whom ([`MessagingScope`](crate::agent::child_policy::MessagingScope) on `ChildPolicy`) — is
 //! enforced by the `signal_agent` tool against registry ground truth,
 //! not here. The router is mechanism; policy lives one layer up.
 //!
 //! ## Ordering guarantee
 //!
 //! Sequence numbers are minted and the message enqueued under the same
-//! lock (an [`InboundChannel`](crate::r#loop::inbound::InboundChannel)
+//! lock (an [`InboundChannel`](crate::agent_loop::inbound::InboundChannel)
 //! permit is reserved *before* minting), so the order of messages on a
 //! recipient's channel always matches their sequence numbers — even
 //! under concurrent senders and even when the async and sync delivery
@@ -66,7 +66,7 @@ pub enum RouteError {
         agent_id: Uuid,
     },
     /// The recipient's loop ended between route resolution and enqueue:
-    /// its [`InboundChannel`](crate::r#loop::inbound::InboundChannel)
+    /// its [`InboundChannel`](crate::agent_loop::inbound::InboundChannel)
     /// receiver was dropped. The stale route is removed.
     #[error("inbound channel closed for agent {agent_id}: its loop has ended")]
     ChannelClosed {

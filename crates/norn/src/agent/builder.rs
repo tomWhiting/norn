@@ -49,25 +49,29 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::agent::assembly::{
-    AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay, SystemPromptInstall,
+    AgentConfigPresence, AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay,
     ToolContextParts, apply_base_to_loop_context, assemble_tool_context, build_base_tool_registry,
     collect_tool_definitions, effective_agent_config, install_agent_infra,
-    install_runtime_base_extensions, install_system_prompt, install_tool_catalog,
-    populate_loop_context, resolve_base_profile, resolve_runtime_overlay, resolve_working_dir,
-    restore_session_state, validate_workspace_root,
+    install_runtime_base_extensions, install_tool_catalog, populate_loop_context,
+    resolve_base_profile, resolve_runtime_overlay, resolve_working_dir, restore_session_state,
+    validate_workspace_root,
 };
-use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
+use crate::agent::build_support::{resolve_coordination, resolve_root_agent_id};
+use crate::agent::child_policy::ChildPolicy;
 use crate::agent::handle::ResolvedAgentInfo;
 use crate::agent::instance::Agent;
 use crate::agent::output::RunOutcome;
+use crate::agent::prompt_install::{SystemPromptInstall, install_system_prompt};
 use crate::agent::registry::AgentRegistry;
 use crate::agent::session_spec::SessionRequest;
 use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
+use crate::agent_loop::event_schemas::EventSchemaSet;
 use crate::agent_loop::inbound::{InboundChannel, InboundSender};
 use crate::agent_loop::retry::RetryPolicy;
 use crate::error::{ConfigError, NornError, SessionError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
+use crate::integration::variables::{SessionVariable, VariableSource, VariableStore};
 use crate::profile::{Capability, Profile, from_profile};
 use crate::provider::request::{ReasoningEffort, ServiceTier};
 use crate::provider::traits::Provider;
@@ -108,6 +112,7 @@ pub struct AgentBuilder {
     pub(super) lsp_workspace: Option<Arc<LspWorkspace>>,
     pub(super) execution_mode: ExecutionMode,
     pub(super) agent_config: AgentLoopConfig,
+    pub(super) agent_config_present: AgentConfigPresence,
     pub(super) retry_policy: Option<RetryPolicy>,
     pub(super) session: Option<EventStore>,
     pub(super) session_request: Option<SessionRequest>,
@@ -128,6 +133,12 @@ pub struct AgentBuilder {
     pub(super) extensions: Vec<ExtensionInstaller>,
     pub(super) load_runtime_base: bool,
     pub(super) task_group_slug: Option<String>,
+    pub(super) event_schemas: Option<EventSchemaSet>,
+    pub(super) variables: Option<Arc<VariableStore>>,
+    pub(super) variable_pairs: Vec<(String, String)>,
+    pub(super) disallowed_tools: Vec<String>,
+    pub(super) terminal_reclamation: bool,
+    pub(super) register_root: Option<(String, String)>,
 }
 
 impl AgentBuilder {
@@ -154,6 +165,7 @@ impl AgentBuilder {
             lsp_workspace: None,
             execution_mode: ExecutionMode::Headless,
             agent_config: AgentLoopConfig::default(),
+            agent_config_present: AgentConfigPresence::default(),
             retry_policy: None,
             session: None,
             session_request: None,
@@ -174,6 +186,16 @@ impl AgentBuilder {
             extensions: Vec::new(),
             load_runtime_base: false,
             task_group_slug: None,
+            event_schemas: None,
+            variables: None,
+            variable_pairs: Vec::new(),
+            disallowed_tools: Vec::new(),
+            // D3: terminal reclamation defaults on, preserving today's
+            // unconditional install for every headless / embedded runtime;
+            // a status-panel driver (the TUI) opts out with
+            // `.terminal_reclamation(false)`.
+            terminal_reclamation: true,
+            register_root: None,
         }
     }
 
@@ -239,57 +261,12 @@ impl AgentBuilder {
             ));
         }
         // Coordination envelope: required exactly when the agent-coordination
-        // runtime is wired (`.agent_registry(..)` makes `spawn_agent` / `fork`
-        // functional and creates the child-result channel), and rejected when
-        // it could only be silently ignored. Norn never assumes a default
-        // child policy or channel capacity.
-        let coordination = match (
+        // runtime is wired, rejected when it could only be silently ignored.
+        let coordination = resolve_coordination(
             self.agent_registry.take(),
             self.child_policy.take(),
             self.child_result_capacity,
-        ) {
-            (Some(agent_registry), Some(child_policy), Some(child_result_capacity)) => Some((
-                agent_registry,
-                CoordinationEnvelope {
-                    child_policy,
-                    child_result_capacity,
-                },
-            )),
-            (Some(_), child_policy, child_result_capacity) => {
-                let mut missing = Vec::new();
-                if child_policy.is_none() {
-                    missing.push(".child_policy(ChildPolicy { .. })");
-                }
-                if child_result_capacity.is_none() {
-                    missing.push(".child_result_capacity(<n>)");
-                }
-                return Err(invalid(format!(
-                    "agent coordination is wired (.agent_registry(..)) but the \
-                     coordination envelope is incomplete — set {} on the builder; \
-                     Norn never assumes a default child policy or channel capacity \
-                     (recommended starting envelope: MessagingScope::SiblingsAndParent, \
-                     remaining_depth 1, max_concurrent_children 32, \
-                     inbound_capacity 32, child_result_capacity 256)",
-                    missing.join(" and "),
-                )));
-            }
-            (None, None, None) => None,
-            (None, child_policy, child_result_capacity) => {
-                let mut orphaned = Vec::new();
-                if child_policy.is_some() {
-                    orphaned.push("child_policy");
-                }
-                if child_result_capacity.is_some() {
-                    orphaned.push("child_result_capacity");
-                }
-                return Err(invalid(format!(
-                    "{} set but agent coordination is not wired — the value would \
-                     be silently ignored; add .agent_registry(..) or remove the \
-                     coordination envelope",
-                    orphaned.join(" and "),
-                )));
-            }
-        };
+        )?;
 
         let working_dir = resolve_working_dir(self.working_dir.take())?;
         let workspace_root = validate_workspace_root(self.workspace_root.take())?;
@@ -372,12 +349,25 @@ impl AgentBuilder {
         }
 
         let lsp_backend = self.lsp_backend.clone();
-        let registry = build_base_tool_registry(
+        let mut registry = build_base_tool_registry(
             lsp_backend.clone(),
             self.extra_tools,
             &self.without_tools,
             self.bash_drain_grace,
         );
+        // D5: register the skill tool on the `load_runtime_base` path when a
+        // non-empty skill catalog was discovered, matching the CLI's
+        // `!skill_catalog.is_empty()` gate. It is registered before
+        // `from_profile` gating so the allow-list/deny-list apply to it
+        // exactly as they do in the CLI. Library agents built without a
+        // runtime base carry no catalog, so they get no skill tool.
+        if let Some(base) = runtime_base.as_ref()
+            && !base.skill_catalog.is_empty()
+        {
+            registry.register(Box::new(crate::tools::skill::SkillTool::with_config(
+                crate::agent::assembly::skill_tool_config_from_settings(&base.settings),
+            )));
+        }
 
         let RuntimeOverlay {
             runtime_base,
@@ -402,6 +392,11 @@ impl AgentBuilder {
         // exactly the registry the loop dispatches.
         let hooks_for_ctx = hooks.clone();
         let (mut loop_context, mut registry) = from_profile(&profile, registry, rules, hooks);
+        loop_context.event_schemas = self.event_schemas.take();
+        // Deny-wins gating: applied after `from_profile`'s allow-list
+        // gating so a disallowed name stays unavailable even when the
+        // allow-list names it (mirrors `build_runtime`'s `set_disallowed`).
+        registry.set_disallowed(std::mem::take(&mut self.disallowed_tools));
 
         if registry.is_empty() {
             return Err(NornError::Config(ConfigError::InvalidConfig {
@@ -417,6 +412,16 @@ impl AgentBuilder {
             }));
         }
 
+        // Reconcile a caller-supplied variable store's session id with the
+        // resolved one. `open_session` pins the persisted id as
+        // authoritative; otherwise the supplied store's id becomes the
+        // resolved session id so `{{session_id}}`, the environment, and the
+        // store never silently diverge.
+        let variables_session_id = self.variables.as_ref().map(|v| v.session_id().to_owned());
+        let session_id_override = opened_session
+            .as_ref()
+            .map(|(entry, _)| entry.id.clone())
+            .or_else(|| variables_session_id.clone());
         let session_id = populate_loop_context(
             &mut loop_context,
             self.retry_policy,
@@ -424,12 +429,45 @@ impl AgentBuilder {
             diagnostics.as_ref(),
             &shared_wd,
             &model,
-            opened_session.as_ref().map(|(entry, _)| entry.id.as_str()),
+            session_id_override.as_deref(),
         );
+        if let Some(variables) = self.variables.take() {
+            if variables.session_id() != session_id {
+                return Err(invalid(format!(
+                    "variables store session_id ('{}') disagrees with the resolved \
+                     session id ('{session_id}') — open_session pins the persisted id \
+                     as authoritative; build the variable store with that id or drop \
+                     open_session",
+                    variables.session_id(),
+                )));
+            }
+            loop_context.variables = Some(variables);
+        }
+        // Raw variable pairs (e.g. norn-cli's `--variables KEY=VALUE`) are
+        // added to the store `build` already minted with the *resolved*
+        // session id — never handed in as a separate store carrying its own
+        // independently-minted id, which the reconciliation above would
+        // reject against an `open_session`-pinned id. The store uses
+        // interior mutability, so the pairs land on whichever store is now
+        // installed (the minted one, or a caller-supplied `.variables`).
+        if !self.variable_pairs.is_empty()
+            && let Some(store) = loop_context.variables.as_ref()
+        {
+            for (name, value) in std::mem::take(&mut self.variable_pairs) {
+                store.set(SessionVariable {
+                    name,
+                    source: VariableSource::Static { value },
+                });
+            }
+        }
         if let Some(base) = runtime_base.as_ref() {
             apply_base_to_loop_context(&mut loop_context, base);
         }
-        let mut config_override = effective_agent_config(runtime_base.as_ref(), self.agent_config);
+        let mut config_override = effective_agent_config(
+            runtime_base.as_ref(),
+            self.agent_config,
+            self.agent_config_present,
+        );
         if let Some((entry, _)) = opened_session.as_ref() {
             // The persisted session's id is the prompt cache key on this
             // path: an explicitly configured cache_key would silently
@@ -510,7 +548,15 @@ impl AgentBuilder {
         // and the `action_log` tool's queries observe one ledger.
         loop_context.action_log = Some(Arc::clone(&action_log));
 
-        let agent_id = self.agent_id.unwrap_or_else(Uuid::new_v4);
+        // Root registry registration (D2): opt-in and effective only
+        // alongside `.agent_registry(..)`; the reservation mints the id so
+        // the registered root entry and the running agent share one id.
+        let agent_id = resolve_root_agent_id(
+            self.register_root.take(),
+            coordination.as_ref(),
+            &model,
+            self.agent_id,
+        )?;
 
         // Event channel: the builder owns the broadcast channel and the
         // root sender, and publishes the raw channel on the tool context
@@ -552,6 +598,7 @@ impl AgentBuilder {
                     // root fails honestly as NotRouted.
                     root_inbound: self.inbound_tx.clone(),
                     cancel: cancel.clone(),
+                    terminal_reclamation: self.terminal_reclamation,
                 },
             );
             // The runner drains child fork/spawn results at iteration
@@ -616,6 +663,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::agent::child_policy::CoordinationEnvelope;
     use crate::agent::output::AgentStopReason;
     use crate::agent::session_spec::SessionSpec;
     use crate::integration::hooks::{Hook, HookOutcome, StopHook};
@@ -2739,6 +2787,190 @@ mod tests {
                 ProviderToolDefinition::Hosted(HostedToolDefinition::WebSearch(_))
             )),
             "no hosted definition may be sent without the capability",
+        );
+    }
+
+    /// `.event_schemas(..)` installs the set on the built loop context.
+    #[test]
+    fn event_schemas_setter_installs_on_loop_context() {
+        use crate::agent_loop::event_schemas::{EventSchemaSet, EventType};
+
+        let mut schemas = EventSchemaSet::new();
+        schemas.set(EventType::Text, serde_json::json!({"type": "string"}));
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .event_schemas(schemas)
+            .build()
+            .expect("build succeeds");
+        let installed = agent
+            .loop_context
+            .event_schemas
+            .as_ref()
+            .expect("event schemas installed on the loop context");
+        assert_eq!(
+            installed.get(EventType::Text),
+            Some(&serde_json::json!({"type": "string"})),
+        );
+    }
+
+    /// `.variables(store)` overrides the minted store, and with no
+    /// `open_session` the supplied store's id becomes the resolved session
+    /// id so `{{session_id}}` and the environment agree.
+    #[test]
+    fn variables_setter_overrides_store_and_pins_session_id() {
+        use crate::integration::variables::VariableStore;
+
+        let store = Arc::new(VariableStore::with_builtins().with_session_id("custom-session"));
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .variables(Arc::clone(&store))
+            .build()
+            .expect("build succeeds");
+        let installed = agent
+            .loop_context
+            .variables
+            .as_ref()
+            .expect("variable store installed on the loop context");
+        assert!(
+            Arc::ptr_eq(installed, &store),
+            "the supplied store overrides the minted one",
+        );
+        assert_eq!(
+            agent.info().session_id,
+            "custom-session",
+            "the supplied store's id becomes the resolved session id",
+        );
+    }
+
+    /// A supplied variable store whose id contradicts an `open_session`
+    /// persisted id fails the build rather than silently diverging.
+    #[test]
+    fn variables_setter_conflicting_session_id_fails_build() {
+        use crate::integration::variables::VariableStore;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = SessionManager::new(temp.path());
+        let store = Arc::new(VariableStore::with_builtins().with_session_id("not-the-session"));
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(temp.path())
+                .open_session(
+                    &manager,
+                    SessionSpec::Create { name: None },
+                    DurabilityPolicy::Flush,
+                )
+                .variables(store)
+                .build(),
+        );
+        assert!(
+            reason.contains("disagrees with the resolved session id"),
+            "{reason}"
+        );
+    }
+
+    /// `.disallowed_tools(..)` gates the registry with deny-wins semantics.
+    #[test]
+    fn disallowed_tools_setter_denies_named_tools() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .allowed_tools(&["read", "bash"])
+            .disallowed_tools(&["bash"])
+            .build()
+            .expect("build succeeds");
+        assert!(
+            agent.registry.get("bash").is_none(),
+            "deny wins even when the allow-list names the tool",
+        );
+        assert!(agent.registry.get("read").is_some());
+    }
+
+    /// `.terminal_reclamation(false)` suppresses the reclamation marker the
+    /// coordination runtime installs by default.
+    #[test]
+    fn terminal_reclamation_setter_gates_reclaim_marker() {
+        use crate::tools::agent::ReclaimOnResultDelivery;
+
+        let default_agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .build()
+            .expect("build succeeds");
+        assert!(
+            default_agent
+                .registry
+                .shared_context()
+                .expect("shared tool context")
+                .get_extension::<ReclaimOnResultDelivery>()
+                .is_some(),
+            "terminal reclamation is installed by default (headless)",
+        );
+
+        let tui_agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .terminal_reclamation(false)
+            .build()
+            .expect("build succeeds");
+        assert!(
+            tui_agent
+                .registry
+                .shared_context()
+                .expect("shared tool context")
+                .get_extension::<ReclaimOnResultDelivery>()
+                .is_none(),
+            "terminal_reclamation(false) suppresses the marker for status-panel drivers",
+        );
+    }
+
+    /// `.register_root(..)` reserves the registry entry and adopts the
+    /// reserved id as the agent's id.
+    #[test]
+    fn register_root_setter_reserves_and_adopts_id() {
+        let registry = AgentRegistry::shared();
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(Arc::clone(&registry))
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .register_root("/root".to_string(), "lead".to_string())
+            .build()
+            .expect("build succeeds");
+        let entry = registry
+            .read()
+            .get_by_path("/root")
+            .expect("root entry reserved and confirmed");
+        assert_eq!(
+            entry.id,
+            agent.agent_id(),
+            "the agent adopts the reserved root id",
+        );
+    }
+
+    /// `.register_root(..)` without `.agent_registry(..)` fails the build —
+    /// the entry would be silently unregistered.
+    #[test]
+    fn register_root_without_registry_fails_build() {
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .register_root("/root".to_string(), "lead".to_string())
+                .build(),
+        );
+        assert!(
+            reason.contains("register_root is set but agent coordination is not wired"),
+            "{reason}"
         );
     }
 }

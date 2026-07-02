@@ -117,8 +117,13 @@ pub(super) async fn run_shell(
         }
     };
 
-    let stdout_open = settle_drain("stdout", stdout_task, drain_grace).await?;
-    let stderr_open = settle_drain("stderr", stderr_task, drain_grace).await?;
+    // Both drains settle concurrently so two held-open pipes cost one
+    // grace period, not one per stream.
+    let (stdout_open, stderr_open) = tokio::join!(
+        settle_drain("stdout", stdout_task, drain_grace),
+        settle_drain("stderr", stderr_task, drain_grace),
+    );
+    let (stdout_open, stderr_open) = (stdout_open?, stderr_open?);
     let captured = capture.finalize().await?;
 
     Ok(ShellExecution {

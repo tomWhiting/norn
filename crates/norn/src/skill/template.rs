@@ -10,23 +10,34 @@
 //!    disable policy, explicit cwd).
 //! 2. `$ARGUMENTS`, `$N`, `$ARGUMENTS[N]`, named `$name`,
 //!    `${CLAUDE_SESSION_ID}`, `${CLAUDE_EFFORT}`, `${CLAUDE_SKILL_DIR}`,
-//!    and `$$ -> $` substitute via a pure-string scanner.
-//! 3. `{{name}}` resolves through the loop's [`VariableStore`] using
-//!    the existing [`crate::integration::variables::expand`] function.
+//!    and `$$ -> $` substitute via a pure-string scanner. A `$N` whose
+//!    index has no positional value passes through literally; a
+//!    *recognised* token with no value (`$ARGUMENTS[N]` out of range, a
+//!    declared named argument the user did not supply) resolves to the
+//!    empty string.
+//! 3. `{{name}}` resolves through the loop's [`VariableStore`],
+//!    token-by-token: a variable that fails to resolve is replaced with
+//!    an inline `[skill variable expansion failed: …]` marker (matching
+//!    stage 1's failure policy) while the rest of the body still
+//!    expands.
 //!
-//! Stages run in fixed order. Each is single-pass; replacement text
-//! produced by stage N is visible to stage N+1. This is intentional —
-//! shell output containing `$ARGUMENTS` will be dollar-expanded;
-//! dollar output containing `{{var}}` will be mustache-expanded. Skills
-//! can compose shell output with downstream substitution; if literal
-//! `$` or `{{` are needed, the source must escape (`$$` for stage 2;
-//! stage 3 simply has no escape — produce text without `{{var}}`
-//! tokens).
+//! # Code protection
 //!
-//! Failures in stage 1 produce inline `[skill shell command failed: …]`
-//! markers (never silent drops). Stage 3 failures pass the unchanged
-//! input through with a `tracing::warn!` log per the loop's expansion
-//! convention. Stage 2 cannot fail — it is pure string manipulation.
+//! Standard fenced code blocks and inline backtick code spans are
+//! protected from ALL three stages: nothing inside them is executed or
+//! substituted, and they are emitted verbatim. Only `` ```! `` fences
+//! and ``!`…` `` inline commands are active.
+//!
+//! Stages run in fixed order over the non-protected text. Replacement
+//! text produced by stage N is visible to stage N+1. This is
+//! intentional — shell output containing `$ARGUMENTS` will be
+//! dollar-expanded; dollar output containing `{{var}}` will be
+//! mustache-expanded. Skills can compose shell output with downstream
+//! substitution; if literal `$` or `{{` are needed, the source must
+//! escape (`$$` for stage 2) or place the text in protected code.
+//!
+//! Failures in stages 1 and 3 produce inline markers (never silent
+//! drops). Stage 2 cannot fail — it is pure string manipulation.
 //!
 //! NS-003 boundary: this module receives already-parsed positional and
 //! named arguments. Argument *parsing* from the `SkillTool` input string
@@ -39,7 +50,7 @@ use std::time::Duration;
 
 use tokio::process::Command;
 
-use crate::integration::variables::{VariableStore, expand as mustache_expand};
+use crate::integration::variables::VariableStore;
 use crate::skill::types::SkillShell;
 
 /// Wall-clock budget for any single shell invocation in stage 1. Mirrors
@@ -67,7 +78,7 @@ const DISABLED_MARKER: &str = "[shell command execution disabled by policy]";
 /// paths, and the expander never needs to mutate them. Stage 3's
 /// [`VariableStore`] is optional so the runtime can call `expand`
 /// without a store wired (mirrors
-/// [`crate::r#loop::loop_context::LoopContext::variables`]'s
+/// [`crate::agent_loop::loop_context::LoopContext::variables`]'s
 /// `Option<Arc<VariableStore>>` shape).
 pub struct TemplateInputs<'a> {
     /// Markdown body after frontmatter has already been stripped.
@@ -128,36 +139,63 @@ impl fmt::Debug for TemplateInputs<'_> {
 
 /// Run all three expansion stages in order and return the final string.
 ///
-/// Stages run sequentially: backtick-bang → dollar-sign → mustache. The
-/// output of each stage is fed verbatim to the next; a `{{name}}`
-/// produced by a stage 1 shell command will be mustache-expanded, and a
-/// literal `$ARGUMENTS` produced by a shell command will be
-/// dollar-expanded. This is intentional — see the module doc comment.
+/// Stage 1 segments the body into protected code (standard fences,
+/// inline code spans — emitted verbatim) and active text (with
+/// backtick-bang commands executed inline). Stages 2 and 3 then run
+/// over the active segments only, so protected code is never
+/// substituted. Within active text, the output of each stage is fed
+/// verbatim to the next — see the module doc comment.
 ///
 /// Stage 1 failures (shell timeout, non-zero exit, spawn error) produce
 /// inline `[skill shell command failed: …]` markers. Stage 3 failures
-/// pass the unchanged input through with a `tracing::warn!` log. Stage
-/// 2 cannot fail.
+/// produce inline `[skill variable expansion failed: …]` markers per
+/// unresolvable `{{name}}` token. Stage 2 cannot fail.
 pub async fn expand(inputs: &TemplateInputs<'_>) -> String {
-    let s1 = stage1_backtick_bang(inputs).await;
-    let s2 = stage2_dollar(&s1, inputs);
-    stage3_mustache(s2, inputs.variables).await
+    let chunks = stage1_segment(inputs).await;
+    let mut out = String::with_capacity(inputs.body.len());
+    for chunk in chunks {
+        match chunk {
+            Chunk::Protected(text) => out.push_str(&text),
+            Chunk::Active(text) => {
+                let dollars = stage2_dollar(&text, inputs);
+                out.push_str(&stage3_mustache(&dollars, inputs.variables).await);
+            }
+        }
+    }
+    out
+}
+
+/// One segment of the body after stage 1.
+enum Chunk {
+    /// Substitutable text (including stage 1 shell output and failure
+    /// markers) — stages 2 and 3 run over it.
+    Active(String),
+    /// Verbatim code (a standard fenced block or an inline code span,
+    /// delimiters included) — no stage touches it.
+    Protected(String),
 }
 
 // ---------------------------------------------------------------------
-// Stage 1: shell execution
+// Stage 1: shell execution + code protection
 // ---------------------------------------------------------------------
 
-async fn stage1_backtick_bang(inputs: &TemplateInputs<'_>) -> String {
+/// Segment the body, executing `` ```! `` fences and ``!`…` `` inline
+/// commands, and carving out standard fences / inline code spans as
+/// protected chunks.
+async fn stage1_segment(inputs: &TemplateInputs<'_>) -> Vec<Chunk> {
     let body = inputs.body;
     let bytes = body.as_bytes();
-    let mut out = String::with_capacity(body.len());
+    let mut chunks: Vec<Chunk> = Vec::new();
+    let mut active = String::with_capacity(body.len());
     let mut i = 0;
     // Some(start) ⇒ we are inside an opened ```! fence; `start` is the
     // byte index in `body` where the fenced *body* begins (i.e. just
     // after the opening fence's newline).
     let mut bang_fence_start: Option<usize> = None;
-    let mut in_standard_fence = false;
+    // Some(start) ⇒ inside a standard fence; `start` is the byte index
+    // of the opening fence line, so the whole block (fences included)
+    // can be emitted verbatim at close.
+    let mut standard_fence_start: Option<usize> = None;
 
     while i < bytes.len() {
         let at_line_start = i == 0 || bytes[i - 1] == b'\n';
@@ -176,21 +214,20 @@ async fn stage1_backtick_bang(inputs: &TemplateInputs<'_>) -> String {
                 if trimmed == "```" {
                     let block = &body[start..i];
                     let replacement = run_or_marker(block, inputs).await;
-                    out.push_str(&replacement);
+                    active.push_str(&replacement);
                     bang_fence_start = None;
-                    i = after_line;
-                    continue;
                 }
-                // Still inside the bang fence body — slip past this line
-                // without copying; the slice is materialised at close.
+                // Inside the bang fence body lines are consumed; the
+                // slice is materialised at close.
                 i = after_line;
                 continue;
             }
 
-            if in_standard_fence {
-                out.push_str(&body[i..after_line]);
+            if let Some(start) = standard_fence_start {
                 if trimmed == "```" {
-                    in_standard_fence = false;
+                    flush_active(&mut chunks, &mut active);
+                    chunks.push(Chunk::Protected(body[start..after_line].to_owned()));
+                    standard_fence_start = None;
                 }
                 i = after_line;
                 continue;
@@ -203,11 +240,9 @@ async fn stage1_backtick_bang(inputs: &TemplateInputs<'_>) -> String {
                 let info = rest.split_whitespace().next().unwrap_or("");
                 if info.starts_with('!') {
                     bang_fence_start = Some(after_line);
-                    i = after_line;
-                    continue;
+                } else {
+                    standard_fence_start = Some(i);
                 }
-                in_standard_fence = true;
-                out.push_str(&body[i..after_line]);
                 i = after_line;
                 continue;
             }
@@ -223,17 +258,35 @@ async fn stage1_backtick_bang(inputs: &TemplateInputs<'_>) -> String {
                 let cmd_end = cmd_start + rel;
                 let cmd = &body[cmd_start..cmd_end];
                 let replacement = run_or_marker(cmd, inputs).await;
-                out.push_str(&replacement);
+                active.push_str(&replacement);
                 i = cmd_end + 1;
                 continue;
             }
+        }
+
+        // Inline code span: a run of N backticks closed by the next run
+        // of exactly N backticks (CommonMark pairing). The whole span —
+        // delimiters included — is protected from every stage. An
+        // unclosed opener is literal text.
+        if bytes[i] == b'`' {
+            let run_len = backtick_run_len(bytes, i);
+            if let Some(close_start) = find_closing_run(bytes, i + run_len, run_len) {
+                let end = close_start + run_len;
+                flush_active(&mut chunks, &mut active);
+                chunks.push(Chunk::Protected(body[i..end].to_owned()));
+                i = end;
+            } else {
+                active.push_str(&body[i..i + run_len]);
+                i += run_len;
+            }
+            continue;
         }
 
         // Ordinary character.
         let Some(c) = body[i..].chars().next() else {
             break;
         };
-        out.push(c);
+        active.push(c);
         i += c.len_utf8();
     }
 
@@ -242,10 +295,47 @@ async fn stage1_backtick_bang(inputs: &TemplateInputs<'_>) -> String {
     if let Some(start) = bang_fence_start {
         let block = &body[start..];
         let replacement = run_or_marker(block, inputs).await;
-        out.push_str(&replacement);
+        active.push_str(&replacement);
     }
+    // Unterminated standard fence: the remainder is code — protect it.
+    if let Some(start) = standard_fence_start {
+        flush_active(&mut chunks, &mut active);
+        chunks.push(Chunk::Protected(body[start..].to_owned()));
+    }
+    flush_active(&mut chunks, &mut active);
+    chunks
+}
 
-    out
+/// Move the accumulated active text into the chunk list.
+fn flush_active(chunks: &mut Vec<Chunk>, active: &mut String) {
+    if !active.is_empty() {
+        chunks.push(Chunk::Active(std::mem::take(active)));
+    }
+}
+
+/// Length of the backtick run starting at `from` (which must index a
+/// backtick).
+fn backtick_run_len(bytes: &[u8], from: usize) -> usize {
+    bytes[from..].iter().take_while(|&&b| b == b'`').count()
+}
+
+/// Find the start of the next backtick run of *exactly* `n` backticks at
+/// or after `from`.
+fn find_closing_run(bytes: &[u8], from: usize, n: usize) -> Option<usize> {
+    let mut i = from;
+    while i < bytes.len() {
+        if bytes[i] == b'`' {
+            let start = i;
+            let len = backtick_run_len(bytes, i);
+            i += len;
+            if len == n {
+                return Some(start);
+            }
+        } else {
+            i += 1;
+        }
+    }
+    None
 }
 
 fn next_newline(bytes: &[u8], from: usize) -> usize {
@@ -323,10 +413,15 @@ async fn run_skill_shell(command: &str, shell: SkillShell, cwd: &Path) -> Result
 
 /// Kept tiny + unit-testable so we can verify the shell selector
 /// without spawning a process.
+///
+/// [`SkillShell::Bash`] runs `bash` — what the frontmatter says — not
+/// `sh`. When the binary is unavailable the spawn error surfaces as the
+/// inline `[skill shell command failed: failed to spawn shell: …]`
+/// marker, this pipeline's typed failure surface.
 #[must_use]
 pub(crate) fn shell_argv(shell: SkillShell) -> (&'static str, &'static str) {
     match shell {
-        SkillShell::Bash => ("sh", "-c"),
+        SkillShell::Bash => ("bash", "-c"),
         SkillShell::PowerShell => ("pwsh", "-c"),
     }
 }
@@ -422,13 +517,19 @@ fn stage2_dollar(input: &str, inputs: &TemplateInputs<'_>) -> String {
                 while j < bytes.len() && bytes[j].is_ascii_digit() {
                     j += 1;
                 }
-                if let Ok(idx) = input[i + 1..j].parse::<usize>()
-                    && let Some(v) = inputs.arguments_positional.get(idx)
+                match input[i + 1..j]
+                    .parse::<usize>()
+                    .ok()
+                    .and_then(|idx| inputs.arguments_positional.get(idx))
                 {
-                    out.push_str(v);
+                    Some(v) => out.push_str(v),
+                    // A `$N` with no positional value is treated like an
+                    // unrecognised identifier: it passes through
+                    // literally instead of being deleted. (Recognised
+                    // tokens with a missing value — `$ARGUMENTS[N]`,
+                    // declared named arguments — still resolve empty.)
+                    None => out.push_str(&input[i..j]),
                 }
-                // Out-of-range positional → empty string. (Same posture
-                // as recognised-but-missing named arguments.)
                 i = j;
             }
             b if is_ident_start(b) => {
@@ -511,20 +612,52 @@ fn is_ident_cont(b: u8) -> bool {
 // Stage 3: mustache via VariableStore
 // ---------------------------------------------------------------------
 
-async fn stage3_mustache(input: String, store: Option<&VariableStore>) -> String {
+/// Substitute `{{name}}` tokens through `store`, token by token.
+///
+/// A token that fails to resolve is replaced with an inline
+/// `[skill variable expansion failed: …]` marker — matching stage 1's
+/// failure policy — while every other token still expands. When no
+/// store is wired, the input passes through unchanged.
+async fn stage3_mustache(input: &str, store: Option<&VariableStore>) -> String {
     let Some(store) = store else {
-        return input;
+        return input.to_owned();
     };
-    match mustache_expand(&input, store).await {
-        Ok(out) => out,
-        Err(err) => {
-            tracing::warn!(
-                error = %err,
-                "skill stage 3 mustache expansion failed; passing through unchanged",
-            );
-            input
+    let bytes = input.as_bytes();
+    let mut out = String::with_capacity(input.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if i + 1 < bytes.len()
+            && bytes[i] == b'{'
+            && bytes[i + 1] == b'{'
+            && let Some(close_rel) = input[i + 2..].find("}}")
+        {
+            let end = i + 2 + close_rel;
+            let name = input[i + 2..end].trim();
+            match store.resolve(name).await {
+                Ok(value) => out.push_str(&value),
+                Err(err) => {
+                    tracing::warn!(
+                        variable = name,
+                        error = %err,
+                        "skill stage 3 variable failed to resolve; emitting inline marker",
+                    );
+                    out.push_str("[skill variable expansion failed: ");
+                    out.push_str(name);
+                    out.push_str(": ");
+                    out.push_str(&err.to_string());
+                    out.push(']');
+                }
+            }
+            i = end + 2;
+            continue;
         }
+        let Some(c) = input[i..].chars().next() else {
+            break;
+        };
+        out.push(c);
+        i += c.len_utf8();
     }
+    out
 }
 
 #[cfg(test)]
@@ -826,8 +959,12 @@ mod tests {
     // ---------------- R4 ----------------
 
     #[test]
-    fn r4_shell_argv_selects_pwsh_for_powershell() {
-        assert_eq!(shell_argv(SkillShell::Bash), ("sh", "-c"));
+    fn r4_shell_argv_runs_what_it_says() {
+        assert_eq!(
+            shell_argv(SkillShell::Bash),
+            ("bash", "-c"),
+            "SkillShell::Bash must run bash, not sh",
+        );
         assert_eq!(shell_argv(SkillShell::PowerShell), ("pwsh", "-c"));
     }
 
@@ -957,7 +1094,58 @@ mod tests {
             variables: None,
         });
         let got = expand(&i).await;
-        assert_eq!(got, "0: first 1: second oob: ");
+        assert_eq!(
+            got, "0: first 1: second oob: $9",
+            "an undefined positional passes through literally, never deleted",
+        );
+    }
+
+    /// `$<digits>` with no positional value must survive verbatim — it
+    /// was previously deleted outright, silently corrupting bodies that
+    /// mention dollar-number text (prices, regex backreferences).
+    #[tokio::test]
+    async fn r5_undefined_positional_passes_through_literally() {
+        let cwd_p = cwd();
+        let sd = skill_dir();
+        let pos: Vec<String> = vec![];
+        let names: Vec<String> = vec![];
+        let i = inputs(InputsParams {
+            body: "the fee is $5 total",
+            cwd: &cwd_p,
+            skill_dir: &sd,
+            positional: &pos,
+            names: &names,
+            args_raw: "",
+            session_id: "sid",
+            effort: "",
+            variables: None,
+        });
+        let got = expand(&i).await;
+        assert_eq!(got, "the fee is $5 total");
+    }
+
+    /// `$ARGUMENTS[N]` out of range still resolves to the empty string —
+    /// the token is recognised (the skill asked for an argument), unlike
+    /// a bare `$N` which may just be dollar-number text.
+    #[tokio::test]
+    async fn r5_arguments_subscript_out_of_range_resolves_empty() {
+        let cwd_p = cwd();
+        let sd = skill_dir();
+        let pos: Vec<String> = vec!["only".into()];
+        let names: Vec<String> = vec![];
+        let i = inputs(InputsParams {
+            body: "[$ARGUMENTS[7]]",
+            cwd: &cwd_p,
+            skill_dir: &sd,
+            positional: &pos,
+            names: &names,
+            args_raw: "only",
+            session_id: "sid",
+            effort: "",
+            variables: None,
+        });
+        let got = expand(&i).await;
+        assert_eq!(got, "[]");
     }
 
     #[tokio::test]
@@ -1196,6 +1384,190 @@ mod tests {
         });
         let got = expand(&i).await;
         assert_eq!(got, "plain {{name}} stays");
+    }
+
+    // ---------------- stage 3 failure markers ----------------
+
+    /// An unresolvable `{{name}}` must produce an inline failure marker
+    /// (stage 1's policy) — not a silent whole-body passthrough that
+    /// leaves every other variable unexpanded too.
+    #[tokio::test]
+    async fn stage3_unresolvable_variable_emits_inline_marker() {
+        let store = VariableStore::with_builtins();
+        store.set(SessionVariable {
+            name: "team".to_owned(),
+            source: VariableSource::Static {
+                value: "norn".to_owned(),
+            },
+        });
+        let cwd_p = cwd();
+        let sd = skill_dir();
+        let pos: Vec<String> = vec![];
+        let names: Vec<String> = vec![];
+        let i = inputs(InputsParams {
+            body: "a={{team}} b={{no_such_var}} c={{team}}",
+            cwd: &cwd_p,
+            skill_dir: &sd,
+            positional: &pos,
+            names: &names,
+            args_raw: "",
+            session_id: "sid",
+            effort: "",
+            variables: Some(&store),
+        });
+        let got = expand(&i).await;
+        assert!(got.starts_with("a=norn b=["), "got: {got}");
+        assert!(
+            got.contains("[skill variable expansion failed: no_such_var:"),
+            "inline marker must name the variable: {got}"
+        );
+        assert!(
+            got.ends_with("c=norn"),
+            "later variables must still expand: {got}"
+        );
+    }
+
+    // ---------------- code protection (all stages) ----------------
+
+    /// Fenced code blocks are protected from stage 2/3 substitution, not
+    /// just stage 1 execution: `$0` and `{{var}}` inside a fence stay
+    /// literal.
+    #[tokio::test]
+    async fn fenced_code_is_protected_from_dollar_and_mustache() {
+        let store = VariableStore::with_builtins();
+        store.set(SessionVariable {
+            name: "team".to_owned(),
+            source: VariableSource::Static {
+                value: "norn".to_owned(),
+            },
+        });
+        let body = "before $0\n```sh\necho $0 {{team}} $ARGUMENTS\n```\nafter {{team}}\n";
+        let cwd_p = cwd();
+        let sd = skill_dir();
+        let pos: Vec<String> = vec!["VAL".into()];
+        let names: Vec<String> = vec![];
+        let i = inputs(InputsParams {
+            body,
+            cwd: &cwd_p,
+            skill_dir: &sd,
+            positional: &pos,
+            names: &names,
+            args_raw: "VAL",
+            session_id: "sid",
+            effort: "",
+            variables: Some(&store),
+        });
+        let got = expand(&i).await;
+        assert_eq!(
+            got,
+            "before VAL\n```sh\necho $0 {{team}} $ARGUMENTS\n```\nafter norn\n",
+        );
+    }
+
+    /// Inline code spans are protected from every stage: no execution,
+    /// no dollar substitution, no mustache substitution.
+    #[tokio::test]
+    async fn inline_code_span_is_protected_from_all_stages() {
+        let store = VariableStore::with_builtins();
+        store.set(SessionVariable {
+            name: "team".to_owned(),
+            source: VariableSource::Static {
+                value: "norn".to_owned(),
+            },
+        });
+        let body = "run `$0 {{team}}` then $0 {{team}}";
+        let cwd_p = cwd();
+        let sd = skill_dir();
+        let pos: Vec<String> = vec!["VAL".into()];
+        let names: Vec<String> = vec![];
+        let i = inputs(InputsParams {
+            body,
+            cwd: &cwd_p,
+            skill_dir: &sd,
+            positional: &pos,
+            names: &names,
+            args_raw: "VAL",
+            session_id: "sid",
+            effort: "",
+            variables: Some(&store),
+        });
+        let got = expand(&i).await;
+        assert_eq!(got, "run `$0 {{team}}` then VAL norn");
+    }
+
+    /// Stage-1 execution protection for inline code spans: a
+    /// backtick-bang sequence that sits inside an inline code span must
+    /// stay literal.
+    #[tokio::test]
+    async fn inline_code_span_protects_backtick_bang_from_execution() {
+        let body = "docs: `use !`echo nope` here` end";
+        let cwd_p = cwd();
+        let sd = skill_dir();
+        let pos: Vec<String> = vec![];
+        let names: Vec<String> = vec![];
+        let i = inputs(InputsParams {
+            body,
+            cwd: &cwd_p,
+            skill_dir: &sd,
+            positional: &pos,
+            names: &names,
+            args_raw: "",
+            session_id: "sid",
+            effort: "",
+            variables: None,
+        });
+        let got = expand(&i).await;
+        assert_eq!(
+            got, body,
+            "a backtick-bang inside a code span must stay literal"
+        );
+    }
+
+    /// Double-backtick spans pair per `CommonMark`: the span closes at the
+    /// next run of exactly the same length.
+    #[tokio::test]
+    async fn double_backtick_span_protects_contents() {
+        let body = "a ``$0`` b $0";
+        let cwd_p = cwd();
+        let sd = skill_dir();
+        let pos: Vec<String> = vec!["VAL".into()];
+        let names: Vec<String> = vec![];
+        let i = inputs(InputsParams {
+            body,
+            cwd: &cwd_p,
+            skill_dir: &sd,
+            positional: &pos,
+            names: &names,
+            args_raw: "VAL",
+            session_id: "sid",
+            effort: "",
+            variables: None,
+        });
+        let got = expand(&i).await;
+        assert_eq!(got, "a ``$0`` b VAL");
+    }
+
+    /// An unterminated standard fence protects the remainder of the body.
+    #[tokio::test]
+    async fn unterminated_standard_fence_stays_protected() {
+        let body = "text $0\n```rust\nlet x = $0; // {{team}}\n";
+        let cwd_p = cwd();
+        let sd = skill_dir();
+        let pos: Vec<String> = vec!["VAL".into()];
+        let names: Vec<String> = vec![];
+        let i = inputs(InputsParams {
+            body,
+            cwd: &cwd_p,
+            skill_dir: &sd,
+            positional: &pos,
+            names: &names,
+            args_raw: "VAL",
+            session_id: "sid",
+            effort: "",
+            variables: None,
+        });
+        let got = expand(&i).await;
+        assert_eq!(got, "text VAL\n```rust\nlet x = $0; // {{team}}\n");
     }
 
     // ---------------- R7 ----------------

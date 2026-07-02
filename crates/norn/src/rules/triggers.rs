@@ -1,6 +1,19 @@
 //! Trigger evaluation: match rules against runtime events.
+//!
+//! Glob patterns are validated at parse time
+//! ([`crate::rules::parser::parse_rule_file`]) and compiled exactly once
+//! here — a process-wide cache keyed by the pattern string holds each
+//! compiled [`Pattern`], so per-event evaluation never re-compiles. A
+//! pattern that reaches evaluation without compiling (only possible for
+//! programmatically constructed rules that bypassed the parser) is
+//! logged at `error` level once and cached as a permanent non-match —
+//! never silently indistinguishable from "no match".
+
+use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use glob::Pattern;
+use parking_lot::Mutex;
 
 use crate::rules::types::{Rule, RuntimeEvent, TriggerCondition, TriggerMatch};
 
@@ -47,13 +60,40 @@ fn matches_event(trigger: &TriggerCondition, event: &RuntimeEvent) -> bool {
     }
 }
 
+/// Process-wide compiled-glob cache. `None` marks a pattern that failed
+/// to compile (already reported), so the failure is logged exactly once
+/// and never re-attempted per event. Bounded in practice by the number
+/// of distinct rule patterns loaded into engines.
+static COMPILED_GLOBS: OnceLock<Mutex<HashMap<String, Option<Pattern>>>> = OnceLock::new();
+
 fn matches_glob(pattern: &str, path: &str) -> bool {
     let opts = glob::MatchOptions {
         case_sensitive: true,
         require_literal_separator: false,
         require_literal_leading_dot: false,
     };
-    Pattern::new(pattern).is_ok_and(|p| p.matches_with(path, opts))
+    let cache = COMPILED_GLOBS.get_or_init(|| Mutex::new(HashMap::new()));
+    let mut guard = cache.lock();
+    let compiled = guard.entry(pattern.to_owned()).or_insert_with(|| {
+        match Pattern::new(pattern) {
+            Ok(p) => Some(p),
+            Err(e) => {
+                // Parse-time validation makes this unreachable for rules
+                // loaded from disk; a programmatically constructed rule
+                // that bypassed the parser is reported loudly instead of
+                // masquerading as "no match".
+                tracing::error!(
+                    pattern = pattern,
+                    error = %e,
+                    "rule glob pattern failed to compile; the trigger can never match",
+                );
+                None
+            }
+        }
+    });
+    compiled
+        .as_ref()
+        .is_some_and(|p| p.matches_with(path, opts))
 }
 
 #[cfg(test)]

@@ -249,6 +249,18 @@ failure-that-looks-like-success.
 
 **(b) Fix shape — two coordinated pieces:**
 
+> **SUPERSEDED (2026-07-02):** Gap C landed as the consumer-neutral stop
+> envelope specified in `docs/design/norn-cli/DRIVEN-PROTOCOL.md` ("Stop
+> envelope"): `envelope_version: 1` + an internally-tagged typed
+> `stop {reason, ...detail}` + the partial riding the single `output` field.
+> The proposal below differs from what shipped in two deliberate ways:
+> there is **no `retryable` field** — retryability is the *caller's*
+> judgment (budget/policy/partial value), and Norn does not encode that
+> judgment into the wire contract; consumers branch on `stop.reason` and
+> the detail fields (`truncation`, `attempts`, …) instead. And there is no
+> back-compat `result` string label — the typed `stop` replaced it
+> outright. Read the sketch below as historical scoping only.
+
 - **Gap C (Norn):** add a typed, versioned stop-reason to the `--print` JSON
   envelope. Extend `JsonEnvelope` with a structured field, e.g.
   ```json
@@ -401,7 +413,7 @@ from exit code + `result`").
 |---|---|---|---|---|---|---|
 | **A** | Aion | `require_run` makes every non-zero Norn exit terminal; `parse_report` ignores `result`/`usage`; retryable stops die, partials lost (`handlers.rs:681-700,712-744`) | `classify_norn`: parse envelope first, branch on typed stop, retryable vs terminal vs success | 1.5–2.5 d | Retry policy is a product call | after C |
 | **B** | Aion | non-idempotent resume: `dev_resume` uses `--resume` which hard-errors if first attempt never created the session (`handlers.rs:298-308`); session-id strategy not uniformly deterministic | deterministic `(workflow,activity)` id; `--resume-if-exists` everywhere | 0.5–1 d | id-collision charset (Norn validates ids) | parallel w/ A |
-| **C** | Norn | `--print` envelope exposes stop only as lossy `result` string, no typed reason/partial/version (`print/output.rs:175-191`) | additive `envelope_version` + `stop{reason,retryable}` + `partial` on `JsonEnvelope` | 0.5–1 d | serde stability; keep `result` | first |
+| **C** | Norn | ~~`--print` envelope exposes stop only as lossy `result` string~~ **DONE — superseded**: shipped as `envelope_version: 1` + typed `stop{reason,...detail}` + partial-on-`output`, WITHOUT `retryable` (caller's judgment) and WITHOUT the `result` label; see `docs/design/norn-cli/DRIVEN-PROTOCOL.md` "Stop envelope" | — | 0 (done) | — | done |
 | **D** | Norn (policy) | print-mode hardcodes `DurabilityPolicy::Flush` — survives kill -9, NOT power loss (`print/session.rs:97,99,108`) | optional `--durability fsync\|fsync-every:N`; default decision | 0.5–1 d | per-event fsync latency cost | optional |
 | **E** | Aion | orphan Norn double-writer after worker kill (no process-group kill) | spawn Norn in own pgid; `killpg` on retry/cancel | 1 d | signal plumbing | after A/B |
 | **F** | both | crash-injection + multi-process race test harness (none today exercises kill-mid-step end-to-end) | see §6 | 1.5–2 d | flaky timing | last |

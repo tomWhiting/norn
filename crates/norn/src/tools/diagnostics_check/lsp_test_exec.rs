@@ -86,10 +86,12 @@ pub(super) fn enrich_args_for_json_output(
 /// Parse the line-delimited `libtest-json-plus` stream for `event=failed`
 /// records and convert each into a [`DiagnosticEvent`].
 ///
-/// Location columns from `TestRunnable` are zero-based per LSP; the
-/// `DiagnosticEvent` contract is one-based, so each value is offset by
-/// `+1`. When the runnable has no location, line/column fall through as
-/// `0` — matching the nextest adapter's fallback.
+/// [`LspLocation`](crate::tools::lsp::LspLocation) positions are already
+/// one-based — every producer converts from the LSP wire protocol's
+/// zero-based positions at the boundary — so they carry through to the
+/// one-based `DiagnosticEvent` contract unshifted. When the runnable has
+/// no location, line/column fall through as `0` — matching the nextest
+/// adapter's fallback.
 pub(super) fn parse_libtest_failures(
     stdout: &str,
     runnable: &TestRunnable,
@@ -146,12 +148,8 @@ pub(super) fn parse_libtest_failures(
         let (file, line, column) = if let Some(location) = runnable.location.as_ref() {
             (
                 PathBuf::from(&location.path),
-                usize::try_from(location.line)
-                    .unwrap_or(usize::MAX)
-                    .saturating_add(1),
-                usize::try_from(location.column)
-                    .unwrap_or(usize::MAX)
-                    .saturating_add(1),
+                usize::try_from(location.line).unwrap_or(usize::MAX),
+                usize::try_from(location.column).unwrap_or(usize::MAX),
             )
         } else {
             (fallback_file.to_path_buf(), 0, 0)
@@ -221,10 +219,10 @@ mod tests {
                       {\"type\":\"test\",\"event\":\"ok\",\"name\":\"foo::baz\"}\n";
         let runnable = make_runnable(Some(LspLocation {
             path: "/abs/src/lib.rs".to_owned(),
-            line: 41,
-            column: 0,
-            end_line: 41,
-            end_column: 10,
+            line: 42,
+            column: 1,
+            end_line: 42,
+            end_column: 11,
         }));
 
         let events = parse_libtest_failures(stdout, &runnable, &PathBuf::from("fallback.rs"));
@@ -239,6 +237,31 @@ mod tests {
         assert_eq!(event.file, PathBuf::from("/abs/src/lib.rs"));
         assert_eq!(event.line, 42);
         assert_eq!(event.column, 1);
+    }
+
+    /// Regression: `LspLocation` is one-based at every producer, so the
+    /// parser must surface it unshifted — the old `saturating_add(1)`
+    /// double-incremented and pointed diagnostics one line/column past
+    /// the real test location.
+    #[test]
+    fn parse_libtest_failures_surfaces_one_based_location_unshifted() {
+        let stdout =
+            "{\"type\":\"test\",\"event\":\"failed\",\"name\":\"top\",\"stdout\":\"boom\"}\n";
+        // Line 1, column 1: the first possible one-based location. Any
+        // offset applied by the parser would be visible immediately.
+        let runnable = make_runnable(Some(LspLocation {
+            path: "/abs/src/first.rs".to_owned(),
+            line: 1,
+            column: 1,
+            end_line: 1,
+            end_column: 4,
+        }));
+
+        let events = parse_libtest_failures(stdout, &runnable, &PathBuf::from("fallback.rs"));
+
+        assert_eq!(events.len(), 1);
+        assert_eq!(events[0].line, 1, "one-based line must pass through");
+        assert_eq!(events[0].column, 1, "one-based column must pass through");
     }
 
     #[test]

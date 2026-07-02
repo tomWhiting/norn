@@ -9,7 +9,7 @@
 //! `Arc<Mutex<Usage>>`) rather than a plain field:
 //!
 //! - The fold happens inside the loop task
-//!   ([`drain_child_results`](crate::r#loop::delivery) is the single
+//!   (`drain_child_results` in the loop delivery module is the single
 //!   injection path), which runs on its own `tokio::spawn` inside the
 //!   spawn/fork completion wrappers.
 //! - The wrapper must still read the folded value when that inner task
@@ -19,7 +19,7 @@
 //!   children's *delivered* subtree usage was real spend and must still
 //!   roll up — partial truth beats silent loss.
 //!
-//! A plain `Usage` field on [`LoopContext`](crate::r#loop::loop_context::LoopContext)
+//! A plain `Usage` field on [`LoopContext`](crate::agent_loop::loop_context::LoopContext)
 //! would unwind with the panicked task; the shared handle survives in the
 //! wrapper's clone.
 //!
@@ -45,7 +45,7 @@ use crate::provider::usage::Usage;
 /// Clones share the same underlying value: the loop folds into it via
 /// [`Self::add`] as results are drained, and the spawn/fork completion
 /// wrapper reads it via [`Self::snapshot`] — including after a panic or
-/// hard error, when no [`AgentStepResult`](crate::r#loop::config::AgentStepResult)
+/// hard error, when no [`AgentStepResult`](crate::agent_loop::config::AgentStepResult)
 /// exists to carry the value out (see the module docs for why this is a
 /// shared handle). Uses `parking_lot::Mutex`, which does not poison, so
 /// no lock-failure path exists to mishandle.

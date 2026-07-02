@@ -1,0 +1,5 @@
+error: ToolArgs: untagged unit variants all deserialize from null, so `AlsoNothing` is unreachable after `Nothing` — remove one of them or use a tagged representation
+  --> tests/ui/untagged_duplicate_unit.rs:17:5
+   |
+17 |     AlsoNothing,
+   |     ^^^^^^^^^^^

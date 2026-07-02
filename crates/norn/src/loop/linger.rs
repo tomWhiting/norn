@@ -12,12 +12,10 @@
 //! and processed instead of orphaned.
 //!
 //! One codepath: everything that arrives is injected by exactly the
-//! same helpers a mid-run drain uses —
-//! [`flush_inbound_messages`](super::helpers::flush_inbound_messages)
-//! for inbound messages and
-//! [`drain_child_results`](super::helpers::drain_child_results) for
-//! child results. The linger only decides *when* those run again; it
-//! never delivers anything itself.
+//! same `super::delivery` helpers a mid-run drain uses —
+//! `flush_inbound_messages` for inbound messages and
+//! `drain_child_results` for child results. The linger only decides
+//! *when* those run again; it never delivers anything itself.
 //!
 //! Deadline semantics: **total per linger entry**. Each time the loop
 //! reaches a would-stop boundary with nothing buffered, a fresh

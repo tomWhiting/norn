@@ -293,6 +293,33 @@ async fn with_drain_grace_bounds_background_pipe_holders() {
     );
 }
 
+/// Concurrent-drain regression: a background child holding BOTH stdout and
+/// stderr open must cost one drain grace period, not two — the drains
+/// settle concurrently. With a 1s grace, the sequential worst case is
+/// >= 2s; the concurrent implementation returns well under that.
+#[tokio::test]
+async fn held_open_stdout_and_stderr_cost_one_grace_period() {
+    let tool = BashTool::new().with_drain_grace(std::time::Duration::from_secs(1));
+    let started = std::time::Instant::now();
+    let out = tool
+        .execute(
+            // The backgrounded sleep inherits both pipes and outlives the
+            // shell, so stdout AND stderr each hit the drain grace.
+            &envelope(json!({ "command": "sleep 5 & echo held" })),
+            &ToolContext::empty(),
+        )
+        .await
+        .expect("bash ok");
+    let elapsed = started.elapsed();
+
+    assert!(!out.is_error());
+    assert_eq!(out.content["streams_still_open"].as_bool(), Some(true));
+    assert!(
+        elapsed < std::time::Duration::from_millis(1900),
+        "two held pipes must settle within ~one 1s grace, not two (elapsed: {elapsed:?})",
+    );
+}
+
 /// Track B finding 7 regression: a relative `working_dir` argument must
 /// resolve against the agent's context working directory, not the process
 /// CWD.

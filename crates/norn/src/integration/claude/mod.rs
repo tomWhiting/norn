@@ -2,9 +2,9 @@
 //!
 //! Two integration modes live here:
 //!
-//! - [`ClaudeRunnerAdapter`] — implements [`Provider`] over the Claude Code
+//! - [`ClaudeRunnerAdapter`] — implements [`Provider`](crate::provider::traits::Provider) over the Claude Code
 //!   CLI by spawning a [`claude_runner::ClaudeProcess`] and translating its
-//!   stream-json events into [`ProviderEvent`]s. Callers route agent steps
+//!   stream-json events into [`ProviderEvent`](crate::provider::events::ProviderEvent)s. Callers route agent steps
 //!   through the legitimate Claude subscription path. The adapter is paired
 //!   with [`StepOutcome`], the structured return value produced by a single
 //!   step.

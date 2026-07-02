@@ -1,41 +1,26 @@
-//! HTTP execution for OpenAI-compatible Chat Completions.
-
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::Duration;
-
-use futures_util::StreamExt;
+//! Chat Completions request execution: payload build plus the shared core.
+//!
+//! All transport behaviour (401 refresh, 429 backoff, error-status
+//! handling, SSE consumption) lives in
+//! [`StreamExecutor`](crate::provider::exec::StreamExecutor); this module
+//! contributes only the Chat Completions payload construction and hands
+//! the executor a stateful [`ChatCompletionsMapper`].
 
 use super::request::build_payload;
 use super::sse::ChatCompletionsMapper;
 use crate::error::ProviderError;
-use crate::provider::auth::AuthProvider;
-use crate::provider::debug::DebugDumper;
 use crate::provider::events::ProviderEvent;
-use crate::provider::openai::rate_limiter::RateLimiter;
-use crate::provider::openai::retry_after::parse_retry_after;
-use crate::provider::openai::sse::SseParser;
+use crate::provider::exec::StreamExecutor;
 use crate::provider::request::ProviderRequest;
-
-/// Deliberate default matching the existing `OpenAI` provider when no
-/// `ProviderConfig::retry_backoff` is supplied.
-pub(super) const DEFAULT_RETRY_BACKOFF: Duration = Duration::from_secs(1);
 
 /// Per-request sender state cloned out of the provider.
 pub(super) struct SenderProvider {
-    pub(super) client: reqwest::Client,
-    pub(super) endpoint: String,
-    pub(super) timeout: Duration,
-    pub(super) max_retries: u32,
-    pub(super) retry_backoff: Duration,
-    pub(super) retry_after_ceiling: Option<Duration>,
-    pub(super) rate_limiter: Arc<RateLimiter>,
-    pub(super) auth_provider: Arc<dyn AuthProvider>,
-    pub(super) debug_dump_file: Option<PathBuf>,
+    /// Shared transport core.
+    pub(super) executor: StreamExecutor,
 }
 
 impl SenderProvider {
-    /// Executes one streaming provider request.
+    /// Executes one streaming Chat Completions request.
     ///
     /// # Errors
     ///
@@ -47,233 +32,19 @@ impl SenderProvider {
         tx: tokio::sync::mpsc::Sender<Result<ProviderEvent, ProviderError>>,
     ) -> Result<(), ProviderError> {
         let payload = build_payload(&request)?;
-        let body =
-            serde_json::to_string(&payload).map_err(|err| ProviderError::ResponseParseError {
+        let body = serde_json::to_string(&payload).map_err(|err| {
+            ProviderError::RequestSerializationFailed {
                 reason: format!("failed to serialize chat completions request: {err}"),
-            })?;
-        let dumper = self.debug_dump_file.as_deref().and_then(DebugDumper::new);
-        if let Some(ref dump) = dumper {
-            dump.write_request(&self.endpoint, &body);
-        }
-
-        let request_start = std::time::Instant::now();
-        let response = self.send_with_retries(body).await?;
-        if let Some(ref dump) = dumper {
-            let status = response.status().as_u16();
-            let headers: Vec<(String, String)> = response
-                .headers()
-                .iter()
-                .map(|(key, value)| {
-                    (
-                        key.to_string(),
-                        value.to_str().unwrap_or("<binary>").to_owned(),
-                    )
-                })
-                .collect();
-            dump.write_response_meta(status, &headers);
-        }
-
-        self.consume_stream(response, tx, dumper, request_start)
-            .await
-    }
-
-    async fn send_with_retries(&self, body: String) -> Result<reqwest::Response, ProviderError> {
-        let mut attempts = 0u32;
-        let mut auth_retried = false;
-        loop {
-            self.rate_limiter.acquire().await;
-            let send_start = std::time::Instant::now();
-            let mut builder = self
-                .client
-                .post(&self.endpoint)
-                .header("Content-Type", "application/json")
-                .header("Accept", "text/event-stream")
-                .body(body.clone());
-            builder = self.auth_provider.apply_auth(builder).await?;
-            let result = match tokio::time::timeout(self.timeout, builder.send()).await {
-                Ok(result) => result,
-                Err(_elapsed) => {
-                    return Err(ProviderError::ConnectionFailed {
-                        reason: format!(
-                            "connection timed out: no response headers within {:.1}s",
-                            self.timeout.as_secs_f64()
-                        ),
-                    });
-                }
-            };
-            let response = result.map_err(|err| {
-                if err.is_timeout() {
-                    ProviderError::ConnectionFailed {
-                        reason: format!("connection timed out: {err}"),
-                    }
-                } else {
-                    ProviderError::ConnectionFailed {
-                        reason: format!("request failed: {err}"),
-                    }
-                }
-            })?;
-            let status = response.status();
-
-            if status == reqwest::StatusCode::UNAUTHORIZED {
-                if auth_retried {
-                    return Err(ProviderError::AuthenticationFailed {
-                        reason: "HTTP 401 Unauthorized after token refresh".to_string(),
-                    });
-                }
-                auth_retried = true;
-                match self.auth_provider.on_unauthorized().await {
-                    Ok(true) => continue,
-                    Ok(false) => {
-                        return Err(ProviderError::AuthenticationFailed {
-                            reason: "HTTP 401 Unauthorized and no refresh available".to_string(),
-                        });
-                    }
-                    Err(err) => return Err(err),
-                }
             }
-
-            if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                let retry_after = response
-                    .headers()
-                    .get("Retry-After")
-                    .and_then(|value| value.to_str().ok())
-                    .and_then(parse_retry_after)
-                    .map(|wait| {
-                        self.retry_after_ceiling
-                            .map_or(wait, |ceiling| wait.min(ceiling))
-                    });
-                let wait = retry_after.unwrap_or(self.retry_backoff);
-                self.rate_limiter.impose_cooldown(wait).await;
-                attempts = attempts.saturating_add(1);
-                if attempts > self.max_retries {
-                    return Err(ProviderError::RateLimited { retry_after });
-                }
-                tokio::time::sleep(wait).await;
-                continue;
-            }
-
-            if status.is_server_error() {
-                let body_text = response.text().await.unwrap_or_default();
-                return Err(ProviderError::StreamError {
-                    reason: format!("HTTP {status}: {body_text}"),
-                });
-            }
-            if !status.is_success() {
-                let body_text = response.text().await.unwrap_or_default();
-                return Err(ProviderError::StreamError {
-                    reason: format!("HTTP {status}: {body_text}"),
-                });
-            }
-
-            tracing::debug!(
-                elapsed_s = send_start.elapsed().as_secs_f64(),
-                status = status.as_u16(),
-                endpoint = %self.endpoint,
-                "chat completions response headers received"
-            );
-            return Ok(response);
-        }
-    }
-
-    async fn consume_stream(
-        &self,
-        response: reqwest::Response,
-        tx: tokio::sync::mpsc::Sender<Result<ProviderEvent, ProviderError>>,
-        dumper: Option<DebugDumper>,
-        request_start: std::time::Instant,
-    ) -> Result<(), ProviderError> {
-        let mut parser = SseParser::new();
+        })?;
+        tracing::debug!(
+            endpoint = %self.executor.endpoint,
+            message_count = request.messages.len(),
+            "chat completions request starting"
+        );
         let mut mapper = ChatCompletionsMapper::default();
-        let mut stream = response.bytes_stream();
-        let mut saw_done = false;
-        let mut chunk_count = 0u64;
-        let mut event_count = 0u64;
-        let mut last_chunk = std::time::Instant::now();
-
-        loop {
-            let Ok(next) = tokio::time::timeout(self.timeout, stream.next()).await else {
-                return Err(ProviderError::StreamError {
-                    reason: format!(
-                        "SSE stream timed out: no data received for {:.1}s",
-                        self.timeout.as_secs_f64()
-                    ),
-                });
-            };
-            let Some(chunk_result) = next else {
-                break;
-            };
-            let chunk = chunk_result.map_err(|err| ProviderError::StreamInterrupted {
-                reason: format!("connection lost mid-stream: {err}"),
-            })?;
-            chunk_count = chunk_count.saturating_add(1);
-            last_chunk = std::time::Instant::now();
-            for sse_event in parser.feed(chunk.as_ref()) {
-                event_count = event_count.saturating_add(1);
-                if emit_mapped(&mut mapper, &tx, dumper.as_ref(), &sse_event, &mut saw_done).await?
-                {
-                    tracing::debug!(
-                        total_s = request_start.elapsed().as_secs_f64(),
-                        chunks = chunk_count,
-                        events = event_count,
-                        "chat completions request complete"
-                    );
-                    return Ok(());
-                }
-            }
-        }
-
-        for sse_event in parser.finish() {
-            event_count = event_count.saturating_add(1);
-            if emit_mapped(&mut mapper, &tx, dumper.as_ref(), &sse_event, &mut saw_done).await? {
-                return Ok(());
-            }
-        }
-
-        if saw_done {
-            return Ok(());
-        }
-        if let Some(done) = mapper.finish_on_clean_close()? {
-            tracing::debug!(
-                total_s = request_start.elapsed().as_secs_f64(),
-                chunks = chunk_count,
-                events = event_count,
-                "chat completions stream closed cleanly without finish_reason; synthesized end_turn"
-            );
-            if tx.send(Ok(done)).await.is_err() {
-                return Ok(());
-            }
-            return Ok(());
-        }
-        Err(ProviderError::StreamInterrupted {
-            reason: format!(
-                "chat completions stream ended before terminal finish_reason; chunks={chunk_count}, events={event_count}, last_chunk_age_s={:.1}",
-                last_chunk.elapsed().as_secs_f64()
-            ),
-        })
+        self.executor.execute(body, &mut mapper, &tx).await
     }
-}
-
-async fn emit_mapped(
-    mapper: &mut ChatCompletionsMapper,
-    tx: &tokio::sync::mpsc::Sender<Result<ProviderEvent, ProviderError>>,
-    dumper: Option<&DebugDumper>,
-    sse_event: &crate::provider::openai::sse::SseEvent,
-    saw_done: &mut bool,
-) -> Result<bool, ProviderError> {
-    if let Some(dump) = dumper {
-        dump.write_sse_event("chat.completion.chunk", &sse_event.data);
-    }
-    for event in mapper.map_event(sse_event) {
-        let is_done = matches!(event, Ok(ProviderEvent::Done { .. }));
-        if tx.send(event).await.is_err() {
-            return Ok(true);
-        }
-        if is_done {
-            *saw_done = true;
-            return Ok(true);
-        }
-    }
-    Ok(false)
 }
 
 #[cfg(test)]
@@ -283,10 +54,12 @@ mod tests {
     use std::time::Duration;
 
     use futures_util::StreamExt;
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
     use wiremock::matchers::{header, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
     use super::super::OpenAiCompatibleProvider;
+    use crate::error::{ErrorClass, ProviderError, TransientKind};
     use crate::provider::auth::{AuthProvider, AuthSource, MockAuthProvider};
     use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::request::{
@@ -297,6 +70,7 @@ mod tests {
     fn build_request() -> ProviderRequest {
         ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::User,
                 content: Some("hello".to_string()),
                 thinking: String::new(),
@@ -319,6 +93,10 @@ mod tests {
     }
 
     fn build_provider(base_url: &str) -> OpenAiCompatibleProvider {
+        build_provider_with_timeout(base_url, Duration::from_secs(10))
+    }
+
+    fn build_provider_with_timeout(base_url: &str, timeout: Duration) -> OpenAiCompatibleProvider {
         let auth: Arc<dyn AuthProvider> = Arc::new(MockAuthProvider::single("test-key"));
         OpenAiCompatibleProvider::with_auth_provider(
             ProviderConfig {
@@ -326,7 +104,7 @@ mod tests {
                     key: SecretString::new("unused-direct-auth"),
                 },
                 base_url: Some(format!("{base_url}/v1")),
-                timeout: Duration::from_secs(10),
+                timeout,
                 max_retries: 0,
                 provider_options: None,
                 debug_dump_file: None,
@@ -338,6 +116,38 @@ mod tests {
             auth,
         )
         .expect("provider construction")
+    }
+
+    async fn drain_request(socket: &mut tokio::net::TcpStream) {
+        let mut buf = Vec::with_capacity(4096);
+        let mut tmp = [0u8; 4096];
+        let mut headers_end: Option<usize> = None;
+        let mut content_length: Option<usize> = None;
+        loop {
+            let n = socket.read(&mut tmp).await.unwrap();
+            if n == 0 {
+                return;
+            }
+            buf.extend_from_slice(&tmp[..n]);
+            if headers_end.is_none()
+                && let Some(pos) = buf.windows(4).position(|w| w == b"\r\n\r\n")
+            {
+                headers_end = Some(pos + 4);
+                let headers_text = String::from_utf8_lossy(&buf[..pos]);
+                for line in headers_text.lines() {
+                    let lc = line.to_ascii_lowercase();
+                    if let Some(value) = lc.strip_prefix("content-length:") {
+                        content_length = value.trim().parse::<usize>().ok();
+                        break;
+                    }
+                }
+            }
+            match (headers_end, content_length) {
+                (Some(end), Some(cl)) if buf.len() >= end + cl => return,
+                (Some(_), None) => return,
+                _ => {}
+            }
+        }
     }
 
     #[tokio::test]
@@ -389,6 +199,115 @@ mod tests {
         }
     }
 
+    /// Regression (Wave-6 provider finding): under
+    /// `stream_options.include_usage` a conformant backend streams the token
+    /// usage in a SEPARATE final chunk (empty `choices`, populated `usage`)
+    /// AFTER the chunk carrying `finish_reason`, before `[DONE]`. The
+    /// terminal `Done` must be deferred so that trailing usage chunk is
+    /// consumed and attributed — not reported as zero tokens.
+    #[tokio::test]
+    async fn stream_attributes_usage_chunk_after_finish_reason() {
+        let server = MockServer::start().await;
+        let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n\
+                    data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                    data: {\"choices\":[],\"usage\":{\"prompt_tokens\":128,\"completion_tokens\":64}}\n\n\
+                    data: [DONE]\n\n";
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer test-key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(&server.uri());
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let mut text = String::new();
+        let mut done = None;
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(ProviderEvent::TextDelta { text: delta }) => text.push_str(&delta),
+                Ok(event @ ProviderEvent::Done { .. }) => done = Some(event),
+                Ok(_) => {}
+                Err(err) => panic!("unexpected provider error: {err}"),
+            }
+        }
+
+        assert_eq!(text, "hello");
+        match done {
+            Some(ProviderEvent::Done {
+                stop_reason,
+                usage,
+                response_id,
+            }) => {
+                assert_eq!(stop_reason, StopReason::EndTurn);
+                assert_eq!(
+                    usage.input_tokens, 128,
+                    "usage from the trailing chunk must be attributed, not zero",
+                );
+                assert_eq!(usage.output_tokens, 64);
+                assert!(response_id.is_none());
+            }
+            other => panic!("expected terminal Done event, got {other:?}"),
+        }
+    }
+
+    /// The no-usage-chunk server shape (`finish_reason` then `[DONE]`, no
+    /// trailing usage chunk) must still terminate cleanly with an `EndTurn`
+    /// `Done`, never hang or surface `StreamInterrupted`. Absent usage is
+    /// legitimate here.
+    #[tokio::test]
+    async fn stream_terminates_when_no_usage_chunk_follows_finish_reason() {
+        let server = MockServer::start().await;
+        let body = "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n\
+                    data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\n\
+                    data: [DONE]\n\n";
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .and(header("authorization", "Bearer test-key"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(body),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(&server.uri());
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let mut text = String::new();
+        let mut done = None;
+        while let Some(event) = stream.next().await {
+            match event {
+                Ok(ProviderEvent::TextDelta { text: delta }) => text.push_str(&delta),
+                Ok(event @ ProviderEvent::Done { .. }) => done = Some(event),
+                Ok(_) => {}
+                Err(err) => panic!("unexpected provider error: {err}"),
+            }
+        }
+
+        assert_eq!(text, "hello");
+        match done {
+            Some(ProviderEvent::Done {
+                stop_reason, usage, ..
+            }) => {
+                assert_eq!(stop_reason, StopReason::EndTurn);
+                assert_eq!(usage.input_tokens, 0, "no usage chunk means zero is honest");
+                assert_eq!(usage.output_tokens, 0);
+            }
+            other => panic!("expected terminal Done event, got {other:?}"),
+        }
+    }
+
     #[tokio::test]
     async fn stream_clean_close_after_text_synthesizes_end_turn() {
         let server = MockServer::start().await;
@@ -429,5 +348,102 @@ mod tests {
                 ..
             }),
         ));
+    }
+
+    /// A stream that ends before any output and before a `finish_reason`
+    /// must surface the retryable `StreamInterrupted` (the shared core's
+    /// missing-terminal-event path) rather than ending silently.
+    #[tokio::test]
+    async fn empty_stream_without_finish_reason_is_stream_interrupted() {
+        let server = MockServer::start().await;
+
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .insert_header("content-type", "text/event-stream")
+                    .set_body_string(""),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+
+        let provider = build_provider(&server.uri());
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let event = stream
+            .next()
+            .await
+            .expect("stream must yield a terminal event");
+        match event {
+            Err(ProviderError::StreamInterrupted { reason }) => {
+                assert!(
+                    reason.contains("chunks=") && reason.contains("events="),
+                    "reason must carry chunk/event diagnostics: {reason}"
+                );
+            }
+            other => panic!("expected StreamInterrupted, got {other:?}"),
+        }
+    }
+
+    /// Regression test (final-state hardening, T1 item 1): a compatible
+    /// backend that returns 5xx headers and then stalls the error body
+    /// forever must trip the configured stall deadline as a retryable
+    /// network timeout instead of hanging the turn inside
+    /// `response.text()`.
+    #[tokio::test]
+    async fn stalled_error_body_times_out_as_retryable_network_timeout() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+
+        let server_task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            drain_request(&mut socket).await;
+            socket
+                .write_all(
+                    b"HTTP/1.1 502 Bad Gateway\r\n\
+                      Content-Type: text/plain\r\n\
+                      Content-Length: 100000\r\n\r\nupstream",
+                )
+                .await
+                .unwrap();
+            socket.flush().await.unwrap();
+            tokio::time::sleep(Duration::from_secs(30)).await;
+            drop(socket);
+        });
+
+        let provider = build_provider_with_timeout(
+            &format!("http://127.0.0.1:{port}"),
+            Duration::from_millis(300),
+        );
+        let mut stream = provider.stream(build_request()).expect("stream");
+
+        let outcome = tokio::time::timeout(Duration::from_secs(5), stream.next()).await;
+        server_task.abort();
+
+        let Ok(Some(Err(err))) = outcome else {
+            panic!("expected a timeout error within 5s, got {outcome:?}");
+        };
+        match &err {
+            ProviderError::StreamError { reason, transient } => {
+                assert!(
+                    reason.contains("timed out"),
+                    "reason should mention the timeout: {reason}"
+                );
+                assert!(
+                    reason.contains("502"),
+                    "reason should surface the HTTP status: {reason}"
+                );
+                assert_eq!(*transient, Some(TransientKind::Timeout));
+            }
+            other => panic!("expected StreamError, got {other:?}"),
+        }
+        assert_eq!(
+            err.class(),
+            ErrorClass::Retryable {
+                kind: TransientKind::Timeout
+            },
+            "stalled error-body read must classify as a retryable network timeout"
+        );
     }
 }

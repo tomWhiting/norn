@@ -138,6 +138,17 @@ pub(super) fn check_syntax(path: &Path, source: &str) -> AstCheck {
 /// or `None` if the parser refused to set the language or returned no tree.
 pub(super) fn parse(source: &str, language: SyntaxLanguage) -> Option<Tree> {
     let mut parser = Parser::new();
+    parse_with(&mut parser, source, language)
+}
+
+/// Parses `source` with a caller-owned parser, so multi-file callers can
+/// reuse one `Parser` allocation across an entire batch instead of
+/// constructing a fresh parser per file.
+pub(super) fn parse_with(
+    parser: &mut Parser,
+    source: &str,
+    language: SyntaxLanguage,
+) -> Option<Tree> {
     parser.set_language(&language.tree_sitter_language()).ok()?;
     parser.parse(source, None)
 }

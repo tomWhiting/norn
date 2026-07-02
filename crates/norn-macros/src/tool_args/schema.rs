@@ -64,7 +64,7 @@ pub(super) fn build_struct_impl(parsed: &ParsedStruct) -> syn::Result<TokenStrea
             __properties.insert(#name.to_string(), #schema);
         });
         mutates_properties = true;
-        if field_is_required(field) {
+        if field_is_required(field, parsed.container_default) {
             statements.push(quote! {
                 __required.push(::serde_json::Value::String(#name.to_string()));
             });
@@ -121,10 +121,13 @@ pub(super) fn build_struct_impl(parsed: &ParsedStruct) -> syn::Result<TokenStrea
 /// output; `#[serde(skip_serializing)]` fields stay. Optional and
 /// serde-defaulted fields are excluded from `required` unless
 /// `#[tool_args(required)]` forces them back. Wire names honour
-/// `#[serde(rename = "...")]`. `#[serde(flatten)]` is rejected here because
-/// merging is only modelled for top-level structs.
+/// `#[serde(rename = "...")]` and the supplied `rename_all` rule (the
+/// variant's own `rename_all` or the container's `rename_all_fields`).
+/// `#[serde(flatten)]` is rejected here because merging is only modelled for
+/// top-level structs.
 pub(super) fn build_field_props(
     fields: &[ParsedField],
+    rename_all: Option<RenameRule>,
 ) -> syn::Result<(Vec<String>, Vec<TokenStream>, Vec<String>)> {
     let mut prop_names = Vec::new();
     let mut prop_schemas = Vec::new();
@@ -141,9 +144,9 @@ pub(super) fn build_field_props(
                  not enum-variant fields",
             ));
         }
-        let name = resolve_wire_name(field, None);
+        let name = resolve_wire_name(field, rename_all);
         let schema = field_schema_tokens(field)?;
-        if field_is_required(field) {
+        if field_is_required(field, false) {
             required_names.push(name.clone());
         }
         prop_names.push(name);
@@ -160,7 +163,7 @@ fn resolve_wire_name(field: &ParsedField, rename_all: Option<RenameRule>) -> Str
     }
     let raw = field.ident.to_string();
     match rename_all {
-        Some(rule) => rule.apply(&raw),
+        Some(rule) => rule.apply_to_field(&raw),
         None => raw,
     }
 }
@@ -177,13 +180,16 @@ fn field_is_schema_visible(field: &ParsedField) -> bool {
 }
 
 /// Whether the field belongs in the `required` array. `#[tool_args(required)]`
-/// forces inclusion even with `#[serde(default)]`; otherwise optionals and
-/// serde-defaulted fields are excluded.
-fn field_is_required(field: &ParsedField) -> bool {
+/// forces inclusion even with a default; otherwise a field is optional when it
+/// is an `Option`, carries its own `#[serde(default)]`, or the container has
+/// `#[serde(default)]`. A container default does *not* relax a flattened
+/// field's inner requirements — serde still demands those from the flattened
+/// map — which is why the flatten branch merges nested `required` verbatim.
+fn field_is_required(field: &ParsedField, container_default: bool) -> bool {
     if field.tool_args_required {
         return true;
     }
-    !field.has_default && !is_option(&field.ty)
+    !field.has_default && !container_default && !is_option(&field.ty)
 }
 
 /// Builds the property schema for one field, layering the `#[tool_args(...)]`
@@ -253,10 +259,22 @@ fn validate_flatten_target(ty: &Type, flatten_span: Option<Span>) -> syn::Result
     if rejected {
         return Err(make_error(format!(
             "ToolArgs: #[serde(flatten)] requires a struct type, found `{}`",
-            quote!(#ty)
+            type_display(ty)
         )));
     }
     Ok(())
+}
+
+/// Renders a type for error messages without the spaces `TokenStream`'s
+/// `Display` inserts around path separators, generic brackets, and commas
+/// (`std :: path :: PathBuf` → `std::path::PathBuf`).
+fn type_display(ty: &Type) -> String {
+    quote!(#ty)
+        .to_string()
+        .replace(" :: ", "::")
+        .replace(" < ", "<")
+        .replace(" , ", ", ")
+        .replace(" >", ">")
 }
 
 /// Builds the JSON Schema fragment for one Rust type, attaching the supplied
@@ -501,7 +519,7 @@ fn unsupported_type_error(ty: &Type) -> Error {
         ty,
         format!(
             "ToolArgs: unsupported type `{}`. Use #[tool_args(schema = {{...}})] to provide a manual schema.",
-            quote!(#ty)
+            type_display(ty)
         ),
     )
 }

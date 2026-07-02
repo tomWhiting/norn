@@ -3,7 +3,7 @@
 //!
 //! Fork is semantically distinct from spawn: **fork = same identity, different
 //! model**, **spawn = fresh identity, configured through profile**. The
-//! machinery is shared (per-child [`ToolContext`](crate::tool::context::ToolContext), status watch channel,
+//! machinery is shared (per-child [`ToolContext`], status watch channel,
 //! inbound steering channel, child result channel) so coordination
 //! tools — `signal_agent`, `close_agent` — work uniformly across
 //! both surfaces.
@@ -12,7 +12,7 @@
 //! event store (inheriting the parent's audit trail with a synthetic
 //! tool-result for the fork call itself), branches the
 //! [`SessionTree`](crate::session::tree::SessionTree) when one is published,
-//! composes the child's [`LoopContext`](crate::r#loop::loop_context::LoopContext) (fork preamble + parent base system
+//! composes the child's [`LoopContext`] (fork preamble + parent base system
 //! instruction), filters the parent registry's tool definitions through the
 //! per-fork allow-list, launches the child via [`tokio::spawn`], and returns
 //! immediately with `{ agent_id, path, status: "active" }` — the same child-id
@@ -20,7 +20,7 @@
 //! launcher marks the registry, appends a
 //! [`SessionEvent::ForkComplete`](crate::session::events::SessionEvent::ForkComplete)
 //! to the parent's timeline, and sends the formatted result through the
-//! [`ChildResultSender`](crate::agent::result_channel::ChildResultSender).
+//! [`ChildResultSender`].
 
 use std::sync::Arc;
 

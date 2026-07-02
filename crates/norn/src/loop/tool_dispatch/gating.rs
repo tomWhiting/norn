@@ -33,7 +33,7 @@ use crate::tool::traits::ToolOutput;
 
 use super::{
     SingleToolResult, ToolResultRecord, append_tool_result, build_envelope, execute_single_tool,
-    model_safe_tool_output, record_dispatch_completion,
+    installed_inline_char_limit, model_safe_tool_output, record_dispatch_completion,
 };
 use crate::provider::request::Message;
 
@@ -210,7 +210,13 @@ pub(super) async fn finish_blocked_call(
     output: &Value,
     reason: &str,
 ) -> Result<(), NornError> {
-    let output = model_safe_tool_output(&tc.name, &tc.call_id, output);
+    // `append_tool_result` caps the persisted/model-facing copy itself;
+    // the raw output goes in so the cap runs exactly once (a re-cap of an
+    // already-capped object would wrap the projection in a second
+    // truncation envelope under a small installed limit). The same
+    // bounded projection is computed here for the action-log record.
+    let inline_char_limit = installed_inline_char_limit(env.executor);
+    let capped = model_safe_tool_output(&tc.name, &tc.call_id, output, inline_char_limit);
     append_tool_result(
         env.store,
         messages,
@@ -218,8 +224,9 @@ pub(super) async fn finish_blocked_call(
             tool_call_id: &tc.call_id,
             tool_name: &tc.name,
             kind: tc.kind,
-            output: &output,
+            output,
             duration_ms: 0,
+            inline_char_limit,
         },
         loop_context.hooks.as_deref(),
         env.event_tx,
@@ -234,7 +241,7 @@ pub(super) async fn finish_blocked_call(
             outcome: Outcome::Blocked {
                 reason: reason.to_owned(),
             },
-            output: &output,
+            output: &capped,
             args: prepared.envelope.model_args.clone(),
             duration_ms: 0,
             follow_ups: Vec::new(),
@@ -263,7 +270,15 @@ pub(super) async fn finish_executed_call(
         follow_ups,
         post_validate_outcome,
     } = result;
-    let output = model_safe_tool_output(&tc.name, &tc.call_id, &output);
+    // `append_tool_result` caps the persisted/model-facing copy itself;
+    // the raw output goes in so the cap runs exactly once (a re-cap of an
+    // already-capped object would wrap the projection in a second
+    // truncation envelope under a small installed limit). The same
+    // bounded projection is computed here for the action-log record and
+    // the post-tool hooks — both saw the capped form before this change
+    // and still do.
+    let inline_char_limit = installed_inline_char_limit(env.executor);
+    let capped = model_safe_tool_output(&tc.name, &tc.call_id, &output, inline_char_limit);
 
     append_tool_result(
         env.store,
@@ -274,6 +289,7 @@ pub(super) async fn finish_executed_call(
             kind: tc.kind,
             output: &output,
             duration_ms,
+            inline_char_limit,
         },
         loop_context.hooks.as_deref(),
         env.event_tx,
@@ -298,7 +314,7 @@ pub(super) async fn finish_executed_call(
             tool_call_id: &tc.call_id,
             tool_use_description: &prepared.description,
             outcome,
-            output: &output,
+            output: &capped,
             args: prepared.envelope.model_args.clone(),
             duration_ms,
             follow_ups,
@@ -309,7 +325,7 @@ pub(super) async fn finish_executed_call(
 
     if let Some(hooks) = loop_context.hooks.as_deref() {
         let tool_ctx = ToolContext::empty();
-        let mut post_output = ToolOutput::from_content(output.clone());
+        let mut post_output = ToolOutput::from_content(capped.clone());
         post_output.duration = Duration::from_millis(duration_ms);
         hooks
             .run_post_tool(&prepared.envelope, &post_output, &tool_ctx)

@@ -23,7 +23,7 @@ pub enum ExecutionMode {
 
 /// Collaboration mode determines how the agent interacts with the
 /// operator and approaches its work. Changeable mid-session via
-/// [`LoopContext`](crate::r#loop::loop_context::LoopContext).
+/// [`LoopContext`](crate::agent_loop::loop_context::LoopContext).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum CollaborationMode {
     /// Balanced: prefer assumptions over questions, execute readily.
@@ -52,7 +52,7 @@ impl CollaborationMode {
 }
 
 /// Metadata about a single tool, extracted from the registry for prompt
-/// generation. Avoids coupling the builder to the full [`Tool`] trait.
+/// generation. Avoids coupling the builder to the full [`Tool`](crate::tool::traits::Tool) trait.
 #[derive(Clone, Debug)]
 pub struct ToolPromptEntry {
     /// Tool identifier.
@@ -85,7 +85,7 @@ pub struct SystemPromptInputs {
 /// Assemble the Norn base system prompt from runtime state.
 ///
 /// The returned string is intended to become `system_sections[0]` in the
-/// [`LoopContext`](crate::r#loop::loop_context::LoopContext), with
+/// [`LoopContext`](crate::agent_loop::loop_context::LoopContext), with
 /// profile instructions appended as subsequent sections.
 pub fn build_system_prompt(inputs: &SystemPromptInputs) -> String {
     let mut out = String::with_capacity(4096);
@@ -196,10 +196,18 @@ fn write_communication(out: &mut String, mode: ExecutionMode) {
     }
 }
 
+/// Groups tools by category in rendering order. Distinct
+/// [`ToolCategory::Custom`] labels form distinct groups: the grouping key
+/// is the ordinal *plus* the label, so two custom categories never merge
+/// even though they share an ordinal slot (labels order alphabetically
+/// within it).
 fn group_by_category(tools: &[ToolPromptEntry]) -> Vec<(ToolCategory, Vec<&ToolPromptEntry>)> {
-    let mut map: BTreeMap<u8, (ToolCategory, Vec<&ToolPromptEntry>)> = BTreeMap::new();
+    let mut map: BTreeMap<(u8, &str), (ToolCategory, Vec<&ToolPromptEntry>)> = BTreeMap::new();
     for entry in tools {
-        let key = category_sort_key(entry.category);
+        let key = (
+            category_sort_key(entry.category),
+            custom_label(entry.category),
+        );
         map.entry(key)
             .or_insert_with(|| (entry.category, Vec::new()))
             .1
@@ -208,13 +216,22 @@ fn group_by_category(tools: &[ToolPromptEntry]) -> Vec<(ToolCategory, Vec<&ToolP
     map.into_values().collect()
 }
 
+/// The label of a [`ToolCategory::Custom`] category; empty for built-ins,
+/// whose ordinal alone determines their position.
+fn custom_label(cat: ToolCategory) -> &'static str {
+    match cat {
+        ToolCategory::Custom(label) => label,
+        _ => "",
+    }
+}
+
 fn category_sort_key(cat: ToolCategory) -> u8 {
     match cat {
         ToolCategory::FileSystem => 0,
         ToolCategory::Search => 1,
         ToolCategory::Shell => 2,
         ToolCategory::Development => 3,
-        ToolCategory::Meridian => 4,
+        ToolCategory::Custom(_) => 4,
         ToolCategory::Web => 5,
         ToolCategory::Agent => 6,
         ToolCategory::Scripting => 7,
@@ -231,7 +248,7 @@ fn category_heading(cat: ToolCategory) -> &'static str {
         ToolCategory::Search => "Search",
         ToolCategory::Shell => "Shell",
         ToolCategory::Development => "Development",
-        ToolCategory::Meridian => "Meridian",
+        ToolCategory::Custom(label) => label,
         ToolCategory::Web => "Web",
         ToolCategory::Agent => "Agent Tools",
         ToolCategory::Scripting => "Scripting",
@@ -243,7 +260,7 @@ fn category_heading(cat: ToolCategory) -> &'static str {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
+#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
 
@@ -360,13 +377,13 @@ mod tests {
     }
 
     #[test]
-    fn meridian_tools_group_under_meridian_heading() {
+    fn custom_category_tools_group_under_their_label_heading() {
         let mut inputs = minimal_inputs();
         inputs.tools = vec![
             entry("read", ToolCategory::FileSystem, "Read a file.", None),
             entry(
                 "meridian_messaging",
-                ToolCategory::Meridian,
+                ToolCategory::Custom("Meridian"),
                 "Send and read Meridian DMs and channels.",
                 None,
             ),
@@ -380,7 +397,42 @@ mod tests {
     }
 
     #[test]
-    fn meridian_heading_absent_without_meridian_tools() {
+    fn distinct_custom_labels_form_distinct_ordered_groups() {
+        let mut inputs = minimal_inputs();
+        inputs.tools = vec![
+            entry("zeta_tool", ToolCategory::Custom("Zeta"), "Zeta op.", None),
+            entry("acme_tool", ToolCategory::Custom("Acme"), "Acme op.", None),
+        ];
+        let prompt = build_system_prompt(&inputs);
+
+        let acme_pos = prompt.find("## Acme").expect("Acme heading present");
+        let zeta_pos = prompt.find("## Zeta").expect("Zeta heading present");
+        assert!(
+            acme_pos < zeta_pos,
+            "custom labels must order alphabetically within their slot",
+        );
+        assert!(prompt.contains("**acme_tool**: Acme op."));
+        assert!(prompt.contains("**zeta_tool**: Zeta op."));
+    }
+
+    #[test]
+    fn custom_category_slots_between_development_and_web() {
+        let mut inputs = minimal_inputs();
+        inputs.tools = vec![
+            entry("web_fetch", ToolCategory::Web, "Fetch.", None),
+            entry("prod_tool", ToolCategory::Custom("Product"), "Op.", None),
+            entry("lsp", ToolCategory::Development, "LSP.", None),
+        ];
+        let prompt = build_system_prompt(&inputs);
+
+        let dev_pos = prompt.find("## Development").expect("dev heading");
+        let custom_pos = prompt.find("## Product").expect("custom heading");
+        let web_pos = prompt.find("## Web").expect("web heading");
+        assert!(dev_pos < custom_pos && custom_pos < web_pos);
+    }
+
+    #[test]
+    fn custom_heading_absent_without_custom_tools() {
         let mut inputs = minimal_inputs();
         inputs.tools = vec![entry(
             "read",

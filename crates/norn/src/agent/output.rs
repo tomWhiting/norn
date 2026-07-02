@@ -2,7 +2,7 @@
 //! [`AgentStopReason`].
 //!
 //! [`Agent::run`](super::instance::Agent::run) maps the runner's
-//! [`AgentStepResult`](crate::r#loop::config::AgentStepResult) into a
+//! [`AgentStepResult`] into a
 //! [`RunOutcome`]: [`RunOutcome::Completed`] for a finished run, or
 //! [`RunOutcome::Stopped`] when the run ended early (schema budget
 //! exhausted, max iterations, timeout, cancellation, truncation). The split

@@ -15,7 +15,7 @@
 //! semantics returned with the name.
 //!
 //! Delivery travels the recipient's
-//! [`InboundChannel`](crate::r#loop::inbound::InboundChannel) and drains at
+//! [`InboundChannel`](crate::agent_loop::inbound::InboundChannel) and drains at
 //! the recipient loop's step boundaries, injected as a harness-framed
 //! `<agent_message>` turn. Route registration is owned by the spawn/fork
 //! launch wrappers (register while a step is running, deregister while a

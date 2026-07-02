@@ -1,10 +1,10 @@
 //! Auto-compaction trigger and shared timeout state (N-023 R4 + R2).
 //!
 //! `maybe_auto_compact` ties the client-side token estimate from
-//! [`crate::r#loop::tokens`] to the plan/commit compaction API on
+//! [`crate::agent_loop::tokens`] to the plan/commit compaction API on
 //! [`ContextEdits`]. When the trigger fires, the loop asks the step's own
 //! provider and model for an LLM-written summary of the events being
-//! elided ([`crate::r#loop::summarization`]); the summary becomes the
+//! elided (the loop summarization module); the summary becomes the
 //! compaction record's content so the model keeps semantic continuity. A
 //! summarization failure never aborts the step: it is logged at `warn`
 //! and the mechanical event digest is committed instead, explicitly
@@ -15,7 +15,7 @@
 //! `TimeoutState` is the shared mutable handle the runner exposes to the
 //! `tokio::time::timeout` wrapper; on cancellation the outer scope reads
 //! the most recent assistant text and iteration count to populate
-//! [`crate::r#loop::runner::AgentStepResult::TimedOut`].
+//! [`crate::agent_loop::runner::AgentStepResult::TimedOut`].
 
 use std::sync::Arc;
 
@@ -112,7 +112,13 @@ fn estimate_event_tokens(
     let mut total: usize = 0;
     for event in events {
         let tokens = match event {
-            SessionEvent::UserMessage { content, .. } => estimator.estimate(content),
+            // A fired rule contributes its content to the prompt whether it
+            // renders as a message (ContextInjection/MessageDelivery) or as
+            // a re-materialized system section (SystemContextAppend), so it
+            // carries a real token cost the compaction planner must see —
+            // the same shape as a user message.
+            SessionEvent::UserMessage { content, .. }
+            | SessionEvent::RuleInjection { content, .. } => estimator.estimate(content),
             SessionEvent::AssistantMessage { content, .. } => {
                 if content.is_empty() {
                     0
@@ -184,6 +190,12 @@ pub struct AutoCompactArgs<'a> {
     pub keep_recent_turns: usize,
     /// Hook registry consulted before compaction runs.
     pub hooks: Option<&'a HookRegistry>,
+    /// The step's cooperative cancellation token, when configured. The
+    /// summarization provider call is raced against it so a cancel that
+    /// fires during preflight ends the call promptly instead of waiting
+    /// out a full LLM completion; a cancelled trigger commits nothing and
+    /// stays un-fired.
+    pub cancel: Option<&'a tokio_util::sync::CancellationToken>,
 }
 
 /// Decide whether auto-compaction should fire and run it if so.
@@ -261,8 +273,36 @@ pub async fn maybe_auto_compact(
 
     let events = args.store.events();
     let elided = &events[..plan.cut_exclusive()];
-    let (summary, summary_source, summarization_usage) =
-        summarize_or_fall_back(args.provider, args.model, elided, token_estimate_freed).await?;
+    // Race the summarization call against the step's cancellation token:
+    // the inline LLM call runs in preflight, outside the runner's own
+    // provider-call select, and must not hold a cancelled step hostage
+    // for a full completion. On cancel the trigger aborts without
+    // committing and without consuming the once-per-step guard — the
+    // runner observes the token at its next gate and returns `Cancelled`.
+    let summarized = match args.cancel {
+        Some(token) => {
+            tokio::select! {
+                biased;
+                () = token.cancelled() => None,
+                result = summarize_or_fall_back(
+                    args.provider,
+                    args.model,
+                    elided,
+                    token_estimate_freed,
+                ) => Some(result?),
+            }
+        }
+        None => Some(
+            summarize_or_fall_back(args.provider, args.model, elided, token_estimate_freed).await?,
+        ),
+    };
+    let Some((summary, summary_source, summarization_usage)) = summarized else {
+        tracing::info!(
+            "auto-compaction summarization cancelled mid-call; \
+             compaction skipped and the trigger left armed",
+        );
+        return Ok(None);
+    };
 
     let outcome = edits.commit_compaction_plan(args.store, plan, summary)?;
     args.state.fired = true;
@@ -553,6 +593,7 @@ mod tests {
             threshold_pct: Some(0.75),
             keep_recent_turns: 10,
             hooks,
+            cancel: None,
         })
         .await
     }
@@ -634,6 +675,77 @@ mod tests {
             provider.call_count(),
             1,
             "the short-circuited trigger must not issue another summarization call",
+        );
+    }
+
+    /// Provider whose stream never yields — a summarization call against
+    /// it can only end through cancellation.
+    struct HangingProvider;
+
+    impl crate::provider::traits::Provider for HangingProvider {
+        fn stream(
+            &self,
+            _request: crate::provider::request::ProviderRequest,
+        ) -> Result<crate::provider::traits::ProviderStream, crate::error::ProviderError> {
+            Ok(Box::pin(futures_util::stream::pending()))
+        }
+
+        fn capabilities(&self) -> crate::provider::tools::ProviderCapabilities {
+            crate::provider::tools::ProviderCapabilities::default()
+        }
+    }
+
+    /// Regression (summarization ran outside the cancellation select): a
+    /// cancel firing while the inline summarization call is in flight
+    /// must end the trigger promptly — committing nothing and leaving
+    /// the once-per-step guard un-fired.
+    #[tokio::test]
+    async fn cancellation_aborts_in_flight_summarization_without_committing() {
+        let store = EventStore::new();
+        for i in 0..30 {
+            store.append(assistant(&format!("t{i}"))).expect("append");
+        }
+        let provider = HangingProvider;
+        let mut state = CompactionState::new();
+        let mut edits = ContextEdits::new();
+        let token = tokio_util::sync::CancellationToken::new();
+        let trigger = token.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            trigger.cancel();
+        });
+
+        let run = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            maybe_auto_compact(AutoCompactArgs {
+                state: &mut state,
+                edits: Some(&mut edits),
+                store: &store,
+                provider: &provider,
+                model: "test-model",
+                estimated_tokens: 10_000,
+                context_window_limit: Some(8_000),
+                threshold_pct: Some(0.75),
+                keep_recent_turns: 10,
+                hooks: None,
+                cancel: Some(&token),
+            }),
+        )
+        .await
+        .expect("a cancelled summarization must end the trigger promptly")
+        .expect("cancellation is not an error");
+
+        assert!(run.is_none(), "a cancelled trigger commits nothing");
+        assert!(
+            !state.has_fired(),
+            "the once-per-step guard stays un-fired so a later step can compact",
+        );
+        assert!(
+            store
+                .events()
+                .iter()
+                .all(|e| !matches!(e, SessionEvent::Compaction { .. })),
+            "no compaction event may be committed after a cancelled summarization",
         );
     }
 
@@ -788,6 +900,7 @@ mod tests {
             threshold_pct: Some(f64::NAN),
             keep_recent_turns: 10,
             hooks: None,
+            cancel: None,
         })
         .await
         .expect("ok");

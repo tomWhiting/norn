@@ -1,6 +1,5 @@
 //! `lsp` tool wrapper: dispatches structured actions to an [`LspBackend`].
 
-use std::path::PathBuf;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -10,10 +9,11 @@ use serde_json::{Value, json};
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
-use crate::tool::failure::ToolErrorKind;
+use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
+use super::super::confinement::check_confinement;
 use super::backend::{LspBackend, LspBackendError};
 
 /// LSP tool: delegates hover/definition/references/symbols/diagnostics to
@@ -91,7 +91,7 @@ impl Tool for LspTool {
                 },
                 "path": {
                     "type": "string",
-                    "description": "Filesystem path the action targets."
+                    "description": "Filesystem path the action targets. Relative paths resolve against the agent working directory."
                 },
                 "line": {
                     "type": "integer",
@@ -120,7 +120,7 @@ impl Tool for LspTool {
     async fn execute(
         &self,
         envelope: &ToolEnvelope,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let args: LspArgs = serde_json::from_value(envelope.model_args.clone()).map_err(|e| {
             ToolError::pre_validation(
@@ -140,7 +140,20 @@ impl Tool for LspTool {
             );
         }
 
-        let path = PathBuf::from(&args.path);
+        let path = ctx.resolve_path(&args.path);
+
+        // Workspace confinement (opt-in): refuse before the backend touches
+        // the file so even metadata of out-of-root paths is never disclosed.
+        if let Err(reason) = check_confinement(ctx, &path) {
+            return Ok(ToolOutput::failure_with_content(
+                serde_json::json!({ "path": args.path, "kind": "confinement_refused" }),
+                ToolErrorPayload::new(
+                    ToolErrorKind::PermissionDenied,
+                    format!("lsp refused: {reason}"),
+                )
+                .with_detail(serde_json::json!({ "path": args.path })),
+            ));
+        }
 
         let result = match args.action.as_str() {
             "hover" => {
@@ -506,6 +519,143 @@ mod tests {
             .await
             .expect_err("missing path must fail");
         assert!(matches!(err, ToolError::PreValidationFailed { .. }));
+    }
+
+    /// Backend that records the path each call receives, so tests can
+    /// assert what the tool actually resolved before dispatch.
+    struct PathRecordingBackend {
+        seen: std::sync::Mutex<Vec<std::path::PathBuf>>,
+    }
+
+    impl PathRecordingBackend {
+        fn new() -> Self {
+            Self {
+                seen: std::sync::Mutex::new(Vec::new()),
+            }
+        }
+    }
+
+    #[async_trait]
+    impl LspBackend for PathRecordingBackend {
+        async fn hover(
+            &self,
+            _path: &Path,
+            _line: u32,
+            _column: u32,
+        ) -> Result<Option<LspHover>, LspBackendError> {
+            Ok(None)
+        }
+        async fn definition(
+            &self,
+            _path: &Path,
+            _line: u32,
+            _column: u32,
+        ) -> Result<Vec<LspLocation>, LspBackendError> {
+            Ok(Vec::new())
+        }
+        async fn references(
+            &self,
+            _path: &Path,
+            _line: u32,
+            _column: u32,
+        ) -> Result<Vec<LspLocation>, LspBackendError> {
+            Ok(Vec::new())
+        }
+        async fn symbols(&self, path: &Path) -> Result<Vec<LspSymbol>, LspBackendError> {
+            self.seen.lock().unwrap().push(path.to_path_buf());
+            Ok(Vec::new())
+        }
+        async fn diagnostics(&self, _path: &Path) -> Result<Vec<LspDiagnostic>, LspBackendError> {
+            Ok(Vec::new())
+        }
+    }
+
+    #[tokio::test]
+    async fn relative_path_resolves_against_agent_working_dir() {
+        use crate::tool::context::SharedWorkingDir;
+
+        let backend = Arc::new(PathRecordingBackend::new());
+        let tool = LspTool::with_backend(backend.clone());
+        let ctx = ToolContext::with_working_dir(SharedWorkingDir::new(std::path::PathBuf::from(
+            "/agent/workdir",
+        )));
+
+        let env = envelope(json!({ "action": "symbols", "path": "src/lib.rs" }));
+        tool.execute(&env, &ctx).await.expect("symbols ok");
+
+        let seen = backend.seen.lock().unwrap();
+        assert_eq!(
+            seen.as_slice(),
+            &[std::path::PathBuf::from("/agent/workdir/src/lib.rs")],
+            "relative path must resolve against the agent working dir, not process CWD"
+        );
+    }
+
+    #[tokio::test]
+    async fn confined_context_refuses_out_of_workspace_absolute_path() {
+        use crate::tool::context::SharedWorkingDir;
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let backend = Arc::new(PathRecordingBackend::new());
+        let tool = LspTool::with_backend(backend.clone());
+        let mut ctx =
+            ToolContext::with_working_dir(SharedWorkingDir::new(root.path().to_path_buf()));
+        ctx.confine_to_workspace(root.path().to_path_buf());
+
+        let env = envelope(json!({ "action": "symbols", "path": "/etc/hosts" }));
+        let out = tool
+            .execute(&env, &ctx)
+            .await
+            .expect("refusal is a tool output");
+        assert!(out.is_error(), "out-of-workspace path must be refused");
+        assert_eq!(out.content["kind"], "confinement_refused");
+        assert!(
+            backend.seen.lock().unwrap().is_empty(),
+            "backend must never see a refused path"
+        );
+    }
+
+    #[tokio::test]
+    async fn confined_context_refuses_relative_escape() {
+        use crate::tool::context::SharedWorkingDir;
+
+        let outer = tempfile::tempdir().expect("tempdir");
+        let root = outer.path().join("ws");
+        std::fs::create_dir(&root).expect("mkdir");
+        std::fs::write(outer.path().join("secret.rs"), "fn s() {}").expect("write");
+
+        let backend = Arc::new(PathRecordingBackend::new());
+        let tool = LspTool::with_backend(backend.clone());
+        let mut ctx = ToolContext::with_working_dir(SharedWorkingDir::new(root.clone()));
+        ctx.confine_to_workspace(root);
+
+        let env = envelope(json!({ "action": "symbols", "path": "../secret.rs" }));
+        let out = tool
+            .execute(&env, &ctx)
+            .await
+            .expect("refusal is a tool output");
+        assert!(out.is_error(), "`..` escape must be refused");
+        assert!(backend.seen.lock().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn confined_context_allows_in_workspace_path() {
+        use crate::tool::context::SharedWorkingDir;
+
+        let root = tempfile::tempdir().expect("tempdir");
+        let file = root.path().join("lib.rs");
+        std::fs::write(&file, "fn ok() {}").expect("write");
+
+        let backend = Arc::new(PathRecordingBackend::new());
+        let tool = LspTool::with_backend(backend.clone());
+        let mut ctx =
+            ToolContext::with_working_dir(SharedWorkingDir::new(root.path().to_path_buf()));
+        ctx.confine_to_workspace(root.path().to_path_buf());
+
+        let env = envelope(json!({ "action": "symbols", "path": "lib.rs" }));
+        let out = tool.execute(&env, &ctx).await.expect("symbols ok");
+        assert!(!out.is_error(), "in-workspace path must pass confinement");
+        assert_eq!(backend.seen.lock().unwrap().len(), 1);
     }
 
     #[tokio::test]

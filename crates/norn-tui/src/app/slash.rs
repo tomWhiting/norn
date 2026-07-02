@@ -63,7 +63,7 @@ pub(super) enum SlashOutcome {
 /// profile command — the caller's `Submit` arm then runs its normal
 /// `write_user_message + run_turn` pipeline so the agent loop's
 /// `preprocess_input` can intercept profile commands as usual.
-pub(super) fn try_dispatch_slash(
+pub(super) async fn try_dispatch_slash(
     text: &str,
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
@@ -83,11 +83,11 @@ pub(super) fn try_dispatch_slash(
     };
     match command.kind {
         TuiBuiltinKind::New | TuiBuiltinKind::Clear => {
-            handle_new(state, runtime, guard)?;
+            handle_new(state, runtime, guard).await?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Compact => {
-            handle_compact(state, runtime, guard)?;
+            handle_compact(state, runtime, guard).await?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Exit | TuiBuiltinKind::Quit => Ok(Some(SlashOutcome::Exit)),
@@ -185,7 +185,7 @@ fn create_new_session_store(
 ///
 /// Terminal scrollback retains the previous conversation — the user
 /// can still scroll up. The model's view is what gets reset.
-fn handle_new(
+async fn handle_new(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
@@ -210,16 +210,23 @@ fn handle_new(
         (None, EventStore::new())
     };
 
-    // Phase 2 — infallible commit: checkpoint the old store's pending
-    // index delta, repoint the action log and agent-tool infra at the
-    // new store, swap `runtime.store`, then update the session
-    // identity everywhere it is displayed or sent.
+    // Phase 2 — infallible commit: reset the context-edit ledger for
+    // the new conversation FIRST (rotation replays the incoming store's
+    // compaction marks into it — a no-op for a fresh store, but the
+    // order keeps any replayed marks from being wiped), then checkpoint
+    // the old store's pending index delta, repoint the action log and
+    // agent-tool infra at the new store, swap `runtime.store`, and
+    // update the session identity everywhere it is displayed or sent.
+    if runtime.loop_context.context_edits.is_some() {
+        runtime.loop_context.context_edits = Some(ContextEdits::new());
+    }
     super::rotation::rotate_store_dependents(
         runtime.executor.shared_context(),
         &mut runtime.store,
         &mut runtime.loop_context,
         Arc::new(new_store),
-    );
+    )
+    .await;
     if let Some(new_id) = new_id {
         runtime.session_id = Some(new_id.clone());
         runtime.agent_config.cache_key = Some(new_id.clone());
@@ -227,10 +234,6 @@ fn handle_new(
             env.session_id = Some(new_id.clone());
         }
         state.fixed_panel.status_bar_mut().session_name = new_id;
-    }
-
-    if runtime.loop_context.context_edits.is_some() {
-        runtime.loop_context.context_edits = Some(ContextEdits::new());
     }
 
     state.clear_usage_totals();
@@ -259,7 +262,7 @@ fn handle_new(
 /// The TUI keeps its own terminal rendering for the command result, but
 /// shares the mechanical compaction estimate with CLI mode through
 /// [`norn::agent_loop::estimate_manual_compaction`].
-fn handle_compact(
+async fn handle_compact(
     state: &AppState,
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
@@ -297,7 +300,7 @@ fn handle_compact(
             // session index reflects it even if the TUI aborts before
             // the next turn-boundary checkpoint. Failure is surfaced
             // in the error-line style but never undoes the compaction.
-            if let Some(message) = super::helpers::checkpoint_session(&runtime.store) {
+            if let Some(message) = super::helpers::checkpoint_session(&runtime.store).await {
                 write_error_line(state, guard, &message)?;
             }
             Ok(())

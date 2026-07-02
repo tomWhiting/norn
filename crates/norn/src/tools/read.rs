@@ -3,8 +3,11 @@
 //! Reads a UTF-8 text file from disk, returning its contents in `cat -n`
 //! style (one-based line numbers, tab-separated). Detects binary files
 //! and image extensions and reports them with a descriptive payload
-//! instead of raw bytes. Successful reads are recorded in `ToolContext`
-//! so the Write and Edit tools can enforce read-before-modify.
+//! instead of raw bytes. The file is streamed through the budget-bounded
+//! scanner in `super::read_stream` — memory never scales with file
+//! size, and the path is stat-ed before any content access. Successful
+//! reads are recorded in `ToolContext` so the Write and Edit tools can
+//! enforce read-before-modify.
 
 use std::path::Path;
 
@@ -12,6 +15,7 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use super::confinement::check_confinement;
+use super::read_stream::{RenderedRead, ScannedFile, scan_file};
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
@@ -22,9 +26,6 @@ use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
 /// Image file extensions reported with the `image` kind instead of being read.
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "svg", "webp"];
-
-/// Number of leading bytes scanned for null bytes when classifying binary files.
-const BINARY_SCAN_BYTES: usize = 8192;
 
 /// Reads a file from disk and returns its content with line numbers.
 ///
@@ -124,18 +125,11 @@ impl Tool for ReadTool {
             ));
         }
 
-        // Image extension takes precedence over reading bytes.
-        if is_image(&path) {
-            let payload = serde_json::json!({
-                "path": args.path,
-                "kind": "image",
-                "message": format!("image file: {}", args.path),
-            });
-            return Ok(ToolOutput::success(payload));
-        }
-
-        let bytes = match tokio::fs::read(&path).await {
-            Ok(bytes) => bytes,
+        // Stat before any content access: a missing path must fail here —
+        // never fabricate a successful read (the image path previously
+        // reported success for paths that did not exist).
+        let metadata = match tokio::fs::metadata(&path).await {
+            Ok(metadata) => metadata,
             Err(e) => {
                 return Ok(ToolOutput::failure_with_content(
                     serde_json::json!({ "path": args.path, "kind": "io_error" }),
@@ -145,31 +139,53 @@ impl Tool for ReadTool {
             }
         };
 
-        if is_binary(&bytes) {
+        // Image extension takes precedence over reading bytes; the stat
+        // above guarantees the file actually exists.
+        if is_image(&path) {
             let payload = serde_json::json!({
                 "path": args.path,
-                "kind": "binary",
-                "size_bytes": bytes.len(),
-                "message": format!("binary file ({} bytes)", bytes.len()),
+                "kind": "image",
+                "size_bytes": metadata.len(),
+                "message": format!("image file: {}", args.path),
             });
             return Ok(ToolOutput::success(payload));
         }
 
-        let text = match std::str::from_utf8(&bytes) {
-            Ok(s) => s,
+        let budget = read_budget(ctx);
+        let scanned = match scan_file(&path, args.offset, args.limit, budget).await {
+            Ok(scanned) => scanned,
             Err(e) => {
-                let payload = serde_json::json!({
-                    "path": args.path,
-                    "kind": "binary",
-                    "message": format!("file is not valid UTF-8: {e}"),
-                });
-                return Ok(ToolOutput::success(payload));
+                return Ok(ToolOutput::failure_with_content(
+                    serde_json::json!({ "path": args.path, "kind": "io_error" }),
+                    ToolErrorPayload::new(ToolErrorKind::Io, e.to_string())
+                        .with_detail(serde_json::json!({ "path": args.path })),
+                ));
             }
         };
 
-        let budget = read_budget(ctx);
-        let rendered = render_with_line_numbers(text, args.offset, args.limit, budget);
-        let warnings = read_warnings(&path, text, &rendered, budget);
+        let rendered = match scanned {
+            ScannedFile::Binary => {
+                let payload = serde_json::json!({
+                    "path": args.path,
+                    "kind": "binary",
+                    "size_bytes": metadata.len(),
+                    "message": format!("binary file ({} bytes)", metadata.len()),
+                });
+                return Ok(ToolOutput::success(payload));
+            }
+            ScannedFile::NotUtf8 { message } => {
+                let payload = serde_json::json!({
+                    "path": args.path,
+                    "kind": "binary",
+                    "size_bytes": metadata.len(),
+                    "message": message,
+                });
+                return Ok(ToolOutput::success(payload));
+            }
+            ScannedFile::Text(rendered) => rendered,
+        };
+
+        let warnings = read_warnings(&path, &rendered, budget);
 
         let payload = serde_json::json!({
             "path": args.path,
@@ -181,7 +197,7 @@ impl Tool for ReadTool {
             "content_char_limit": rendered.content_char_limit,
             "returned_lines": rendered.returned_lines,
             "total_lines": rendered.total_lines,
-            "file_size_bytes": bytes.len(),
+            "file_size_bytes": metadata.len(),
             "content_chars": rendered.content_chars,
             "max_line_chars": rendered.max_line_chars,
             "next_offset": rendered.next_offset,
@@ -228,146 +244,13 @@ fn is_image(path: &Path) -> bool {
     IMAGE_EXTENSIONS.iter().any(|e| *e == lower)
 }
 
-/// Heuristic: a file is treated as binary if any of the first
-/// `BINARY_SCAN_BYTES` bytes is `0u8`.
-fn is_binary(bytes: &[u8]) -> bool {
-    let scan = &bytes[..bytes.len().min(BINARY_SCAN_BYTES)];
-    scan.contains(&0u8)
-}
-
-#[derive(Debug)]
-struct RenderedRead {
-    content: String,
-    offset: u64,
-    effective_line_limit: u64,
-    content_char_limit: usize,
-    returned_lines: u64,
-    total_lines: u64,
-    content_chars: usize,
-    max_line_chars: usize,
-    next_offset: Option<u64>,
-    truncated_by_line_limit: bool,
-    truncated_by_char_limit: bool,
-    truncated_long_lines: u64,
-}
-
-impl RenderedRead {
-    fn truncated(&self) -> bool {
-        self.truncated_by_line_limit
-            || self.truncated_by_char_limit
-            || self.truncated_long_lines > 0
-    }
-
-    fn truncated_by(&self) -> Vec<&'static str> {
-        let mut reasons = Vec::new();
-        if self.truncated_by_line_limit {
-            reasons.push("line_limit");
-        }
-        if self.truncated_by_char_limit {
-            reasons.push("char_limit");
-        }
-        if self.truncated_long_lines > 0 {
-            reasons.push("long_line_limit");
-        }
-        reasons
-    }
-}
-
 fn read_budget(ctx: &ToolContext) -> ToolOutputBudget {
     ctx.get_extension::<ToolOutputBudget>()
         .map_or_else(ToolOutputBudget::default, |budget| *budget)
 }
 
-/// Renders `text` in `cat -n` format. `offset` is the 1-based starting line
-/// (defaults to 1). `limit` caps lines but cannot bypass the character budget.
-fn render_with_line_numbers(
-    text: &str,
-    offset: Option<u64>,
-    limit: Option<u64>,
-    budget: ToolOutputBudget,
-) -> RenderedRead {
-    let offset_usize = match offset {
-        None | Some(0) => 1usize,
-        Some(n) => usize::try_from(n).unwrap_or(usize::MAX),
-    };
-    let offset_u64 = u64::try_from(offset_usize).unwrap_or(u64::MAX);
-    let effective_line_limit = limit
-        .unwrap_or(budget.read_default_line_limit)
-        .min(budget.read_hard_line_limit);
-    let content_char_limit = budget
-        .read_output_char_limit
-        .min(budget.read_hard_output_char_limit);
-    let total_lines = u64::try_from(text.split_inclusive('\n').count()).unwrap_or(u64::MAX);
-
-    let mut out = String::new();
-    let skip = offset_usize.saturating_sub(1);
-    let mut content_chars = 0usize;
-    let mut returned_lines = 0u64;
-    let mut next_offset = None;
-    let mut truncated_by_line_limit = false;
-    let mut truncated_by_char_limit = false;
-    let mut truncated_long_lines = 0u64;
-    let mut max_line_chars = 0usize;
-
-    for (idx, line) in text.split_inclusive('\n').enumerate().skip(skip) {
-        if returned_lines >= effective_line_limit {
-            truncated_by_line_limit = true;
-            next_offset = Some(u64::try_from(idx + 1).unwrap_or(u64::MAX));
-            break;
-        }
-        let lineno = idx + 1;
-        let trimmed = line.strip_suffix('\n').unwrap_or(line);
-        let original_line_chars = trimmed.chars().count();
-        max_line_chars = max_line_chars.max(original_line_chars);
-        let (line_text, line_truncated) = cap_line(trimmed, budget.read_line_char_limit);
-        if line_truncated {
-            truncated_long_lines = truncated_long_lines.saturating_add(1);
-        }
-        let suffix = if line_truncated {
-            format!(" … [line truncated; original_chars={original_line_chars}]")
-        } else {
-            String::new()
-        };
-        let candidate = format!("{lineno}\t{line_text}{suffix}\n");
-        let candidate_chars = candidate.chars().count();
-        if content_chars.saturating_add(candidate_chars) > content_char_limit {
-            truncated_by_char_limit = true;
-            next_offset = Some(u64::try_from(idx + 1).unwrap_or(u64::MAX));
-            break;
-        }
-
-        out.push_str(&candidate);
-        content_chars = content_chars.saturating_add(candidate_chars);
-        returned_lines = returned_lines.saturating_add(1);
-    }
-
-    RenderedRead {
-        content: out,
-        offset: offset_u64,
-        effective_line_limit,
-        content_char_limit,
-        returned_lines,
-        total_lines,
-        content_chars,
-        max_line_chars,
-        next_offset,
-        truncated_by_line_limit,
-        truncated_by_char_limit,
-        truncated_long_lines,
-    }
-}
-
-fn cap_line(line: &str, limit: usize) -> (String, bool) {
-    let original_chars = line.chars().count();
-    if original_chars <= limit {
-        return (line.to_owned(), false);
-    }
-    (line.chars().take(limit).collect(), true)
-}
-
 fn read_warnings(
     path: &Path,
-    text: &str,
     rendered: &RenderedRead,
     budget: ToolOutputBudget,
 ) -> Vec<serde_json::Value> {
@@ -380,11 +263,11 @@ fn read_warnings(
             "line_char_limit": budget.read_line_char_limit,
         }));
     }
-    warnings.extend(build_artifact_warnings(path, text));
+    warnings.extend(build_artifact_warnings(path, rendered.fingerprint_hits));
     warnings
 }
 
-fn build_artifact_warnings(path: &Path, text: &str) -> Vec<serde_json::Value> {
+fn build_artifact_warnings(path: &Path, fingerprint_hits: usize) -> Vec<serde_json::Value> {
     let mut warnings = Vec::new();
     let path_text = normalized_path_text(path);
     if path_text.contains("/target/") {
@@ -399,9 +282,6 @@ fn build_artifact_warnings(path: &Path, text: &str) -> Vec<serde_json::Value> {
             "The file path is inside node_modules/, which is usually dependency output.",
         ));
     }
-    let fingerprint_hits = text.matches("target/debug/.fingerprint").count()
-        + text.matches("target/release/.fingerprint").count()
-        + text.matches(".fingerprint/").count();
     if fingerprint_hits >= 5 {
         warnings.push(serde_json::json!({
             "kind": "rust_fingerprint_noise",
@@ -655,6 +535,118 @@ mod tests {
                 .any(|warning| warning["kind"] == "rust_fingerprint_noise"),
             "expected fingerprint warning: {warnings:?}",
         );
+    }
+
+    /// Regression: the image path used to return success before any
+    /// filesystem access, then `on_success` recorded the never-read path
+    /// in the read-before-write set. A missing image must be an error and
+    /// must never be marked read.
+    #[tokio::test]
+    async fn missing_image_path_is_an_error_and_not_marked_read() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("ghost.png");
+
+        let tool = ReadTool::new();
+        let envelope = envelope_for(json!({ "path": path.to_string_lossy() }));
+        let ctx = ToolContext::empty();
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+
+        assert!(out.is_error(), "missing image must be an io_error");
+        assert_eq!(out.content["kind"], "io_error");
+        tool.on_success(&out, &ctx).await;
+        assert!(
+            !ctx.has_read_file(&path),
+            "a path that was never read must not enter the read set",
+        );
+    }
+
+    #[tokio::test]
+    async fn existing_image_reports_size_and_is_marked_read() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("pic.png");
+        tokio::fs::write(&path, b"fake-png-bytes").await.unwrap();
+
+        let tool = ReadTool::new();
+        let envelope = envelope_for(json!({ "path": path.to_string_lossy() }));
+        let ctx = ToolContext::empty();
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+
+        assert!(!out.is_error());
+        assert_eq!(out.content["kind"], "image");
+        assert_eq!(out.content["size_bytes"], 14);
+        tool.on_success(&out, &ctx).await;
+        assert!(ctx.has_read_file(&path));
+    }
+
+    /// Regression: the whole file used to be loaded into memory before
+    /// any budget applied. A file far larger than every configured budget
+    /// must stream: the returned window stays budget-bounded while the
+    /// totals stay exact.
+    #[tokio::test]
+    async fn oversized_file_returns_bounded_window_with_exact_totals() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("huge.log");
+        let mut body = String::new();
+        for i in 1..=50_000 {
+            let _ = writeln!(body, "entry number {i} with some padding text");
+        }
+        tokio::fs::write(&path, &body).await.unwrap();
+
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(ToolOutputBudget {
+            read_default_line_limit: 50,
+            read_hard_line_limit: 50,
+            read_output_char_limit: 4_000,
+            read_hard_output_char_limit: 4_000,
+            read_line_char_limit: 200,
+            model_output_inline_char_limit: 64_000,
+        }));
+        let tool = ReadTool::new();
+        let envelope = envelope_for(json!({ "path": path.to_string_lossy() }));
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+
+        assert!(!out.is_error(), "{:?}", out.content);
+        assert_eq!(out.content["kind"], "text");
+        assert_eq!(out.content["returned_lines"], 50);
+        assert_eq!(out.content["total_lines"], 50_000);
+        assert_eq!(out.content["file_size_bytes"], body.len());
+        assert_eq!(out.content["truncated"], true);
+        assert_eq!(out.content["next_offset"], 51);
+        let content = out.content["content"].as_str().unwrap();
+        assert!(content.chars().count() <= 4_000, "window stays in budget");
+
+        // A window deep inside the oversized file is still reachable.
+        let deep = tool
+            .execute(
+                &envelope_for(
+                    json!({ "path": path.to_string_lossy(), "offset": 49_999, "limit": 2 }),
+                ),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        let deep_content = deep.content["content"].as_str().unwrap();
+        assert!(deep_content.contains("49999\tentry number 49999"));
+        assert!(deep_content.contains("50000\tentry number 50000"));
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_reports_binary_kind_with_offset() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("mixed.txt");
+        let mut bytes = b"good line\n".to_vec();
+        bytes.extend_from_slice(&[0xC3, 0x28]); // invalid UTF-8 pair
+        tokio::fs::write(&path, &bytes).await.unwrap();
+
+        let tool = ReadTool::new();
+        let envelope = envelope_for(json!({ "path": path.to_string_lossy() }));
+        let ctx = ToolContext::empty();
+        let out = tool.execute(&envelope, &ctx).await.unwrap();
+
+        assert!(!out.is_error());
+        assert_eq!(out.content["kind"], "binary");
+        let message = out.content["message"].as_str().unwrap();
+        assert!(message.contains("not valid UTF-8"), "{message}");
     }
 
     #[tokio::test]

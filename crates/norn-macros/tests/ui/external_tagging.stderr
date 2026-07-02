@@ -1,0 +1,5 @@
+error: ToolArgs: data-bearing enum variants require a serde representation attribute — add #[serde(tag = "...")], #[serde(tag = "t", content = "c")], or #[serde(untagged)] on the enum
+ --> tests/ui/external_tagging.rs:8:5
+  |
+8 |     Create {
+  |     ^^^^^^

@@ -90,7 +90,7 @@ pub(crate) fn auto_child_path(
 /// `install_agent_infra` does for the root), so the child's own
 /// spawn/fork sites deliver grandchild results to *the child*; the
 /// returned receiver must be wired onto the child's
-/// [`LoopContext::child_result_rx`](crate::r#loop::loop_context::LoopContext::child_result_rx)
+/// [`LoopContext::child_result_rx`](crate::agent_loop::loop_context::LoopContext::child_result_rx)
 /// so its loop drains them at the existing step boundaries. Results
 /// bubble exactly one hop per level — never skipping levels (Wave 3
 /// §"Recursive result delivery").

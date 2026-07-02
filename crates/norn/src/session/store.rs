@@ -4,6 +4,8 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::time::Duration;
 
 use parking_lot::{Mutex, RwLock};
 
@@ -122,6 +124,9 @@ struct IndexRegistration {
     session_id: String,
     pending_events: u64,
     pending_usage: Usage,
+    /// Acquisition deadline applied when taking the inter-process index
+    /// lock for a delta flush; `None` waits indefinitely.
+    lock_deadline: Option<Duration>,
 }
 
 impl IndexRegistration {
@@ -157,6 +162,7 @@ impl IndexRegistration {
             &self.session_id,
             self.pending_events,
             &self.pending_usage,
+            self.lock_deadline,
         )?;
         self.pending_events = 0;
         self.pending_usage = Usage::default();
@@ -171,7 +177,7 @@ impl IndexRegistration {
 /// Within one sink's lifetime a torn line is remembered
 /// (`needs_newline`) and terminated with a lone `\n` before the next
 /// write; across process restarts,
-/// [`open_session_append`] heals a torn final line at open time the
+/// `open_session_append` heals a torn final line at open time the
 /// same way. Either way subsequent events never concatenate onto a
 /// partial line, the tolerant reader skips the corrupt line, and every
 /// later event still loads (H19, both halves).
@@ -235,6 +241,12 @@ impl JsonlSink {
     /// are kept in step (batched per the [`DurabilityPolicy`], under the
     /// inter-process index lock — see the type-level docs).
     ///
+    /// `index_lock_deadline` bounds the inter-process index-lock wait
+    /// of every delta flush this sink performs (`None` = wait
+    /// indefinitely; exceeding a deadline surfaces
+    /// [`SessionPersistError::IndexLockTimeout`] through the usual flush
+    /// error paths, with the delta retained for retry).
+    ///
     /// # Errors
     ///
     /// Returns [`SessionPersistError::InvalidSessionId`] when
@@ -246,6 +258,7 @@ impl JsonlSink {
         data_dir: &Path,
         session_id: &str,
         durability: DurabilityPolicy,
+        index_lock_deadline: Option<Duration>,
     ) -> Result<Self, SessionPersistError> {
         crate::session::persistence::io::ensure_session_id_not_reserved(session_id)?;
         let path = session_file_path(data_dir, session_id);
@@ -255,6 +268,7 @@ impl JsonlSink {
             session_id: session_id.to_owned(),
             pending_events: 0,
             pending_usage: Usage::default(),
+            lock_deadline: index_lock_deadline,
         });
         Ok(sink)
     }
@@ -468,6 +482,16 @@ impl EventStore {
         self.inner.read().events.clone()
     }
 
+    /// Run `f` over the events in insertion order without cloning them.
+    ///
+    /// The read lock is held for the duration of `f`, so callers that only
+    /// need to inspect (not retain) event bodies avoid copying the whole
+    /// history — unlike [`Self::events`]. `f` must not call back into the
+    /// store, which would deadlock on the held read lock.
+    pub fn with_events<R>(&self, f: impl FnOnce(&[SessionEvent]) -> R) -> R {
+        f(&self.inner.read().events)
+    }
+
     /// Return up to `count` most recent events in insertion order.
     ///
     /// This clones only the returned tail window, unlike [`Self::events`],
@@ -498,6 +522,14 @@ impl EventStore {
     /// Embedders call this at turn boundaries so session listings stay
     /// fresh without paying an index rewrite per event.
     ///
+    /// For an index-registered sink this performs blocking file I/O:
+    /// the inter-process index lock is taken (an unbounded wait unless
+    /// the opening [`SessionManager`](crate::session::SessionManager)
+    /// configured a deadline) and held across a full index
+    /// read+rewrite+fsync. Callers on an async executor use
+    /// [`Self::checkpoint_off_executor`] instead so that critical
+    /// section never stalls an executor thread.
+    ///
     /// # Errors
     ///
     /// [`SessionError::StorageError`] when the sink's checkpoint fails.
@@ -513,6 +545,35 @@ impl EventStore {
                 })?;
         }
         Ok(())
+    }
+
+    /// [`Self::checkpoint`], with the blocking critical section (index
+    /// lock acquisition + read + rewrite + fsync) moved off the async
+    /// executor onto Tokio's blocking pool.
+    ///
+    /// This is the step-boundary flush for async embedders (see the
+    /// keep-sessions-open guidance on
+    /// [`SessionManager`](crate::session::SessionManager)): an executor
+    /// thread never waits on the inter-process index lock or pays the
+    /// index rewrite. Error semantics are identical to
+    /// [`Self::checkpoint`] — a failure leaves the deferred delta
+    /// retained for retry. Must be awaited within a Tokio runtime
+    /// context ([`tokio::task::spawn_blocking`] requires one).
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::StorageError`] when the sink's checkpoint fails,
+    /// or when the blocking task itself dies before reporting (a panic
+    /// in a custom [`PersistenceSink`] implementation, or runtime
+    /// shutdown cancelling the task) — in that case whether the flush
+    /// landed is unknown, and the next checkpoint or the resume-time
+    /// index repair reconciles it.
+    pub async fn checkpoint_off_executor(self: Arc<Self>) -> Result<(), SessionError> {
+        tokio::task::spawn_blocking(move || self.checkpoint())
+            .await
+            .map_err(|e| SessionError::StorageError {
+                reason: format!("session checkpoint task failed before reporting: {e}"),
+            })?
     }
 
     /// Return the ID of the most recently appended event, if any.
@@ -720,6 +781,122 @@ mod tests {
         let id = store.append(event).expect("retry succeeds");
         assert_eq!(store.len(), 1);
         assert!(store.get(&id).is_some());
+    }
+
+    /// A sink whose `checkpoint` fails a configurable number of times,
+    /// then succeeds — models a transient index-flush failure.
+    struct FlakyCheckpointSink {
+        checkpoint_failures_left: u32,
+        checkpoints_succeeded: u32,
+    }
+
+    impl PersistenceSink for FlakyCheckpointSink {
+        fn persist(&mut self, _event: &SessionEvent) -> Result<(), SessionPersistError> {
+            Ok(())
+        }
+
+        fn checkpoint(&mut self) -> Result<(), SessionPersistError> {
+            if self.checkpoint_failures_left > 0 {
+                self.checkpoint_failures_left -= 1;
+                return Err(SessionPersistError::Io(std::io::Error::other(
+                    "simulated checkpoint failure",
+                )));
+            }
+            self.checkpoints_succeeded += 1;
+            Ok(())
+        }
+    }
+
+    /// No silent in-memory degradation on the checkpoint path either: a
+    /// failing sink checkpoint must surface as a typed `StorageError`
+    /// (never `Ok`), already-persisted events must be unaffected, and a
+    /// retry must reach the sink again.
+    #[test]
+    fn checkpoint_failure_surfaces_typed_error_and_retry_reaches_sink() {
+        let store = EventStore::with_sink(Box::new(FlakyCheckpointSink {
+            checkpoint_failures_left: 1,
+            checkpoints_succeeded: 0,
+        }));
+        store.append(user_msg("kept")).expect("append succeeds");
+
+        let err = store.checkpoint().expect_err("first checkpoint must fail");
+        assert!(
+            matches!(err, SessionError::StorageError { .. }),
+            "expected StorageError, got {err:?}",
+        );
+        assert_eq!(store.len(), 1, "persisted events are unaffected");
+
+        store.checkpoint().expect("retry succeeds");
+    }
+
+    /// A sink that records which thread its `checkpoint` ran on.
+    struct ThreadRecordingSink {
+        checkpoint_thread: std::sync::Arc<parking_lot::Mutex<Option<std::thread::ThreadId>>>,
+    }
+
+    impl PersistenceSink for ThreadRecordingSink {
+        fn persist(&mut self, _event: &SessionEvent) -> Result<(), SessionPersistError> {
+            Ok(())
+        }
+
+        fn checkpoint(&mut self) -> Result<(), SessionPersistError> {
+            *self.checkpoint_thread.lock() = Some(std::thread::current().id());
+            Ok(())
+        }
+    }
+
+    /// R2's off-executor guarantee: `checkpoint_off_executor` must run
+    /// the sink's critical section on the blocking pool, never on the
+    /// executor thread. On a current-thread runtime every task polls on
+    /// the test thread, so the sink observing a DIFFERENT thread proves
+    /// the offload.
+    #[tokio::test]
+    async fn checkpoint_off_executor_runs_critical_section_off_the_executor_thread() {
+        let checkpoint_thread = std::sync::Arc::new(parking_lot::Mutex::new(None));
+        let store = std::sync::Arc::new(EventStore::with_sink(Box::new(ThreadRecordingSink {
+            checkpoint_thread: std::sync::Arc::clone(&checkpoint_thread),
+        })));
+        store.append(user_msg("step")).expect("append");
+
+        std::sync::Arc::clone(&store)
+            .checkpoint_off_executor()
+            .await
+            .expect("checkpoint succeeds");
+
+        let recorded = checkpoint_thread.lock().expect("sink checkpoint ran");
+        assert_ne!(
+            recorded,
+            std::thread::current().id(),
+            "the checkpoint critical section must not run on the executor thread",
+        );
+    }
+
+    /// Failure path parity with the sync `checkpoint`: a failing sink
+    /// checkpoint surfaces the typed `StorageError` through the
+    /// off-executor path, the delta stays retained, and a retry reaches
+    /// the sink again.
+    #[tokio::test]
+    async fn checkpoint_off_executor_surfaces_typed_error_and_retry_reaches_sink() {
+        let store = std::sync::Arc::new(EventStore::with_sink(Box::new(FlakyCheckpointSink {
+            checkpoint_failures_left: 1,
+            checkpoints_succeeded: 0,
+        })));
+        store.append(user_msg("kept")).expect("append succeeds");
+
+        let err = std::sync::Arc::clone(&store)
+            .checkpoint_off_executor()
+            .await
+            .expect_err("first checkpoint must fail");
+        assert!(
+            matches!(err, SessionError::StorageError { .. }),
+            "expected StorageError, got {err:?}",
+        );
+        assert_eq!(store.len(), 1, "persisted events are unaffected");
+
+        std::sync::Arc::clone(&store)
+            .checkpoint_off_executor()
+            .await
+            .expect("retry succeeds");
     }
 
     /// A writer that fails after writing a fixed number of bytes, then

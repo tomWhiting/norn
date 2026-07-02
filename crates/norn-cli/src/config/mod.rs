@@ -10,7 +10,6 @@ pub mod paths;
 pub mod profile_loader;
 pub mod provider_selection;
 pub mod rules;
-pub mod variables;
 
 pub use assembly::{ConfigOverrides, ProviderConfigOverrides, parse_duration, parse_kv};
 pub use event_schemas::{merge_event_schemas, parse_inline_or_file};
@@ -27,4 +26,3 @@ pub use paths::session_data_dir;
 pub use profile_loader::resolve_profile;
 pub use provider_selection::{ProviderSelection, resolve_provider_selection};
 pub use rules::load_rule_engine;
-pub use variables::build_variable_store;

@@ -3,6 +3,7 @@
 use std::collections::HashMap;
 
 use crate::provider::events::{ProviderEvent, StopReason};
+use crate::provider::reasoning::ReasoningItem;
 use crate::provider::request::ToolCallKind;
 use crate::provider::usage::Usage;
 
@@ -35,6 +36,11 @@ pub struct AssembledResponse {
     pub text: String,
     /// Accumulated reasoning/thinking content.
     pub thinking: String,
+    /// Structured reasoning output items, in wire order. Attached to the
+    /// assistant [`Message`](crate::provider::request::Message) so the
+    /// `OpenAI` Responses serializer can replay encrypted reasoning on
+    /// stateless backends.
+    pub reasoning: Vec<ReasoningItem>,
     /// Accumulated tool calls.
     pub tool_calls: Vec<AssembledToolCall>,
     /// Stop reason from the Done event.
@@ -92,6 +98,7 @@ struct ToolCallAccumulator {
 pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> {
     let mut text = String::new();
     let mut thinking = String::new();
+    let mut reasoning: Vec<ReasoningItem> = Vec::new();
     let mut tool_calls_map: HashMap<String, ToolCallAccumulator> = HashMap::new();
     let mut tool_call_order: Vec<String> = Vec::new();
     let mut stop_reason = StopReason::EndTurn;
@@ -186,6 +193,13 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
             ProviderEvent::ThinkingDelta { text: delta } => {
                 thinking.push_str(delta);
             }
+            ProviderEvent::ReasoningItemDone { item } => {
+                reasoning.push(item.clone());
+            }
+            // None of these carry assemblable content. `Error` is
+            // additionally unreachable through the loop: `call_provider`
+            // fails the turn with the event's typed `ProviderError`
+            // before assembly runs.
             ProviderEvent::TextComplete { .. }
             | ProviderEvent::ThinkingComplete { .. }
             | ProviderEvent::ToolResult { .. }
@@ -221,6 +235,7 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
     Some(AssembledResponse {
         text,
         thinking,
+        reasoning,
         tool_calls,
         stop_reason,
         usage,
@@ -600,6 +615,64 @@ mod tests {
         ];
         let resp = assemble_response(&events).expect("assembled");
         assert_eq!(resp.tool_calls[0].kind, ToolCallKind::Custom);
+    }
+
+    #[test]
+    fn reasoning_items_collected_in_wire_order() {
+        // Encrypted-reasoning seam: ReasoningItemDone events are attached
+        // to the assembled response in the order the wire emitted them, so
+        // the request serializer can replay them ahead of the assistant
+        // output they preceded.
+        use crate::provider::reasoning::ReasoningSummaryPart;
+        let first = ReasoningItem {
+            id: "rs_1".to_owned(),
+            summary: vec![ReasoningSummaryPart::SummaryText {
+                text: "first thought".to_owned(),
+            }],
+            content: None,
+            encrypted_content: Some("blob-1".to_owned()),
+        };
+        let second = ReasoningItem {
+            id: "rs_2".to_owned(),
+            summary: Vec::new(),
+            content: None,
+            encrypted_content: None,
+        };
+        let events = vec![
+            ProviderEvent::ReasoningItemDone {
+                item: first.clone(),
+            },
+            ProviderEvent::TextDelta {
+                text: "answer".to_string(),
+            },
+            ProviderEvent::ReasoningItemDone {
+                item: second.clone(),
+            },
+            ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: None,
+            },
+        ];
+        let resp = assemble_response(&events).expect("assembled");
+        assert_eq!(resp.text, "answer");
+        assert_eq!(resp.reasoning, vec![first, second]);
+    }
+
+    #[test]
+    fn response_without_reasoning_items_has_empty_reasoning() {
+        let events = vec![
+            ProviderEvent::TextDelta {
+                text: "hi".to_string(),
+            },
+            ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: None,
+            },
+        ];
+        let resp = assemble_response(&events).expect("assembled");
+        assert!(resp.reasoning.is_empty());
     }
 
     #[test]

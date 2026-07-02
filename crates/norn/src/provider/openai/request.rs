@@ -9,6 +9,16 @@ use crate::provider::request::{
     ToolCallKind,
 };
 
+/// Catalog provider identifier every `OpenAI` Responses connection
+/// resolves against.
+pub(super) const CATALOG_PROVIDER: &str = "openai";
+/// Catalog backend identifier for OAuth connections against the compiled
+/// `ChatGPT` base URL (the Codex subscription backend).
+pub(super) const CATALOG_BACKEND_CODEX_SUBSCRIPTION: &str = "codex_subscription";
+/// Catalog backend identifier for direct Responses API connections
+/// (API-key auth or an explicit base URL).
+pub(super) const CATALOG_BACKEND_RESPONSES_API: &str = "responses_api";
+
 /// Serialized payload for `POST /v1/responses`.
 #[derive(Debug, Serialize)]
 pub(crate) struct ResponsesApiPayload {
@@ -75,16 +85,27 @@ pub(crate) enum ContextManagementItem {
 
 /// Builds the API payload from a `ProviderRequest`.
 ///
+/// `catalog_backend` is the model-catalog backend identifier of the
+/// connection the calling provider actually uses
+/// ([`CATALOG_BACKEND_CODEX_SUBSCRIPTION`] or
+/// [`CATALOG_BACKEND_RESPONSES_API`]); service tiers are resolved against
+/// it so a tier available only on one backend can never leak onto another.
+///
 /// # Errors
 ///
-/// Returns [`ProviderError::ResponseParseError`] when a `ToolResult` message
-/// in the conversation history is missing its `tool_call_id` — the API
-/// requires `call_id` on every `function_call_output` (and
-/// `custom_tool_call_output`) item, so synthesising an empty string would
-/// silently corrupt the conversation. A missing `tool_call_id` is always an
-/// upstream bug; surfacing it here lets the caller fail the turn rather than
-/// dispatch an unmoored tool result.
-pub(crate) fn build_payload(request: &ProviderRequest) -> Result<serde_json::Value, ProviderError> {
+/// Returns [`ProviderError::RequestSerializationFailed`] when the payload
+/// cannot be serialized, or when a `ToolResult` message in the conversation
+/// history is missing its `tool_call_id` — the API requires `call_id` on
+/// every `function_call_output` (and `custom_tool_call_output`) item, so
+/// synthesising an empty string would silently corrupt the conversation. A
+/// missing `tool_call_id` is always an upstream bug; surfacing it here lets
+/// the caller fail the turn rather than dispatch an unmoored tool result.
+/// Returns [`ProviderError::InvalidRequest`] when the requested service tier
+/// is not supported for the model on `catalog_backend`.
+pub(crate) fn build_payload(
+    request: &ProviderRequest,
+    catalog_backend: &str,
+) -> Result<serde_json::Value, ProviderError> {
     let mut instructions = String::new();
     let mut input = Vec::new();
 
@@ -120,10 +141,25 @@ pub(crate) fn build_payload(request: &ProviderRequest) -> Result<serde_json::Val
         summary: request.reasoning_summary.clone().unwrap_or_default(),
     });
 
-    let include = if request.reasoning_effort.is_some() {
-        vec!["reasoning.encrypted_content".to_string()]
-    } else {
+    // Encrypted-reasoning replay is a property of *stateless* threading, not
+    // of reasoning effort. On the ChatGPT/codex subscription backend
+    // (`response_threading: false` → `store: false`) the server keeps no
+    // conversation state, so the model's chain-of-thought is dropped between
+    // tool-call iterations unless each captured reasoning item is echoed back
+    // with its `encrypted_content` blob (see the module doc on
+    // `serialize_assistant_into` and `provider/reasoning.rs`). The blob only
+    // arrives when the request asked for it via this `include`, so it must be
+    // requested whenever the payload is stateless — the `reasoning` param is
+    // always sent and reasoning models emit items regardless of whether an
+    // explicit effort was configured. Gating on `reasoning_effort` (which
+    // defaults to `None`) would make the entire replay path a silent no-op in
+    // the default configuration. On stateful backends (`store: true`) the
+    // server threads reasoning itself and returns no `encrypted_content`, so
+    // requesting it is not applicable and is omitted.
+    let include = if request.store {
         Vec::new()
+    } else {
+        vec!["reasoning.encrypted_content".to_string()]
     };
 
     let context_management = if let Some(management) = request.context_management.as_ref() {
@@ -133,7 +169,7 @@ pub(crate) fn build_payload(request: &ProviderRequest) -> Result<serde_json::Val
     } else {
         Vec::new()
     };
-    let service_tier = service_tier_provider_value(request)?;
+    let service_tier = service_tier_provider_value(request, catalog_backend)?;
 
     let payload = ResponsesApiPayload {
         model: request.model.clone(),
@@ -153,7 +189,7 @@ pub(crate) fn build_payload(request: &ProviderRequest) -> Result<serde_json::Val
         context_management,
     };
     let mut value =
-        serde_json::to_value(payload).map_err(|err| ProviderError::ResponseParseError {
+        serde_json::to_value(payload).map_err(|err| ProviderError::RequestSerializationFailed {
             reason: format!("failed to serialize responses request: {err}"),
         })?;
     merge_provider_options(&mut value, request.config.as_ref())?;
@@ -169,7 +205,7 @@ fn merge_provider_options(
     };
     let option_object = select_responses_options(&options.0)?;
     let Some(payload_object) = payload.as_object_mut() else {
-        return Err(ProviderError::ResponseParseError {
+        return Err(ProviderError::RequestSerializationFailed {
             reason: "responses payload was not a JSON object".to_string(),
         });
     };
@@ -235,23 +271,28 @@ fn reject_protected_option_key(key: &str) -> Result<(), ProviderError> {
     Ok(())
 }
 
-fn service_tier_provider_value(request: &ProviderRequest) -> Result<Option<String>, ProviderError> {
+/// Resolves the requested service tier against the backend the provider
+/// actually uses, never the catalog default: a tier catalogued only for
+/// the Codex subscription backend must not resolve for a direct
+/// Responses API connection.
+fn service_tier_provider_value(
+    request: &ProviderRequest,
+    catalog_backend: &str,
+) -> Result<Option<String>, ProviderError> {
     let Some(tier) = request.service_tier else {
         return Ok(None);
     };
     let Some(provider_value) = crate::model_catalog::service_tier_provider_value(
-        crate::model_catalog::DEFAULT_PROVIDER,
-        crate::model_catalog::DEFAULT_BACKEND,
+        CATALOG_PROVIDER,
+        catalog_backend,
         &request.model,
         tier.as_str(),
     ) else {
         return Err(ProviderError::InvalidRequest {
             message: format!(
-                "service tier '{}' is not supported for model '{}' on {}.{}",
+                "service tier '{}' is not supported for model '{}' on {CATALOG_PROVIDER}.{catalog_backend}",
                 tier.as_str(),
                 request.model,
-                crate::model_catalog::DEFAULT_PROVIDER,
-                crate::model_catalog::DEFAULT_BACKEND,
             ),
         });
     };
@@ -281,6 +322,17 @@ fn serialize_user_message(msg: &Message) -> serde_json::Value {
 /// any) is emitted as a separate `output_text` content item inside an
 /// assistant-role message.
 ///
+/// Captured reasoning items that carry `encrypted_content` are replayed
+/// first, as `"reasoning"` input items **before** the assistant content and
+/// tool calls they preceded in the model's original output — the Codex CLI
+/// reference behaviour for stateless threading
+/// (`response_threading: false`): without the echo the ChatGPT/codex
+/// backend drops the model's reasoning between tool-call iterations. Items
+/// without `encrypted_content` are never echoed (the server cannot
+/// reconstruct reasoning state from them and rejects bare reasoning items),
+/// and the server-internal `rs_*` item id is deliberately omitted from the
+/// echo (`protocol-models.rs:757-761`).
+///
 /// Each `AssistantToolCall` is replayed with the wire envelope its `kind`
 /// requires:
 /// * [`ToolCallKind::Function`] → `function_call` item with an `arguments`
@@ -294,6 +346,21 @@ fn serialize_user_message(msg: &Message) -> serde_json::Value {
 /// `protocol-models.rs:779-781`). Empty `call_id` is a bug, not a
 /// fallback — `tc.call_id` carries the value `assemble_response` propagated.
 fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
+    for item in &msg.reasoning {
+        let Some(encrypted_content) = &item.encrypted_content else {
+            continue;
+        };
+        let mut reasoning_item = serde_json::json!({
+            "type": "reasoning",
+            "summary": item.summary,
+            "encrypted_content": encrypted_content,
+        });
+        if let (Some(content), Some(object)) = (&item.content, reasoning_item.as_object_mut()) {
+            object.insert("content".to_string(), serde_json::json!(content));
+        }
+        input.push(reasoning_item);
+    }
+
     if let Some(content) = &msg.content {
         input.push(serde_json::json!({
             "type": "message",
@@ -336,15 +403,16 @@ fn serialize_assistant_into(input: &mut Vec<serde_json::Value>, msg: &Message) {
 /// its originating call; the Responses API rejects items that omit it, and a
 /// silently-empty `call_id` would corrupt the conversation by detaching the
 /// result from its call. A missing `tool_call_id` is therefore returned as a
-/// hard error rather than papered over with an empty string — every
-/// `ToolResult` is constructed from an `AssembledToolCall` that already
-/// carries the `call_id`, so absence is unambiguously an upstream bug.
+/// hard [`ProviderError::RequestSerializationFailed`] rather than papered
+/// over with an empty string — every `ToolResult` is constructed from an
+/// `AssembledToolCall` that already carries the `call_id`, so absence is
+/// unambiguously an upstream bug.
 fn serialize_tool_result(msg: &Message) -> Result<serde_json::Value, ProviderError> {
     let call_id = msg
         .tool_call_id
         .as_deref()
         .filter(|s| !s.is_empty())
-        .ok_or_else(|| ProviderError::ResponseParseError {
+        .ok_or_else(|| ProviderError::RequestSerializationFailed {
             reason: format!(
                 "tool result for {tool_name} missing tool_call_id; refusing to dispatch an unmoored tool_call_output",
                 tool_name = msg.tool_name.as_deref().unwrap_or("<unknown tool>"),
@@ -399,6 +467,7 @@ mod tests {
         ProviderRequest {
             messages: vec![
                 Message {
+                    reasoning: Vec::new(),
                     role: MessageRole::System,
                     content: Some("You are helpful.".to_string()),
                     thinking: String::new(),
@@ -408,6 +477,7 @@ mod tests {
                     tool_call_kind: None,
                 },
                 Message {
+                    reasoning: Vec::new(),
                     role: MessageRole::User,
                     content: Some("Hello".to_string()),
                     thinking: String::new(),
@@ -417,6 +487,7 @@ mod tests {
                     tool_call_kind: None,
                 },
                 Message {
+                    reasoning: Vec::new(),
                     role: MessageRole::Assistant,
                     content: Some("Hi there".to_string()),
                     thinking: String::new(),
@@ -455,7 +526,8 @@ mod tests {
     #[test]
     fn payload_shape_matches_api() {
         let req = make_request();
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let json = serde_json::to_value(&payload).expect("serialize");
 
         assert_eq!(json["model"], "gpt-4.1-mini");
@@ -476,7 +548,8 @@ mod tests {
             compact_threshold_tokens: 200_000,
         });
 
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let json = serde_json::to_value(&payload).expect("serialize");
 
         assert_eq!(json["store"], true);
@@ -490,7 +563,8 @@ mod tests {
         let mut req = make_request();
         req.cache_key = Some("session-cache".to_string());
 
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let json = serde_json::to_value(&payload).expect("serialize");
 
         assert_eq!(json["prompt_cache_key"], "session-cache");
@@ -503,7 +577,8 @@ mod tests {
             HostedToolDefinition::WebSearch(HostedWebSearchTool::default()),
         ));
 
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let tools = payload["tools"].as_array().unwrap();
         assert!(tools.iter().any(|tool| {
             tool.get("type").and_then(serde_json::Value::as_str) == Some("web_search")
@@ -515,7 +590,8 @@ mod tests {
     #[test]
     fn system_message_becomes_instructions() {
         let req = make_request();
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         assert_eq!(payload["instructions"], "You are helpful.");
         assert!(
             payload["input"]
@@ -529,7 +605,8 @@ mod tests {
     #[test]
     fn no_response_format_in_payload() {
         let req = make_request();
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let json = serde_json::to_value(&payload).expect("serialize");
         assert!(json.get("response_format").is_none());
         let json_str = serde_json::to_string(&payload).expect("serialize");
@@ -541,7 +618,8 @@ mod tests {
     fn reasoning_effort_high() {
         let mut req = make_request();
         req.reasoning_effort = Some(ReasoningEffort::High);
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let json = serde_json::to_value(&payload).expect("serialize");
         assert_eq!(json["reasoning"]["effort"], "high");
         assert_eq!(json["reasoning"]["summary"], "auto");
@@ -552,7 +630,8 @@ mod tests {
         let mut req = make_request();
         req.model = "gpt-5.5".to_owned();
         req.service_tier = Some(ServiceTier::Fast);
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let json = serde_json::to_value(&payload).expect("serialize");
         assert_eq!(json["service_tier"], "priority");
     }
@@ -562,8 +641,57 @@ mod tests {
         let mut req = make_request();
         req.model = "gpt-5.4-mini".to_owned();
         req.service_tier = Some(ServiceTier::Fast);
-        let err = build_payload(&req).expect_err("unsupported tier must fail");
+        let err = build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION)
+            .expect_err("unsupported tier must fail");
         assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+    }
+
+    /// Regression test (final-state hardening, T1 item 9): service tiers
+    /// resolve against the backend the provider actually uses. `fast` is
+    /// catalogued for gpt-5.5 on the Codex subscription backend only, so
+    /// the same request on the direct Responses API backend must be
+    /// rejected instead of silently borrowing the subscription mapping.
+    #[test]
+    fn service_tier_resolution_uses_actual_backend_not_catalog_default() {
+        let mut req = make_request();
+        req.model = "gpt-5.5".to_owned();
+        req.service_tier = Some(ServiceTier::Fast);
+
+        let subscription = build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION)
+            .expect("subscription backend supports the tier");
+        assert_eq!(subscription["service_tier"], "priority");
+
+        let err = build_payload(&req, CATALOG_BACKEND_RESPONSES_API)
+            .expect_err("the responses_api backend has no catalogued tier for gpt-5.5");
+        match err {
+            ProviderError::InvalidRequest { message } => {
+                assert!(
+                    message.contains("responses_api"),
+                    "error must name the actual backend: {message}"
+                );
+            }
+            other => panic!("expected InvalidRequest, got {other:?}"),
+        }
+    }
+
+    /// The catalog constants baked into this module must exist in the
+    /// generated catalog — a rename in `assets/models.json` must fail here
+    /// rather than silently making every tier resolution miss.
+    #[test]
+    fn catalog_backend_constants_exist_in_catalog() {
+        assert!(
+            crate::model_catalog::find_backend(
+                CATALOG_PROVIDER,
+                CATALOG_BACKEND_CODEX_SUBSCRIPTION
+            )
+            .is_some(),
+            "codex_subscription backend missing from the model catalog"
+        );
+        assert!(
+            crate::model_catalog::find_backend(CATALOG_PROVIDER, CATALOG_BACKEND_RESPONSES_API)
+                .is_some(),
+            "responses_api backend missing from the model catalog"
+        );
     }
 
     #[test]
@@ -580,7 +708,8 @@ mod tests {
             }
         })));
 
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
 
         assert_eq!(payload["temperature"], 0.2);
         assert_eq!(payload["top_p"], 0.9);
@@ -596,7 +725,7 @@ mod tests {
             "input": []
         })));
 
-        let err = build_payload(&req).unwrap_err();
+        let err = build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).unwrap_err();
 
         assert!(matches!(err, ProviderError::InvalidRequest { .. }));
     }
@@ -605,7 +734,8 @@ mod tests {
     fn reasoning_effort_medium() {
         let mut req = make_request();
         req.reasoning_effort = Some(ReasoningEffort::Medium);
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let json = serde_json::to_value(&payload).expect("serialize");
         assert_eq!(json["reasoning"]["effort"], "medium");
     }
@@ -614,7 +744,8 @@ mod tests {
     fn reasoning_effort_low() {
         let mut req = make_request();
         req.reasoning_effort = Some(ReasoningEffort::Low);
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let json = serde_json::to_value(&payload).expect("serialize");
         assert_eq!(json["reasoning"]["effort"], "low");
     }
@@ -622,24 +753,99 @@ mod tests {
     #[test]
     fn reasoning_defaults_when_no_effort_set() {
         let req = make_request();
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let json = serde_json::to_value(&payload).expect("serialize");
         assert_eq!(json["reasoning"]["summary"], "auto");
         assert!(json["reasoning"].get("effort").is_none());
     }
 
     #[test]
+    fn stateless_default_request_includes_encrypted_reasoning() {
+        // Regression (Wave-6 provider finding): encrypted-reasoning replay
+        // must engage in the *default* configuration — a stateless request
+        // (`store: false`, the codex_subscription/Auto default) with no
+        // explicit `reasoning_effort`. The `include` gate is the stateless
+        // precondition, NOT `reasoning_effort`; gating on the effort knob
+        // (which defaults to `None`) made the Wave-1 replay machinery a
+        // silent no-op whenever the user did not set an effort, dropping the
+        // model's chain-of-thought across every tool-call iteration.
+        let req = make_request();
+        assert!(
+            req.reasoning_effort.is_none(),
+            "guard: the default request carries no reasoning effort",
+        );
+        assert!(!req.store, "guard: the default request is stateless");
+
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let include = payload["include"]
+            .as_array()
+            .expect("include must serialize as an array");
+        assert!(
+            include
+                .iter()
+                .any(|value| value == "reasoning.encrypted_content"),
+            "a stateless default request must request encrypted reasoning content: {include:?}",
+        );
+    }
+
+    #[test]
+    fn stateful_request_omits_encrypted_reasoning() {
+        // Negative case: with `store: true` the server threads reasoning
+        // itself and returns no `encrypted_content`, so requesting the blob
+        // is not applicable and must be omitted — the replay feature does not
+        // apply on stateful backends.
+        let mut req = make_request();
+        req.store = true;
+
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let include = payload["include"]
+            .as_array()
+            .expect("include must serialize as an array");
+        assert!(
+            include.is_empty(),
+            "a stateful request must not request encrypted reasoning content: {include:?}",
+        );
+    }
+
+    #[test]
+    fn stateless_request_includes_encrypted_reasoning_even_with_explicit_effort() {
+        // The include is independent of reasoning_effort in both directions:
+        // an explicit effort on a stateless request must still request the
+        // blob (it always did, incidentally, but pin it so a future refactor
+        // cannot re-couple the two knobs).
+        let mut req = make_request();
+        req.reasoning_effort = Some(ReasoningEffort::High);
+
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let include = payload["include"]
+            .as_array()
+            .expect("include must serialize as an array");
+        assert!(
+            include
+                .iter()
+                .any(|value| value == "reasoning.encrypted_content"),
+            "an explicit-effort stateless request must request encrypted reasoning content: {include:?}",
+        );
+    }
+
+    #[test]
     fn model_passed_through_without_validation() {
         let mut req = make_request();
         req.model = "custom-model-xyz-v99".to_string();
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         assert_eq!(payload["model"], "custom-model-xyz-v99");
     }
 
     #[test]
     fn tools_serialize_as_functions() {
         let req = make_request();
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         for tool in payload["tools"].as_array().unwrap() {
             assert_eq!(tool["type"], "function");
             assert_eq!(tool["strict"], false);
@@ -652,6 +858,7 @@ mod tests {
         req.messages.insert(
             1,
             Message {
+                reasoning: Vec::new(),
                 role: MessageRole::Developer,
                 content: Some("dynamic context here".to_string()),
                 thinking: String::new(),
@@ -661,7 +868,8 @@ mod tests {
                 tool_call_kind: None,
             },
         );
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         assert_eq!(
             payload["instructions"], "You are helpful.",
             "system message must go to instructions",
@@ -680,11 +888,13 @@ mod tests {
     fn tool_result_missing_call_id_returns_error() {
         // F3: a ToolResult message without a tool_call_id is always an
         // upstream bug — every ToolResult is constructed from an
-        // AssembledToolCall that already carries the call_id. Surfacing it as
-        // a ResponseParseError lets the loop refuse the turn instead of
-        // dispatching an unmoored function_call_output to the API.
+        // AssembledToolCall that already carries the call_id. Surfacing it
+        // as a RequestSerializationFailed lets the loop refuse the turn
+        // instead of dispatching an unmoored function_call_output to the
+        // API.
         let req = ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some(r#"{"ok":true}"#.to_string()),
                 thinking: String::new(),
@@ -704,9 +914,10 @@ mod tests {
             store: false,
             context_management: None,
         };
-        let err = build_payload(&req).expect_err("missing tool_call_id must be rejected");
+        let err = build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION)
+            .expect_err("missing tool_call_id must be rejected");
         match err {
-            ProviderError::ResponseParseError { reason } => {
+            ProviderError::RequestSerializationFailed { reason } => {
                 assert!(
                     reason.contains("missing tool_call_id"),
                     "reason should describe the missing field: {reason}",
@@ -716,7 +927,7 @@ mod tests {
                     "reason should name the tool so the bug can be traced upstream: {reason}",
                 );
             }
-            other => panic!("expected ResponseParseError, got {other:?}"),
+            other => panic!("expected RequestSerializationFailed, got {other:?}"),
         }
     }
 
@@ -728,6 +939,7 @@ mod tests {
         // `Some(String::new())`.
         let req = ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some("output".to_string()),
                 thinking: String::new(),
@@ -748,8 +960,8 @@ mod tests {
             context_management: None,
         };
         assert!(matches!(
-            build_payload(&req),
-            Err(ProviderError::ResponseParseError { .. }),
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION),
+            Err(ProviderError::RequestSerializationFailed { .. }),
         ));
     }
 
@@ -760,6 +972,7 @@ mod tests {
         // freeform body passes through verbatim — no JSON wrapping.
         let req = ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::Assistant,
                 content: None,
                 thinking: String::new(),
@@ -784,7 +997,8 @@ mod tests {
             store: false,
             context_management: None,
         };
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let input = payload["input"].as_array().unwrap();
         assert_eq!(input.len(), 1);
         assert_eq!(input[0]["type"], "custom_tool_call");
@@ -802,6 +1016,7 @@ mod tests {
         // `input`. This proves the kind discriminator is honoured both ways.
         let req = ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::Assistant,
                 content: None,
                 thinking: String::new(),
@@ -826,7 +1041,8 @@ mod tests {
             store: false,
             context_management: None,
         };
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let input = payload["input"].as_array().unwrap();
         assert_eq!(input[0]["type"], "function_call");
         assert_eq!(input[0]["arguments"], r#"{"path":"a"}"#);
@@ -839,6 +1055,7 @@ mod tests {
         // `custom_tool_call_output`, mirroring the call's envelope.
         let req = ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some("hunk applied".to_string()),
                 thinking: String::new(),
@@ -858,7 +1075,8 @@ mod tests {
             store: false,
             context_management: None,
         };
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let input = payload["input"].as_array().unwrap();
         assert_eq!(input[0]["type"], "custom_tool_call_output");
         assert_eq!(input[0]["call_id"], "call_custom");
@@ -872,6 +1090,7 @@ mod tests {
         // must still serialise as `function_call_output`.
         let req = ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some("ok".to_string()),
                 thinking: String::new(),
@@ -891,7 +1110,8 @@ mod tests {
             store: false,
             context_management: None,
         };
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let input = payload["input"].as_array().unwrap();
         assert_eq!(input[0]["type"], "function_call_output");
     }
@@ -900,6 +1120,7 @@ mod tests {
     fn tool_result_with_call_id_serializes_function_call_output() {
         let req = ProviderRequest {
             messages: vec![Message {
+                reasoning: Vec::new(),
                 role: MessageRole::ToolResult,
                 content: Some(r#"{"lines":42}"#.to_string()),
                 thinking: String::new(),
@@ -919,11 +1140,141 @@ mod tests {
             store: false,
             context_management: None,
         };
-        let payload = build_payload(&req).expect("build_payload");
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
         let input = payload["input"].as_array().unwrap();
         assert_eq!(input.len(), 1);
         assert_eq!(input[0]["type"], "function_call_output");
         assert_eq!(input[0]["call_id"], "call_xyz");
         assert_eq!(input[0]["output"], r#"{"lines":42}"#);
+    }
+
+    // -- Encrypted reasoning replay (stateless threading) -------------------
+
+    use crate::provider::reasoning::{ReasoningContentPart, ReasoningItem, ReasoningSummaryPart};
+
+    fn encrypted_item(id: &str, summary: &str, blob: &str) -> ReasoningItem {
+        ReasoningItem {
+            id: id.to_owned(),
+            summary: vec![ReasoningSummaryPart::SummaryText {
+                text: summary.to_owned(),
+            }],
+            content: None,
+            encrypted_content: Some(blob.to_owned()),
+        }
+    }
+
+    fn assistant_request_with_reasoning(reasoning: Vec<ReasoningItem>) -> ProviderRequest {
+        ProviderRequest {
+            messages: vec![Message {
+                role: MessageRole::Assistant,
+                content: Some("calling a tool".to_string()),
+                thinking: "summary text".to_string(),
+                reasoning,
+                tool_calls: vec![crate::provider::request::AssistantToolCall {
+                    call_id: "call_1".to_string(),
+                    name: "read".to_string(),
+                    arguments: r#"{"path":"a"}"#.to_string(),
+                    kind: ToolCallKind::Function,
+                }],
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+            }],
+            tools: vec![],
+            model: "gpt-5".to_string(),
+            reasoning_effort: Some(ReasoningEffort::Medium),
+            reasoning_summary: None,
+            service_tier: None,
+            config: None,
+            cache_key: None,
+            previous_response_id: None,
+            store: false,
+            context_management: None,
+        }
+    }
+
+    #[test]
+    fn encrypted_reasoning_replays_before_assistant_content_and_tool_calls() {
+        // Stateless threading (Codex CLI reference behaviour): captured
+        // reasoning items with encrypted_content are echoed as "reasoning"
+        // input items BEFORE the assistant message and tool calls they
+        // preceded, with the blob passed through verbatim and the
+        // server-internal rs_* id omitted.
+        let req = assistant_request_with_reasoning(vec![encrypted_item(
+            "rs_1",
+            "I thought about it",
+            "opaque-blob-1",
+        )]);
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 3, "reasoning + message + function_call");
+        assert_eq!(input[0]["type"], "reasoning");
+        assert_eq!(input[0]["encrypted_content"], "opaque-blob-1");
+        assert_eq!(input[0]["summary"][0]["type"], "summary_text");
+        assert_eq!(input[0]["summary"][0]["text"], "I thought about it");
+        assert!(
+            input[0].get("id").is_none(),
+            "server-internal rs_* id must not be echoed"
+        );
+        assert_eq!(input[1]["type"], "message");
+        assert_eq!(input[1]["role"], "assistant");
+        assert_eq!(input[2]["type"], "function_call");
+        assert_eq!(input[2]["call_id"], "call_1");
+    }
+
+    #[test]
+    fn reasoning_without_encrypted_content_is_not_replayed() {
+        // Items captured on store: true responses carry no
+        // encrypted_content; the stateless backend cannot reconstruct
+        // reasoning state from them, so they are never echoed.
+        let req = assistant_request_with_reasoning(vec![ReasoningItem {
+            id: "rs_plain".to_owned(),
+            summary: vec![ReasoningSummaryPart::SummaryText {
+                text: "not replayable".to_owned(),
+            }],
+            content: None,
+            encrypted_content: None,
+        }]);
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input.len(), 2, "message + function_call only");
+        assert!(
+            input.iter().all(|item| item["type"] != "reasoning"),
+            "no reasoning item may be echoed without encrypted_content: {input:?}"
+        );
+    }
+
+    #[test]
+    fn multiple_encrypted_reasoning_items_replay_in_capture_order() {
+        let req = assistant_request_with_reasoning(vec![
+            encrypted_item("rs_1", "first", "blob-1"),
+            encrypted_item("rs_2", "second", "blob-2"),
+        ]);
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input[0]["type"], "reasoning");
+        assert_eq!(input[0]["encrypted_content"], "blob-1");
+        assert_eq!(input[1]["type"], "reasoning");
+        assert_eq!(input[1]["encrypted_content"], "blob-2");
+        assert_eq!(input[2]["type"], "message");
+    }
+
+    #[test]
+    fn encrypted_reasoning_replays_content_parts_when_present() {
+        let mut item = encrypted_item("rs_c", "with content", "blob-c");
+        item.content = Some(vec![ReasoningContentPart::ReasoningText {
+            text: "raw chain".to_owned(),
+        }]);
+        let req = assistant_request_with_reasoning(vec![item]);
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let input = payload["input"].as_array().unwrap();
+        assert_eq!(input[0]["type"], "reasoning");
+        assert_eq!(input[0]["content"][0]["type"], "reasoning_text");
+        assert_eq!(input[0]["content"][0]["text"], "raw chain");
     }
 }

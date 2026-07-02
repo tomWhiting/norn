@@ -3,7 +3,7 @@
 //!
 //! Close performs a depth-first post-order shutdown of the target's whole
 //! subtree. `signal_agent` routes through the recipient's
-//! [`crate::r#loop::inbound::InboundChannel`] via the workspace-shared
+//! [`crate::agent_loop::inbound::InboundChannel`] via the workspace-shared
 //! [`MessageRouter`](crate::agent::message_router::MessageRouter), with
 //! who-may-message-whom enforced from the sender's granted
 //! [`MessagingScope`](crate::agent::child_policy::MessagingScope) against

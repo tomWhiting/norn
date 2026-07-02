@@ -26,7 +26,7 @@ use crate::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
 /// re-run every iteration; `Some(_)` re-uses the cached stdout until the TTL
 /// elapses.
 ///
-/// Serialisation goes through [`PromptCommandRepr`] so TOML/JSON config
+/// Serialisation goes through `PromptCommandRepr` so TOML/JSON config
 /// files can write `cache_ttl = 30` (integer seconds) instead of
 /// struct-of-fields [`Duration`] syntax.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -90,8 +90,12 @@ pub struct Capability {
     /// System-instruction snippets contributed by this capability.
     #[serde(default)]
     pub system_instructions: Vec<String>,
-    /// Disallowed patterns contributed by this capability (e.g. bash command
-    /// substrings the runtime should refuse to execute).
+    /// Disallowed patterns contributed by this capability, in the
+    /// permission-pattern grammar (`tool_name` or `tool_name(args)` with
+    /// `*` wildcards — see [`crate::config::permissions`]). Applied by
+    /// [`super::resolve::from_profile`]: plain tool names gate the tool
+    /// out of the registry, and every pattern is folded into the consent
+    /// boundary's deny list.
     #[serde(default)]
     pub disallowed_patterns: Vec<String>,
 }
@@ -134,6 +138,15 @@ pub struct Profile {
     /// Composable capability bundles merged into the profile.
     #[serde(default)]
     pub capabilities: Vec<Capability>,
+    /// Names of capability files referenced by the profile's
+    /// `capabilities:` frontmatter but not yet resolved into
+    /// [`Self::capabilities`]. [`super::loader::resolve_profile`] resolves
+    /// each name against the sibling `capabilities/` directories of the
+    /// profile scan dirs and moves the result into [`Self::capabilities`];
+    /// a name that cannot be resolved is a typed error, never a silently
+    /// dropped restriction surface.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capability_names: Vec<String>,
     /// Free-form settings map for caller-specific configuration.
     #[serde(default)]
     pub settings: HashMap<String, serde_json::Value>,
@@ -224,6 +237,7 @@ mod tests {
                     disallowed_patterns: vec!["sudo".to_owned()],
                 },
             ],
+            capability_names: Vec::new(),
             settings: {
                 let mut m = HashMap::new();
                 m.insert("max_file_lines".to_owned(), serde_json::json!(500));

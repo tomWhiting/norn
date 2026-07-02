@@ -9,38 +9,23 @@
 //! directory or file is auto-created on read. A non-existent file simply
 //! resolves to [`NornSettings::default`] for that layer.
 //!
-//! Top-level keys that are not recognised by [`NornSettings`] are silently
-//! dropped by serde during typed deserialisation. To preserve forward
-//! compatibility (`DESIGN.md` D2; brief R7), the loader inspects the parsed
-//! [`serde_json::Value`] *before* typed conversion and emits a
-//! `tracing::warn!` for every unknown top-level key.
+//! Keys that are not recognised by [`NornSettings`] — at ANY nesting depth
+//! — are silently dropped by serde during typed deserialisation. To
+//! preserve forward compatibility (`DESIGN.md` D2; brief R7) while still
+//! surfacing typos, the loader deserialises through `serde_ignored` and
+//! emits a `tracing::warn!` naming the full dotted path of every ignored
+//! key (e.g. `agent.max_turnz`), so a nested typo never silently
+//! deserialises to a default.
+//!
+//! Known limitation: sections deserialised via `#[serde(flatten)]`
+//! (`provider_profiles.<name>.*`) buffer their content, so unknown keys
+//! inside a flattened section are not reported by `serde_ignored`.
 
 use std::path::{Path, PathBuf};
-
-use serde_json::Value;
 
 use crate::config::paths;
 use crate::config::types::NornSettings;
 use crate::error::ConfigError;
-
-/// The thirteen documented top-level settings keys. Anything outside this
-/// set is reported via `tracing::warn!` so future-version settings files
-/// remain readable on older binaries.
-const KNOWN_TOP_LEVEL_KEYS: &[&str] = &[
-    "model",
-    "provider",
-    "agent",
-    "retry",
-    "permissions",
-    "hooks",
-    "tools",
-    "mcp_servers",
-    "skills",
-    "context",
-    "session",
-    "tui",
-    "env",
-];
 
 /// Three independent settings layers as loaded from disk.
 ///
@@ -109,36 +94,49 @@ fn load_one_layer(path: &Path) -> Result<NornSettings, ConfigError> {
     parse_layer(path, &contents)
 }
 
-/// Parse a single layer's JSON string, warning on unknown top-level keys
-/// before producing the typed view.
+/// Parse a single layer's JSON string, warning on every ignored key —
+/// top-level or nested — before returning the typed view.
 fn parse_layer(path: &Path, contents: &str) -> Result<NornSettings, ConfigError> {
-    let value: Value =
-        serde_json::from_str(contents).map_err(|err| ConfigError::InvalidConfig {
+    let (settings, unknown_paths) =
+        parse_settings_with_unknown_paths(contents).map_err(|err| ConfigError::InvalidConfig {
             reason: format!("failed to parse {}: {err}", path.display()),
         })?;
-    warn_on_unknown_keys(path, &value);
-    serde_json::from_value::<NornSettings>(value).map_err(|err| ConfigError::InvalidConfig {
-        reason: format!("failed to parse {}: {err}", path.display()),
-    })
+    for key_path in &unknown_paths {
+        tracing::warn!(
+            path = %path.display(),
+            key = %key_path,
+            "unknown key in settings; ignoring",
+        );
+    }
+    Ok(settings)
 }
 
-/// Emit a `tracing::warn!` for each top-level key in `value` that does not
-/// appear in [`KNOWN_TOP_LEVEL_KEYS`]. Silently ignores non-object roots —
-/// serde will reject them with a descriptive error at the typed-conversion
-/// step.
-fn warn_on_unknown_keys(path: &Path, value: &Value) {
-    let Some(obj) = value.as_object() else {
-        return;
-    };
-    for key in obj.keys() {
-        if !KNOWN_TOP_LEVEL_KEYS.contains(&key.as_str()) {
-            tracing::warn!(
-                path = %path.display(),
-                key = %key,
-                "unknown top-level key in settings; ignoring",
-            );
-        }
-    }
+/// Deserialise a settings document, collecting the full dotted path of
+/// every key the typed schema ignores (top-level and nested).
+///
+/// Pure so tests can assert on the exact reported paths without
+/// capturing tracing output. Flattened sections
+/// (`provider_profiles.<name>`) buffer their content and therefore
+/// cannot report ignored keys — see the module docs.
+///
+/// # Errors
+///
+/// Propagates the `serde_json` error for malformed JSON or a document
+/// that violates the typed schema (e.g. a hook entry missing its
+/// required `timeout`).
+pub(crate) fn parse_settings_with_unknown_paths(
+    contents: &str,
+) -> Result<(NornSettings, Vec<String>), serde_json::Error> {
+    let mut unknown: Vec<String> = Vec::new();
+    let mut de = serde_json::Deserializer::from_str(contents);
+    let settings: NornSettings = serde_ignored::deserialize(&mut de, |ignored| {
+        // serde_ignored renders each `Option` hop as a `?` segment
+        // (`agent.?.max_turnz`); collapse those so the reported path
+        // matches the JSON the operator actually wrote.
+        unknown.push(ignored.to_string().replace(".?.", "."));
+    })?;
+    de.end()?;
+    Ok((settings, unknown))
 }
 
 /// Convenience: the project-layer path derived from a working directory.
@@ -323,24 +321,103 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn unknown_top_level_key_emits_warn_and_loads_known_keys() {
+    fn unknown_top_level_key_is_reported_and_known_keys_still_load() {
         let user_home = tempfile::tempdir().unwrap();
         let cwd = tempfile::tempdir().unwrap();
         let _guard = NornHomeGuard::set(Some(user_home.path()));
 
         let norn_dir = cwd.path().join(".norn");
         std::fs::create_dir_all(&norn_dir).unwrap();
-        // `mystery_field` is not in KNOWN_TOP_LEVEL_KEYS; serde drops it
-        // silently. We assert that the typed view still loads, and the
-        // known field is preserved.
         std::fs::write(
             norn_dir.join("settings.json"),
             r#"{"model":"gpt-5.5","mystery_field":{"x":1}}"#,
         )
         .unwrap();
 
+        // The typed view still loads through the full path...
         let loaded = load_settings(cwd.path()).unwrap();
         assert_eq!(loaded.project.model.as_deref(), Some("gpt-5.5"));
+
+        // ...and the pure detector reports the unknown key by path.
+        let (_, unknown) =
+            parse_settings_with_unknown_paths(r#"{"model":"gpt-5.5","mystery_field":{"x":1}}"#)
+                .unwrap();
+        assert_eq!(unknown, vec!["mystery_field".to_owned()]);
+    }
+
+    /// `model_aliases` and `provider_profiles` are documented top-level
+    /// keys — they must not produce false unknown-key reports (the old
+    /// hand-maintained key list omitted them).
+    #[test]
+    fn documented_top_level_keys_produce_no_unknown_reports() {
+        let json = r#"{
+            "model": "gpt-5.5",
+            "model_aliases": {"55": "gpt-5.5"},
+            "provider_profiles": {
+                "lmstudio": {
+                    "api_shape": "openai_chat_completions",
+                    "base_url": "http://localhost:1234/v1"
+                }
+            }
+        }"#;
+        let (settings, unknown) = parse_settings_with_unknown_paths(json).unwrap();
+        assert!(
+            unknown.is_empty(),
+            "documented keys must not be reported as unknown: {unknown:?}"
+        );
+        assert!(settings.model_aliases.is_some());
+        assert!(settings.provider_profiles.is_some());
+    }
+
+    /// A nested typo (`agent.max_turnz`) used to deserialise silently to
+    /// the default; the detector now reports it with a path-qualified
+    /// name.
+    #[test]
+    fn nested_typo_is_reported_with_dotted_path() {
+        let json = r#"{"agent":{"max_turnz":9,"step_timeout":"30s"}}"#;
+        let (settings, unknown) = parse_settings_with_unknown_paths(json).unwrap();
+        assert_eq!(unknown, vec!["agent.max_turnz".to_owned()]);
+        let agent = settings.agent.expect("agent section loads");
+        assert_eq!(agent.step_timeout.as_deref(), Some("30s"));
+        assert!(
+            agent.max_turns.is_none(),
+            "the typo'd key must not populate the real field"
+        );
+    }
+
+    /// `tools.skill.shell_execution` is a documented typed key — the
+    /// nested unknown-key detector must not flag it, while a typo'd
+    /// sibling under the same section is still reported by path.
+    #[test]
+    fn tools_skill_shell_execution_is_a_known_key() {
+        let json = r#"{"tools":{"skill":{"shell_execution":false}}}"#;
+        let (settings, unknown) = parse_settings_with_unknown_paths(json).unwrap();
+        assert!(
+            unknown.is_empty(),
+            "tools.skill.shell_execution must not be reported as unknown: {unknown:?}"
+        );
+        let skill = settings
+            .tools
+            .expect("tools section loads")
+            .skill
+            .expect("skill section loads");
+        assert_eq!(skill.shell_execution, Some(false));
+
+        let (_, unknown) =
+            parse_settings_with_unknown_paths(r#"{"tools":{"skill":{"shell_exec":false}}}"#)
+                .unwrap();
+        assert_eq!(unknown, vec!["tools.skill.shell_exec".to_owned()]);
+    }
+
+    /// Deeply nested unknown keys are reported with their full path,
+    /// including array indices.
+    #[test]
+    fn hook_entry_typo_is_reported_with_indexed_path() {
+        let json = r#"{"hooks":{"pre_tool":[
+            {"matcher":"Write","command":"lint.sh","timeout":5,"timout":9}
+        ]}}"#;
+        let (_, unknown) = parse_settings_with_unknown_paths(json).unwrap();
+        assert_eq!(unknown, vec!["hooks.pre_tool.0.timout".to_owned()]);
     }
 
     #[test]

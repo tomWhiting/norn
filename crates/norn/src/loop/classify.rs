@@ -9,7 +9,7 @@ use crate::r#loop::assembly::{AssembledResponse, assemble_response};
 use crate::r#loop::config::TruncationKind;
 use crate::r#loop::helpers::append_and_notify;
 use crate::r#loop::schema::validate_against_schema;
-use crate::provider::agent_event::AgentEventSender;
+use crate::provider::agent_event::{AgentEventSender, AgentStreamRetry};
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::request::ProviderRequest;
 use crate::provider::traits::Provider;
@@ -23,7 +23,7 @@ use crate::tool::envelope::split_envelope_fields;
 /// The partial text, per-call usage, and stop reason are already persisted
 /// on the preceding `AssistantMessage` event; the Custom event marks the
 /// abort for observers. The runner then returns
-/// [`AgentStepResult::Truncated`](crate::r#loop::config::AgentStepResult),
+/// [`AgentStepResult::Truncated`](crate::agent_loop::config::AgentStepResult),
 /// which carries the partial text and accumulated usage — a truncated run
 /// is a stopped run with partial output, never a transport error and never
 /// retryable (the stop is deterministic).
@@ -188,6 +188,12 @@ pub(super) fn classify_response(
 
 /// Call the provider with a prebuilt request, collect all streaming events,
 /// forward to broadcast channel if present, and assemble the response.
+///
+/// An in-band [`ProviderEvent::Error`] fails the call immediately with its
+/// **typed** [`ProviderError`] — the provider itself reported the failure,
+/// so the retry policy classifies the real error (5xx retryable, quota
+/// terminal, ...) instead of the turn dying later on a generic
+/// "stream ended without a Done event".
 pub(super) async fn call_provider(
     provider: &dyn Provider,
     request: ProviderRequest,
@@ -201,14 +207,59 @@ pub(super) async fn call_provider(
         if let Some(sender) = event_tx {
             sender.send(event.clone());
         }
+        if let ProviderEvent::Error { error } = event {
+            return Err(NornError::Provider(error));
+        }
         events.push(event);
     }
 
     assemble_response(&events).ok_or_else(|| {
+        // Terminal by construction (`transient: None`): the transport-level
+        // cutoff cases surface earlier as retryable `StreamInterrupted`
+        // from the executor; a stream that yielded events but no `Done` is
+        // a provider-contract violation replays cannot fix.
         NornError::Provider(ProviderError::StreamError {
             reason: "provider stream ended without a Done event".to_string(),
+            transient: None,
         })
     })
+}
+
+/// [`call_provider`] under the loop's retry policy.
+///
+/// Each retry replays the full request, and the failed attempt may have
+/// already forwarded partial stream deltas to observers on `event_tx`.
+/// A typed [`AgentStreamRetry`] marker is broadcast immediately before
+/// every retry attempt's stream begins, so observers reset the failed
+/// attempt's partial output instead of rendering the replay appended to
+/// it.
+///
+/// # Errors
+///
+/// Returns the final [`NornError`] after the retry budget is exhausted,
+/// or the first non-retryable error encountered.
+pub(super) async fn call_provider_with_retry(
+    policy: &crate::r#loop::retry::RetryPolicy,
+    provider: &dyn Provider,
+    request: ProviderRequest,
+    event_tx: Option<&AgentEventSender>,
+) -> Result<AssembledResponse, NornError> {
+    let attempts = std::sync::atomic::AtomicU32::new(0);
+    crate::r#loop::retry::retry_with_backoff(policy, || {
+        let req = request.clone();
+        let attempt = attempts
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+            .saturating_add(1);
+        async move {
+            if attempt > 1
+                && let Some(sender) = event_tx
+            {
+                sender.send_stream_retry(AgentStreamRetry { attempt });
+            }
+            call_provider(provider, req, event_tx).await
+        }
+    })
+    .await
 }
 
 #[cfg(test)]
@@ -224,6 +275,7 @@ mod tests {
         AssembledResponse {
             text: String::new(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: vec![AssembledToolCall {
                 call_id: "call_1".to_owned(),
                 name: "structured_output".to_owned(),
@@ -360,6 +412,193 @@ mod tests {
                 "expected Truncated(ContentFilter), got {:?}",
                 std::mem::discriminant(&other)
             ),
+        }
+    }
+
+    // -- In-band provider Error events and stream-retry markers -----------
+
+    use std::sync::Mutex;
+
+    use futures_util::stream;
+
+    use crate::provider::agent_event::{AgentEvent, AgentEventKind};
+    use crate::provider::mock::MockProvider;
+    use crate::provider::tools::ProviderCapabilities;
+    use crate::provider::traits::ProviderStream;
+
+    /// Scripted provider whose `stream()` calls pop pre-built
+    /// `Result<ProviderEvent, ProviderError>` sequences, so tests can
+    /// script transport-level `Err` items mid-stream (which
+    /// [`MockProvider`] cannot).
+    struct ScriptedResultProvider {
+        attempts: Mutex<Vec<Vec<Result<ProviderEvent, ProviderError>>>>,
+    }
+
+    impl ScriptedResultProvider {
+        fn new(attempts: Vec<Vec<Result<ProviderEvent, ProviderError>>>) -> Self {
+            Self {
+                attempts: Mutex::new(attempts),
+            }
+        }
+    }
+
+    impl Provider for ScriptedResultProvider {
+        fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            let mut attempts = self.attempts.lock().expect("scripted provider lock");
+            if attempts.is_empty() {
+                return Err(ProviderError::StreamError {
+                    reason: "scripted provider exhausted".to_owned(),
+                    transient: None,
+                });
+            }
+            let events = attempts.remove(0);
+            Ok(Box::pin(stream::iter(events)))
+        }
+
+        fn capabilities(&self) -> ProviderCapabilities {
+            ProviderCapabilities::default()
+        }
+    }
+
+    fn empty_request() -> ProviderRequest {
+        ProviderRequest {
+            messages: Vec::new(),
+            tools: Vec::new(),
+            model: "test-model".to_owned(),
+            reasoning_effort: None,
+            reasoning_summary: None,
+            service_tier: None,
+            config: None,
+            cache_key: None,
+            previous_response_id: None,
+            store: false,
+            context_management: None,
+        }
+    }
+
+    fn done_event() -> ProviderEvent {
+        ProviderEvent::Done {
+            stop_reason: StopReason::EndTurn,
+            usage: Usage::default(),
+            response_id: None,
+        }
+    }
+
+    /// Regression (in-band `ProviderEvent::Error` was silently ignored):
+    /// a scripted mock provider emitting an Error event must fail the
+    /// call with that event's typed [`ProviderError`], not the generic
+    /// "stream ended without a Done event".
+    #[tokio::test]
+    async fn call_provider_fails_fast_with_typed_error_from_error_event() {
+        let provider = MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "partial".to_owned(),
+            },
+            ProviderEvent::Error {
+                error: ProviderError::QuotaExceeded,
+            },
+        ]]);
+
+        let err = call_provider(&provider, empty_request(), None)
+            .await
+            .expect_err("in-band Error event must fail the call");
+        match err {
+            NornError::Provider(ProviderError::QuotaExceeded) => {}
+            other => panic!("expected the typed in-band provider error, got {other:?}"),
+        }
+    }
+
+    /// Regression (retry re-broadcast with no marker): a retryable
+    /// mid-stream failure after partial deltas must broadcast a typed
+    /// [`AgentStreamRetry`] marker *before* the replay's events, so
+    /// observers reset the failed attempt's partial output.
+    #[tokio::test]
+    async fn retry_broadcasts_stream_retry_marker_before_replay() {
+        let provider = ScriptedResultProvider::new(vec![
+            vec![
+                Ok(ProviderEvent::TextDelta {
+                    text: "doomed partial".to_owned(),
+                }),
+                Err(ProviderError::StreamInterrupted {
+                    reason: "connection reset by test".to_owned(),
+                }),
+            ],
+            vec![
+                Ok(ProviderEvent::TextDelta {
+                    text: "full answer".to_owned(),
+                }),
+                Ok(done_event()),
+            ],
+        ]);
+        let policy = crate::r#loop::retry::RetryPolicy {
+            initial_backoff: std::time::Duration::from_millis(1),
+            ..crate::r#loop::retry::RetryPolicy::default()
+        };
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
+        let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
+
+        let response = call_provider_with_retry(&policy, &provider, empty_request(), Some(&sender))
+            .await
+            .expect("second attempt succeeds");
+        assert_eq!(response.text, "full answer");
+
+        let mut received = Vec::new();
+        while let Ok(event) = rx.try_recv() {
+            received.push(event.event);
+        }
+        assert!(
+            matches!(
+                &received[0],
+                AgentEventKind::Provider(ProviderEvent::TextDelta { text })
+                    if text == "doomed partial",
+            ),
+            "first broadcast must be the failed attempt's partial delta",
+        );
+        assert!(
+            matches!(
+                &received[1],
+                AgentEventKind::StreamRetry(AgentStreamRetry { attempt: 2 }),
+            ),
+            "the retry marker must precede the replay, got {received:?}",
+        );
+        assert!(
+            matches!(
+                &received[2],
+                AgentEventKind::Provider(ProviderEvent::TextDelta { text })
+                    if text == "full answer",
+            ),
+            "the replay's deltas must follow the marker",
+        );
+        assert!(matches!(
+            &received[3],
+            AgentEventKind::Provider(ProviderEvent::Done { .. }),
+        ));
+        assert_eq!(received.len(), 4, "no extra events are broadcast");
+    }
+
+    /// A first-attempt success must broadcast no retry marker.
+    #[tokio::test]
+    async fn successful_first_attempt_emits_no_retry_marker() {
+        let provider = ScriptedResultProvider::new(vec![vec![
+            Ok(ProviderEvent::TextDelta {
+                text: "clean".to_owned(),
+            }),
+            Ok(done_event()),
+        ]]);
+        let policy = crate::r#loop::retry::RetryPolicy::default();
+        let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
+        let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
+
+        let response = call_provider_with_retry(&policy, &provider, empty_request(), Some(&sender))
+            .await
+            .expect("first attempt succeeds");
+        assert_eq!(response.text, "clean");
+
+        while let Ok(event) = rx.try_recv() {
+            assert!(
+                !matches!(event.event, AgentEventKind::StreamRetry(_)),
+                "no retry marker may be broadcast on a clean first attempt",
+            );
         }
     }
 }

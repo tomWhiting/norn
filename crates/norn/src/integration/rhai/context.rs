@@ -68,7 +68,7 @@ pub struct NornRhaiContext {
     /// Shared working directory used by `run_cmd` to set the child
     /// process's CWD. Cloning this field yields a handle that shares the
     /// same underlying value as [`crate::tool::context::ToolContext`] and
-    /// [`crate::r#loop::loop_context::LoopContext`].
+    /// [`crate::agent_loop::loop_context::LoopContext`].
     pub working_dir: crate::tool::context::SharedWorkingDir,
     /// The host agent's **own** granted [`ChildPolicy`] — the budget its
     /// script-driven `spawn_agent` reservations are checked against, and

@@ -198,8 +198,23 @@ pub fn load_runtime_base(
     let retry_policy = retry_policy_from_settings(&settings)?;
     let diagnostics = DiagnosticCollector::shared();
     let shared_wd = SharedWorkingDir::new(cwd.to_path_buf());
-    let rules = merge_discovered_rules(None, cwd).map(|r| r.with_working_dir(shared_wd));
-    let hook_settings = load_hooks_from_settings(cwd)?;
+    // Wire the live diagnostic collector and the resolved shell budget onto
+    // the rules engine so `shell_source` failures reach telemetry and the
+    // command timeout is configuration-driven (see DECISION: rule shell
+    // timeout reuses `agent.prompt_command_timeout`, defaulting to the
+    // engine's built-in budget when unset).
+    let rules = merge_discovered_rules(None, cwd).map(|r| {
+        let r = r
+            .with_working_dir(shared_wd)
+            .with_diagnostics(Arc::clone(&diagnostics));
+        match agent_config.prompt_command_timeout {
+            Some(timeout) => r.with_shell_timeout(timeout),
+            None => r,
+        }
+    });
+    // The merged settings already carry the three-tier hook concatenation;
+    // extracting from them costs no second disk read.
+    let hook_settings = load_hooks_from_settings(&settings);
     let hooks = assemble_hook_registry(programmatic_hooks, &hook_settings, profile, cwd)?;
     let skill_paths = build_skill_search_paths(&settings, cwd);
     let skill_catalog = Arc::new(SkillCatalog::scan(&skill_paths));
@@ -233,6 +248,12 @@ fn apply_settings_to_agent_config(
     }
     if let Some(step_timeout) = agent.step_timeout.as_deref() {
         config.step_timeout = Some(parse_settings_duration("agent.step_timeout", step_timeout)?);
+    }
+    if let Some(prompt_timeout) = agent.prompt_command_timeout.as_deref() {
+        config.prompt_command_timeout = Some(parse_settings_duration(
+            "agent.prompt_command_timeout",
+            prompt_timeout,
+        )?);
     }
     if let Some(budget) = agent.schema_budget {
         config.schema_attempt_budget = budget;
@@ -285,7 +306,7 @@ fn parse_settings_conversation_state(raw: &str) -> Result<ConversationStateMode,
         "provider_threaded" => Ok(ConversationStateMode::ProviderThreaded),
         "manual" | "manual_replay" => Ok(ConversationStateMode::ManualReplay),
         _ => Err(invalid_config(format!(
-            "invalid value for agent.conversation_state: expected auto, manual, or provider_threaded, got '{raw}'"
+            "invalid value for agent.conversation_state: expected auto, manual, manual_replay, or provider_threaded, got '{raw}'"
         ))),
     }
 }
@@ -345,11 +366,18 @@ pub(super) fn resolve_search_path(cwd: &Path, raw: &str) -> PathBuf {
     }
 }
 
+/// Discover on-disk rules across the four documented tiers (DESIGN.md §D5
+/// / the [`scan_rule_dirs`] ordering contract): project `.norn/rules/`,
+/// user `~/.norn/rules/` (honouring `NORN_HOME`), Claude Code
+/// `.claude/rules/`, and Meridian `.meridian/rules/`. Earlier tiers win on
+/// rule-ID collision.
 fn merge_discovered_rules(existing: Option<RuleEngine>, cwd: &Path) -> Option<RuleEngine> {
     let mut dirs = vec![cwd.join(".norn").join("rules")];
     if let Some(user) = crate::config::paths::rules_dir() {
         dirs.push(user);
     }
+    dirs.push(cwd.join(".claude").join("rules"));
+    dirs.push(cwd.join(".meridian").join("rules"));
     let discovered = scan_rule_dirs(&dirs);
     if discovered.is_empty() {
         return existing;
@@ -436,10 +464,165 @@ pub(super) fn invalid_config(reason: String) -> NornError {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
 mod tests {
     use super::*;
     use crate::config::types::ProviderSettings;
+    use crate::rules::types::{PathOperation, RuntimeEvent};
+
+    /// Guard that swaps `NORN_HOME` for the duration of a test and
+    /// restores the prior value on drop. Paired with
+    /// `#[serial_test::serial]` on every consumer.
+    struct NornHomeGuard {
+        prior: Option<std::ffi::OsString>,
+    }
+
+    impl NornHomeGuard {
+        fn set(path: &Path) -> Self {
+            let prior = std::env::var_os("NORN_HOME");
+            // SAFETY: paired with `#[serial_test::serial]`; no concurrent
+            // reader observes the mutated env.
+            unsafe { std::env::set_var("NORN_HOME", path) }
+            Self { prior }
+        }
+    }
+
+    impl Drop for NornHomeGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(val) => unsafe { std::env::set_var("NORN_HOME", val) },
+                None => unsafe { std::env::remove_var("NORN_HOME") },
+            }
+        }
+    }
+
+    fn write_rule(path: &Path, glob: &str, body: &str) {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent).unwrap();
+        }
+        std::fs::write(path, format!("---\nglobs: \"{glob}\"\n---\n{body}\n")).unwrap();
+    }
+
+    async fn injected_content(engine: &RuleEngine, path: &str) -> Option<String> {
+        let event = RuntimeEvent::PathChanged {
+            path: path.to_owned(),
+            operation: PathOperation::Read,
+        };
+        engine
+            .process_event(&event)
+            .await
+            .into_iter()
+            .next()
+            .map(|inj| inj.content.trim().to_owned())
+    }
+
+    /// All four documented rule tiers are scanned: project `.norn/rules`,
+    /// user `~/.norn/rules` (via `NORN_HOME`), Claude Code
+    /// `.claude/rules`, and Meridian `.meridian/rules`. The scan formerly
+    /// covered only the first two, silently ignoring `.claude` and
+    /// `.meridian` rules.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn merge_discovered_rules_scans_all_four_tiers() {
+        let user_home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let _guard = NornHomeGuard::set(user_home.path());
+
+        write_rule(
+            &cwd.path().join(".norn").join("rules").join("proj.md"),
+            "**/*.proj",
+            "project rule",
+        );
+        write_rule(
+            &user_home.path().join("rules").join("user.md"),
+            "**/*.user",
+            "user rule",
+        );
+        write_rule(
+            &cwd.path().join(".claude").join("rules").join("cc.md"),
+            "**/*.cc",
+            "claude rule",
+        );
+        write_rule(
+            &cwd.path().join(".meridian").join("rules").join("mer.md"),
+            "**/*.mer",
+            "meridian rule",
+        );
+
+        let engine = merge_discovered_rules(None, cwd.path()).expect("rules discovered");
+        for (path, body) in [
+            ("src/a.proj", "project rule"),
+            ("src/a.user", "user rule"),
+            ("src/a.cc", "claude rule"),
+            ("src/a.mer", "meridian rule"),
+        ] {
+            let content = injected_content(&engine, path).await;
+            assert_eq!(
+                content.as_deref(),
+                Some(body),
+                "tier rule for {path} must fire"
+            );
+        }
+    }
+
+    /// Earlier tiers shadow later ones on rule-ID collision: a project
+    /// `.norn/rules` rule wins over a same-named `.claude/rules` rule.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn merge_discovered_rules_project_tier_shadows_claude_tier() {
+        let user_home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let _guard = NornHomeGuard::set(user_home.path());
+
+        write_rule(
+            &cwd.path().join(".norn").join("rules").join("shadow.md"),
+            "**/*.rs",
+            "from project",
+        );
+        write_rule(
+            &cwd.path().join(".claude").join("rules").join("shadow.md"),
+            "**/*.rs",
+            "from claude",
+        );
+
+        let engine = merge_discovered_rules(None, cwd.path()).expect("rules discovered");
+        let content = injected_content(&engine, "src/lib.rs").await;
+        assert_eq!(content.as_deref(), Some("from project"));
+    }
+
+    /// `agent.prompt_command_timeout` was merged and validated but never
+    /// applied — it must reach `AgentLoopConfig.prompt_command_timeout`.
+    #[test]
+    fn agent_config_applies_prompt_command_timeout() {
+        let settings = NornSettings {
+            agent: Some(crate::config::types::AgentSettings {
+                prompt_command_timeout: Some("12s".to_owned()),
+                ..crate::config::types::AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let config = agent_config_from_settings(&settings).expect("valid settings");
+        assert_eq!(config.prompt_command_timeout, Some(Duration::from_secs(12)));
+
+        let unset = agent_config_from_settings(&NornSettings::default()).expect("empty settings");
+        assert_eq!(unset.prompt_command_timeout, None, "no assumed default");
+    }
+
+    #[test]
+    fn agent_config_rejects_malformed_prompt_command_timeout() {
+        let settings = NornSettings {
+            agent: Some(crate::config::types::AgentSettings {
+                prompt_command_timeout: Some("not-a-duration".to_owned()),
+                ..crate::config::types::AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = agent_config_from_settings(&settings).expect_err("malformed duration rejected");
+        assert!(
+            err.to_string().contains("agent.prompt_command_timeout"),
+            "error must name the field: {err}"
+        );
+    }
 
     #[test]
     fn provider_settings_resolve_maps_rate_and_retry_knobs() {

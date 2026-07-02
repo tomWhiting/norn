@@ -1,7 +1,7 @@
 //! Post-tool diagnostic check.
 //!
 //! Folder module split (LD-014): the entry point and per-mutation logic
-//! live in [`post_check`]; supporting concerns live in dedicated siblings
+//! live in `post_check`; supporting concerns live in dedicated siblings
 //! to keep each file under the project-wide 500-LoC clippy gate.
 
 mod adapters;

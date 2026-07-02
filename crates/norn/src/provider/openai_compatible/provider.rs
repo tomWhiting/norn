@@ -7,6 +7,7 @@ use super::execute::SenderProvider;
 use crate::error::ProviderError;
 use crate::provider::auth::{AuthProvider, build_from_auth_source};
 use crate::provider::events::ProviderEvent;
+use crate::provider::exec::{DEFAULT_RETRY_BACKOFF, StreamExecutor};
 use crate::provider::openai::rate_limiter::RateLimiter;
 use crate::provider::request::{ProviderConfig, ProviderOptions, ProviderRequest};
 use crate::provider::startup_trace;
@@ -103,18 +104,18 @@ impl Provider for OpenAiCompatibleProvider {
             request.config = self.config.provider_options.clone().map(ProviderOptions);
         }
         let sender = SenderProvider {
-            client: self.client.clone(),
-            endpoint: self.endpoint.clone(),
-            timeout: self.config.timeout,
-            max_retries: self.config.max_retries,
-            retry_backoff: self
-                .config
-                .retry_backoff
-                .unwrap_or(super::execute::DEFAULT_RETRY_BACKOFF),
-            retry_after_ceiling: self.config.retry_after_ceiling,
-            rate_limiter: Arc::clone(&self.rate_limiter),
-            auth_provider: Arc::clone(&self.auth_provider),
-            debug_dump_file: self.config.debug_dump_file.clone(),
+            executor: StreamExecutor {
+                client: self.client.clone(),
+                endpoint: self.endpoint.clone(),
+                timeout: self.config.timeout,
+                max_retries: self.config.max_retries,
+                retry_backoff: self.config.retry_backoff.unwrap_or(DEFAULT_RETRY_BACKOFF),
+                retry_after_ceiling: self.config.retry_after_ceiling,
+                rate_limiter: Arc::clone(&self.rate_limiter),
+                auth_provider: Arc::clone(&self.auth_provider),
+                debug_dump_file: self.config.debug_dump_file.clone(),
+                backend_label: "chat completions",
+            },
         };
 
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<ProviderEvent, ProviderError>>(64);
@@ -151,6 +152,7 @@ fn build_http_client(timeout: Duration) -> Result<reqwest::Client, ProviderError
         .build()
         .map_err(|err| ProviderError::ConnectionFailed {
             reason: format!("failed to build HTTP client: {err}"),
+            kind: crate::error::TransientKind::ConnectionReset,
         })
 }
 

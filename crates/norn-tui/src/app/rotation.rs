@@ -23,10 +23,12 @@
 //! commit: callers finish every fallible step (session creation, sink
 //! attach) **before** invoking it, matching `handle_new`'s
 //! no-partially-rotated-state contract. The old store receives an
-//! explicit final [`EventStore::checkpoint`] before being replaced —
-//! components may pin `Arc` clones of it, deferring the sink's
-//! drop-flush indefinitely, so the rotation cannot rely on drop to
-//! land the final index delta (event count, usage, `updated_at`).
+//! explicit final [`EventStore::checkpoint_off_executor`] before being
+//! replaced — components may pin `Arc` clones of it, deferring the
+//! sink's drop-flush indefinitely, so the rotation cannot rely on drop
+//! to land the final index delta (event count, usage, `updated_at`) —
+//! and the blocking index-lock critical section runs on Tokio's
+//! blocking pool, never on the TUI's executor thread.
 
 use std::sync::Arc;
 
@@ -46,14 +48,22 @@ use norn::tools::agent::AgentToolInfra;
 ///
 /// 1. **Checkpoint the OLD store.** Flushes the sink's pending index
 ///    delta now, because `Arc` clones of the old store held elsewhere
-///    can defer its drop-flush indefinitely. Failure is warn-logged and
-///    never aborts the rotation: the write-through JSONL event file is
+///    can defer its drop-flush indefinitely. Runs via
+///    [`EventStore::checkpoint_off_executor`] so the inter-process
+///    index lock and index rewrite never stall the executor thread
+///    driving the TUI event loop. Failure is warn-logged and never
+///    aborts the rotation: the write-through JSONL event file is
 ///    already durable; only the index entry lags until its next flush.
 /// 2. **Rebuild the [`ActionLog`]** against the new store with the loop
 ///    context's live working-dir handle — the same construction
-///    norn-cli's `install_action_log` uses at startup. The rebuild from
-///    the new store's events is a no-op for a fresh `/new` session but
-///    keeps this helper correct for any store handed to it.
+///    norn-cli's `install_action_log` uses at startup. The history is
+///    snapshotted once into
+///    [`ReplayArtifacts`](norn::session::ReplayArtifacts) — mirroring
+///    libnorn's resume assembly — so a single traversal restores both
+///    the persisted compaction marks (into
+///    [`LoopContext::context_edits`], when present) and the action
+///    ledger. Both are no-ops for a fresh `/new` session but keep this
+///    helper correct for any store handed to it.
 /// 3. **Repoint the shared [`ToolContext`] extensions**: the action-log
 ///    slot gets the new ledger; any installed [`ActionLogTree`] gets its
 ///    root slot repointed at the same ledger (see
@@ -69,16 +79,17 @@ use norn::tools::agent::AgentToolInfra;
 ///    extension (a typed `MissingExtension` error) exactly as before
 ///    the rotation.
 /// 4. **Swap** `LoopContext::action_log` and `store_slot`.
-pub(super) fn rotate_store_dependents(
+pub(super) async fn rotate_store_dependents(
     shared_ctx: Option<Arc<ToolContext>>,
     store_slot: &mut Arc<EventStore>,
     loop_context: &mut LoopContext,
     new_store: Arc<EventStore>,
 ) {
-    // 1. Final checkpoint of the OLD store. Components pinning Arc
-    //    clones of it defer the sink's drop-flush indefinitely, so the
-    //    pending index delta must be flushed here, before the swap.
-    if let Err(err) = store_slot.checkpoint() {
+    // 1. Final checkpoint of the OLD store, off-executor. Components
+    //    pinning Arc clones of it defer the sink's drop-flush
+    //    indefinitely, so the pending index delta must be flushed here,
+    //    before the swap.
+    if let Err(err) = Arc::clone(store_slot).checkpoint_off_executor().await {
         tracing::warn!(
             error = %err,
             "final checkpoint of the rotated-out session store failed; \
@@ -88,12 +99,19 @@ pub(super) fn rotate_store_dependents(
 
     // 2. Fresh ActionLog wrapping the NEW store — same construction as
     //    norn-cli's startup `install_action_log`, including the live
-    //    working-dir handle and the rebuild (a no-op for a fresh store).
+    //    working-dir handle. One ReplayArtifacts snapshot (mirroring
+    //    libnorn's resume assembly) feeds both the compaction marks and
+    //    the action-ledger rebuild — no per-consumer re-walks of the
+    //    event history.
     let action_log = Arc::new(ActionLog::with_working_dir(
         Arc::clone(&new_store),
         loop_context.working_dir.clone(),
     ));
-    norn::agent::rebuild_action_log(&action_log, &new_store.events());
+    let artifacts = norn::session::ReplayArtifacts::from_events(new_store.events());
+    if let Some(edits) = loop_context.context_edits.as_mut() {
+        edits.mark_superseded(artifacts.superseded_event_ids.iter().cloned());
+    }
+    norn::agent::rebuild_action_log(&action_log, &artifacts.events);
 
     // 3. Repoint the shared tool-context extensions.
     if let Some(ctx) = shared_ctx {
@@ -168,6 +186,7 @@ mod tests {
         fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
             Err(ProviderError::ConnectionFailed {
                 reason: "stub provider — rotation tests never stream".to_owned(),
+                kind: norn::error::TransientKind::ConnectionReset,
             })
         }
     }
@@ -184,8 +203,8 @@ mod tests {
         }
     }
 
-    #[test]
-    fn rotation_repoints_action_log_to_new_store() {
+    #[tokio::test]
+    async fn rotation_repoints_action_log_to_new_store() {
         // Regression: `/new` previously swapped `runtime.store` only,
         // leaving `LoopContext::action_log` and the shared-context
         // extension slot wrapping the OLD store — action-log queries
@@ -212,7 +231,8 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::clone(&new_store),
-        );
+        )
+        .await;
 
         assert!(
             Arc::ptr_eq(&store_slot, &new_store),
@@ -243,8 +263,50 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rotation_repoints_tree_root_log_leaving_descendants_untouched() {
+    #[tokio::test]
+    async fn rotation_replays_incoming_stores_compaction_marks_into_context_edits() {
+        // Rotation snapshots the incoming store once via ReplayArtifacts
+        // (mirroring libnorn's resume assembly): a persisted Compaction
+        // event's replaced ids must land in the live context-edit
+        // ledger, or the next prompt assembly would resend events the
+        // compaction already summarised away.
+        let superseded = tool_result("compacted-call");
+        let superseded_id = superseded.base().id.clone();
+        let new_store = Arc::new(EventStore::new());
+        new_store.append(superseded).unwrap();
+        new_store
+            .append(SessionEvent::Compaction {
+                base: EventBase::new(None),
+                summary: "older turns summarised".to_owned(),
+                replaced_event_ids: vec![superseded_id.clone()],
+            })
+            .unwrap();
+
+        let mut loop_context = LoopContext {
+            context_edits: Some(norn::session::context_edit::ContextEdits::new()),
+            ..LoopContext::default()
+        };
+        let mut store_slot = Arc::new(EventStore::new());
+        rotate_store_dependents(
+            None,
+            &mut store_slot,
+            &mut loop_context,
+            Arc::clone(&new_store),
+        )
+        .await;
+
+        let edits = loop_context
+            .context_edits
+            .as_ref()
+            .expect("context edits survive rotation");
+        assert!(
+            edits.is_superseded(&superseded_id),
+            "persisted compaction marks must be replayed into the ledger",
+        );
+    }
+
+    #[tokio::test]
+    async fn rotation_repoints_tree_root_log_leaving_descendants_untouched() {
         // Regression (review flag): a lazily-installed ActionLogTree
         // registered the pre-rotation root ActionLog and kept serving it
         // after `/new` — federated `action_log` queries (scope=...)
@@ -269,7 +331,8 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::new(EventStore::new()),
-        );
+        )
+        .await;
 
         let rotated = ctx
             .get_extension::<ActionLog>()
@@ -289,8 +352,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rotation_repoints_agent_infra_event_store_reusing_runtime_identity() {
+    #[tokio::test]
+    async fn rotation_repoints_agent_infra_event_store_reusing_runtime_identity() {
         // Regression: `AgentToolInfra.event_store` previously kept the
         // startup store after `/new`, so fork/spawn seeded children
         // from the previous conversation. Everything that must stay
@@ -325,7 +388,8 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::clone(&new_store),
-        );
+        )
+        .await;
 
         let infra = ctx
             .get_extension::<AgentToolInfra>()
@@ -358,8 +422,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rotation_checkpoints_old_store_index_delta_before_swap() {
+    #[tokio::test]
+    async fn rotation_checkpoints_old_store_index_delta_before_swap() {
         // Regression (integration-track flag): `/new` relied on the old
         // store's drop-flush for its final index delta, but components
         // holding Arc clones of the old store defer that drop
@@ -394,7 +458,8 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::new(EventStore::new()),
-        );
+        )
+        .await;
 
         // The old store is still alive via `pinned`, so only the
         // explicit checkpoint can have flushed the index delta.
@@ -408,8 +473,8 @@ mod tests {
         drop(pinned);
     }
 
-    #[test]
-    fn rotation_without_shared_context_still_rebuilds_action_log() {
+    #[tokio::test]
+    async fn rotation_without_shared_context_still_rebuilds_action_log() {
         // Ephemeral runs can lack a shared tool context; the loop-side
         // ActionLog must still be repointed so dispatch recording lands
         // in the new conversation.
@@ -428,7 +493,8 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::clone(&new_store),
-        );
+        )
+        .await;
 
         assert!(Arc::ptr_eq(&store_slot, &new_store));
         let rotated = loop_context.action_log.clone().unwrap();
@@ -440,8 +506,8 @@ mod tests {
         );
     }
 
-    #[test]
-    fn rotation_without_existing_infra_does_not_fabricate_one() {
+    #[tokio::test]
+    async fn rotation_without_existing_infra_does_not_fabricate_one() {
         // Startup wiring installs AgentToolInfra conditionally; when it
         // was never installed, rotation must not invent one (it has no
         // provider or identity to give it) — agent tools keep failing
@@ -457,7 +523,8 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::clone(&new_store),
-        );
+        )
+        .await;
 
         assert!(
             ctx.get_extension::<AgentToolInfra>().is_none(),

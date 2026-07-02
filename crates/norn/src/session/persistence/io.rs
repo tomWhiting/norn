@@ -11,9 +11,8 @@ use std::path::{Path, PathBuf};
 use crate::session::events::{EventId, SessionEvent};
 
 use super::index::{read_index, sum_usage_from_events, update_session_index};
-use super::types::{
-    SESSION_FORMAT_VERSION, SessionFileHeader, SessionFileRead, SessionPersistError,
-};
+use super::replay::ReplayArtifacts;
+use super::types::{SESSION_FORMAT_VERSION, SessionFileHeader, SessionPersistError};
 
 /// Return the JSONL file path for `session_id` under `data_dir`.
 ///
@@ -79,10 +78,22 @@ pub(crate) fn ensure_session_id_not_reserved(id: &str) -> Result<(), SessionPers
 /// Open (or create) the session JSONL file at `path` in append mode,
 /// creating parent directories as needed.
 ///
-/// When the file is brand new (or empty), a [`SessionFileHeader`] line
-/// stamped with [`SESSION_FORMAT_VERSION`] is written first, so every
-/// file created by this writer is versioned. Pre-versioning files keep
-/// loading without a header.
+/// Creation stamps the [`SessionFileHeader`] (carrying
+/// [`SESSION_FORMAT_VERSION`]) **atomically with the file's appearance**:
+/// the header is written and `fsync`-ed to a same-directory temp file,
+/// then [`std::fs::hard_link`]-ed into place at `path`. Because the link
+/// is the first moment `path` exists, the file is never observable
+/// without its header — closing the residual race where a create winner
+/// (exclusive `create_new` + a separate header `write_all`) could be
+/// preempted between the two steps, letting a racing loser append its
+/// first event ahead of the header and leaving it as a permanently
+/// skipped corrupt line at line 2. Exactly one opener wins the link; the
+/// loser gets `AlreadyExists` and takes the reopen path, so two processes
+/// racing the first open can never both stamp a header. A pre-existing
+/// **empty** file (creator crashed between creation and the header write,
+/// or external truncation) is never retro-stamped: writing a header on
+/// "observed empty" is exactly the check-then-write race the atomic link
+/// closes, and a headerless file loads fine as pre-versioning format.
 ///
 /// When the file is non-empty and its last byte is not `\n` — a torn
 /// final line left by a crash (`ENOSPC`, `kill -9`, power loss) in a
@@ -95,19 +106,97 @@ pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistErr
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut file = OpenOptions::new()
-        .create(true)
-        .read(true)
-        .append(true)
-        .open(path)?;
-    let len = file.metadata()?.len();
-    if len == 0 {
-        let mut line = serde_json::to_vec(&SessionFileHeader {
-            version: SESSION_FORMAT_VERSION,
+    // Fast path: the file already exists → reopen and heal directly. This
+    // skips the temp-file stamp (which needs directory write permission the
+    // append itself does not), preserving the contract that a subsequent
+    // append to an existing session stays durable even when the data dir
+    // has been made read-only. A racing first-create that lands between
+    // this check and the stamp below still resolves correctly: the stamp's
+    // `AlreadyExists` arm falls through to the same reopen path, and the
+    // winner's header is always present because the file only becomes
+    // visible via the atomic link.
+    if path.exists() {
+        return reopen_and_heal(path);
+    }
+    match stamp_header_atomically(path) {
+        // We created the file; it already contains its header. Return a
+        // fresh append handle onto the linked inode.
+        Ok(()) => Ok(OpenOptions::new().read(true).append(true).open(path)?),
+        // Another opener already created the file (or it pre-existed):
+        // reopen and heal any torn final line, never retro-stamping.
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => reopen_and_heal(path),
+        Err(error) => Err(SessionPersistError::Io(error)),
+    }
+}
+
+/// Stamp the versioned header into `path` atomically with the file
+/// becoming visible.
+///
+/// Writes the header to a uniquely-named temp file in the same directory,
+/// `fsync`s it, then hard-links it to `path`. Success means this caller
+/// created `path` with its header already durable; an `AlreadyExists`
+/// error means another opener won the link (or the file pre-existed). The
+/// temp file is always removed, whether the link wins, loses, or errors,
+/// so a leftover temp never accumulates.
+fn stamp_header_atomically(path: &Path) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "session file path has no valid final component",
+            )
         })?;
-        line.push(b'\n');
-        file.write_all(&line)?;
-    } else {
+    // Same directory as `path` (a hard link requires it), uniquely named
+    // so concurrent creators never collide on the temp itself. The
+    // `.jsonl.tmp.*` shape stays inside the reserved family the reader and
+    // listing already ignore.
+    let tmp_path = parent.join(format!("{file_name}.tmp.{}", uuid::Uuid::new_v4()));
+
+    let mut header = serde_json::to_vec(&SessionFileHeader {
+        version: SESSION_FORMAT_VERSION,
+    })
+    .map_err(std::io::Error::other)?;
+    header.push(b'\n');
+
+    let write_result = (|| -> std::io::Result<()> {
+        let mut tmp = OpenOptions::new()
+            .create_new(true)
+            .write(true)
+            .open(&tmp_path)?;
+        tmp.write_all(&header)?;
+        // Durably land the header bytes before the link makes the inode
+        // reachable at `path`.
+        tmp.sync_all()
+    })();
+    let link_result = write_result.and_then(|()| fs::hard_link(&tmp_path, path));
+
+    // Best-effort cleanup on every outcome. A failure to remove the temp
+    // never corrupts the session and never fails the open — the orphan is
+    // an inert `.jsonl.tmp.*` file the reader and listing ignore — but it
+    // must never pass silently.
+    if let Err(error) = fs::remove_file(&tmp_path)
+        && error.kind() != std::io::ErrorKind::NotFound
+    {
+        tracing::warn!(
+            path = %tmp_path.display(),
+            %error,
+            "failed to remove session header temp file after stamping; \
+             the orphan is inert and ignored by readers",
+        );
+    }
+
+    link_result
+}
+
+/// Reopen an existing session file in append mode and heal a torn final
+/// line (H19, reopen half). Never retro-stamps a header.
+fn reopen_and_heal(path: &Path) -> Result<File, SessionPersistError> {
+    let mut file = OpenOptions::new().read(true).append(true).open(path)?;
+    let len = file.metadata()?.len();
+    if len > 0 {
         file.seek(SeekFrom::Start(len - 1))?;
         let mut last = [0_u8; 1];
         file.read_exact(&mut last)?;
@@ -124,26 +213,29 @@ pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistErr
     Ok(file)
 }
 
-/// Tolerantly read `{data_dir}/{session_id}.jsonl` (H19 / R4).
+/// Tolerantly read `{data_dir}/{session_id}.jsonl` in a single pass,
+/// producing every resume artifact at once (H19 / R4).
 ///
-/// Returns an empty [`SessionFileRead`] when the file does not exist.
-/// Line handling:
+/// Returns empty [`ReplayArtifacts`] when the file does not exist. Each
+/// recovered event is folded into the artifact accumulators (usage
+/// rollup, compaction supersession marks) as it is parsed, so opening a
+/// session never re-walks the history per consumer. Line handling:
 ///
 /// * an optional [`SessionFileHeader`] first line populates
-///   [`SessionFileRead::format_version`] (absent on pre-versioning
+///   [`ReplayArtifacts::format_version`] (absent on pre-versioning
 ///   files — they still load);
 /// * empty / whitespace-only lines are skipped silently;
 /// * a non-empty line that is not valid JSON (e.g. a torn final line
 ///   from `ENOSPC` or `kill -9` mid-write) or is valid JSON that does
 ///   not match the [`SessionEvent`] schema (e.g. an unknown variant from
 ///   a newer writer) is skipped with a `tracing::warn!` and counted in
-///   [`SessionFileRead::skipped_lines`];
+///   [`ReplayArtifacts::skipped_lines`];
 /// * a line whose [`EventId`] was already seen earlier in the file (a
 ///   crash-retry artifact: the first attempt persisted but reported
 ///   failure, so the documented-safe retry wrote the event again) keeps
 ///   its first occurrence and skips the duplicate with a
 ///   `tracing::warn!`, also counted in
-///   [`SessionFileRead::skipped_lines`].
+///   [`ReplayArtifacts::skipped_lines`].
 ///
 /// The call fails when `session_id` is reserved by the persistence layer
 /// ([`SessionPersistError::InvalidSessionId`] — the id would select a
@@ -153,19 +245,24 @@ pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistErr
 pub fn read_session_events(
     data_dir: &Path,
     session_id: &str,
-) -> Result<SessionFileRead, SessionPersistError> {
+) -> Result<ReplayArtifacts, SessionPersistError> {
     ensure_session_id_not_reserved(session_id)?;
     let path = session_file_path(data_dir, session_id);
-    let mut read = SessionFileRead {
-        events: Vec::new(),
-        skipped_lines: 0,
-        format_version: None,
-    };
     if !path.exists() {
-        return Ok(read);
+        return Ok(ReplayArtifacts::default());
     }
     let file = File::open(&path)?;
-    let reader = BufReader::new(file);
+    read_session_events_from(BufReader::new(file), session_id)
+}
+
+/// The single-pass tolerant reader behind [`read_session_events`],
+/// generic over the byte source so tests can instrument the reader and
+/// prove the history is traversed exactly once.
+pub(crate) fn read_session_events_from<R: BufRead>(
+    reader: R,
+    session_id: &str,
+) -> Result<ReplayArtifacts, SessionPersistError> {
+    let mut artifacts = ReplayArtifacts::default();
     let mut seen_first_content_line = false;
     let mut seen_ids: HashSet<EventId> = HashSet::new();
     for (idx, raw) in reader.split(b'\n').enumerate() {
@@ -176,7 +273,7 @@ pub fn read_session_events(
         if !seen_first_content_line {
             seen_first_content_line = true;
             if let Ok(header) = serde_json::from_slice::<SessionFileHeader>(&raw) {
-                read.format_version = Some(header.version);
+                artifacts.format_version = Some(header.version);
                 if header.version > SESSION_FORMAT_VERSION {
                     tracing::warn!(
                         session_id,
@@ -193,9 +290,9 @@ pub fn read_session_events(
             Ok(event) => {
                 let id = event.base().id.clone();
                 if seen_ids.insert(id.clone()) {
-                    read.events.push(event);
+                    artifacts.push(event);
                 } else {
-                    read.skipped_lines = read.skipped_lines.saturating_add(1);
+                    artifacts.skipped_lines = artifacts.skipped_lines.saturating_add(1);
                     tracing::warn!(
                         session_id,
                         line = idx + 1,
@@ -206,7 +303,7 @@ pub fn read_session_events(
                 }
             }
             Err(error) => {
-                read.skipped_lines = read.skipped_lines.saturating_add(1);
+                artifacts.skipped_lines = artifacts.skipped_lines.saturating_add(1);
                 tracing::warn!(
                     session_id,
                     line = idx + 1,
@@ -216,16 +313,16 @@ pub fn read_session_events(
             }
         }
     }
-    if read.skipped_lines > 0 {
+    if artifacts.skipped_lines > 0 {
         tracing::warn!(
             session_id,
-            skipped = read.skipped_lines,
-            recovered = read.events.len(),
+            skipped = artifacts.skipped_lines,
+            recovered = artifacts.events.len(),
             "session file contained unparseable or duplicate lines; \
              recovered events were loaded, the rest were skipped",
         );
     }
-    Ok(read)
+    Ok(artifacts)
 }
 
 /// Append `events` to `{data_dir}/{session_id}.jsonl` and update the
@@ -279,7 +376,10 @@ pub fn append_events(
 
     let appended = u64::try_from(events.len()).unwrap_or(u64::MAX);
     let usage_delta = sum_usage_from_events(events);
-    if let Err(error) = update_session_index(data_dir, session_id, appended, &usage_delta) {
+    // The batch path has no per-caller lock configuration; it keeps the
+    // indefinite index-lock wait (the documented default of every
+    // lock-taking index function).
+    if let Err(error) = update_session_index(data_dir, session_id, appended, &usage_delta, None) {
         tracing::error!(
             session_id,
             %error,

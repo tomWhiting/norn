@@ -4,18 +4,21 @@
 //! source-declaration order and the doc-comment text the builders need to keep
 //! generated schemas faithful to the Rust definition.
 //!
-//! The set of fields is intentionally additive: NTM-003 extends the per-field
-//! and per-variant records with rename / flatten / override data without
-//! breaking the NTM-001 / NTM-002 surface.
+//! Attribute interpretation lives in the sibling `serde_attrs` / `tool_attrs`
+//! modules; this module owns the shape checks (named fields only, no tuple
+//! variants, no unions, no generics) and the doc-comment extraction.
 
 use proc_macro2::{Span, TokenStream};
-use syn::spanned::Spanned;
 use syn::{
     Attribute, Data, DataEnum, DataStruct, DeriveInput, Error, Expr, ExprLit, Fields, Lit, Meta,
     Token, Type,
 };
 
 use super::rename::RenameRule;
+use super::serde_attrs::{
+    parse_enum_serde, parse_field_serde, parse_struct_serde, parse_variant_serde,
+};
+use super::tool_attrs::parse_field_tool_args;
 
 /// Per-field metadata extracted from a struct or struct-shaped enum variant.
 pub(super) struct ParsedField {
@@ -59,6 +62,10 @@ pub(super) struct ParsedStruct {
     /// Container-level `#[serde(rename_all = "...")]` rule, parsed and validated
     /// at parse time so an unknown value becomes a `compile_error!`.
     pub(super) rename_all: Option<RenameRule>,
+    /// Container-level `#[serde(default)]` / `#[serde(default = "fn")]` — serde
+    /// fills every omitted non-flattened field from the container default, so
+    /// none of those fields belongs in `required`.
+    pub(super) container_default: bool,
     /// Parsed fields in source declaration order.
     pub(super) fields: Vec<ParsedField>,
 }
@@ -71,6 +78,10 @@ pub(super) struct ParsedEnum {
     pub(super) description: String,
     /// Optional `#[serde(rename_all = "...")]` rule applied to variant names.
     pub(super) rename_all: Option<RenameRule>,
+    /// Optional `#[serde(rename_all_fields = "...")]` rule applied to the
+    /// field names of every struct variant (a variant's own `rename_all`
+    /// takes precedence).
+    pub(super) rename_all_fields: Option<RenameRule>,
     /// Serde tagging representation, derived from `tag`/`content`/`untagged`.
     pub(super) representation: EnumRepresentation,
     /// Parsed variants in source declaration order.
@@ -98,6 +109,9 @@ pub(super) struct ParsedVariant {
     pub(super) description: String,
     /// Per-variant `#[serde(rename = "...")]` override, if any.
     pub(super) rename: Option<String>,
+    /// Per-variant `#[serde(rename_all = "...")]` rule for this variant's
+    /// *field* names, overriding the container's `rename_all_fields`.
+    pub(super) rename_all: Option<RenameRule>,
     /// The variant's payload shape (unit or struct-style named fields).
     pub(super) fields: VariantFields,
 }
@@ -119,19 +133,29 @@ pub(super) enum Parsed {
 /// Parses the derive input into a [`Parsed`] value.
 ///
 /// Returns a spanned error for any input that is not a struct with named fields
-/// or an enum whose variants are unit or struct-style. Empty named-field
-/// structs are accepted and yield an empty field list.
+/// or an enum whose variants are unit or struct-style, and for any generic
+/// item — the generated `json_schema()` is an inherent method on a concrete
+/// type, so type, lifetime, and const parameters are all rejected. Empty
+/// named-field structs are accepted and yield an empty field list.
 pub(super) fn parse(input: &DeriveInput) -> syn::Result<Parsed> {
+    if !input.generics.params.is_empty() {
+        return Err(Error::new_spanned(
+            &input.generics,
+            "ToolArgs does not support generic types — json_schema() describes exactly one \
+             concrete schema; derive ToolArgs on a concrete type instead",
+        ));
+    }
     match &input.data {
         Data::Struct(DataStruct {
             fields: Fields::Named(named),
             ..
         }) => {
-            let rename_all = parse_struct_rename_all(&input.attrs)?;
+            let serde = parse_struct_serde(&input.attrs)?;
             let fields = parse_named_fields(&named.named)?;
             Ok(Parsed::Struct(ParsedStruct {
                 ident: input.ident.clone(),
-                rename_all,
+                rename_all: serde.rename_all,
+                container_default: serde.container_default,
                 fields,
             }))
         }
@@ -215,16 +239,17 @@ fn parse_enum(input: &DeriveInput, data: &DataEnum) -> syn::Result<ParsedEnum> {
         ident: input.ident.clone(),
         description,
         rename_all: attrs.rename_all,
+        rename_all_fields: attrs.rename_all_fields,
         representation,
         variants,
     })
 }
 
 /// Extracts the fields the variant carries plus the per-variant serde
-/// attributes the schema builder needs (currently `rename`).
+/// attributes the schema builder needs (`rename` and `rename_all`).
 fn parse_variant(variant: &syn::Variant) -> syn::Result<ParsedVariant> {
     let description = extract_doc(&variant.attrs);
-    let rename = parse_variant_serde(&variant.attrs)?;
+    let serde = parse_variant_serde(&variant.attrs)?;
     let fields = match &variant.fields {
         Fields::Unit => VariantFields::Unit,
         Fields::Named(named) => VariantFields::Named(parse_named_fields(&named.named)?),
@@ -238,7 +263,8 @@ fn parse_variant(variant: &syn::Variant) -> syn::Result<ParsedVariant> {
     Ok(ParsedVariant {
         ident: variant.ident.clone(),
         description,
-        rename,
+        rename: serde.rename,
+        rename_all: serde.rename_all,
         fields,
     })
 }
@@ -260,249 +286,4 @@ fn extract_doc(attrs: &[Attribute]) -> String {
         }
     }
     lines.join(" ")
-}
-
-/// Field-level serde attrs that affect schema generation.
-#[derive(Default)]
-struct FieldSerde {
-    has_default: bool,
-    rename: Option<String>,
-    skip: bool,
-    skip_deserializing: bool,
-    flatten: bool,
-    flatten_span: Option<Span>,
-}
-
-/// Inspects `#[serde(...)]` attributes for the keys that affect schema
-/// generation: `default` (with or without `= "fn"`), `rename`, `skip`,
-/// `skip_deserializing`, and `flatten`. Unknown keys (including
-/// `skip_serializing`) are ignored so that serde attributes owned by other
-/// concerns pass through untouched and `Deserialize` behaviour is left intact.
-fn parse_field_serde(attrs: &[Attribute]) -> syn::Result<FieldSerde> {
-    let mut out = FieldSerde::default();
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("default") {
-                out.has_default = true;
-                if meta.input.peek(Token![=]) {
-                    let _: Expr = meta.value()?.parse()?;
-                }
-            } else if meta.path.is_ident("rename") {
-                out.rename = Some(parse_string_value(&meta)?);
-            } else if meta.path.is_ident("skip") {
-                out.skip = true;
-            } else if meta.path.is_ident("skip_deserializing") {
-                out.skip_deserializing = true;
-            } else if meta.path.is_ident("flatten") {
-                out.flatten = true;
-                out.flatten_span = Some(meta.path.span());
-            } else if meta.input.peek(Token![=]) {
-                let _: Expr = meta.value()?.parse()?;
-            } else if meta.input.peek(syn::token::Paren) {
-                let _content;
-                syn::parenthesized!(_content in meta.input);
-            }
-            Ok(())
-        })?;
-    }
-    Ok(out)
-}
-
-/// Field-level `#[tool_args(...)]` schema-only overrides.
-#[derive(Default)]
-struct FieldToolArgs {
-    skip: bool,
-    required: bool,
-    description: Option<String>,
-    schema: Option<TokenStream>,
-    additional_properties: bool,
-}
-
-/// Parses `#[tool_args(schema = {...}, description = "...", skip, required,
-/// additional_properties)]` on a field. Unknown keys are rejected with a
-/// spanned error so typos surface at compile time rather than being silently
-/// dropped.
-fn parse_field_tool_args(attrs: &[Attribute]) -> syn::Result<FieldToolArgs> {
-    let mut out = FieldToolArgs::default();
-    for attr in attrs {
-        if !attr.path().is_ident("tool_args") {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("skip") {
-                out.skip = true;
-            } else if meta.path.is_ident("required") {
-                out.required = true;
-            } else if meta.path.is_ident("additional_properties") {
-                out.additional_properties = true;
-            } else if meta.path.is_ident("description") {
-                out.description = Some(parse_string_value(&meta)?);
-            } else if meta.path.is_ident("schema") {
-                let value = meta.value()?;
-                // The schema value is a single JSON-object token tree (`{...}`);
-                // parse exactly one tree so sibling keys after a comma are left
-                // for `parse_nested_meta` to handle.
-                let tree: proc_macro2::TokenTree = value.parse()?;
-                let is_brace_object = matches!(
-                    &tree,
-                    proc_macro2::TokenTree::Group(group)
-                        if group.delimiter() == proc_macro2::Delimiter::Brace
-                );
-                if !is_brace_object {
-                    return Err(Error::new_spanned(
-                        &tree,
-                        "ToolArgs: #[tool_args(schema = ...)] requires a JSON object literal, \
-                         e.g. schema = {\"type\": \"string\"}",
-                    ));
-                }
-                out.schema = Some(TokenStream::from(tree));
-            } else {
-                return Err(meta.error(
-                    "ToolArgs: unknown #[tool_args(...)] key — expected one of \
-                     `schema`, `description`, `skip`, `required`, `additional_properties`",
-                ));
-            }
-            Ok(())
-        })?;
-    }
-    Ok(out)
-}
-
-/// Container-level serde attrs that drive enum schema shape.
-#[derive(Default)]
-struct EnumSerdeAttrs {
-    tag: Option<String>,
-    content: Option<String>,
-    untagged: bool,
-    rename_all: Option<RenameRule>,
-}
-
-/// Parses `#[serde(tag = "...", content = "...", untagged, rename_all = "...")]`
-/// at the enum container level. Other serde keys are skipped without erroring.
-fn parse_enum_serde(attrs: &[Attribute]) -> syn::Result<EnumSerdeAttrs> {
-    let mut out = EnumSerdeAttrs::default();
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("tag") {
-                out.tag = Some(parse_string_value(&meta)?);
-            } else if meta.path.is_ident("content") {
-                out.content = Some(parse_string_value(&meta)?);
-            } else if meta.path.is_ident("untagged") {
-                out.untagged = true;
-            } else if meta.path.is_ident("rename_all") {
-                let raw = parse_string_value(&meta)?;
-                match RenameRule::from_str(&raw) {
-                    Some(rule) => out.rename_all = Some(rule),
-                    None => {
-                        return Err(syn::Error::new(
-                            meta.path.span(),
-                            format!(
-                                "ToolArgs: unsupported rename_all rule `{raw}` — expected one of \
-                                 lowercase, UPPERCASE, camelCase, snake_case, PascalCase, \
-                                 SCREAMING_SNAKE_CASE, kebab-case, SCREAMING-KEBAB-CASE"
-                            ),
-                        ));
-                    }
-                }
-            } else if meta.input.peek(Token![=]) {
-                let _: Expr = meta.value()?.parse()?;
-            } else if meta.input.peek(syn::token::Paren) {
-                let _content;
-                syn::parenthesized!(_content in meta.input);
-            }
-            Ok(())
-        })?;
-    }
-    Ok(out)
-}
-
-/// Parses the container-level `#[serde(rename_all = "...")]` on a struct,
-/// validating the value against the eight supported rules. Unlike the enum
-/// path, an unrecognised rule is a hard error so the derive emits a
-/// `compile_error!` instead of silently using the raw field names.
-fn parse_struct_rename_all(attrs: &[Attribute]) -> syn::Result<Option<RenameRule>> {
-    let mut rule = None;
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("rename_all") {
-                let value = meta.value()?;
-                let expr: Expr = value.parse()?;
-                let raw = expect_string_literal(&expr)?;
-                match RenameRule::from_str(&raw) {
-                    Some(parsed) => rule = Some(parsed),
-                    None => {
-                        return Err(Error::new_spanned(
-                            &expr,
-                            format!(
-                                "ToolArgs: unsupported rename_all rule `{raw}` — expected one of \
-                                 lowercase, UPPERCASE, camelCase, snake_case, PascalCase, \
-                                 SCREAMING_SNAKE_CASE, kebab-case, SCREAMING-KEBAB-CASE"
-                            ),
-                        ));
-                    }
-                }
-            } else if meta.input.peek(Token![=]) {
-                let _: Expr = meta.value()?.parse()?;
-            } else if meta.input.peek(syn::token::Paren) {
-                let _content;
-                syn::parenthesized!(_content in meta.input);
-            }
-            Ok(())
-        })?;
-    }
-    Ok(rule)
-}
-
-/// Variant-level serde attrs the schema builder needs (currently only `rename`).
-fn parse_variant_serde(attrs: &[Attribute]) -> syn::Result<Option<String>> {
-    let mut rename = None;
-    for attr in attrs {
-        if !attr.path().is_ident("serde") {
-            continue;
-        }
-        attr.parse_nested_meta(|meta| {
-            if meta.path.is_ident("rename") {
-                rename = Some(parse_string_value(&meta)?);
-            } else if meta.input.peek(Token![=]) {
-                let _: Expr = meta.value()?.parse()?;
-            } else if meta.input.peek(syn::token::Paren) {
-                let _content;
-                syn::parenthesized!(_content in meta.input);
-            }
-            Ok(())
-        })?;
-    }
-    Ok(rename)
-}
-
-/// Reads a `key = "value"` pair inside a `#[serde(...)]` / `#[tool_args(...)]`
-/// invocation, returning the string. Errors point at the right-hand-side
-/// expression when it is not a string literal.
-fn parse_string_value(meta: &syn::meta::ParseNestedMeta<'_>) -> syn::Result<String> {
-    let expr: Expr = meta.value()?.parse()?;
-    expect_string_literal(&expr)
-}
-
-/// Extracts the value of a string-literal expression, erroring otherwise.
-fn expect_string_literal(expr: &Expr) -> syn::Result<String> {
-    if let Expr::Lit(ExprLit {
-        lit: Lit::Str(s), ..
-    }) = expr
-    {
-        Ok(s.value())
-    } else {
-        Err(Error::new_spanned(
-            expr,
-            "ToolArgs: expected a string literal",
-        ))
-    }
 }

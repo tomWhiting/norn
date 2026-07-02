@@ -6,7 +6,7 @@
 //! Every error exposes a typed retry classification through
 //! [`NornError::class`] / [`ProviderError::class`], returning an
 //! [`ErrorClass`]. The agent loop's internal retry policy
-//! ([`RetryPolicy`](crate::r#loop::retry::RetryPolicy)) is implemented in
+//! ([`RetryPolicy`](crate::agent_loop::retry::RetryPolicy)) is implemented in
 //! terms of this public taxonomy, so embedders (e.g. durable-workflow
 //! engines deciding retry-vs-terminal per activity) and the loop can never
 //! disagree about what is retryable.
@@ -76,7 +76,7 @@ impl ErrorClass {
 /// Transport-level category of a [`ErrorClass::Retryable`] failure.
 ///
 /// This is the single source of truth the loop's
-/// [`RetryPolicy`](crate::r#loop::retry::RetryPolicy) maps onto its
+/// [`RetryPolicy`](crate::agent_loop::retry::RetryPolicy) maps onto its
 /// configurable retryable-error set, so policy filtering and the public
 /// taxonomy can never drift apart.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
@@ -92,15 +92,6 @@ pub enum TransientKind {
         /// from the provider's error message.
         status: u16,
     },
-}
-
-/// Parse the leading status code out of an `HTTP <status>: <message>`
-/// reason string. Returns `0` when no parseable status is present, which
-/// [`TransientKind::ServerError`] documents as "status unknown".
-fn parse_status_from_reason(reason: &str) -> u16 {
-    let trimmed = reason.trim_start_matches("HTTP ");
-    let digits: String = trimmed.chars().take_while(char::is_ascii_digit).collect();
-    digits.parse::<u16>().unwrap_or(0)
 }
 
 /// Top-level error type for the norn crate.
@@ -215,19 +206,24 @@ pub enum HookType {
 ///
 /// Model truncation (`max_tokens` / `content_filter` stops) is **not** an
 /// error: a truncated run is a stopped run with partial output, surfaced
-/// as [`AgentStepResult::Truncated`](crate::r#loop::config::AgentStepResult)
+/// as [`AgentStepResult::Truncated`](crate::agent_loop::config::AgentStepResult)
 /// and [`AgentStopReason::Truncated`](crate::agent::AgentStopReason).
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum ProviderError {
     /// Failed to establish a connection to the provider.
     ///
-    /// Classification: [`ErrorClass::Retryable`] —
-    /// [`TransientKind::Timeout`] when the reason mentions a timeout,
-    /// otherwise [`TransientKind::ConnectionReset`].
+    /// Classification: [`ErrorClass::Retryable`] with the carried `kind`.
+    /// The producer sets the kind structurally at the failure site
+    /// ([`TransientKind::Timeout`] for connect/header deadlines,
+    /// [`TransientKind::ConnectionReset`] for every other transport-level
+    /// connection fault) — classification never inspects the reason text.
     #[error("connection failed: {reason}")]
     ConnectionFailed {
         /// Description of the connection failure.
         reason: String,
+        /// Structured transport category of the failure, set by the
+        /// producer.
+        kind: TransientKind,
     },
 
     /// Authentication with the provider was rejected.
@@ -244,7 +240,7 @@ pub enum ProviderError {
     ///
     /// Classification: [`ErrorClass::RateLimited`], carrying `retry_after`
     /// so engines can honour the provider's delay hint. The loop's default
-    /// [`RetryPolicy`](crate::r#loop::retry::RetryPolicy) deliberately does
+    /// [`RetryPolicy`](crate::agent_loop::retry::RetryPolicy) deliberately does
     /// **not** retry it (the provider layer owns 429 retry internally), but
     /// the class tells embedders a delayed retry can succeed.
     #[error("rate limited")]
@@ -255,15 +251,20 @@ pub enum ProviderError {
 
     /// An error occurred during the streaming response.
     ///
-    /// Classification: [`ErrorClass::Retryable`] with
-    /// [`TransientKind::ServerError`] for `HTTP 5xx`-prefixed reasons and
-    /// [`TransientKind::Timeout`] for timeout reasons; every other stream
-    /// error is [`ErrorClass::Terminal`] (the provider itself reported a
-    /// non-transient failure).
+    /// Classification: [`ErrorClass::Retryable`] with the carried
+    /// [`TransientKind`] when `transient` is `Some`, otherwise
+    /// [`ErrorClass::Terminal`] (the provider itself reported a
+    /// non-transient failure). The producer sets `transient` structurally
+    /// at the failure site — an HTTP 5xx status, a stall-deadline expiry —
+    /// so classification never inspects the reason text.
     #[error("stream error: {reason}")]
     StreamError {
         /// Description of the stream failure.
         reason: String,
+        /// Structured transient classification set by the producer.
+        /// `Some(kind)` marks the error retryable with that transport
+        /// category; `None` marks it terminal.
+        transient: Option<TransientKind>,
     },
 
     /// The stream was interrupted after at least one chunk was received.
@@ -291,6 +292,19 @@ pub enum ProviderError {
     #[error("response parse error: {reason}")]
     ResponseParseError {
         /// Description of the parse failure.
+        reason: String,
+    },
+
+    /// The outgoing request could not be serialized or assembled into the
+    /// provider's wire shape (payload serialization failure, a replay item
+    /// missing its correlation identifier, a malformed payload object).
+    ///
+    /// Classification: [`ErrorClass::Terminal`] — the fault is in the
+    /// locally-constructed request; re-sending the identical request
+    /// cannot succeed.
+    #[error("request serialization failed: {reason}")]
+    RequestSerializationFailed {
+        /// Description of the serialization failure.
         reason: String,
     },
 
@@ -342,43 +356,26 @@ impl ProviderError {
     /// Typed retry classification of this provider error.
     ///
     /// This is the single source of truth for retryability: the agent
-    /// loop's [`RetryPolicy`](crate::r#loop::retry::RetryPolicy) derives
+    /// loop's [`RetryPolicy`](crate::agent_loop::retry::RetryPolicy) derives
     /// its internal categorisation from this method, and embedders use it
     /// to drive their own retry-vs-terminal decisions. Per-variant
     /// classifications are documented on each variant.
     #[must_use]
     pub fn class(&self) -> ErrorClass {
         match self {
-            Self::ConnectionFailed { reason } => ErrorClass::Retryable {
-                kind: if reason.to_lowercase().contains("timed out") {
-                    TransientKind::Timeout
-                } else {
-                    TransientKind::ConnectionReset
-                },
-            },
+            Self::ConnectionFailed { kind, .. } => ErrorClass::Retryable { kind: *kind },
             Self::StreamInterrupted { .. } => ErrorClass::Retryable {
                 kind: TransientKind::ConnectionReset,
             },
-            Self::StreamError { reason } => {
-                if reason.starts_with("HTTP 5") {
-                    ErrorClass::Retryable {
-                        kind: TransientKind::ServerError {
-                            status: parse_status_from_reason(reason),
-                        },
-                    }
-                } else if reason.to_lowercase().contains("timed out") {
-                    ErrorClass::Retryable {
-                        kind: TransientKind::Timeout,
-                    }
-                } else {
-                    ErrorClass::Terminal
-                }
+            Self::StreamError { transient, .. } => {
+                transient.map_or(ErrorClass::Terminal, |kind| ErrorClass::Retryable { kind })
             }
             Self::RateLimited { retry_after } => ErrorClass::RateLimited {
                 retry_after: *retry_after,
             },
             Self::AuthenticationFailed { .. } => ErrorClass::Auth,
             Self::ResponseParseError { .. }
+            | Self::RequestSerializationFailed { .. }
             | Self::UnsupportedFeature { .. }
             | Self::ContextWindowExceeded
             | Self::QuotaExceeded
@@ -673,16 +670,29 @@ mod tests {
     #[test]
     fn connection_failed_timeout_classifies_retryable_timeout() {
         let err = ProviderError::ConnectionFailed {
-            reason: "request timed out after 30s".to_string(),
+            reason: "no response headers within 30.0s".to_string(),
+            kind: TransientKind::Timeout,
         };
         assert_eq!(err.class(), retryable(TransientKind::Timeout));
         assert!(err.is_retryable());
     }
 
     #[test]
-    fn connection_failed_other_classifies_retryable_reset() {
+    fn connection_failed_reset_classifies_retryable_reset() {
         let err = ProviderError::ConnectionFailed {
             reason: "connection refused".to_string(),
+            kind: TransientKind::ConnectionReset,
+        };
+        assert_eq!(err.class(), retryable(TransientKind::ConnectionReset));
+    }
+
+    /// The reason text carries zero classification weight: a reason that
+    /// *mentions* a timeout still classifies by its structured kind.
+    #[test]
+    fn connection_failed_classifies_by_structured_kind_not_reason_text() {
+        let err = ProviderError::ConnectionFailed {
+            reason: "request timed out after 30s".to_string(),
+            kind: TransientKind::ConnectionReset,
         };
         assert_eq!(err.class(), retryable(TransientKind::ConnectionReset));
     }
@@ -696,9 +706,10 @@ mod tests {
     }
 
     #[test]
-    fn stream_error_5xx_classifies_retryable_server_error_with_status() {
+    fn stream_error_server_error_classifies_retryable_with_status() {
         let err = ProviderError::StreamError {
-            reason: "HTTP 503: service unavailable".to_string(),
+            reason: "HTTP 503 Service Unavailable: overloaded".to_string(),
+            transient: Some(TransientKind::ServerError { status: 503 }),
         };
         assert_eq!(
             err.class(),
@@ -707,32 +718,37 @@ mod tests {
     }
 
     #[test]
-    fn stream_error_5xx_without_parseable_status_uses_zero() {
-        // "HTTP 5" prefix matches but the digits do not parse as one code.
-        let err = ProviderError::StreamError {
-            reason: "HTTP 5xx upstream failure".to_string(),
-        };
-        assert_eq!(
-            err.class(),
-            retryable(TransientKind::ServerError { status: 5 })
-        );
-    }
-
-    #[test]
     fn stream_error_timeout_classifies_retryable_timeout() {
         let err = ProviderError::StreamError {
-            reason: "read timed out waiting for chunk".to_string(),
+            reason: "SSE stream timed out: no data received for 30.0s".to_string(),
+            transient: Some(TransientKind::Timeout),
         };
         assert_eq!(err.class(), retryable(TransientKind::Timeout));
     }
 
     #[test]
-    fn stream_error_other_classifies_terminal() {
+    fn stream_error_without_transient_classifies_terminal() {
         let err = ProviderError::StreamError {
             reason: "provider stream ended without a Done event".to_string(),
+            transient: None,
         };
         assert_eq!(err.class(), ErrorClass::Terminal);
         assert!(!err.is_retryable());
+    }
+
+    /// The reason text carries zero classification weight: the old
+    /// magic-string triggers (`HTTP 5` prefix, `timed out` substring)
+    /// embedded in the reason no longer opt a terminal stream error into
+    /// retry.
+    #[test]
+    fn stream_error_classifies_by_structured_data_not_reason_text() {
+        for reason in ["HTTP 503: service unavailable", "read timed out"] {
+            let err = ProviderError::StreamError {
+                reason: reason.to_string(),
+                transient: None,
+            };
+            assert_eq!(err.class(), ErrorClass::Terminal, "{reason}");
+        }
     }
 
     #[test]
@@ -773,6 +789,15 @@ mod tests {
             reason: "unexpected JSON shape".to_string(),
         };
         assert_eq!(err.class(), ErrorClass::Terminal);
+    }
+
+    #[test]
+    fn request_serialization_failed_classifies_terminal() {
+        let err = ProviderError::RequestSerializationFailed {
+            reason: "failed to serialize responses request: key must be a string".to_string(),
+        };
+        assert_eq!(err.class(), ErrorClass::Terminal);
+        assert!(!err.is_retryable());
     }
 
     #[test]

@@ -5,6 +5,7 @@ pub use crate::error::SessionError;
 pub mod action_log;
 pub(super) mod action_log_mutations;
 pub mod action_log_scope;
+pub(super) mod action_log_summary;
 pub mod action_log_tree;
 pub mod context_edit;
 pub mod conversion;
@@ -23,7 +24,7 @@ pub use mutation_ledger::{
     DiffStats, MutationLedger, MutationLedgerEntry, MutationOp, RecordedMutation, RevertStatus,
 };
 pub use persistence::{
-    RESERVED_SESSION_ID_STEMS, SESSION_FORMAT_VERSION, SessionFileHeader, SessionFileRead,
+    RESERVED_SESSION_ID_STEMS, ReplayArtifacts, SESSION_FORMAT_VERSION, SessionFileHeader,
     SessionIndexEntry, SessionPersistError, SessionStatus, append_events, append_index_entry,
     index_file_path, insert_index_entry_if_absent, is_reserved_session_id, read_index,
     read_session_events, remove_index_entry, resolve_latest_session_in_working_dir,

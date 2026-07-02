@@ -390,7 +390,7 @@ pub struct AgentSettings {
 // Retry policy
 // ---------------------------------------------------------------------------
 
-/// Retry-policy settings consumed by [`crate::r#loop::retry`].
+/// Retry-policy settings consumed by [`crate::agent_loop::retry`].
 ///
 /// Distinct from [`ProviderSettings::max_retries`]: the provider layer
 /// retries connection-level failures, while [`RetrySettings`] governs the
@@ -556,17 +556,23 @@ pub struct HookSettings {
     pub pre_compaction: Option<Vec<HookEntry>>,
 }
 
-/// A single hook entry — inline shell command plus optional matcher and
-/// timeout.
+/// A single hook entry — inline shell command, required timeout, and an
+/// optional matcher.
 ///
 /// [`Self::command`] is REQUIRED (not [`Option`]) — a hook without a command
-/// has no behaviour and is rejected at load time. NC-003 catches the empty
-/// string and produces a typed error.
+/// has no behaviour. An absent command is a serde deserialisation error; an
+/// *empty* command is rejected with a typed error by
+/// [`crate::config::validate::validate_settings`].
+///
+/// [`Self::timeout`] is REQUIRED (not [`Option`]) per CO6 / D9 — there is
+/// no runtime default to fall back to, so an entry that omits it fails
+/// typed deserialisation at load time with an error naming the missing
+/// field and the offending file.
 ///
 /// Per `DESIGN.md` D5, [`Self::command`] is an inline shell string, not a
 /// file path. If the operator wants a script, they reference it explicitly:
 /// `command: "/path/to/script.sh --flag"`.
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HookEntry {
     /// Tool-name or event-type pattern restricting when this hook fires.
     /// [`None`] means "fire for every event in this slot".
@@ -574,14 +580,14 @@ pub struct HookEntry {
     pub matcher: Option<String>,
 
     /// Shell command executed when the hook fires. Required (not
-    /// optional) — empty / absent commands are rejected by NC-003.
+    /// optional) — empty commands are rejected with a typed error by
+    /// [`crate::config::validate::validate_settings`].
     pub command: String,
 
-    /// Optional execution timeout in milliseconds (D5 is silent on the
-    /// unit; the brief specifies `u64` and defers the humantime-vs-integer
-    /// choice). [`None`] means "use the runtime default".
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub timeout: Option<u64>,
+    /// Execution timeout in milliseconds (D5 is silent on the unit; the
+    /// brief specifies `u64`). Required — there is no assumed default
+    /// (CO6 / D9), so omitting it is a typed load error.
+    pub timeout: u64,
 }
 
 // ---------------------------------------------------------------------------
@@ -590,16 +596,21 @@ pub struct HookEntry {
 
 /// Per-tool configuration, namespaced by tool name.
 ///
-/// The `write` slot has a typed schema ([`WriteToolSettings`]) because its
-/// fields are consumed by [`crate::tools::write`]. `bash` and `edit` are
-/// deliberately opaque [`serde_json::Value`] for forward compatibility —
-/// downstream tool clusters will replace them with typed sub-structs as
-/// their schemas stabilise.
+/// The `write` and `skill` slots have typed schemas
+/// ([`WriteToolSettings`] / [`SkillToolSettings`]) because their fields
+/// are consumed by [`crate::tools::write`] and [`crate::tools::skill`].
+/// `bash` and `edit` are deliberately opaque [`serde_json::Value`] for
+/// forward compatibility — downstream tool clusters will replace them
+/// with typed sub-structs as their schemas stabilise.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct ToolSettings {
     /// Configuration for the `write` tool. See [`WriteToolSettings`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub write: Option<WriteToolSettings>,
+
+    /// Configuration for the `skill` tool. See [`SkillToolSettings`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub skill: Option<SkillToolSettings>,
 
     /// Configuration for the `bash` tool. Reserved opaque object; the
     /// `bash` cluster will replace this with a typed sub-struct.
@@ -610,6 +621,20 @@ pub struct ToolSettings {
     /// `edit` cluster will replace this with a typed sub-struct.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub edit: Option<serde_json::Value>,
+}
+
+/// Settings for the `skill` tool — the settings-file surface of
+/// [`crate::tools::skill::SkillToolConfig`].
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct SkillToolSettings {
+    /// Whether fenced/inline shell commands in skill bodies execute
+    /// during template expansion. Absent means the documented tool
+    /// default (**enabled**, per
+    /// [`crate::tools::skill::SkillToolConfig::default`]); `false`
+    /// replaces every shell placeholder with the policy-disabled marker
+    /// without spawning a shell.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shell_execution: Option<bool>,
 }
 
 /// Settings for the `write` tool — global default for the per-profile
@@ -824,12 +849,16 @@ mod tests {
 
         let tools = ToolSettings::default();
         assert!(tools.write.is_none());
+        assert!(tools.skill.is_none());
         assert!(tools.bash.is_none());
         assert!(tools.edit.is_none());
 
         let write = WriteToolSettings::default();
         assert!(write.max_code_lines.is_none());
         assert!(write.length_overrides.is_none());
+
+        let skill = SkillToolSettings::default();
+        assert!(skill.shell_execution.is_none());
 
         let mcp = McpServerSettings::default();
         assert!(mcp.transport.is_none());
@@ -903,6 +932,39 @@ mod tests {
         assert!(s.session.is_none());
         assert!(s.tui.is_none());
         assert!(s.env.is_none());
+    }
+
+    /// CO6 / D9 regression: a hook entry without a timeout must fail typed
+    /// deserialisation — there is no runtime default to silently fall back
+    /// to, and the two former load paths disagreed on whether the field
+    /// was required.
+    #[test]
+    fn hook_entry_missing_timeout_is_a_deserialisation_error() {
+        let err = serde_json::from_str::<HookEntry>(r#"{"command":"lint.sh"}"#)
+            .expect_err("missing timeout must be rejected at parse time");
+        assert!(
+            err.to_string().contains("timeout"),
+            "error must name the missing field: {err}"
+        );
+
+        let nested = r#"{"hooks":{"pre_tool":[{"matcher":"Write","command":"lint.sh"}]}}"#;
+        let err = serde_json::from_str::<NornSettings>(nested)
+            .expect_err("missing timeout inside a settings document must be rejected");
+        assert!(
+            err.to_string().contains("timeout"),
+            "error must name the missing field: {err}"
+        );
+    }
+
+    /// A hook entry without a command is equally a typed parse error.
+    #[test]
+    fn hook_entry_missing_command_is_a_deserialisation_error() {
+        let err = serde_json::from_str::<HookEntry>(r#"{"timeout":5}"#)
+            .expect_err("missing command must be rejected at parse time");
+        assert!(
+            err.to_string().contains("command"),
+            "error must name the missing field: {err}"
+        );
     }
 
     #[test]
@@ -1003,7 +1065,7 @@ mod tests {
                 pre_tool: Some(vec![HookEntry {
                     matcher: Some("write".to_owned()),
                     command: "lint-check.sh".to_owned(),
-                    timeout: Some(5000),
+                    timeout: 5000,
                 }]),
                 post_tool: None,
                 post_tool_failure: None,
@@ -1012,7 +1074,7 @@ mod tests {
                 session_event: Some(vec![HookEntry {
                     matcher: Some("start".to_owned()),
                     command: "log-start.sh".to_owned(),
-                    timeout: None,
+                    timeout: 250,
                 }]),
                 user_prompt: None,
                 stop: None,
@@ -1029,6 +1091,9 @@ mod tests {
                         pattern: "**/*.md".to_owned(),
                         limit: 2000,
                     }]),
+                }),
+                skill: Some(SkillToolSettings {
+                    shell_execution: Some(false),
                 }),
                 bash: Some(serde_json::json!({"timeout":"60s"})),
                 edit: None,
@@ -1102,6 +1167,9 @@ mod tests {
             rt.length_overrides.as_ref().unwrap()[0].pattern,
             ot.length_overrides.as_ref().unwrap()[0].pattern,
         );
+        let rskill = roundtripped.tools.as_ref().unwrap().skill.as_ref().unwrap();
+        let oskill = original.tools.as_ref().unwrap().skill.as_ref().unwrap();
+        assert_eq!(rskill.shell_execution, oskill.shell_execution);
         assert_eq!(
             roundtripped
                 .mcp_servers

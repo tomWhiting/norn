@@ -240,6 +240,7 @@ mod tests {
         AssembledResponse {
             text: "ok".to_string(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: Vec::new(),
             stop_reason: StopReason::EndTurn,
             usage: Usage::default(),
@@ -284,6 +285,7 @@ mod tests {
         let policy = RetryPolicy::default();
         let err = ProviderError::StreamError {
             reason: "HTTP 503: service unavailable".to_string(),
+            transient: Some(TransientKind::ServerError { status: 503 }),
         };
         assert!(policy.classifies_as_retryable(&err));
     }
@@ -293,6 +295,7 @@ mod tests {
         let policy = RetryPolicy::default();
         let err = ProviderError::ConnectionFailed {
             reason: "request timed out after 30s".to_string(),
+            kind: TransientKind::Timeout,
         };
         assert!(policy.classifies_as_retryable(&err));
     }
@@ -315,18 +318,22 @@ mod tests {
         let cases = vec![
             ProviderError::ConnectionFailed {
                 reason: "request timed out".to_string(),
+                kind: TransientKind::Timeout,
             },
             ProviderError::ConnectionFailed {
                 reason: "connection refused".to_string(),
+                kind: TransientKind::ConnectionReset,
             },
             ProviderError::StreamInterrupted {
                 reason: "reset".to_string(),
             },
             ProviderError::StreamError {
                 reason: "HTTP 502: bad gateway".to_string(),
+                transient: Some(TransientKind::ServerError { status: 502 }),
             },
             ProviderError::StreamError {
                 reason: "protocol violation".to_string(),
+                transient: None,
             },
             ProviderError::RateLimited { retry_after: None },
             ProviderError::AuthenticationFailed {
@@ -334,6 +341,9 @@ mod tests {
             },
             ProviderError::ResponseParseError {
                 reason: "bad json".to_string(),
+            },
+            ProviderError::RequestSerializationFailed {
+                reason: "unserializable payload".to_string(),
             },
             ProviderError::UnsupportedFeature {
                 feature: "x".to_string(),
@@ -393,6 +403,7 @@ mod tests {
                 if count < 2 {
                     Err(NornError::Provider(ProviderError::StreamError {
                         reason: "HTTP 503: try again".to_string(),
+                        transient: Some(TransientKind::ServerError { status: 503 }),
                     }))
                 } else {
                     Ok(ok_response())
@@ -418,6 +429,7 @@ mod tests {
             Box::pin(async {
                 Err(NornError::Provider(ProviderError::StreamError {
                     reason: "HTTP 502: bad gateway".to_string(),
+                    transient: Some(TransientKind::ServerError { status: 502 }),
                 }))
             })
         })
@@ -499,25 +511,31 @@ mod tests {
     }
 
     #[test]
-    fn server_overloaded_encoded_as_http_503_is_retryable_under_default() {
-        // Proves the SSE encoding (`HTTP 503: <message>`) round-trips through
-        // the loop-level classifier as a retryable ServerError under the
-        // default policy. Without the explicit prefix the StreamError would
-        // fall through `classify_provider_error` to `None` and never retry.
+    fn server_overloaded_structured_503_is_retryable_under_default() {
+        // Proves the structured SSE classification (`transient:
+        // Some(ServerError { status: 503 })`) round-trips through the
+        // loop-level classifier as a retryable ServerError under the
+        // default policy. Without the structured kind the StreamError
+        // would fall through `classify_provider_error` to `None` and
+        // never retry.
         let policy = RetryPolicy::default();
         let err = ProviderError::StreamError {
-            reason: "HTTP 503: server is overloaded".to_string(),
+            reason: "server is overloaded".to_string(),
+            transient: Some(TransientKind::ServerError { status: 503 }),
         };
         assert!(policy.classifies_as_retryable(&err));
     }
 
     #[test]
-    fn slow_down_encoded_as_http_503_is_retryable_under_default() {
-        // Same round-trip for `slow_down`.
-        let policy = RetryPolicy::default();
+    fn stream_error_without_transient_is_never_retryable() {
+        // The reason text carries zero weight: even a reason that spells
+        // out `HTTP 503` stays terminal when the producer set no
+        // structured transient kind.
         let err = ProviderError::StreamError {
             reason: "HTTP 503: slow down".to_string(),
+            transient: None,
         };
-        assert!(policy.classifies_as_retryable(&err));
+        assert!(!RetryPolicy::default().classifies_as_retryable(&err));
+        assert!(!maximally_permissive_policy().classifies_as_retryable(&err));
     }
 }

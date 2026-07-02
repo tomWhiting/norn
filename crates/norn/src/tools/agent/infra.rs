@@ -224,8 +224,8 @@ pub(super) fn strip_signal_agent_from_allow_list(
 /// dispatch every tool against the *parent's* shared context, leaking the
 /// parent's identity to the child — this executor replays the full
 /// four-phase lifecycle (pre-validate, execute, post-validate, on-success)
-/// against [`Self::child_context`]. Tools that read
-/// [`AgentToolInfra`](crate::tools::agent::AgentToolInfra) therefore see the
+/// against `Self::child_context`. Tools that read
+/// [`AgentToolInfra`] therefore see the
 /// child's `agent_id` / `parent_id`, not the spawning agent's.
 pub struct SubAgentExecutor {
     registry: Arc<ToolRegistry>,

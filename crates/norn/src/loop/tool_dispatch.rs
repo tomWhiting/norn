@@ -61,7 +61,9 @@ use crate::session::store::EventStore;
 use crate::tool::envelope::{RuntimeInputs, ToolEnvelope, split_envelope_fields};
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::FollowUpAction;
-use crate::tool::output_budget::cap_model_output;
+use crate::tool::output_budget::{
+    MODEL_OUTPUT_INLINE_CHAR_LIMIT, ToolOutputBudget, cap_model_output,
+};
 
 use super::helpers::append_and_notify;
 
@@ -217,9 +219,31 @@ fn record_dispatch_completion(loop_context: &LoopContext, mut record: Completion
     action_log.record_completion(record);
 }
 
+/// Resolve the effective model-facing inline character limit for tool
+/// results dispatched through `executor`.
+///
+/// The embedder-installed [`ToolOutputBudget`] on the executor's shared
+/// [`ToolContext`](crate::tool::context::ToolContext) is authoritative;
+/// without one (executors assembled outside `runtime_init`, mock
+/// executors) the documented default [`MODEL_OUTPUT_INLINE_CHAR_LIMIT`]
+/// applies.
+pub(super) fn installed_inline_char_limit(executor: &dyn ToolExecutor) -> usize {
+    executor
+        .shared_context()
+        .and_then(|ctx| ctx.get_extension::<ToolOutputBudget>())
+        .map_or(MODEL_OUTPUT_INLINE_CHAR_LIMIT, |budget| {
+            budget.model_output_inline_char_limit
+        })
+}
+
 /// Return the bounded model-facing projection of a tool result.
-pub(super) fn model_safe_tool_output(tool_name: &str, tool_call_id: &str, output: &Value) -> Value {
-    cap_model_output(tool_name, tool_call_id, output)
+pub(super) fn model_safe_tool_output(
+    tool_name: &str,
+    tool_call_id: &str,
+    output: &Value,
+    inline_char_limit: usize,
+) -> Value {
+    cap_model_output(tool_name, tool_call_id, output, inline_char_limit)
 }
 
 /// Identity and payload of one tool result to append via
@@ -241,6 +265,11 @@ pub(super) struct ToolResultRecord<'a> {
     pub(super) output: &'a Value,
     /// Wall-clock execution duration in milliseconds.
     pub(super) duration_ms: u64,
+    /// Effective model-facing inline character limit for this result —
+    /// [`installed_inline_char_limit`] of the dispatching executor, so an
+    /// embedder-installed [`ToolOutputBudget`] governs the persisted
+    /// model-facing projection.
+    pub(super) inline_char_limit: usize,
 }
 
 /// Append a tool result to both the event store and the local messages vec,
@@ -258,8 +287,9 @@ pub(super) async fn append_tool_result(
         kind,
         output,
         duration_ms,
+        inline_char_limit,
     } = record;
-    let output = model_safe_tool_output(tool_name, tool_call_id, output);
+    let output = model_safe_tool_output(tool_name, tool_call_id, output, inline_char_limit);
     let parent = store.last_event_id();
     append_and_notify(
         store,
@@ -283,12 +313,16 @@ pub(super) async fn append_tool_result(
         });
     }
 
-    let content = serde_json::to_string(&output).ok();
+    // `Display` for `Value` is infallible (serde_json Values cannot hold
+    // non-string keys or non-finite numbers), so the model-facing echo
+    // can never silently degrade to a missing content field.
+    let content = Some(output.to_string());
 
     messages.push(Message {
         role: MessageRole::ToolResult,
         content,
         thinking: String::new(),
+        reasoning: Vec::new(),
         tool_calls: Vec::new(),
         tool_call_id: Some(tool_call_id.to_string()),
         tool_name: Some(tool_name.to_string()),
@@ -338,6 +372,7 @@ mod tests {
         AssembledResponse {
             text: String::new(),
             thinking: String::new(),
+            reasoning: Vec::new(),
             tool_calls: calls,
             stop_reason: StopReason::EndTurn,
             usage: Usage::default(),
@@ -467,6 +502,98 @@ mod tests {
 
         let detail = action_log.get_detail("tc-big").expect("detail recorded");
         assert_eq!(detail.output["truncated_for_model"], true);
+    }
+
+    /// A mock executor that publishes a shared [`ToolContext`], so tests
+    /// can install extensions (e.g. a [`ToolOutputBudget`]) the dispatch
+    /// pipeline resolves through [`installed_inline_char_limit`].
+    struct SharedContextExecutor {
+        inner: MockToolExecutor,
+        ctx: Arc<ToolContext>,
+    }
+
+    #[async_trait::async_trait]
+    impl ToolExecutor for SharedContextExecutor {
+        async fn execute(
+            &self,
+            name: &str,
+            call_id: &str,
+            arguments: Value,
+        ) -> Result<Value, ToolError> {
+            self.inner.execute(name, call_id, arguments).await
+        }
+
+        fn shared_context(&self) -> Option<Arc<ToolContext>> {
+            Some(Arc::clone(&self.ctx))
+        }
+    }
+
+    /// An embedder-installed [`ToolOutputBudget`] with a small
+    /// `model_output_inline_char_limit` actually caps: an output far
+    /// below the documented 64k default is truncated at the installed
+    /// limit, and the persisted record names that limit.
+    #[tokio::test]
+    async fn installed_budget_inline_limit_caps_tool_result() {
+        let store = Arc::new(EventStore::new());
+        let action_log = Arc::new(ActionLog::new(Arc::clone(&store)));
+        let mut loop_context = loop_with_log(&action_log);
+
+        let small_limit = 200;
+        let oversized = "x".repeat(small_limit + 1);
+        let mut handlers: HashMap<String, ToolHandler> = HashMap::new();
+        let payload = oversized.clone();
+        handlers.insert(
+            "read".to_owned(),
+            Box::new(move |_args| Ok(json!({ "content": payload.clone() }))),
+        );
+        let ctx = Arc::new(ToolContext::empty());
+        ctx.insert_extension(Arc::new(ToolOutputBudget {
+            model_output_inline_char_limit: small_limit,
+            ..ToolOutputBudget::default()
+        }));
+        let executor = SharedContextExecutor {
+            inner: MockToolExecutor::new(handlers),
+            ctx,
+        };
+
+        let response = response_with(tool_call("tc-budget", "read", r#"{"path":"a.log"}"#));
+        dispatch(&executor, store.as_ref(), &mut loop_context, &response).await;
+
+        let output = persisted_tool_result(store.as_ref(), "read");
+        assert_eq!(
+            output["truncated_for_model"], true,
+            "the installed budget's limit must cap the result: {output}",
+        );
+        assert_eq!(output["inline_char_limit"], small_limit);
+        assert_eq!(output["original_chars"], json!(small_limit + 1 + 14));
+    }
+
+    /// Without an installed budget the documented default applies: the
+    /// same sub-64k output persists uncapped.
+    #[tokio::test]
+    async fn default_inline_limit_applies_without_installed_budget() {
+        let store = Arc::new(EventStore::new());
+        let action_log = Arc::new(ActionLog::new(Arc::clone(&store)));
+        let mut loop_context = loop_with_log(&action_log);
+
+        let content = "x".repeat(201);
+        let payload = content.clone();
+        let mut handlers: HashMap<String, ToolHandler> = HashMap::new();
+        handlers.insert(
+            "read".to_owned(),
+            Box::new(move |_args| Ok(json!({ "content": payload.clone() }))),
+        );
+        let executor = MockToolExecutor::new(handlers);
+
+        let response = response_with(tool_call("tc-default", "read", r#"{"path":"a.log"}"#));
+        dispatch(&executor, store.as_ref(), &mut loop_context, &response).await;
+
+        let output = persisted_tool_result(store.as_ref(), "read");
+        assert_eq!(
+            output,
+            json!({ "content": content }),
+            "under the 64k default a small output must persist unchanged",
+        );
     }
 
     /// The persisted `ToolResult` output for `tool_name`, from the store.
@@ -1370,5 +1497,41 @@ mod tests {
             .filter_map(|m| m.tool_call_id.as_deref())
             .collect();
         assert_eq!(ids, vec!["m-0", "m-1"]);
+    }
+
+    /// Regression (`serde_json::to_string(&output).ok()` swallowed the
+    /// Result): the tool-result echo the model sees is rendered
+    /// infallibly, so the message content is always present and
+    /// round-trips the capped output exactly.
+    #[tokio::test]
+    async fn tool_result_message_content_is_always_present() {
+        let store = EventStore::new();
+        let mut messages = Vec::new();
+        let output = json!({ "nested": { "value": 42, "text": "café \u{1F980}" } });
+
+        append_tool_result(
+            &store,
+            &mut messages,
+            ToolResultRecord {
+                tool_call_id: "tc-content",
+                tool_name: "read",
+                kind: crate::provider::request::ToolCallKind::Function,
+                output: &output,
+                duration_ms: 3,
+                inline_char_limit: MODEL_OUTPUT_INLINE_CHAR_LIMIT,
+            },
+            None,
+            None,
+        )
+        .await
+        .expect("append succeeds");
+
+        assert_eq!(messages.len(), 1);
+        let content = messages[0]
+            .content
+            .as_deref()
+            .expect("tool-result content is infallible by construction");
+        let parsed: Value = serde_json::from_str(content).expect("content is valid JSON");
+        assert_eq!(parsed, output, "the echoed content round-trips the output");
     }
 }

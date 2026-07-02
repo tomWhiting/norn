@@ -19,7 +19,7 @@
 //! Out of scope for this brief: nested-directory scanning (NX-004) and
 //! `build_runtime` wiring (NX-005). NX-002 adds the
 //! [`ContextLoader::check_staleness`] re-stat helper and the
-//! [`crate::r#loop::loop_context::LoopContext::refresh_context_if_stale`]
+//! [`crate::agent_loop::loop_context::LoopContext::refresh_context_if_stale`]
 //! integration point; the actual rebuild of `system_sections[0]` lands
 //! with NX-005's wiring.
 
@@ -37,7 +37,7 @@ const NORN_MD: &str = "NORN.md";
 
 /// Inter-file separator used when concatenating the two layers into a
 /// single string for [`ContextLoader::formatted_context`]. Matches the
-/// `"\n\n"` separator [`crate::r#loop::loop_context::LoopContext::system_instruction`]
+/// `"\n\n"` separator [`crate::agent_loop::loop_context::LoopContext::system_instruction`]
 /// uses to join `system_sections`.
 const SECTION_SEPARATOR: &str = "\n\n";
 
@@ -115,7 +115,7 @@ impl ContextLoader {
     /// into the corresponding slot.
     ///
     /// Reading failures other than `NotFound` are warning-logged inside
-    /// [`read_context_file`] and clear the slot — the consumer rebuilds
+    /// `read_context_file` and clear the slot — the consumer rebuilds
     /// with the absent layer rather than retaining stale content.
     pub fn check_staleness(&mut self) -> bool {
         let user_path = user_norn_md_path();

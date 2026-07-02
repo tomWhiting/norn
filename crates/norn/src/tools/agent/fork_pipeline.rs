@@ -244,7 +244,7 @@ pub(crate) struct ForkOutcome {
     /// delivered (W3.6 usage rollup) — from the
     /// [`AgentStepResult`] arm on every loop outcome, and from the
     /// wrapper's shared
-    /// [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+    /// [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)
     /// snapshot on the hard-error and panic paths. Disjoint from
     /// [`Self::usage`]: `usage + children_usage` is the fork's subtree
     /// total with each agent counted exactly once.
@@ -271,7 +271,7 @@ pub(crate) struct ForkOutcome {
 /// and marking (a hook Block suppresses the transition, mirroring spawn).
 ///
 /// `delivered_children_usage` is the wrapper's snapshot of the fork's
-/// shared [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+/// shared [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)
 /// accumulator, used only on the hard-error arm where no step result
 /// exists to carry `children_usage` out of the loop (W3.6); every `Ok`
 /// arm reads the authoritative value from the step result.
@@ -338,7 +338,7 @@ pub(super) fn mark_fork_terminal(
 /// see a dangling `Started`. Own usage is [`Usage::default`] (unknown —
 /// the panicked task took its accumulated usage with it), while
 /// `delivered_children_usage` — the wrapper's snapshot of the shared
-/// [`ChildrenUsage`](crate::r#loop::children_usage::ChildrenUsage)
+/// [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)
 /// accumulator, which survives the unwound task — still carries every
 /// grandchild subtree the fork's loop delivered before the panic (W3.6).
 pub(super) fn panicked_fork_outcome(

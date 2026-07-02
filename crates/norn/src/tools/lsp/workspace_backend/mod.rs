@@ -1,6 +1,6 @@
-//! Adapter connecting the `lsp` workspace crate to norn's [`LspBackend`] trait.
+//! Adapter connecting the `lsp` workspace crate to norn's [`LspBackend`](crate::tools::lsp::LspBackend) trait.
 //!
-//! [`WorkspaceLspBackend`] wraps an [`LspWorkspace`] and implements the
+//! [`WorkspaceLspBackend`] wraps an `LspWorkspace` and implements the
 //! backend methods by delegating to the workspace API and mapping
 //! `lsp-types` results into norn's serialisation-friendly types.
 //!
@@ -12,5 +12,8 @@
 pub mod adapter;
 pub mod mapping;
 pub mod runnables;
+
+#[cfg(test)]
+mod stub_tests;
 
 pub use self::adapter::{WorkspaceLspBackend, build_lsp_backend};

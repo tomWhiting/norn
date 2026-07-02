@@ -78,7 +78,7 @@ pub(super) fn build_payload(request: &ProviderRequest) -> Result<serde_json::Val
         reasoning_effort: request.reasoning_effort,
     };
     let mut value =
-        serde_json::to_value(payload).map_err(|err| ProviderError::ResponseParseError {
+        serde_json::to_value(payload).map_err(|err| ProviderError::RequestSerializationFailed {
             reason: format!("failed to serialize chat completions request: {err}"),
         })?;
     merge_provider_options(&mut value, request.config.as_ref())?;
@@ -94,7 +94,7 @@ fn merge_provider_options(
     };
     let option_object = select_chat_completion_options(&options.0)?;
     let Some(payload_object) = payload.as_object_mut() else {
-        return Err(ProviderError::ResponseParseError {
+        return Err(ProviderError::RequestSerializationFailed {
             reason: "chat completions payload was not a JSON object".to_string(),
         });
     };
@@ -215,7 +215,7 @@ fn serialize_tool_result(message: &Message) -> Result<serde_json::Value, Provide
         .tool_call_id
         .as_deref()
         .filter(|id| !id.is_empty())
-        .ok_or_else(|| ProviderError::ResponseParseError {
+        .ok_or_else(|| ProviderError::RequestSerializationFailed {
             reason: format!(
                 "tool result for {tool_name} missing tool_call_id; refusing to dispatch unmoored chat tool result",
                 tool_name = message.tool_name.as_deref().unwrap_or("<unknown tool>"),
@@ -290,6 +290,7 @@ mod tests {
         ProviderRequest {
             messages: vec![
                 Message {
+                    reasoning: Vec::new(),
                     role: MessageRole::System,
                     content: Some("system".to_owned()),
                     thinking: String::new(),
@@ -299,6 +300,7 @@ mod tests {
                     tool_call_kind: None,
                 },
                 Message {
+                    reasoning: Vec::new(),
                     role: MessageRole::Developer,
                     content: Some("developer".to_owned()),
                     thinking: String::new(),
@@ -308,6 +310,7 @@ mod tests {
                     tool_call_kind: None,
                 },
                 Message {
+                    reasoning: Vec::new(),
                     role: MessageRole::User,
                     content: Some("hello".to_owned()),
                     thinking: String::new(),
@@ -370,6 +373,7 @@ mod tests {
     fn assistant_tool_call_and_result_use_chat_replay_shape() {
         let mut request = base_request();
         request.messages.push(Message {
+            reasoning: Vec::new(),
             role: MessageRole::Assistant,
             content: None,
             thinking: String::new(),
@@ -384,6 +388,7 @@ mod tests {
             tool_call_kind: None,
         });
         request.messages.push(Message {
+            reasoning: Vec::new(),
             role: MessageRole::ToolResult,
             content: Some("contents".to_owned()),
             thinking: String::new(),
@@ -409,6 +414,7 @@ mod tests {
     fn missing_tool_result_id_is_hard_error() {
         let mut request = base_request();
         request.messages.push(Message {
+            reasoning: Vec::new(),
             role: MessageRole::ToolResult,
             content: Some("contents".to_owned()),
             thinking: String::new(),
@@ -419,7 +425,10 @@ mod tests {
         });
 
         let err = build_payload(&request).unwrap_err();
-        assert!(matches!(err, ProviderError::ResponseParseError { .. }));
+        assert!(matches!(
+            err,
+            ProviderError::RequestSerializationFailed { .. }
+        ));
     }
 
     #[test]
@@ -491,5 +500,47 @@ mod tests {
         let err = build_payload(&request).unwrap_err();
 
         assert!(matches!(err, ProviderError::InvalidRequest { .. }));
+    }
+
+    #[test]
+    fn chat_completions_never_replays_reasoning_items() {
+        // The encrypted-reasoning replay contract is Responses-API-only:
+        // an assistant message carrying captured reasoning items (even
+        // with encrypted_content) serializes to a plain chat message with
+        // no reasoning payload anywhere in the request.
+        use crate::provider::reasoning::{ReasoningItem, ReasoningSummaryPart};
+        let mut request = base_request();
+        request.messages.push(Message {
+            role: MessageRole::Assistant,
+            content: Some("answer".to_owned()),
+            thinking: "summary".to_owned(),
+            reasoning: vec![ReasoningItem {
+                id: "rs_1".to_owned(),
+                summary: vec![ReasoningSummaryPart::SummaryText {
+                    text: "thought".to_owned(),
+                }],
+                content: None,
+                encrypted_content: Some("opaque-blob".to_owned()),
+            }],
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        });
+
+        let value = serde_json::to_value(build_payload(&request).unwrap()).unwrap();
+        let serialized = value.to_string();
+        assert!(
+            !serialized.contains("opaque-blob"),
+            "encrypted reasoning must never reach the chat payload: {serialized}"
+        );
+        assert!(
+            !serialized.contains("\"reasoning\""),
+            "no reasoning items may be serialized on chat_completions: {serialized}"
+        );
+        let messages = value["messages"].as_array().unwrap();
+        let assistant = messages.last().unwrap();
+        assert_eq!(assistant["role"], "assistant");
+        assert_eq!(assistant["content"], "answer");
     }
 }

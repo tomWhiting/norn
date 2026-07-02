@@ -8,7 +8,7 @@
 //! The agent loop accepts a `&mut LoopContext` instead of an exploding list
 //! of optional parameters. Components default to absent so callers that do
 //! not need rules or hooks can simply construct
-//! [`LoopContext::new(system_instruction)`] and pass it through.
+//! [`LoopContext::new`]`(system_instruction)` and pass it through.
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -75,6 +75,12 @@ pub struct LoopContext {
     /// execution and applies the engine's
     /// [`RuleInjection`](crate::rules::types::RuleInjection) results.
     pub rules: Option<RuleEngine>,
+    /// Reactive scanner that registers nested `NORN.md` files as synthetic
+    /// rules on [`Self::rules`] the first time a path under their directory
+    /// is touched (NX-004). Lazily constructed on first use from
+    /// [`Self::working_dir`] so no assembly site has to thread the project
+    /// root separately; absent when no rules engine is installed.
+    pub nested_scanner: Option<crate::context::scanner::NestedScanner>,
     /// Optional hook registry. When present, the loop calls pre/post tool,
     /// pre/post LLM, and session-event hooks at their respective firing
     /// points.
@@ -106,7 +112,7 @@ pub struct LoopContext {
     /// [`ProviderRequest`](crate::provider::request::ProviderRequest).
     pub service_tier: Option<ServiceTier>,
     /// Optional registry of slash commands. When present, user input is
-    /// pre-processed through [`crate::r#loop::commands::preprocess_input`]
+    /// pre-processed through [`crate::agent_loop::commands::preprocess_input`]
     /// before reaching the model.
     pub slash_commands: Option<SlashCommandRegistry>,
     /// Profile-supplied shell commands evaluated at the start of every
@@ -145,7 +151,7 @@ pub struct LoopContext {
 
     /// present alongside a token estimator and the
 
-    /// [`AgentLoopConfig::auto_compact_threshold_pct`](crate::r#loop::runner::AgentLoopConfig)
+    /// [`AgentLoopConfig::auto_compact_threshold_pct`](crate::agent_loop::runner::AgentLoopConfig)
 
     /// trigger, the loop appends a
 
@@ -153,6 +159,24 @@ pub struct LoopContext {
 
     /// once estimated usage crosses the configured fraction.
     pub context_edits: Option<ContextEdits>,
+
+    /// Whether persisted compaction supersession marks have been loaded
+    /// into [`Self::context_edits`].
+    ///
+    /// The runner loads persisted marks **once per loop context** — its
+    /// first step walks the store (see `run_agent_step_inner`) — covering
+    /// drivers that resume a session with a fresh [`ContextEdits`]
+    /// without going through the library's resume path. Every compaction
+    /// appended after that point marks supersession at append time on
+    /// the tracker itself ([`ContextEdits::summarize`],
+    /// [`ContextEdits::compact`],
+    /// [`ContextEdits::commit_compaction_plan`]), so no per-step store
+    /// re-walk exists. Drivers that pre-load marks (resume via
+    /// [`ReplayArtifacts`](crate::session::ReplayArtifacts) plus
+    /// [`ContextEdits::mark_superseded`]) may set this to `true` to skip
+    /// the runner's one-time walk; leaving it `false` costs exactly one
+    /// idempotent walk on the first step.
+    pub compaction_marks_loaded: bool,
 
     /// Optional diagnostic collector. When present, the runner pushes a
     /// [`NornDiagnostic`](crate::integration::NornDiagnostic) at three sites
@@ -254,20 +278,20 @@ pub struct LoopContext {
     /// Accumulated `subtree_usage` of every child result delivered into
     /// this loop (W3.6 usage rollup).
     ///
-    /// [`drain_child_results`](crate::r#loop) — the single injection path
+    /// [`drain_child_results`](crate::agent_loop) — the single injection path
     /// for child results, mid-run and lingering alike — folds each
     /// drained result's
     /// [`subtree_usage`](crate::agent::result_channel::ChildAgentResult::subtree_usage)
-    /// in here, and every [`AgentStepResult`](crate::r#loop::config::AgentStepResult)
+    /// in here, and every [`AgentStepResult`](crate::agent_loop::config::AgentStepResult)
     /// arm carries a snapshot alongside its own-calls-only `usage`, so
     /// the spawn/fork completion wrappers can compute
     /// `subtree_usage = total_usage + children_usage` without reaching
     /// into the loop. Deliberately a shared handle, not a plain value:
     /// the wrapper's clone survives a panicking loop task so delivered
-    /// descendant spend is never silently lost (see [`ChildrenUsage`]).
+    /// descendant spend is never silently lost (see [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)).
     pub children_usage: crate::r#loop::children_usage::ChildrenUsage,
 
-    /// Per-agent working directory shared with [`ToolContext`].
+    /// Per-agent working directory shared with [`ToolContext`](crate::tool::context::ToolContext).
     ///
     /// Bash's `cd` parsing updates this; subsequent prompt commands,
     /// shell hooks, rules engine, Rhai `run_cmd`, and shell variable
@@ -289,6 +313,7 @@ impl LoopContext {
     pub fn new(base: impl Into<String>) -> Self {
         Self {
             rules: None,
+            nested_scanner: None,
             hooks: None,
             system_sections: vec![base.into()],
             event_schemas: None,
@@ -303,6 +328,7 @@ impl LoopContext {
             token_estimator: None,
             variables: None,
             context_edits: None,
+            compaction_marks_loaded: false,
             diagnostics: None,
             action_log: None,
             agent_id: None,
@@ -433,6 +459,93 @@ impl LoopContext {
         self.system_sections.truncate(1);
     }
 
+    /// Build the current prompt view over `store`, honouring the active
+    /// [`ContextEdits`] when one is installed. When no edits tracker is
+    /// present nothing is suppressed, so the view is every stored event.
+    /// Re-append every in-context [`DeliveryMode::SystemContextAppend`] rule's
+    /// content to the dynamic system sections from the persisted event
+    /// stream.
+    ///
+    /// Called at the top of each iteration after
+    /// [`Self::clear_dynamic_sections`] and before the managed developer
+    /// message is synced, so append-mode rule content survives the
+    /// per-iteration wipe "for the remainder of the session" — while still
+    /// vanishing the instant its
+    /// [`SessionEvent::RuleInjection`](crate::session::events::SessionEvent::RuleInjection)
+    /// event is compacted or suppressed out of the view (at which point the
+    /// rule re-fires on its next trigger). No-op when no rules engine is
+    /// installed.
+    pub fn materialize_system_context_rules(&mut self, store: &crate::session::store::EventStore) {
+        if self.rules.is_none() {
+            return;
+        }
+        let fallback = ContextEdits::new();
+        let edits = self.context_edits.as_ref().unwrap_or(&fallback);
+        let sections: Vec<String> = store.with_events(|events| {
+            let mut sections = Vec::new();
+            crate::r#loop::context::for_each_visible_event(events, edits, |event, _tag| {
+                if let crate::session::events::SessionEvent::RuleInjection {
+                    delivery: crate::rules::types::DeliveryMode::SystemContextAppend,
+                    content,
+                    ..
+                } = event
+                {
+                    sections.push(content.clone());
+                }
+            });
+            sections
+        });
+        for section in sections {
+            self.append_system_section(section);
+        }
+    }
+
+    /// Rebuild the rules engine's presence set from the current prompt view.
+    ///
+    /// Invoked immediately before a tool batch's rule evaluation so
+    /// `process_event` suppresses rules already present in context and
+    /// re-injects only those whose events have been compacted or suppressed
+    /// out of the view (N-007 R7). No-op when no rules engine is installed.
+    pub fn rebuild_rule_presence(&mut self, store: &crate::session::store::EventStore) {
+        if self.rules.is_none() {
+            return;
+        }
+        let fallback = ContextEdits::new();
+        let edits = self.context_edits.as_ref().unwrap_or(&fallback);
+        let tags = store.with_events(|events| {
+            let mut tags = Vec::new();
+            crate::r#loop::context::for_each_visible_event(events, edits, |_event, tag| {
+                tags.push(tag);
+            });
+            tags
+        });
+        if let Some(engine) = self.rules.as_mut() {
+            engine.presence_mut().rebuild(&tags);
+        }
+    }
+
+    /// Register nested `NORN.md` synthetic rules for a batch of touched
+    /// paths before the rules engine evaluates them (NX-004 / NX-005).
+    ///
+    /// The [`NestedScanner`](crate::context::scanner::NestedScanner) is
+    /// lazily constructed from [`Self::working_dir`] on first use, so no
+    /// assembly site needs to thread the project root. No-op when no rules
+    /// engine is installed or no paths were touched.
+    pub fn scan_nested_norn(&mut self, paths: &[String]) {
+        if self.rules.is_none() || paths.is_empty() {
+            return;
+        }
+        if self.nested_scanner.is_none() {
+            let cwd = self.working_dir.get();
+            self.nested_scanner = Some(crate::context::scanner::NestedScanner::new(&cwd));
+        }
+        if let (Some(scanner), Some(engine)) = (self.nested_scanner.as_mut(), self.rules.as_mut()) {
+            for path in paths {
+                scanner.scan_on_path_change(path, engine);
+            }
+        }
+    }
+
     /// Replace the current reasoning effort with `new_effort`, returning
     /// the prior value so the caller can hand it back to
     /// [`Self::restore_reasoning_effort`] after the activation turn.
@@ -481,27 +594,55 @@ impl LoopContext {
     /// timeout) are logged via `tracing::warn!` and skipped — the loop
     /// continues without that section.
     ///
+    /// Cache misses run **concurrently**, each under `timeout` (`None`
+    /// defers to [`DEFAULT_PROMPT_COMMAND_TIMEOUT`], the documented
+    /// default; the runner passes
+    /// [`AgentLoopConfig::prompt_command_timeout`](crate::agent_loop::config::AgentLoopConfig::prompt_command_timeout)),
+    /// so an iteration's prompt-command wall-clock cost is the slowest
+    /// command, not the sum. Sections append in registration order
+    /// regardless of completion order.
+    ///
     /// Callers must invoke this method at the start of every iteration
     /// after [`Self::clear_dynamic_sections`] so the dynamic sections live
     /// for exactly the next provider call.
-    pub async fn evaluate_prompt_commands(&mut self) {
+    pub async fn evaluate_prompt_commands(&mut self, timeout: Option<Duration>) {
         if self.prompt_commands.is_empty() {
             return;
         }
+        let timeout = timeout.unwrap_or(DEFAULT_PROMPT_COMMAND_TIMEOUT);
         let commands = self.prompt_commands.clone();
-        for cmd in &commands {
-            let now = Instant::now();
-            let cached_value: Option<String> = self
-                .prompt_command_cache
-                .get(&cmd.name)
-                .filter(|entry| entry.expires_at.is_some_and(|deadline| deadline > now))
-                .map(|entry| entry.value.clone());
-            if let Some(value) = cached_value {
-                self.append_system_section(format_section(&cmd.name, &value));
-                continue;
-            }
+        let now = Instant::now();
+        // Resolve cache hits up front; only misses spend a subprocess.
+        let cached: Vec<Option<String>> = commands
+            .iter()
+            .map(|cmd| {
+                self.prompt_command_cache
+                    .get(&cmd.name)
+                    .filter(|entry| entry.expires_at.is_some_and(|deadline| deadline > now))
+                    .map(|entry| entry.value.clone())
+            })
+            .collect();
 
-            match run_prompt_command(&cmd.command, &self.working_dir.get()).await {
+        let working_dir = self.working_dir.get();
+        let misses: Vec<_> = commands
+            .iter()
+            .zip(&cached)
+            .filter(|(_, cached_value)| cached_value.is_none())
+            .map(|(cmd, _)| run_prompt_command(&cmd.command, &working_dir, timeout))
+            .collect();
+        let mut miss_results = futures_util::future::join_all(misses).await.into_iter();
+
+        for (cmd, cached_value) in commands.iter().zip(cached) {
+            let outcome = match cached_value {
+                Some(value) => Ok(value),
+                None => match miss_results.next() {
+                    Some(result) => result,
+                    // Structurally unreachable: one future was created per
+                    // cache miss, in the same order this loop consumes.
+                    None => Err("concurrent evaluation produced no result".to_owned()),
+                },
+            };
+            match outcome {
                 Ok(stdout) => {
                     if let Some(ttl) = cmd.cache_ttl {
                         self.prompt_command_cache.insert(
@@ -537,9 +678,10 @@ fn format_section(name: &str, body: &str) -> String {
 async fn run_prompt_command(
     command: &str,
     working_dir: &std::path::Path,
+    timeout: Duration,
 ) -> Result<String, String> {
     let result = tokio::time::timeout(
-        DEFAULT_PROMPT_COMMAND_TIMEOUT,
+        timeout,
         Command::new("sh")
             .arg("-c")
             .arg(command)
@@ -565,10 +707,7 @@ async fn run_prompt_command(
             Err(format!("prompt command exited {exit}: {stderr}"))
         }
         Ok(Err(e)) => Err(format!("failed to spawn prompt command: {e}")),
-        Err(_) => Err(format!(
-            "prompt command timed out after {}s",
-            DEFAULT_PROMPT_COMMAND_TIMEOUT.as_secs()
-        )),
+        Err(_) => Err(format!("prompt command timed out after {timeout:?}")),
     }
 }
 
@@ -583,6 +722,172 @@ async fn run_prompt_command(
 )]
 mod tests {
     use super::*;
+
+    // ---- Rule context lifecycle (N-007 R7 / N-017 R3 / NX-004) ----------
+
+    use crate::rules::engine::RuleEngine;
+    use crate::rules::types::{
+        DeliveryMode, PathOperation, Rule, RuleId, RuntimeEvent, TriggerCondition, TriggerTiming,
+    };
+    use crate::session::events::{EventBase, SessionEvent};
+    use crate::session::store::EventStore;
+    use crate::tool::context::SharedWorkingDir;
+
+    fn append_rule_event(
+        store: &EventStore,
+        rule_id: &str,
+        delivery: DeliveryMode,
+        content: &str,
+    ) -> crate::session::events::EventId {
+        store
+            .append(SessionEvent::RuleInjection {
+                base: EventBase::new(store.last_event_id()),
+                rule_id: rule_id.to_owned(),
+                delivery,
+                timing: TriggerTiming::After,
+                content: content.to_owned(),
+            })
+            .expect("append")
+    }
+
+    fn rs_rule(id: &str, body: &str, delivery: DeliveryMode) -> Rule {
+        Rule {
+            id: RuleId::from(id),
+            name: id.to_owned(),
+            triggers: vec![TriggerCondition::PathGlob {
+                pattern: "**/*.rs".to_owned(),
+            }],
+            delivery,
+            timing: TriggerTiming::After,
+            body: body.to_owned(),
+            shell_source: None,
+        }
+    }
+
+    #[test]
+    fn materialize_system_context_rules_reappends_across_wipes() {
+        let store = EventStore::new();
+        append_rule_event(
+            &store,
+            "sys-rule",
+            DeliveryMode::SystemContextAppend,
+            "APPEND_BODY",
+        );
+
+        let mut ctx = LoopContext::new("base");
+        ctx.rules = Some(RuleEngine::new(vec![]));
+
+        // First prompt-construction pass: content re-materialized from the
+        // persisted event even though it was never in `system_sections`.
+        ctx.materialize_system_context_rules(&store);
+        assert!(ctx.system_instruction().contains("APPEND_BODY"));
+
+        // The per-iteration wipe removes it, but the next pass restores it
+        // from the durable event — "for the remainder of the session".
+        ctx.clear_dynamic_sections();
+        assert!(!ctx.system_instruction().contains("APPEND_BODY"));
+        ctx.materialize_system_context_rules(&store);
+        assert!(ctx.system_instruction().contains("APPEND_BODY"));
+    }
+
+    #[test]
+    fn materialize_drops_content_once_event_is_compacted_out() {
+        let store = EventStore::new();
+        let id = append_rule_event(
+            &store,
+            "sys-rule",
+            DeliveryMode::SystemContextAppend,
+            "APPEND_BODY",
+        );
+
+        let mut ctx = LoopContext::new("base");
+        ctx.rules = Some(RuleEngine::new(vec![]));
+        let mut edits = ContextEdits::new();
+        edits.suppress(id);
+        ctx.context_edits = Some(edits);
+
+        ctx.clear_dynamic_sections();
+        ctx.materialize_system_context_rules(&store);
+        assert!(
+            !ctx.system_instruction().contains("APPEND_BODY"),
+            "a compacted/suppressed rule event must not re-materialize",
+        );
+    }
+
+    #[tokio::test]
+    async fn presence_rebuild_suppresses_then_re_fires_after_eviction() {
+        let store = EventStore::new();
+        let mut ctx = LoopContext::new("base");
+        ctx.rules = Some(RuleEngine::new(vec![rs_rule(
+            "broad",
+            "BODY",
+            DeliveryMode::ContextInjection,
+        )]));
+        ctx.context_edits = Some(ContextEdits::new());
+
+        let event = RuntimeEvent::PathChanged {
+            path: "src/lib.rs".to_owned(),
+            operation: PathOperation::Read,
+        };
+
+        // Fires once when nothing is in context.
+        ctx.rebuild_rule_presence(&store);
+        let first = ctx.rules.as_ref().unwrap().process_event(&event).await;
+        assert_eq!(first.len(), 1, "broad rule must fire on first match");
+
+        // Persist its presence marker; rebuild sees it in context → no re-fire.
+        let id = append_rule_event(&store, "broad", DeliveryMode::ContextInjection, "BODY");
+        ctx.rebuild_rule_presence(&store);
+        assert!(
+            ctx.rules
+                .as_ref()
+                .unwrap()
+                .process_event(&event)
+                .await
+                .is_empty(),
+            "rule present in context must not re-fire",
+        );
+
+        // Compact the marker out of the view → rule re-fires on next trigger.
+        if let Some(edits) = ctx.context_edits.as_mut() {
+            edits.suppress(id);
+        }
+        ctx.rebuild_rule_presence(&store);
+        let after = ctx.rules.as_ref().unwrap().process_event(&event).await;
+        assert_eq!(after.len(), 1, "evicted rule must re-fire");
+    }
+
+    #[tokio::test]
+    async fn scan_nested_norn_surfaces_nested_context_once() {
+        let cwd = tempfile::tempdir().expect("tempdir");
+        let api = cwd.path().join("src").join("api");
+        std::fs::create_dir_all(&api).expect("mkdir");
+        std::fs::write(api.join("NORN.md"), "API_CONVENTIONS").expect("write");
+        std::fs::write(api.join("handler.rs"), "// stub").expect("write");
+
+        let mut ctx =
+            LoopContext::with_working_dir("base", SharedWorkingDir::new(cwd.path().to_path_buf()));
+        ctx.rules = Some(RuleEngine::new(vec![]));
+
+        // Touching a file under src/api registers the nested NORN.md rule
+        // lazily (scanner built from working_dir).
+        ctx.scan_nested_norn(&["src/api/handler.rs".to_owned()]);
+        // Re-touch: must not register a duplicate.
+        ctx.scan_nested_norn(&["src/api/other.rs".to_owned()]);
+
+        let injections = ctx
+            .rules
+            .as_ref()
+            .unwrap()
+            .process_event(&RuntimeEvent::PathChanged {
+                path: "src/api/handler.rs".to_owned(),
+                operation: PathOperation::Read,
+            })
+            .await;
+        assert_eq!(injections.len(), 1, "nested NORN.md surfaces exactly once");
+        assert_eq!(injections[0].rule_id.as_str(), "norn-md:src/api");
+        assert_eq!(injections[0].content, "API_CONVENTIONS");
+    }
 
     #[test]
     fn new_seeds_single_base_section() {
@@ -878,7 +1183,7 @@ mod tests {
             command: "echo hello".to_owned(),
             cache_ttl: None,
         });
-        ctx.evaluate_prompt_commands().await;
+        ctx.evaluate_prompt_commands(None).await;
         let combined = ctx.system_instruction();
         assert!(
             combined.contains("hello"),
@@ -898,7 +1203,7 @@ mod tests {
             command: "exit 7".to_owned(),
             cache_ttl: None,
         });
-        ctx.evaluate_prompt_commands().await;
+        ctx.evaluate_prompt_commands(None).await;
         let combined = ctx.system_instruction();
         assert_eq!(
             combined, "base",
@@ -914,14 +1219,73 @@ mod tests {
             command: "date +%N || echo stable".to_owned(),
             cache_ttl: Some(Duration::from_mins(1)),
         });
-        ctx.evaluate_prompt_commands().await;
+        ctx.evaluate_prompt_commands(None).await;
         let first = ctx.system_instruction();
         ctx.clear_dynamic_sections();
-        ctx.evaluate_prompt_commands().await;
+        ctx.evaluate_prompt_commands(None).await;
         let second = ctx.system_instruction();
         assert_eq!(
             first, second,
             "second evaluation within TTL must reuse cache"
+        );
+    }
+
+    /// Two 300ms commands must evaluate concurrently: the iteration's
+    /// prompt-command cost is the slowest command, not the sum. Serial
+    /// evaluation would take at least 600ms.
+    #[tokio::test]
+    async fn evaluate_prompt_commands_runs_misses_concurrently_in_order() {
+        let mut ctx = LoopContext::new("base");
+        ctx.prompt_commands.push(PromptCommand {
+            name: "first".to_owned(),
+            command: "sleep 0.3 && echo one".to_owned(),
+            cache_ttl: None,
+        });
+        ctx.prompt_commands.push(PromptCommand {
+            name: "second".to_owned(),
+            command: "sleep 0.3 && echo two".to_owned(),
+            cache_ttl: None,
+        });
+
+        let started = Instant::now();
+        ctx.evaluate_prompt_commands(None).await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(550),
+            "two 300ms commands must overlap, took {elapsed:?}",
+        );
+        // Sections append in registration order, not completion order.
+        assert_eq!(ctx.system_sections.len(), 3);
+        assert_eq!(ctx.system_sections[1], "# first\none");
+        assert_eq!(ctx.system_sections[2], "# second\ntwo");
+    }
+
+    /// A configured `prompt_command_timeout` overrides the documented
+    /// 5-second default: a command slower than the budget is cut and its
+    /// section skipped, without waiting out the default.
+    #[tokio::test]
+    async fn evaluate_prompt_commands_honors_configured_timeout() {
+        let mut ctx = LoopContext::new("base");
+        ctx.prompt_commands.push(PromptCommand {
+            name: "slowpoke".to_owned(),
+            command: "sleep 2 && echo late".to_owned(),
+            cache_ttl: None,
+        });
+
+        let started = Instant::now();
+        ctx.evaluate_prompt_commands(Some(Duration::from_millis(100)))
+            .await;
+        let elapsed = started.elapsed();
+
+        assert!(
+            elapsed < Duration::from_millis(900),
+            "the configured budget must cut the command, took {elapsed:?}",
+        );
+        assert_eq!(
+            ctx.system_instruction(),
+            "base",
+            "a timed-out prompt command must not append a section",
         );
     }
 

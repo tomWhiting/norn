@@ -108,7 +108,35 @@ where
     guard.restore_scroll_cursor_clamped()?;
     let result = body(guard);
     let save_result = guard.save_scroll_cursor();
+    reconcile_scroll_cursor(result, save_result)
+}
 
+/// [`with_scroll_region_cursor`] for async bodies — required by
+/// operations that await inside the scroll-region write (e.g. slash
+/// dispatch, whose `/new` rotation checkpoints the outgoing session
+/// store off-executor). Identical cursor discipline: restore before the
+/// body, save after, body errors win over save errors.
+pub(super) async fn with_scroll_region_cursor_async<T, F>(
+    guard: &mut TerminalGuard,
+    body: F,
+) -> Result<T, TuiError>
+where
+    F: AsyncFnOnce(&mut TerminalGuard) -> Result<T, TuiError>,
+{
+    guard.restore_scroll_cursor_clamped()?;
+    let result = body(guard).await;
+    let save_result = guard.save_scroll_cursor();
+    reconcile_scroll_cursor(result, save_result)
+}
+
+/// Combine a scroll-region body result with the trailing
+/// `save_scroll_cursor` result: the body's error takes precedence (the
+/// save failure is warn-logged so it is never silently swallowed), and a
+/// save failure alone still fails the operation.
+fn reconcile_scroll_cursor<T>(
+    result: Result<T, TuiError>,
+    save_result: std::io::Result<()>,
+) -> Result<T, TuiError> {
     match (result, save_result) {
         (Ok(value), Ok(())) => Ok(value),
         (Ok(_), Err(err)) => Err(TuiError::from(err)),

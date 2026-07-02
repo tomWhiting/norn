@@ -27,14 +27,13 @@ use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::{Hook, HookRegistry};
 use crate::integration::variables::VariableStore;
 use crate::internal::extraction::SharedProvider;
-use crate::r#loop::config::{AgentLoopConfig, ConversationStateMode};
+use crate::r#loop::config::AgentLoopConfig;
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::retry::RetryPolicy;
 use crate::r#loop::tokens::SimpleTokenEstimator;
 use crate::profile::{Profile, default_scan_dirs, resolve_profile};
 use crate::provider::request::ToolDefinition;
-use crate::provider::surface::{collect_function_definitions, reframe_prompt_entries};
-use crate::provider::tools::ProviderCapabilities;
+use crate::provider::surface::collect_function_definitions;
 use crate::provider::traits::Provider;
 use crate::rules::engine::RuleEngine;
 use crate::runtime_init::LoadedRuntimeBase;
@@ -42,9 +41,6 @@ use crate::session::action_log::ActionLog;
 use crate::session::action_log_tree::ActionLogTree;
 use crate::session::context_edit::ContextEdits;
 use crate::session::store::EventStore;
-use crate::system_prompt::builder::{
-    ExecutionMode, SystemPromptInputs, ToolPromptEntry, build_system_prompt,
-};
 use crate::system_prompt::environment::EnvironmentConfig;
 use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 use crate::tool::context::{SessionId, SharedWorkingDir, ToolContext};
@@ -138,6 +134,28 @@ pub(crate) fn resolve_base_profile(
     }
 }
 
+/// Resolve the [`SkillToolConfig`](crate::tools::skill::SkillToolConfig)
+/// from the merged settings' `tools.skill` section (D5).
+///
+/// An absent section — or an absent `shell_execution` key — defers to the
+/// tool's own documented default (shell execution **enabled**); `false`
+/// disables skill-authored shell expansion. This is the library-side
+/// mirror of the CLI's `skill_tool_config_from_settings`, so the embedded
+/// `load_runtime_base` path and the CLI resolve the skill tool identically.
+pub(crate) fn skill_tool_config_from_settings(
+    settings: &crate::config::NornSettings,
+) -> crate::tools::skill::SkillToolConfig {
+    let shell_execution = settings
+        .tools
+        .as_ref()
+        .and_then(|tools| tools.skill.as_ref())
+        .and_then(|skill| skill.shell_execution);
+    match shell_execution {
+        Some(shell_execution) => crate::tools::skill::SkillToolConfig { shell_execution },
+        None => crate::tools::skill::SkillToolConfig::default(),
+    }
+}
+
 /// Build the ungated tool registry: the standard set (with the bash drain
 /// grace applied when overridden), plus the caller's extra tools, minus the
 /// excluded names.
@@ -197,77 +215,6 @@ pub(crate) fn install_runtime_base_extensions(
     crate::runtime_init::install_permission_policy(shared, &base.settings);
 }
 
-/// Inputs for [`install_system_prompt`] beyond the loop context itself.
-pub(crate) struct SystemPromptInstall<'a> {
-    /// The gated tool registry whose tools the prompt lists.
-    pub(crate) registry: &'a ToolRegistry,
-    /// Interactive or headless execution.
-    pub(crate) mode: ExecutionMode,
-    /// Whether an output schema is configured for the final response.
-    pub(crate) has_output_schema: bool,
-    /// Caller-supplied replacement for the profile instructions.
-    pub(crate) system_prompt_override: Option<String>,
-    /// Caller-supplied fragment appended after the instructions.
-    pub(crate) append_system_prompt: Option<String>,
-    /// Whether auto-compaction is enabled on the effective config.
-    pub(crate) has_auto_compact: bool,
-    /// Capabilities of the provider this agent is being bound to. The
-    /// prompt's tools section is reframed through the resolved tool
-    /// surface so a hosted-replaced tool (e.g. `web_search` on a
-    /// hosted-search provider) is described as provider-native, never as
-    /// a phantom callable function. Recomputed on every build — including
-    /// session resumes, which re-enter this assembly with the (possibly
-    /// different) provider being bound.
-    pub(crate) capabilities: ProviderCapabilities,
-}
-
-/// Build the Norn base system prompt from the gated registry and layer it
-/// over the profile instructions (or the caller's `system_prompt` override)
-/// into `loop_context.system_sections[0]`.
-pub(crate) fn install_system_prompt(
-    loop_context: &mut LoopContext,
-    install: SystemPromptInstall<'_>,
-) {
-    let inputs = SystemPromptInputs {
-        mode: install.mode,
-        tools: reframe_prompt_entries(
-            collect_tool_prompt_entries(install.registry),
-            install.capabilities,
-        ),
-        has_output_schema: install.has_output_schema,
-        event_schema_descriptions: Vec::new(),
-        has_rules_engine: loop_context.rules.is_some(),
-        has_auto_compact: install.has_auto_compact,
-    };
-    let base_prompt = build_system_prompt(&inputs);
-
-    let profile_prefix = std::mem::take(&mut loop_context.system_sections);
-    let mut instructions = install
-        .system_prompt_override
-        .unwrap_or_else(|| profile_prefix.into_iter().next().unwrap_or_default());
-    if let Some(append) = install.append_system_prompt
-        && !append.is_empty()
-    {
-        append_prompt(&mut instructions, &append);
-    }
-
-    loop_context.base_prefix = if instructions.is_empty() {
-        base_prompt
-    } else {
-        format!("{base_prompt}\n\n{instructions}")
-    };
-    loop_context.rebuild_base_section();
-}
-
-fn append_prompt(prompt: &mut String, fragment: &str) {
-    if prompt.is_empty() {
-        *prompt = fragment.to_string();
-    } else {
-        prompt.push_str("\n\n");
-        prompt.push_str(fragment);
-    }
-}
-
 /// Snapshot a shared event store's events into a fresh owned store. Used only
 /// when the original cannot be reclaimed (fork/spawn Arc cycle). The
 /// persistence sink is not carried over — only the event content, which is
@@ -280,23 +227,6 @@ pub(crate) fn snapshot_store(store: &EventStore) -> EventStore {
         }
     }
     snapshot
-}
-
-/// Tool metadata for the system prompt builder.
-fn collect_tool_prompt_entries(registry: &ToolRegistry) -> Vec<ToolPromptEntry> {
-    let names: Vec<String> = registry.names().map(str::to_owned).collect();
-    let mut entries = Vec::with_capacity(names.len());
-    for name in names {
-        if let Some(tool) = registry.get(&name) {
-            entries.push(ToolPromptEntry {
-                name: tool.name().to_owned(),
-                category: tool.category(),
-                description: tool.description().to_owned(),
-                usage_guidance: tool.usage_guidance().map(str::to_owned),
-            });
-        }
-    }
-    entries
 }
 
 /// Finish the merged hook registry by appending the diagnostic stop hook.
@@ -397,7 +327,24 @@ pub(crate) fn resolve_runtime_overlay(
             .as_ref()
             .map(|base| Arc::clone(&base.diagnostics))
     });
-    let rules = overrides.rules.or(runtime_rules);
+    // An explicit rules engine (e.g. norn-cli's `--rules` file) is merged
+    // ONTO the runtime base's auto-discovered rules rather than replacing
+    // them: both sets are enforced, and the explicit rules inherit the
+    // base engine's working-dir / diagnostics / shell-timeout wiring. On a
+    // rule-ID collision (both IDs derive from the file stem) the explicit
+    // rule wins — `merge_rules_from` drops the shadowed discovered rule and
+    // logs it, so the operator's `--rules` override is never silently
+    // discarded. With no base rules, the explicit engine passes through with
+    // its own wiring; with no explicit engine, the base's discovered rules
+    // stand.
+    let rules = match (overrides.rules, runtime_rules) {
+        (Some(explicit), Some(mut base_rules)) => {
+            base_rules.merge_rules_from(explicit);
+            Some(base_rules)
+        }
+        (Some(explicit), None) => Some(explicit),
+        (None, base_rules) => base_rules,
+    };
     let hook_source = overrides.hooks.or(runtime_hooks);
     let hooks = append_diagnostic_stop_hook(hook_source, diagnostic_infra.as_ref().map(Arc::clone));
     RuntimeOverlay {
@@ -419,6 +366,43 @@ pub(crate) fn apply_base_to_loop_context(loop_context: &mut LoopContext, base: &
         .clone_from(&base.iteration_monitor);
 }
 
+/// Which non-`Option` [`AgentLoopConfig`] fields the caller explicitly set.
+///
+/// `Option` fields carry their own presence (`Some` = explicitly set), but
+/// the four non-`Option` fields below are indistinguishable from an unset
+/// default by value alone. A caller that explicitly restores the library
+/// default (e.g. `-c schema_budget=3` when 3 is the default) must still win
+/// over a settings-derived runtime base, so presence is tracked
+/// structurally here rather than inferred from value inequality — the
+/// latter silently reverted an explicit-to-default override back to the
+/// base value.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct AgentConfigPresence {
+    /// `schema_attempt_budget` was explicitly set.
+    pub(crate) schema_attempt_budget: bool,
+    /// `auto_compact_keep_recent_turns` was explicitly set.
+    pub(crate) auto_compact_keep_recent_turns: bool,
+    /// `schema_tool_name` was explicitly set.
+    pub(crate) schema_tool_name: bool,
+    /// `conversation_state` was explicitly set.
+    pub(crate) conversation_state: bool,
+}
+
+impl AgentConfigPresence {
+    /// Mark every non-`Option` field present — the caller supplied a
+    /// complete [`AgentLoopConfig`] via
+    /// [`AgentBuilder::agent_config`](crate::agent::builder::AgentBuilder::agent_config),
+    /// so all of its fields are explicit.
+    pub(crate) fn all() -> Self {
+        Self {
+            schema_attempt_budget: true,
+            auto_compact_keep_recent_turns: true,
+            schema_tool_name: true,
+            conversation_state: true,
+        }
+    }
+}
+
 /// The effective agent-loop config: the runtime base's config with
 /// explicitly-set builder fields overlaid, or the explicit config alone
 /// when no base was loaded. This single value drives both the loop config
@@ -427,9 +411,10 @@ pub(crate) fn apply_base_to_loop_context(loop_context: &mut LoopContext, base: &
 pub(crate) fn effective_agent_config(
     runtime_base: Option<&LoadedRuntimeBase>,
     explicit: AgentLoopConfig,
+    present: AgentConfigPresence,
 ) -> AgentLoopConfig {
     match runtime_base {
-        Some(base) => merge_agent_config(base.agent_config.clone(), explicit),
+        Some(base) => merge_agent_config(base.agent_config.clone(), explicit, present),
         None => explicit,
     }
 }
@@ -479,9 +464,12 @@ pub(crate) fn populate_loop_context(
 /// action log's Level 2/3 look-ups, so one `Arc` is shared between them.
 /// The action log resolves model-supplied relative paths against the live
 /// agent working dir (not process CWD), so it shares the same
-/// [`SharedWorkingDir`] handle as the tool context. When resuming,
-/// persisted compactions are re-applied and the action ledger is rebuilt
-/// so the session-lifetime queryability contract holds.
+/// [`SharedWorkingDir`] handle as the tool context. When resuming, the
+/// history is snapshotted once into
+/// [`ReplayArtifacts`](crate::session::ReplayArtifacts) — a single
+/// traversal — and that one value restores both the persisted compaction
+/// marks and the action ledger, so the session-lifetime queryability
+/// contract holds without per-consumer re-walks of the event history.
 pub(crate) fn restore_session_state(
     session: Option<EventStore>,
     loop_context: &mut LoopContext,
@@ -489,15 +477,16 @@ pub(crate) fn restore_session_state(
 ) -> (Arc<EventStore>, Arc<ActionLog>) {
     let resuming = session.is_some();
     let event_store = Arc::new(session.unwrap_or_default());
-    if let Some(edits) = loop_context.context_edits.as_mut() {
-        edits.apply_persisted_compactions(&event_store);
-    }
     let action_log = Arc::new(ActionLog::with_working_dir(
         Arc::clone(&event_store),
         shared_wd,
     ));
     if resuming {
-        crate::agent::resume::rebuild_action_log(&action_log, &event_store.events());
+        let artifacts = crate::session::ReplayArtifacts::from_events(event_store.events());
+        if let Some(edits) = loop_context.context_edits.as_mut() {
+            edits.mark_superseded(artifacts.superseded_event_ids.iter().cloned());
+        }
+        crate::agent::resume::rebuild_action_log(&action_log, &artifacts.events);
     }
     (event_store, action_log)
 }
@@ -564,9 +553,29 @@ pub(crate) fn assemble_tool_context(parts: ToolContextParts) -> ToolContext {
 }
 
 /// Overlay explicitly-set builder fields onto the runtime-base agent config.
-fn merge_agent_config(mut base: AgentLoopConfig, explicit: AgentLoopConfig) -> AgentLoopConfig {
-    if explicit.schema_attempt_budget != AgentLoopConfig::default().schema_attempt_budget {
+///
+/// Non-`Option` fields overlay when `present` marks them explicit (so an
+/// explicit-to-default value still wins); every `Option` field overlays
+/// when it is `Some`. Every field of [`AgentLoopConfig`] is covered — a
+/// completeness test in this module asserts a fully-explicit config
+/// survives the merge intact, so a future field cannot silently miss the
+/// overlay.
+fn merge_agent_config(
+    mut base: AgentLoopConfig,
+    explicit: AgentLoopConfig,
+    present: AgentConfigPresence,
+) -> AgentLoopConfig {
+    if present.schema_attempt_budget {
         base.schema_attempt_budget = explicit.schema_attempt_budget;
+    }
+    if present.auto_compact_keep_recent_turns {
+        base.auto_compact_keep_recent_turns = explicit.auto_compact_keep_recent_turns;
+    }
+    if present.schema_tool_name {
+        base.schema_tool_name = explicit.schema_tool_name;
+    }
+    if present.conversation_state {
+        base.conversation_state = explicit.conversation_state;
     }
     if explicit.max_iterations.is_some() {
         base.max_iterations = explicit.max_iterations;
@@ -580,25 +589,20 @@ fn merge_agent_config(mut base: AgentLoopConfig, explicit: AgentLoopConfig) -> A
     if explicit.auto_compact_threshold_pct.is_some() {
         base.auto_compact_threshold_pct = explicit.auto_compact_threshold_pct;
     }
-    if explicit.auto_compact_keep_recent_turns
-        != AgentLoopConfig::default().auto_compact_keep_recent_turns
-    {
-        base.auto_compact_keep_recent_turns = explicit.auto_compact_keep_recent_turns;
-    }
-    if explicit.schema_tool_name != AgentLoopConfig::default().schema_tool_name {
-        base.schema_tool_name = explicit.schema_tool_name;
-    }
     if explicit.cache_key.is_some() {
         base.cache_key = explicit.cache_key;
-    }
-    if explicit.conversation_state != ConversationStateMode::default() {
-        base.conversation_state = explicit.conversation_state;
     }
     if explicit.server_compaction_threshold_tokens.is_some() {
         base.server_compaction_threshold_tokens = explicit.server_compaction_threshold_tokens;
     }
     if explicit.output_schema.is_some() {
         base.output_schema = explicit.output_schema;
+    }
+    if explicit.prompt_command_timeout.is_some() {
+        base.prompt_command_timeout = explicit.prompt_command_timeout;
+    }
+    if explicit.linger.is_some() {
+        base.linger = explicit.linger;
     }
     base
 }
@@ -666,12 +670,20 @@ pub(crate) struct AgentInfraParts {
     /// The root agent's own run-cancellation token — the builder's
     /// `cancel_token` when one was supplied, otherwise the fresh token
     /// the builder resolved; the *same* token `Agent::run` threads into
-    /// the root's [`AgentStepRequest`](crate::r#loop::runner::AgentStepRequest)
+    /// the root's [`AgentStepRequest`](crate::agent_loop::runner::AgentStepRequest)
     /// and `AgentHandle::cancel` triggers. Published as the
     /// [`AgentCancellation`](crate::tools::agent::AgentCancellation)
     /// extension so spawn/fork create child run tokens as children of it
     /// — cancelling the root cascades to the whole tree (W3.5).
     pub(crate) cancel: tokio_util::sync::CancellationToken,
+    /// Whether to install the
+    /// [`ReclaimOnResultDelivery`](crate::tools::agent::ReclaimOnResultDelivery)
+    /// marker. `true` for embedded / headless runtimes (no external status
+    /// observer polls the registry, so a finished child's terminal entry
+    /// is reclaimed once its result is delivered); `false` for a driver
+    /// that owns reclamation itself through a status panel (the TUI), which
+    /// would otherwise race the hold window into nonexistence.
+    pub(crate) terminal_reclamation: bool,
 }
 
 /// Install the complete fork/spawn runtime on the agent's shared
@@ -679,21 +691,23 @@ pub(crate) struct AgentInfraParts {
 /// [`AgentHandles`](crate::tools::agent::AgentHandles) collection
 /// (required by `spawn_agent` / `fork`), a [`ChildResultSender`] whose
 /// receiver must be wired onto
-/// [`LoopContext::child_result_rx`](crate::r#loop::loop_context::LoopContext)
+/// [`LoopContext::child_result_rx`](crate::agent_loop::loop_context::LoopContext)
 /// so the loop drains child results at iteration boundaries, and the
 /// [`ReclaimOnResultDelivery`](crate::tools::agent::ReclaimOnResultDelivery)
 /// marker.
 ///
-/// The reclamation marker is installed unconditionally here because every
-/// builder-assembled agent is an embedded / headless runtime: no external
-/// status observer (such as the TUI agent status panel) ever polls its
-/// registry, so once a naturally-finished child's result has been
-/// delivered through the channel, the spawn/fork wrapper reclaims the
-/// terminal registry entry and parent-held handle — long-running embedded
-/// processes must not pin one event store per finished child forever. See
-/// [`crate::tools::agent::reclaim`] for the full ownership rule; the TUI
-/// runtime is assembled by `norn-cli`'s `build_runtime`, never through
-/// this path.
+/// The reclamation marker is installed when
+/// [`AgentInfraParts::terminal_reclamation`] is `true` (the builder
+/// default, matching every embedded / headless runtime): no external
+/// status observer polls the registry, so once a naturally-finished
+/// child's result has been delivered through the channel, the spawn/fork
+/// wrapper reclaims the terminal registry entry and parent-held handle —
+/// long-running embedded processes must not pin one event store per
+/// finished child forever. A driver that owns reclamation itself through a
+/// status panel (the TUI, via
+/// [`AgentBuilder::terminal_reclamation(false)`](crate::agent::builder::AgentBuilder::terminal_reclamation))
+/// suppresses it. See [`crate::tools::agent::reclaim`] for the full
+/// ownership rule.
 ///
 /// Also publishes the session-wide [`ActionLogTree`] rooted at this agent:
 /// every spawn/fork child registers its own per-agent [`ActionLog`] into
@@ -760,7 +774,14 @@ pub(crate) fn install_agent_infra(
         parts.cancel,
     )));
     crate::runtime_init::install_agent_handles(shared);
-    crate::runtime_init::install_terminal_reclamation(shared);
+    // Terminal reclamation is gated (not unconditional): a headless /
+    // embedded runtime reclaims a finished child's terminal registry entry
+    // once its result is delivered, but a driver that owns reclamation
+    // through a status panel (the TUI) must not — installing the marker
+    // there would race its hold window into nonexistence.
+    if parts.terminal_reclamation {
+        crate::runtime_init::install_terminal_reclamation(shared);
+    }
 
     let log_tree = Arc::new(ActionLogTree::new(parts.id));
     if let Some(root_log) = shared.get_extension::<ActionLog>() {
@@ -792,8 +813,115 @@ pub(crate) fn install_agent_infra(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use std::time::Duration;
+
     use super::*;
+    use crate::r#loop::config::ConversationStateMode;
+    use crate::r#loop::linger::LingerPolicy;
     use crate::provider::mock::MockProvider;
+
+    /// Finding-4 regression: an explicit non-`Option` value that equals the
+    /// library default must still win over a settings-derived base when its
+    /// presence flag is set. The old value-vs-default sentinel reverted it
+    /// back to the base value, silently discarding the explicit override.
+    #[test]
+    fn explicit_non_option_default_value_wins_when_present() {
+        let base = AgentLoopConfig {
+            schema_attempt_budget: 5,
+            auto_compact_keep_recent_turns: 20,
+            ..AgentLoopConfig::default()
+        };
+        let explicit = AgentLoopConfig {
+            // Both equal the library default (3 / 10) — the exact case the
+            // old sentinel misclassified as "unset".
+            schema_attempt_budget: AgentLoopConfig::default().schema_attempt_budget,
+            auto_compact_keep_recent_turns: AgentLoopConfig::default()
+                .auto_compact_keep_recent_turns,
+            ..AgentLoopConfig::default()
+        };
+        let merged = merge_agent_config(base, explicit, AgentConfigPresence::all());
+        assert_eq!(
+            merged.schema_attempt_budget, 3,
+            "explicit schema_attempt_budget=3 (the default) must win over base=5",
+        );
+        assert_eq!(
+            merged.auto_compact_keep_recent_turns, 10,
+            "explicit auto_compact_keep_recent_turns=10 (the default) must win over base=20",
+        );
+    }
+
+    /// Without a presence flag a non-`Option` field defers to the base —
+    /// the caller never set it, so the settings-derived value stands.
+    #[test]
+    fn unset_non_option_field_defers_to_base() {
+        let base = AgentLoopConfig {
+            schema_attempt_budget: 5,
+            ..AgentLoopConfig::default()
+        };
+        let explicit = AgentLoopConfig::default();
+        let merged = merge_agent_config(base, explicit, AgentConfigPresence::default());
+        assert_eq!(
+            merged.schema_attempt_budget, 5,
+            "no presence flag means the base (settings) value stands",
+        );
+    }
+
+    /// Finding-5 regression + completeness guard: a fully-explicit config
+    /// (every field non-default, all presence flags set) must overlay the
+    /// base in its entirety — including `prompt_command_timeout` and
+    /// `linger`, which the previous overlay omitted. This fails loudly if a
+    /// future `AgentLoopConfig` field is added without a matching overlay.
+    #[test]
+    fn fully_explicit_config_overlays_every_field() {
+        let base = AgentLoopConfig::default();
+        let explicit = AgentLoopConfig {
+            schema_attempt_budget: 9,
+            max_iterations: Some(42),
+            step_timeout: Some(Duration::from_secs(99)),
+            context_window_limit: Some(123_456),
+            auto_compact_threshold_pct: Some(77.0),
+            auto_compact_keep_recent_turns: 33,
+            schema_tool_name: "custom_output".to_owned(),
+            cache_key: Some("ck".to_owned()),
+            conversation_state: ConversationStateMode::ManualReplay,
+            server_compaction_threshold_tokens: Some(7_000),
+            output_schema: Some(serde_json::json!({"type": "object"})),
+            prompt_command_timeout: Some(Duration::from_secs(12)),
+            linger: Some(LingerPolicy {
+                deadline: Duration::from_secs(3),
+            }),
+        };
+        let merged = merge_agent_config(base, explicit.clone(), AgentConfigPresence::all());
+        assert_eq!(merged.schema_attempt_budget, explicit.schema_attempt_budget);
+        assert_eq!(merged.max_iterations, explicit.max_iterations);
+        assert_eq!(merged.step_timeout, explicit.step_timeout);
+        assert_eq!(merged.context_window_limit, explicit.context_window_limit);
+        assert_eq!(
+            merged.auto_compact_threshold_pct,
+            explicit.auto_compact_threshold_pct
+        );
+        assert_eq!(
+            merged.auto_compact_keep_recent_turns,
+            explicit.auto_compact_keep_recent_turns
+        );
+        assert_eq!(merged.schema_tool_name, explicit.schema_tool_name);
+        assert_eq!(merged.cache_key, explicit.cache_key);
+        assert_eq!(merged.conversation_state, explicit.conversation_state);
+        assert_eq!(
+            merged.server_compaction_threshold_tokens,
+            explicit.server_compaction_threshold_tokens
+        );
+        assert_eq!(merged.output_schema, explicit.output_schema);
+        assert_eq!(
+            merged.prompt_command_timeout, explicit.prompt_command_timeout,
+            "prompt_command_timeout must overlay onto the base (finding 5)",
+        );
+        assert_eq!(
+            merged.linger.is_some(),
+            explicit.linger.is_some(),
+            "linger must overlay onto the base (finding 5)",
+        );
+    }
 
     /// `install_agent_infra` anchors the session-wide [`ActionLogTree`]
     /// at the agent and registers the shared context's root [`ActionLog`]
@@ -832,6 +960,7 @@ mod tests {
                 envelope: envelope.clone(),
                 root_inbound: None,
                 cancel: root_cancel.clone(),
+                terminal_reclamation: true,
             },
         );
 
