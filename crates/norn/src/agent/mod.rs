@@ -3,6 +3,7 @@
 pub use crate::error::AgentError;
 
 pub(crate) mod assembly;
+mod build_support;
 pub mod builder;
 mod builder_setters;
 pub mod child_policy;
@@ -14,6 +15,7 @@ pub mod message_router;
 pub mod monitor;
 pub mod output;
 pub mod pending_messages;
+pub(crate) mod prompt_install;
 pub mod registry;
 pub mod result_channel;
 pub mod resume;

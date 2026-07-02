@@ -49,17 +49,19 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::agent::assembly::{
-    AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay, SystemPromptInstall,
-    ToolContextParts, apply_base_to_loop_context, assemble_tool_context, build_base_tool_registry,
+    AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay, ToolContextParts,
+    apply_base_to_loop_context, assemble_tool_context, build_base_tool_registry,
     collect_tool_definitions, effective_agent_config, install_agent_infra,
-    install_runtime_base_extensions, install_system_prompt, install_tool_catalog,
-    populate_loop_context, resolve_base_profile, resolve_runtime_overlay, resolve_working_dir,
-    restore_session_state, validate_workspace_root,
+    install_runtime_base_extensions, install_tool_catalog, populate_loop_context,
+    resolve_base_profile, resolve_runtime_overlay, resolve_working_dir, restore_session_state,
+    validate_workspace_root,
 };
-use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
+use crate::agent::build_support::{resolve_coordination, resolve_root_agent_id};
+use crate::agent::child_policy::ChildPolicy;
 use crate::agent::handle::ResolvedAgentInfo;
 use crate::agent::instance::Agent;
 use crate::agent::output::RunOutcome;
+use crate::agent::prompt_install::{SystemPromptInstall, install_system_prompt};
 use crate::agent::registry::AgentRegistry;
 use crate::agent::session_spec::SessionRequest;
 use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
@@ -255,57 +257,12 @@ impl AgentBuilder {
             ));
         }
         // Coordination envelope: required exactly when the agent-coordination
-        // runtime is wired (`.agent_registry(..)` makes `spawn_agent` / `fork`
-        // functional and creates the child-result channel), and rejected when
-        // it could only be silently ignored. Norn never assumes a default
-        // child policy or channel capacity.
-        let coordination = match (
+        // runtime is wired, rejected when it could only be silently ignored.
+        let coordination = resolve_coordination(
             self.agent_registry.take(),
             self.child_policy.take(),
             self.child_result_capacity,
-        ) {
-            (Some(agent_registry), Some(child_policy), Some(child_result_capacity)) => Some((
-                agent_registry,
-                CoordinationEnvelope {
-                    child_policy,
-                    child_result_capacity,
-                },
-            )),
-            (Some(_), child_policy, child_result_capacity) => {
-                let mut missing = Vec::new();
-                if child_policy.is_none() {
-                    missing.push(".child_policy(ChildPolicy { .. })");
-                }
-                if child_result_capacity.is_none() {
-                    missing.push(".child_result_capacity(<n>)");
-                }
-                return Err(invalid(format!(
-                    "agent coordination is wired (.agent_registry(..)) but the \
-                     coordination envelope is incomplete — set {} on the builder; \
-                     Norn never assumes a default child policy or channel capacity \
-                     (recommended starting envelope: MessagingScope::SiblingsAndParent, \
-                     remaining_depth 1, max_concurrent_children 32, \
-                     inbound_capacity 32, child_result_capacity 256)",
-                    missing.join(" and "),
-                )));
-            }
-            (None, None, None) => None,
-            (None, child_policy, child_result_capacity) => {
-                let mut orphaned = Vec::new();
-                if child_policy.is_some() {
-                    orphaned.push("child_policy");
-                }
-                if child_result_capacity.is_some() {
-                    orphaned.push("child_result_capacity");
-                }
-                return Err(invalid(format!(
-                    "{} set but agent coordination is not wired — the value would \
-                     be silently ignored; add .agent_registry(..) or remove the \
-                     coordination envelope",
-                    orphaned.join(" and "),
-                )));
-            }
-        };
+        )?;
 
         let working_dir = resolve_working_dir(self.working_dir.take())?;
         let workspace_root = validate_workspace_root(self.workspace_root.take())?;
@@ -567,35 +524,14 @@ impl AgentBuilder {
         loop_context.action_log = Some(Arc::clone(&action_log));
 
         // Root registry registration (D2): opt-in and effective only
-        // alongside `.agent_registry(..)`. The reservation mints the id, so
-        // the registered root entry and the running agent share one id;
-        // set without coordination it would be silently unregistered, so
-        // that combination fails loudly.
-        let agent_id = match (self.register_root.take(), coordination.as_ref()) {
-            (Some((path, role)), Some((agent_registry, envelope))) => {
-                let guard = AgentRegistry::reserve(
-                    agent_registry,
-                    path,
-                    role,
-                    model.clone(),
-                    None,
-                    envelope.child_policy.clone(),
-                    None,
-                )?;
-                let id = guard.id();
-                guard.confirm()?;
-                id
-            }
-            (Some(_), None) => {
-                return Err(invalid(
-                    "register_root is set but agent coordination is not wired — the \
-                     root entry would be silently unregistered; add .agent_registry(..) \
-                     or remove .register_root(..)"
-                        .to_string(),
-                ));
-            }
-            (None, _) => self.agent_id.unwrap_or_else(Uuid::new_v4),
-        };
+        // alongside `.agent_registry(..)`; the reservation mints the id so
+        // the registered root entry and the running agent share one id.
+        let agent_id = resolve_root_agent_id(
+            self.register_root.take(),
+            coordination.as_ref(),
+            &model,
+            self.agent_id,
+        )?;
 
         // Event channel: the builder owns the broadcast channel and the
         // root sender, and publishes the raw channel on the tool context
@@ -702,6 +638,7 @@ mod tests {
     use serde_json::Value;
 
     use super::*;
+    use crate::agent::child_policy::CoordinationEnvelope;
     use crate::agent::output::AgentStopReason;
     use crate::agent::session_spec::SessionSpec;
     use crate::integration::hooks::{Hook, HookOutcome, StopHook};

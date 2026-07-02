@@ -1,84 +1,48 @@
-//! Runtime wiring helpers added by NC-003 R3 and extended by NC-009.
+//! CLI-side runtime wiring that maps onto library [`AgentBuilder`] inputs.
 //!
-//! [`crate::runtime::build_runtime`] already threads
-//! [`norn::agent_loop::tokens::SimpleTokenEstimator`],
-//! [`norn::session::context_edit::ContextEdits`], retry policy, and event
-//! schemas onto the [`norn::agent_loop::loop_context::LoopContext`]. This
-//! module fills the remaining gaps:
+//! After R1 collapsed runtime assembly onto the single library-owned
+//! [`AgentBuilder`](norn::agent::AgentBuilder), this module holds only the
+//! genuinely CLI-side helpers that translate the parsed CLI surface into
+//! builder inputs or read off the assembled
+//! [`AgentParts`](norn::agent::AgentParts):
 //!
-//! 1. [`DiagnosticCollector`] construction — produced as an `Arc` and
-//!    carried on [`crate::runtime::bundle::RuntimeBundle`] for draining after
-//!    `run_agent_step`. The same `Arc` is wired onto
-//!    [`norn::agent_loop::loop_context::LoopContext::diagnostics`] and
-//!    published on the [`norn::tool::registry::ToolRegistry`]'s shared
-//!    [`norn::tool::context::ToolContext`] via `insert_extension`
-//!    (NC-009 R1) so runtime post-validate checks and tool implementations
-//!    report into the same sink the CLI drains.
-//! 2. [`iteration_monitor_from_profile`] — parses the optional
-//!    `[iteration_monitor]` section out of [`norn::profile::Profile::settings`]
-//!    via a CLI-side serde-derived mirror struct, since libnorn's
-//!    [`IterationMonitorConfig`] is not Serde-derived.
-//! 3. [`length_limit_from_profile`] — parses the optional
-//!    `[tool_config.write]` section into a [`LengthLimit`] for
-//!    [`WriteTool::with_length_limit`], applies a CLI `-c
-//!    write.max_code_lines=N` override that takes precedence over the
-//!    profile value, and returns [`LengthLimit::none`] when neither is
-//!    configured (NC-009 R2 / R3).
+//! 1. [`cli_coordination_envelope`] — the CLI's deliberate
+//!    [`CoordinationEnvelope`] (child policy + channel capacities) each
+//!    driver passes to `.child_policy()` / `.child_result_capacity()` /
+//!    `.inbound_capacity()`.
+//! 2. [`length_limit_from_profile`] / [`build_write_tool`] — resolve the
+//!    profile `[tool_config.write]` section and the `-c
+//!    write.max_code_lines=N` override into a length-limited [`WriteTool`]
+//!    the driver overlays via `.tool(..)`.
+//! 3. [`build_slash_state_from_bundle`] / [`build_slash_state_with_schema`]
+//!    — build the slash-command surface from the decoupled
+//!    [`SlashStateInputs`] read off `AgentParts`.
 
-use std::path::{Path, PathBuf};
 use std::sync::Arc;
-
-use parking_lot::RwLock;
 
 use norn::agent::child_policy::{
     ChildPolicy, CoordinationEnvelope, DelegationBudget, MessagingScope,
 };
-use norn::agent::message_router::MessageRouter;
-use norn::agent::registry::AgentRegistry;
-use norn::agent::result_channel::ChildResultSender;
-use norn::agent_loop::inbound::{InboundChannel, inbound_channel};
-use norn::config::NornSettings;
-use norn::integration::DiagnosticCollector;
-use norn::integration::hooks::HookRegistry;
-
 use norn::agent_loop::commands::SlashCommandRegistry;
-use norn::agent_loop::iteration::IterationMonitorConfig;
-use norn::agent_loop::runner::ToolExecutor;
 use norn::profile::Profile;
-
-use norn::internal::extraction::SharedProvider;
-use norn::provider::traits::Provider;
 use norn::session::store::EventStore;
-use norn::skill::SkillCatalog;
 use norn::tool::registry::ToolRegistry;
-use norn::tools::agent::AgentToolInfra;
-use norn::tools::skill::SkillToolConfig;
 use norn::tools::write::{LengthLimit, WriteTool};
 use serde::Deserialize;
 use serde_json::Value;
-use uuid::Uuid;
-
-use super::bundle::RuntimeBundle;
-
-use crate::cli::Cli;
-
-use crate::commands::slash::state::SlashStateSeed;
-
-use crate::commands::slash::{SlashState, build_slash_registry};
-
-use crate::config::parse_kv;
 
 use crate::cli::BuildError;
+use crate::cli::Cli;
+use crate::commands::slash::state::SlashStateSeed;
+use crate::commands::slash::{SlashState, build_slash_registry};
+use crate::config::AppliedOverrides;
 use crate::config::ConfigOverrides;
-
 use crate::config::parse_inline_or_file;
-
+use crate::config::parse_kv;
 use crate::config::session_data_dir;
 
 #[cfg(test)]
 mod inline_tests;
-#[cfg(test)]
-mod wiring_tests;
 
 /// The CLI's deliberate [`CoordinationEnvelope`]: the child policy and
 /// channel capacities every agent spawned from a CLI-assembled runtime
@@ -114,329 +78,50 @@ pub fn cli_coordination_envelope() -> CoordinationEnvelope {
     }
 }
 
-/// Register the standard tool set into a [`ToolRegistry`].
+/// The `(flag, name)` pairs from `--allowed-tools` / `--disallowed-tools`
+/// that match no physically-registered tool in the assembled agent. Pure
+/// core of [`warn_unmatched_tool_flag_names`], split out for testing.
 ///
-/// Install [`AgentToolInfra`] on the registry's shared
-/// [`norn::tool::context::ToolContext`] so the four agent-coordination
-/// tools (`spawn_agent`, `fork`, `signal_agent`,
-/// `close_agent`) resolve their runtime infrastructure instead of
-/// erroring with a typed `MissingExtension` error naming
-/// `AgentToolInfra`, and publish the CLI's deliberate
-/// [`CoordinationEnvelope`] (`envelope`) so the spawn/fork launch paths
-/// can read the child policy — without it every spawn/fork fails with a
-/// typed `MissingExtension` naming the envelope.
-///
-/// `build_runtime` is synchronous and runs before the provider is
-/// constructed, so this step is split out: callers invoke it after
-/// `build_provider` succeeds, passing the shared `Arc<dyn Provider>`
-/// alongside the session's [`EventStore`] and the root agent's id.
-///
-/// `tool_registry` is the same `Arc<ToolRegistry>` that the root agent
-/// dispatches through. Spawned sub-agents look up `Tool` implementations
-/// from this registry and dispatch them against their own per-child
-/// `ToolContext` (the Path 3 identity fix).
-///
-/// The CLI's root agent has a real inbound channel (W3.7): this function
-/// creates it, sized from the envelope's `child_policy.inbound_capacity`
-/// (never an invented constant — the same buffer every child's inbound
-/// channel uses), registers its sender in the [`MessageRouter`] under the
-/// root's id, and returns the receiver half. The caller — the driver
-/// that runs root steps — MUST thread the returned [`InboundChannel`]
-/// into every root
-/// [`AgentStepRequest::inbound`](norn::agent_loop::runner::AgentStepRequest),
-/// so a child granted `parent_only` or `siblings_and_parent` calling
-/// `signal_agent(to: "parent")` drains into the root's loop through the
-/// same framed `<agent_message>` injection path as every other recipient.
-/// This mirrors what `AgentBuilder::build` does on the library surface
-/// when `.inbound_capacity(..)` is configured.
-///
-/// **Route ownership**: the root's route is registered here, during
-/// assembly — before the root's first step can run — and is never
-/// explicitly deregistered. Like the library root (see
-/// `install_agent_infra` in `norn::agent`), the root has no completion
-/// wrapper: its route is process-lifetime, living exactly as long as the
-/// driver that owns the returned receiver. When the driver drops the
-/// receiver at teardown, the router detects the closed channel lazily on
-/// the next delivery attempt and removes the stale route
-/// (`RouteError::ChannelClosed`). Single ownership: nothing else ever
-/// registers or removes the root's route.
-///
-/// Returns `None` in exactly two states, neither of which a production
-/// CLI path produces: the registry exposes no shared context (no
-/// infrastructure is installed at all — there is no router for a route
-/// to be missing from), or the envelope carries a zero
-/// `inbound_capacity` (rejected by the library builder and never emitted
-/// by [`cli_coordination_envelope`]; error-logged here instead of
-/// panicking inside the channel constructor). Every CLI assembly path
-/// that installs the agent tools therefore also wires the root route.
-#[must_use = "dropping the root inbound channel kills the root's route: child \
-              signal_agent(to: \"parent\") sends would fail as ChannelClosed \
-              instead of draining into the root's steps — thread it into \
-              AgentStepRequest.inbound"]
-pub fn install_agent_tool_infra(
+/// The reference is [`ToolRegistry::is_registered`] — the *physical*
+/// registration, not the gated [`ToolRegistry::names`] view — so a
+/// correctly denied tool (removed from the available set by
+/// `--disallowed-tools`) is never reported: only names matching no real
+/// tool at all appear.
+fn unmatched_tool_flag_names<'a>(
     registry: &ToolRegistry,
-    provider: Arc<dyn Provider>,
-    event_store: Arc<EventStore>,
-    agent_id: Uuid,
-    tool_registry: Arc<ToolRegistry>,
-    agent_registry: Arc<RwLock<AgentRegistry>>,
-    envelope: CoordinationEnvelope,
-) -> Option<InboundChannel> {
-    let shared = registry.shared_context()?;
-    shared.insert_extension(Arc::new(SharedProvider(Arc::clone(&provider))));
-    let inbound_capacity = envelope.child_policy.inbound_capacity;
-    shared.insert_extension(Arc::new(envelope));
-    let router = Arc::new(MessageRouter::new());
-    // The root's inbound channel, sized from the envelope exactly as
-    // every child's is. The bounded-channel constructor requires a
-    // non-zero capacity; the library builder rejects a zero-capacity
-    // envelope at build time and `cli_coordination_envelope` pins 32,
-    // so the guard below never fires on a production path — it exists
-    // so a malformed envelope degrades to the honest pre-W3.7 state
-    // (NotRouted, error-logged) instead of panicking mid-assembly.
-    // The envelope was already published above even in the degraded
-    // case — safe, because spawn/fork grant validation independently
-    // rejects inbound_capacity == 0 (ChildPolicy schema minimum 1 and
-    // grant_for_child), so no child channel is ever built from the
-    // malformed value.
-    let root_inbound_rx = if inbound_capacity == 0 {
-        tracing::error!(
-            root_id = %agent_id,
-            "coordination envelope carries child_policy.inbound_capacity = 0; \
-             refusing to create the root inbound channel — child→root \
-             signal_agent will fail with the typed NotRouted reason",
-        );
-        None
-    } else {
-        let (root_inbound_tx, rx) = inbound_channel(inbound_capacity);
-        router.register(agent_id, root_inbound_tx);
-        Some(rx)
-    };
-    let infra = AgentToolInfra {
-        registry: agent_registry,
-        router,
-        pending_messages: Arc::new(norn::agent::PendingAgentMessages::from_events(
-            &event_store.events(),
-        )),
-        provider,
-        event_store,
-        agent_id,
-        parent_id: None,
-        grant: None,
-        tool_registry: Some(tool_registry),
-    };
-    shared.insert_extension(Arc::new(infra));
-    root_inbound_rx
-}
-
-/// Stamp the installed root agent identity and pending-message store onto
-/// the loop context.
-///
-/// [`install_agent_tool_infra`] publishes the authoritative
-/// [`AgentToolInfra`] on the registry's shared tool context. The runner
-/// cannot read tool-context extensions directly, so root drivers call this
-/// after installation to let queued `signal_agent` messages drain into the
-/// next root step.
-pub fn install_pending_agent_messages_for_loop(
-    registry: &ToolRegistry,
-    loop_context: &mut norn::agent_loop::loop_context::LoopContext,
-) {
-    let Some(shared) = registry.shared_context() else {
-        return;
-    };
-    let Some(infra) = shared.get_extension::<AgentToolInfra>() else {
-        return;
-    };
-    loop_context.agent_id = Some(infra.agent_id);
-    loop_context.pending_agent_messages = Some(Arc::clone(&infra.pending_messages));
-}
-
-/// Install a [`ChildResultSender`] on the registry's shared
-/// [`norn::tool::context::ToolContext`] so fork and spawn tools can
-/// send completion results to the orchestrator's outer loop.
-pub fn install_child_result_sender(registry: &ToolRegistry, sender: ChildResultSender) {
-    let Some(shared) = registry.shared_context() else {
-        return;
-    };
-    shared.insert_extension(Arc::new(sender));
-}
-
-/// Declare delivery-anchored reclamation of finished children on the
-/// registry's shared [`norn::tool::context::ToolContext`] — the
-/// **headless** (print / non-TUI) driver's half of the reclamation
-/// ownership split.
-///
-/// Installs the [`norn::tools::agent::ReclaimOnResultDelivery`] marker
-/// via [`norn::runtime_init::install_terminal_reclamation`]: once a
-/// spawned or forked child's result has been delivered through the
-/// child-result channel, the launch wrapper reclaims the child's
-/// terminal registry entry and the parent-held handle, so headless runs
-/// do not pin one event store per finished child.
-///
-/// The TUI driver must **not** call this — its agent status panel
-/// displays terminal entries through a hold window and reclaims them
-/// itself; installing the marker there would race the hold window into
-/// nonexistence. `build_runtime` is shared between both drivers, which
-/// is why this lives in per-driver wiring instead.
-pub fn install_headless_reclamation(registry: &ToolRegistry) {
-    let Some(shared) = registry.shared_context() else {
-        return;
-    };
-    norn::runtime_init::install_terminal_reclamation(&shared);
-}
-
-/// Install the shared agent event broadcast channel on the tool
-/// registry's shared context so fork/spawn tools can create child
-/// [`AgentEventSender`](norn::provider::AgentEventSender) instances.
-///
-/// The extension holds an **owned** `Sender` clone, so the broadcast
-/// channel never closes while the registry's shared context is alive
-/// (REVIEW C1). Consumers must therefore not await channel closure to
-/// detect end-of-stream — the print renderer uses the explicit
-/// [`StreamRendererHandle::finish`](crate::print::StreamRendererHandle::finish)
-/// shutdown signal instead.
-pub fn install_shared_agent_event_channel(
-    registry: &ToolRegistry,
-    tx: tokio::sync::broadcast::Sender<norn::provider::AgentEvent>,
-) {
-    let Some(shared) = registry.shared_context() else {
-        return;
-    };
-    shared.insert_extension(Arc::new(norn::provider::SharedAgentEventChannel(tx)));
-}
-
-/// NH-006 R8 / C60: fire every registered
-/// [`SessionLifecycleHook::on_session_start`](norn::integration::hooks::SessionLifecycleHook::on_session_start)
-/// at the moment the CLI driver opens a session, before the first
-/// `run_agent_step` call. `hooks` is the same `Arc<HookRegistry>` that
-/// [`crate::runtime::build_runtime`] installs on
-/// [`norn::agent_loop::loop_context::LoopContext::hooks`]; passing `None`
-/// is a no-op so the call site can invoke this unconditionally.
-pub async fn run_session_start(hooks: Option<&Arc<HookRegistry>>, session_id: &str) {
-    if let Some(h) = hooks {
-        h.run_session_start(session_id).await;
-    }
-}
-
-/// NH-006 R8 / C61: counterpart to [`run_session_start`] — fires every
-/// registered
-/// [`SessionLifecycleHook::on_session_end`](norn::integration::hooks::SessionLifecycleHook::on_session_end)
-/// at session teardown (the driver's explicit cleanup path, since a
-/// drop guard cannot `.await`). Observational; the return value of any
-/// hook is ignored.
-pub async fn run_session_end(hooks: Option<&Arc<HookRegistry>>, session_id: &str) {
-    if let Some(h) = hooks {
-        h.run_session_end(session_id).await;
-    }
-}
-
-/// Construct a fresh [`DiagnosticCollector`] shared via `Arc`.
-///
-/// Returned as an `Arc` so the CLI can publish the same collector onto
-/// [`crate::runtime::bundle::RuntimeBundle`], onto
-/// [`norn::agent_loop::loop_context::LoopContext::diagnostics`], and onto
-/// the [`norn::tool::context::ToolContext`] for runtime validators.
-#[must_use]
-pub fn build_diagnostic_collector() -> Arc<DiagnosticCollector> {
-    DiagnosticCollector::shared()
-}
-
-/// Build the seven-tier skill search-path list per
-/// `norn-skills` DESIGN.md §D1, with any `settings.skills.search_paths`
-/// entries prepended in source order.
-///
-/// Default ordering (first entry searched first):
-///
-/// 1. `settings.skills.search_paths[*]` (relative entries are joined
-///    onto `cwd`).
-/// 2. `{cwd}/.norn/skills/` — project Norn tier (highest priority of
-///    the defaults).
-/// 3. `{cwd}/.agents/skills/` — cross-client project tier.
-/// 4. `{cwd}/.claude/skills/` — Claude Code project tier.
-/// 5. `~/.norn/skills/` — user Norn tier.
-/// 6. `~/.agents/skills/` — cross-client user tier.
-/// 7. `~/.claude/skills/` — Claude Code user tier.
-/// 8. `{cwd}/.meridian/skills/` — Meridian-integrated workspaces
-///    (lowest priority).
-///
-/// Tiers whose home-dir resolution fails (CI/chroot environments
-/// without a `HOME`) are silently omitted; the project tiers always
-/// resolve because `cwd` is known.
-#[must_use]
-pub fn build_skill_search_paths(settings: &NornSettings, cwd: &Path) -> Vec<PathBuf> {
-    use crate::config::paths::{
-        project_agents_skills_dir, project_claude_skills_dir, project_meridian_skills_dir,
-        project_skills_dir, user_agents_skills_dir, user_claude_skills_dir, user_skills_dir,
-    };
-
-    let mut paths: Vec<PathBuf> = Vec::new();
-
-    if let Some(skills) = settings.skills.as_ref()
-        && let Some(entries) = skills.search_paths.as_ref()
-    {
-        for entry in entries {
-            paths.push(resolve_search_path(cwd, entry));
+    applied: &'a AppliedOverrides,
+) -> Vec<(&'static str, &'a str)> {
+    let mut unmatched = Vec::new();
+    for (flag, names) in [
+        ("--allowed-tools", &applied.allowed_tools),
+        ("--disallowed-tools", &applied.disallowed_tools),
+    ] {
+        for name in names {
+            if !registry.is_registered(name) {
+                unmatched.push((flag, name.as_str()));
+            }
         }
     }
-
-    paths.push(project_skills_dir(cwd));
-    paths.push(project_agents_skills_dir(cwd));
-    paths.push(project_claude_skills_dir(cwd));
-    if let Some(dir) = user_skills_dir() {
-        paths.push(dir);
-    }
-    if let Some(dir) = user_agents_skills_dir() {
-        paths.push(dir);
-    }
-    if let Some(dir) = user_claude_skills_dir() {
-        paths.push(dir);
-    }
-    paths.push(project_meridian_skills_dir(cwd));
-
-    paths
+    unmatched
 }
 
-/// Scan the supplied search paths and return a populated
-/// [`SkillCatalog`] wrapped in `Arc`.
+/// Emit a visible stderr warning for every `--allowed-tools` /
+/// `--disallowed-tools` name that matches no tool in the assembled agent.
 ///
-/// `SkillCatalog::scan` silently skips missing directories (logged at
-/// `tracing::debug!` level) so passing the full seven-tier list when
-/// only one tier exists is the intended pattern.
-#[must_use]
-pub fn build_skill_catalog(paths: &[PathBuf]) -> Arc<SkillCatalog> {
-    Arc::new(SkillCatalog::scan(paths))
-}
-
-/// Resolve the [`SkillToolConfig`] from the merged settings'
-/// `tools.skill` section.
-///
-/// An absent section — or an absent `shell_execution` key — defers to
-/// the tool's own documented default (shell execution **enabled**, per
-/// [`SkillToolConfig::default`]); `false` disables skill-authored shell
-/// expansion, replacing every shell placeholder with the
-/// policy-disabled marker.
-#[must_use]
-pub fn skill_tool_config_from_settings(settings: &NornSettings) -> SkillToolConfig {
-    let shell_execution = settings
-        .tools
-        .as_ref()
-        .and_then(|tools| tools.skill.as_ref())
-        .and_then(|skill| skill.shell_execution);
-    match shell_execution {
-        Some(shell_execution) => SkillToolConfig { shell_execution },
-        None => SkillToolConfig::default(),
-    }
-}
-
-/// Resolve a settings-supplied path string against the working
-/// directory. Absolute paths are returned verbatim; relative paths are
-/// joined onto `cwd`.
-fn resolve_search_path(cwd: &Path, raw: &str) -> PathBuf {
-    let candidate = PathBuf::from(raw);
-    if candidate.is_absolute() {
-        candidate
-    } else {
-        cwd.join(candidate)
+/// Tool gating is exact-name, so a partial typo (`--allowed-tools
+/// read,serch` silently narrows to `read`) or a wrong-case name would
+/// otherwise enforce a different tool set than the user asked for with no
+/// feedback. Run against the assembled agent's registry after `build()`.
+/// It is a warning rather than a hard error because a name may legitimately
+/// match a tool an `--extension` MCP server registers later.
+pub fn warn_unmatched_tool_flag_names(registry: &ToolRegistry, applied: &AppliedOverrides) {
+    for (flag, name) in unmatched_tool_flag_names(registry, applied) {
+        eprintln!(
+            "norn: warning: {flag} name '{name}' matches no registered tool \
+             (names are case-sensitive and matched exactly); it takes effect \
+             only if a tool with that exact name is registered later (e.g. by \
+             an --extension MCP server)",
+        );
     }
 }
 
@@ -490,9 +175,10 @@ pub fn length_limit_from_profile(
 /// profile's `[tool_config.write]` section and the `-c
 /// write.max_code_lines=N` override carried on [`ConfigOverrides`].
 ///
-/// Returned tool is ready to register with [`norn::tool::registry::ToolRegistry`].
-/// Profile glob overrides are preserved when the CLI override is set;
-/// the CLI override only replaces `LengthLimit::default`.
+/// The returned tool is overlaid onto the library-assembled default
+/// `WriteTool` via [`AgentBuilder::tool`](norn::agent::AgentBuilder::tool);
+/// [`ToolRegistry::register`] keys on the tool name, so the configured
+/// tool replaces the default-limit one.
 ///
 /// # Errors
 ///
@@ -505,132 +191,34 @@ pub fn build_write_tool(
     Ok(WriteTool::with_length_limit(limit))
 }
 
-/// Parse the optional `[iteration_monitor]` section from
-/// [`Profile::settings`] into a typed [`IterationMonitorConfig`].
-///
-/// Returns [`None`] when the profile does not contain an
-/// `iteration_monitor` key. Returns [`BuildError::Argument`] when the
-/// value is present but cannot be deserialised into the expected shape.
-///
-/// # Errors
-///
-/// Propagates serde failures as [`BuildError::Argument`] with the
-/// underlying message so the caller surfaces them as exit code 2.
-pub fn iteration_monitor_from_profile(
-    profile: &Profile,
-) -> Result<Option<IterationMonitorConfig>, BuildError> {
-    let Some(raw) = profile.settings.get("iteration_monitor") else {
-        return Ok(None);
-    };
-    let spec: IterationMonitorSpec = serde_json::from_value(raw.clone()).map_err(|err| {
-        BuildError::Argument(format!(
-            "invalid [iteration_monitor] profile section: {err} (expected fields: \
-             context_window_tokens, warn_threshold_pct, handoff_threshold_pct, \
-             handoff_guidance, failure_repeat_window, hedging_patterns)",
-        ))
-    })?;
-    Ok(Some(spec.into_config()))
+/// The assembled inputs a slash-command surface reads off an agent
+/// bundle: the gated tool registry, the resolved model, and the resolved
+/// service tier / reasoning effort. Decoupled from any concrete assembly
+/// bundle so the assembled [`AgentParts`](norn::agent::AgentParts) feed the
+/// same builder.
+#[derive(Clone, Copy)]
+pub struct SlashStateInputs<'a> {
+    /// The gated tool registry whose names/descriptions populate the
+    /// slash `/tools` surface.
+    pub registry: &'a ToolRegistry,
+    /// The resolved model identifier shown in the status surface and
+    /// swapped by `/model`.
+    pub model: &'a str,
+    /// The resolved service tier, when set.
+    pub service_tier: Option<norn::provider::request::ServiceTier>,
+    /// The resolved reasoning effort, when set.
+    pub reasoning_effort: Option<norn::provider::request::ReasoningEffort>,
 }
 
-/// CLI-side mirror of [`IterationMonitorConfig`] used for deserialisation
-/// only. Carries the same field set as the libnorn struct but adds the
-/// `Deserialize` derive that libnorn cannot ship without taking serde as
-/// a dependency.
-#[derive(Debug, Deserialize)]
-struct IterationMonitorSpec {
-    context_window_tokens: u64,
-    warn_threshold_pct: f64,
-    handoff_threshold_pct: f64,
-    handoff_guidance: String,
-    failure_repeat_window: usize,
-    #[serde(default)]
-    hedging_patterns: Vec<String>,
-}
-
-impl IterationMonitorSpec {
-    fn into_config(self) -> IterationMonitorConfig {
-        IterationMonitorConfig {
-            context_window_tokens: self.context_window_tokens,
-            warn_threshold_pct: self.warn_threshold_pct,
-            handoff_threshold_pct: self.handoff_threshold_pct,
-            handoff_guidance: self.handoff_guidance,
-            failure_repeat_window: self.failure_repeat_window,
-            hedging_patterns: self.hedging_patterns,
-        }
-    }
-}
-
-/// Build a [`ToolContext`] pre-loaded with the diagnostics post-validation
-/// check and `DiagnosticInfra` extension.
-///
-/// The returned context should be set on the [`ToolRegistry`] via
-/// [`ToolRegistry::with_context`] or [`ToolRegistry::set_context`] BEFORE
-/// other extensions are installed (they go through `insert_extension` on
-/// the same `Arc`).
-///
-/// LD-015 R3: when the caller supplies an `lsp_workspace` and/or
-/// `lsp_backend`, those slots are forwarded to
-/// [`build_diagnostic_infra`] so the post-check pipeline gets a fast
-/// LSP path before falling back to the adapter-subprocess cascade. The
-/// TUI driver builds a single `Arc<LspWorkspace>` at startup and threads
-/// it through `RuntimeInputs` so every agent step queries the same
-/// language-server processes. `None` for either slot keeps the
-/// corresponding feature dark — graceful CO5 degradation.
-pub fn build_tool_context_with_diagnostics(
-    workspace_root: &std::path::Path,
-    working_dir: norn::tool::context::SharedWorkingDir,
-    lsp_backend: Option<Arc<dyn norn::tools::lsp::LspBackend>>,
-    lsp_workspace: Option<&norn::tools::lsp::LspWorkspace>,
-) -> norn::tool::context::ToolContext {
-    use norn::tools::diagnostics::{DiagnosticsPostCheck, build_diagnostic_infra};
-
-    let infra = build_diagnostic_infra(workspace_root, lsp_backend, lsp_workspace);
-    let mut ctx = norn::tool::context::ToolContext::with_working_dir(working_dir);
-    ctx.insert_extension(Arc::new(infra));
-    ctx.post_checks.push(Box::new(DiagnosticsPostCheck));
-    ctx
-}
-
-/// Install an [`ActionLog`](norn::session::action_log::ActionLog) on the
-/// registry's shared [`norn::tool::context::ToolContext`] and the
-/// [`norn::agent_loop::loop_context::LoopContext`] so the `action_log` tool
-/// and the loop's dispatch recording share one ledger.
-///
-/// The log is constructed with the loop context's **live**
-/// [`norn::tool::context::SharedWorkingDir`] handle (the same one bash's
-/// `cd` parsing updates), so model-supplied relative paths resolve
-/// against the agent's working directory rather than the process CWD.
-///
-/// Must be called after `open_session` (the event store does not exist at
-/// `build_runtime` time). On `--resume` / `--fork`, `store` already
-/// contains the replayed events: [`norn::agent::rebuild_action_log`]
-/// replays them so the resumed session's action ledger (and derived
-/// mutation ledger) is queryable instead of starting empty. A fresh
-/// store has no events, making the rebuild a no-op.
-pub fn install_action_log(
-    registry: &norn::tool::registry::ToolRegistry,
-    store: &Arc<EventStore>,
-    loop_context: &mut norn::agent_loop::loop_context::LoopContext,
-) {
-    let action_log = Arc::new(norn::session::action_log::ActionLog::with_working_dir(
-        Arc::clone(store),
-        loop_context.working_dir.clone(),
-    ));
-    norn::agent::rebuild_action_log(&action_log, &store.events());
-    if let Some(ctx) = registry.shared_context() {
-        ctx.insert_extension(Arc::clone(&action_log));
-    }
-    loop_context.action_log = Some(action_log);
-}
-
-/// Build a [`SlashState`] and [`SlashCommandRegistry`] from a completed runtime bundle.
+/// Build a [`SlashState`] and [`SlashCommandRegistry`] from the assembled
+/// slash inputs.
 pub fn build_slash_state_from_bundle(
     cli: &Cli,
-    bundle: &RuntimeBundle,
+    inputs: SlashStateInputs<'_>,
     store: Arc<EventStore>,
     session_id: Option<String>,
 ) -> (SlashState, SlashCommandRegistry) {
-    build_slash_state_inner(cli, bundle, store, session_id, None)
+    build_slash_state_inner(cli, inputs, store, session_id, None)
 }
 
 /// Variant that accepts a pre-parsed output schema, avoiding a
@@ -638,26 +226,26 @@ pub fn build_slash_state_from_bundle(
 /// `--output-schema` flag (e.g. the print-mode orchestrator).
 pub fn build_slash_state_with_schema(
     cli: &Cli,
-    bundle: &RuntimeBundle,
+    inputs: SlashStateInputs<'_>,
     store: Arc<EventStore>,
     session_id: Option<String>,
     output_schema: Option<Value>,
 ) -> (SlashState, SlashCommandRegistry) {
-    build_slash_state_inner(cli, bundle, store, session_id, output_schema)
+    build_slash_state_inner(cli, inputs, store, session_id, output_schema)
 }
 
 fn build_slash_state_inner(
     cli: &Cli,
-    bundle: &RuntimeBundle,
+    inputs: SlashStateInputs<'_>,
     store: Arc<EventStore>,
     session_id: Option<String>,
     output_schema_override: Option<Value>,
 ) -> (SlashState, SlashCommandRegistry) {
-    let tools: Vec<(String, String)> = bundle
+    let tools: Vec<(String, String)> = inputs
         .registry
         .names()
         .filter_map(|name| {
-            bundle
+            inputs
                 .registry
                 .get(name)
                 .map(|tool| (tool.name().to_owned(), tool.description().to_owned()))
@@ -669,9 +257,9 @@ fn build_slash_state_inner(
         .or_else(|| parse_output_schema_for_state(cli.output_schema.as_deref()));
 
     let seed = SlashStateSeed {
-        model: bundle.model.clone(),
-        service_tier: bundle.loop_context.service_tier,
-        reasoning_effort: bundle.loop_context.reasoning_effort,
+        model: inputs.model.to_owned(),
+        service_tier: inputs.service_tier,
+        reasoning_effort: inputs.reasoning_effort,
         output_schema,
         session_name: cli.session_name.clone(),
         session_id,
@@ -685,6 +273,7 @@ fn build_slash_state_inner(
     let registry = build_slash_registry(&state, None);
     (state, registry)
 }
+
 fn parse_variable_pairs(raw: &[String]) -> Vec<(String, String)> {
     raw.iter()
         .filter_map(|pair| match parse_kv(pair) {

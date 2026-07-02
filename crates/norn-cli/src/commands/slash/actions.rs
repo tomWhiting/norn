@@ -11,15 +11,15 @@
 //! [`ContextEdits::auto_compact_keeping_recent_turns`](norn::session::context_edit::ContextEdits::auto_compact_keeping_recent_turns):
 //! count assistant turns, locate the cut index that retains the most
 //! recent `keep` turns, then estimate the tokens that will be freed by
-//! summing each superseded event's content through the bundle's
+//! summing each superseded event's content through the loop context's
 //! [`TokenEstimator`](norn::agent_loop::tokens::TokenEstimator).
 
 use std::sync::Arc;
 use std::sync::atomic::Ordering;
 
+use norn::agent_loop::loop_context::LoopContext;
 use norn::session::store::EventStore;
 
-use crate::runtime::RuntimeBundle;
 use crate::session::SessionPersistError;
 
 use super::state::SlashState;
@@ -43,8 +43,8 @@ pub enum CompactOutcome {
     /// The store did not have enough assistant turns to compact.
     Nothing,
     /// Compaction was requested but `LoopContext::context_edits` is not
-    /// installed — should not happen with a runtime built via
-    /// [`crate::runtime::build_runtime`], which always wires
+    /// installed — should not happen with an agent assembled through
+    /// `AgentBuilder`, whose `load_runtime_base` always wires
     /// [`ContextEdits`](norn::session::context_edit::ContextEdits).
     ContextEditsUnavailable,
 }
@@ -85,23 +85,23 @@ impl CompactOutcome {
 /// Returns [`SessionPersistError`] when appending the `Compaction` event
 /// through `auto_compact_keeping_recent_turns` fails.
 pub fn apply_compact_request(
-    bundle: &mut RuntimeBundle,
+    keep: usize,
+    loop_context: &mut LoopContext,
     store: &Arc<EventStore>,
     state: &SlashState,
 ) -> Result<Option<CompactOutcome>, SessionPersistError> {
     if !state.compact_requested.swap(false, Ordering::Relaxed) {
         return Ok(None);
     }
-    let keep = bundle.agent_config.auto_compact_keep_recent_turns;
     let Some(estimate) = norn::agent_loop::estimate_manual_compaction(
         store,
         keep,
-        bundle.loop_context.token_estimator.as_deref(),
+        loop_context.token_estimator.as_deref(),
     ) else {
         return Ok(Some(CompactOutcome::Nothing));
     };
 
-    let Some(edits) = bundle.loop_context.context_edits.as_mut() else {
+    let Some(edits) = loop_context.context_edits.as_mut() else {
         return Ok(Some(CompactOutcome::ContextEditsUnavailable));
     };
 
@@ -131,17 +131,31 @@ pub fn apply_clear_request(state: &SlashState) -> bool {
 mod tests {
     use std::path::PathBuf;
 
-    use clap::Parser;
+    use norn::agent::{AgentBuilder, AgentParts};
+    use norn::provider::mock::MockProvider;
+    use norn::provider::traits::Provider;
     use norn::session::events::{EventBase, EventUsage, SessionEvent};
     use norn::session::store::EventStore;
 
-    use crate::cli::Cli;
     use crate::commands::slash::state::{SlashState, SlashStateSeed};
-    use crate::runtime::RuntimeInputs;
-    use crate::runtime::build_runtime;
     use crate::session::{CreateSessionOptions, SessionManager, session_file_path};
 
     use super::*;
+
+    /// Assemble a headless agent through the library builder and hand back
+    /// its parts, so the compact tests read the same
+    /// `auto_compact_keep_recent_turns`, `token_estimator`, and
+    /// `context_edits` the print orchestrator's `AgentParts` carry.
+    fn built_parts() -> AgentParts {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        AgentBuilder::new(provider)
+            .model("gpt-x")
+            .working_dir(std::env::temp_dir())
+            .load_runtime_base()
+            .build()
+            .expect("build succeeds")
+            .into_parts()
+    }
 
     /// Open a fresh sink-backed session for the compact regression
     /// tests, mirroring what the orchestrator gets from `open_session`.
@@ -197,27 +211,31 @@ mod tests {
     #[test]
     fn compact_flag_not_set_returns_none() {
         let store = Arc::new(EventStore::new());
-        let mut bundle = build_runtime(
-            &Cli::try_parse_from(["norn"]).unwrap(),
-            RuntimeInputs::default(),
+        let mut parts = built_parts();
+        let state = make_state(Arc::clone(&store));
+        let outcome = apply_compact_request(
+            parts.config.auto_compact_keep_recent_turns,
+            &mut parts.loop_context,
+            &store,
+            &state,
         )
         .unwrap();
-        let state = make_state(Arc::clone(&store));
-        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
         assert!(outcome.is_none());
     }
 
     #[test]
     fn compact_on_empty_store_reports_nothing() {
         let store = Arc::new(EventStore::new());
-        let mut bundle = build_runtime(
-            &Cli::try_parse_from(["norn"]).unwrap(),
-            RuntimeInputs::default(),
-        )
-        .unwrap();
+        let mut parts = built_parts();
         let state = make_state(Arc::clone(&store));
         state.compact_requested.store(true, Ordering::Relaxed);
-        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
+        let outcome = apply_compact_request(
+            parts.config.auto_compact_keep_recent_turns,
+            &mut parts.loop_context,
+            &store,
+            &state,
+        )
+        .unwrap();
         assert!(matches!(outcome, Some(CompactOutcome::Nothing)));
         assert!(!state.compact_requested.load(Ordering::Relaxed));
     }
@@ -231,14 +249,16 @@ mod tests {
             store.append(user(&format!("u{i}"))).unwrap();
             store.append(assistant(&format!("a{i}"))).unwrap();
         }
-        let mut bundle = build_runtime(
-            &Cli::try_parse_from(["norn"]).unwrap(),
-            RuntimeInputs::default(),
-        )
-        .unwrap();
+        let mut parts = built_parts();
         let state = make_state(Arc::clone(&store));
         state.compact_requested.store(true, Ordering::Relaxed);
-        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
+        let outcome = apply_compact_request(
+            parts.config.auto_compact_keep_recent_turns,
+            &mut parts.loop_context,
+            &store,
+            &state,
+        )
+        .unwrap();
         match outcome {
             Some(CompactOutcome::Performed {
                 compacted_events, ..
@@ -267,15 +287,17 @@ mod tests {
             store.append(user(&format!("u{i}"))).unwrap();
             store.append(assistant(&format!("a{i}"))).unwrap();
         }
-        let mut bundle = build_runtime(
-            &Cli::try_parse_from(["norn"]).unwrap(),
-            RuntimeInputs::default(),
-        )
-        .unwrap();
+        let mut parts = built_parts();
         let state = make_state(Arc::clone(&store));
         state.compact_requested.store(true, Ordering::Relaxed);
 
-        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
+        let outcome = apply_compact_request(
+            parts.config.auto_compact_keep_recent_turns,
+            &mut parts.loop_context,
+            &store,
+            &state,
+        )
+        .unwrap();
         assert!(matches!(outcome, Some(CompactOutcome::Performed { .. })));
 
         // 24 turn events + exactly one Compaction event = 25 event
@@ -314,15 +336,17 @@ mod tests {
             store.append(user(&format!("u{i}"))).unwrap();
             store.append(assistant(&format!("a{i}"))).unwrap();
         }
-        let mut bundle = build_runtime(
-            &Cli::try_parse_from(["norn"]).unwrap(),
-            RuntimeInputs::default(),
-        )
-        .unwrap();
+        let mut parts = built_parts();
         let state = make_state(Arc::clone(&store));
         state.compact_requested.store(true, Ordering::Relaxed);
 
-        let outcome = apply_compact_request(&mut bundle, &store, &state).unwrap();
+        let outcome = apply_compact_request(
+            parts.config.auto_compact_keep_recent_turns,
+            &mut parts.loop_context,
+            &store,
+            &state,
+        )
+        .unwrap();
         assert!(matches!(outcome, Some(CompactOutcome::Performed { .. })));
         // Mirror the orchestrator: checkpoint flushes the sink's pending
         // index delta (the registered sink batches it until a durability

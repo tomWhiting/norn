@@ -143,6 +143,20 @@ impl ToolRegistry {
         self.tools.get(name).map(AsRef::as_ref)
     }
 
+    /// Returns `true` when a tool with this exact name is physically
+    /// registered, regardless of allow-list / deny-list gating.
+    ///
+    /// Distinct from [`Self::get`], which returns `None` for a gated name:
+    /// gating hides an installed tool from dispatch but does not
+    /// unregister it. This answers "is this a real tool at all?" — the CLI
+    /// uses it to warn when an `--allowed-tools` / `--disallowed-tools`
+    /// flag names a tool that matches nothing, without false-flagging a
+    /// tool that was correctly gated out.
+    #[must_use]
+    pub fn is_registered(&self, name: &str) -> bool {
+        self.tools.contains_key(name)
+    }
+
     /// Returns an iterator over the names of currently-available tools.
     pub fn names(&self) -> impl Iterator<Item = &str> + '_ {
         self.tools

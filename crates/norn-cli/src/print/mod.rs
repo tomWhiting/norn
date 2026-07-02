@@ -7,7 +7,6 @@ pub mod orchestrator;
 pub mod output;
 pub mod provider;
 mod provider_trace;
-pub mod session;
 mod step_output;
 
 pub use orchestrator::{run, run_async};

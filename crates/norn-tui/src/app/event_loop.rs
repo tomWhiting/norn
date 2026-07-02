@@ -63,7 +63,7 @@ use super::turn::{run_pending_child_prompts, run_ready_root_inbound, run_turn_an
 pub struct TuiInputs {
     /// Concrete provider built by `norn-cli::print::build_provider`.
     pub provider: Arc<dyn Provider>,
-    /// Tool executor (the gated `ToolRegistry` from `RuntimeBundle`).
+    /// Tool executor (the gated `ToolRegistry` from the agent's `AgentParts`).
     pub executor: Arc<dyn ToolExecutor>,
     /// Session event store.
     pub store: Arc<EventStore>,

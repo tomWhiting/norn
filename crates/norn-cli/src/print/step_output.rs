@@ -16,7 +16,6 @@ use super::output::{
     render_text,
 };
 use crate::cli::{Cli, OutputFormat};
-use crate::runtime::RuntimeBundle;
 
 /// Post-step output data bundled for the output writers. Eliminates
 /// the `too_many_arguments` lint without sacrificing the named-field
@@ -124,7 +123,7 @@ fn write_stream_completed(
 pub(crate) fn write_handled_locally(
     cli: &Cli,
     format: OutputFormat,
-    bundle: &RuntimeBundle,
+    model: &str,
     session_id: Option<&str>,
 ) -> Result<(), PrintError> {
     let usage = Usage::default();
@@ -137,7 +136,7 @@ pub(crate) fn write_handled_locally(
                 stop: &StopInfo::Completed,
                 output: None,
                 usage: UsageOut::from(&usage),
-                model: &bundle.model,
+                model,
                 session_id,
                 events: &[],
                 diagnostics: &diagnostics,

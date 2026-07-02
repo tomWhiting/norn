@@ -6,15 +6,15 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
+use tokio_util::sync::CancellationToken;
+
 use super::intervene::NornInterventionHandler;
 use super::jsonrpc::{
     self, DrivenRun, InterventionHandler, PreRunOutcome, RunDriver, SharedRunDriver,
     TransportError, UnavailableInterventionHandler,
 };
-use super::orchestrator::{PrintError, orchestrate, parse_output_schema};
+use super::orchestrator::{PrintError, assemble_print_agent, orchestrate, parse_output_schema};
 use crate::cli::{Cli, ExitCode};
-use crate::runtime::{RuntimeInputs, apply_system_prompt, build_runtime, register_standard_tools};
-use norn::tools::lsp::build_lsp_backend;
 
 /// Driven-mode entry: own the stdin+stdout JSON-RPC 2.0 duplex.
 ///
@@ -93,11 +93,7 @@ async fn run_accepted(
 ) -> Result<ExitCode, PrintError> {
     let output_schema = parse_output_schema(cli.output_schema.as_deref())?;
 
-    let mut inputs = RuntimeInputs::default();
-    let lsp_backend = build_lsp_backend();
-    register_standard_tools(&mut inputs.registry, Some(lsp_backend));
-    let mut bundle = build_runtime(cli, inputs)?;
-    apply_system_prompt(&mut bundle, norn::system_prompt::ExecutionMode::Headless);
+    let parts = assemble_print_agent(cli).await?;
 
     // The stdin reader that carried initialize/run/execute keeps being read
     // during the run so mid-run intervene/* requests reach the agent.
@@ -106,7 +102,7 @@ async fn run_accepted(
         reader,
     };
 
-    orchestrate(cli, bundle, prompt, output_schema, Some(driven_run)).await
+    orchestrate(cli, parts, prompt, output_schema, Some(driven_run)).await
 }
 
 /// The join handle + stop signal for the mid-run intervene reader task.
@@ -115,16 +111,16 @@ pub(super) type InterveneTask = tokio::task::JoinHandle<Result<(), TransportErro
 /// Spawn the driven-mode `intervene/*` reader loop for the duration of the
 /// run.
 ///
-/// Returns the [`tokio_util::sync::CancellationToken`] to thread into the
-/// step's `cancel` (so an `intervene/cancel` stops the run), the reader
-/// task's join handle, and the `stop` sender used to wind it down when the
-/// run finishes on its own. In non-driven mode the token, task, and stop
-/// are all `None`: the step runs with `cancel: None` and no reader task,
-/// exactly as before.
+/// Returns the reader task's join handle and the `stop` sender used to
+/// wind it down when the run finishes on its own. In non-driven mode both
+/// are `None`: no reader task is spawned. The step is always driven by the
+/// builder's root cancellation token (`root_cancel`), so an
+/// `intervene/cancel` stops the run and cascades to spawned descendants
+/// through the published `AgentCancellation`.
 ///
 /// The reader is fed the Norn control adapter ([`NornInterventionHandler`])
 /// built from the harness `MessageRouter` (looked up on the shared tool
-/// context installed by `install_agent_tool_infra`) and a fresh token, so
+/// context installed by the builder) and the root cancellation token, so
 /// injects reach the root agent and a cancel trips the same token the step
 /// observes. If the router cannot be resolved — an assembly invariant that
 /// should never fail on the driven path — the loop STILL runs, degraded:
@@ -132,14 +128,15 @@ pub(super) type InterveneTask = tokio::task::JoinHandle<Result<(), TransportErro
 /// the internal error (`-32603`) carrying the unavailability reason, so
 /// peer requests never sit unread until EOF (`DRIVEN-PROTOCOL.md`
 /// "Degraded intervention mode"). The condition is error-logged, never
-/// silently dropped; the step then runs with `cancel: None`.
+/// silently dropped; `intervene/cancel` is then answered -32603 and the
+/// step's own token is never tripped by the reader.
 pub(super) fn spawn_intervene_loop<R>(
     run_driver: Option<&SharedRunDriver>,
     reader: Option<R>,
     registry: &Arc<norn::tool::registry::ToolRegistry>,
     root_id: Uuid,
+    root_cancel: &CancellationToken,
 ) -> (
-    Option<tokio_util::sync::CancellationToken>,
     Option<InterveneTask>,
     Option<tokio::sync::oneshot::Sender<()>>,
 )
@@ -147,28 +144,27 @@ where
     R: tokio::io::AsyncBufRead + Unpin + Send + 'static,
 {
     let (Some(run_driver), Some(mut reader)) = (run_driver, reader) else {
-        return (None, None, None);
+        return (None, None);
     };
-    let (token, handler): (
-        Option<tokio_util::sync::CancellationToken>,
-        Box<dyn InterventionHandler>,
-    ) = if let Some(router) = resolve_router(registry) {
-        let token = tokio_util::sync::CancellationToken::new();
-        let handler = NornInterventionHandler::new(router, root_id, token.clone());
-        (Some(token), Box::new(handler))
+    let handler: Box<dyn InterventionHandler> = if let Some(router) = resolve_router(registry) {
+        Box::new(NornInterventionHandler::new(
+            router,
+            root_id,
+            root_cancel.clone(),
+        ))
     } else {
         tracing::error!(
             "driven mode: the harness MessageRouter is unavailable; \
              intervene/* requests will be answered -32603 this run",
         );
-        (None, Box::new(UnavailableInterventionHandler))
+        Box::new(UnavailableInterventionHandler)
     };
     let writer = run_driver.writer();
     let (stop_tx, stop_rx) = tokio::sync::oneshot::channel::<()>();
     let task = tokio::spawn(async move {
         jsonrpc::drive_interventions(&mut reader, &writer, handler.as_ref(), stop_rx).await
     });
-    (token, Some(task), Some(stop_tx))
+    (Some(task), Some(stop_tx))
 }
 
 /// Look up the harness `MessageRouter` on the registry's shared tool
@@ -240,9 +236,14 @@ mod tests {
               {\"jsonrpc\":\"2.0\",\"id\":52,\"method\":\"intervene/cancel\"}\n";
         let reader = tokio::io::BufReader::new(&input[..]);
 
-        let (token, task, stop) =
-            spawn_intervene_loop(Some(&driver), Some(reader), &registry, Uuid::new_v4());
-        assert!(token.is_none(), "degraded mode has no live cancel token");
+        let root_cancel = CancellationToken::new();
+        let (task, stop) = spawn_intervene_loop(
+            Some(&driver),
+            Some(reader),
+            &registry,
+            Uuid::new_v4(),
+            &root_cancel,
+        );
         assert!(task.is_some(), "the reader loop MUST run in degraded mode");
 
         // Observe both answers BEFORE winding down: the loop's select is
@@ -265,13 +266,14 @@ mod tests {
     #[tokio::test]
     async fn intervene_loop_absent_outside_driven_mode() {
         let registry = Arc::new(norn::tool::registry::ToolRegistry::new());
-        let (token, task, stop) = spawn_intervene_loop::<tokio::io::BufReader<tokio::io::Stdin>>(
+        let root_cancel = CancellationToken::new();
+        let (task, stop) = spawn_intervene_loop::<tokio::io::BufReader<tokio::io::Stdin>>(
             None,
             None,
             &registry,
             Uuid::new_v4(),
+            &root_cancel,
         );
-        assert!(token.is_none());
         assert!(task.is_none());
         assert!(stop.is_none());
     }

@@ -1,19 +1,17 @@
-//! Assembly conformance fence (R1.2).
+//! Assembly golden-snapshot fence (R1.2 / R1.9).
 //!
-//! Asserts that the library-owned assembler reached through
+//! Asserts that the single library-owned assembler reached through
 //! [`builder_from_cli`](norn_cli::runtime::builder_from_cli) →
-//! `AgentBuilder::build` → [`Agent::into_parts`](norn::agent::Agent) and
-//! the legacy CLI assembler [`build_runtime`](norn_cli::runtime::build_runtime)
-//! produce field-equivalent bundles for the same resolved [`Cli`]. It is
-//! the regression fence kept green through the R1 migration; the dual-path
-//! comparison is retired only when `build_runtime` is deleted (R1.9).
+//! `AgentBuilder::build` → [`Agent::into_parts`](norn::agent::Agent)
+//! produces the expected assembled bundle for a fixed set of resolved
+//! [`Cli`] invocations. It began (R1.2) as a dual-path comparison against
+//! the legacy `build_runtime`; that path is deleted (R1.9), so this is now
+//! a committed golden snapshot of the unified path's assembled fields.
 //!
-//! Both paths are exercised under an isolated `HOME` / `NORN_HOME` (via
-//! `temp-env`) and working directory so no on-disk settings, rules, skills,
-//! or sessions perturb the comparison — the two paths are compared on
-//! assembly alone.
-//!
-//! The whole comparison runs in a single `#[test]` because it sets the
+//! The comparison runs under an isolated `HOME` / `NORN_HOME` (via
+//! `temp-env`) and working directory so no on-disk settings, rules,
+//! skills, or sessions perturb the assertions — assembly alone is under
+//! test. The whole check runs in a single `#[test]` because it sets the
 //! process working directory (process-global) inside the `temp-env` scope;
 //! splitting it would race that under intra-binary test parallelism.
 
@@ -23,12 +21,17 @@ use std::sync::Arc;
 
 use clap::Parser;
 
-use norn::agent::AgentParts;
-use norn::agent_loop::config::ToolExecutor;
-use norn::config::{NornSettings, PermissionPolicy};
+use norn::agent::child_policy::CoordinationEnvelope;
+use norn::agent::registry::AgentRegistry;
+use norn::agent::{AgentBuilder, AgentParts};
+use norn::agent_loop::retry::{
+    DEFAULT_BACKOFF_MULTIPLIER, DEFAULT_INITIAL_BACKOFF, DEFAULT_MAX_RETRIES,
+};
+use norn::agent_loop::runner::ToolExecutor;
+use norn::config::NornSettings;
 use norn::provider::mock::MockProvider;
+use norn::provider::request::{ReasoningEffort, ServiceTier};
 use norn::provider::traits::Provider;
-use norn::system_prompt::builder::ExecutionMode;
 use norn::tool::catalog::SharedToolCatalog;
 use norn::tools::SharedTaskStore;
 use norn::tools::diagnostics::DiagnosticInfra;
@@ -38,28 +41,15 @@ use norn_cli::config::{
     apply_cli_profile_overrides, apply_settings_reasoning_to_profile, resolve_model_selection,
     resolve_profile,
 };
-use norn_cli::runtime::bundle::{RuntimeBundle, RuntimeInputs};
-use norn_cli::runtime::register_standard_tools;
-use norn_cli::runtime::{apply_system_prompt, build_runtime, builder_from_cli};
+use norn_cli::runtime::{builder_from_cli, cli_coordination_envelope};
 
 fn mock_provider() -> Arc<dyn Provider> {
     Arc::new(MockProvider::new(Vec::new()))
 }
 
-/// The legacy CLI assembler's bundle, with the base system prompt applied
-/// exactly as the print orchestrator does after `build_runtime`.
-fn build_bundle(cli: &Cli) -> RuntimeBundle {
-    let mut inputs = RuntimeInputs::default();
-    register_standard_tools(&mut inputs.registry, None);
-    let mut bundle = build_runtime(cli, inputs).expect("build_runtime succeeds");
-    apply_system_prompt(&mut bundle, ExecutionMode::Headless);
-    bundle
-}
-
-/// The merged settings both assembly paths consult, loaded exactly as
-/// `build_runtime`'s private `load_and_merge_settings` does. Using the same
-/// merged settings on the caller side keeps the comparison relative — any
-/// on-disk user settings perturb both paths identically.
+/// The merged settings the assembly path consults, loaded exactly as the
+/// caller does before `builder_from_cli`. Using the same merged settings
+/// keeps the assertions relative to the hermetic environment.
 fn merged_settings() -> NornSettings {
     let cwd = std::env::current_dir().expect("cwd");
     let mut layers = norn::config::load_settings(&cwd).expect("load settings");
@@ -74,9 +64,11 @@ fn merged_settings() -> NornSettings {
     merged
 }
 
-/// The unified library assembler's parts, resolving the profile through the
-/// same helper pipeline the CLI caller runs before `builder_from_cli`.
-fn build_parts(cli: &Cli) -> AgentParts {
+/// The unified library assembler's builder, resolving the profile through
+/// the same helper pipeline the CLI drivers run before `builder_from_cli`.
+/// Returned un-built so a caller can chain the driver-specific coordination
+/// envelope before `build()`.
+fn builder_for(cli: &Cli) -> AgentBuilder {
     let settings = merged_settings();
     let mut profile = resolve_profile(cli.profile.as_deref()).expect("resolve profile");
     apply_settings_reasoning_to_profile(&settings, &mut profile).expect("settings reasoning");
@@ -85,143 +77,56 @@ fn build_parts(cli: &Cli) -> AgentParts {
         resolve_model_selection(&profile.model, &settings).expect("model selection");
     profile.model = model_selection.model;
 
-    let builder = builder_from_cli(cli, mock_provider(), profile, &settings, &applied)
-        .expect("builder_from_cli succeeds");
-    builder.build().expect("build succeeds").into_parts()
+    builder_from_cli(cli, mock_provider(), profile, &settings, &applied)
+        .expect("builder_from_cli succeeds")
+}
+
+/// The unified library assembler's parts for a fixed CLI invocation.
+fn build_parts(cli: &Cli) -> AgentParts {
+    builder_for(cli)
+        .build()
+        .expect("build succeeds")
+        .into_parts()
 }
 
 /// Sorted registry tool names.
-///
-/// Under the hermetic `HOME` / `NORN_HOME` isolation the test installs, no
-/// skill catalog is discovered on either path, so neither registers the
-/// `skill` tool (the §5.2 gap the library still carries until R1.8) and the
-/// sets are strictly equal. A non-hermetic run that leaked a skill dir
-/// would fail this assertion loudly — surfacing exactly that gap.
 fn sorted_tool_names(registry: &norn::tool::registry::ToolRegistry) -> Vec<String> {
     let mut names: Vec<String> = registry.names().map(str::to_owned).collect();
     names.sort();
     names
 }
 
-/// Assert every R1.2 field is equivalent between the two assembly paths.
-/// `check_prompt` is `false` only where the legacy path's provider-blind,
-/// event-schema-aware prompt rendering is known to diverge (deferred to the
-/// step-3 provider-aware convergence).
-fn assert_conformant(cli: &Cli, check_prompt: bool, label: &str) {
-    let bundle = build_bundle(cli);
-    let parts = build_parts(cli);
-
-    assert_eq!(
-        sorted_tool_names(&bundle.registry),
-        sorted_tool_names(&parts.registry),
-        "{label}: sorted registry tool names must match",
-    );
-
-    let bundle_config = serde_json::to_value(&bundle.agent_config).unwrap();
-    let parts_config = serde_json::to_value(&parts.config).unwrap();
-    assert_eq!(
-        bundle_config, parts_config,
-        "{label}: agent-loop config must be serde-equal",
-    );
-
-    let bundle_ctx = bundle
-        .registry
-        .shared_context()
-        .expect("bundle registry has a shared context");
-    let parts_ctx = parts
+/// Assert the runtime-extension set the assembler unconditionally
+/// publishes on the shared tool context (a `PermissionPolicy` is
+/// installed only when permission rules are configured, so it is not
+/// asserted in this hermetic environment).
+fn assert_core_extensions(parts: &AgentParts, label: &str) {
+    let ctx = parts
         .registry
         .shared_context()
         .expect("parts registry has a shared context");
-
-    assert_eq!(
-        bundle_ctx.get_extension::<PermissionPolicy>().is_some(),
-        parts_ctx.get_extension::<PermissionPolicy>().is_some(),
-        "{label}: PermissionPolicy presence",
+    assert!(
+        ctx.get_extension::<SharedTaskStore>().is_some(),
+        "{label}: SharedTaskStore present",
     );
-    assert_eq!(
-        bundle_ctx.get_extension::<SharedTaskStore>().is_some(),
-        parts_ctx.get_extension::<SharedTaskStore>().is_some(),
-        "{label}: SharedTaskStore presence",
+    assert!(
+        ctx.get_extension::<SharedToolCatalog>().is_some(),
+        "{label}: SharedToolCatalog present",
     );
-    assert_eq!(
-        bundle_ctx.get_extension::<SharedToolCatalog>().is_some(),
-        parts_ctx.get_extension::<SharedToolCatalog>().is_some(),
-        "{label}: SharedToolCatalog presence",
+    assert!(
+        ctx.get_extension::<DiagnosticInfra>().is_some(),
+        "{label}: DiagnosticInfra present",
     );
-    assert_eq!(
-        bundle_ctx.get_extension::<DiagnosticInfra>().is_some(),
-        parts_ctx.get_extension::<DiagnosticInfra>().is_some(),
-        "{label}: DiagnosticInfra presence",
-    );
-    // HookRegistry: the brief compares this "when configured" — i.e. when
-    // user hooks are wired. Neither path wires user hooks here. They still
-    // differ on an internal detail: the library's `load_runtime_base`
-    // overlay always folds the diagnostic stop hook into a HookRegistry,
-    // while `build_runtime` routes diagnostics purely through the
-    // DiagnosticsPostCheck (asserted above). That is a benign pre-existing
-    // path difference, not user-hook configuration, so it is not asserted
-    // here; both publish a registry once real hooks are configured.
-
-    // RetryPolicy and IterationMonitorConfig derive Debug but not PartialEq;
-    // their Debug rendering is the equality surface here.
-    assert_eq!(
-        format!("{:?}", bundle.loop_context.retry_policy),
-        format!("{:?}", parts.loop_context.retry_policy),
-        "{label}: retry policy",
-    );
-    assert_eq!(
-        bundle.loop_context.reasoning_effort, parts.loop_context.reasoning_effort,
-        "{label}: reasoning effort",
-    );
-    assert_eq!(
-        bundle.loop_context.service_tier, parts.loop_context.service_tier,
-        "{label}: service tier",
-    );
-    assert_eq!(
-        format!("{:?}", bundle.loop_context.iteration_monitor),
-        format!("{:?}", parts.loop_context.iteration_monitor),
-        "{label}: iteration monitor",
-    );
-
-    if check_prompt {
-        // The provider-aware widening to a hosted-search provider is
-        // deferred to step 3 (R1.5); here the mock provider is non-hosted,
-        // so `reframe_prompt_entries` is a no-op and the two prompts carry
-        // identical content. They are compared as a multiset of lines: the
-        // system prompt lists tools in `ToolRegistry::names()` order, which
-        // is `HashMap` iteration order — nondeterministic per registry
-        // instance — so the tool blocks appear in a different order while
-        // the content is identical. Line-multiset equality proves every
-        // line is present in both.
-        let bundle_prompt = bundle.loop_context.system_sections.first();
-        let parts_prompt = parts.loop_context.system_sections.first();
-        assert_eq!(
-            bundle_prompt.map(|s| sorted_lines(s)),
-            parts_prompt.map(|s| sorted_lines(s)),
-            "{label}: base system prompt content (order-insensitive, non-hosted provider)",
-        );
-    }
-}
-
-/// The lines of `s` as a sorted multiset — the order-insensitive equality
-/// surface for the system prompt (see [`assert_conformant`]).
-fn sorted_lines(s: &str) -> Vec<&str> {
-    let mut lines: Vec<&str> = s.lines().collect();
-    lines.sort_unstable();
-    lines
 }
 
 #[test]
-fn builder_from_cli_matches_build_runtime() {
+fn builder_from_cli_golden_snapshot() {
     let home = tempfile::tempdir().expect("home tempdir");
     let workdir = tempfile::tempdir().expect("work tempdir");
     // Full hermetic isolation: an empty `HOME` / `NORN_HOME` means no user
     // settings, rules, or skill tiers exist, and an empty working directory
     // carries no project `.norn`. `temp-env` mutates and restores the env
     // safely (no `unsafe` on this side), serialised behind its own lock.
-    // Without the skill tiers neither path discovers a skill catalog, so the
-    // §5.2 skill-tool gap does not perturb the tool set or the prompt, and
-    // the fence compares strict equality.
     let home_path = home.path().to_path_buf();
     temp_env::with_vars(
         [
@@ -230,17 +135,78 @@ fn builder_from_cli_matches_build_runtime() {
         ],
         || {
             std::env::set_current_dir(workdir.path()).expect("chdir into isolated workdir");
-            run_comparisons();
+            run_snapshot();
         },
     );
 }
 
-fn run_comparisons() {
-    // Base invocation: model + no session. All R1.2 fields, prompt included.
+fn run_snapshot() {
+    // Base invocation: model + no session. The full standard tool set is
+    // present, and the core extensions are published.
     let base = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
-    assert_conformant(&base, true, "base");
+    let base_parts = build_parts(&base);
+    assert_core_extensions(&base_parts, "base");
+    let base_tools = sorted_tool_names(&base_parts.registry);
+    for expected in ["read", "write", "bash", "search"] {
+        assert!(
+            base_tools.iter().any(|name| name == expected),
+            "base: standard tool set must include `{expected}` (got {base_tools:?})",
+        );
+    }
+    // The base system prompt is the Norn runtime prompt with a real tools
+    // section listing the assembled tools — not merely non-empty.
+    let base_prompt = base_parts
+        .loop_context
+        .system_sections
+        .first()
+        .expect("base: a base system prompt section is assembled");
+    for marker in ["# Norn Runtime", "# Tools", "**read**"] {
+        assert!(
+            base_prompt.contains(marker),
+            "base: system prompt must contain `{marker}` (a real tools section \
+             built from the gated registry), got:\n{base_prompt}",
+        );
+    }
 
-    // -m already covered by base; each remaining flag layered onto the base.
+    // Retry policy resolves to the runtime-base default in the hermetic
+    // environment (no settings override the 2-retry / 1s / 2x policy).
+    let retry = &base_parts.loop_context.retry_policy;
+    assert_eq!(retry.max_retries, DEFAULT_MAX_RETRIES, "base: retry count");
+    assert_eq!(
+        retry.initial_backoff, DEFAULT_INITIAL_BACKOFF,
+        "base: retry backoff",
+    );
+    assert!(
+        (retry.backoff_multiplier - DEFAULT_BACKOFF_MULTIPLIER).abs() < f64::EPSILON,
+        "base: retry multiplier",
+    );
+
+    // No `--fast` / `--service-tier` and no profile / settings tier: the
+    // service tier resolves to `None`.
+    assert_eq!(
+        base_parts.loop_context.service_tier, None,
+        "base: service tier resolves to None absent any tier config",
+    );
+
+    // No `[iteration_monitor]` profile section in the hermetic env: the
+    // iteration monitor resolves to `None`.
+    assert!(
+        base_parts.loop_context.iteration_monitor.is_none(),
+        "base: iteration monitor resolves to None absent a profile section",
+    );
+
+    // --fast resolves the service tier onto the loop context (positive
+    // guard that the tier is wired, not merely defaulted to None).
+    let fast = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session", "--fast"]);
+    assert_eq!(
+        build_parts(&fast).loop_context.service_tier,
+        Some(ServiceTier::Fast),
+        "--fast resolves the service tier onto the loop context",
+    );
+
+    // --allowed-tools gates the registry down to the named tools (plus any
+    // always-on tools the profile keeps). `bash` is not named, so it is
+    // gated out; the named tools survive.
     let allowed = Cli::parse_from([
         "norn",
         "-m",
@@ -249,8 +215,22 @@ fn run_comparisons() {
         "--allowed-tools",
         "read,search",
     ]);
-    assert_conformant(&allowed, true, "--allowed-tools");
+    let allowed_tools = sorted_tool_names(&build_parts(&allowed).registry);
+    assert!(
+        allowed_tools.iter().any(|name| name == "read"),
+        "--allowed-tools: `read` stays available (got {allowed_tools:?})",
+    );
+    assert!(
+        allowed_tools.iter().any(|name| name == "search"),
+        "--allowed-tools: `search` stays available (got {allowed_tools:?})",
+    );
+    assert!(
+        !allowed_tools.iter().any(|name| name == "bash"),
+        "--allowed-tools: `bash` is gated out (got {allowed_tools:?})",
+    );
 
+    // --disallowed-tools removes the named tool even from the default set
+    // (deny wins).
     let disallowed = Cli::parse_from([
         "norn",
         "-m",
@@ -259,11 +239,27 @@ fn run_comparisons() {
         "--disallowed-tools",
         "bash",
     ]);
-    assert_conformant(&disallowed, true, "--disallowed-tools");
+    let disallowed_tools = sorted_tool_names(&build_parts(&disallowed).registry);
+    assert!(
+        !disallowed_tools.iter().any(|name| name == "bash"),
+        "--disallowed-tools: `bash` is denied (got {disallowed_tools:?})",
+    );
+    assert!(
+        disallowed_tools.iter().any(|name| name == "read"),
+        "--disallowed-tools: unrelated tools stay available (got {disallowed_tools:?})",
+    );
 
+    // -c max_turns=7 overlays the agent-loop config.
     let max_turns = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session", "-c", "max_turns=7"]);
-    assert_conformant(&max_turns, true, "-c max_turns=");
+    let max_turns_config = build_parts(&max_turns).config;
+    let config_json = serde_json::to_value(&max_turns_config).expect("serialize config");
+    assert_eq!(
+        config_json.get("max_iterations"),
+        Some(&serde_json::json!(7)),
+        "-c max_turns=7 sets the agent-loop max_iterations (config: {config_json})",
+    );
 
+    // --reasoning-effort high lands on the loop context.
     let reasoning = Cli::parse_from([
         "norn",
         "-m",
@@ -272,8 +268,14 @@ fn run_comparisons() {
         "--reasoning-effort",
         "high",
     ]);
-    assert_conformant(&reasoning, true, "--reasoning-effort");
+    assert_eq!(
+        build_parts(&reasoning).loop_context.reasoning_effort,
+        Some(ReasoningEffort::High),
+        "--reasoning-effort high resolves onto the loop context",
+    );
 
+    // --variables is carried through assembly (the variable store is minted
+    // and the run still assembles).
     let variables = Cli::parse_from([
         "norn",
         "-m",
@@ -282,8 +284,10 @@ fn run_comparisons() {
         "--variables",
         "foo=bar",
     ]);
-    assert_conformant(&variables, true, "--variables");
+    assert_core_extensions(&build_parts(&variables), "--variables");
 
+    // --session-name assembles (the task-group slug derives from it); the
+    // core extensions still publish.
     let session_name = Cli::parse_from([
         "norn",
         "-m",
@@ -292,14 +296,9 @@ fn run_comparisons() {
         "--session-name",
         "my-work",
     ]);
-    assert_conformant(&session_name, true, "--session-name");
+    assert_core_extensions(&build_parts(&session_name), "--session-name");
 
-    // --event-schema: the legacy path renders event-schema descriptions and
-    // toggles auto-compact guidance into the system prompt, while the
-    // library `install_system_prompt` defers that to the step-3
-    // provider-aware convergence — so the prompt equality is deferred here
-    // and the schemas themselves are compared instead. Every other R1.2
-    // field must still match.
+    // --event-schema installs the schema set on the loop context.
     let event_schema = Cli::parse_from([
         "norn",
         "-m",
@@ -308,16 +307,54 @@ fn run_comparisons() {
         "--event-schema",
         "text={\"type\":\"string\"}",
     ]);
-    assert_conformant(&event_schema, false, "--event-schema");
-    let bundle = build_bundle(&event_schema);
-    let parts = build_parts(&event_schema);
     assert!(
-        bundle.loop_context.event_schemas.is_some(),
-        "--event-schema: legacy path installs the schema set",
+        build_parts(&event_schema)
+            .loop_context
+            .event_schemas
+            .is_some(),
+        "--event-schema installs the event-schema set on the loop context",
     );
+
+    // Coordination envelope + session-derived cache key. A session-backed
+    // invocation with the CLI's coordination envelope chained (exactly as
+    // the print driver does) publishes the envelope on the shared tool
+    // context, wires the child-result receiver and root agent id, and keys
+    // the prompt cache on the resolved session id.
+    let coord_cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--session-name", "conf-coord"]);
+    let envelope = cli_coordination_envelope();
+    let coord_parts = builder_for(&coord_cli)
+        .agent_registry(AgentRegistry::shared())
+        .child_policy(envelope.child_policy.clone())
+        .child_result_capacity(envelope.child_result_capacity)
+        .register_root("/root".to_string(), "lead".to_string())
+        .build()
+        .expect("coordination build succeeds")
+        .into_parts();
+
+    let published = coord_parts
+        .registry
+        .shared_context()
+        .expect("coord: shared tool context")
+        .get_extension::<CoordinationEnvelope>()
+        .expect("coord: CoordinationEnvelope published on the shared context");
     assert_eq!(
-        format!("{:?}", bundle.loop_context.event_schemas),
-        format!("{:?}", parts.loop_context.event_schemas),
-        "--event-schema: both paths install the same event-schema set",
+        *published, envelope,
+        "coord: the published envelope carries the CLI's child policy and capacities",
+    );
+    assert!(
+        coord_parts.loop_context.child_result_rx.is_some(),
+        "coord: the child-result receiver is wired alongside the envelope",
+    );
+    assert!(
+        coord_parts.loop_context.agent_id.is_some(),
+        "coord: the root agent id is wired onto the loop context",
+    );
+
+    let session_id = coord_parts.info.session_id.clone();
+    assert!(!session_id.is_empty(), "coord: a session id is resolved");
+    assert_eq!(
+        coord_parts.config.cache_key.as_deref(),
+        Some(session_id.as_str()),
+        "coord: open_session wires the resolved session id as the prompt cache_key",
     );
 }

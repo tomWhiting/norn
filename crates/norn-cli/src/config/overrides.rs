@@ -9,9 +9,9 @@
 //!
 //! The disallowed-tools list lives on the [`AppliedOverrides`] return
 //! type rather than the `Profile` because libnorn has no top-level
-//! `disallowed_tools` field on [`Profile`]; the brief calls this out and
-//! recommends carrying the list separately through to the runtime
-//! bundle.
+//! `disallowed_tools` field on [`Profile`]; the list is carried
+//! separately through to `builder_from_cli`
+//! ([`AgentBuilder::disallowed_tools`](norn::agent::AgentBuilder::disallowed_tools)).
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -31,16 +31,22 @@ use crate::config::{ConfigOverrides, ProviderConfigOverrides, parse_duration};
 #[derive(Debug, Default, Clone)]
 pub struct AppliedOverrides {
     /// Tool names added by `--disallowed-tools` (exact names, matching
-    /// the `--allowed-tools` semantics). `build_runtime` applies them to
-    /// the registry via [`norn::tool::registry::ToolRegistry::set_disallowed`]
-    /// — deny wins over the allow-list — and also carries them on the
-    /// runtime bundle for downstream audit surfaces.
+    /// the `--allowed-tools` semantics). `builder_from_cli` passes them to
+    /// [`AgentBuilder::disallowed_tools`](norn::agent::AgentBuilder::disallowed_tools),
+    /// which applies them via
+    /// [`ToolRegistry::set_disallowed`](norn::tool::registry::ToolRegistry::set_disallowed)
+    /// — deny wins over the allow-list. Also fed to
+    /// [`warn_unmatched_tool_flag_names`](crate::runtime::warn_unmatched_tool_flag_names)
+    /// after `build()` to flag a bogus name that matches no real tool.
     pub disallowed_tools: Vec<String>,
     /// Tool names supplied via the `--allowed-tools` flag specifically
-    /// (empty when the flag is absent). Kept separately from
-    /// [`Profile::tools`] — which may also be populated by the profile
-    /// file — so `build_runtime` can warn about flag-supplied names that
-    /// match no registered tool without flagging profile-declared lists.
+    /// (empty when the flag is absent). The allow-list itself rides on
+    /// [`Profile::tools`](norn::profile::Profile) (also populatable by the
+    /// profile file); this flag-only copy is kept separately so
+    /// [`warn_unmatched_tool_flag_names`](crate::runtime::warn_unmatched_tool_flag_names)
+    /// can warn about a flag-supplied name that matches no registered tool
+    /// (a partial typo like `--allowed-tools read,serch`) without
+    /// mis-flagging profile-declared lists.
     pub allowed_tools: Vec<String>,
 }
 
@@ -156,7 +162,7 @@ pub fn apply_loop_config_overrides(
 /// [`AgentLoopConfig`].
 ///
 /// Every `-c` value, when present, overwrites the field unconditionally.
-/// The precedence pipeline in [`crate::runtime::build_runtime`] applies
+/// The precedence pipeline in `builder_from_cli` applies
 /// settings → `-c` → CLI `--flag`, so the explicit `--flag` form is
 /// layered on top of this function's output via
 /// [`apply_loop_config_overrides`].
