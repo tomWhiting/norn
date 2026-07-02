@@ -44,6 +44,12 @@ use crate::config::session_data_dir;
 #[cfg(test)]
 mod inline_tests;
 
+/// The owner-ruled default root delegation depth when neither the `[agent]
+/// delegation_depth` setting nor `-c delegation_depth=<u32>` is set: `2`
+/// (children may spawn one level of their own; grandchildren are leaves).
+/// DECISIONS §0.6(d).
+pub const DEFAULT_DELEGATION_DEPTH: u32 = 2;
+
 /// The CLI's deliberate [`CoordinationEnvelope`]: the child policy and
 /// channel capacities every agent spawned from a CLI-assembled runtime
 /// runs under.
@@ -54,21 +60,25 @@ mod inline_tests;
 ///
 /// - `messaging: SiblingsAndParent` — the audit trail and the steer/update
 ///   split are the safety mechanism, not isolation (DECISION M1).
-/// - `remaining_depth: 1`, `max_concurrent_children: 32` — today's
-///   production-proven delegation shape; deeper trees are an explicit
-///   opt-in per deployment (DECISION R1).
+/// - `remaining_depth: delegation_depth` — the root's own delegation
+///   budget, resolved from `[agent] delegation_depth` / `-c
+///   delegation_depth`, defaulting to [`DEFAULT_DELEGATION_DEPTH`] (`2`,
+///   owner-ruled — DECISIONS §0.6(d)). The inherit-with-decrement and
+///   narrowing-only invariants are unchanged; this only seeds the root.
+/// - `max_concurrent_children: 32` — today's production-proven concurrency
+///   cap (DECISION R1).
 /// - `inbound_capacity: 32` — the per-child inbound backpressure buffer
 ///   (DECISION M4).
 /// - `child_result_capacity: 256` — the child-result channel buffer
 ///   (DECISION R3); the CLI's root result channel is sized from this same
 ///   value so the two cannot drift.
 #[must_use]
-pub fn cli_coordination_envelope() -> CoordinationEnvelope {
+pub fn cli_coordination_envelope(delegation_depth: u32) -> CoordinationEnvelope {
     CoordinationEnvelope {
         child_policy: ChildPolicy {
             messaging: MessagingScope::SiblingsAndParent,
             delegation: DelegationBudget {
-                remaining_depth: 1,
+                remaining_depth: delegation_depth,
                 max_concurrent_children: 32,
             },
             inbound_capacity: 32,

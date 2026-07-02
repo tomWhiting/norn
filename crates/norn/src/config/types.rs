@@ -480,6 +480,19 @@ pub struct AgentSettings {
     /// `loop/loop_context.rs`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompt_command_timeout: Option<String>,
+
+    /// Root delegation depth: how many levels of descendants the root
+    /// agent may create (`remaining_depth` on the root's
+    /// [`crate::agent::child_policy::DelegationBudget`]). `0` = the root is
+    /// a leaf and may not spawn; `1` = children are leaves; `2` = children
+    /// may spawn one level of their own (grandchildren are leaves). The
+    /// inherit-with-decrement and narrowing-only invariants are unchanged —
+    /// this only seeds the root's own budget. Unset defers to the
+    /// owner-ruled default of `2` (DECISIONS §0.6(d)); explicit config
+    /// wins. The CLI applies the resolved value to
+    /// `cli_coordination_envelope`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delegation_depth: Option<u32>,
 }
 
 // ---------------------------------------------------------------------------
@@ -1170,6 +1183,7 @@ mod tests {
                 reasoning_summary: Some("detailed".to_owned()),
                 service_tier: Some("fast".to_owned()),
                 prompt_command_timeout: Some("10s".to_owned()),
+                delegation_depth: Some(2),
             }),
             retry: Some(RetrySettings {
                 max_retries: Some(5),
@@ -1267,6 +1281,7 @@ mod tests {
         assert_eq!(ra.max_turns, oa.max_turns);
         assert_eq!(ra.step_timeout, oa.step_timeout);
         assert_eq!(ra.reasoning_effort, oa.reasoning_effort);
+        assert_eq!(ra.delegation_depth, oa.delegation_depth);
         let rr = roundtripped.retry.as_ref().unwrap();
         let or_ = original.retry.as_ref().unwrap();
         assert_eq!(rr.max_retries, or_.max_retries);

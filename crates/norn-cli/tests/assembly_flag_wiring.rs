@@ -28,7 +28,9 @@ use norn_cli::config::{
     apply_cli_profile_overrides, apply_settings_reasoning_to_profile, resolve_model_selection,
     resolve_profile,
 };
-use norn_cli::runtime::builder_from_cli;
+use norn_cli::runtime::{
+    DEFAULT_DELEGATION_DEPTH, builder_from_cli, cli_coordination_envelope, resolve_invocation,
+};
 
 fn mock_provider() -> Arc<dyn Provider> {
     Arc::new(MockProvider::new(Vec::new()))
@@ -233,6 +235,92 @@ fn workspace_root_file_fails_build() {
             }
             Err(other) => panic!("expected a config error, got: {other}"),
         }
+    });
+}
+
+// ---------------------------------------------------------------------------
+// Nested delegation depth (DECISIONS §0.6(d)): default 2, configurable via
+// the `[agent] delegation_depth` setting and `-c delegation_depth=<u32>`.
+// ---------------------------------------------------------------------------
+
+/// The root delegation depth resolves default-2, honours the `[agent]
+/// delegation_depth` setting, and `-c delegation_depth` wins over both —
+/// landing on `cli_coordination_envelope`'s root `remaining_depth`. A
+/// default-2 root grants a child that can still spawn one level (a
+/// grandchild leaf); `-c delegation_depth=1` restores leaf children.
+#[test]
+#[serial_test::serial]
+fn delegation_depth_defaults_to_two_and_is_configurable() {
+    with_isolated_env(|| {
+        // Default: no flag, no settings → owner-ruled 2.
+        let cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
+        let resolved = resolve_invocation(&cli).expect("resolve default");
+        assert_eq!(resolved.delegation_depth, DEFAULT_DELEGATION_DEPTH);
+        assert_eq!(resolved.delegation_depth, 2, "owner-ruled default is 2");
+        let envelope = cli_coordination_envelope(resolved.delegation_depth);
+        assert_eq!(envelope.child_policy.delegation.remaining_depth, 2);
+        // End-to-end: a child may spawn one level; the grandchild is a leaf.
+        let child = envelope
+            .child_policy
+            .grant_for_child(None)
+            .expect("root grants a child");
+        assert_eq!(child.delegation.remaining_depth, 1);
+        let grandchild = child
+            .grant_for_child(None)
+            .expect("child grants a grandchild");
+        assert_eq!(grandchild.delegation.remaining_depth, 0);
+        assert!(
+            grandchild.grant_for_child(None).is_err(),
+            "the grandchild is a leaf and cannot spawn",
+        );
+
+        // `-c delegation_depth=1` restores leaf children.
+        let cli = Cli::parse_from([
+            "norn",
+            "-m",
+            "gpt-5.5",
+            "--no-session",
+            "-c",
+            "delegation_depth=1",
+        ]);
+        let resolved = resolve_invocation(&cli).expect("resolve -c");
+        assert_eq!(resolved.delegation_depth, 1);
+        let child = cli_coordination_envelope(resolved.delegation_depth)
+            .child_policy
+            .grant_for_child(None)
+            .expect("root grants a child");
+        assert_eq!(
+            child.delegation.remaining_depth, 0,
+            "-c=1 makes children leaves"
+        );
+
+        // The `[agent] delegation_depth` setting plumbs when no `-c`.
+        let cwd = std::env::current_dir().expect("cwd");
+        let norn_dir = cwd.join(".norn");
+        std::fs::create_dir_all(&norn_dir).expect("create .norn");
+        std::fs::write(
+            norn_dir.join("settings.json"),
+            r#"{"agent":{"delegation_depth":3}}"#,
+        )
+        .expect("write settings");
+        let cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
+        let resolved = resolve_invocation(&cli).expect("resolve settings");
+        assert_eq!(resolved.delegation_depth, 3, "the settings key plumbs");
+
+        // `-c` wins over the settings key.
+        let cli = Cli::parse_from([
+            "norn",
+            "-m",
+            "gpt-5.5",
+            "--no-session",
+            "-c",
+            "delegation_depth=1",
+        ]);
+        let resolved = resolve_invocation(&cli).expect("resolve -c over settings");
+        assert_eq!(
+            resolved.delegation_depth, 1,
+            "explicit -c wins over settings"
+        );
     });
 }
 

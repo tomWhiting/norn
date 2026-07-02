@@ -1032,50 +1032,34 @@ mod tests {
     }
 
     /// R5 parity on the script surface: the host policy's `loop_config`
-    /// rides the inherit-with-decrement derivation into the child's
-    /// grant (registry ground truth) and actually binds on the script
-    /// child's run — a granted `max_iterations = 1` stops the child
-    /// after exactly one provider call where the scripted conversation
-    /// would otherwise take two.
+    /// rides the inherit-with-decrement derivation into the child's grant
+    /// (registry ground truth), so a script-spawned child runs under the
+    /// host's granted loop-shaping knobs. (The `max_iterations` grant was
+    /// removed — DECISIONS §0.6(c); the surviving `step_timeout_secs` /
+    /// `linger_secs` knobs still ride the derivation unchanged.)
     #[tokio::test(flavor = "multi_thread")]
-    async fn spawn_agent_grants_and_enforces_host_loop_config() {
+    async fn spawn_agent_grants_host_loop_config() {
         use crate::agent::child_policy::ChildLoopConfig;
         use crate::provider::events::{ProviderEvent, StopReason};
         use crate::provider::usage::Usage;
 
-        // Two scripted turns: a tool call (which would force a second
-        // provider round-trip) then text. The granted cap of 1 means the
-        // second turn must never be requested.
-        let provider = Arc::new(MockProvider::new(vec![
-            vec![
-                ProviderEvent::ToolCallDelta {
-                    item_id: "tc1".to_owned(),
-                    name: Some("nonexistent".to_owned()),
-                    arguments_delta: "{}".to_owned(),
-                    kind: crate::provider::request::ToolCallKind::Function,
-                },
-                ProviderEvent::Done {
-                    stop_reason: StopReason::ToolUse,
-                    usage: Usage::default(),
-                    response_id: None,
-                },
-            ],
-            vec![
-                ProviderEvent::TextDelta {
-                    text: "never reached".to_owned(),
-                },
-                ProviderEvent::Done {
-                    stop_reason: StopReason::EndTurn,
-                    usage: Usage::default(),
-                    response_id: None,
-                },
-            ],
-        ]));
+        // One scripted turn: the child completes normally. The point under
+        // test is that the host's granted loop_config reaches the child's
+        // registry entry, not any iteration-cap behavior.
+        let provider = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_owned(),
+            },
+            ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: None,
+            },
+        ]]));
         let mut ctx = build_context_with_provider(Arc::<MockProvider>::clone(&provider));
         let granted = ChildLoopConfig {
-            max_iterations: Some(1),
-            step_timeout_secs: None,
-            linger_secs: None,
+            step_timeout_secs: Some(300),
+            linger_secs: Some(30),
         };
         ctx.child_policy.loop_config = Some(granted);
         let engine = build_norn_engine(&ctx);
@@ -1115,23 +1099,5 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
-        assert_eq!(
-            provider.call_count(),
-            1,
-            "the granted max_iterations = 1 must stop the child after one provider call",
-        );
-        // REVIEW R5 HIGH-1: a capped-out script child is a FAILED run in
-        // registry ground truth — `MaxIterationsReached` must never be
-        // recorded as `Completed` (the agents tool, status surfaces, and
-        // close decisions all read this status).
-        assert_eq!(
-            registry
-                .read()
-                .get(child_id)
-                .expect("terminal entry observable")
-                .status,
-            crate::agent::registry::AgentStatus::Failed,
-            "a child stopped by its iteration cap completed nothing",
-        );
     }
 }

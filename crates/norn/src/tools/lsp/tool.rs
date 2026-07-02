@@ -13,7 +13,7 @@ use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
-use super::super::confinement::check_confinement;
+use super::super::confinement::check_read_confinement;
 use super::backend::{LspBackend, LspBackendError};
 
 /// LSP tool: delegates hover/definition/references/symbols/diagnostics to
@@ -144,7 +144,10 @@ impl Tool for LspTool {
 
         // Workspace confinement (opt-in): refuse before the backend touches
         // the file so even metadata of out-of-root paths is never disclosed.
-        if let Err(reason) = check_confinement(ctx, &path) {
+        // The LSP tool is read-only (a `rename` returns edits the model
+        // applies through the write-confined edit tool), so it honours the
+        // skill / profile / config read carve-out (DECISIONS §0.6(b)).
+        if let Err(reason) = check_read_confinement(ctx, &path) {
             return Ok(ToolOutput::failure_with_content(
                 serde_json::json!({ "path": args.path, "kind": "confinement_refused" }),
                 ToolErrorPayload::new(
@@ -655,6 +658,42 @@ mod tests {
         let out = tool.execute(&env, &ctx).await.expect("symbols ok");
         assert!(!out.is_error(), "in-workspace path must pass confinement");
         assert_eq!(backend.seen.lock().unwrap().len(), 1);
+    }
+
+    /// DECISIONS §0.6(b): the LSP tool is read-class, so a file inside a
+    /// declared read-exempt root is admitted under confinement even though
+    /// it lies outside the workspace root — the backend is invoked on it,
+    /// mirroring the read/search carve-out.
+    #[tokio::test]
+    async fn confined_context_allows_exempt_skill_dir() {
+        use crate::tool::context::SharedWorkingDir;
+
+        let outer = tempfile::tempdir().expect("tempdir");
+        let root = outer.path().join("ws");
+        let skills = outer.path().join("home-skills");
+        std::fs::create_dir(&root).expect("mkdir ws");
+        std::fs::create_dir(&skills).expect("mkdir skills");
+        let companion = skills.join("helper.rs");
+        std::fs::write(&companion, "fn ok() {}").expect("write");
+
+        let backend = Arc::new(PathRecordingBackend::new());
+        let tool = LspTool::with_backend(backend.clone());
+        let mut ctx = ToolContext::with_working_dir(SharedWorkingDir::new(root.clone()));
+        ctx.confine_to_workspace(root);
+        ctx.set_read_exempt_roots(vec![skills.clone()]);
+
+        let env = envelope(json!({ "action": "symbols", "path": companion.to_string_lossy() }));
+        let out = tool.execute(&env, &ctx).await.expect("symbols ok");
+        assert!(
+            !out.is_error(),
+            "exempt skill file must pass read-class confinement: {:?}",
+            out.content
+        );
+        assert_eq!(
+            backend.seen.lock().unwrap().len(),
+            1,
+            "backend must see the admitted exempt path"
+        );
     }
 
     #[tokio::test]

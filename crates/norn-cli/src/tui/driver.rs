@@ -113,7 +113,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     // (`TuiInputs.registry`), the other is handed to the builder so the
     // registered root and every spawned child share one registry.
     let registry = AgentRegistry::shared();
-    let envelope = cli_coordination_envelope();
+    let envelope = cli_coordination_envelope(resolved.delegation_depth);
 
     let agent = builder_from_cli(
         cli,
@@ -282,7 +282,7 @@ mod tests {
     /// concrete backend `build_provider` would return.
     #[tokio::test]
     async fn tui_parts_carry_root_inbound_and_event_channel() {
-        let envelope = cli_coordination_envelope();
+        let envelope = cli_coordination_envelope(crate::runtime::DEFAULT_DELEGATION_DEPTH);
         let agent = AgentBuilder::new(mock_provider())
             .model("test-model")
             .working_dir(std::env::temp_dir())

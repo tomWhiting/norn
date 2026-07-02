@@ -117,7 +117,7 @@ pub(super) struct ChildLaunch {
     /// [`ChildLoopConfig::resolve`]: `None` → the child runs
     /// [`AgentLoopConfig::default()`](crate::agent_loop::runner::AgentLoopConfig)
     /// exactly as before R5; `Some` applies the granted subset
-    /// (`max_iterations`, `step_timeout`, `linger`) onto that default —
+    /// (`step_timeout`, `linger`) onto that default —
     /// a granted linger lets this child wait at its stop boundaries for
     /// its own children's late results.
     pub(super) loop_config: Option<ChildLoopConfig>,

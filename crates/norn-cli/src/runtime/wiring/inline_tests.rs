@@ -12,8 +12,54 @@ mod tests {
 
     use crate::cli::BuildError;
     use crate::runtime::wiring::{
-        SlashStateInputs, build_slash_state_from_bundle, length_limit_from_profile,
+        DEFAULT_DELEGATION_DEPTH, SlashStateInputs, build_slash_state_from_bundle,
+        cli_coordination_envelope, length_limit_from_profile,
     };
+
+    /// DECISIONS §0.6(d): the CLI's coordination envelope seeds the root's
+    /// own delegation depth from the resolved value. The default is `2`
+    /// (a child may spawn one level of its own; grandchildren are leaves),
+    /// and an explicit `1` restores leaf children.
+    #[test]
+    fn coordination_envelope_seeds_root_delegation_depth() {
+        assert_eq!(DEFAULT_DELEGATION_DEPTH, 2, "owner-ruled default is 2");
+
+        let default_env = cli_coordination_envelope(DEFAULT_DELEGATION_DEPTH);
+        assert_eq!(default_env.child_policy.delegation.remaining_depth, 2);
+        // The inherit-with-decrement invariant is untouched: a root at
+        // depth 2 grants a child depth 1 (can still spawn) and a grandchild
+        // depth 0 (a leaf that cannot).
+        let child = default_env
+            .child_policy
+            .grant_for_child(None)
+            .expect("root grants a child");
+        assert_eq!(
+            child.delegation.remaining_depth, 1,
+            "child may spawn one level"
+        );
+        let grandchild = child
+            .grant_for_child(None)
+            .expect("child grants a grandchild");
+        assert_eq!(
+            grandchild.delegation.remaining_depth, 0,
+            "grandchild is a leaf"
+        );
+        assert!(
+            grandchild.grant_for_child(None).is_err(),
+            "a leaf grandchild cannot spawn",
+        );
+
+        // Explicit depth 1 restores leaf children (the pre-ruling shape).
+        let leaf_env = cli_coordination_envelope(1);
+        assert_eq!(leaf_env.child_policy.delegation.remaining_depth, 1);
+        let leaf_child = leaf_env
+            .child_policy
+            .grant_for_child(None)
+            .expect("root grants a child");
+        assert_eq!(leaf_child.delegation.remaining_depth, 0, "child is a leaf");
+        // The concurrency cap is unchanged by the depth knob.
+        assert_eq!(leaf_env.child_policy.delegation.max_concurrent_children, 32);
+    }
 
     /// Assemble a headless agent through the library builder and hand back
     /// its parts, so the slash-state tests read the same gated registry,

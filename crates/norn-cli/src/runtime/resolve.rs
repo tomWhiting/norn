@@ -51,6 +51,13 @@ pub struct ResolvedInvocation {
     pub provider_overrides: ProviderConfigOverrides,
     /// The resolved model identifier.
     pub model: String,
+    /// The resolved root delegation depth for
+    /// [`cli_coordination_envelope`](crate::runtime::cli_coordination_envelope):
+    /// `-c delegation_depth` wins over the `[agent] delegation_depth`
+    /// setting, which wins over the owner-ruled default of
+    /// [`DEFAULT_DELEGATION_DEPTH`](crate::runtime::DEFAULT_DELEGATION_DEPTH)
+    /// (`2`, DECISIONS §0.6(d)).
+    pub delegation_depth: u32,
 }
 
 /// Resolve a CLI invocation into the provider selection + profile the
@@ -121,6 +128,20 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
     }
     overlay_cli_provider_overrides(&mut provider_overrides, &config_overrides);
 
+    // Root delegation depth: `-c delegation_depth` wins over the `[agent]
+    // delegation_depth` setting, which wins over the owner-ruled default
+    // (DECISIONS §0.6(d)). The inherit-with-decrement and narrowing-only
+    // invariants are untouched — this only seeds the root's own budget.
+    let delegation_depth = config_overrides
+        .delegation_depth
+        .or_else(|| {
+            settings
+                .agent
+                .as_ref()
+                .and_then(|agent| agent.delegation_depth)
+        })
+        .unwrap_or(crate::runtime::DEFAULT_DELEGATION_DEPTH);
+
     let model = profile.model.clone();
     Ok(ResolvedInvocation {
         settings,
@@ -129,6 +150,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         provider_kind: provider_selection.kind,
         provider_overrides,
         model,
+        delegation_depth,
     })
 }
 

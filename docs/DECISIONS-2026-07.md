@@ -113,6 +113,27 @@ two are behaviors an agent explicitly wrote "needs sign-off" against. Full detai
    summarization-grade compaction is needed). Reasoning persistence: ruled and done — see
    the §3 entry.
 
+6. **Skills & delegation rulings (owner, 2026-07-03/04):**
+   (a) **Skill scan tiers**: the `cwd/.meridian/skills` tier is legacy experimentation —
+   removed; `~/.norn` (NORN_HOME-aware) is the central home-level store, project `.norn` the
+   project store; `.agents`/`.claude` convention tiers remain.
+   (b) **Confinement carve-out APPROVED**: under a workspace root, agents may READ the
+   discovered skill search paths and profile/config directories (home-level skills'
+   companion files were reported but unreadable). Write allowance + a Claude-Code-style
+   progressively-merged permission config surface for it: follow-up design, owner-sketched.
+   (c) **`ChildLoopConfig.max_iterations` REMOVED outright** (the model-suppliable spawn
+   grant): it was a silent cutoff — the child was never told its budget, just stopped at the
+   gate, so granted children "always error"; models chronically underestimate action counts.
+   The root/embedder config knob stays; the model-facing grant goes.
+   (d) **Nested delegation: default depth 1 → 2** (children may spawn one level of their
+   own), configurable via settings/`-c` (owner ruled the value; inherit-with-decrement and
+   narrowing-only invariants unchanged). Prebuilt role profiles (PM/scrum-master, developer,
+   reviewer) noted for the internal-agents assistant-hats phase.
+   (e) **Cron tool requirements** (for the brief): relative wake-ups ("in N"), time-of-day,
+   and looping intervals (minutes/hours/days); fired schedules deliver as injected messages;
+   schedules persist as session events (resume restores); no caps on count or interval;
+   in-session first, daemon phase later.
+
 Beyond these, §5.1 (R1 D1-D7) were **applied autonomously while the owner was away** and are all
 reversible on `hardening/final-state` before merge — the owner may override any of them.
 

@@ -107,9 +107,9 @@ pub fn session_data_dir() -> Option<PathBuf> {
 ///
 /// Returns [`None`] when neither `$NORN_HOME` nor [`dirs::home_dir`]
 /// resolves. Callers that need to scan project-local skill trees
-/// (`.norn/skills/`, `.agents/skills/`, `.claude/skills/`,
-/// `.meridian/skills/`) compose those from a working directory in the
-/// CLI layer — this helper covers the user-level tier only.
+/// (`.norn/skills/`, `.agents/skills/`, `.claude/skills/`) compose those
+/// from a working directory in the CLI layer — this helper covers the
+/// user-level tier only.
 #[must_use]
 pub fn skills_dir() -> Option<PathBuf> {
     norn_dir().map(|d| d.join(SKILLS_SUBDIR))

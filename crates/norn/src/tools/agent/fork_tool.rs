@@ -182,11 +182,6 @@ impl Tool for ForkTool {
                             "additionalProperties": false,
                             "description": "Optional loop-shaping overrides for the fork. Not a narrowing axis: any value is accepted regardless of your own loop config. Each field is optional; an unset field keeps the library default (today's behavior). Omit entirely to run the fork on default loop limits — and note that supplying child_policy without this key clears any loop overrides the fork would have inherited; restate them to keep them.",
                             "properties": {
-                                "max_iterations": {
-                                    "type": "integer",
-                                    "minimum": 0,
-                                    "description": "Hard cap on provider round-trips within one of the fork's steps. Unset = uncapped."
-                                },
                                 "step_timeout_secs": {
                                     "type": "integer",
                                     "minimum": 0,
@@ -3061,44 +3056,25 @@ mod tests {
         handle.join_handle.await.expect("join");
     }
 
-    /// R5 on the fork surface: a per-fork
-    /// `child_policy.loop_config.max_iterations` is stamped on the
-    /// fork's grant (registry ground truth) and actually binds — the
-    /// fork's schema loop would need a second round-trip to produce its
-    /// structured output, the granted cap of 1 forbids it, and the typed
-    /// `MaxIterationsReached` failure is delivered honestly through the
-    /// result channel.
+    /// DECISIONS §0.6(c) on the fork surface: the model-suppliable
+    /// `loop_config.max_iterations` grant is removed. It is absent from the
+    /// fork schema and, because `loop_config` is `deny_unknown_fields`, a
+    /// fork that still passes it is rejected loudly at the argument
+    /// boundary — never silently dropped, and nothing is reserved.
     #[tokio::test]
-    async fn fork_granted_max_iterations_binds() {
-        use crate::agent::child_policy::ChildLoopConfig;
-        use crate::agent::output::AgentStopReason;
+    async fn fork_rejects_removed_max_iterations_grant() {
         use crate::agent::result_channel::ChildResultSender;
 
-        // First turn ends with plain text (no structured_output call):
-        // in schema mode the loop would nudge and call again — the
-        // second (scripted) turn must never be requested under the cap.
-        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
-            vec![
-                ProviderEvent::TextDelta {
-                    text: "not structured".to_string(),
-                },
-                ProviderEvent::Done {
-                    stop_reason: StopReason::EndTurn,
-                    usage: Usage::default(),
-                    response_id: None,
-                },
-            ],
-            vec![
-                ProviderEvent::TextDelta {
-                    text: "never reached".to_string(),
-                },
-                ProviderEvent::Done {
-                    stop_reason: StopReason::EndTurn,
-                    usage: Usage::default(),
-                    response_id: None,
-                },
-            ],
-        ]));
+        // The fork schema no longer advertises the knob under loop_config.
+        let tool = ForkTool::new();
+        let loop_config = &tool.input_schema()["properties"]["child_policy"]["properties"]["loop_config"]
+            ["properties"];
+        assert!(
+            loop_config.get("max_iterations").is_none(),
+            "max_iterations must be absent from the fork loop_config schema: {loop_config:?}",
+        );
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let agent_registry = AgentRegistry::shared();
         let (ctx, _parent_store) = parent_ctx(
             provider,
@@ -3107,11 +3083,10 @@ mod tests {
             Arc::new(ToolRegistry::new()),
             Arc::new(MessageRouter::new()),
         );
-        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
+        let (tx, _rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
 
-        let tool = ForkTool::new();
-        let out = tool
+        let err = tool
             .execute(
                 &envelope_for(json!({
                     "request": "r", "model": "gpt-5.5", "requirements": [],
@@ -3128,40 +3103,20 @@ mod tests {
                 &ctx,
             )
             .await
-            .expect("fork");
-        assert!(!out.is_error(), "{:?}", out.content);
-        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
-
-        assert_eq!(
-            agent_registry
-                .read()
-                .get(fork_id)
-                .expect("entry")
-                .policy
-                .loop_config,
-            Some(ChildLoopConfig {
-                max_iterations: Some(1),
-                step_timeout_secs: None,
-                linger_secs: None,
-            }),
-            "the granted loop_config is registry ground truth",
+            .expect_err("the removed max_iterations grant must fail loudly");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(
+                    reason.contains("max_iterations"),
+                    "the failure names the removed field: {reason}",
+                );
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
+        assert!(
+            agent_registry.read().is_empty(),
+            "a refused fork reserves nothing",
         );
-
-        let handle = ctx
-            .get_extension::<AgentHandles>()
-            .unwrap()
-            .remove(fork_id)
-            .expect("handle");
-        handle.join_handle.await.expect("join");
-
-        assert_eq!(
-            agent_registry.read().get(fork_id).expect("entry").status,
-            AgentStatus::Failed,
-            "a capped-out fork is an honest failure",
-        );
-        let result = rx.try_recv().expect("result delivered");
-        assert!(!result.succeeded);
-        assert_eq!(result.stop, Some(AgentStopReason::MaxIterationsReached));
     }
 
     /// Routes provider scripts so a mid-tree fork and the grandchild it

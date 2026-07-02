@@ -119,6 +119,15 @@ pub(super) fn build_child_context(
         ToolContext::with_working_dir(SharedWorkingDir::new(parent_ctx.working_dir()));
     if let Some(root) = parent_ctx.workspace_root() {
         child_ctx.confine_to_workspace(root.to_path_buf());
+        // Inherit the parent's read carve-out (already canonicalized) so a
+        // confined child can READ the same operator-configured skill /
+        // profile / config dirs the parent could — otherwise the skill tool
+        // would advertise companion files the child cannot open (DECISIONS
+        // §0.6(b)).
+        let exempt = parent_ctx.read_exempt_roots().to_vec();
+        if !exempt.is_empty() {
+            child_ctx.set_read_exempt_roots(exempt);
+        }
     }
     child_ctx.insert_extension(Arc::new(child_infra));
     child_ctx.insert_extension(Arc::new(AgentCancellation(child_cancel)));
@@ -343,6 +352,85 @@ mod tests {
             .get_extension::<ActionLogTree>()
             .expect("tree forwarded to the child context");
         assert!(Arc::ptr_eq(&child_tree, &tree));
+    }
+
+    /// DECISIONS §0.6(b): a spawned child inherits the parent's read
+    /// carve-out, so under inherited confinement it can READ a file inside a
+    /// parent-declared exempt dir that lies outside the workspace root —
+    /// end-to-end through the read tool, not merely by field inspection.
+    #[tokio::test]
+    async fn child_inherits_read_exemption_and_reads_exempt_file() {
+        use crate::tool::envelope::ToolEnvelope;
+        use crate::tool::traits::Tool;
+        use crate::tools::read::ReadTool;
+
+        let outer = tempdir().expect("outer");
+        let root = outer.path().join("ws");
+        let skills = outer.path().join("home-skills");
+        std::fs::create_dir(&root).expect("mkdir ws");
+        std::fs::create_dir(&skills).expect("mkdir skills");
+        let companion = skills.join("SKILL.md");
+        std::fs::write(&companion, "name: demo\n").expect("write companion");
+
+        // Confined parent that carries the exempt root.
+        let mut parent_ctx = ToolContext::with_working_dir(SharedWorkingDir::new(root.clone()));
+        parent_ctx.confine_to_workspace(root.clone());
+        parent_ctx.set_read_exempt_roots(vec![skills.clone()]);
+
+        let parent_id = Uuid::new_v4();
+        let infra = parent_infra(parent_id);
+        let child_ctx = build_child_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+            test_policy(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        // The child inherited the (canonicalized) exempt root.
+        assert_eq!(
+            child_ctx.read_exempt_roots(),
+            parent_ctx.read_exempt_roots(),
+            "child must inherit the parent's canonicalized exempt roots",
+        );
+
+        // End-to-end: the child reads the exempt companion despite being
+        // confined to `root`.
+        let tool = ReadTool::new();
+        let env = ToolEnvelope {
+            tool_call_id: "call-1".to_owned(),
+            tool_name: "read".to_owned(),
+            model_args: serde_json::json!({ "path": companion.to_string_lossy() }),
+            metadata: serde_json::Value::Null,
+        };
+        let out = tool.execute(&env, &child_ctx).await.expect("read output");
+        assert!(
+            !out.is_error(),
+            "child must read the inherited-exempt file: {:?}",
+            out.content
+        );
+        assert_eq!(out.content["kind"], "text");
+
+        // A non-exempt sibling outside the root stays refused for the child.
+        let secret = outer.path().join("secret.txt");
+        std::fs::write(&secret, "s").expect("write secret");
+        let refused_env = ToolEnvelope {
+            tool_call_id: "call-2".to_owned(),
+            tool_name: "read".to_owned(),
+            model_args: serde_json::json!({ "path": secret.to_string_lossy() }),
+            metadata: serde_json::Value::Null,
+        };
+        let refused = tool
+            .execute(&refused_env, &child_ctx)
+            .await
+            .expect("refusal output");
+        assert!(
+            refused.is_error(),
+            "non-exempt outside path must be refused"
+        );
+        assert_eq!(refused.content["kind"], "confinement_refused");
     }
 
     /// A second child reuses the already-installed tree — both children

@@ -652,6 +652,12 @@ pub(crate) struct ToolContextParts {
     pub(crate) shared_wd: SharedWorkingDir,
     /// Validated workspace-confinement root, when configured.
     pub(crate) workspace_root: Option<PathBuf>,
+    /// Directories a confined agent may READ from even outside the
+    /// confinement root (operator-configured skill / profile / config
+    /// dirs; DECISIONS §0.6(b)). Canonicalized at install; ignored when no
+    /// confinement root is set. Empty for unconfined or non-runtime-base
+    /// builds.
+    pub(crate) read_exempt_roots: Vec<PathBuf>,
     /// Session id minted by the variable store.
     pub(crate) session_id: String,
     /// Resolved diagnostic collector.
@@ -684,6 +690,13 @@ pub(crate) fn assemble_tool_context(parts: ToolContextParts) -> ToolContext {
     let mut ctx = ToolContext::with_working_dir(parts.shared_wd);
     if let Some(root) = parts.workspace_root {
         ctx.confine_to_workspace(root);
+        // Read carve-out only matters under confinement; installing it here
+        // (after the root, before any dispatch) keeps the exemption
+        // effective from the first tool call. Canonicalization happens
+        // inside the setter.
+        if !parts.read_exempt_roots.is_empty() {
+            ctx.set_read_exempt_roots(parts.read_exempt_roots);
+        }
     }
     ctx.insert_extension(Arc::new(SessionId(parts.session_id)));
     if let Some(diagnostics) = parts.diagnostics {

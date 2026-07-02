@@ -41,7 +41,7 @@ use norn_cli::config::{
     apply_cli_profile_overrides, apply_settings_reasoning_to_profile, resolve_model_selection,
     resolve_profile,
 };
-use norn_cli::runtime::{builder_from_cli, cli_coordination_envelope};
+use norn_cli::runtime::{DEFAULT_DELEGATION_DEPTH, builder_from_cli, cli_coordination_envelope};
 
 fn mock_provider() -> Arc<dyn Provider> {
     Arc::new(MockProvider::new(Vec::new()))
@@ -321,7 +321,7 @@ fn run_snapshot() {
     // context, wires the child-result receiver and root agent id, and keys
     // the prompt cache on the resolved session id.
     let coord_cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--session-name", "conf-coord"]);
-    let envelope = cli_coordination_envelope();
+    let envelope = cli_coordination_envelope(DEFAULT_DELEGATION_DEPTH);
     let coord_parts = builder_for(&coord_cli)
         .agent_registry(AgentRegistry::shared())
         .child_policy(envelope.child_policy.clone())

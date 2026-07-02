@@ -336,6 +336,18 @@ fn parse_service_tier(raw: &str) -> Result<ServiceTier, NornError> {
     })
 }
 
+/// Assemble the ordered skill search tiers (earlier wins on name collision).
+///
+/// Precedence, highest first:
+/// 1. settings-declared `skills.search_paths` (resolved against `cwd`),
+/// 2. project convention tiers `cwd/.norn/skills`, `cwd/.agents/skills`,
+///    `cwd/.claude/skills`,
+/// 3. home-tier norn skills (`NORN_HOME`-aware via
+///    [`crate::config::paths::skills_dir`]),
+/// 4. foreign-convention home tiers `~/.agents/skills`, `~/.claude/skills`.
+///
+/// The legacy `cwd/.meridian/skills` experimentation tier was removed
+/// (owner ruling, DECISIONS §0.6(a)) — it is not scanned.
 fn build_skill_search_paths(settings: &NornSettings, cwd: &Path) -> Vec<PathBuf> {
     let mut paths = Vec::new();
     if let Some(skills) = settings.skills.as_ref()
@@ -364,7 +376,6 @@ fn build_skill_search_paths(settings: &NornSettings, cwd: &Path) -> Vec<PathBuf>
         paths.push(home.join(".agents").join("skills"));
         paths.push(home.join(".claude").join("skills"));
     }
-    paths.push(cwd.join(".meridian").join("skills"));
     paths
 }
 
@@ -697,6 +708,41 @@ mod tests {
                 "without NORN_HOME the literal ~/.norn/skills must be present: {paths:?}",
             );
         }
+    }
+
+    /// The legacy `.meridian/skills` experimentation tier is removed
+    /// (DECISIONS §0.6(a)): it must never appear in the search paths, while
+    /// every other tier stays in its documented precedence order.
+    #[test]
+    #[serial_test::serial]
+    fn build_skill_search_paths_excludes_meridian_tier() {
+        let cwd = tempfile::tempdir().unwrap();
+        let _guard = NornHomeGuard::clear();
+
+        let paths = build_skill_search_paths(&NornSettings::default(), cwd.path());
+
+        assert!(
+            !paths.contains(&cwd.path().join(".meridian").join("skills")),
+            "the legacy .meridian/skills tier must not be scanned: {paths:?}",
+        );
+        // Project convention tiers survive, in order and ahead of the home
+        // tiers — precedence is otherwise unchanged.
+        let norn = cwd.path().join(".norn").join("skills");
+        let agents = cwd.path().join(".agents").join("skills");
+        let claude = cwd.path().join(".claude").join("skills");
+        let norn_idx = paths.iter().position(|p| *p == norn).expect("norn tier");
+        let agents_idx = paths
+            .iter()
+            .position(|p| *p == agents)
+            .expect("agents tier");
+        let claude_idx = paths
+            .iter()
+            .position(|p| *p == claude)
+            .expect("claude tier");
+        assert!(
+            norn_idx < agents_idx && agents_idx < claude_idx,
+            "project tiers keep their .norn < .agents < .claude order: {paths:?}",
+        );
     }
 
     #[test]

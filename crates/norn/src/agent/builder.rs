@@ -564,9 +564,76 @@ impl AgentBuilder {
         let (event_store, action_log) =
             restore_session_state(self.session, &mut loop_context, shared_wd.clone());
 
+        // Read carve-out (DECISIONS §0.6(b)): under confinement, a confined
+        // agent may READ the well-known, convention-defined skill / profile /
+        // config locations that lie OUTSIDE the workspace root — the skill
+        // tool advertises companion files there, so they must be readable.
+        // Write stays fully confined; only computed when a confinement root is
+        // actually set; canonicalization + dedup + missing-drop happen in the
+        // context setter.
+        //
+        // The exempt set is deliberately limited to non-model-writable
+        // convention locations. It is NOT seeded from `runtime_base.skill_paths`,
+        // because that list includes settings-declared `skills.search_paths`
+        // merged from `cwd/.norn/settings.json` / `settings.local.json` — files
+        // INSIDE the confinement root that the confined agent can write. Seeding
+        // exemptions from them would let an agent append an arbitrary path and
+        // have the NEXT session read-exempt it: a persistent confinement escape.
+        // Settings-declared `search_paths` that point outside the workspace are
+        // therefore NOT exempt under confinement — that allowance belongs to the
+        // future operator permission-config surface (DECISIONS §0.6(b) sketch).
+        // A skill from such a path still LOADS (the skill tool reads through its
+        // own `std::fs` path in `tools/skill.rs`, never through read-tool
+        // confinement), but its companion files are not readable under
+        // confinement until that operator surface exists.
+        //
+        // `~/.norn/settings.json` itself is not exempted: exempt roots are
+        // directory prefixes (`starts_with`), so a file-granular allowance is
+        // not expressible here, and exempting its directory would be too broad
+        // (`~/.norn/` also holds `sessions/`). Nothing extra is added for it.
+        // `~/.norn/sessions/` (session transcripts for ALL workspaces) and the
+        // `~/.norn/` root itself are never exempted.
+        let read_exempt_roots = if let Some(root) = workspace_root.as_ref() {
+            let mut roots: Vec<PathBuf> = Vec::new();
+            // Narrow `~/.norn/` convention subdirs (NORN_HOME-aware via the
+            // `config::paths` helpers) — skills, profiles, and rules only,
+            // never the norn root and never `sessions/`.
+            if let Some(skills) = crate::config::paths::skills_dir() {
+                roots.push(skills);
+            }
+            if let Some(profiles) = crate::config::paths::profiles_dir() {
+                roots.push(profiles);
+            }
+            if let Some(rules) = crate::config::paths::rules_dir() {
+                roots.push(rules);
+            }
+            // Literal-home foreign-convention skill tiers, resolved exactly as
+            // `build_skill_search_paths` resolves them: rooted at the real home
+            // dir, because NORN_HOME moves only the norn root, not these
+            // (agentskills.io / Claude Code) conventions.
+            if let Some(home) = dirs::home_dir() {
+                roots.push(home.join(".agents").join("skills"));
+                roots.push(home.join(".claude").join("skills"));
+            }
+            // Home-tier profile scan dirs: only those `default_scan_dirs`
+            // yields OUTSIDE the workspace. Its project-tier entries
+            // (`cwd/.norn/profiles`, `cwd/.meridian/profiles`) live inside the
+            // confinement root and are already readable, so they need no
+            // exemption.
+            for dir in crate::profile::default_scan_dirs(&working_dir) {
+                if !dir.starts_with(root) {
+                    roots.push(dir);
+                }
+            }
+            roots
+        } else {
+            Vec::new()
+        };
+
         let ctx = assemble_tool_context(ToolContextParts {
             shared_wd,
             workspace_root,
+            read_exempt_roots,
             session_id: session_id.clone(),
             diagnostics: diagnostics.clone(),
             diagnostic_infra,
@@ -843,6 +910,125 @@ mod tests {
             ctx.post_checks.len(),
             1,
             "runtime base plus diagnostic override must install exactly one diagnostics post-check",
+        );
+    }
+
+    /// Guard that swaps `NORN_HOME` for the duration of a test and restores
+    /// the prior value on drop. Consumers must be `#[serial]`.
+    #[allow(unsafe_code)]
+    struct NornHomeGuard {
+        prior: Option<std::ffi::OsString>,
+    }
+
+    #[allow(unsafe_code)]
+    impl NornHomeGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let prior = std::env::var_os("NORN_HOME");
+            // SAFETY: paired with `#[serial]` on the sole consumer, so no
+            // concurrent reader observes the mutated env.
+            unsafe { std::env::set_var("NORN_HOME", path) };
+            Self { prior }
+        }
+    }
+
+    #[allow(unsafe_code)]
+    impl Drop for NornHomeGuard {
+        fn drop(&mut self) {
+            // SAFETY: see [`Self::set`].
+            match &self.prior {
+                Some(val) => unsafe { std::env::set_var("NORN_HOME", val) },
+                None => unsafe { std::env::remove_var("NORN_HOME") },
+            }
+        }
+    }
+
+    /// Findings 1 & 2 (security): under confinement the computed read-exempt
+    /// set is drawn ONLY from well-known, non-model-writable convention
+    /// locations. It contains the NORN_HOME-aware home skills dir and the
+    /// narrow `~/.norn/{skills,profiles,rules}` subdirs; it never contains a
+    /// settings-declared `skills.search_paths` entry (Finding 1: those are
+    /// model-writable and would be a persistent escape), nor the `~/.norn/`
+    /// root itself or `~/.norn/sessions/` (Finding 2: sessions hold
+    /// transcripts for ALL workspaces).
+    #[test]
+    #[serial_test::serial]
+    #[allow(clippy::unwrap_used)]
+    fn confined_read_exempt_set_excludes_settings_paths_and_sessions() {
+        let norn_home = tempfile::tempdir().expect("norn_home");
+        let _guard = NornHomeGuard::set(norn_home.path());
+
+        // The convention subdirs must exist on disk — the context setter
+        // canonicalizes and drops non-existent exempt roots.
+        for sub in ["skills", "profiles", "rules", "sessions"] {
+            std::fs::create_dir(norn_home.path().join(sub)).expect("mk norn subdir");
+        }
+
+        // A settings-declared skill search path that lives OUTSIDE the
+        // workspace and exists on disk — under the pre-fix code this would
+        // have been canonicalized into the exempt set.
+        let outside = tempfile::tempdir().expect("outside");
+        let outside_skills = outside.path().join("evil-skills");
+        std::fs::create_dir(&outside_skills).expect("mk outside skills");
+
+        // Workspace with a project settings file declaring that search path.
+        let workspace = tempfile::tempdir().expect("workspace");
+        let dot_norn = workspace.path().join(".norn");
+        std::fs::create_dir(&dot_norn).expect("mk .norn");
+        std::fs::write(
+            dot_norn.join("settings.json"),
+            serde_json::json!({
+                "skills": { "search_paths": [outside_skills.to_string_lossy()] }
+            })
+            .to_string(),
+        )
+        .expect("write settings");
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(workspace.path())
+            .workspace_root(workspace.path())
+            .load_runtime_base()
+            .build()
+            .expect("build succeeds");
+
+        let ctx = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context");
+        let roots = ctx.read_exempt_roots();
+
+        let canon = |p: &std::path::Path| p.canonicalize().expect("canonicalize");
+        let skills = canon(&norn_home.path().join("skills"));
+        let profiles = canon(&norn_home.path().join("profiles"));
+        let rules = canon(&norn_home.path().join("rules"));
+
+        assert!(
+            roots.contains(&skills),
+            "home skills dir must be exempt: {roots:?}",
+        );
+        assert!(
+            roots.contains(&profiles),
+            "home profiles dir must be exempt: {roots:?}",
+        );
+        assert!(
+            roots.contains(&rules),
+            "home rules dir must be exempt: {roots:?}",
+        );
+
+        let sessions = canon(&norn_home.path().join("sessions"));
+        let norn_root = canon(norn_home.path());
+        let settings_path = canon(&outside_skills);
+        assert!(
+            !roots.contains(&sessions),
+            "sessions dir must NEVER be exempt (holds all-workspace transcripts): {roots:?}",
+        );
+        assert!(
+            !roots.contains(&norn_root),
+            "the ~/.norn root itself must never be exempt: {roots:?}",
+        );
+        assert!(
+            !roots.contains(&settings_path),
+            "settings-declared search_paths must never be exempt (model-writable): {roots:?}",
         );
     }
 

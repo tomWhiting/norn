@@ -14,7 +14,7 @@ use std::path::Path;
 use async_trait::async_trait;
 use serde::Deserialize;
 
-use super::confinement::check_confinement;
+use super::confinement::check_read_confinement;
 use super::read_stream::{RenderedRead, ScannedFile, scan_file};
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
@@ -113,8 +113,10 @@ impl Tool for ReadTool {
         let path = ctx.resolve_path(&args.path);
 
         // Workspace confinement (opt-in): refuse before touching disk so
-        // even metadata of out-of-root paths is never disclosed.
-        if let Err(reason) = check_confinement(ctx, &path) {
+        // even metadata of out-of-root paths is never disclosed. Read-class
+        // access additionally admits the operator-configured skill /
+        // profile / config dirs (DECISIONS §0.6(b)).
+        if let Err(reason) = check_read_confinement(ctx, &path) {
             return Ok(ToolOutput::failure_with_content(
                 serde_json::json!({ "path": args.path, "kind": "confinement_refused" }),
                 ToolErrorPayload::new(
@@ -718,6 +720,55 @@ mod tests {
         let out = tool.execute(&envelope, &ctx).await.unwrap();
         assert!(!out.is_error(), "{:?}", out.content);
         assert_eq!(out.content["kind"], "text");
+    }
+
+    /// DECISIONS §0.6(b): under confinement the read tool admits a file
+    /// inside a declared read-exempt root (a home-level skill dir) even
+    /// though it is outside the workspace root — the reported-but-unreadable
+    /// companion-file bug is fixed. A non-exempt outside path stays refused.
+    #[tokio::test]
+    async fn confined_read_admits_exempt_skill_dir() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("ws");
+        let skills = outer.path().join("home-skills");
+        tokio::fs::create_dir(&root).await.unwrap();
+        tokio::fs::create_dir(&skills).await.unwrap();
+        let companion = skills.join("SKILL.md");
+        tokio::fs::write(&companion, "name: demo\n").await.unwrap();
+
+        let tool = ReadTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(root.clone());
+        ctx.set_working_dir(root.clone());
+        ctx.set_read_exempt_roots(vec![skills.clone()]);
+
+        // The exempt skill companion is readable.
+        let out = tool
+            .execute(
+                &envelope_for(json!({ "path": companion.to_string_lossy() })),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(
+            !out.is_error(),
+            "exempt skill file must read: {:?}",
+            out.content
+        );
+        assert_eq!(out.content["kind"], "text");
+
+        // A non-exempt sibling outside the root is still refused.
+        let secret = outer.path().join("secret.txt");
+        tokio::fs::write(&secret, "s").await.unwrap();
+        let refused = tool
+            .execute(
+                &envelope_for(json!({ "path": secret.to_string_lossy() })),
+                &ctx,
+            )
+            .await
+            .unwrap();
+        assert!(refused.is_error());
+        assert_eq!(refused.content["kind"], "confinement_refused");
     }
 
     #[tokio::test]

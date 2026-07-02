@@ -241,11 +241,11 @@ fn build_slash_snapshot() -> Vec<SlashCandidate> {
 /// Directories searched for skill files, in shadow-priority order
 /// (earlier entries take precedence on a name collision).
 ///
-/// Mirrors the runtime's 7-tier search path from
-/// `norn-cli::runtime::wiring::build_skill_search_paths`:
+/// Mirrors the runtime's 6-tier search path from
+/// `norn::runtime_init::base::build_skill_search_paths`:
 /// project `.norn/skills/`, `.agents/skills/`, `.claude/skills/`,
-/// user `~/.norn/skills/`, `~/.agents/skills/`, `~/.claude/skills/`,
-/// project `.meridian/skills/`.
+/// user `~/.norn/skills/`, `~/.agents/skills/`, `~/.claude/skills/`.
+/// (The legacy `.meridian/skills/` tier was removed — DECISIONS §0.6(a).)
 fn profile_skills_dirs() -> Vec<PathBuf> {
     let mut out = Vec::new();
     if let Ok(cwd) = std::env::current_dir() {
@@ -259,9 +259,6 @@ fn profile_skills_dirs() -> Vec<PathBuf> {
     if let Some(home) = dirs::home_dir() {
         out.push(home.join(".agents").join("skills"));
         out.push(home.join(".claude").join("skills"));
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        out.push(cwd.join(".meridian").join("skills"));
     }
     out
 }

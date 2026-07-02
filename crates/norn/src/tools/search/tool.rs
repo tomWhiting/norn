@@ -13,7 +13,7 @@ use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
-use crate::tools::confinement::check_confinement;
+use crate::tools::confinement::check_read_confinement;
 
 use super::ast_search::run_ast_search;
 use super::content::run_content_search;
@@ -176,8 +176,9 @@ impl Tool for SearchTool {
 
         // Workspace confinement (opt-in): refuse before touching disk so a
         // confined agent cannot exfiltrate content through search that the
-        // read tool refuses.
-        if let Err(reason) = check_confinement(ctx, &root) {
+        // read tool refuses. Read-class, so it honours the same skill /
+        // profile / config carve-out as the read tool (DECISIONS §0.6(b)).
+        if let Err(reason) = check_read_confinement(ctx, &root) {
             let requested = args
                 .path
                 .clone()
@@ -930,6 +931,53 @@ mod tests {
 
         assert!(!out.is_error());
         assert_eq!(out.content["matches"].as_array().unwrap().len(), 1);
+    }
+
+    /// DECISIONS §0.6(b): the search tool is read-class, so a file inside a
+    /// declared read-exempt root (a home-level skill dir) is searchable
+    /// under confinement even though it lies outside the workspace root —
+    /// the same carve-out the read tool honours. A non-exempt sibling stays
+    /// refused.
+    #[tokio::test]
+    async fn confined_search_admits_exempt_skill_dir() {
+        let outer = tempdir().expect("outer");
+        let root = outer.path().join("ws");
+        let skills = outer.path().join("home-skills");
+        std::fs::create_dir(&root).expect("mkdir ws");
+        std::fs::create_dir(&skills).expect("mkdir skills");
+        std::fs::write(skills.join("SKILL.md"), "look for the needle here\n").expect("write skill");
+
+        let mut ctx = confined_ctx(&root);
+        ctx.set_read_exempt_roots(vec![skills.clone()]);
+        let tool = SearchTool::new();
+
+        // Content search rooted at the exempt dir finds the match.
+        let env = envelope(json!({
+            "pattern": "needle",
+            "path": skills.to_string_lossy(),
+        }));
+        let out = tool.execute(&env, &ctx).await.expect("search ok");
+        assert!(
+            !out.is_error(),
+            "exempt skill dir must be searchable: {:?}",
+            out.content
+        );
+        assert_eq!(out.content["matches"].as_array().unwrap().len(), 1);
+
+        // A non-exempt sibling outside the root is still refused.
+        let secret = outer.path().join("secret");
+        std::fs::create_dir(&secret).expect("mkdir secret");
+        std::fs::write(secret.join("s.txt"), "needle\n").expect("write secret");
+        let refused = envelope(json!({
+            "pattern": "needle",
+            "path": secret.to_string_lossy(),
+        }));
+        let out = tool
+            .execute(&refused, &ctx)
+            .await
+            .expect("refusal is output");
+        assert!(out.is_error(), "non-exempt outside path must be refused");
+        assert_eq!(out.content["kind"].as_str(), Some("confinement_refused"));
     }
 
     #[tokio::test]

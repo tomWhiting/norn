@@ -795,6 +795,46 @@ mod tests {
         assert!(!escape_target.exists());
     }
 
+    /// DECISIONS §0.6(b): the read carve-out is read-only. Even with a
+    /// read-exempt root declared, WRITE into that exempt dir is refused —
+    /// write never consults the exemption.
+    #[tokio::test]
+    async fn confined_write_refuses_read_exempt_dir() {
+        let outer = tempdir().unwrap();
+        let root = outer.path().join("ws");
+        let skills = outer.path().join("home-skills");
+        tokio::fs::create_dir(&root).await.unwrap();
+        tokio::fs::create_dir(&skills).await.unwrap();
+        let target = skills.join("SKILL.md");
+
+        let tool = WriteTool::new();
+        let mut ctx = ToolContext::empty();
+        ctx.confine_to_workspace(root.clone());
+        ctx.set_working_dir(root.clone());
+        ctx.set_read_exempt_roots(vec![skills.clone()]);
+
+        let envelope = envelope_for(json!({
+            "path": target.to_string_lossy(),
+            "content": "must never land in an exempt dir"
+        }));
+        match tool.pre_validate(&envelope, &ctx).await {
+            PreValidateOutcome::Block(decision) => {
+                assert!(
+                    decision.message.contains("outside the workspace"),
+                    "{}",
+                    decision.message
+                );
+            }
+            PreValidateOutcome::Proceed => panic!("expected Block for write into exempt dir"),
+        }
+        let err = tool.execute(&envelope, &ctx).await.expect_err("refused");
+        assert!(err.to_string().contains("outside the workspace"), "{err}");
+        assert!(
+            !target.exists(),
+            "write into an exempt dir must not create the file"
+        );
+    }
+
     #[tokio::test]
     async fn confined_context_allows_write_inside_root() {
         let dir = tempdir().unwrap();

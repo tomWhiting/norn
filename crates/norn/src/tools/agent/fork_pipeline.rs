@@ -125,6 +125,13 @@ pub(super) fn build_fork_context(
         ToolContext::with_working_dir(SharedWorkingDir::new(parent_ctx.working_dir()));
     if let Some(root) = parent_ctx.workspace_root() {
         child_ctx.confine_to_workspace(root.to_path_buf());
+        // Inherit the parent's read carve-out (already canonicalized) so a
+        // confined fork can READ the same operator-configured skill /
+        // profile / config dirs the parent could (DECISIONS §0.6(b)).
+        let exempt = parent_ctx.read_exempt_roots().to_vec();
+        if !exempt.is_empty() {
+            child_ctx.set_read_exempt_roots(exempt);
+        }
     }
     child_ctx.insert_extension(Arc::new(child_infra));
     child_ctx.insert_extension(Arc::new(AgentCancellation(child_cancel)));
@@ -546,6 +553,103 @@ mod tests {
             inbound_capacity: 32,
             loop_config: None,
         }
+    }
+
+    /// DECISIONS §0.6(b): a fork inherits the parent's read carve-out, so
+    /// under inherited confinement it can READ a file inside a
+    /// parent-declared exempt dir outside the workspace root — end-to-end
+    /// through the read tool (twin of the spawn-side
+    /// `child_inherits_read_exemption_and_reads_exempt_file`; deleting the
+    /// fork-side inheritance block must fail this test).
+    #[tokio::test]
+    async fn fork_inherits_read_exemption_and_reads_exempt_file() -> Result<(), String> {
+        use crate::agent::message_router::MessageRouter;
+        use crate::provider::mock::MockProvider;
+        use crate::tool::context::SharedWorkingDir;
+        use crate::tool::envelope::ToolEnvelope;
+        use crate::tool::traits::Tool;
+        use crate::tools::read::ReadTool;
+
+        let outer = tempdir().map_err(|e| format!("outer tempdir: {e}"))?;
+        let root = outer.path().join("ws");
+        let skills = outer.path().join("home-skills");
+        std::fs::create_dir(&root).map_err(|e| format!("mkdir ws: {e}"))?;
+        std::fs::create_dir(&skills).map_err(|e| format!("mkdir skills: {e}"))?;
+        let companion = skills.join("SKILL.md");
+        std::fs::write(&companion, "name: demo\n").map_err(|e| format!("write companion: {e}"))?;
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let infra = AgentToolInfra {
+            registry: AgentRegistry::shared(),
+            router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id: Uuid::new_v4(),
+            parent_id: None,
+            grant: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+        };
+
+        // Confined parent carrying the exempt root.
+        let mut parent_ctx = ToolContext::with_working_dir(SharedWorkingDir::new(root.clone()));
+        parent_ctx.confine_to_workspace(root.clone());
+        parent_ctx.set_read_exempt_roots(vec![skills.clone()]);
+
+        let child_ctx = build_fork_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            None,
+            test_policy(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        assert_eq!(
+            child_ctx.read_exempt_roots(),
+            parent_ctx.read_exempt_roots(),
+            "the fork must inherit the parent's canonicalized exempt roots",
+        );
+
+        // End-to-end: the fork reads the exempt companion despite
+        // confinement to `root`.
+        let tool = ReadTool::new();
+        let env = ToolEnvelope {
+            tool_call_id: "call-1".to_owned(),
+            tool_name: "read".to_owned(),
+            model_args: serde_json::json!({ "path": companion.to_string_lossy() }),
+            metadata: serde_json::Value::Null,
+        };
+        let out = tool
+            .execute(&env, &child_ctx)
+            .await
+            .map_err(|e| format!("read output: {e}"))?;
+        assert!(
+            !out.is_error(),
+            "fork must read the inherited-exempt file: {:?}",
+            out.content
+        );
+
+        // A non-exempt outside path stays refused for the fork.
+        let secret = outer.path().join("secret.txt");
+        std::fs::write(&secret, "s").map_err(|e| format!("write secret: {e}"))?;
+        let refused_env = ToolEnvelope {
+            tool_call_id: "call-2".to_owned(),
+            tool_name: "read".to_owned(),
+            model_args: serde_json::json!({ "path": secret.to_string_lossy() }),
+            metadata: serde_json::Value::Null,
+        };
+        let refused = tool
+            .execute(&refused_env, &child_ctx)
+            .await
+            .map_err(|e| format!("refusal output: {e}"))?;
+        assert!(
+            refused.is_error(),
+            "non-exempt outside path must be refused for the fork"
+        );
+        assert_eq!(refused.content["kind"], "confinement_refused");
+        Ok(())
     }
 
     /// Permission-escape regression (blocker): the consent-boundary

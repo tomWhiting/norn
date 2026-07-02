@@ -237,7 +237,7 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<AgentParts, PrintE
                 _ => PrintError::Agent(err.to_string()),
             })?;
 
-    let envelope = cli_coordination_envelope();
+    let envelope = cli_coordination_envelope(resolved.delegation_depth);
     let agent = builder_from_cli(
         cli,
         built_provider.as_arc(),

@@ -9,7 +9,7 @@
 //! It also exposes the seven-tier skill discovery roots from
 //! `norn-skills` DESIGN.md §D1. The project-tier helpers
 //! ([`project_skills_dir`], [`project_agents_skills_dir`],
-//! [`project_claude_skills_dir`], [`project_meridian_skills_dir`]) take
+//! [`project_claude_skills_dir`]) take
 //! a working directory so the resolution matches the user's effective
 //! project root after `--working-dir` has been applied. The user-tier
 //! helpers ([`user_skills_dir`], [`user_agents_skills_dir`],
@@ -81,17 +81,12 @@ pub fn project_agents_skills_dir(cwd: &Path) -> PathBuf {
 
 /// Resolve `{cwd}/.claude/skills/` — Claude Code's project-level skill
 /// directory, scanned so SKILL.md files authored for Claude Code work
-/// in Norn without modification.
+/// in Norn without modification. This is the lowest-priority project
+/// tier (the legacy `.meridian/skills/` tier was removed — DECISIONS
+/// §0.6(a)).
 #[must_use]
 pub fn project_claude_skills_dir(cwd: &Path) -> PathBuf {
     cwd.join(".claude").join("skills")
-}
-
-/// Resolve `{cwd}/.meridian/skills/` — the lowest-priority tier for
-/// Meridian-integrated workspaces.
-#[must_use]
-pub fn project_meridian_skills_dir(cwd: &Path) -> PathBuf {
-    cwd.join(".meridian").join("skills")
 }
 
 /// Resolve `~/.norn/skills/` — the user-level Norn skill directory.
@@ -173,10 +168,6 @@ mod tests {
         assert_eq!(
             project_claude_skills_dir(&cwd),
             PathBuf::from("/tmp/project/.claude/skills"),
-        );
-        assert_eq!(
-            project_meridian_skills_dir(&cwd),
-            PathBuf::from("/tmp/project/.meridian/skills"),
         );
     }
 

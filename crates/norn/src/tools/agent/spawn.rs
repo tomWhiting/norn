@@ -294,11 +294,6 @@ impl Tool for SpawnAgentTool {
                             "additionalProperties": false,
                             "description": "Optional loop-shaping overrides for the child. Not a narrowing axis: any value is accepted regardless of your own loop config. Each field is optional; an unset field keeps the library default (today's behavior). Omit entirely to run the child on default loop limits — and note that supplying child_policy without this key clears any loop overrides the child would have inherited; restate them to keep them.",
                             "properties": {
-                                "max_iterations": {
-                                    "type": "integer",
-                                    "minimum": 0,
-                                    "description": "Hard cap on provider round-trips within one of the child's steps. Unset = uncapped."
-                                },
                                 "step_timeout_secs": {
                                     "type": "integer",
                                     "minimum": 0,
@@ -5328,7 +5323,6 @@ mod tests {
                 .policy
                 .loop_config,
             Some(ChildLoopConfig {
-                max_iterations: None,
                 step_timeout_secs: None,
                 linger_secs: Some(2),
             }),
@@ -5385,97 +5379,67 @@ mod tests {
         );
     }
 
-    /// R5: a granted `loop_config.max_iterations` actually binds on the
-    /// child — the cap is reached, the run stops with the typed
-    /// `MaxIterationsReached` outcome, and the failure is delivered
-    /// honestly through the result channel. Also pins that the granted
-    /// loop_config is stamped on the child's registry entry.
+    /// DECISIONS §0.6(c): the model-suppliable `loop_config.max_iterations`
+    /// grant is removed. It is absent from the schema and, because
+    /// `loop_config` is `deny_unknown_fields`, a spawn that still passes it
+    /// is rejected loudly at the argument boundary — never silently dropped
+    /// (a silent failure), and nothing is reserved.
     #[tokio::test]
-    async fn granted_max_iterations_binds_on_child() {
-        use crate::agent::child_policy::ChildLoopConfig;
-        use crate::agent::output::AgentStopReason;
+    async fn spawn_rejects_removed_max_iterations_grant() {
+        // The schema no longer advertises the knob under loop_config.
+        let tool = SpawnAgentTool::new();
+        let loop_config = &tool.input_schema()["properties"]["child_policy"]["properties"]["loop_config"]
+            ["properties"];
+        assert!(
+            loop_config.get("max_iterations").is_none(),
+            "max_iterations must be absent from the loop_config schema: {loop_config:?}",
+        );
+        assert!(
+            loop_config.get("step_timeout_secs").is_some()
+                && loop_config.get("linger_secs").is_some(),
+            "the surviving loop-shaping knobs stay advertised: {loop_config:?}",
+        );
 
-        // The child calls a tool on its first iteration, so finishing
-        // would need a second provider round-trip — which the granted
-        // cap of 1 forbids.
-        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
-            vec![
-                ProviderEvent::ToolCallDelta {
-                    item_id: "tc1".to_string(),
-                    name: Some("echo".to_string()),
-                    arguments_delta: "{}".to_string(),
-                    kind: crate::provider::request::ToolCallKind::Function,
-                },
-                done_event_tool_use(),
-            ],
-            vec![
-                ProviderEvent::TextDelta {
-                    text: "never reached".to_string(),
-                },
-                done_event(),
-            ],
-        ]));
-        let mut tool_registry = ToolRegistry::new();
-        tool_registry.register(Box::new(EchoStubTool { tool_name: "echo" }));
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let agent_registry = AgentRegistry::shared();
         let ctx = parent_ctx(
             provider,
             Uuid::new_v4(),
             &agent_registry,
-            Arc::new(tool_registry),
+            Arc::new(ToolRegistry::new()),
             Arc::new(MessageRouter::new()),
         );
-        let (tx, mut rx) = tokio::sync::mpsc::channel(16);
-        ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
 
-        let tool = SpawnAgentTool::new();
-        let child_id = spawn_and_join(
-            &tool,
-            &ctx,
-            json!({
-                "task": "capped", "model": "haiku", "role": "worker",
-                "child_policy": {
-                    "messaging": "siblings_and_parent",
-                    "delegation": {
-                        "remaining_depth": 0,
-                        "max_concurrent_children": 32,
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "capped", "model": "haiku", "role": "worker",
+                    "child_policy": {
+                        "messaging": "siblings_and_parent",
+                        "delegation": {
+                            "remaining_depth": 0,
+                            "max_concurrent_children": 32,
+                        },
+                        "inbound_capacity": 32,
+                        "loop_config": { "max_iterations": 1 },
                     },
-                    "inbound_capacity": 32,
-                    "loop_config": { "max_iterations": 1 },
-                },
-            }),
-        )
-        .await;
-
-        assert_eq!(
-            agent_registry
-                .read()
-                .get(child_id)
-                .expect("entry")
-                .policy
-                .loop_config,
-            Some(ChildLoopConfig {
-                max_iterations: Some(1),
-                step_timeout_secs: None,
-                linger_secs: None,
-            }),
-            "the granted loop_config is registry ground truth",
-        );
-        assert_eq!(
-            agent_registry.read().get(child_id).expect("entry").status,
-            AgentStatus::Idle,
-            "a capped-out child reports failure but remains wakeable",
-        );
-        let result = rx.try_recv().expect("result delivered");
-        assert!(!result.succeeded);
-        assert_eq!(result.stop, Some(AgentStopReason::MaxIterationsReached));
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("the removed max_iterations grant must fail loudly");
+        match err {
+            ToolError::ExecutionFailed { reason } => {
+                assert!(
+                    reason.contains("max_iterations"),
+                    "the failure names the removed field: {reason}",
+                );
+            }
+            other => panic!("expected ExecutionFailed, got {other:?}"),
+        }
         assert!(
-            result
-                .error
-                .as_deref()
-                .is_some_and(|e| e.contains("max-iterations")),
-            "the failure names the cap: {:?}",
-            result.error,
+            agent_registry.read().is_empty(),
+            "a refused spawn reserves nothing",
         );
     }
 

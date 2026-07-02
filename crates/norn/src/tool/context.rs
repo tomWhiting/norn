@@ -196,6 +196,28 @@ pub struct ToolContext {
     /// default) preserves unconfined behaviour for embedders that operate
     /// across arbitrary directories.
     workspace_root: Option<PathBuf>,
+    /// Canonicalized directories a confined agent may **read** from even
+    /// when they lie outside [`Self::workspace_root`] (owner-approved
+    /// carve-out, DECISIONS §0.6(b)).
+    ///
+    /// Trust rationale: every entry here is an **operator-configured or
+    /// well-known-convention** directory — the resolved skill search paths
+    /// (settings-declared `skills.search_paths` plus the fixed
+    /// `.norn`/`.agents`/`.claude` convention tiers), the profile scan
+    /// directories, and the norn config dir. None is model-controlled, so
+    /// exempting them from read-confinement cannot let a model reach an
+    /// arbitrary path of its choosing: it can only read the same
+    /// operator-declared skill/profile/config trees the skill tool already
+    /// advertises to it (companion files reported by `resources` /
+    /// `skill_dir` were previously reported-but-unreadable).
+    ///
+    /// Consulted for **read-class** access only ([`crate::tools`]' read,
+    /// search, and LSP paths). Write/edit/patch never consult it — write
+    /// stays fully confined. The exemption is symlink-safe: it applies only
+    /// when the *canonicalized* target resolves under a canonicalized entry
+    /// here (populated via [`Self::set_read_exempt_roots`], which
+    /// canonicalizes at install), so `..`-traversal cannot fabricate it.
+    read_exempt_roots: Vec<PathBuf>,
 }
 
 impl ToolContext {
@@ -215,6 +237,7 @@ impl ToolContext {
             extensions: Mutex::new(HashMap::new()),
             working_dir: SharedWorkingDir::default(),
             workspace_root: None,
+            read_exempt_roots: Vec::new(),
         }
     }
 
@@ -233,6 +256,7 @@ impl ToolContext {
             extensions: Mutex::new(HashMap::new()),
             working_dir,
             workspace_root: None,
+            read_exempt_roots: Vec::new(),
         }
     }
 
@@ -253,6 +277,47 @@ impl ToolContext {
     #[must_use]
     pub fn workspace_root(&self) -> Option<&Path> {
         self.workspace_root.as_deref()
+    }
+
+    /// Declare the read-exempt roots: directories a confined agent may
+    /// **read** from even when they lie outside the confinement root
+    /// (owner-approved carve-out, DECISIONS §0.6(b)). See the
+    /// [`Self::read_exempt_roots`] field for the trust rationale.
+    ///
+    /// Each root is canonicalized here (symlinks and `..`/`.` resolved) so
+    /// the read-confinement check compares fully-resolved paths on both
+    /// sides — a `..`-traversal can never fabricate an exemption. Entries
+    /// that cannot be canonicalized (e.g. a convention dir that does not
+    /// exist on disk) are dropped: a non-existent directory can contain no
+    /// readable file, so it grants no access. Only meaningful under
+    /// confinement — with no [`Self::confine_to_workspace`] root every read
+    /// is already allowed, so exemptions are never consulted.
+    pub fn set_read_exempt_roots(&mut self, roots: Vec<PathBuf>) {
+        let mut canonical: Vec<PathBuf> = Vec::with_capacity(roots.len());
+        for root in roots {
+            match root.canonicalize() {
+                Ok(resolved) => {
+                    if !canonical.contains(&resolved) {
+                        canonical.push(resolved);
+                    }
+                }
+                Err(e) => {
+                    tracing::debug!(
+                        path = %root.display(),
+                        error = %e,
+                        "skipping read-exempt root that cannot be canonicalized",
+                    );
+                }
+            }
+        }
+        self.read_exempt_roots = canonical;
+    }
+
+    /// The canonicalized read-exempt roots (see
+    /// [`Self::set_read_exempt_roots`]).
+    #[must_use]
+    pub fn read_exempt_roots(&self) -> &[PathBuf] {
+        &self.read_exempt_roots
     }
 
     /// Returns a clone of the shared working-dir handle.

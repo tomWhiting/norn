@@ -194,7 +194,6 @@ pub struct DelegationBudget {
 /// model-supplied per-spawn argument must never control. The subset is
 /// exactly the execution-shaping knobs:
 ///
-/// - [`Self::max_iterations`] — provider round-trip cap per step,
 /// - [`Self::step_timeout_secs`] — wall-clock cap per step,
 /// - [`Self::linger_secs`] — the deadline for an opt-in
 ///   [`LingerPolicy`], letting a **mid-tree** agent wait at its would-stop
@@ -223,20 +222,15 @@ pub struct DelegationBudget {
 /// web `fetch` tool's `timeout` are both integer seconds); the unit is in
 /// the field name so the wire shape is self-describing.
 ///
-/// Interaction note: a child granted both `max_iterations` and
-/// `linger_secs` can drain a late child result at a would-stop boundary
-/// (the linger's purpose) and then immediately stop at the top-of-loop
-/// iteration check without acting on it — typed, honest, and
-/// usage-complete (the drained subtree still rolls up), but budget the
-/// cap with at least one iteration of headroom when the child must
-/// *respond* to what it lingered for.
+/// A provider round-trip cap (`max_iterations`) is deliberately **not** a
+/// grantable knob (DECISIONS §0.6(c)): it was a silent cutoff — the child
+/// was never told its budget, it just stopped at the gate and the result
+/// read as an error — and models chronically underestimate action counts.
+/// The root/embedder-facing [`AgentLoopConfig::max_iterations`] knob is
+/// unaffected; only the model-suppliable per-child grant is gone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChildLoopConfig {
-    /// Optional hard cap on provider round-trips within one of the
-    /// child's steps. Unset → the library default (uncapped).
-    #[serde(default)]
-    pub max_iterations: Option<u32>,
     /// Optional wall-clock cap, in seconds, on each of the child's
     /// steps. Unset → the library default (uncapped).
     #[serde(default)]
@@ -259,9 +253,6 @@ impl ChildLoopConfig {
     #[must_use]
     pub fn to_loop_config(self) -> AgentLoopConfig {
         let mut config = AgentLoopConfig::default();
-        if let Some(max_iterations) = self.max_iterations {
-            config.max_iterations = Some(max_iterations);
-        }
         if let Some(secs) = self.step_timeout_secs {
             config.step_timeout = Some(Duration::from_secs(secs));
         }
@@ -485,7 +476,6 @@ mod tests {
     #[test]
     fn child_loop_config_serde_shape_is_stable() {
         let full = ChildLoopConfig {
-            max_iterations: Some(12),
             step_timeout_secs: Some(300),
             linger_secs: Some(45),
         };
@@ -493,7 +483,6 @@ mod tests {
         assert_eq!(
             json,
             serde_json::json!({
-                "max_iterations": 12,
                 "step_timeout_secs": 300,
                 "linger_secs": 45,
             }),
@@ -508,7 +497,6 @@ mod tests {
         assert_eq!(
             empty,
             ChildLoopConfig {
-                max_iterations: None,
                 step_timeout_secs: None,
                 linger_secs: None,
             },
@@ -516,8 +504,22 @@ mod tests {
         let partial: ChildLoopConfig =
             serde_json::from_value(serde_json::json!({ "linger_secs": 10 })).expect("partial");
         assert_eq!(partial.linger_secs, Some(10));
-        assert_eq!(partial.max_iterations, None);
         assert_eq!(partial.step_timeout_secs, None);
+    }
+
+    /// The model-suppliable `max_iterations` grant is removed (DECISIONS
+    /// §0.6(c)): `deny_unknown_fields` makes a `loop_config` that still
+    /// carries it fail loudly at the deserialization boundary rather than
+    /// silently dropping the key (a silent failure).
+    #[test]
+    fn child_loop_config_rejects_removed_max_iterations() {
+        let result: Result<ChildLoopConfig, _> =
+            serde_json::from_value(serde_json::json!({ "max_iterations": 3 }));
+        let err = result.expect_err("max_iterations must no longer be accepted");
+        assert!(
+            err.to_string().contains("max_iterations"),
+            "error names the removed field: {err}",
+        );
     }
 
     /// A `child_policy` JSON written before R5 (no `loop_config` key)
@@ -541,7 +543,7 @@ mod tests {
     #[test]
     fn child_loop_config_rejects_unknown_fields() {
         let result: Result<ChildLoopConfig, _> = serde_json::from_value(serde_json::json!({
-            "max_iterations": 3,
+            "step_timeout_secs": 3,
             "linger_seconds": 10,
         }));
         let err = result.expect_err("unknown field must be rejected");
@@ -565,7 +567,6 @@ mod tests {
         // The all-unset subset is identical to None: unset fields defer
         // to the library default, never to an invented value.
         let empty = ChildLoopConfig {
-            max_iterations: None,
             step_timeout_secs: None,
             linger_secs: None,
         };
@@ -581,11 +582,9 @@ mod tests {
     #[test]
     fn loop_config_overrides_apply_onto_default() {
         let resolved = ChildLoopConfig::resolve(Some(ChildLoopConfig {
-            max_iterations: Some(7),
             step_timeout_secs: Some(90),
             linger_secs: Some(45),
         }));
-        assert_eq!(resolved.max_iterations, Some(7));
         assert_eq!(resolved.step_timeout, Some(Duration::from_secs(90)));
         assert_eq!(
             resolved.linger,
@@ -723,7 +722,6 @@ mod tests {
     #[test]
     fn grant_for_child_inherits_loop_config_unchanged() {
         let configured = ChildLoopConfig {
-            max_iterations: Some(4),
             step_timeout_secs: Some(60),
             linger_secs: Some(15),
         };
@@ -754,7 +752,6 @@ mod tests {
         assert_eq!(spawner.loop_config, None);
         let mut requested = policy(1);
         requested.loop_config = Some(ChildLoopConfig {
-            max_iterations: Some(100),
             step_timeout_secs: Some(3600),
             linger_secs: Some(120),
         });
@@ -767,7 +764,6 @@ mod tests {
         // a child none at all (the child then runs library defaults).
         let mut tight = policy(2);
         tight.loop_config = Some(ChildLoopConfig {
-            max_iterations: Some(1),
             step_timeout_secs: Some(1),
             linger_secs: None,
         });

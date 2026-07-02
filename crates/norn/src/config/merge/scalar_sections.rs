@@ -185,6 +185,12 @@ pub(super) fn merge_agent(
             &mut lcl.prompt_command_timeout,
             &mut ovr.prompt_command_timeout,
         ),
+        delegation_depth: pick_scalar(
+            &mut usr.delegation_depth,
+            &mut prj.delegation_depth,
+            &mut lcl.delegation_depth,
+            &mut ovr.delegation_depth,
+        ),
     })
 }
 

@@ -94,6 +94,14 @@ pub struct ConfigOverrides {
     /// `-c server_compaction_threshold_tokens=<u64>` → provider compaction threshold.
     pub server_compaction_threshold_tokens: Option<u64>,
 
+    // -- Coordination fields ---------------------------------------------
+    /// `-c delegation_depth=<u32>` → the root agent's
+    /// [`DelegationBudget::remaining_depth`](norn::agent::child_policy::DelegationBudget::remaining_depth)
+    /// on `cli_coordination_envelope`. Overrides the `[agent]
+    /// delegation_depth` setting; unset defers to that setting, then to the
+    /// owner-ruled default of `2` (DECISIONS §0.6(d)).
+    pub delegation_depth: Option<u32>,
+
     // -- ProviderConfig fields -------------------------------------------
     /// `-c base_url=<string>` → [`ProviderConfig::base_url`].
     pub base_url: Option<String>,
@@ -251,6 +259,9 @@ impl ConfigOverrides {
             }
             "compact_keep_turns" => {
                 self.compact_keep_turns = Some(parse_typed::<usize>(key, "usize", value)?);
+            }
+            "delegation_depth" => {
+                self.delegation_depth = Some(parse_typed::<u32>(key, "u32", value)?);
             }
             "conversation_state" => {
                 self.conversation_state = Some(parse_conversation_state(value)?);
@@ -538,6 +549,28 @@ mod tests {
     fn parse_compact_keep_turns_sets_value() {
         let overrides = ConfigOverrides::parse(&["compact_keep_turns=5".to_owned()]).unwrap();
         assert_eq!(overrides.compact_keep_turns, Some(5));
+    }
+
+    /// `-c delegation_depth=<u32>` parses into the coordination override
+    /// (DECISIONS §0.6(d)); a non-integer is a loud parse error naming the
+    /// key.
+    #[test]
+    fn parse_delegation_depth_sets_value() {
+        let overrides = ConfigOverrides::parse(&["delegation_depth=1".to_owned()]).unwrap();
+        assert_eq!(overrides.delegation_depth, Some(1));
+
+        let unset = ConfigOverrides::parse(&[]).unwrap();
+        assert_eq!(unset.delegation_depth, None, "unset stays None");
+
+        let err = ConfigOverrides::parse(&["delegation_depth=deep".to_owned()])
+            .expect_err("a non-integer depth must error");
+        let BuildError::Argument(msg) = err else {
+            panic!("expected an Argument error, got {err:?}");
+        };
+        assert!(
+            msg.contains("delegation_depth"),
+            "the error names the key: {msg}"
+        );
     }
 
     #[test]
