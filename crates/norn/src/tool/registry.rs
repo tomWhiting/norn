@@ -157,12 +157,29 @@ impl ToolRegistry {
         self.tools.contains_key(name)
     }
 
-    /// Returns an iterator over the names of currently-available tools.
+    /// Returns an iterator over the names of currently-available tools, in
+    /// lexicographically sorted order.
+    ///
+    /// The order is deterministic across process runs. The backing store is
+    /// a [`HashMap`], whose iteration order is randomised per instance, so
+    /// yielding keys directly would vary the order between runs. Every
+    /// prompt- and request-visible projection of the registry is built from
+    /// this iterator — the system prompt's `# Tools` section
+    /// ([`collect_tool_prompt_entries`](crate::agent::prompt_install)), the
+    /// provider tool-definition array
+    /// ([`collect_function_definitions`](crate::provider::surface::collect_function_definitions)),
+    /// the tool catalog, and the MCP tool listing — so a stable order here
+    /// keeps those byte-identical between runs and preserves provider prompt
+    /// caching.
     pub fn names(&self) -> impl Iterator<Item = &str> + '_ {
-        self.tools
+        let mut names: Vec<&str> = self
+            .tools
             .keys()
             .filter(|name| self.is_name_available(name.as_str()))
             .map(String::as_str)
+            .collect();
+        names.sort_unstable();
+        names.into_iter()
     }
 
     /// Returns the number of currently-available tools.

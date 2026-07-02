@@ -1,47 +1,38 @@
-//! In-flight root turn execution for the TUI.
+//! Turn orchestration: seeding, the in-flight `select!` loop, follow-up and
+//! pending-child prompt threading, and end-of-turn finalisation.
 
-use std::io::Write as _;
 use std::time::Instant;
 
 use termina::Event;
-use termina::Terminal as _;
-use termina::event::KeyEventKind;
 use tokio::sync::{broadcast, mpsc};
 use tokio_util::sync::CancellationToken;
 
+use norn::agent_loop::active_input_channel;
 use norn::agent_loop::inbound::{ChannelMessage, InboundChannel};
 use norn::agent_loop::runner::{
     AgentMessageStepRequest, AgentStepRequest, AgentStepResult, run_agent_step,
     run_agent_step_from_messages,
 };
-use norn::agent_loop::{
-    ActiveInputDelivery, ActiveInputError, ActiveInputSender, active_input_channel,
-};
-use norn::provider::agent_event::{AgentEvent, AgentEventKind};
-use norn::provider::events::ProviderEvent;
 
 use crate::TuiError;
-use crate::input::keybindings::{InputAction, map_key_event};
 use crate::render::MarkdownRenderer;
 use crate::render::fixed_panel::StreamingIndicator;
 use crate::terminal::setup::TerminalGuard;
 
-use super::active_input::InFlightSubmitMode;
-use super::autocomplete::{PopupKeyOutcome, dismiss as dismiss_autocomplete, handle_popup_key};
-use super::child_results::{recv_child_result, render_child_result_batch};
-use super::dispatch::{finalise_turn, handle_agent_event, write_error_line};
-use super::edit::apply_edit_action;
-use super::event_loop::{
-    ChildResultState, RENDER_TICK, RuntimeRefs, insert_paste_text, is_ctrl_c,
-    sync_input_for_current_geometry,
+use crate::app::child_results::{recv_child_result, render_child_result_batch};
+use crate::app::dispatch::{finalise_turn, write_error_line};
+use crate::app::event_loop::{ChildResultState, RENDER_TICK, RuntimeRefs, is_ctrl_c};
+use crate::app::helpers::{checkpoint_session, flush_pending};
+use crate::app::render::{
+    redraw_panel, redraw_streaming_tick, render_input, with_scroll_region_cursor,
+    write_cancelled_line, write_user_message,
 };
-use super::helpers::{checkpoint_session, flush_markdown, flush_pending};
-use super::render::{
-    park_input_cursor, redraw_panel, redraw_streaming_tick, render_input,
-    with_scroll_region_cursor, write_cancelled_line, write_user_message,
+use crate::app::state::AppState;
+use crate::app::streaming::finish_thinking_block;
+
+use super::mid::{
+    handle_active_input_delivery, handle_mid_turn_agent_event, handle_mid_turn_event,
 };
-use super::state::AppState;
-use super::streaming::finish_thinking_block;
 
 enum TurnSeed {
     UserPrompt(String),
@@ -53,7 +44,7 @@ struct TurnOutcome {
     interrupt_prompt: Option<String>,
 }
 
-pub(super) async fn run_turn_and_pending(
+pub(crate) async fn run_turn_and_pending(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
@@ -93,7 +84,7 @@ pub(super) async fn run_turn_and_pending(
     .await
 }
 
-pub(super) async fn run_ready_root_inbound(
+pub(crate) async fn run_ready_root_inbound(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
@@ -131,7 +122,7 @@ pub(super) async fn run_ready_root_inbound(
     .await
 }
 
-pub(super) async fn run_pending_child_prompts(
+pub(crate) async fn run_pending_child_prompts(
     state: &mut AppState,
     runtime: &mut RuntimeRefs,
     guard: &mut TerminalGuard,
@@ -393,248 +384,4 @@ fn reset_turn_state(state: &mut AppState) {
     state.complete_at = None;
     state.streaming_indicator = StreamingIndicator::Idle;
     state.reset_live_usage();
-}
-
-fn handle_mid_turn_event(
-    event: Event,
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    active_input_tx: &ActiveInputSender,
-    cancel: &CancellationToken,
-    cancel_requested: &mut bool,
-) -> Result<(), TuiError> {
-    match event {
-        Event::WindowResized(size) => {
-            guard.restore_scroll_cursor_clamped()?;
-            guard.save_scroll_cursor()?;
-            guard.handle_resize(size.rows)?;
-            sync_input_for_current_geometry(state, guard);
-            redraw_panel(state, guard)?;
-            guard.restore_scroll_cursor_clamped()?;
-            guard.save_scroll_cursor()?;
-            render_input(state, guard)?;
-            guard.terminal_mut().flush()?;
-        }
-        Event::Paste(text) => {
-            insert_paste_text(state, &text);
-            sync_input_for_current_geometry(state, guard);
-            redraw_panel(state, guard)?;
-            render_input(state, guard)?;
-        }
-        Event::Key(key) if key.kind == KeyEventKind::Press => {
-            handle_mid_turn_key(key, state, guard, active_input_tx, cancel, cancel_requested)?;
-        }
-        _ => {}
-    }
-    Ok(())
-}
-
-fn handle_mid_turn_agent_event(
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    renderer: &mut Option<MarkdownRenderer>,
-    agent_ev: AgentEvent,
-) -> Result<(), TuiError> {
-    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-    let before_indicator_key = state.streaming_indicator.repaint_key(cols);
-    let before_indicator_height = state.streaming_indicator.height();
-    let structural_panel_change = agent_event_needs_panel_redraw(state, &agent_ev);
-
-    guard.restore_scroll_cursor_clamped()?;
-    handle_agent_event(state, guard, renderer, agent_ev)?;
-    guard.save_scroll_cursor()?;
-
-    let indicator_changed = before_indicator_height != state.streaming_indicator.height()
-        || before_indicator_key != state.streaming_indicator.repaint_key(cols);
-    if structural_panel_change || indicator_changed {
-        redraw_panel(state, guard)?;
-        render_input(state, guard)
-    } else {
-        park_input_cursor(state, guard)
-    }
-}
-
-fn agent_event_needs_panel_redraw(state: &AppState, agent_ev: &AgentEvent) -> bool {
-    match &agent_ev.event {
-        AgentEventKind::Provider(event) if agent_ev.agent_id == state.tab_state.root_id() => {
-            root_provider_event_needs_panel_redraw(event)
-        }
-        AgentEventKind::Provider(event) => child_provider_event_needs_panel_redraw(event),
-        AgentEventKind::Subagent(_)
-        | AgentEventKind::Message(_)
-        | AgentEventKind::UsageEstimate(_) => true,
-        // Consumed as a deliberate no-op in `handle_agent_event`.
-        AgentEventKind::StreamRetry(_) => false,
-    }
-}
-
-fn root_provider_event_needs_panel_redraw(event: &ProviderEvent) -> bool {
-    !matches!(
-        event,
-        ProviderEvent::TextDelta { .. }
-            | ProviderEvent::ThinkingDelta { .. }
-            | ProviderEvent::ToolCallDelta { .. }
-            | ProviderEvent::TextComplete { .. }
-            | ProviderEvent::ThinkingComplete { .. }
-            | ProviderEvent::Compaction { .. }
-    )
-}
-
-fn child_provider_event_needs_panel_redraw(event: &ProviderEvent) -> bool {
-    !matches!(
-        event,
-        ProviderEvent::TextDelta { .. }
-            | ProviderEvent::ThinkingDelta { .. }
-            | ProviderEvent::ToolCallDelta { name: None, .. }
-            | ProviderEvent::TextComplete { .. }
-            | ProviderEvent::ThinkingComplete { .. }
-            | ProviderEvent::Compaction { .. }
-    )
-}
-
-fn handle_mid_turn_key(
-    key: termina::event::KeyEvent,
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    active_input_tx: &ActiveInputSender,
-    cancel: &CancellationToken,
-    cancel_requested: &mut bool,
-) -> Result<(), TuiError> {
-    let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-    if state.autocomplete.is_some()
-        && matches!(
-            handle_popup_key(key, state, cols, guard.terminal_rows()),
-            PopupKeyOutcome::Consumed
-        )
-    {
-        return Ok(());
-    }
-
-    let caps = state.terminal_caps.clone();
-    let popup_open = state.autocomplete.is_some();
-    if let Some(action) = map_key_event(key, &caps, popup_open) {
-        handle_mid_turn_action(
-            action,
-            state,
-            guard,
-            active_input_tx,
-            cancel,
-            cancel_requested,
-        )?;
-        sync_input_for_current_geometry(state, guard);
-        redraw_panel(state, guard)?;
-        render_input(state, guard)?;
-    }
-    Ok(())
-}
-
-fn handle_mid_turn_action(
-    action: InputAction,
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    active_input_tx: &ActiveInputSender,
-    cancel: &CancellationToken,
-    cancel_requested: &mut bool,
-) -> Result<(), TuiError> {
-    match action {
-        InputAction::Submit => {
-            submit_mid_turn_input(state, active_input_tx, cancel, cancel_requested)?;
-        }
-        InputAction::ToggleInFlightSubmitMode => state.in_flight_input.toggle_mode(),
-        other => {
-            let cols = guard.terminal_mut().get_dimensions().map_or(80, |d| d.cols);
-            apply_edit_action(other, state, cols, guard.terminal_rows());
-        }
-    }
-    Ok(())
-}
-
-fn submit_mid_turn_input(
-    state: &mut AppState,
-    active_input_tx: &ActiveInputSender,
-    cancel: &CancellationToken,
-    cancel_requested: &mut bool,
-) -> Result<(), TuiError> {
-    dismiss_autocomplete(state);
-    let Some(text) = state.input_editor.submit()? else {
-        if state.in_flight_input.has_pending_steers() {
-            state.in_flight_input.request_interrupt_submit();
-            *cancel_requested = true;
-            cancel.cancel();
-        }
-        return Ok(());
-    };
-
-    match state.in_flight_input.mode() {
-        InFlightSubmitMode::Steer => match active_input_tx.send_steer(text.clone()) {
-            Ok(id) => state.in_flight_input.push_pending_steer(id, text),
-            Err(ActiveInputError::Closed) => state.in_flight_input.queue_followup(text),
-            Err(ActiveInputError::Empty) => {}
-        },
-        InFlightSubmitMode::Queue => state.in_flight_input.queue_followup(text),
-    }
-    Ok(())
-}
-
-fn handle_active_input_delivery(
-    delivery: &ActiveInputDelivery,
-    state: &mut AppState,
-    guard: &mut TerminalGuard,
-    renderer: &mut Option<MarkdownRenderer>,
-) -> Result<(), TuiError> {
-    state.in_flight_input.mark_steer_delivered(delivery.id);
-    finish_thinking_block(state, guard, renderer)?;
-    flush_markdown(state, guard, renderer)?;
-    write_user_message(&delivery.content, state, guard)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use norn::provider::request::ToolCallKind;
-
-    #[test]
-    fn root_text_deltas_do_not_force_panel_redraw() {
-        let event = ProviderEvent::TextDelta {
-            text: "hello".to_string(),
-        };
-
-        assert!(!root_provider_event_needs_panel_redraw(&event));
-    }
-
-    #[test]
-    fn root_tool_completion_forces_panel_redraw() {
-        let event = ProviderEvent::ToolCallComplete {
-            call_id: "call_1".to_string(),
-            name: "bash".to_string(),
-            arguments: "{}".to_string(),
-            kind: ToolCallKind::Function,
-        };
-
-        assert!(root_provider_event_needs_panel_redraw(&event));
-    }
-
-    #[test]
-    fn child_nameless_tool_delta_does_not_force_panel_redraw() {
-        let event = ProviderEvent::ToolCallDelta {
-            item_id: "item_1".to_string(),
-            name: None,
-            arguments_delta: "{}".to_string(),
-            kind: ToolCallKind::Function,
-        };
-
-        assert!(!child_provider_event_needs_panel_redraw(&event));
-    }
-
-    #[test]
-    fn child_named_tool_delta_forces_panel_redraw() {
-        let event = ProviderEvent::ToolCallDelta {
-            item_id: "item_1".to_string(),
-            name: Some("read".to_string()),
-            arguments_delta: "{}".to_string(),
-            kind: ToolCallKind::Function,
-        };
-
-        assert!(child_provider_event_needs_panel_redraw(&event));
-    }
 }
