@@ -46,6 +46,16 @@ pub enum SessionSpec {
         /// The exact session id (also the `{id}.jsonl` file name).
         id: String,
     },
+    /// Create a fresh session under this exact caller-supplied id, failing
+    /// when a session with that id already exists. The non-idempotent
+    /// counterpart of [`SessionSpec::OpenOrResume`] for a CLI `--session-id`
+    /// without `--resume-if-exists`.
+    CreateWithId {
+        /// The exact session id (also the `{id}.jsonl` file name).
+        id: String,
+        /// Optional human-readable name recorded in the index entry.
+        name: Option<String>,
+    },
 }
 
 /// A deferred session-open request stored on the builder: the manager,
@@ -79,6 +89,10 @@ impl SessionRequest {
             SessionSpec::OpenOrResume { id } => {
                 self.manager
                     .open_or_resume(&id, options(None), self.durability)
+            }
+            SessionSpec::CreateWithId { id, name } => {
+                self.manager
+                    .create_with_id(&id, options(name), self.durability)
             }
         }
     }

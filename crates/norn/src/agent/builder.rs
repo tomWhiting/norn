@@ -63,11 +63,13 @@ use crate::agent::output::RunOutcome;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::session_spec::SessionRequest;
 use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
+use crate::agent_loop::event_schemas::EventSchemaSet;
 use crate::agent_loop::inbound::{InboundChannel, InboundSender};
 use crate::agent_loop::retry::RetryPolicy;
 use crate::error::{ConfigError, NornError, SessionError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
+use crate::integration::variables::VariableStore;
 use crate::profile::{Capability, Profile, from_profile};
 use crate::provider::request::{ReasoningEffort, ServiceTier};
 use crate::provider::traits::Provider;
@@ -128,6 +130,11 @@ pub struct AgentBuilder {
     pub(super) extensions: Vec<ExtensionInstaller>,
     pub(super) load_runtime_base: bool,
     pub(super) task_group_slug: Option<String>,
+    pub(super) event_schemas: Option<EventSchemaSet>,
+    pub(super) variables: Option<Arc<VariableStore>>,
+    pub(super) disallowed_tools: Vec<String>,
+    pub(super) terminal_reclamation: bool,
+    pub(super) register_root: Option<(String, String)>,
 }
 
 impl AgentBuilder {
@@ -174,6 +181,15 @@ impl AgentBuilder {
             extensions: Vec::new(),
             load_runtime_base: false,
             task_group_slug: None,
+            event_schemas: None,
+            variables: None,
+            disallowed_tools: Vec::new(),
+            // D3: terminal reclamation defaults on, preserving today's
+            // unconditional install for every headless / embedded runtime;
+            // a status-panel driver (the TUI) opts out with
+            // `.terminal_reclamation(false)`.
+            terminal_reclamation: true,
+            register_root: None,
         }
     }
 
@@ -402,6 +418,11 @@ impl AgentBuilder {
         // exactly the registry the loop dispatches.
         let hooks_for_ctx = hooks.clone();
         let (mut loop_context, mut registry) = from_profile(&profile, registry, rules, hooks);
+        loop_context.event_schemas = self.event_schemas.take();
+        // Deny-wins gating: applied after `from_profile`'s allow-list
+        // gating so a disallowed name stays unavailable even when the
+        // allow-list names it (mirrors `build_runtime`'s `set_disallowed`).
+        registry.set_disallowed(std::mem::take(&mut self.disallowed_tools));
 
         if registry.is_empty() {
             return Err(NornError::Config(ConfigError::InvalidConfig {
@@ -417,6 +438,16 @@ impl AgentBuilder {
             }));
         }
 
+        // Reconcile a caller-supplied variable store's session id with the
+        // resolved one. `open_session` pins the persisted id as
+        // authoritative; otherwise the supplied store's id becomes the
+        // resolved session id so `{{session_id}}`, the environment, and the
+        // store never silently diverge.
+        let variables_session_id = self.variables.as_ref().map(|v| v.session_id().to_owned());
+        let session_id_override = opened_session
+            .as_ref()
+            .map(|(entry, _)| entry.id.clone())
+            .or_else(|| variables_session_id.clone());
         let session_id = populate_loop_context(
             &mut loop_context,
             self.retry_policy,
@@ -424,8 +455,20 @@ impl AgentBuilder {
             diagnostics.as_ref(),
             &shared_wd,
             &model,
-            opened_session.as_ref().map(|(entry, _)| entry.id.as_str()),
+            session_id_override.as_deref(),
         );
+        if let Some(variables) = self.variables.take() {
+            if variables.session_id() != session_id {
+                return Err(invalid(format!(
+                    "variables store session_id ('{}') disagrees with the resolved \
+                     session id ('{session_id}') — open_session pins the persisted id \
+                     as authoritative; build the variable store with that id or drop \
+                     open_session",
+                    variables.session_id(),
+                )));
+            }
+            loop_context.variables = Some(variables);
+        }
         if let Some(base) = runtime_base.as_ref() {
             apply_base_to_loop_context(&mut loop_context, base);
         }
@@ -510,7 +553,36 @@ impl AgentBuilder {
         // and the `action_log` tool's queries observe one ledger.
         loop_context.action_log = Some(Arc::clone(&action_log));
 
-        let agent_id = self.agent_id.unwrap_or_else(Uuid::new_v4);
+        // Root registry registration (D2): opt-in and effective only
+        // alongside `.agent_registry(..)`. The reservation mints the id, so
+        // the registered root entry and the running agent share one id;
+        // set without coordination it would be silently unregistered, so
+        // that combination fails loudly.
+        let agent_id = match (self.register_root.take(), coordination.as_ref()) {
+            (Some((path, role)), Some((agent_registry, envelope))) => {
+                let guard = AgentRegistry::reserve(
+                    agent_registry,
+                    path,
+                    role,
+                    model.clone(),
+                    None,
+                    envelope.child_policy.clone(),
+                    None,
+                )?;
+                let id = guard.id();
+                guard.confirm()?;
+                id
+            }
+            (Some(_), None) => {
+                return Err(invalid(
+                    "register_root is set but agent coordination is not wired — the \
+                     root entry would be silently unregistered; add .agent_registry(..) \
+                     or remove .register_root(..)"
+                        .to_string(),
+                ));
+            }
+            (None, _) => self.agent_id.unwrap_or_else(Uuid::new_v4),
+        };
 
         // Event channel: the builder owns the broadcast channel and the
         // root sender, and publishes the raw channel on the tool context
@@ -552,6 +624,7 @@ impl AgentBuilder {
                     // root fails honestly as NotRouted.
                     root_inbound: self.inbound_tx.clone(),
                     cancel: cancel.clone(),
+                    terminal_reclamation: self.terminal_reclamation,
                 },
             );
             // The runner drains child fork/spawn results at iteration
@@ -2739,6 +2812,190 @@ mod tests {
                 ProviderToolDefinition::Hosted(HostedToolDefinition::WebSearch(_))
             )),
             "no hosted definition may be sent without the capability",
+        );
+    }
+
+    /// `.event_schemas(..)` installs the set on the built loop context.
+    #[test]
+    fn event_schemas_setter_installs_on_loop_context() {
+        use crate::agent_loop::event_schemas::{EventSchemaSet, EventType};
+
+        let mut schemas = EventSchemaSet::new();
+        schemas.set(EventType::Text, serde_json::json!({"type": "string"}));
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .event_schemas(schemas)
+            .build()
+            .expect("build succeeds");
+        let installed = agent
+            .loop_context
+            .event_schemas
+            .as_ref()
+            .expect("event schemas installed on the loop context");
+        assert_eq!(
+            installed.get(EventType::Text),
+            Some(&serde_json::json!({"type": "string"})),
+        );
+    }
+
+    /// `.variables(store)` overrides the minted store, and with no
+    /// `open_session` the supplied store's id becomes the resolved session
+    /// id so `{{session_id}}` and the environment agree.
+    #[test]
+    fn variables_setter_overrides_store_and_pins_session_id() {
+        use crate::integration::variables::VariableStore;
+
+        let store = Arc::new(VariableStore::with_builtins().with_session_id("custom-session"));
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .variables(Arc::clone(&store))
+            .build()
+            .expect("build succeeds");
+        let installed = agent
+            .loop_context
+            .variables
+            .as_ref()
+            .expect("variable store installed on the loop context");
+        assert!(
+            Arc::ptr_eq(installed, &store),
+            "the supplied store overrides the minted one",
+        );
+        assert_eq!(
+            agent.info().session_id,
+            "custom-session",
+            "the supplied store's id becomes the resolved session id",
+        );
+    }
+
+    /// A supplied variable store whose id contradicts an `open_session`
+    /// persisted id fails the build rather than silently diverging.
+    #[test]
+    fn variables_setter_conflicting_session_id_fails_build() {
+        use crate::integration::variables::VariableStore;
+
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manager = SessionManager::new(temp.path());
+        let store = Arc::new(VariableStore::with_builtins().with_session_id("not-the-session"));
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(temp.path())
+                .open_session(
+                    &manager,
+                    SessionSpec::Create { name: None },
+                    DurabilityPolicy::Flush,
+                )
+                .variables(store)
+                .build(),
+        );
+        assert!(
+            reason.contains("disagrees with the resolved session id"),
+            "{reason}"
+        );
+    }
+
+    /// `.disallowed_tools(..)` gates the registry with deny-wins semantics.
+    #[test]
+    fn disallowed_tools_setter_denies_named_tools() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .allowed_tools(&["read", "bash"])
+            .disallowed_tools(&["bash"])
+            .build()
+            .expect("build succeeds");
+        assert!(
+            agent.registry.get("bash").is_none(),
+            "deny wins even when the allow-list names the tool",
+        );
+        assert!(agent.registry.get("read").is_some());
+    }
+
+    /// `.terminal_reclamation(false)` suppresses the reclamation marker the
+    /// coordination runtime installs by default.
+    #[test]
+    fn terminal_reclamation_setter_gates_reclaim_marker() {
+        use crate::tools::agent::ReclaimOnResultDelivery;
+
+        let default_agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .build()
+            .expect("build succeeds");
+        assert!(
+            default_agent
+                .registry
+                .shared_context()
+                .expect("shared tool context")
+                .get_extension::<ReclaimOnResultDelivery>()
+                .is_some(),
+            "terminal reclamation is installed by default (headless)",
+        );
+
+        let tui_agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .terminal_reclamation(false)
+            .build()
+            .expect("build succeeds");
+        assert!(
+            tui_agent
+                .registry
+                .shared_context()
+                .expect("shared tool context")
+                .get_extension::<ReclaimOnResultDelivery>()
+                .is_none(),
+            "terminal_reclamation(false) suppresses the marker for status-panel drivers",
+        );
+    }
+
+    /// `.register_root(..)` reserves the registry entry and adopts the
+    /// reserved id as the agent's id.
+    #[test]
+    fn register_root_setter_reserves_and_adopts_id() {
+        let registry = AgentRegistry::shared();
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_registry(Arc::clone(&registry))
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .register_root("/root".to_string(), "lead".to_string())
+            .build()
+            .expect("build succeeds");
+        let entry = registry
+            .read()
+            .get_by_path("/root")
+            .expect("root entry reserved and confirmed");
+        assert_eq!(
+            entry.id,
+            agent.agent_id(),
+            "the agent adopts the reserved root id",
+        );
+    }
+
+    /// `.register_root(..)` without `.agent_registry(..)` fails the build —
+    /// the entry would be silently unregistered.
+    #[test]
+    fn register_root_without_registry_fails_build() {
+        let reason = invalid_config_reason(
+            AgentBuilder::new(provider_with(vec![]))
+                .model("test-model")
+                .working_dir(std::env::temp_dir())
+                .register_root("/root".to_string(), "lead".to_string())
+                .build(),
+        );
+        assert!(
+            reason.contains("register_root is set but agent coordination is not wired"),
+            "{reason}"
         );
     }
 }

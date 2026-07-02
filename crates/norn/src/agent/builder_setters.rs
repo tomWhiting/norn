@@ -21,10 +21,12 @@ use crate::agent::child_policy::ChildPolicy;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::session_spec::{SessionRequest, SessionSpec};
 use crate::agent_loop::config::{AgentLoopConfig, ConversationStateMode};
+use crate::agent_loop::event_schemas::EventSchemaSet;
 use crate::agent_loop::inbound::{InboundSender, inbound_channel};
 use crate::agent_loop::retry::RetryPolicy;
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
+use crate::integration::variables::VariableStore;
 use crate::profile::{Capability, Profile};
 use crate::provider::request::{ReasoningEffort, ServiceTier};
 use crate::rules::engine::RuleEngine;
@@ -502,6 +504,76 @@ impl AgentBuilder {
     #[must_use]
     pub fn child_result_capacity(mut self, capacity: usize) -> Self {
         self.child_result_capacity = Some(capacity);
+        self
+    }
+
+    /// Install a set of per-event-type output schemas the loop enforces
+    /// on model-emitted structured events. There is no library default —
+    /// unset leaves the loop's event-schema enforcement dark.
+    #[must_use]
+    pub fn event_schemas(mut self, schemas: EventSchemaSet) -> Self {
+        self.event_schemas = Some(schemas);
+        self
+    }
+
+    /// Provide the variable store the loop expands `{{…}}` templates
+    /// against, replacing the built-in store
+    /// [`build`](Self::build) would otherwise mint.
+    ///
+    /// When set, the store's `session_id` must agree with the session id
+    /// [`build`](Self::build) resolves (the minted id, or the persisted
+    /// id from [`Self::open_session`]); a mismatch fails the build with a
+    /// typed configuration error rather than silently running the loop and
+    /// the persisted session under two different ids. There is no library
+    /// default beyond the built-in store `build` mints when this is unset.
+    #[must_use]
+    pub fn variables(mut self, variables: Arc<VariableStore>) -> Self {
+        self.variables = Some(variables);
+        self
+    }
+
+    /// Deny the named tools after profile/allow-list gating, with
+    /// deny-wins semantics: a disallowed name stays unavailable even when
+    /// the allow-list ([`Self::allowed_tools`]) names it. Matched by exact
+    /// tool-registry name, mirroring
+    /// [`ToolRegistry::set_disallowed`](crate::tool::registry::ToolRegistry::set_disallowed).
+    /// There is no library default — unset denies nothing.
+    #[must_use]
+    pub fn disallowed_tools(mut self, names: &[&str]) -> Self {
+        self.disallowed_tools = names.iter().map(|s| (*s).to_string()).collect();
+        self
+    }
+
+    /// Control whether the agent-coordination runtime installs the
+    /// terminal-reclamation marker.
+    ///
+    /// Only meaningful when [`Self::agent_registry`] is wired. Defaults to
+    /// `true` — every headless / embedded runtime reclaims a finished
+    /// child's terminal registry entry once its result is delivered. A
+    /// driver that owns reclamation itself through a status panel (the
+    /// TUI) passes `false`, otherwise the marker would race its hold
+    /// window into nonexistence.
+    #[must_use]
+    pub fn terminal_reclamation(mut self, enabled: bool) -> Self {
+        self.terminal_reclamation = enabled;
+        self
+    }
+
+    /// Reserve and confirm the agent-registry `path` entry (with `role`)
+    /// for this agent at build time, using the coordination envelope's
+    /// child policy as the root's granted budget, and adopt the reserved
+    /// id as the agent's id.
+    ///
+    /// Opt-in and effective **only** alongside [`Self::agent_registry`]:
+    /// embedders that wire no coordination (no `spawn`/`fork`) need no
+    /// root entry, so root registration is never mandatory. Setting this
+    /// without [`Self::agent_registry`] fails the build — it would
+    /// otherwise be silently ignored. The reserved id supersedes any
+    /// [`Self::agent_id`], since the registered root entry and the running
+    /// agent must share one id.
+    #[must_use]
+    pub fn register_root(mut self, path: String, role: String) -> Self {
+        self.register_root = Some((path, role));
         self
     }
 

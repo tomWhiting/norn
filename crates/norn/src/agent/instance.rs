@@ -49,7 +49,96 @@ pub struct Agent {
     pub(super) replay: Option<ReplaySummary>,
 }
 
+/// Every assembled field of a built [`Agent`], handed to custom drivers
+/// (the TUI's multi-turn REPL, the print step-loop) that run the
+/// agent-step loop themselves instead of calling [`Agent::run`].
+///
+/// Produced by [`Agent::into_parts`], which consumes the agent. The
+/// `event_store` is the same [`Arc`] the loop persists into, and
+/// `registry` is the same [`Arc`] spawn/fork children dispatch through —
+/// dropping either is what lets the store be handed back owned at the end
+/// of a driver-run (matching [`Agent::run`]'s own reclamation contract).
+pub struct AgentParts {
+    /// The provider the agent step calls.
+    pub provider: Arc<dyn Provider>,
+    /// The gated tool registry, published with the assembled tool
+    /// context; the same `Arc` spawn/fork children dispatch through.
+    pub registry: Arc<ToolRegistry>,
+    /// The fully-populated loop context (system sections, retry policy,
+    /// variables, action log, coordination receivers).
+    pub loop_context: LoopContext,
+    /// The effective agent-loop config the step executes under.
+    pub config: AgentLoopConfig,
+    /// The resolved model identifier.
+    pub model: String,
+    /// The provider-facing tool definitions.
+    pub tool_defs: Vec<ToolDefinition>,
+    /// The session event store the loop persists into.
+    pub event_store: Arc<EventStore>,
+    /// The root event sender, present iff
+    /// [`AgentBuilder::event_channel_capacity`](crate::agent::builder::AgentBuilder::event_channel_capacity)
+    /// was set.
+    pub event_sender: Option<AgentEventSender>,
+    /// The raw broadcast channel, present iff
+    /// [`AgentBuilder::event_channel_capacity`](crate::agent::builder::AgentBuilder::event_channel_capacity)
+    /// was set; `subscribe()` yields receivers for driver-owned streams.
+    pub events_tx: Option<tokio::sync::broadcast::Sender<AgentEvent>>,
+    /// The agent's run-cancellation token — the same trigger the
+    /// published `AgentCancellation` cascade and the handle observe.
+    pub cancel: CancellationToken,
+    /// The inbound steering receiver, present iff
+    /// [`AgentBuilder::inbound_capacity`](crate::agent::builder::AgentBuilder::inbound_capacity)
+    /// was set.
+    pub inbound: Option<InboundChannel>,
+    /// The inbound steering sender, present iff
+    /// [`AgentBuilder::inbound_capacity`](crate::agent::builder::AgentBuilder::inbound_capacity)
+    /// was set.
+    pub inbound_tx: Option<InboundSender>,
+    /// The agent's id.
+    pub id: Uuid,
+    /// The resolved-configuration snapshot (model, profile, tools,
+    /// session id, working dir, output schema).
+    pub info: Arc<ResolvedAgentInfo>,
+    /// The persisted session's index entry, when a managed session was
+    /// opened via
+    /// [`AgentBuilder::open_session`](crate::agent::builder::AgentBuilder::open_session).
+    pub session_entry: Option<SessionIndexEntry>,
+    /// What was recovered from disk while opening the persisted session.
+    pub replay: Option<ReplaySummary>,
+}
+
 impl Agent {
+    /// Decompose the agent into its assembled fields for a custom driver
+    /// that runs the agent-step loop itself (the TUI's multi-turn REPL,
+    /// the print step-loop) rather than calling [`Agent::run`]. Consumes
+    /// the agent; mutually exclusive with [`Agent::run`].
+    ///
+    /// The returned `event_store` is the same [`Arc`] the loop persists
+    /// into and `registry` is the same [`Arc`] spawn/fork children
+    /// dispatch through, so the driver owns the identical wiring
+    /// [`Agent::run`] would have executed against.
+    #[must_use]
+    pub fn into_parts(self) -> AgentParts {
+        AgentParts {
+            provider: self.provider,
+            registry: self.registry,
+            loop_context: self.loop_context,
+            config: self.config,
+            model: self.model,
+            tool_defs: self.tool_defs,
+            event_store: self.event_store,
+            event_sender: self.event_sender,
+            events_tx: self.events_tx,
+            cancel: self.cancel,
+            inbound: self.inbound,
+            inbound_tx: self.inbound_tx,
+            id: self.id,
+            info: self.info,
+            session_entry: self.session_entry,
+            replay: self.replay,
+        }
+    }
+
     /// The cloneable control surface for this agent: event subscription,
     /// cancellation, steering, and introspection. Take it *before*
     /// calling [`Agent::run`] (running consumes the agent); the handle
@@ -168,5 +257,75 @@ impl Agent {
         let event_store = self.event_store;
         let store = Arc::try_unwrap(event_store).unwrap_or_else(|shared| snapshot_store(&shared));
         Ok(RunOutcome::from_step_result(result, Some(store)))
+    }
+}
+
+#[cfg(test)]
+#[allow(clippy::expect_used)]
+mod tests {
+    use super::*;
+    use crate::agent::builder::AgentBuilder;
+    use crate::provider::mock::MockProvider;
+
+    fn mock_provider() -> Arc<dyn Provider> {
+        Arc::new(MockProvider::new(Vec::new()))
+    }
+
+    /// `into_parts` moves the agent's assembled fields verbatim: the
+    /// returned `event_store` is the same `Arc` the built agent held (the
+    /// one the loop persists into), the id is the builder-supplied id, the
+    /// broadcast sender is present exactly when the event channel was
+    /// configured, and the session id is always resolved.
+    #[test]
+    fn into_parts_returns_same_arcs() {
+        let id = Uuid::new_v4();
+        let agent = AgentBuilder::new(mock_provider())
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .agent_id(id)
+            .event_channel_capacity(16)
+            .build()
+            .expect("build succeeds");
+        let store_before = Arc::clone(&agent.event_store);
+        let registry_before = Arc::clone(&agent.registry);
+
+        let parts = agent.into_parts();
+
+        assert!(
+            Arc::ptr_eq(&store_before, &parts.event_store),
+            "into_parts hands back the same event store Arc the agent persisted into",
+        );
+        assert!(
+            Arc::ptr_eq(&registry_before, &parts.registry),
+            "into_parts hands back the same registry Arc children dispatch through",
+        );
+        assert_eq!(parts.id, id, "the builder-supplied id is preserved");
+        assert!(
+            parts.events_tx.is_some(),
+            "events_tx is present because event_channel_capacity was set",
+        );
+        assert!(
+            parts.event_sender.is_some(),
+            "the root event sender is present alongside the broadcast channel",
+        );
+        assert!(
+            !parts.info.session_id.is_empty(),
+            "a session id is always resolved",
+        );
+    }
+
+    /// The broadcast sender is absent when the event channel was never
+    /// configured — no silent dead channel.
+    #[test]
+    fn into_parts_has_no_event_channel_when_unconfigured() {
+        let agent = AgentBuilder::new(mock_provider())
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .build()
+            .expect("build succeeds");
+        let parts = agent.into_parts();
+        assert!(parts.events_tx.is_none());
+        assert!(parts.event_sender.is_none());
+        assert!(parts.inbound.is_none());
     }
 }

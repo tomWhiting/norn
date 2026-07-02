@@ -34,7 +34,7 @@ pub use fork::{
 };
 pub use goals::{ContinuationPolicy, Goal, GoalSignal, GoalTracker, ScheduleEntry, Scheduler};
 pub use handle::{AgentHandle, ResolvedAgentInfo};
-pub use instance::Agent;
+pub use instance::{Agent, AgentParts};
 pub use message_router::{MessageRouter, RouteError};
 pub use monitor::{MonitorConfig, MonitorHandle, MonitorStatus, run_monitored};
 pub use output::{AgentOutput, AgentStopReason, RunOutcome};

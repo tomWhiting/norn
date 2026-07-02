@@ -2,10 +2,12 @@
 
 pub mod builder;
 pub mod bundle;
+pub mod from_cli;
 pub mod wiring;
 
 pub use builder::{apply_system_prompt, build_runtime};
 pub use bundle::{RuntimeBundle, RuntimeInputs};
+pub use from_cli::builder_from_cli;
 // `register_standard_tools` moved to the `norn` library
 // (`norn::tools::registry_builder`) so the `AgentBuilder` can assemble the
 // standard tool set without depending on this crate. Re-exported here so the

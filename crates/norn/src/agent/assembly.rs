@@ -676,6 +676,14 @@ pub(crate) struct AgentInfraParts {
     /// extension so spawn/fork create child run tokens as children of it
     /// — cancelling the root cascades to the whole tree (W3.5).
     pub(crate) cancel: tokio_util::sync::CancellationToken,
+    /// Whether to install the
+    /// [`ReclaimOnResultDelivery`](crate::tools::agent::ReclaimOnResultDelivery)
+    /// marker. `true` for embedded / headless runtimes (no external status
+    /// observer polls the registry, so a finished child's terminal entry
+    /// is reclaimed once its result is delivered); `false` for a driver
+    /// that owns reclamation itself through a status panel (the TUI), which
+    /// would otherwise race the hold window into nonexistence.
+    pub(crate) terminal_reclamation: bool,
 }
 
 /// Install the complete fork/spawn runtime on the agent's shared
@@ -688,16 +696,18 @@ pub(crate) struct AgentInfraParts {
 /// [`ReclaimOnResultDelivery`](crate::tools::agent::ReclaimOnResultDelivery)
 /// marker.
 ///
-/// The reclamation marker is installed unconditionally here because every
-/// builder-assembled agent is an embedded / headless runtime: no external
-/// status observer (such as the TUI agent status panel) ever polls its
-/// registry, so once a naturally-finished child's result has been
-/// delivered through the channel, the spawn/fork wrapper reclaims the
-/// terminal registry entry and parent-held handle — long-running embedded
-/// processes must not pin one event store per finished child forever. See
-/// [`crate::tools::agent::reclaim`] for the full ownership rule; the TUI
-/// runtime is assembled by `norn-cli`'s `build_runtime`, never through
-/// this path.
+/// The reclamation marker is installed when
+/// [`AgentInfraParts::terminal_reclamation`] is `true` (the builder
+/// default, matching every embedded / headless runtime): no external
+/// status observer polls the registry, so once a naturally-finished
+/// child's result has been delivered through the channel, the spawn/fork
+/// wrapper reclaims the terminal registry entry and parent-held handle —
+/// long-running embedded processes must not pin one event store per
+/// finished child forever. A driver that owns reclamation itself through a
+/// status panel (the TUI, via
+/// [`AgentBuilder::terminal_reclamation(false)`](crate::agent::builder::AgentBuilder::terminal_reclamation))
+/// suppresses it. See [`crate::tools::agent::reclaim`] for the full
+/// ownership rule.
 ///
 /// Also publishes the session-wide [`ActionLogTree`] rooted at this agent:
 /// every spawn/fork child registers its own per-agent [`ActionLog`] into
@@ -764,7 +774,14 @@ pub(crate) fn install_agent_infra(
         parts.cancel,
     )));
     crate::runtime_init::install_agent_handles(shared);
-    crate::runtime_init::install_terminal_reclamation(shared);
+    // Terminal reclamation is gated (not unconditional): a headless /
+    // embedded runtime reclaims a finished child's terminal registry entry
+    // once its result is delivered, but a driver that owns reclamation
+    // through a status panel (the TUI) must not — installing the marker
+    // there would race its hold window into nonexistence.
+    if parts.terminal_reclamation {
+        crate::runtime_init::install_terminal_reclamation(shared);
+    }
 
     let log_tree = Arc::new(ActionLogTree::new(parts.id));
     if let Some(root_log) = shared.get_extension::<ActionLog>() {
@@ -836,6 +853,7 @@ mod tests {
                 envelope: envelope.clone(),
                 root_inbound: None,
                 cancel: root_cancel.clone(),
+                terminal_reclamation: true,
             },
         );
 
