@@ -349,8 +349,18 @@ fn build_skill_search_paths(settings: &NornSettings, cwd: &Path) -> Vec<PathBuf>
     paths.push(cwd.join(".norn").join("skills"));
     paths.push(cwd.join(".agents").join("skills"));
     paths.push(cwd.join(".claude").join("skills"));
+    // Home-tier norn skills honour `NORN_HOME` exactly as
+    // [`crate::config::paths::skills_dir`] does, so a user who redirects the
+    // norn root gets config and skills from one place instead of two. The
+    // `.agents`/`.claude` home tiers stay rooted at the real home dir:
+    // `NORN_HOME` overrides only the *norn* root (see
+    // [`crate::config::paths::norn_dir`]), and those are foreign-tool
+    // conventions (agentskills.io / Claude Code) that live under the actual
+    // home regardless of where norn's own root points.
+    if let Some(norn_skills) = crate::config::paths::skills_dir() {
+        paths.push(norn_skills);
+    }
     if let Some(home) = dirs::home_dir() {
-        paths.push(home.join(".norn").join("skills"));
         paths.push(home.join(".agents").join("skills"));
         paths.push(home.join(".claude").join("skills"));
     }
@@ -485,6 +495,14 @@ mod tests {
             // SAFETY: paired with `#[serial_test::serial]`; no concurrent
             // reader observes the mutated env.
             unsafe { std::env::set_var("NORN_HOME", path) }
+            Self { prior }
+        }
+
+        fn clear() -> Self {
+            let prior = std::env::var_os("NORN_HOME");
+            // SAFETY: paired with `#[serial_test::serial]`; no concurrent
+            // reader observes the mutated env.
+            unsafe { std::env::remove_var("NORN_HOME") }
             Self { prior }
         }
     }
@@ -624,6 +642,61 @@ mod tests {
             err.to_string().contains("agent.prompt_command_timeout"),
             "error must name the field: {err}"
         );
+    }
+
+    /// The home-tier norn skills directory honours `NORN_HOME` exactly as
+    /// [`crate::config::paths::skills_dir`] does: a user who redirects the
+    /// norn root gets skills from that root, not from the literal
+    /// `~/.norn/skills`. The foreign-convention `.agents`/`.claude` home
+    /// tiers still root at the real home dir (`NORN_HOME` overrides only the
+    /// norn root, not those third-party conventions).
+    #[test]
+    #[serial_test::serial]
+    fn build_skill_search_paths_honours_norn_home_for_norn_tier() {
+        let norn_home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let _guard = NornHomeGuard::set(norn_home.path());
+
+        let paths = build_skill_search_paths(&NornSettings::default(), cwd.path());
+
+        let expected = norn_home.path().join("skills");
+        assert!(
+            paths.contains(&expected),
+            "NORN_HOME-rooted skills dir must be present: {paths:?}",
+        );
+        if let Some(home) = dirs::home_dir() {
+            assert!(
+                !paths.contains(&home.join(".norn").join("skills")),
+                "the literal ~/.norn/skills must NOT be used when NORN_HOME is set: {paths:?}",
+            );
+            // Foreign-convention home tiers stay under the real home.
+            assert!(
+                paths.contains(&home.join(".agents").join("skills")),
+                "home .agents/skills tier must remain rooted at the real home: {paths:?}",
+            );
+            assert!(
+                paths.contains(&home.join(".claude").join("skills")),
+                "home .claude/skills tier must remain rooted at the real home: {paths:?}",
+            );
+        }
+    }
+
+    /// Without `NORN_HOME` the home-tier norn skills directory falls back to
+    /// the literal `~/.norn/skills` — the pre-existing behaviour is intact.
+    #[test]
+    #[serial_test::serial]
+    fn build_skill_search_paths_falls_back_to_home_without_norn_home() {
+        let cwd = tempfile::tempdir().unwrap();
+        let _guard = NornHomeGuard::clear();
+
+        let paths = build_skill_search_paths(&NornSettings::default(), cwd.path());
+
+        if let Some(home) = dirs::home_dir() {
+            assert!(
+                paths.contains(&home.join(".norn").join("skills")),
+                "without NORN_HOME the literal ~/.norn/skills must be present: {paths:?}",
+            );
+        }
     }
 
     #[test]

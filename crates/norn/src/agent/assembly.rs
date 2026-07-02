@@ -41,6 +41,7 @@ use crate::session::action_log::ActionLog;
 use crate::session::action_log_tree::ActionLogTree;
 use crate::session::context_edit::ContextEdits;
 use crate::session::store::EventStore;
+use crate::skill::SkillCatalog;
 use crate::system_prompt::environment::EnvironmentConfig;
 use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
 use crate::tool::context::{SessionId, SharedWorkingDir, ToolContext};
@@ -208,6 +209,17 @@ pub(crate) fn install_runtime_base_extensions(
         base.skill_paths.clone(),
         Arc::clone(&base.skill_catalog),
     );
+    // Report the skill catalog's load-time diagnostics (skill-shadowed,
+    // skill-missing-description, skill-yaml-parse-failed, skill-io-error,
+    // skill-allowed-tools-not-enforced, …) into the shared diagnostic
+    // collector so a user with a malformed skill sees a surfaced diagnostic
+    // instead of the skill silently vanishing. The catalog retains its own
+    // list (this copies, it does not empty), so this single assembly seam —
+    // the one place both the catalog and the resolved collector are in
+    // scope (the CLI reaches it through `AgentBuilder`) — must remain the
+    // only caller per build. Severity is carried on each `NornDiagnostic`,
+    // so warnings stay warnings and info stays info.
+    report_skill_diagnostics(&base.skill_catalog, &effective_diagnostics);
     crate::runtime_init::install_context_search_paths(shared, &base.settings, working_dir);
     // Consent boundary: without this, `permissions.deny` / `permissions.ask`
     // rules from the merged settings are silently unenforced on the
@@ -357,13 +369,115 @@ pub(crate) fn resolve_runtime_overlay(
 }
 
 /// Overlay the runtime base's loaders and monitors onto the loop context:
-/// NORN.md context loader, skill-catalog prompt listing, iteration monitor.
+/// NORN.md context loader and iteration monitor.
+///
+/// The skill-catalog prompt listing is applied separately by
+/// [`apply_skill_listing`] — the single shared mechanism every launch path
+/// (root here; spawned/forked children at their own construction sites)
+/// uses — so the "# Available Skills" section cannot drift between root and
+/// children, and is gated on whether the `skill` tool is actually callable.
 pub(crate) fn apply_base_to_loop_context(loop_context: &mut LoopContext, base: &LoadedRuntimeBase) {
     loop_context.context_loader = Some(base.context_loader.clone());
-    loop_context.base_suffix = base.skill_catalog.system_prompt_listing();
     loop_context
         .iteration_monitor
         .clone_from(&base.iteration_monitor);
+}
+
+/// Copy the skill catalog's accumulated load-time diagnostics into the
+/// shared diagnostic collector, preserving each diagnostic's own severity.
+/// The catalog retains its own list — this reports, it does not empty the
+/// source, so it must be called exactly once per assembled agent (the
+/// single `build()` call site).
+///
+/// Without this report a malformed skill (missing description, unparseable
+/// frontmatter, IO error, shadowed name, unenforced allowed-tools) is
+/// silently dropped from the catalog and the user sees nothing.
+fn report_skill_diagnostics(catalog: &SkillCatalog, collector: &DiagnosticCollector) {
+    for diagnostic in catalog.diagnostics() {
+        collector.report(diagnostic.clone());
+    }
+}
+
+/// Whether the `skill` tool is on a child's resolved tool surface: it must
+/// be present (and un-gated) in the shared parent registry *and* admitted
+/// by the child's allow-list — the same two filters
+/// [`collect_function_definitions`](crate::provider::surface::collect_function_definitions)
+/// applies to the child's tool definitions. A child's system prompt
+/// advertises the skill listing only when this holds, so it never lists a
+/// skill the child has no tool to load.
+pub(crate) fn child_skill_tool_available(
+    parent_registry: &ToolRegistry,
+    allow_list: Option<&[String]>,
+) -> bool {
+    parent_registry.get("skill").is_some()
+        && allow_list.is_none_or(|list| list.iter().any(|name| name == "skill"))
+}
+
+/// Apply the skill-catalog "# Available Skills" listing to a loop context's
+/// `base_suffix` — the single shared mechanism the root builder and the
+/// child launch paths use for the listing's content and gating, so the
+/// section cannot drift between them.
+///
+/// Sets nothing when `skill_tool_available` is `false`: advertising a skill
+/// the agent has no tool to load would be a lie. The content is the
+/// catalog's filtered
+/// [`SkillCatalog::system_prompt_listing`], identical for root and
+/// children (an all-hidden or empty catalog yields an empty string, which
+/// the system-prompt build omits).
+pub(crate) fn apply_skill_listing(
+    loop_context: &mut LoopContext,
+    catalog: &SkillCatalog,
+    skill_tool_available: bool,
+) {
+    if skill_tool_available {
+        loop_context.base_suffix = catalog.system_prompt_listing();
+    }
+}
+
+/// Give a spawned/forked child the same "# Available Skills" listing the
+/// root gets.
+///
+/// Children build a bare [`LoopContext`] and never run the root's
+/// `install_system_prompt` — the step that materializes `base_suffix` into
+/// the system instruction — so this applies the shared listing via
+/// [`apply_skill_listing`], then folds the child's base instruction into
+/// `base_prefix` and rebuilds the base section, producing the same
+/// base-instruction-then-listing layering the root emits. A no-op when the
+/// resulting listing is empty (the skill tool is gated off for the child,
+/// or the catalog is empty / all-hidden), leaving the child's system
+/// instruction untouched.
+pub(crate) fn install_child_skill_listing(
+    loop_context: &mut LoopContext,
+    catalog: &SkillCatalog,
+    skill_tool_available: bool,
+) {
+    // An embedder-supplied parent base (`ParentSystemInstruction`) may
+    // legitimately already contain the listing — the root's
+    // `base_system_instruction()` includes its materialized `base_suffix`.
+    // Appending again would duplicate the section, so the exact generated
+    // listing text already present anywhere in the child's base is treated
+    // as installed.
+    let listing = catalog.system_prompt_listing();
+    if !listing.is_empty()
+        && loop_context
+            .system_sections
+            .first()
+            .is_some_and(|base| base.contains(&listing))
+    {
+        return;
+    }
+    apply_skill_listing(loop_context, catalog, skill_tool_available);
+    if loop_context.base_suffix.is_empty() {
+        return;
+    }
+    if loop_context.base_prefix.is_empty() {
+        loop_context.base_prefix = loop_context
+            .system_sections
+            .first()
+            .cloned()
+            .unwrap_or_default();
+    }
+    loop_context.rebuild_base_section();
 }
 
 /// Which non-`Option` [`AgentLoopConfig`] fields the caller explicitly set.
@@ -1129,5 +1243,142 @@ mod tests {
             "the tree's root log is the same Arc the context publishes",
         );
         assert!(tree.children_of(agent_id).is_empty(), "no children yet");
+    }
+
+    /// Defect 2 regression: a malformed skill (missing description) in a
+    /// scanned directory must surface a diagnostic on the shared collector
+    /// after runtime-base assembly — previously the catalog accumulated the
+    /// diagnostic but nothing drained it, so the skill silently vanished.
+    #[test]
+    fn skill_catalog_diagnostics_reach_the_collector_after_assembly() {
+        let cwd = tempfile::tempdir().expect("tempdir");
+        let broken = cwd.path().join(".norn").join("skills").join("broken");
+        std::fs::create_dir_all(&broken).expect("mkdir");
+        // Missing `description` → the loader emits skill-missing-description.
+        std::fs::write(broken.join("SKILL.md"), "---\nname: broken\n---\nbody").expect("write");
+
+        let mut profile = crate::profile::Profile::default();
+        let base = crate::runtime_init::load_runtime_base(cwd.path(), &mut profile, None, None)
+            .expect("runtime base loads");
+        let ctx = ToolContext::empty();
+        install_runtime_base_extensions(&ctx, &base, None, cwd.path());
+
+        let snapshot = base.diagnostics.snapshot();
+        assert!(
+            snapshot
+                .iter()
+                .any(|d| d.code == "skill-missing-description"),
+            "the malformed skill must surface a diagnostic on the shared collector: {snapshot:?}",
+        );
+    }
+
+    /// A child's skill listing is gated on the `skill` tool being on the
+    /// child's resolved surface: present + admitted → available; present +
+    /// excluded by allow-list → unavailable; absent registry → unavailable.
+    #[test]
+    fn child_skill_tool_available_respects_registry_and_allow_list() {
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(crate::tools::skill::SkillTool::new()));
+
+        assert!(child_skill_tool_available(&registry, None));
+        assert!(child_skill_tool_available(
+            &registry,
+            Some(&["skill".to_owned(), "read".to_owned()]),
+        ));
+        assert!(!child_skill_tool_available(
+            &registry,
+            Some(&["read".to_owned()])
+        ));
+
+        let empty = ToolRegistry::new();
+        assert!(!child_skill_tool_available(&empty, None));
+    }
+
+    /// The shared child-listing installer folds the "# Available Skills"
+    /// section into the child's base instruction (after the base) when the
+    /// skill tool is available, and leaves the instruction untouched when it
+    /// is not — the same filtered listing the root gets.
+    #[test]
+    fn install_child_skill_listing_appends_when_available_and_skips_when_not() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("greet");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: greet the user\n---\nbody",
+        )
+        .unwrap();
+        let catalog = SkillCatalog::scan(&[dir.path().to_path_buf()]);
+
+        let mut available = LoopContext::new("You are a sub-agent.");
+        install_child_skill_listing(&mut available, &catalog, true);
+        let base = available.base_system_instruction();
+        assert!(
+            base.contains("You are a sub-agent."),
+            "base retained: {base}"
+        );
+        assert!(
+            base.contains("# Available Skills"),
+            "listing present when available: {base}",
+        );
+        assert!(
+            base.find("You are a sub-agent.") < base.find("# Available Skills"),
+            "the base instruction must precede the listing: {base}",
+        );
+
+        let mut gated = LoopContext::new("You are a sub-agent.");
+        install_child_skill_listing(&mut gated, &catalog, false);
+        assert_eq!(
+            gated.base_system_instruction(),
+            "You are a sub-agent.",
+            "an unavailable skill tool leaves the child's instruction untouched",
+        );
+    }
+
+    /// Regression: an embedder-supplied parent base
+    /// (`ParentSystemInstruction`) may already contain the listing — the
+    /// root's `base_system_instruction()` includes its materialized
+    /// `base_suffix`. Installing on such a base must not duplicate the
+    /// "# Available Skills" section.
+    #[test]
+    fn install_child_skill_listing_does_not_duplicate_listing_bearing_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("greet");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: greet the user\n---\nbody",
+        )
+        .unwrap();
+        let catalog = SkillCatalog::scan(&[dir.path().to_path_buf()]);
+
+        // A parent base that already carries the exact generated listing,
+        // as a root's materialized instruction would.
+        let listing_bearing_base =
+            format!("You are the parent.\n\n{}", catalog.system_prompt_listing());
+        let mut child = LoopContext::new(&listing_bearing_base);
+        install_child_skill_listing(&mut child, &catalog, true);
+
+        let base = child.base_system_instruction();
+        assert_eq!(
+            base.matches("# Available Skills").count(),
+            1,
+            "the listing must appear exactly once: {base}",
+        );
+        assert_eq!(
+            base, listing_bearing_base,
+            "a listing-bearing base is left untouched",
+        );
+
+        // Idempotency of the guard itself: a second install is also a no-op.
+        install_child_skill_listing(&mut child, &catalog, true);
+        assert_eq!(
+            child
+                .base_system_instruction()
+                .matches("# Available Skills")
+                .count(),
+            1,
+            "repeat installs must not duplicate the section",
+        );
     }
 }

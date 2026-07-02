@@ -74,7 +74,10 @@ two are behaviors an agent explicitly wrote "needs sign-off" against. Full detai
    `auto_compact_reserve_tokens: Option<u64>`, default **`Some(30_000)`** (owner's value) —
    trigger fires when estimated tokens exceed `window − reserve` (gpt-5.5: 272_000 − 30_000
    = 242_000); explicit `off` disables (settings string `"off"` / `-c
-   auto_compact_reserve_tokens=off` — for orchestrators that manage context themselves);
+   auto_compact_reserve_tokens=off` — for orchestrators that manage context themselves;
+   owner guidance 2026-07-03: on very large-window models, prefer lowering the effective
+   ceiling — an explicit `context_window` below the catalog value, e.g. 500k on a 1M model —
+   over turning compaction off);
    `reserve ≥ window` warns loudly and disables (would otherwise fire every step; the builder
    also warns once and drops the system-prompt compaction guidance). Reserve is absolute, not proportional, because it is sized by
    turn overhead (next input + compaction summary call), which does not scale with window

@@ -403,6 +403,24 @@ impl Tool for ForkTool {
             parent_registry,
             allow_list.as_deref(),
         );
+
+        // Skill listing (parity with the root and spawn): advertise "#
+        // Available Skills" on the fork's system prompt only when the parent
+        // published a skill catalog AND the skill tool is on the fork's
+        // resolved surface. Same shared mechanism + filtered listing the
+        // root builder uses. Applied after the fork preamble + parent base
+        // are composed into `loop_ctx`, so the listing lands after them.
+        if let Some(catalog) = ctx.get_extension::<crate::skill::SkillCatalog>() {
+            crate::agent::assembly::install_child_skill_listing(
+                &mut loop_ctx,
+                &catalog,
+                crate::agent::assembly::child_skill_tool_available(
+                    parent_registry,
+                    allow_list.as_deref(),
+                ),
+            );
+        }
+
         let executor = SubAgentExecutor::new(
             Arc::clone(parent_registry),
             allow_list,
@@ -1125,6 +1143,99 @@ mod tests {
             *seen_parent.lock().unwrap(),
             Some(real_parent),
             "child tool must observe the parent as its parent_id",
+        );
+    }
+
+    /// Defect 1 regression (critical): a forked child must be able to load a
+    /// skill end-to-end. Previously `build_fork_context` never forwarded
+    /// `SkillSearchPaths`/`SkillCatalog`, so the fork saw the `skill` tool
+    /// but every call failed `MissingExtension`. Here the fork calls `skill`
+    /// (then produces its structured output) and its store must carry a
+    /// successful `skill` tool result containing the skill body.
+    #[tokio::test]
+    async fn forked_child_loads_a_skill_end_to_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let skill_dir = dir.path().join("greet");
+        std::fs::create_dir(&skill_dir).unwrap();
+        std::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: greet the user\n---\nHELLO_FROM_GREET",
+        )
+        .unwrap();
+        let paths = vec![dir.path().to_path_buf()];
+        let catalog = Arc::new(crate::skill::SkillCatalog::scan(&paths));
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc-skill".to_string(),
+                    name: Some("skill".to_string()),
+                    arguments_delta: json!({"name": "greet"}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "structured-out".to_string(),
+                    name: Some("structured_output".to_string()),
+                    arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: None,
+            }],
+        ]));
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(crate::tools::skill::SkillTool::with_config(
+            crate::tools::skill::SkillToolConfig {
+                shell_execution: false,
+            },
+        )));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(registry),
+            Arc::new(MessageRouter::new()),
+        );
+        ctx.insert_extension(Arc::new(crate::tools::skill::SkillSearchPaths(paths)));
+        ctx.insert_extension(catalog);
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"request": "greet", "model": "gpt-5.5", "requirements": []})),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        let child_store = Arc::clone(&handle.event_store);
+        handle.join_handle.await.expect("join");
+
+        let loaded = child_store.events().iter().any(|e| {
+            matches!(
+                e,
+                SessionEvent::ToolResult { tool_name, output, .. }
+                    if tool_name == "skill" && output.to_string().contains("HELLO_FROM_GREET")
+            )
+        });
+        assert!(
+            loaded,
+            "forked child must load the skill successfully (extensions forwarded): {:?}",
+            child_store.events(),
         );
     }
 

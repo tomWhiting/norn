@@ -462,6 +462,17 @@ impl AgentBuilder {
         }
         if let Some(base) = runtime_base.as_ref() {
             apply_base_to_loop_context(&mut loop_context, base);
+            // Advertise the skill listing only when the fully-gated registry
+            // still carries the `skill` tool — a `without_tools`/deny that
+            // removes it must also remove the "# Available Skills" section,
+            // matching the child paths (never advertise what cannot be
+            // called). `registry` here is post-`from_profile` and
+            // post-`set_disallowed`, so `get` reflects the final surface.
+            crate::agent::assembly::apply_skill_listing(
+                &mut loop_context,
+                &base.skill_catalog,
+                registry.get("skill").is_some(),
+            );
         }
         let mut config_override = effective_agent_config(
             runtime_base.as_ref(),

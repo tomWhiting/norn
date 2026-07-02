@@ -132,6 +132,18 @@ pub(super) fn build_child_context(
     if let Some(catalog) = parent_ctx.get_extension::<SharedToolCatalog>() {
         child_ctx.insert_extension(catalog);
     }
+    // Skill infrastructure: the child shares the parent's registry, so the
+    // `skill` tool is offered to it (subject to the child's allow-list).
+    // Without forwarding both the search paths and the catalog the tool
+    // would always fail `MissingExtension` at execute — the child could see
+    // the tool but never use it. Forwarded as `Arc` clones exactly like the
+    // other shared infrastructure above.
+    if let Some(skill_paths) = parent_ctx.get_extension::<crate::tools::skill::SkillSearchPaths>() {
+        child_ctx.insert_extension(skill_paths);
+    }
+    if let Some(skill_catalog) = parent_ctx.get_extension::<crate::skill::SkillCatalog>() {
+        child_ctx.insert_extension(skill_catalog);
+    }
     if let Some(diagnostics) = parent_ctx.get_extension::<DiagnosticCollector>() {
         child_ctx.insert_extension(diagnostics);
     }

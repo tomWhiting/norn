@@ -71,7 +71,10 @@ Notes:
   `-c auto_compact_reserve_tokens=off` (for orchestrators that manage
   context themselves), and supply `-c context_window=<u64>` for models the
   catalog doesn't know — without a window, compaction stays off and a long
-  run can die with a terminal `context window exceeded` error.
+  run can die with a terminal `context window exceeded` error. On very
+  large-window models, prefer *lowering the ceiling* over turning
+  compaction off: an explicit `-c context_window=500000` on a 1M model
+  compacts at 500k − reserve (explicit window always beats the catalog).
 - `--partial` and `-o` do not apply to the transport; delta events are
   always forwarded on the channel.
 - Gate on the `protocol` field of the `initialize` result
