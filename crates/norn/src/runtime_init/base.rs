@@ -198,7 +198,20 @@ pub fn load_runtime_base(
     let retry_policy = retry_policy_from_settings(&settings)?;
     let diagnostics = DiagnosticCollector::shared();
     let shared_wd = SharedWorkingDir::new(cwd.to_path_buf());
-    let rules = merge_discovered_rules(None, cwd).map(|r| r.with_working_dir(shared_wd));
+    // Wire the live diagnostic collector and the resolved shell budget onto
+    // the rules engine so `shell_source` failures reach telemetry and the
+    // command timeout is configuration-driven (see DECISION: rule shell
+    // timeout reuses `agent.prompt_command_timeout`, defaulting to the
+    // engine's built-in budget when unset).
+    let rules = merge_discovered_rules(None, cwd).map(|r| {
+        let r = r
+            .with_working_dir(shared_wd)
+            .with_diagnostics(Arc::clone(&diagnostics));
+        match agent_config.prompt_command_timeout {
+            Some(timeout) => r.with_shell_timeout(timeout),
+            None => r,
+        }
+    });
     // The merged settings already carry the three-tier hook concatenation;
     // extracting from them costs no second disk read.
     let hook_settings = load_hooks_from_settings(&settings);

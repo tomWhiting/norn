@@ -2,7 +2,6 @@
 
 pub use crate::error::RulesError;
 
-pub mod delivery;
 pub mod engine;
 pub mod lifecycle;
 pub mod parser;

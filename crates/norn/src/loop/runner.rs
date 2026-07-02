@@ -601,6 +601,15 @@ async fn run_agent_step_inner(
         loop_context.inject_environment_section();
         loop_context.inject_collaboration_mode();
 
+        // N-007 R3 / N-017 R3: SystemContextAppend rules persist "for the
+        // remainder of the session" by being re-materialized from their
+        // persisted RuleInjection events every iteration — after the
+        // per-iteration wipe above, before the developer message is synced
+        // below — rather than surviving the wipe in place. A rule whose
+        // event has been compacted out simply stops re-materializing and
+        // re-fires on its next trigger.
+        loop_context.materialize_system_context_rules(store);
+
         // Provider tool surface, recomputed every iteration from the live
         // provider's capabilities — the same cadence as the wire resolution
         // below — so a provider rebind (or a launch path whose static

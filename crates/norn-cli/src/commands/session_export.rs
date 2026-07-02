@@ -161,6 +161,11 @@ fn export_markdown(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCo
                 let rendered = serde_json::to_string(data).unwrap_or_else(|_| data.to_string());
                 println!("_Custom `{event_type}`: {rendered}_\n");
             }
+            SessionEvent::RuleInjection {
+                rule_id, content, ..
+            } => {
+                println!("### Rule: {rule_id}\n\n{content}\n");
+            }
         }
     }
     ExitCode::Success

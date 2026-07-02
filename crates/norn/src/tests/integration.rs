@@ -686,7 +686,9 @@ async fn test_agent_step_with_bash_and_search() {
 /// - RuleEngine is wired into the loop via LoopContext
 /// - PathGlob triggers fire when a write tool is called with a matching path
 /// - Rule content becomes a dynamic system section for the next iteration
-/// - The session store records the rule injection as a UserMessage
+/// - The session store records the rule injection as a typed
+///   `SessionEvent::RuleInjection` carrying the rule id and delivery mode
+///   (the durable presence/audit record), not as an untyped UserMessage
 #[tokio::test]
 async fn test_rules_fire_on_file_write() {
     let rule = Rule {
@@ -760,23 +762,39 @@ async fn test_rules_fire_on_file_write() {
     let (output, _) = assert_completed(result);
     assert_eq!(output["answer"], "rules fired");
 
-    // Rule delivery ContextInjection creates a UserMessage with the rule content.
+    // ContextInjection delivery persists a typed RuleInjection event that
+    // carries the rule id, delivery mode, and raw (unformatted) content —
+    // the durable presence/audit record the lifecycle reads back.
     let events = store.events();
-    let rule_injected = events.iter().any(|e| {
-        if let SessionEvent::UserMessage { content, .. } = e {
-            content.contains("RULE_CONTENT_INJECTED")
-        } else {
-            false
+    let rule_injected = events.iter().any(|e| match e {
+        SessionEvent::RuleInjection {
+            rule_id,
+            delivery,
+            content,
+            ..
+        } => {
+            rule_id == "txt-rule"
+                && *delivery == RuleDelivery::ContextInjection
+                && content == "RULE_CONTENT_INJECTED"
         }
+        _ => false,
     });
     assert!(
         rule_injected,
-        "rule content 'RULE_CONTENT_INJECTED' must appear in session store as a UserMessage; events: {:?}",
+        "rule 'txt-rule' must appear in session store as a RuleInjection event; events: {:?}",
         events
             .iter()
             .map(|e| format!("{e:?}"))
             .collect::<Vec<_>>()
             .join(", ")
+    );
+    // The old untyped [Context: id]-prefixed UserMessage hack is gone.
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, SessionEvent::UserMessage { content, .. }
+                if content.contains("RULE_CONTENT_INJECTED"))),
+        "rule content must not be persisted as a UserMessage",
     );
 }
 
@@ -1396,6 +1414,32 @@ async fn test_rules_system_context_append_delivery() {
     assert!(
         !has_rule_user_msg,
         "SystemContextAppend must not appear as a UserMessage in the session store",
+    );
+
+    // It IS persisted as a typed RuleInjection event so the presence set can
+    // re-materialize its content each prompt-construction pass and re-fire
+    // it after compaction.
+    let has_rule_event = events.iter().any(|e| match e {
+        SessionEvent::RuleInjection {
+            rule_id,
+            delivery,
+            content,
+            ..
+        } => {
+            rule_id == "sys-append-rule"
+                && *delivery == RuleDelivery::SystemContextAppend
+                && content == "SYS_APPEND_CONTENT"
+        }
+        _ => false,
+    });
+    assert!(
+        has_rule_event,
+        "SystemContextAppend rule must persist a RuleInjection event; events: {:?}",
+        events
+            .iter()
+            .map(|e| format!("{e:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
     );
 }
 

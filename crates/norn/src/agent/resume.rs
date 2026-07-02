@@ -125,6 +125,7 @@ pub fn rebuild_action_log(action_log: &ActionLog, events: &[SessionEvent]) {
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
             | SessionEvent::Custom { .. }
+            | SessionEvent::RuleInjection { .. }
             | SessionEvent::SpokenResponse { .. }
             | SessionEvent::Compaction { .. } => {}
         }

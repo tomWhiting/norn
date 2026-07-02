@@ -115,6 +115,32 @@ pub enum DeliveryMode {
     MessageDelivery,
 }
 
+impl DeliveryMode {
+    /// Format a fired rule's raw content for delivery as a conversation
+    /// message.
+    ///
+    /// Returns [`None`] for [`DeliveryMode::SystemContextAppend`], which is
+    /// delivered through the system prompt (re-materialized into the
+    /// dynamic system sections each prompt-construction pass) rather than
+    /// as a message. [`DeliveryMode::ContextInjection`] and
+    /// [`DeliveryMode::MessageDelivery`] each carry a distinguishing prefix
+    /// so the model can tell rule-sourced content apart from ordinary user
+    /// input.
+    ///
+    /// The same formatting is applied both when a rule fires live and when
+    /// a persisted [`RuleInjection`](crate::session::events::SessionEvent::RuleInjection)
+    /// event is replayed on resume, so the provider-facing text is byte-for-byte
+    /// identical across a restart.
+    #[must_use]
+    pub fn format_conversation_content(&self, rule_id: &str, content: &str) -> Option<String> {
+        match self {
+            Self::SystemContextAppend => None,
+            Self::ContextInjection => Some(format!("[Context: {rule_id}] {content}")),
+            Self::MessageDelivery => Some(format!("[Rule: {rule_id}] {content}")),
+        }
+    }
+}
+
 // ---------------------------------------------------------------------------
 // R4: RuntimeEvent, PathOperation
 // ---------------------------------------------------------------------------

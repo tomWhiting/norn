@@ -126,6 +126,7 @@ impl ReplayArtifacts {
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
             | SessionEvent::Custom { .. }
+            | SessionEvent::RuleInjection { .. }
             | SessionEvent::SpokenResponse { .. } => {}
         }
     }

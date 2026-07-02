@@ -482,6 +482,16 @@ impl EventStore {
         self.inner.read().events.clone()
     }
 
+    /// Run `f` over the events in insertion order without cloning them.
+    ///
+    /// The read lock is held for the duration of `f`, so callers that only
+    /// need to inspect (not retain) event bodies avoid copying the whole
+    /// history — unlike [`Self::events`]. `f` must not call back into the
+    /// store, which would deadlock on the held read lock.
+    pub fn with_events<R>(&self, f: impl FnOnce(&[SessionEvent]) -> R) -> R {
+        f(&self.inner.read().events)
+    }
+
     /// Return up to `count` most recent events in insertion order.
     ///
     /// This clones only the returned tail window, unlike [`Self::events`],

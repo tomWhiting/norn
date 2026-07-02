@@ -405,6 +405,7 @@ pub fn build_compaction_digest(
             | SessionEvent::Fork { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
+            | SessionEvent::RuleInjection { .. }
             | SessionEvent::SpokenResponse { .. } => other_events += 1,
         }
     }
@@ -460,6 +461,7 @@ fn compact_boundary_after_tool_results(events: &[SessionEvent], assistant_idx: u
             | SessionEvent::Fork { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
+            | SessionEvent::RuleInjection { .. }
             | SessionEvent::SpokenResponse { .. }
             | SessionEvent::Compaction { .. } => {}
         }

@@ -156,6 +156,29 @@ fn event_to_message(
             tool_call_kind: None,
         }),
 
+        // A fired rule delivered as conversation content (ContextInjection
+        // or MessageDelivery) re-renders to the same prefixed User message
+        // it produced live, so a resumed session sees identical text.
+        // SystemContextAppend rules deliver through the system prompt, not
+        // the message stream, so they render to nothing here.
+        SessionEvent::RuleInjection {
+            rule_id,
+            delivery,
+            content,
+            ..
+        } => delivery
+            .format_conversation_content(rule_id, content)
+            .map(|formatted| Message {
+                role: MessageRole::User,
+                content: Some(formatted),
+                thinking: String::new(),
+                reasoning: Vec::new(),
+                tool_calls: Vec::new(),
+                tool_call_id: None,
+                tool_name: None,
+                tool_call_kind: None,
+            }),
+
         SessionEvent::ModelChange { .. }
         | SessionEvent::Fork { .. }
         | SessionEvent::ForkComplete { .. }
@@ -438,6 +461,41 @@ mod tests {
             let parsed: serde_json::Value = serde_json::from_str(&tc.arguments).unwrap();
             assert_eq!(parsed, args, "round-trips losslessly for {}", tc.call_id);
         }
+    }
+
+    #[test]
+    fn rule_injection_renders_prefixed_message_on_resume() {
+        use crate::rules::types::{DeliveryMode, TriggerTiming};
+
+        let events = vec![
+            SessionEvent::RuleInjection {
+                base: EventBase::new(None),
+                rule_id: "conv".to_owned(),
+                delivery: DeliveryMode::ContextInjection,
+                timing: TriggerTiming::Before,
+                content: "ctx body".to_owned(),
+            },
+            SessionEvent::RuleInjection {
+                base: EventBase::new(None),
+                rule_id: "msg".to_owned(),
+                delivery: DeliveryMode::MessageDelivery,
+                timing: TriggerTiming::Before,
+                content: "msg body".to_owned(),
+            },
+            SessionEvent::RuleInjection {
+                base: EventBase::new(None),
+                rule_id: "sys".to_owned(),
+                delivery: DeliveryMode::SystemContextAppend,
+                timing: TriggerTiming::After,
+                content: "sys body".to_owned(),
+            },
+        ];
+        let msgs = events_to_messages(&events);
+        // SystemContextAppend delivers via the system prompt, not a message.
+        assert_eq!(msgs.len(), 2);
+        assert_eq!(msgs[0].role, MessageRole::User);
+        assert_eq!(msgs[0].content.as_deref(), Some("[Context: conv] ctx body"));
+        assert_eq!(msgs[1].content.as_deref(), Some("[Rule: msg] msg body"));
     }
 
     #[test]

@@ -43,17 +43,37 @@ pub(super) fn latest_response_anchor(
 /// assistant messages and tool results always render; compaction events
 /// render only when the prompt view includes them (`include_compactions`,
 /// i.e. when a [`ContextEdits`](crate::session::context_edit::ContextEdits)
-/// tracker is active); all metadata events render nothing.
+/// tracker is active); a `RuleInjection` renders exactly when its delivery
+/// mode produces conversation content (context-injection and
+/// message-delivery rules render a prefixed user message;
+/// system-context-append rules deliver through the system prompt and render
+/// nothing here); all other metadata events render nothing. The rule case
+/// defers to [`DeliveryMode::format_conversation_content`] — the same
+/// function `conversion.rs` uses — so the two projections cannot drift.
 pub(super) fn event_produces_prompt_message(
     event: &SessionEvent,
     include_compactions: bool,
 ) -> bool {
-    matches!(
-        event,
+    match event {
         SessionEvent::UserMessage { .. }
-            | SessionEvent::AssistantMessage { .. }
-            | SessionEvent::ToolResult { .. }
-    ) || (include_compactions && matches!(event, SessionEvent::Compaction { .. }))
+        | SessionEvent::AssistantMessage { .. }
+        | SessionEvent::ToolResult { .. } => true,
+        SessionEvent::Compaction { .. } => include_compactions,
+        SessionEvent::RuleInjection {
+            rule_id,
+            delivery,
+            content,
+            ..
+        } => delivery
+            .format_conversation_content(rule_id, content)
+            .is_some(),
+        SessionEvent::ModelChange { .. }
+        | SessionEvent::Fork { .. }
+        | SessionEvent::ForkComplete { .. }
+        | SessionEvent::Label { .. }
+        | SessionEvent::Custom { .. }
+        | SessionEvent::SpokenResponse { .. } => false,
+    }
 }
 
 /// Mutable provider-state anchor for one agent-loop step.
@@ -223,8 +243,42 @@ fn validate_provider_state_config(
 mod tests {
     use super::*;
     use crate::provider::request::MessageRole;
+    use crate::rules::types::{DeliveryMode, TriggerTiming};
     use crate::session::events::{EventBase, EventUsage};
     use crate::session::store::EventStore;
+
+    /// `event_produces_prompt_message` must agree exactly with the message
+    /// projection in `session::conversion` for every delivery mode: a
+    /// `RuleInjection` that `conversion` renders to a live message must be
+    /// counted, and one it drops must not be. Divergence silently breaks
+    /// in-flight compaction and the Responses-API thread anchor, which
+    /// count messages through this predicate while the message list is
+    /// built by `conversion`.
+    #[test]
+    fn rule_injection_prompt_message_predicate_mirrors_conversion() {
+        for delivery in [
+            DeliveryMode::SystemContextAppend,
+            DeliveryMode::ContextInjection,
+            DeliveryMode::MessageDelivery,
+        ] {
+            let label = format!("{delivery:?}");
+            let event = SessionEvent::RuleInjection {
+                base: EventBase::new(None),
+                rule_id: "rust-conventions".to_owned(),
+                delivery,
+                timing: TriggerTiming::After,
+                content: "Follow conventions.".to_owned(),
+            };
+            let rendered =
+                !crate::session::conversion::events_to_messages(std::slice::from_ref(&event))
+                    .is_empty();
+            assert_eq!(
+                event_produces_prompt_message(&event, true),
+                rendered,
+                "predicate diverges from conversion for delivery {label}",
+            );
+        }
+    }
 
     fn message(role: MessageRole, content: &str) -> Message {
         Message {

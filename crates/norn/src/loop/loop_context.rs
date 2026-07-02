@@ -75,6 +75,12 @@ pub struct LoopContext {
     /// execution and applies the engine's
     /// [`RuleInjection`](crate::rules::types::RuleInjection) results.
     pub rules: Option<RuleEngine>,
+    /// Reactive scanner that registers nested `NORN.md` files as synthetic
+    /// rules on [`Self::rules`] the first time a path under their directory
+    /// is touched (NX-004). Lazily constructed on first use from
+    /// [`Self::working_dir`] so no assembly site has to thread the project
+    /// root separately; absent when no rules engine is installed.
+    pub nested_scanner: Option<crate::context::scanner::NestedScanner>,
     /// Optional hook registry. When present, the loop calls pre/post tool,
     /// pre/post LLM, and session-event hooks at their respective firing
     /// points.
@@ -307,6 +313,7 @@ impl LoopContext {
     pub fn new(base: impl Into<String>) -> Self {
         Self {
             rules: None,
+            nested_scanner: None,
             hooks: None,
             system_sections: vec![base.into()],
             event_schemas: None,
@@ -450,6 +457,93 @@ impl LoopContext {
     /// re-fire fresh.
     pub fn clear_dynamic_sections(&mut self) {
         self.system_sections.truncate(1);
+    }
+
+    /// Build the current prompt view over `store`, honouring the active
+    /// [`ContextEdits`] when one is installed. When no edits tracker is
+    /// present nothing is suppressed, so the view is every stored event.
+    /// Re-append every in-context [`DeliveryMode::SystemContextAppend`] rule's
+    /// content to the dynamic system sections from the persisted event
+    /// stream.
+    ///
+    /// Called at the top of each iteration after
+    /// [`Self::clear_dynamic_sections`] and before the managed developer
+    /// message is synced, so append-mode rule content survives the
+    /// per-iteration wipe "for the remainder of the session" — while still
+    /// vanishing the instant its
+    /// [`SessionEvent::RuleInjection`](crate::session::events::SessionEvent::RuleInjection)
+    /// event is compacted or suppressed out of the view (at which point the
+    /// rule re-fires on its next trigger). No-op when no rules engine is
+    /// installed.
+    pub fn materialize_system_context_rules(&mut self, store: &crate::session::store::EventStore) {
+        if self.rules.is_none() {
+            return;
+        }
+        let fallback = ContextEdits::new();
+        let edits = self.context_edits.as_ref().unwrap_or(&fallback);
+        let sections: Vec<String> = store.with_events(|events| {
+            let mut sections = Vec::new();
+            crate::r#loop::context::for_each_visible_event(events, edits, |event, _tag| {
+                if let crate::session::events::SessionEvent::RuleInjection {
+                    delivery: crate::rules::types::DeliveryMode::SystemContextAppend,
+                    content,
+                    ..
+                } = event
+                {
+                    sections.push(content.clone());
+                }
+            });
+            sections
+        });
+        for section in sections {
+            self.append_system_section(section);
+        }
+    }
+
+    /// Rebuild the rules engine's presence set from the current prompt view.
+    ///
+    /// Invoked immediately before a tool batch's rule evaluation so
+    /// `process_event` suppresses rules already present in context and
+    /// re-injects only those whose events have been compacted or suppressed
+    /// out of the view (N-007 R7). No-op when no rules engine is installed.
+    pub fn rebuild_rule_presence(&mut self, store: &crate::session::store::EventStore) {
+        if self.rules.is_none() {
+            return;
+        }
+        let fallback = ContextEdits::new();
+        let edits = self.context_edits.as_ref().unwrap_or(&fallback);
+        let tags = store.with_events(|events| {
+            let mut tags = Vec::new();
+            crate::r#loop::context::for_each_visible_event(events, edits, |_event, tag| {
+                tags.push(tag);
+            });
+            tags
+        });
+        if let Some(engine) = self.rules.as_mut() {
+            engine.presence_mut().rebuild(&tags);
+        }
+    }
+
+    /// Register nested `NORN.md` synthetic rules for a batch of touched
+    /// paths before the rules engine evaluates them (NX-004 / NX-005).
+    ///
+    /// The [`NestedScanner`](crate::context::scanner::NestedScanner) is
+    /// lazily constructed from [`Self::working_dir`] on first use, so no
+    /// assembly site needs to thread the project root. No-op when no rules
+    /// engine is installed or no paths were touched.
+    pub fn scan_nested_norn(&mut self, paths: &[String]) {
+        if self.rules.is_none() || paths.is_empty() {
+            return;
+        }
+        if self.nested_scanner.is_none() {
+            let cwd = self.working_dir.get();
+            self.nested_scanner = Some(crate::context::scanner::NestedScanner::new(&cwd));
+        }
+        if let (Some(scanner), Some(engine)) = (self.nested_scanner.as_mut(), self.rules.as_mut()) {
+            for path in paths {
+                scanner.scan_on_path_change(path, engine);
+            }
+        }
     }
 
     /// Replace the current reasoning effort with `new_effort`, returning
@@ -628,6 +722,172 @@ async fn run_prompt_command(
 )]
 mod tests {
     use super::*;
+
+    // ---- Rule context lifecycle (N-007 R7 / N-017 R3 / NX-004) ----------
+
+    use crate::rules::engine::RuleEngine;
+    use crate::rules::types::{
+        DeliveryMode, PathOperation, Rule, RuleId, RuntimeEvent, TriggerCondition, TriggerTiming,
+    };
+    use crate::session::events::{EventBase, SessionEvent};
+    use crate::session::store::EventStore;
+    use crate::tool::context::SharedWorkingDir;
+
+    fn append_rule_event(
+        store: &EventStore,
+        rule_id: &str,
+        delivery: DeliveryMode,
+        content: &str,
+    ) -> crate::session::events::EventId {
+        store
+            .append(SessionEvent::RuleInjection {
+                base: EventBase::new(store.last_event_id()),
+                rule_id: rule_id.to_owned(),
+                delivery,
+                timing: TriggerTiming::After,
+                content: content.to_owned(),
+            })
+            .expect("append")
+    }
+
+    fn rs_rule(id: &str, body: &str, delivery: DeliveryMode) -> Rule {
+        Rule {
+            id: RuleId::from(id),
+            name: id.to_owned(),
+            triggers: vec![TriggerCondition::PathGlob {
+                pattern: "**/*.rs".to_owned(),
+            }],
+            delivery,
+            timing: TriggerTiming::After,
+            body: body.to_owned(),
+            shell_source: None,
+        }
+    }
+
+    #[test]
+    fn materialize_system_context_rules_reappends_across_wipes() {
+        let store = EventStore::new();
+        append_rule_event(
+            &store,
+            "sys-rule",
+            DeliveryMode::SystemContextAppend,
+            "APPEND_BODY",
+        );
+
+        let mut ctx = LoopContext::new("base");
+        ctx.rules = Some(RuleEngine::new(vec![]));
+
+        // First prompt-construction pass: content re-materialized from the
+        // persisted event even though it was never in `system_sections`.
+        ctx.materialize_system_context_rules(&store);
+        assert!(ctx.system_instruction().contains("APPEND_BODY"));
+
+        // The per-iteration wipe removes it, but the next pass restores it
+        // from the durable event — "for the remainder of the session".
+        ctx.clear_dynamic_sections();
+        assert!(!ctx.system_instruction().contains("APPEND_BODY"));
+        ctx.materialize_system_context_rules(&store);
+        assert!(ctx.system_instruction().contains("APPEND_BODY"));
+    }
+
+    #[test]
+    fn materialize_drops_content_once_event_is_compacted_out() {
+        let store = EventStore::new();
+        let id = append_rule_event(
+            &store,
+            "sys-rule",
+            DeliveryMode::SystemContextAppend,
+            "APPEND_BODY",
+        );
+
+        let mut ctx = LoopContext::new("base");
+        ctx.rules = Some(RuleEngine::new(vec![]));
+        let mut edits = ContextEdits::new();
+        edits.suppress(id);
+        ctx.context_edits = Some(edits);
+
+        ctx.clear_dynamic_sections();
+        ctx.materialize_system_context_rules(&store);
+        assert!(
+            !ctx.system_instruction().contains("APPEND_BODY"),
+            "a compacted/suppressed rule event must not re-materialize",
+        );
+    }
+
+    #[tokio::test]
+    async fn presence_rebuild_suppresses_then_re_fires_after_eviction() {
+        let store = EventStore::new();
+        let mut ctx = LoopContext::new("base");
+        ctx.rules = Some(RuleEngine::new(vec![rs_rule(
+            "broad",
+            "BODY",
+            DeliveryMode::ContextInjection,
+        )]));
+        ctx.context_edits = Some(ContextEdits::new());
+
+        let event = RuntimeEvent::PathChanged {
+            path: "src/lib.rs".to_owned(),
+            operation: PathOperation::Read,
+        };
+
+        // Fires once when nothing is in context.
+        ctx.rebuild_rule_presence(&store);
+        let first = ctx.rules.as_ref().unwrap().process_event(&event).await;
+        assert_eq!(first.len(), 1, "broad rule must fire on first match");
+
+        // Persist its presence marker; rebuild sees it in context → no re-fire.
+        let id = append_rule_event(&store, "broad", DeliveryMode::ContextInjection, "BODY");
+        ctx.rebuild_rule_presence(&store);
+        assert!(
+            ctx.rules
+                .as_ref()
+                .unwrap()
+                .process_event(&event)
+                .await
+                .is_empty(),
+            "rule present in context must not re-fire",
+        );
+
+        // Compact the marker out of the view → rule re-fires on next trigger.
+        if let Some(edits) = ctx.context_edits.as_mut() {
+            edits.suppress(id);
+        }
+        ctx.rebuild_rule_presence(&store);
+        let after = ctx.rules.as_ref().unwrap().process_event(&event).await;
+        assert_eq!(after.len(), 1, "evicted rule must re-fire");
+    }
+
+    #[tokio::test]
+    async fn scan_nested_norn_surfaces_nested_context_once() {
+        let cwd = tempfile::tempdir().expect("tempdir");
+        let api = cwd.path().join("src").join("api");
+        std::fs::create_dir_all(&api).expect("mkdir");
+        std::fs::write(api.join("NORN.md"), "API_CONVENTIONS").expect("write");
+        std::fs::write(api.join("handler.rs"), "// stub").expect("write");
+
+        let mut ctx =
+            LoopContext::with_working_dir("base", SharedWorkingDir::new(cwd.path().to_path_buf()));
+        ctx.rules = Some(RuleEngine::new(vec![]));
+
+        // Touching a file under src/api registers the nested NORN.md rule
+        // lazily (scanner built from working_dir).
+        ctx.scan_nested_norn(&["src/api/handler.rs".to_owned()]);
+        // Re-touch: must not register a duplicate.
+        ctx.scan_nested_norn(&["src/api/other.rs".to_owned()]);
+
+        let injections = ctx
+            .rules
+            .as_ref()
+            .unwrap()
+            .process_event(&RuntimeEvent::PathChanged {
+                path: "src/api/handler.rs".to_owned(),
+                operation: PathOperation::Read,
+            })
+            .await;
+        assert_eq!(injections.len(), 1, "nested NORN.md surfaces exactly once");
+        assert_eq!(injections[0].rule_id.as_str(), "norn-md:src/api");
+        assert_eq!(injections[0].content, "API_CONVENTIONS");
+    }
 
     #[test]
     fn new_seeds_single_base_section() {

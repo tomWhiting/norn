@@ -155,6 +155,15 @@ pub fn build_runtime(cli: &Cli, mut inputs: RuntimeInputs) -> Result<RuntimeBund
     let iteration_monitor = iteration_monitor_from_profile(&profile)?;
     let diagnostics = build_diagnostic_collector();
 
+    // Wire the live diagnostic collector and the resolved shell budget onto
+    // the rules engine (see DECISION: rule shell timeout reuses
+    // `agent.prompt_command_timeout`, defaulting to the engine's built-in
+    // budget when unset). `with_working_dir` was applied above.
+    rules = rules.map(|r| r.with_diagnostics(Arc::clone(&diagnostics)));
+    if let Some(timeout) = agent_config.prompt_command_timeout {
+        rules = rules.map(|r| r.with_shell_timeout(timeout));
+    }
+
     let write_tool = build_write_tool(&profile, &config_overrides)?;
     inputs.registry.register(Box::new(write_tool));
 

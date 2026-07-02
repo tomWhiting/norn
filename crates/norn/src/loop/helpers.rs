@@ -23,7 +23,7 @@ use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::notifications::ToolBatchNotificationHook;
 use crate::provider::request::{Message, MessageRole};
 use crate::provider::traits::Provider;
-use crate::rules::types::RuleInjection;
+use crate::rules::types::{RuleInjection, RuntimeEvent};
 use crate::session::events::{EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
@@ -34,7 +34,8 @@ pub(super) use super::tool_dispatch::{
 };
 
 pub(super) use crate::r#loop::rule_wiring::{
-    apply_rule_injections, partition_injections_by_timing,
+    apply_rule_injections, build_runtime_events, dedup_injections_by_rule,
+    partition_injections_by_timing,
 };
 
 /// Initial prompt messages plus the index where the new user input starts.
@@ -448,6 +449,30 @@ pub(super) struct ToolBatchRequest<'a> {
 pub(super) async fn execute_tool_batch(
     request: ToolBatchRequest<'_>,
 ) -> Result<Vec<RuleInjection>, NornError> {
+    // NX-004/NX-005: register nested NORN.md synthetic rules for every path
+    // this batch is about to touch, before the engine evaluates the batch,
+    // so a freshly-discovered nested rule fires on the same touch that
+    // revealed it rather than one tool call later. Derived from the planned
+    // calls' arguments (the same source `build_runtime_events` reads).
+    if request.loop_context.nested_scanner.is_some() || request.loop_context.rules.is_some() {
+        let mut touched_paths = Vec::new();
+        for &idx in &request.tool_indices {
+            if let Some(tc) = request.response.tool_calls.get(idx) {
+                for event in build_runtime_events(&tc.name, &tc.arguments) {
+                    if let RuntimeEvent::PathChanged { path, .. } = event {
+                        touched_paths.push(path);
+                    }
+                }
+            }
+        }
+        request.loop_context.scan_nested_norn(&touched_paths);
+    }
+
+    // N-007 R7: rebuild the presence set from the current prompt view so
+    // `process_event` suppresses rules already in context and re-injects
+    // only those evicted by compaction/context editing.
+    request.loop_context.rebuild_rule_presence(request.store);
+
     // Dispatch the whole batch through the effect-based scheduling plan:
     // adjacent ReadOnly/Network calls overlap, Write/Process serialize, and
     // result ordering always matches call order.
@@ -463,6 +488,7 @@ pub(super) async fn execute_tool_batch(
         event_tx: request.event_tx,
     })
     .await?;
+    let batch_injections = dedup_injections_by_rule(batch_injections);
     let (before, after) = partition_injections_by_timing(batch_injections);
     apply_rule_injections(request.loop_context, after, request.messages, request.store).await?;
     Ok(before)
