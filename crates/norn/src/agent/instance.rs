@@ -107,6 +107,31 @@ pub struct AgentParts {
     pub replay: Option<ReplaySummary>,
 }
 
+impl AgentParts {
+    /// Fire every registered
+    /// [`SessionLifecycleHook::on_session_start`](crate::integration::hooks::SessionLifecycleHook::on_session_start)
+    /// with the resolved session id (D1). A custom driver that runs the
+    /// step loop itself — instead of [`Agent::run`], which fires these
+    /// itself — calls this once after assembly, before its first step. A
+    /// no-op when no hook registry is wired.
+    pub async fn fire_session_start(&self) {
+        if let Some(hooks) = self.loop_context.hooks.as_ref() {
+            hooks.run_session_start(&self.info.session_id).await;
+        }
+    }
+
+    /// Fire every registered
+    /// [`SessionLifecycleHook::on_session_end`](crate::integration::hooks::SessionLifecycleHook::on_session_end)
+    /// with the resolved session id (D1) — the counterpart to
+    /// [`Self::fire_session_start`], called on a driver's normal-exit
+    /// teardown path. A no-op when no hook registry is wired.
+    pub async fn fire_session_end(&self) {
+        if let Some(hooks) = self.loop_context.hooks.as_ref() {
+            hooks.run_session_end(&self.info.session_id).await;
+        }
+    }
+}
+
 impl Agent {
     /// Decompose the agent into its assembled fields for a custom driver
     /// that runs the agent-step loop itself (the TUI's multi-turn REPL,
@@ -219,6 +244,17 @@ impl Agent {
                     .to_string(),
             }));
         }
+        // Session-lifecycle hooks (D1): `Agent::run` fires them itself with
+        // the resolved `info.session_id`, so every embedded / library caller
+        // (including Meridian) gets them without hand-firing. The registry is
+        // cloned out before the step borrows `loop_context` mutably; the end
+        // hook fires only on the normal-exit path below (errors short-circuit
+        // via `?` and skip it, matching the driver contract).
+        let session_hooks = self.loop_context.hooks.clone();
+        let session_id = self.info.session_id.clone();
+        if let Some(hooks) = session_hooks.as_ref() {
+            hooks.run_session_start(&session_id).await;
+        }
         // Passed as `&Arc<dyn ToolExecutor>` (not `&*registry`) so the
         // loop's concurrent batch steps get an owned handle
         // (`ToolExecutor::owned_handle`) and can spawn each batch member
@@ -256,6 +292,9 @@ impl Agent {
         self.loop_context.action_log = None;
         let event_store = self.event_store;
         let store = Arc::try_unwrap(event_store).unwrap_or_else(|shared| snapshot_store(&shared));
+        if let Some(hooks) = session_hooks.as_ref() {
+            hooks.run_session_end(&session_id).await;
+        }
         Ok(RunOutcome::from_step_result(result, Some(store)))
     }
 }
@@ -312,6 +351,66 @@ mod tests {
             !parts.info.session_id.is_empty(),
             "a session id is always resolved",
         );
+    }
+
+    /// D1: `Agent::run` fires the session-lifecycle hooks itself (start
+    /// before the step, end on the normal-exit path), so every embedded /
+    /// library caller gets them without hand-firing. Regression for §5.3
+    /// (hooks never fired on the library path).
+    #[tokio::test]
+    async fn run_fires_session_lifecycle_hooks() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+
+        use crate::integration::hooks::{Hook, HookRegistry, SessionLifecycleHook};
+        use crate::provider::events::{ProviderEvent, StopReason};
+        use crate::provider::usage::Usage;
+
+        struct Recorder {
+            starts: Arc<AtomicUsize>,
+            ends: Arc<AtomicUsize>,
+        }
+        #[async_trait::async_trait]
+        impl SessionLifecycleHook for Recorder {
+            async fn on_session_start(&self, session_id: &str) {
+                assert!(!session_id.is_empty(), "session id must be resolved");
+                self.starts.fetch_add(1, Ordering::SeqCst);
+            }
+            async fn on_session_end(&self, session_id: &str) {
+                assert!(!session_id.is_empty(), "session id must be resolved");
+                self.ends.fetch_add(1, Ordering::SeqCst);
+            }
+        }
+
+        let starts = Arc::new(AtomicUsize::new(0));
+        let ends = Arc::new(AtomicUsize::new(0));
+        let mut registry = HookRegistry::new();
+        registry.register(Hook::SessionLifecycle(Box::new(Recorder {
+            starts: Arc::clone(&starts),
+            ends: Arc::clone(&ends),
+        })));
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "ok".to_string(),
+            },
+            ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: None,
+            },
+        ]]));
+
+        let agent = AgentBuilder::new(provider)
+            .model("test-model")
+            .working_dir(std::env::temp_dir())
+            .hooks(Arc::new(registry))
+            .build()
+            .expect("build succeeds");
+        let outcome = agent.run("go").await.expect("run succeeds");
+        assert!(outcome.is_completed(), "text completion completes");
+
+        assert_eq!(starts.load(Ordering::SeqCst), 1, "start hook fires once");
+        assert_eq!(ends.load(Ordering::SeqCst), 1, "end hook fires once");
     }
 
     /// The broadcast sender is absent when the event channel was never

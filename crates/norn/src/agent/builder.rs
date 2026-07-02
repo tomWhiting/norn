@@ -388,12 +388,25 @@ impl AgentBuilder {
         }
 
         let lsp_backend = self.lsp_backend.clone();
-        let registry = build_base_tool_registry(
+        let mut registry = build_base_tool_registry(
             lsp_backend.clone(),
             self.extra_tools,
             &self.without_tools,
             self.bash_drain_grace,
         );
+        // D5: register the skill tool on the `load_runtime_base` path when a
+        // non-empty skill catalog was discovered, matching the CLI's
+        // `!skill_catalog.is_empty()` gate. It is registered before
+        // `from_profile` gating so the allow-list/deny-list apply to it
+        // exactly as they do in the CLI. Library agents built without a
+        // runtime base carry no catalog, so they get no skill tool.
+        if let Some(base) = runtime_base.as_ref()
+            && !base.skill_catalog.is_empty()
+        {
+            registry.register(Box::new(crate::tools::skill::SkillTool::with_config(
+                crate::agent::assembly::skill_tool_config_from_settings(&base.settings),
+            )));
+        }
 
         let RuntimeOverlay {
             runtime_base,

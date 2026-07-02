@@ -138,6 +138,28 @@ pub(crate) fn resolve_base_profile(
     }
 }
 
+/// Resolve the [`SkillToolConfig`](crate::tools::skill::SkillToolConfig)
+/// from the merged settings' `tools.skill` section (D5).
+///
+/// An absent section — or an absent `shell_execution` key — defers to the
+/// tool's own documented default (shell execution **enabled**); `false`
+/// disables skill-authored shell expansion. This is the library-side
+/// mirror of the CLI's `skill_tool_config_from_settings`, so the embedded
+/// `load_runtime_base` path and the CLI resolve the skill tool identically.
+pub(crate) fn skill_tool_config_from_settings(
+    settings: &crate::config::NornSettings,
+) -> crate::tools::skill::SkillToolConfig {
+    let shell_execution = settings
+        .tools
+        .as_ref()
+        .and_then(|tools| tools.skill.as_ref())
+        .and_then(|skill| skill.shell_execution);
+    match shell_execution {
+        Some(shell_execution) => crate::tools::skill::SkillToolConfig { shell_execution },
+        None => crate::tools::skill::SkillToolConfig::default(),
+    }
+}
+
 /// Build the ungated tool registry: the standard set (with the bash drain
 /// grace applied when overridden), plus the caller's extra tools, minus the
 /// excluded names.
