@@ -1,0 +1,227 @@
+{
+  "id": "NP-001",
+  "cluster": "norn-process",
+  "title": "Background-process manager and bash background execution",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9", "C10", "C11", "C12", "C13", "C14", "C15", "C16", "C17", "C18"],
+  "stories": ["S1", "S2", "S4", "S5", "S6", "S8"],
+  "purpose": "Norn's bash tool is strictly synchronous: drain-grace (crates/norn/src/tools/bash/process.rs:36-48) exists precisely to stop shell-backgrounded children from holding the tool's pipes, so nothing long-running can outlive a tool call without losing its output. INTERNAL-AGENTS.md (docs/design/norn/INTERNAL-AGENTS.md) §3 rules the Claude Code Bash tool as the standard to meet and names the background-process manager as the one genuinely new primitive everything long-running depends on — the explicit first work package (§10). This brief builds crates/norn/src/process/ (manager/spool/handle per §9.1), the bash surface changes (run_in_background, automatic migration), a process tool for incremental output access, wake-on-completion over the durable injected-message path, follow-up integration, and the subscription seam NP-002's watches attach to. Owner rulings: NO timeouts, NO turn limits, NO caps on process count or spool size — a background process lives until it exits or is killed.",
+  "task": "Create crates/norn/src/process/ with manager.rs (spawn/adopt, registry of running processes), spool.rs (file-backed output spooling with incremental cursor reads and append notifications), and handle.rs (status, kill, exit-notification wiring) — no dependency on the agent module. Extend the bash tool with run_in_background and timeout-boundary migration, add a process tool (output/status/kill/list), deliver completion notices through the durable injection path used by inject_inbound_messages (crates/norn/src/loop/delivery.rs:83) and the pending store (crates/norn/src/agent/pending_messages.rs), register follow-ups on backgrounded results, and wire the manager into agent assembly (crates/norn/src/agent/assembly.rs) as a ToolContext extension with clean shutdown.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Process module scaffold and manager core",
+      "spec": "The norn crate SHALL provide a process module at crates/norn/src/process/ (declared in crates/norn/src/lib.rs) with manager.rs, spool.rs, and handle.rs per INTERNAL-AGENTS.md §9.1; process/mod.rs SHALL contain only pub mod declarations and re-exports. WHEN asked to spawn a background command, the ProcessManager SHALL spawn it via `sh -c` detached from any tool call — piped stdio owned by the manager, the agent's working directory and ProcessEnv applied, and (on Unix) its own process group — mirroring build_shell_command (crates/norn/src/tools/bash/process.rs:140-161). The manager SHALL assign each process a stable short id (\"p1\", \"p2\", … monotonic per manager) and track it in a registry with status Running, Exited { code }, or Killed. The manager SHALL NOT impose any timeout, turn limit, or cap on the number of concurrent processes: a process record leaves Running only by exiting or by an explicit kill. WHEN asked to adopt an already-spawned child (the migration path, R4), the manager SHALL take ownership of the tokio Child and its drain tasks and treat it identically to an explicitly spawned process from that point on.",
+      "acceptance": [
+        "crates/norn/src/process/mod.rs contains only pub mod declarations and re-exports; manager, spool, and handle logic live in their named files",
+        "The process module compiles with no dependency on crate::agent or crate::internal (bash and future watchers both consume it, per §9.1)",
+        "Unit test: spawning three background commands yields ids p1, p2, p3 with status Running, and the registry lists all three — no count ceiling is enforced anywhere in the module (no MAX_* constant, no capacity check)",
+        "Unit test: a spawned `sleep`-style command is still Running after any foreground bash timeout would have elapsed; no code path kills it except ProcessHandle::kill or manager shutdown",
+        "Unit test: adopt() on a live Child produces a registry entry indistinguishable (status/spool/handle behavior) from an explicitly spawned one",
+        "On Unix the spawned command's process group id equals its pid (process_group(0)), so kill reaches descendants exactly as the bash timeout kill does (crates/norn/src/tools/bash/process.rs:172-199)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/process/mod.rs",
+          "crates/norn/src/process/manager.rs",
+          "crates/norn/src/process/handle.rs"
+        ],
+        "modify": [
+          "crates/norn/src/lib.rs"
+        ]
+      },
+      "checklist": ["C1", "C2", "C3", "C4", "C5"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R2",
+      "title": "File-backed spool with incremental cursors and append notifications",
+      "spec": "Each managed process SHALL spool its stdout and stderr to a single arrival-ordered on-disk file, each line tagged with its stream of origin, with NO size cap and NO truncation (the inline threshold logic of crates/norn/src/tools/bash/output.rs does not apply to spools; model-facing reads are budgeted at the tool layer in R6). WHEN the owning ToolContext carries a SessionId extension, the spool SHALL live at <norn_dir>/outputs/<session_id>/processes/<process_id>.log; WHEN no SessionId exists, the manager SHALL generate one run-scoped UUID directory at manager construction and place spools at <norn_dir>/outputs/<run_uuid>/processes/<process_id>.log (one directory per session-less run, mirroring the per-capture fallback of crates/norn/src/tools/bash/output.rs:46-49). The root SHALL resolve through config::paths::norn_dir (crates/norn/src/config/paths.rs:54, NORN_HOME-aware) — not through dirs::home_dir directly. The spool SHALL support incremental reads: a SpoolReader holds a byte cursor, read_new() returns exactly the content appended since that cursor, and multiple readers advance independently. The spool SHALL publish append notifications (a tokio watch channel of committed length, exposed on ProcessHandle) so a subscriber learns of new output without polling — this is the watch attach seam (R8). Spool files SHALL persist on disk after process exit and after manager shutdown.",
+      "acceptance": [
+        "Unit test: with a SessionId extension \"abc\", process p1's spool path is <norn_dir>/outputs/abc/processes/p1.log; with no SessionId, the path is <norn_dir>/outputs/<uuid>/processes/p1.log and the same uuid is reused for p2 within the same manager",
+        "Unit test: two SpoolReaders on one spool — reader A consumes 100 bytes, reader B still returns those 100 bytes from its own cursor; neither read affects the other",
+        "Unit test: interleaved stdout/stderr writes appear in the spool in arrival order with their stream tags preserved",
+        "Unit test: an append-notification subscriber awoken by the committed-length watch observes exactly the appended region via its reader — no polling loop anywhere in the test",
+        "No constant, config knob, or code path bounds spool size; a grep for size caps in process/spool.rs finds only the (unbounded) committed-length counter",
+        "Setting NORN_HOME relocates spool roots (test via temp dir), proving norn_dir() is the only root resolution"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/process/spool.rs"
+        ]
+      },
+      "checklist": ["C7", "C8", "C9"],
+      "stories": ["S2"]
+    },
+    {
+      "id": "R3",
+      "title": "Explicit backgrounding via bash run_in_background — distinct from shell-backgrounded children",
+      "spec": "BashArgs (crates/norn/src/tools/bash/tool.rs:42-52) SHALL gain an optional boolean run_in_background. WHEN run_in_background is true, the bash tool SHALL spawn the command through the ProcessManager and return immediately (success) with the process id, spool path, the command, and instructions to check on it via the process tool; the timeout argument SHALL be rejected in combination with run_in_background (a background process has no timeout — owner ruling), with a structured InvalidArguments failure. The foreground path SHALL remain byte-for-byte unchanged in its drain-grace semantics: a foreground command that backgrounds a child at the shell level (`server &`) still gets the bounded drain grace and streams_still_open annotation (crates/norn/src/tools/bash/process.rs:200-256, tool.rs:39). The implementation SHALL keep these two concepts distinct and documented in the module docs: a shell-backgrounded child of a FOREGROUND run is an orphan holding pipes (drain-grace bounded, its later output lost); a MANAGER-OWNED background process has its pipes owned and spooled for its whole life — including output from its own backgrounded grandchildren, which keep the spool's pipe open and keep being captured (no grace period applies; there is nothing to cut off).",
+      "acceptance": [
+        "Invoking bash with {\"command\": \"sleep 5 && echo done\", \"run_in_background\": true} returns success in well under a second with process_id, spool_path, and check guidance; the process tool later shows Exited(0) and the spool contains \"done\"",
+        "Invoking bash with both run_in_background: true and timeout set fails with ToolErrorKind::InvalidArguments naming the conflict",
+        "Existing foreground bash tests (crates/norn/src/tools/bash/tests.rs) pass unmodified — drain-grace behavior, streams_still_open annotation, and timeout=0 wait-forever semantics for foreground runs are untouched except as R4 specifies for timeout expiry",
+        "A manager-owned background process whose command backgrounds a grandchild keeps spooling the grandchild's output after the direct child exits (test: `(sleep 1; echo late) & echo early` under run_in_background captures both lines); the process's own status still reflects the direct child's exit",
+        "Module docs in tools/bash/process.rs and process/manager.rs each state the shell-backgrounded vs manager-owned distinction",
+        "The bash description/usage guidance documents run_in_background and when to use it"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/bash/tool.rs",
+          "crates/norn/src/tools/bash/process.rs",
+          "crates/norn/src/tools/bash/mod.rs",
+          "crates/norn/src/tools/guidance/bash.description.md",
+          "crates/norn/src/tools/guidance/bash.usage.md"
+        ]
+      },
+      "checklist": ["C11", "C13"],
+      "stories": ["S5", "S2"]
+    },
+    {
+      "id": "R4",
+      "title": "Automatic migration of long foreground commands",
+      "spec": "WHEN a foreground bash command reaches its timeout boundary (the model-supplied or default timeout of crates/norn/src/tools/bash/tool.rs:30), the tool SHALL migrate the command to the ProcessManager instead of killing it: the live Child and its drain tasks are handed to manager adopt() (R1), output buffered so far is flushed into a newly created spool, and the tool returns a SUCCESS result carrying migrated: true, the process id, the spool path, the output captured before migration (subject to the existing inline threshold), and explicit guidance that the command moved to the background and how to check on it. The Timeout failure path for foreground bash (tool.rs:266-278) is REPLACED by migration — no compat flag, no dual behavior (repo rule: no backwards compatibility). timeout: 0 SHALL retain its wait-forever semantics and never migrate. The migration point is deliberately the existing timeout value — no second threshold knob is introduced (no assumed defaults; the timeout is already model-suppliable per call and its default is pre-existing and owner-approved).",
+      "acceptance": [
+        "Integration test: bash with {\"command\": \"sleep 3; echo finished\", \"timeout\": 1} returns success within ~1s with migrated: true and a process_id; ~2s later the process tool reports Exited(0) and output \"finished\"",
+        "The returned content includes human-readable guidance naming the process tool and the process id (the model is told it moved and how to check)",
+        "ToolErrorKind::Timeout is no longer produced by the bash tool for foreground timeout expiry; the old timed-out failure construction is deleted, not gated",
+        "timeout: 0 still means wait forever — no migration machinery engages (unit test)",
+        "kill_process_tree is no longer invoked at the timeout boundary; the process group survives migration intact (same pgid before/after)",
+        "A migrated process is indistinguishable in the manager registry from an explicitly backgrounded one (status, spool, kill, completion notice)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/bash/tool.rs",
+          "crates/norn/src/tools/bash/process.rs"
+        ]
+      },
+      "checklist": ["C12"],
+      "stories": ["S4"]
+    },
+    {
+      "id": "R5",
+      "title": "Wake on completion via the durable injected-message path",
+      "spec": "WHEN a manager-owned process exits (or is killed), the manager SHALL deliver a completion notice to the owning agent as an injected message — never via the tool envelope (message-injection ruling, INTERNAL-AGENTS.md §2). The notice SHALL be a ChannelMessage (crates/norn/src/loop/inbound.rs:72) with kind Steer, seq None (a direct send that bypasses the router, like close_agent's shutdown steer — inbound.rs:93-98), a reserved harness sender identity (sender_id Uuid::nil(), from \"norn:process-manager\", role None), and structured JSON content carrying process_id, command, exit_code (or killed marker), started_at, exited_at, spool_path, and a hint to fetch unread output via the process tool. Delivery SHALL follow the durable algorithm: (a) try_send on the owning agent's live InboundSender when one is open — a Steer wakes a lingering agent immediately via the steer_ready wake set (crates/norn/src/loop/linger.rs:29-38); (b) otherwise queue a PendingAgentMessage with an agent_message.queued audit event exactly as the pending store specifies (crates/norn/src/agent/pending_messages.rs:10-16, 199), so the notice is drained by flush_pending_agent_messages at the next step (crates/norn/src/loop/delivery.rs:189) — persisted, ordered, resume-safe; (c) when the owning agent is a registry-Idle spawned child, additionally request a wake through the AgentWakeRegistry after queuing (queue-then-wake, matching the wake tool's pending-gated contract, crates/norn/src/tools/agent/coord/wake.rs:226-247). The delivery handles (InboundSender, Arc<PendingAgentMessages>, owning agent id, EventStore, wake registry when present) SHALL be provided to the manager at assembly time — the manager itself stays agent-agnostic behind a small delivery-sink trait or struct defined in the process module.",
+      "acceptance": [
+        "Integration test: an agent with a LingerPolicy at a would-stop boundary is woken by a background process completion and the injected <agent_message from=\"norn:process-manager\" …> frame (frame_message, crates/norn/src/loop/inbound.rs:133) appears in its conversation and as a persisted UserMessage event",
+        "Integration test: with no live channel, the completion notice lands in PendingAgentMessages with an agent_message.queued custom event in the store; a subsequent step drains it through flush_pending_agent_messages and appends the framed UserMessage",
+        "Integration test: an Idle spawned child receives queue-then-wake — the pending store holds the notice and the wake controller receives a wake request",
+        "The notice content parses as JSON with process_id, command, exit_code, spool_path fields; a killed process reports its killed disposition distinctly from a normal exit",
+        "Delivery failures (closed channel AND failed durable queue append) are logged at error level with process id — never silently dropped",
+        "No completion path writes into the tool envelope or fabricates a tool result"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/process/manager.rs",
+          "crates/norn/src/process/handle.rs"
+        ]
+      },
+      "checklist": ["C17", "C18"],
+      "stories": ["S6", "S1"]
+    },
+    {
+      "id": "R6",
+      "title": "Process tool — output, status, kill, list",
+      "spec": "A new model-facing process tool (crates/norn/src/tools/process.rs, registered in register_standard_tools, crates/norn/src/tools/registry_builder.rs:61) SHALL provide four operations selected by an op argument: output — return content appended since the model's last output call for that process (the BashOutput pattern; the model's cursor is owned by the tool layer, one per process) plus current status; status — status, pid, started_at, exit information when terminal, spool path; kill — process-group kill mirroring the semantics of crates/norn/src/tools/bash/process.rs:172-199, idempotent on already-terminal processes (reports the terminal status rather than erroring); list — every process this manager owns with id, command, status, and spool size. Output responses SHALL pass through the same inline-output budgeting as other tools (large new regions redirect to the spool path with a read/grep hint rather than flooding the context) — a display budget, not a spool cap. Operations on unknown process ids SHALL fail with ToolErrorKind::NotFound naming the id. The tool SHALL be registered only when a ProcessManager extension is present on the ToolContext.",
+      "acceptance": [
+        "op=output on a chattering process returns only new content on each successive call (test with two calls bracketing known writes), plus status",
+        "op=output on a process with no new output returns an explicit no-new-output result with status — not an error",
+        "op=kill on a Running process transitions it to Killed and its process group is gone (pgid probe); op=kill on an Exited process returns its terminal status without error",
+        "op=list reflects Running, Exited, and Killed processes with ids and commands; there is no pagination cap",
+        "op=status and op=output with an unknown id fail with ToolErrorKind::NotFound",
+        "A huge new-output region (beyond the inline threshold) returns a redirected reference to the spool path with offset guidance instead of inlining",
+        "Without a ProcessManager extension the tool is absent from the registry (mirrors the conditional-registration pattern)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/process.rs",
+          "crates/norn/src/tools/guidance/process.description.md",
+          "crates/norn/src/tools/guidance/process.usage.md"
+        ],
+        "modify": [
+          "crates/norn/src/tools/mod.rs",
+          "crates/norn/src/tools/registry_builder.rs"
+        ]
+      },
+      "checklist": ["C15", "C16"],
+      "stories": ["S2", "S8"]
+    },
+    {
+      "id": "R7",
+      "title": "Follow-up integration",
+      "spec": "WHEN a bash result reports a backgrounded spawn (R3) or a migration (R4), register_follow_ups (pattern: crates/norn/src/tools/bash/tool.rs:302-370) SHALL register follow-up actions targeting the process tool: check_output (op=output for that process id, Confidence::High) and kill_process (op=kill, Confidence::Medium), both ExpiryCondition::Never, so a backgrounded command's completion can drive queued follow-on work through the existing follow_up machinery (crates/norn/src/tools/follow_up/).",
+      "acceptance": [
+        "A run_in_background bash result carries check_output and kill_process follow-ups resolvable by the follow_up tool against the original tool_call_id",
+        "A migrated bash result carries the same two follow-ups bound to the migrated process id",
+        "Dispatching the check_output follow-up executes the process tool's output op for the correct process (integration test through dispatch_follow_up, crates/norn/src/tools/follow_up/dispatch.rs:97)",
+        "Foreground non-migrated results keep exactly their existing rerun/rerun_with_timeout/read_output/grep_output follow-up set"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/tools/bash/tool.rs"
+        ]
+      },
+      "checklist": ["C14"],
+      "stories": ["S5"]
+    },
+    {
+      "id": "R8",
+      "title": "Watcher handoff seam on ProcessHandle",
+      "spec": "ProcessHandle SHALL expose a subscription surface sufficient for NP-002 to attach a watch without modifying manager or spool internals: (a) subscribe() returning the spool's committed-length watch receiver (R2) plus a fresh independent SpoolReader; (b) an exit-notification future or watch usable alongside the append subscription; (c) status inspection. The seam SHALL support multiple concurrent subscribers per process. This brief SHALL NOT implement any watch/filter execution — the seam is designed here, consumed in NP-002.",
+      "acceptance": [
+        "Unit test: two subscribers on one process each observe the same appended region through their own readers and both observe the exit notification",
+        "The subscription API is exported from process/mod.rs re-exports and documented as the watch attach point (rustdoc names NP-002/INTERNAL-AGENTS §5)",
+        "The model's process-tool output cursor (R6) is provably independent of subscriber cursors (test: a subscriber reading ahead does not consume the model's unread region)",
+        "No watch, filter, or matching logic exists anywhere in this brief's diff"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/process/handle.rs",
+          "crates/norn/src/process/mod.rs"
+        ]
+      },
+      "checklist": ["C10"],
+      "stories": ["S6"]
+    },
+    {
+      "id": "R9",
+      "title": "Runtime wiring and shutdown",
+      "spec": "The ProcessManager SHALL be constructed during agent assembly (crates/norn/src/agent/assembly.rs — alongside the other shared extensions installed at :688-702) with its delivery sink (R5) and installed on the ToolContext as an extension, for library-launched root agents and spawned children alike (each agent's tool calls resolve the manager owning that agent's processes). WHEN the runtime shuts down (agent instance drop / explicit shutdown path), the manager SHALL kill every still-Running process group, deliver no further completion notices, and finalize spools; spool files persist on disk. Shutdown SHALL be deterministic and logged per process — a norn exit never silently orphans a manager-owned child (the in-session ruling: no daemon exists yet to adopt them; INTERNAL-AGENTS §6.2 is future work).",
+      "acceptance": [
+        "After assembly, ToolContext::get_extension::<Arc<ProcessManager>>() (or the equivalent newtype) returns Some for root and spawned-child contexts",
+        "Integration test: dropping/shutting down the runtime with a Running background process kills its process group (pgid probe fails afterward) and the spool file remains readable with all captured output",
+        "Each shutdown kill is logged with process id and command at info level or above",
+        "A process that exited before shutdown is not re-killed and its record is untouched",
+        "Session resume does not resurrect process records: a resumed session starts with an empty manager registry (processes are in-session state; their spools remain on disk for reading)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/assembly.rs",
+          "crates/norn/src/process/manager.rs"
+        ]
+      },
+      "checklist": ["C6", "C3"],
+      "stories": ["S1", "S8"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT impose timeouts, turn limits, or lifetime bounds on manager-owned processes, and SHALL NOT cap process count or spool size — owner ruling; a background process lives until it exits or is killed",
+    "SHALL NOT implement watches, filter scripts, or any matching over spools — that is NP-002; this brief only designs the ProcessHandle subscription seam (R8)",
+    "SHALL NOT implement the cheap-model watcher agent or any internal-agent harness (INTERNAL-AGENTS §5 step 2 / §9.1 internal/) — future internal-agents work",
+    "SHALL NOT implement the large-output digest processor (INTERNAL-AGENTS §4.2)",
+    "SHALL NOT implement the daemon or any cross-session process survival (INTERNAL-AGENTS §6.2); processes die with the norn process at shutdown, spools persist",
+    "SHALL NOT alter foreground drain-grace semantics for shell-backgrounded children beyond replacing the timeout-kill with migration (R4) — DEFAULT_DRAIN_GRACE and streams_still_open behavior are untouched",
+    "SHALL NOT deliver any process signal through the tool envelope or runtime inputs — injected messages only (message-injection ruling, INTERNAL-AGENTS §2)",
+    "SHALL NOT add compat shims or dual code paths for the removed foreground timeout-kill behavior (repo rule: no backwards compatibility)"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn passes, including new process::, tools::bash migration, and delivery integration tests",
+    "cargo clippy --workspace --all-targets -- -D warnings clean",
+    "cargo fmt --check passes",
+    "End-to-end: run_in_background spawn → incremental output op → kill; and foreground timeout → migration → completion notice wakes a lingering agent",
+    "grep the process module for MAX_/cap/limit constants — none exist for count or spool size",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

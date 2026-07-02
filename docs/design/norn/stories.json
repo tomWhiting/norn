@@ -112,6 +112,20 @@
         {"id": "S45", "text": "As an orchestrator developer, I want tool validation results in structured JSON so that I can programmatically filter, aggregate, and route violations."},
         {"id": "S46", "text": "As an orchestrator developer, I want to publish diagnostics infrastructure on the ToolContext so that any RuntimePostValidateCheck can access shared registries without coupling to specific tools."}
       ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Scheduling In-Session Wake-Ups",
+      "stories": [
+        {"id": "S47", "text": "As an AI agent, I want to schedule wake-ups — \"in 20 minutes\", \"every day at 09:00\", or a full cron expression — that arrive as injected messages so that I can check back on long-running work or run a triage pass without staying active."}
+      ]
+    },
+    {
+      "name": "Human Developer",
+      "role": "Operating Resumable Sessions",
+      "stories": [
+        {"id": "S48", "text": "As a human developer, I want my agent's pending schedules to survive a session resume so that a planned check-in still happens after a restart instead of silently vanishing."}
+      ]
     }
   ]
 }

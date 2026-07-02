@@ -540,6 +540,36 @@
           "done": false
         }
       ]
+    },
+    {
+      "name": "In-Session Scheduling",
+      "items": [
+        {
+          "id": "C99",
+          "text": "A cron tool provides schedule, list, and cancel operations supporting relative wake-ups (\"in N\"), time-of-day, looping intervals (minutes/hours/days), and full cron expressions, with no caps on schedule count or interval",
+          "done": false
+        },
+        {
+          "id": "C100",
+          "text": "Fired schedules deliver as injected messages through the durable delivery path and actually wake gate-idle and lingering agents",
+          "done": false
+        },
+        {
+          "id": "C101",
+          "text": "Schedules persist as session events; resume restores pending schedules (past-due one-shots fire immediately marked late, recurring schedules re-arm from resume time without backfill)",
+          "done": false
+        },
+        {
+          "id": "C102",
+          "text": "Looping schedules re-arm on fire; one-shot schedules complete after firing",
+          "done": false
+        },
+        {
+          "id": "C103",
+          "text": "The goals.rs Scheduler/ScheduleEntry scaffolding is deleted and replaced by the schedule module — no zombie code; GoalTracker remains untouched",
+          "done": false
+        }
+      ]
     }
   ]
 }

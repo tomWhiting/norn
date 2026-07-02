@@ -1,0 +1,49 @@
+{
+  "cluster": "norn-process",
+  "personas": [
+    {
+      "name": "Agent Operator",
+      "role": "Running Long-Lived Work",
+      "stories": [
+        {
+          "id": "S1",
+          "text": "As an operator, I want the agent to background a long test run and keep working, then be told the result when it finishes, so a twenty-minute suite does not stall the whole session."
+        },
+        {
+          "id": "S2",
+          "text": "As an operator, I want the agent to start a dev server in the background and read its output incrementally so it can drive and debug a live application while the server keeps running."
+        },
+        {
+          "id": "S3",
+          "text": "As an operator, I want the agent to attach a watch (\"tell me when this errors\") to a noisy CI-style build log so it reacts to failures without wading through raw volume."
+        },
+        {
+          "id": "S4",
+          "text": "As an operator, I want a foreground command that outruns its timeout moved to the background instead of killed, so slow-but-healthy work is never lost to an arbitrary cutoff."
+        }
+      ]
+    },
+    {
+      "name": "AI Agent",
+      "role": "Working Alongside Background Processes",
+      "stories": [
+        {
+          "id": "S5",
+          "text": "As an AI agent, I want a run_in_background option on bash plus an output-check operation so I can start a process, continue other work, and pull only the new output when I choose."
+        },
+        {
+          "id": "S6",
+          "text": "As an AI agent, I want to be woken with the exit status and output access when a background process completes — even while I am lingering idle — so completions never go unnoticed."
+        },
+        {
+          "id": "S7",
+          "text": "As an AI agent, I want to author a deterministic filter script as a watch on a background process so a match wakes me with just the matching excerpt instead of the full stream."
+        },
+        {
+          "id": "S8",
+          "text": "As an AI agent, I want to list and kill my background processes so nothing keeps running past its usefulness."
+        }
+      ]
+    }
+  ]
+}

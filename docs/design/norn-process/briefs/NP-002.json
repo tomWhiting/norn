@@ -1,0 +1,165 @@
+{
+  "id": "NP-002",
+  "cluster": "norn-process",
+  "title": "Monitored processes — deterministic watches over the process manager",
+  "depends_on": ["NP-001"],
+  "blocked_by": [],
+  "checklist": ["C19", "C20", "C21", "C22", "C23", "C24", "C25", "C26", "C27"],
+  "stories": ["S3", "S7"],
+  "purpose": "INTERNAL-AGENTS.md §5 (the original RunMonitored intent, superseding checklist item C71 of the norn cluster): \"here's the command, here's what to watch for.\" A watch is an agent-authored filter script attached to a manager-owned background process; it runs deterministically against the spool incrementally — zero model cost — and on a match the owning agent is woken with the matching excerpt via an injected message. This brief builds the deterministic watch layer inside crates/norn/src/process/ (it has no agent inside, so it lives with the manager, not in internal/ — internal/watcher.rs remains reserved for the future cheap-model watcher agent that INTERNAL-AGENTS §9.1 sketches and this brief explicitly does not build). Same owner rulings as NP-001: no caps — not on watch count, not on match count.",
+  "task": "Create process/watch.rs (watch records, per-process watch registry, attach/detach lifecycle) and process/watch_exec.rs (incremental filter execution over the ProcessHandle subscription seam from NP-001 R8). Extend the process tool with watch/unwatch operations and watch-aware list output, and the bash background surface with an optional watch-at-spawn argument. Deliver match alerts through the same durable injected-message algorithm as NP-001 R5, with a structured payload that a future watcher-agent layer can consume unchanged.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Watch records, registry, and attach/detach surface",
+      "spec": "The process module SHALL define a Watch { watch_id, process_id, brief, filter } where brief is the agent's human-readable statement of what to watch for and filter is an agent-authored shell filter script (R2). A watch SHALL be attachable to any manager-owned process while it is Running: (a) at spawn, via an optional watch argument ({ brief, filter }) on bash run_in_background; (b) later, via a new watch operation on the process tool naming an existing process id; and detachable via an unwatch operation naming the watch_id. The process tool's list operation SHALL include each process's active watches (watch_id + brief). Watch ids SHALL be stable short ids (\"w1\", \"w2\", … monotonic per manager). The registry SHALL impose NO cap on the number of watches per process or overall. Attaching to a terminal process SHALL fail with a structured error naming the terminal status (there is nothing left to watch; the spool remains readable by ordinary means).",
+      "acceptance": [
+        "bash {run_in_background: true, watch: {brief, filter}} spawns the process with one active watch visible in list output",
+        "process tool op=watch attaches a second watch to the same running process; both fire independently (test with two filters matching different lines)",
+        "op=unwatch removes exactly the named watch; the other keeps firing",
+        "op=watch on an Exited process fails with a structured error naming the exit; op=unwatch on an unknown watch_id fails with NotFound",
+        "No constant or check bounds watch count (attach 100 watches in a loop test — all registered)",
+        "process/mod.rs still contains only pub mod declarations and re-exports"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/process/watch.rs"
+        ],
+        "modify": [
+          "crates/norn/src/process/mod.rs",
+          "crates/norn/src/tools/process.rs",
+          "crates/norn/src/tools/bash/tool.rs",
+          "crates/norn/src/tools/guidance/process.usage.md",
+          "crates/norn/src/tools/guidance/bash.usage.md"
+        ]
+      },
+      "checklist": ["C19"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R2",
+      "title": "Deterministic incremental filter execution",
+      "spec": "WHEN a watched process's spool publishes an append notification (NP-001 R8 seam), the watch executor SHALL run the watch's filter script over the region appended since that watch's cursor: the filter runs via `sh -c` with the new region on stdin, in the agent's working directory with the context's ProcessEnv, exactly one execution at a time per watch — appends arriving during a run coalesce into the next run's region (no queue growth, no dropped bytes; the cursor advances only over regions a filter run actually consumed). Exit status 0 SHALL mean match, with the filter's stdout as the matching excerpt; any non-zero exit SHALL mean no match. The watch path SHALL make NO model calls and SHALL apply NO cadence timers, debounce intervals, or match-count caps — execution is driven purely by append notifications. Filter execution SHALL NOT read the spool file directly; it consumes the region handed to it by the executor (so a filter script cannot desynchronize cursors).",
+      "acceptance": [
+        "Unit test: a `grep ERROR`-style filter over three staged appends fires exactly on the appends containing ERROR, with the cursor advancing past clean regions",
+        "Unit test: appends written while a filter run is in flight are delivered as one coalesced region to the next run — byte ranges prove no gap and no overlap",
+        "Unit test: a filter matching twice in one region produces one alert for that region carrying the filter's full stdout",
+        "No tokio interval, sleep-based poll, or debounce constant exists in watch_exec.rs; the only await points are the append notification, the exit notification, and child I/O",
+        "grep of the watch path for provider/model imports comes back empty (zero model cost, enforced structurally)",
+        "No match-count or alert-count cap exists; a watch that matches on every append alerts on every append (loop test)"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/process/watch_exec.rs"
+        ]
+      },
+      "checklist": ["C20", "C24"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R3",
+      "title": "Match alerts via the durable injected-message path",
+      "spec": "WHEN a filter run matches, the executor SHALL deliver an alert to the owning agent through the identical durable delivery algorithm as NP-001 R5 (live inbound Steer → pending store with agent_message.queued audit → idle-child wake request), with sender identity from \"norn:watch\", sender_id Uuid::nil(), role None, seq None. The alert content SHALL be structured JSON carrying: watch_id, process_id, brief, excerpt (the filter's stdout), spool_range (byte offsets of the examined region), and matched_at — a shape a future cheap-model watcher agent (INTERNAL-AGENTS §5 step 2) can consume unchanged, which is why the payload is structured data rather than prose. A Steer alert SHALL wake a lingering agent via the steer_ready wake set (crates/norn/src/loop/linger.rs:29-38). Alert delivery failure (closed channel AND failed durable queue) SHALL be logged at error level with watch and process ids — never swallowed.",
+      "acceptance": [
+        "Integration test: an agent lingering at a would-stop boundary is woken by a watch match; the injected <agent_message from=\"norn:watch\" …> frame appears in conversation and as a persisted UserMessage event",
+        "Integration test: with no live channel the alert lands in PendingAgentMessages with an agent_message.queued event and drains on the next step",
+        "The alert content parses as JSON with watch_id, process_id, brief, excerpt, spool_range, matched_at — asserted field-by-field in a test",
+        "The excerpt is exactly the filter's stdout for the matching region (byte-equal), not a re-derivation from the spool",
+        "No alert path writes into a tool envelope or tool result"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/process/watch_exec.rs",
+          "crates/norn/src/process/watch.rs"
+        ]
+      },
+      "checklist": ["C21"],
+      "stories": ["S3", "S7"]
+    },
+    {
+      "id": "R4",
+      "title": "Filter failures surface as alerts",
+      "spec": "IF a filter script cannot be spawned, or its execution fails in a way that is neither exit-0 (match) nor a clean non-zero exit (no match) — spawn error, signal kill, stdin write failure — THEN the executor SHALL deliver a watch-error alert to the owning agent over the same injected-message path (from \"norn:watch\", structured content: watch_id, process_id, brief, error, spool_range) and SHALL keep the watch attached with its cursor advanced past the failed region (the agent decides whether to unwatch or fix the filter; the harness never silently disables or silently retries). Every such failure SHALL also be logged with watch and process ids.",
+      "acceptance": [
+        "Unit test: a filter script that references a nonexistent binary produces a watch-error alert naming the spawn failure; the watch remains attached, its cursor has advanced past the failed region, and it fires normally on a later matching append",
+        "Unit test: a filter killed by signal mid-run produces a watch-error alert distinct from a no-match",
+        "A clean non-zero exit (no match) produces NO alert and NO log noise above debug level",
+        "No catch-and-continue exists in watch_exec.rs without either an alert or an error log — verified by review against the no-silent-failure rule"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/process/watch_exec.rs"
+        ]
+      },
+      "checklist": ["C22"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R5",
+      "title": "Exit ordering and watch lifecycle end",
+      "spec": "WHEN a watched process exits or is killed, the executor SHALL run each attached watch's filter over the remaining unexamined spool region BEFORE the manager's completion notice (NP-001 R5) is delivered, so a match in the final output cannot be lost behind the completion message; the watches then end and are removed from the registry. Unwatch during a filter run SHALL take effect at that run's completion (the in-flight region is still examined; no region is examined after detach). Manager shutdown (NP-001 R9) SHALL end watches without final-region alerts — shutdown kills are not watch events.",
+      "acceptance": [
+        "Integration test: a process whose final line matches the filter produces the match alert and then the completion notice, in that order, in the injected-message sequence",
+        "Integration test: unwatch racing an in-flight filter run neither drops the in-flight region nor examines anything after it",
+        "After process exit, list shows no watches for that process and unwatch on them returns NotFound",
+        "Runtime shutdown with active watches produces no watch alerts and no panics; shutdown logging covers the ended watches"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/process/watch.rs",
+          "crates/norn/src/process/watch_exec.rs",
+          "crates/norn/src/process/manager.rs"
+        ]
+      },
+      "checklist": ["C23"],
+      "stories": ["S3"]
+    },
+    {
+      "id": "R6",
+      "title": "Seam-only integration with the manager",
+      "spec": "The watch layer SHALL consume only the ProcessHandle subscription seam designed in NP-001 R8 (append-notification receiver + independent SpoolReader + exit notification + status) and the delivery sink; it SHALL NOT reach into manager registry internals, spool file paths, or the model's output cursor. IF the seam proves insufficient, the seam itself is extended in handle.rs with the same guarantees — the watch layer never grows a privileged back door.",
+      "acceptance": [
+        "watch.rs and watch_exec.rs import from process::handle (and the delivery sink) only — no direct use of spool.rs internals or manager registry fields (enforced by module privacy: the needed spool internals stay pub(crate)-invisible to the watch files or are accessed only through handle re-exports)",
+        "A watch's reads provably never advance the model's process-tool output cursor (test mirrors NP-001 R8's independence test with a live watch attached)",
+        "Two watches plus the model's output op all observe the full stream independently (three-cursor test)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/process/handle.rs"
+        ]
+      },
+      "checklist": ["C25"],
+      "stories": ["S7"]
+    },
+    {
+      "id": "R7",
+      "title": "Clean lint and format gates",
+      "spec": "cargo clippy --workspace --all-targets -- -D warnings SHALL pass clean. cargo fmt --check SHALL pass clean.",
+      "acceptance": [
+        "cargo clippy --workspace --all-targets -- -D warnings exits 0",
+        "cargo fmt --check exits 0"
+      ],
+      "files": {},
+      "checklist": ["C26", "C27"],
+      "stories": []
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT build the cheap-model watcher agent, any internal-agent harness, or internal/watcher.rs (INTERNAL-AGENTS §5 step 2, §9.1) — that is future internal-agents work; the alert payload shape (R3) is the only forward provision for it",
+    "SHALL NOT make any model/provider call anywhere in the watch path — watches are deterministic and zero model cost",
+    "SHALL NOT cap watch count, match count, or alert count — owner ruling (same no-limits family as NP-001)",
+    "SHALL NOT add cadence timers, poll intervals, or debounce windows — execution is append-notification-driven only",
+    "SHALL NOT modify manager/spool internals beyond extending the handle.rs seam (R6); NP-001's semantics (no timeouts, spool locations, completion delivery) are consumed, not reopened",
+    "SHALL NOT implement watch persistence across sessions — watches are in-session state like the processes they watch",
+    "SHALL NOT resurrect the deleted RunMonitored scaffolding or its heartbeat/provider design (superseded C71, docs/DECISIONS-2026-07.md §4)"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn passes, including new process::watch tests and the ordering/lifecycle integration tests",
+    "cargo clippy --workspace --all-targets -- -D warnings clean",
+    "cargo fmt --check passes",
+    "End-to-end: spawn a background command with a watch, stage output that matches, observe the alert wake a lingering agent with the excerpt, then the completion notice, in order",
+    "grep the watch path for model/provider imports and for cadence/debounce constants — both empty",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}

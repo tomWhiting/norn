@@ -1,0 +1,166 @@
+{
+  "id": "N-026",
+  "cluster": "norn",
+  "title": "In-session cron tool — schedule module, durable injected delivery, resume restore",
+  "depends_on": [],
+  "blocked_by": [],
+  "checklist": ["C99", "C100", "C101", "C102", "C103"],
+  "stories": ["S47", "S48"],
+  "purpose": "Owner ruling docs/DECISIONS-2026-07.md §0 item 6(e): the cron tool supports relative wake-ups (\"in N\"), time-of-day, and looping intervals (minutes/hours/days); fired schedules deliver as injected messages; schedules persist as session events so resume restores them; no caps on count or interval; in-session first, daemon phase later. INTERNAL-AGENTS.md §6.1 names agent/goals.rs as the seed. Inspection verdict (this brief's ruling): the existing Scheduler/ScheduleEntry (crates/norn/src/agent/goals.rs:192-312) is REPLACED, not wired. It is the C73 session-dispatched shape — cron-expression-only entries carrying an opaque agent_config for dispatching FRESH sessions, polled via due_entries — and cannot express relative one-shots (\"in 90 minutes\" is not a cron expression), plain intervals (\"every 36 hours\" is not expressible in a 5-field cron), injected-message payloads, or session-event persistence. Wiring it would mean contorting every requirement through the wrong data model. Per the no-zombie-code rule, the old scaffolding is deleted outright: Scheduler, ScheduleEntry, compute_next_run, their tests, and the agent/mod.rs re-exports go; GoalTracker (C72) stays. croner remains the cron-expression engine (already a dependency, crates/norn/Cargo.toml:45). C73 (session-dispatched cron) is daemon-phase (INTERNAL-AGENTS §6.2) and is deliberately NOT claimed here — the future daemon builds on the new schedule store, not on the deleted scaffolding.",
+  "task": "Create crates/norn/src/schedule/ (mod.rs declarations only; entry.rs schedule kinds + next-fire computation; store.rs in-memory store + rebuild-from-events; executor.rs live tokio timer task; events.rs custom session-event payloads). Delete the Scheduler half of agent/goals.rs. Add a cron tool (tools/cron.rs) with schedule/list/cancel operations. Wire the executor at agent assembly so fired schedules deliver as injected messages that wake gate-idle and lingering agents, persist schedule lifecycle as session events, and restore pending schedules on resume. Timers die with the process — the daemon is out of scope.",
+  "requirements": [
+    {
+      "id": "R1",
+      "title": "Schedule module — kinds, records, next-fire computation",
+      "spec": "The norn crate SHALL provide a schedule module at crates/norn/src/schedule/ (declared in crates/norn/src/lib.rs); mod.rs SHALL contain only pub mod declarations and re-exports. entry.rs SHALL define ScheduleSpec with four kinds: In(Duration) — relative one-shot (\"in N\", accepting integer+unit strings s/m/h/d, e.g. \"90s\", \"15m\", \"2h\", \"3d\", parsed by a small exact parser that rejects anything else with a descriptive error); At — time-of-day one-shot (\"HH:MM\" resolving to the next occurrence in the host's local timezone via chrono, or an explicit RFC3339 instant); Every(Duration) — looping interval (same duration grammar; re-arms on fire); Cron(String) — full cron expression parsed via croner exactly as the deleted compute_next_run did (crates/norn/src/agent/goals.rs:297-312 is the reference; croner is already a workspace dependency). A ScheduleRecord SHALL carry a stable id, the spec, the agent-supplied message to inject on fire, the owning agent id, created_at, next_fire, and a terminal disposition (fired-out one-shot | cancelled). Next-fire computation SHALL be a pure function of (spec, after: DateTime<Utc>) with unit tests per kind, including DST-boundary tests for At(\"HH:MM\"). The module SHALL impose NO cap on schedule count and NO minimum or maximum interval.",
+      "acceptance": [
+        "crates/norn/src/schedule/mod.rs contains only pub mod declarations and re-exports",
+        "Parser tests: \"90s\", \"15m\", \"2h\", \"3d\" parse; \"15\", \"2 hours\", \"-5m\", \"0x\" are rejected with errors naming the expected grammar",
+        "At(\"09:00\") computed at 08:59 local fires within the next minute; computed at 09:01 local resolves to tomorrow 09:00 local (test pins a timezone via chrono fixed-offset injection or TZ env in a serial test)",
+        "Cron kind accepts \"*/5 * * * *\" and rejects garbage with an error carrying the croner parse failure, matching the deleted compute_next_run's error fidelity",
+        "Every(Duration) next-fire is strictly after `after` by exactly the interval",
+        "An Every(1s) schedule and an Every(365d) schedule both construct — no interval bounds anywhere in the module",
+        "Constructing 10_000 records in a store test succeeds — no count cap"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/schedule/mod.rs",
+          "crates/norn/src/schedule/entry.rs",
+          "crates/norn/src/schedule/store.rs"
+        ],
+        "modify": [
+          "crates/norn/src/lib.rs"
+        ]
+      },
+      "checklist": ["C99"],
+      "stories": ["S47"]
+    },
+    {
+      "id": "R2",
+      "title": "Delete the goals.rs Scheduler scaffolding — replace, don't wire",
+      "spec": "The Scheduler, ScheduleEntry, and compute_next_run items and their tests SHALL be deleted from crates/norn/src/agent/goals.rs (lines 188-312 and the scheduler test block), and the ScheduleEntry/Scheduler re-exports removed from crates/norn/src/agent/mod.rs:36. GoalTracker, Goal, GoalSignal, ContinuationPolicy, and under_budget_fraction SHALL remain byte-for-byte untouched (they are C72, live scope). The goals.rs module docs SHALL be updated to describe goal tracking only, with a pointer to crate::schedule for scheduling. No deprecated markers, no compat re-exports, no #[cfg]-hidden remnants — the repo rule is replace, not add alongside. (Verified 2026-07-03: no code outside goals.rs and the mod.rs re-export references Scheduler/ScheduleEntry, so the deletion is closed.)",
+      "acceptance": [
+        "grep -r \"ScheduleEntry\\|struct Scheduler\" crates/ returns no production hits after the change",
+        "crates/norn/src/agent/mod.rs re-exports GoalTracker and friends but nothing schedule-related",
+        "GoalTracker and its tests are unmodified (git diff on goals.rs shows only deletions plus the module-doc update)",
+        "No #[deprecated], #[allow(dead_code)], or commented-out scheduler code remains anywhere in the diff",
+        "cargo check -p norn succeeds with the deletion before the new tool lands (the deletion is self-contained)"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/goals.rs",
+          "crates/norn/src/agent/mod.rs"
+        ]
+      },
+      "checklist": ["C103"],
+      "stories": []
+    },
+    {
+      "id": "R3",
+      "title": "Cron tool — schedule, list, cancel",
+      "spec": "A new model-facing cron tool (crates/norn/src/tools/cron.rs, registered in register_standard_tools, crates/norn/src/tools/registry_builder.rs:61, only when the schedule executor extension is present) SHALL provide three operations via an op argument. schedule SHALL accept exactly one of `in`, `at`, `every`, or `cron` (mutual exclusion enforced with a structured InvalidArguments error naming the conflict) plus a required `message` (the text injected when the schedule fires), and SHALL return the schedule id and the computed next fire time. list SHALL return every non-terminal schedule for the owning agent with id, kind, message, and next fire, with no pagination cap. cancel SHALL take a schedule id, mark it cancelled, persist the cancellation (R5), and report NotFound for unknown or already-terminal ids. The tool SHALL impose no cap on schedule count and no bounds on intervals (owner ruling 6(e)).",
+      "acceptance": [
+        "schedule with {\"in\": \"15m\", \"message\": \"check the build\"} returns an id and a next_fire ≈ now+15m",
+        "schedule with both \"in\" and \"cron\" set fails with InvalidArguments naming mutual exclusion; schedule with none of the four fails likewise",
+        "schedule with {\"cron\": \"0 9 * * 1-5\", \"message\": \"weekday triage\"} returns the next weekday-09:00 UTC-computed fire from croner",
+        "list after three schedules shows all three; after cancel of one, shows two; cancel of the same id again returns NotFound",
+        "Tool description and usage guidance document the four kinds, the duration grammar, and injected-message delivery",
+        "Without the executor extension the tool is absent from the registry"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/tools/cron.rs",
+          "crates/norn/src/tools/guidance/cron.description.md",
+          "crates/norn/src/tools/guidance/cron.usage.md"
+        ],
+        "modify": [
+          "crates/norn/src/tools/mod.rs",
+          "crates/norn/src/tools/registry_builder.rs"
+        ]
+      },
+      "checklist": ["C99"],
+      "stories": ["S47"]
+    },
+    {
+      "id": "R4",
+      "title": "Live executor — fire, re-arm, and wake through the real machinery",
+      "spec": "executor.rs SHALL run a per-agent tokio task, armed at assembly (R6), that sleeps until the earliest next_fire in the store (re-evaluating whenever the store changes, via a notify handle the tool operations signal) and, WHEN a schedule fires, delivers the agent-supplied message as an injected message over the durable path: a ChannelMessage (crates/norn/src/loop/inbound.rs:72) with kind Steer, seq None, sender identity from \"norn:cron\", sender_id Uuid::nil(), role None, and structured JSON content { schedule_id, kind, fired_at, late, message }. Delivery SHALL follow: (a) try_send on the agent's live InboundSender — a Steer wakes a lingering agent at its would-stop boundary via the steer_ready wake set (crates/norn/src/loop/linger.rs:29-38, inbound.rs:248); (b) otherwise queue a PendingAgentMessage with its agent_message.queued audit event (crates/norn/src/agent/pending_messages.rs:199, 10-16) so flush_pending_agent_messages injects it at the next step (crates/norn/src/loop/delivery.rs:189); (c) for a registry-Idle spawned child, queue-then-wake through the AgentWakeRegistry (the wake tool's pending-gated contract, crates/norn/src/tools/agent/coord/wake.rs:226-247). AFTER delivery, Every and Cron schedules SHALL re-arm (next_fire recomputed from fire time) and In/At one-shots SHALL complete. Timers SHALL die with the process: the executor holds no state that outlives the runtime (persistence is R5's job). Delivery failure (closed channel AND failed durable queue) SHALL be logged at error level with the schedule id and leave the schedule armed for its next fire (recurring) or terminal-with-error-logged (one-shot) — never a silent drop.",
+      "acceptance": [
+        "Integration test: an agent lingering at a would-stop boundary is woken by a fired In(\"1s\") schedule; the injected <agent_message from=\"norn:cron\" …> frame (frame_message, crates/norn/src/loop/inbound.rs:133) appears in conversation and as a persisted UserMessage event",
+        "Integration test: with no live channel, the fired message lands in PendingAgentMessages with an agent_message.queued event and is injected by the next step's flush",
+        "Integration test: an Idle spawned child gets queue-then-wake — pending store holds the message and the wake controller receives the request",
+        "An Every(\"1s\") schedule fires at least three times in a test window with next_fire advancing each time (re-arm proven); an In one-shot fires exactly once and list no longer shows it",
+        "Cron re-arm uses croner's next occurrence after the fire time (no drift accumulation assertion across two fires)",
+        "Killing the runtime mid-schedule leaves no timer thread (executor task aborts with the runtime); nothing fires after shutdown",
+        "The executor makes no model/provider calls and never touches the tool envelope"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/schedule/executor.rs"
+        ]
+      },
+      "checklist": ["C100", "C102"],
+      "stories": ["S47"]
+    },
+    {
+      "id": "R5",
+      "title": "Session-event persistence and resume restore",
+      "spec": "Schedule lifecycle SHALL persist as SessionEvent::Custom events on the owning agent's EventStore, following the pending-messages pattern exactly (event-type constants + typed payload enum + from_events rebuild: crates/norn/src/agent/pending_messages.rs:29-33, 118-131, 186): schedule.created (full record), schedule.fired ({ id, fired_at, late }), schedule.cancelled ({ id, cancelled_at }). events.rs SHALL define the payloads; store.rs SHALL rebuild live state from an event slice: created minus cancelled minus fired-out one-shots equals pending. WHEN a session resumes, the store SHALL be rebuilt from events at assembly (the same site that rebuilds PendingAgentMessages, crates/norn/src/agent/assembly.rs:916) and the executor re-armed: a one-shot whose fire time passed while no process was live SHALL fire immediately on resume with late: true in its payload; a recurring schedule SHALL re-arm from resume time with NO backfill of missed occurrences (one wake per recurring schedule at most, at its next natural fire). Persistence ordering SHALL be created-before-armed and fired-after-delivered (mirroring the content-first durability rule of crates/norn/src/loop/delivery.rs:96-121), so a crash can duplicate a fire notice at worst, never lose an accepted schedule.",
+      "acceptance": [
+        "Round-trip test: create three schedules (one each of in/every/cron), cancel one, fire one one-shot, serialize the event log, rebuild — pending state matches exactly",
+        "Resume test: a session with an In(\"1s\") schedule persisted and a simulated dead period past its fire time delivers the injected message immediately on resume with late: true",
+        "Resume test: an Every(\"1h\") schedule that missed 5 occurrences during downtime injects nothing at resume and shows a single next_fire within the hour — no backfill",
+        "schedule.created is appended before the executor arms the entry; schedule.fired is appended only after the injected delivery (or durable queue) succeeded",
+        "Events use SessionEvent::Custom with stable event_type constants exported like AGENT_MESSAGE_QUEUED_EVENT_TYPE (pending_messages.rs:30)",
+        "Session-less child agents (in-memory stores) persist to their in-memory store without error — rebuild is simply never exercised for them"
+      ],
+      "files": {
+        "create": [
+          "crates/norn/src/schedule/events.rs"
+        ],
+        "modify": [
+          "crates/norn/src/schedule/store.rs"
+        ]
+      },
+      "checklist": ["C101"],
+      "stories": ["S48"]
+    },
+    {
+      "id": "R6",
+      "title": "Assembly wiring",
+      "spec": "Agent assembly (crates/norn/src/agent/assembly.rs) SHALL construct the schedule store (rebuilt from events on resume, R5), arm the executor with its delivery handles (InboundSender when the agent has one, Arc<PendingAgentMessages>, owning agent id, EventStore, AgentWakeRegistry when present), and install the store/notify surface as a ToolContext extension the cron tool resolves — for every library-launched agent, root and children alike, mirroring the arm_auto_compaction coverage pattern (crates/norn/src/agent/assembly.rs:559 and its call sites; docs/DECISIONS-2026-07.md §0 item 5(i): \"all library-launched agents\"). The executor's lifetime SHALL be bound to the agent instance (aborted on drop/shutdown) — in-session only; the daemon (INTERNAL-AGENTS §6.2) is explicitly out of scope.",
+      "acceptance": [
+        "After assembly, the cron tool resolves its extension for root agents, spawned children, and forks (three-path test mirroring the arm_auto_compaction call-site coverage)",
+        "Dropping the agent instance aborts the executor task (no schedule fires after drop — asserted with a short Every schedule and a post-drop delay)",
+        "A resumed root agent's executor is armed from the rebuilt store without any tool call having run",
+        "An embedder hand-rolling run_agent_step without assembly simply has no executor — documented in the arming function's rustdoc as the discoverable contract, exactly like arm_auto_compaction's"
+      ],
+      "files": {
+        "modify": [
+          "crates/norn/src/agent/assembly.rs"
+        ]
+      },
+      "checklist": ["C100", "C101"],
+      "stories": ["S47", "S48"]
+    }
+  ],
+  "boundaries": [
+    "SHALL NOT implement the daemon, launchd/systemd integration, or any schedule that survives the norn process (INTERNAL-AGENTS §6.2; DECISIONS §0.6(e): in-session first, daemon phase later) — timers die with the process; only the session-event record survives, for resume",
+    "SHALL NOT claim or implement C73 session-dispatched cron (re-launching fresh sessions) — that is daemon-phase work; this tool wakes the OWNING session only",
+    "SHALL NOT cap schedule count or bound intervals in any direction — owner ruling 6(e)",
+    "SHALL NOT modify GoalTracker, Goal, GoalSignal, ContinuationPolicy, or their semantics (C72 stays as-is)",
+    "SHALL NOT leave any Scheduler/ScheduleEntry zombie code, compat re-exports, or deprecated markers — replaced outright (R2)",
+    "SHALL NOT backfill missed recurring occurrences on resume — one wake per schedule at its next natural fire (late-marked immediate fire is for one-shots only)",
+    "SHALL NOT deliver fired schedules through the tool envelope or any channel other than the durable injected-message path",
+    "SHALL NOT depend on the norn-process cluster (NP-001/NP-002) — this brief stands alone on existing delivery primitives"
+  ],
+  "verification": [
+    "cargo check -p norn succeeds",
+    "cargo test -p norn passes, including schedule:: unit tests, the executor integration tests, and the resume round-trip tests",
+    "cargo clippy --workspace --all-targets -- -D warnings clean",
+    "cargo fmt --check passes",
+    "End-to-end: schedule \"in 2s\" while lingering → woken with the injected message; schedule \"every 1s\" → three fires with re-arm; cancel → no further fires; resume → pending schedules restored",
+    "grep -r \"ScheduleEntry\\|struct Scheduler\" crates/ finds nothing (R2 deletion closed)",
+    "No file exceeds 500 lines of code (excluding tests, comments, whitespace)"
+  ]
+}
