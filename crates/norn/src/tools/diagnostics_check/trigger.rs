@@ -1,11 +1,10 @@
 //! Trigger-aware matching and helper functions for the post-check pipeline.
 
-use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 
 use diagnostics::conventions::{
-    CompiledRule, ConventionsConfig, Handling, PatternDef, PatternMatch, TestTrigger,
-    execute_patterns,
+    CompiledPatternDef, CompiledRule, ConventionsConfig, Handling, PatternDef, PatternMatch,
+    TestTrigger, execute_patterns,
 };
 
 use crate::tool::lifecycle::{Advisory, AdvisorySeverity};
@@ -73,27 +72,41 @@ pub(super) fn run_pattern_tool(
 ) {
     let mut pattern_def = def.clone();
     pattern_def.handling = handling;
-    let patterns = BTreeMap::from([(tool_name.to_owned(), pattern_def)]);
+    // Compile here (the new conventions API precompiles patterns at config
+    // load; this path receives a bare PatternDef, so it compiles one-off).
+    // A pattern that fails to compile surfaces as a finding error.
+    let compiled =
+        match CompiledPatternDef::compile(tool_name, &pattern_def, language.unwrap_or_default()) {
+            Ok(compiled) => vec![compiled],
+            Err(error) => {
+                findings.errors.push(format!(
+                    "{} [pattern:{tool_name}] pattern failed to compile: {error}",
+                    file_path.display()
+                ));
+                return;
+            }
+        };
 
-    match execute_patterns(&patterns, file_content, language) {
-        Ok(result) => {
-            for finding in result.errors {
-                findings
-                    .errors
-                    .push(format_pattern_message(file_path, tool_name, &finding));
-            }
-            for finding in result.advisories {
-                findings.advisories.push(Advisory {
-                    severity: AdvisorySeverity::Warning,
-                    source: tool_name.to_owned(),
-                    message: format_pattern_message(file_path, tool_name, &finding),
-                });
-            }
-        }
-        Err(error) => findings.errors.push(format!(
-            "{} [pattern:{tool_name}] pattern execution failed: {error}",
-            file_path.display()
-        )),
+    let result = execute_patterns(&compiled, file_content);
+    for finding in result.errors {
+        findings
+            .errors
+            .push(format_pattern_message(file_path, tool_name, &finding));
+    }
+    for finding in result.advisories {
+        findings.advisories.push(Advisory {
+            severity: AdvisorySeverity::Warning,
+            source: tool_name.to_owned(),
+            message: format_pattern_message(file_path, tool_name, &finding),
+        });
+    }
+    for failure in result.failures {
+        findings.errors.push(format!(
+            "{} [pattern:{}] pattern execution failed: {}",
+            file_path.display(),
+            failure.pattern_name,
+            failure.error
+        ));
     }
 }
 

@@ -647,8 +647,13 @@ mod tests {
     /// Wait until the spool's on-disk content contains `needle`. The drain
     /// tasks flush asynchronously after the direct child exits, so a content
     /// assertion must wait for the bytes rather than merely for terminal status.
+    ///
+    /// The 30s deadline is deliberately generous: large-region tests spool
+    /// over a megabyte through the drain tasks, which can take >6s wall-clock
+    /// when the whole suite runs in parallel. A passing test returns as soon
+    /// as the bytes land, so the generous cap costs nothing when healthy.
     async fn wait_spool_contains(handle: &ProcessHandle, needle: &str) {
-        for _ in 0..600 {
+        for _ in 0..3000 {
             let (bytes, _) = handle.spool().read_from(0).await.unwrap();
             if String::from_utf8_lossy(&bytes).contains(needle) {
                 return;

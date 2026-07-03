@@ -98,9 +98,9 @@ impl DiagnosticAdapter for EchoDiagnosticAdapter {
         Some(&self.command)
     }
 
-    fn normalize(&self, stdout: &str, stderr: &str, exit_code: i32) -> Vec<DiagnosticEvent> {
-        let _ = (stderr, exit_code);
-        stdout
+    fn interpret(&self, run: &diagnostics::adapter::ToolRun) -> diagnostics::adapter::ToolOutcome {
+        let events = run
+            .stdout
             .lines()
             .filter_map(|line| {
                 let (file, message) = line.split_once('|')?;
@@ -118,7 +118,8 @@ impl DiagnosticAdapter for EchoDiagnosticAdapter {
                     entity_context: None,
                 })
             })
-            .collect()
+            .collect();
+        diagnostics::adapter::ToolOutcome::Ok(events)
     }
 }
 

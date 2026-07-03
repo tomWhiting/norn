@@ -20,11 +20,14 @@ pub struct DiagnosticInfra {
     pub policies: Arc<PolicyRegistry>,
     /// Workspace root for cargo invocations and template expansion.
     pub workspace_root: PathBuf,
-    /// Diagnostic server UNIX socket path. Default is
-    /// `.git/yggdrasil/diag.sock` relative to [`Self::workspace_root`],
-    /// populated by [`crate::tools::diagnostics_infra::build_diagnostic_infra`].
-    /// Consumed by the LD-003 server-query fast path in the post-check
-    /// pipeline before it falls back to inline adapter dispatch.
+    /// Diagnostic server UNIX socket path. Populated by
+    /// [`crate::tools::diagnostics_infra::build_diagnostic_infra`] via
+    /// [`diagnostics::server::default_socket_path`], which derives a
+    /// per-workspace socket (`diag-<hash>.sock`) in the per-user runtime
+    /// directory (`$XDG_RUNTIME_DIR`, falling back to `~/.cache/<name>/run`,
+    /// then the system temp dir). Consumed by the LD-003 server-query fast
+    /// path in the post-check pipeline before it falls back to inline
+    /// adapter dispatch.
     pub socket_path: PathBuf,
     /// Parsed `CONVENTIONS.toml` for the workspace. `None` when no file
     /// is present or the file failed to load.

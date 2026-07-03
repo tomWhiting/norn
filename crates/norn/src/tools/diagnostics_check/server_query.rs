@@ -3,7 +3,8 @@
 //!
 //! [`try_server_query_for_tool`] short-circuits when the server is unavailable
 //! (missing socket, stale socket, IO failure, request/response timeout,
-//! or `DiagnosticStatus::Error` response) so the inline rule diagnostic path
+//! or a `DiagnosticStatus::Error` / `DiagnosticStatus::NotAnalyzed`
+//! response) so the inline rule diagnostic path
 //! can continue. On a successful `Fresh` / `Stale` response, results for the
 //! requested activated tool are routed into the shared [`Findings`] accumulator
 //! using the same formatter as the inline path (see
@@ -52,8 +53,8 @@ pub(super) enum ServerQueryOutcome {
     /// Server replied with `Fresh` or `Stale`; results merged into
     /// the supplied [`Findings`].
     Used,
-    /// Server unavailable or replied with `Error`; caller must run
-    /// the existing inline adapter dispatch path.
+    /// Server unavailable or replied with `Error` / `NotAnalyzed`;
+    /// caller must run the existing inline adapter dispatch path.
     FellBack,
 }
 
@@ -111,6 +112,7 @@ mod platform {
         };
 
         let query = DiagnosticQuery {
+            protocol_version: diagnostics::server::protocol::PROTOCOL_VERSION,
             file_path: relative_path.to_path_buf(),
             mode: QueryMode::InvalidateAndCheck,
         };
@@ -171,7 +173,17 @@ mod platform {
                     ServerQueryOutcome::Used
                 }
             }
-            DiagnosticStatus::Error => ServerQueryOutcome::FellBack,
+            // NotAnalyzed: the daemon has no cache entry for this file yet —
+            // fall back to the inline subprocess path just like an error.
+            DiagnosticStatus::Error | DiagnosticStatus::NotAnalyzed => {
+                tracing::debug!(
+                    tool = tool_name,
+                    status = ?response.status,
+                    error = response.error.as_deref().unwrap_or("<none>"),
+                    "diagnostic server returned non-usable status; falling back to inline adapter"
+                );
+                ServerQueryOutcome::FellBack
+            }
         }
     }
 

@@ -139,18 +139,25 @@ pub(super) async fn run_rule_diagnostic_tool(
     )
     .await
     {
-        Ok(invocation) => {
-            let events =
-                adapter.normalize(&invocation.stdout, &invocation.stderr, invocation.exit_code);
-            collect_policy_findings(
-                &events,
+        Ok(run) => match adapter.interpret(&run) {
+            diagnostics::adapter::ToolOutcome::Ok(events) => {
+                collect_policy_findings(
+                    &events,
+                    tool_name,
+                    relative_path,
+                    handling,
+                    &infra.policies,
+                    findings,
+                );
+            }
+            diagnostics::adapter::ToolOutcome::Failed(failure) => push_diagnostic_dispatch_failure(
                 tool_name,
                 relative_path,
                 handling,
-                &infra.policies,
+                &format!("tool did not complete its job: {failure}"),
                 findings,
-            );
-        }
+            ),
+        },
         Err(error) => push_diagnostic_dispatch_failure(
             tool_name,
             relative_path,

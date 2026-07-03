@@ -29,7 +29,7 @@
 //! inline-adapter cascade runs — CO11: stale reads must never silently
 //! pass as current.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use diagnostics::conventions::{CompiledRule, ConventionsConfig, Handling};
@@ -119,6 +119,14 @@ pub(super) async fn try_lsp_diagnostics_for_rules(
     let handling = strongest_handling(&matching_rules);
     let timeout = strongest_timeout(&matching_rules);
 
+    // The aggregator keys its store — and therefore every broadcast
+    // `DiagnosticUpdate::file_path` — by the *canonical* path (symlinks
+    // resolved, macOS `/tmp` → `/private/tmp`). Canonicalize the modified
+    // file once up front so wait-for-publish and the merge filter compare
+    // like with like; otherwise a symlinked spelling of the same file
+    // never matches and the path always times out into FellBack.
+    let canonical_file = canonicalize_or_fallback(file_path).await;
+
     // R1 race-prevention: subscribe BEFORE triggering flycheck so the
     // broadcast send cannot race ahead of our receiver. Broadcasts have
     // no replay; a late subscriber misses the publish entirely.
@@ -142,7 +150,7 @@ pub(super) async fn try_lsp_diagnostics_for_rules(
     // R1 + R3: wait for a publishDiagnostics update matching the file,
     // bounded by the strongest configured timeout. On timeout / channel
     // closure the function falls back so the LD-003 cascade runs (CO11).
-    let Some(events) = wait_for_publish(&mut stream, file_path, timeout).await else {
+    let Some(events) = wait_for_publish(&mut stream, &canonical_file, timeout).await else {
         tracing::warn!(
             file = %file_path.display(),
             timeout_secs = timeout.as_secs(),
@@ -151,8 +159,21 @@ pub(super) async fn try_lsp_diagnostics_for_rules(
         return LspDiagnosticsOutcome::FellBack;
     };
 
-    merge_lsp_events(&events, file_path, handling, &infra.policies, findings);
+    merge_lsp_events(&events, &canonical_file, handling, &infra.policies, findings);
     LspDiagnosticsOutcome::Used
+}
+
+/// Canonicalize a path, falling back to the input unchanged when
+/// canonicalization fails (nonexistent path, permission error). Mirrors
+/// the lsp crate's private `canonicalize_or_fallback` primitive that the
+/// [`DiagnosticAggregator`](lsp::features::diagnostics::DiagnosticAggregator)
+/// uses to derive its storage keys, so paths compared against broadcast
+/// updates use the same spelling as the aggregator's keys.
+async fn canonicalize_or_fallback(path: &Path) -> PathBuf {
+    match tokio::fs::canonicalize(path).await {
+        Ok(canonical) => canonical,
+        Err(_) => path.to_path_buf(),
+    }
 }
 
 /// Resolve the handling for an LSP event when multiple rules match the

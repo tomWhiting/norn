@@ -106,30 +106,18 @@ while True:
 /// Test-only server config pointing the registry at the stub script.
 ///
 /// Named `rust-analyzer` so the adapter's rust-analyzer extension paths
-/// (`experimental/runnables`) engage.
-struct StubServerConfig {
-    binary: &'static str,
-    env: Vec<(String, String)>,
-}
-
-impl ServerConfig for StubServerConfig {
-    fn name(&self) -> &'static str {
-        "rust-analyzer"
-    }
-    fn binary(&self) -> &'static str {
-        self.binary
-    }
-    fn language_ids(&self) -> Vec<String> {
-        vec!["rust".to_owned()]
-    }
-    fn file_patterns(&self) -> Vec<String> {
-        vec!["*.rs".to_owned()]
-    }
-    fn root_markers(&self) -> Vec<String> {
-        vec!["Cargo.toml".to_owned()]
-    }
-    fn env(&self) -> Vec<(String, String)> {
-        self.env.clone()
+/// (`experimental/runnables`) engage. `ServerConfig` is plain data in the
+/// new lsp crate, so this is a constructor instead of a trait impl.
+fn stub_server_config(binary: &str, env: Vec<(String, String)>) -> ServerConfig {
+    ServerConfig {
+        env,
+        ..ServerConfig::new(
+            "rust-analyzer",
+            binary,
+            ["rust"],
+            ["*.rs"],
+            ["Cargo.toml"],
+        )
     }
 }
 
@@ -193,20 +181,19 @@ fn stub_fixture(python: &Path) -> StubFixture {
     )
     .expect("write marker");
 
-    let leaked: &'static str = Box::leak(script.display().to_string().into_boxed_str());
-    let config = StubServerConfig {
-        binary: leaked,
-        env: vec![
+    let config = stub_server_config(
+        &script.display().to_string(),
+        vec![
             ("NORN_STUB_LOG".to_owned(), log.display().to_string()),
             (
                 "NORN_STUB_RUNNABLES".to_owned(),
                 runnables.display().to_string(),
             ),
         ],
-    };
+    );
 
     let mut workspace = LspWorkspace::new();
-    workspace.register_server(Box::new(config));
+    workspace.register_server(config);
     let backend = Arc::new(WorkspaceLspBackend::new(Arc::new(workspace)));
 
     StubFixture {

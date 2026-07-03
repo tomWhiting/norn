@@ -2,6 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
+use diagnostics::adapter::ExitStatus;
 use diagnostics::adapter::invoke::invoke_tool;
 use diagnostics::conventions::{RemediationDef, ReportDef, ToolTarget};
 use diagnostics::languages::rust::crate_root_for_file;
@@ -31,7 +32,7 @@ pub(super) async fn run_remediation_tool(
     let args = args_with_target(&def.args, &target_path);
 
     match invoke_tool(tool_name, &args, &infra.workspace_root, 0).await {
-        Ok(result) if result.exit_code == 0 => {
+        Ok(run) if matches!(run.exit, ExitStatus::Code(0)) => {
             tracing::info!(
                 tool = tool_name,
                 file = %file_path.display(),
@@ -39,11 +40,11 @@ pub(super) async fn run_remediation_tool(
                 "remediation tool completed"
             );
         }
-        Ok(result) => findings.errors.push(format!(
-            "{} [remediation:{tool_name}] subprocess failed with exit code {}. stderr: {}",
+        Ok(run) => findings.errors.push(format!(
+            "{} [remediation:{tool_name}] subprocess failed ({}). stderr: {}",
             file_path.display(),
-            result.exit_code,
-            result.stderr.trim()
+            run.exit,
+            run.stderr.trim()
         )),
         Err(error) => findings.errors.push(format!(
             "{} [remediation:{tool_name}] subprocess invocation failed: {error}",
@@ -76,23 +77,23 @@ pub(super) async fn run_report_tool(
     let args = args_with_target(&def.args, &target_path);
 
     match invoke_tool(tool_name, &args, &infra.workspace_root, 0).await {
-        Ok(result) if result.exit_code == 0 => {
+        Ok(run) if matches!(run.exit, ExitStatus::Code(0)) => {
             tracing::info!(
                 tool = tool_name,
                 file = %file_path.display(),
                 target = %target_path.display(),
-                stdout = %result.stdout.trim(),
+                stdout = %run.stdout.trim(),
                 "report tool completed"
             );
         }
-        Ok(result) => findings.advisories.push(Advisory {
+        Ok(run) => findings.advisories.push(Advisory {
             severity: AdvisorySeverity::Warning,
             source: tool_name.to_owned(),
             message: format!(
-                "{} [report:{tool_name}] subprocess failed with exit code {}. stderr: {}",
+                "{} [report:{tool_name}] subprocess failed ({}). stderr: {}",
                 file_path.display(),
-                result.exit_code,
-                result.stderr.trim()
+                run.exit,
+                run.stderr.trim()
             ),
         }),
         Err(error) => findings.advisories.push(Advisory {

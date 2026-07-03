@@ -457,14 +457,18 @@ fn queue_durable(
 mod tests {
     use std::time::Duration;
 
-    use chrono::TimeZone;
-
     use super::*;
     use crate::agent::registry::AgentRegistry;
     use crate::r#loop::inbound::inbound_channel;
     use crate::schedule::entry::ScheduleSpec;
     use crate::session::events::SessionEvent;
 
+    // Anchor test records at the current wall clock, NOT a hardcoded
+    // timestamp: `fire_due` passes `Utc::now()` to `complete_fire`, whose
+    // catch-up path engages whenever the re-armed `next_fire` is not
+    // strictly in the future. A fixed anchor becomes a time bomb the
+    // moment the wall clock passes it (re-arms collapse to now-aligned
+    // fires instead of `fire + interval`).
     fn one_shot(agent_id: Uuid) -> ScheduleRecord {
         ScheduleRecord::new(
             Uuid::new_v4(),
@@ -473,7 +477,7 @@ mod tests {
             },
             "check the build".to_string(),
             agent_id,
-            Utc.with_ymd_and_hms(2026, 7, 3, 12, 0, 0).unwrap(),
+            Utc::now(),
         )
         .unwrap()
     }
@@ -486,7 +490,7 @@ mod tests {
             },
             "triage".to_string(),
             agent_id,
-            Utc.with_ymd_and_hms(2026, 7, 3, 12, 0, 0).unwrap(),
+            Utc::now(),
         )
         .unwrap()
     }
