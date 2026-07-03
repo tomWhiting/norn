@@ -251,8 +251,13 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
             } else {
                 ToolCallKind::Function
             };
+            // `call_id` is left `None` here: this stateless dispatcher does
+            // not hold the per-response `item_id`->`call_id` correlation. The
+            // stateful [`ResponsesMapper`](super::execute) stamps it from the
+            // `response.output_item.added` event that announced this item.
             Some(Ok(ProviderEvent::ToolCallDelta {
                 item_id,
+                call_id: None,
                 name: None,
                 arguments_delta: delta,
                 kind,
@@ -516,6 +521,32 @@ fn extract_stop_reason(data: &serde_json::Value) -> StopReason {
     }
 }
 
+/// Extracts the `(item_id, call_id)` correlation pair announced by a
+/// `response.output_item.added` event for a tool-call item.
+///
+/// The Responses API announces every output item with an
+/// `output_item.added` event before streaming that item's content; for
+/// `function_call` / `custom_tool_call` items the announcement carries both
+/// the streaming `item_id` (`fc_*` / `ctc_*`) and the `call_id` (`call_*`)
+/// the model expects on echoes. The stateful
+/// [`ResponsesMapper`](super::execute::ResponsesMapper) records this pair so
+/// it can stamp the `call_id` onto the item's subsequent
+/// [`ProviderEvent::ToolCallDelta`] fragments.
+///
+/// Returns `None` for non-tool items (messages, reasoning) and for payloads
+/// missing either id — no correlation is recorded, and a delta whose item was
+/// never announced simply carries `call_id: None` (never a fabricated value).
+pub(crate) fn output_item_added_call_id(event: &SseEvent) -> Option<(String, String)> {
+    let item = event.data.get("item")?;
+    let item_type = item.get("type").and_then(|v| v.as_str())?;
+    if item_type != "function_call" && item_type != "custom_tool_call" {
+        return None;
+    }
+    let item_id = item.get("id").and_then(|v| v.as_str())?;
+    let call_id = item.get("call_id").and_then(|v| v.as_str())?;
+    Some((item_id.to_owned(), call_id.to_owned()))
+}
+
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -623,6 +654,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         match map_sse_event(&event) {
             Some(Ok(ProviderEvent::ToolCallDelta {
                 item_id,
+                call_id: _,
                 name,
                 arguments_delta,
                 kind: _,
@@ -1543,6 +1575,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         match map_sse_event(&event) {
             Some(Ok(ProviderEvent::ToolCallDelta {
                 item_id,
+                call_id: _,
                 name,
                 arguments_delta,
                 kind: _,
@@ -1552,6 +1585,45 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 assert_eq!(arguments_delta, "*** Begin");
             }
             other => panic!("expected ToolCallDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn output_item_added_call_id_extracts_tool_correlation() {
+        // C7: the correlation pair is read from a function_call / custom_tool_call
+        // announcement and ignored for everything else.
+        let func = SseEvent {
+            event_type: "response.output_item.added".to_string(),
+            data: serde_json::json!({
+                "item": {"type": "function_call", "id": "fc_9", "call_id": "call_9"}
+            }),
+        };
+        assert_eq!(
+            output_item_added_call_id(&func),
+            Some(("fc_9".to_string(), "call_9".to_string())),
+        );
+        let custom = SseEvent {
+            event_type: "response.output_item.added".to_string(),
+            data: serde_json::json!({
+                "item": {"type": "custom_tool_call", "id": "ctc_9", "call_id": "call_c"}
+            }),
+        };
+        assert_eq!(
+            output_item_added_call_id(&custom),
+            Some(("ctc_9".to_string(), "call_c".to_string())),
+        );
+        // Non-tool items and payloads missing an id yield no correlation.
+        for data in [
+            serde_json::json!({"item": {"type": "message", "id": "msg_1"}}),
+            serde_json::json!({"item": {"type": "function_call", "id": "fc_1"}}),
+            serde_json::json!({"item": {"type": "function_call", "call_id": "call_1"}}),
+            serde_json::json!({"unexpected": true}),
+        ] {
+            let ev = SseEvent {
+                event_type: "response.output_item.added".to_string(),
+                data,
+            };
+            assert_eq!(output_item_added_call_id(&ev), None);
         }
     }
 

@@ -40,8 +40,38 @@ pub enum ProviderEvent {
         /// Streaming item identifier used to merge deltas of the same call
         /// (the `fc_*` `item_id` on the wire). This is NOT the `call_id` the
         /// model expects on `function_call_output` echoes — that arrives on
-        /// [`ProviderEvent::ToolCallComplete`].
+        /// [`ProviderEvent::ToolCallComplete`] and, for correlation, on the
+        /// `call_id` field below.
         item_id: String,
+        /// Provider-assigned correlation identifier (`call_*` on the `OpenAI`
+        /// Responses wire) for the tool call these deltas belong to, when the
+        /// provider has surfaced it by the time this fragment is emitted.
+        ///
+        /// This is the same `call_id` that arrives on
+        /// [`ProviderEvent::ToolCallComplete`] and echoes on
+        /// `function_call_output`; carrying it here lets an embedder correlate
+        /// live input-streaming deltas with the tool call its UI already knows
+        /// (by `call_id`) rather than the internal streaming `item_id`.
+        ///
+        /// Source and guarantee, by provider family:
+        ///
+        /// * **`OpenAI` Responses API** — populated from the
+        ///   `response.output_item.added` event, which announces the item
+        ///   carrying both its `item_id` and its `call_id` and *always*
+        ///   precedes that item's `response.function_call_arguments.delta` /
+        ///   `response.custom_tool_call_input.delta` events within a response.
+        ///   It is therefore always `Some` on this path (see the
+        ///   `ResponsesMapper` correlation logic).
+        /// * **Chat Completions** — the tool-call `id` from the first streaming
+        ///   chunk of the call; `Some` from that chunk onward.
+        /// * **Anthropic** — the tool `id` on the tool-use block when it is
+        ///   available in the emitting event; `None` for the incremental
+        ///   `input_json_delta` fragments, which the wire delivers without the
+        ///   id in the same event.
+        ///
+        /// `None` means the provider had not surfaced the correlation id at the
+        /// time this fragment was produced — it is never fabricated.
+        call_id: Option<String>,
         /// Tool name (present in the first delta for this call).
         name: Option<String>,
         /// Incremental arguments fragment. For

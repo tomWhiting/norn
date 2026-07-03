@@ -113,6 +113,10 @@ pub fn assemble_response(events: &[ProviderEvent]) -> Option<AssembledResponse> 
             }
             ProviderEvent::ToolCallDelta {
                 item_id,
+                // `call_id` correlates live deltas for embedders; assembly
+                // merges by `item_id` and takes the authoritative `call_id`
+                // from the eventual `ToolCallComplete`.
+                call_id: _,
                 name,
                 arguments_delta,
                 kind,
@@ -299,12 +303,14 @@ mod tests {
             },
             ProviderEvent::ToolCallDelta {
                 item_id: "1".to_string(),
+                call_id: None,
                 name: Some("read".to_string()),
                 arguments_delta: "{\"path\":".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
             },
             ProviderEvent::ToolCallDelta {
                 item_id: "1".to_string(),
+                call_id: None,
                 name: None,
                 arguments_delta: "\"f\"}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -327,12 +333,14 @@ mod tests {
         let events = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "1".to_string(),
+                call_id: None,
                 name: Some("read".to_string()),
                 arguments_delta: "{}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
             },
             ProviderEvent::ToolCallDelta {
                 item_id: "2".to_string(),
+                call_id: None,
                 name: Some("write".to_string()),
                 arguments_delta: "{}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -366,6 +374,7 @@ mod tests {
             },
             ProviderEvent::ToolCallDelta {
                 item_id: "1".to_string(),
+                call_id: None,
                 name: Some("tool".to_string()),
                 arguments_delta: "{}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -386,6 +395,7 @@ mod tests {
         let events = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "tc_1".to_string(),
+                call_id: None,
                 name: None,
                 arguments_delta: "{\"city\":\"NYC\"}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -440,6 +450,7 @@ mod tests {
             },
             ProviderEvent::ToolCallDelta {
                 item_id: "1".to_string(),
+                call_id: None,
                 name: Some("read".to_string()),
                 arguments_delta: "{}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -485,12 +496,14 @@ mod tests {
         let events = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "fc_a".to_string(),
+                call_id: None,
                 name: Some("read".to_string()),
                 arguments_delta: "{\"path\":\"a\"}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
             },
             ProviderEvent::ToolCallDelta {
                 item_id: "fc_b".to_string(),
+                call_id: None,
                 name: Some("write".to_string()),
                 arguments_delta: "{\"path\":\"b\"}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -536,12 +549,14 @@ mod tests {
         let events = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "ctc_1".to_string(),
+                call_id: None,
                 name: Some("apply_patch".to_string()),
                 arguments_delta: "*** BEGIN ".to_string(),
                 kind: ToolCallKind::Custom,
             },
             ProviderEvent::ToolCallDelta {
                 item_id: "ctc_1".to_string(),
+                call_id: None,
                 name: None,
                 arguments_delta: "PATCH ***".to_string(),
                 kind: ToolCallKind::Custom,
@@ -574,6 +589,7 @@ mod tests {
         let events = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "fc_1".to_string(),
+                call_id: None,
                 name: Some("read".to_string()),
                 arguments_delta: "{}".to_string(),
                 kind: ToolCallKind::Function,
@@ -597,6 +613,7 @@ mod tests {
         let events = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "x_1".to_string(),
+                call_id: None,
                 name: None,
                 arguments_delta: "hello".to_string(),
                 kind: ToolCallKind::Function,

@@ -486,3 +486,107 @@ Decisions recorded in the Wave 3–4 commit record, verified against HEAD.
 - **Section 5 (R1 D1-D7 + Wave 3-4):** 7 R1 decisions applied autonomously (owner-overridable, 5
   Discuss / 2 Keep) plus 7 Wave 3-4 load-bearing decisions (mostly Keep). The three items in §0
   remain the highest-priority owner calls.
+
+---
+
+## 6. Meridian integration-audit follow-ups (C1, C4, C7, C8) — 2026-07-04
+
+Four embedder-facing improvements surfaced by the meridian integration audit
+(`meridian/docs/reviews/2026-07-04-norn-integration-audit.md`, items C1/C4/C7/C8).
+Each decision below is recorded for owner sign-off; silence = ship.
+
+### C7 — `ToolCallDelta` carries `call_id` for live tool-input correlation
+
+- **Ordering verdict (Responses API): GUARANTEED.** The OpenAI Responses stream announces
+  every output item with `response.output_item.added` (carrying both the streaming `item_id`
+  `fc_*`/`ctc_*` and the correlation `call_id` `call_*`) *before* emitting that item's
+  `response.function_call_arguments.delta` / `custom_tool_call_input.delta` events. Evidence:
+  the codex reference mapper (`crates/norn/reference/codex-rs/sse-responses.rs:410-415`) parses
+  `output_item.added` into a `ResponseItem::FunctionCall` carrying `call_id`, and the Responses
+  lifecycle (`created → in_progress → output_item.added → …deltas… → output_item.done →
+  completed`) fixes the ordering. So on the Responses path the correlation is always available
+  before the first delta needing it.
+- **Decision — variant carries `call_id: Option<String>`, not bare `String`.** The
+  `ProviderEvent::ToolCallDelta` variant is shared across three provider families with
+  *different* delta/id ordering. Responses (always `Some`) and Chat Completions (id on the
+  first chunk of each call, `Some` thereafter) both surface it; Anthropic's incremental
+  `input_json_delta` fragments arrive with no id in the same event, so forcing a non-optional
+  field would require fabricating an empty string there — exactly the "pad with empty string"
+  anti-pattern the SSE mapper elsewhere refuses. `Option` keeps the absence honest and lossless
+  (the delta still streams; only correlation is unavailable). The Responses path is documented
+  and guaranteed `Some`.
+- **Correlation lives in the stateful `ResponsesMapper`** (`provider/openai/execute.rs`): it
+  holds an `item_id → call_id` map populated from `output_item.added`, stamps every
+  `ToolCallDelta` produced by the (still stateless) `map_sse_event` dispatcher, and clears the
+  map at response end (terminal `Done`/error) so nothing leaks across responses. A per-response
+  fresh mapper is created per `execute()` call, so cross-response leakage was already impossible;
+  the clear is belt-and-suspenders and honors the explicit lifecycle.
+- **FOLLOW-UP flagged for owner (Fable review, 2026-07-04):** the Anthropic integration path
+  (`integration/claude/adapter.rs`) emits `call_id: None` on its incremental `input_json_delta`
+  fragments because that event carries no id. This conforms to the Option decision and is honest,
+  but the same "announcement precedes deltas" structure exists on Anthropic
+  (`ContentBlockStart{ index, ToolUse{ id }}` precedes `ContentBlockDelta{ index }`), so an
+  index→id map — the exact `ResponsesMapper` technique — *could* make Anthropic deltas correlate
+  too (and would also fix the pre-existing `item_id: String::new()` on those fragments). Not done
+  here (meridian consumes the Responses path, and the Anthropic `map_claude_event` is a stateless
+  free function that would need threading state). Recommend owner rules whether to close this
+  asymmetry as a follow-up. Silence = leave Anthropic deltas uncorrelated (`None`).
+
+### C8 — granular `AgentBuilder::context_window_limit(u64)` setter
+
+- **Decision — no `AgentConfigPresence` flag.** `context_window_limit: Option<u64>` carries its
+  own presence (`Some` = explicitly set); the merge already overlays it via
+  `explicit.context_window_limit.is_some()` (`agent/assembly.rs`), so the setter is a one-liner
+  mirroring the `max_iterations`/`step_timeout` `Option`-field setters. Unlike `.agent_config()`
+  (which marks the whole config explicit via `AgentConfigPresence::all()`), the granular setter
+  overrides only this field and leaves the settings-derived runtime base intact. `arm_auto_compaction`
+  fills the catalog window only when the merged value is still `None`, so the setter's value
+  survives arming unchanged.
+
+### C4 — live compaction event for embedders
+
+- **Decision — new `AgentEventKind::Compaction(AgentCompaction)` variant.** `ProviderEvent::Compaction`
+  is an unrelated opaque OpenAI Responses stream item (not auto-compaction) and is the wrong shape;
+  a dedicated typed payload is added rather than reusing it. The event carries honest accounting:
+  `tokens_before`/`tokens_after` (estimator counts either side of the rewrite), `events_compacted`
+  (count of newly-superseded events), `summary_source` (`llm` vs `mechanical_digest_fallback` with
+  its error), the summarization call's real `Usage`, and the compaction event id.
+- **Completion-only, no "begin" event.** The two problems C4 names — an unexplained history
+  rewrite and invisible summarization spend — are both resolved only *after* the summarization
+  round-trip completes (before/after token deltas and the real `Usage` do not exist until then).
+  Pre-turn compaction is synchronous and holds the turn, so a "compacting…" begin marker would
+  carry no accounting and interleave nothing. Emitting a single completion event at the point the
+  rewrite lands is the honest, minimal contract; a `Started` phase can be added later without
+  breaking it.
+- **Summarization sub-call stays event-tx-free.** The event is broadcast from the preflight caller
+  (`loop/inflight_compaction.rs`), not by threading `event_tx` into `summarization.rs` — the
+  summarization provider call's own `Done`/`TextDelta` events must never pollute the agent stream
+  (preserved). Wired only through the auto-compaction path (pre-turn preflight, which is also the
+  in-flight application site). The manual `/compact` CLI/TUI surfaces run outside the agent loop
+  with no live subscriber and are out of scope (confirm with owner if UI coverage is wanted there).
+
+### C1 — live event for unsequenced inbound injections
+
+- **Decision — reuse `AgentMessageLifecycle::Delivered` (no new event kind), with two shape
+  changes.** All injection paths (cron `norn:cron`, process-manager `norn:process-manager`, watch
+  `norn:watch`, generic embedder sends) already funnel through
+  `inject_inbound_messages` (`loop/delivery.rs`); the fix removes the `seq.map` gate so the same
+  dual-carrier Delivered (durable audit `SessionEvent::Custom` + live broadcast) fires for every
+  injection, not just router-sequenced ones.
+- **`Delivered.seq: u64 → Option<u64>`.** Unsequenced injections have no router seq; fabricating
+  one (e.g. `0`) is an arbitrary invented value. The existing shape genuinely cannot express an
+  unsequenced delivery, so the field becomes optional (`None` = unsequenced). NO BACKWARDS COMPAT:
+  the shape is mutated, not duplicated.
+- **Add `Delivered.from: String`** (the sender label, mirroring `Sent.from`). Internal sources use
+  `sender_id = Uuid::nil()`, so `from_id` alone cannot attribute the stimulus; the human label
+  (`norn:cron` etc.) is what makes the live event self-describing — the whole point of C1
+  (transcripts no longer show responses to invisible stimuli). Populated from `ChannelMessage.from`
+  on both sequenced and unsequenced paths.
+- **Aggregation follow-through (Fable review, 2026-07-04):** the `agents` `messages` edge
+  projection (`tools/agents_messages.rs`) now folds the delivered `from` label into the edge when
+  no `Sent` supplied one, so cron/watch/process edges render `norn:cron` instead of the bare nil
+  UUID. Note (deliberate, minor): all nil-sender sources to one recipient collapse into a single
+  `(nil, to_id)` edge that shows the first-seen label; distinguishing cron from watch on that
+  projection would need the label folded into the edge key — left as-is (secondary tool; the live
+  event and the persisted audit both carry the exact source). The edge's `last_seq` stays `0` for
+  an unsequenced-only edge; this is an honest sentinel, since router-minted seqs start at `1`.

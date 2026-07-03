@@ -327,6 +327,11 @@ fn map_claude_event(
                         // emitted ToolCallComplete (synthesized below).
                         emitted.push(ProviderEvent::ToolCallDelta {
                             item_id: id.clone(),
+                            // Claude's tool-use `id` is both the streaming merge
+                            // key and the identifier promoted to `call_id` on
+                            // the synthesized ToolCallComplete, so it is the
+                            // correlation id embedders see for this call.
+                            call_id: Some(id.clone()),
                             name: Some(name),
                             arguments_delta: serde_json::to_string(&input).unwrap_or_default(),
                             kind: crate::provider::request::ToolCallKind::Function,
@@ -352,6 +357,10 @@ fn map_claude_event(
                 } else if let Some(partial) = delta.partial_json() {
                     emitted.push(ProviderEvent::ToolCallDelta {
                         item_id: String::new(),
+                        // Anthropic's `input_json_delta` fragments arrive with
+                        // no tool id in the same event; the correlation id is
+                        // unavailable here (honest `None`, never fabricated).
+                        call_id: None,
                         name: None,
                         arguments_delta: partial.to_owned(),
                         kind: crate::provider::request::ToolCallKind::Function,

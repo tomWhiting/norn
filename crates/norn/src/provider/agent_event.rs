@@ -51,6 +51,7 @@ use super::events::ProviderEvent;
 use super::usage::Usage;
 use crate::agent::output::AgentStopReason;
 use crate::r#loop::inbound::MessageKind;
+use crate::session::events::EventId;
 
 /// `event_type` of the [`SessionEvent::Custom`](crate::session::events::SessionEvent::Custom)
 /// appended to the parent's store when a child launches. The event's
@@ -74,6 +75,13 @@ pub const AGENT_MESSAGE_DELIVERED_EVENT_TYPE: &str = "agent_message.delivered";
 /// outcome. The event's `data` is a serialized
 /// [`SubagentLifecycle::Completed`].
 pub const SUBAGENT_COMPLETED_EVENT_TYPE: &str = "subagent.completed";
+
+/// `event_type` of the pre-existing `loop.compaction_summarization`
+/// [`SessionEvent::Custom`](crate::session::events::SessionEvent::Custom) audit
+/// record. The live [`AgentEventKind::Compaction`] broadcast (payload
+/// [`AgentCompaction`]) carries the same accounting for embedders that
+/// subscribe to the event stream rather than replay the store.
+pub const COMPACTION_EVENT_TYPE: &str = "loop.compaction_summarization";
 
 /// Which delegation surface created a child agent.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -245,15 +253,32 @@ pub enum AgentMessageLifecycle {
         sent_at: DateTime<Utc>,
     },
     /// The recipient's loop injected the message into its conversation.
+    ///
+    /// Emitted for **every** injected message, not only router-sequenced
+    /// inter-agent traffic: schedule/cron fires (`norn:cron`), process-manager
+    /// completions (`norn:process-manager`), watch alerts (`norn:watch`), and
+    /// generic embedder injections all produce this event so an embedder's
+    /// transcript never shows a response to an invisible stimulus. Router
+    /// traffic pairs with a preceding `Sent`; the unsequenced sources have no
+    /// `Sent` half (`seq` is `None` for them).
     Delivered {
         /// Unique message identifier, shared with the `Sent` phase.
         message_id: Uuid,
-        /// Sender agent id.
+        /// Sender agent id. `Uuid::nil()` for the harness sources
+        /// (`norn:cron` / `norn:process-manager` / `norn:watch`) — use `from`
+        /// to attribute those.
         from_id: Uuid,
+        /// Sender's registry label at injection time (path / `root` /
+        /// `norn:cron` / `norn:watch` / `norn:process-manager` / embedder
+        /// label). Mirrors [`Self::Sent`]'s `from` so the live event
+        /// self-identifies the injecting source even when `from_id` is nil.
+        from: String,
         /// Recipient agent id.
         to_id: Uuid,
-        /// Router-minted per-recipient sequence number.
-        seq: u64,
+        /// Router-minted per-recipient sequence number, or `None` for an
+        /// unsequenced injection (any non-router source: cron, process
+        /// manager, watch, direct embedder send). Never fabricated.
+        seq: Option<u64>,
         /// Wall-clock injection time.
         delivered_at: DateTime<Utc>,
     },
@@ -310,9 +335,71 @@ pub struct AgentStreamRetry {
     pub attempt: u32,
 }
 
+/// How a committed context-compaction summary was produced.
+///
+/// Serialization is stable: internally tagged on `kind` with `snake_case`
+/// variant names, mirroring the internal
+/// `CompactionSummarySource`(crate-private) so embedders read the same
+/// distinction the session-store audit records.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum CompactionSummaryKind {
+    /// The provider wrote a semantic summary of the elided turns.
+    Llm,
+    /// LLM summarization was unavailable (call failed or produced an
+    /// unusable response); the mechanical event digest was committed
+    /// instead.
+    MechanicalDigestFallback {
+        /// Why the LLM summary was unavailable.
+        error: String,
+    },
+}
+
+/// A completed automatic context compaction, broadcast live so an embedder
+/// can surface the history rewrite in its UI and account honestly for the
+/// summarization spend.
+///
+/// Auto-compaction rewrites the conversation the model sees (elided turns are
+/// replaced by a summary). Without this event an embedder observes only an
+/// unexplained history change and the summarization tokens are invisible to
+/// its live accounting. The event carries the reclaimed-token estimate
+/// (`tokens_before`/`tokens_after`) and the summarization provider call's real
+/// [`Usage`]. It is the live twin of the `loop.compaction_summarization`
+/// session-store audit record ([`COMPACTION_EVENT_TYPE`]).
+///
+/// Serialization is stable: a flat object with RFC 3339 `compacted_at` and the
+/// typed [`Usage`] / [`CompactionSummaryKind`] payloads.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct AgentCompaction {
+    /// Session-store id of the committed `SessionEvent::Compaction`, so an
+    /// embedder can correlate the live event with the persisted rewrite.
+    pub compaction_id: EventId,
+    /// Number of prior events the summary superseded (now hidden from the
+    /// prompt view).
+    pub events_compacted: usize,
+    /// Estimated prompt tokens before the rewrite (same estimator, full
+    /// conversation).
+    pub tokens_before: u64,
+    /// Estimated prompt tokens after the rewrite (same estimator, compacted
+    /// conversation). `tokens_before - tokens_after` is the reclaimed
+    /// estimate. In the rare case where the in-flight rewrite could not be
+    /// applied to the current request (a cursor-mapping invariant mismatch,
+    /// logged loudly), this equals `tokens_before` — the compaction is still
+    /// persisted and takes effect on the next step.
+    pub tokens_after: u64,
+    /// How the committed summary was produced.
+    pub summary_source: CompactionSummaryKind,
+    /// Usage of the summarization provider call — real spend the embedder
+    /// must fold into its accounting. `None` only when the call failed
+    /// before the provider returned any assembled response.
+    pub summarization_usage: Option<Usage>,
+    /// Wall-clock time the compaction landed.
+    pub compacted_at: DateTime<Utc>,
+}
+
 /// The payload of an [`AgentEvent`]: a raw provider stream event, a
-/// typed subagent lifecycle event, typed usage telemetry, or a typed
-/// inter-agent message event.
+/// typed subagent lifecycle event, typed usage telemetry, a typed
+/// inter-agent message event, or a typed context-compaction event.
 #[derive(Clone, Debug)]
 pub enum AgentEventKind {
     /// A raw provider stream event from the tagged agent's own loop.
@@ -332,6 +419,8 @@ pub enum AgentEventKind {
     /// is about to be replayed; observers reset any partial output from
     /// the failed attempt.
     StreamRetry(AgentStreamRetry),
+    /// A completed automatic context compaction on the tagged agent's loop.
+    Compaction(AgentCompaction),
 }
 
 /// An [`AgentEventKind`] tagged with the identity of the agent it
@@ -433,6 +522,18 @@ impl AgentEventSender {
             agent_id: self.agent_id,
             agent_role: Arc::clone(&self.agent_role),
             event: AgentEventKind::StreamRetry(retry),
+        });
+    }
+
+    /// Tag and broadcast a completed context-compaction event. Emitted by
+    /// the loop's pre-turn preflight the moment a fired auto-compaction has
+    /// rewritten the conversation, so observers can surface the history
+    /// rewrite and account for the summarization spend.
+    pub fn send_compaction(&self, compaction: AgentCompaction) {
+        let _ = self.tx.send(AgentEvent {
+            agent_id: self.agent_id,
+            agent_role: Arc::clone(&self.agent_role),
+            event: AgentEventKind::Compaction(compaction),
         });
     }
 
@@ -577,7 +678,8 @@ mod tests {
             AgentEventKind::Provider(_)
             | AgentEventKind::Message(_)
             | AgentEventKind::UsageEstimate(_)
-            | AgentEventKind::StreamRetry(_) => {
+            | AgentEventKind::StreamRetry(_)
+            | AgentEventKind::Compaction(_) => {
                 panic!("expected subagent lifecycle event")
             }
         }
@@ -768,8 +870,9 @@ mod tests {
         let event = AgentMessageLifecycle::Delivered {
             message_id: Uuid::from_u128(9),
             from_id: Uuid::from_u128(1),
+            from: "/smoke/child".to_owned(),
             to_id: Uuid::from_u128(2),
-            seq: 42,
+            seq: Some(42),
             delivered_at,
         };
         let value = serde_json::to_value(&event).unwrap();
@@ -779,9 +882,45 @@ mod tests {
                 "phase": "delivered",
                 "message_id": "00000000-0000-0000-0000-000000000009",
                 "from_id": "00000000-0000-0000-0000-000000000001",
+                "from": "/smoke/child",
                 "to_id": "00000000-0000-0000-0000-000000000002",
                 "seq": 42,
                 "delivered_at": "2026-06-12T10:00:01Z",
+            }),
+        );
+        let parsed: AgentMessageLifecycle = serde_json::from_value(value).unwrap();
+        assert_eq!(
+            parsed.session_event_type(),
+            AGENT_MESSAGE_DELIVERED_EVENT_TYPE,
+        );
+    }
+
+    #[test]
+    fn message_delivered_unsequenced_serde_shape() {
+        // An unsequenced injection (cron/watch/process/embedder) carries
+        // `seq: null` and the harness sender label; `from_id` is nil.
+        let delivered_at = DateTime::parse_from_rfc3339("2026-06-12T10:00:02Z")
+            .unwrap()
+            .with_timezone(&Utc);
+        let event = AgentMessageLifecycle::Delivered {
+            message_id: Uuid::from_u128(11),
+            from_id: Uuid::nil(),
+            from: "norn:cron".to_owned(),
+            to_id: Uuid::from_u128(2),
+            seq: None,
+            delivered_at,
+        };
+        let value = serde_json::to_value(&event).unwrap();
+        assert_eq!(
+            value,
+            serde_json::json!({
+                "phase": "delivered",
+                "message_id": "00000000-0000-0000-0000-00000000000b",
+                "from_id": "00000000-0000-0000-0000-000000000000",
+                "from": "norn:cron",
+                "to_id": "00000000-0000-0000-0000-000000000002",
+                "seq": null,
+                "delivered_at": "2026-06-12T10:00:02Z",
             }),
         );
         let parsed: AgentMessageLifecycle = serde_json::from_value(value).unwrap();
@@ -799,8 +938,9 @@ mod tests {
         sender.send_message(AgentMessageLifecycle::Delivered {
             message_id: Uuid::from_u128(9),
             from_id: Uuid::from_u128(1),
+            from: "/parent/worker".to_owned(),
             to_id: sender_id,
-            seq: 1,
+            seq: Some(1),
             delivered_at: Utc::now(),
         });
         let received = rx.try_recv().unwrap();

@@ -159,7 +159,13 @@ pub(super) async fn try_lsp_diagnostics_for_rules(
         return LspDiagnosticsOutcome::FellBack;
     };
 
-    merge_lsp_events(&events, &canonical_file, handling, &infra.policies, findings);
+    merge_lsp_events(
+        &events,
+        &canonical_file,
+        handling,
+        &infra.policies,
+        findings,
+    );
     LspDiagnosticsOutcome::Used
 }
 

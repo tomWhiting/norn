@@ -2897,6 +2897,43 @@ mod tests {
         );
     }
 
+    #[test]
+    fn context_window_limit_setter_survives_runtime_base_merge() {
+        // C8: the granular setter overrides only this field, overriding the
+        // settings-derived runtime base per the explicit-config-wins rule.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .working_dir(temp.path())
+            .load_runtime_base()
+            .context_window_limit(4_242)
+            .build()
+            .expect("build succeeds");
+        assert_eq!(agent.config.context_window_limit, Some(4_242));
+    }
+
+    #[test]
+    fn context_window_limit_setter_beats_auto_compaction_catalog_fill() {
+        // C8 interaction: the setter's window survives auto-compaction arming,
+        // which fills the catalog window only when the merged value is still
+        // `None`. A catalogued model would otherwise have its window filled
+        // from the catalog during build(); the explicit setter value wins.
+        let temp = tempfile::tempdir().expect("tempdir");
+        let model = crate::model_catalog::default_selection().model;
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model(model)
+            .working_dir(temp.path())
+            .load_runtime_base()
+            .context_window_limit(4_242)
+            .build()
+            .expect("build succeeds");
+        assert_eq!(
+            agent.config.context_window_limit,
+            Some(4_242),
+            "the setter value must survive catalog fill during arming",
+        );
+    }
+
     // -- open_session: the managed persisted-session path -------------------
 
     fn manager_in(dir: &std::path::Path) -> SessionManager {

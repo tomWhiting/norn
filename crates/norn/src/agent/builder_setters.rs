@@ -250,6 +250,23 @@ impl AgentBuilder {
         self
     }
 
+    /// Set the client-side context-window budget, in tokens, that drives the
+    /// token estimator and the auto-compaction trigger.
+    ///
+    /// Granular counterpart to [`Self::agent_config`]: it overrides only
+    /// `context_window_limit`, leaving every other field of the
+    /// settings-derived runtime base intact (unlike `agent_config`, which
+    /// marks the whole config explicit). Because the field carries its own
+    /// presence (`Some` = explicitly set), this value wins over the runtime
+    /// base per the explicit-config-wins merge, and auto-compaction arming
+    /// honours it — the catalog window is filled only when this is left
+    /// `None`.
+    #[must_use]
+    pub fn context_window_limit(mut self, tokens: u64) -> Self {
+        self.agent_config.context_window_limit = Some(tokens);
+        self
+    }
+
     /// Select how the provider carries conversation state between calls.
     #[must_use]
     pub fn conversation_state(mut self, mode: ConversationStateMode) -> Self {

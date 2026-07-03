@@ -96,7 +96,9 @@ fn agent_event_needs_panel_redraw(state: &AppState, agent_ev: &AgentEvent) -> bo
         AgentEventKind::Provider(event) => child_provider_event_needs_panel_redraw(event),
         AgentEventKind::Subagent(_)
         | AgentEventKind::Message(_)
-        | AgentEventKind::UsageEstimate(_) => true,
+        | AgentEventKind::UsageEstimate(_)
+        // Compaction pushes an activity-log row: the panel must repaint.
+        | AgentEventKind::Compaction(_) => true,
         // Consumed as a deliberate no-op in `handle_agent_event`.
         AgentEventKind::StreamRetry(_) => false,
     }
@@ -252,6 +254,7 @@ mod tests {
     fn child_nameless_tool_delta_does_not_force_panel_redraw() {
         let event = ProviderEvent::ToolCallDelta {
             item_id: "item_1".to_string(),
+            call_id: None,
             name: None,
             arguments_delta: "{}".to_string(),
             kind: ToolCallKind::Function,
@@ -264,6 +267,7 @@ mod tests {
     fn child_named_tool_delta_forces_panel_redraw() {
         let event = ProviderEvent::ToolCallDelta {
             item_id: "item_1".to_string(),
+            call_id: None,
             name: Some("read".to_string()),
             arguments_delta: "{}".to_string(),
             kind: ToolCallKind::Function,

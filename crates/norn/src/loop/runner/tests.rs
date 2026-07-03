@@ -99,6 +99,7 @@ fn thinking_delta(text: &str) -> ProviderEvent {
 fn tool_call_delta(item_id: &str, name: Option<&str>, args: &str) -> ProviderEvent {
     ProviderEvent::ToolCallDelta {
         item_id: item_id.to_string(),
+        call_id: None,
         name: name.map(String::from),
         arguments_delta: args.to_string(),
         kind: crate::provider::request::ToolCallKind::Function,
@@ -896,7 +897,8 @@ async fn streaming_events_forwarded_to_broadcast() {
             AgentEventKind::UsageEstimate(_) => {}
             AgentEventKind::Subagent(_)
             | AgentEventKind::Message(_)
-            | AgentEventKind::StreamRetry(_) => {
+            | AgentEventKind::StreamRetry(_)
+            | AgentEventKind::Compaction(_) => {
                 panic!("the loop emits only provider events here")
             }
         }
@@ -3247,6 +3249,7 @@ async fn custom_tool_call_kind_propagated_to_session_event() {
     let events = vec![
         ProviderEvent::ToolCallDelta {
             item_id: "ctc_1".to_string(),
+            call_id: None,
             name: Some("apply_patch".to_string()),
             arguments_delta: "patch content".to_string(),
             kind: crate::provider::request::ToolCallKind::Custom,
@@ -4187,6 +4190,142 @@ async fn auto_compaction_applies_to_in_flight_request() {
     assert_eq!(audit["summary_kind"], "llm_summary");
     assert_eq!(audit["usage"]["input_tokens"], 10);
     assert_eq!(audit["usage"]["output_tokens"], 5);
+}
+
+/// C4: a fired auto-compaction broadcasts a live [`AgentCompaction`]
+/// event carrying honest accounting (reclaimed-token estimate plus the
+/// summarization call's real usage); the summarization sub-call's own
+/// provider stream (its `Done` / text deltas) must NOT leak onto the
+/// agent event channel; and the persisted `SessionEvent::Compaction` is
+/// unchanged.
+#[tokio::test]
+async fn auto_compaction_broadcasts_live_event_and_hides_summarization_stream() {
+    use crate::provider::agent_event::{AgentEvent, AgentEventKind, CompactionSummaryKind};
+
+    let store = EventStore::new();
+    for i in 0..6 {
+        store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(None),
+                content: format!("seed question {i} {}", "x".repeat(200)),
+            })
+            .expect("seed user");
+        store
+            .append(SessionEvent::AssistantMessage {
+                base: EventBase::new(None),
+                content: format!("seed answer {i} {}", "y".repeat(200)),
+                thinking: String::new(),
+                reasoning: Vec::new(),
+                tool_calls: Vec::new(),
+                usage: EventUsage::default(),
+                stop_reason: "end_turn".to_string(),
+                response_id: None,
+            })
+            .expect("seed assistant");
+    }
+
+    // First scripted response answers the summarization call, the second
+    // answers the main (compacted) request.
+    let provider = MockProvider::new(vec![
+        vec![
+            text_delta("LLM summary of the seed turns"),
+            done_event(StopReason::EndTurn),
+        ],
+        vec![text_delta("done"), done_event(StopReason::EndTurn)],
+    ]);
+    let executor = MockToolExecutor::empty();
+
+    let mut loop_ctx = LoopContext::new("system");
+    loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
+    loop_ctx.token_estimator = Some(std::sync::Arc::new(crate::r#loop::SimpleTokenEstimator));
+
+    let config = AgentLoopConfig {
+        context_window_limit: Some(100),
+        auto_compact_reserve_tokens: Some(50),
+        auto_compact_keep_recent_turns: 1,
+        ..AgentLoopConfig::default()
+    };
+
+    let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(256);
+    let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_string());
+
+    let result = run_step_with(
+        StepArgs {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            tools: &[],
+            schema: None,
+            config: &config,
+            event_tx: Some(&sender),
+            inbound: None,
+        },
+        &mut loop_ctx,
+    )
+    .await;
+    let _ = assert_completed(result);
+
+    let mut compactions = Vec::new();
+    let mut provider_dones = 0usize;
+    let mut leaked_summary = false;
+    while let Ok(ev) = rx.try_recv() {
+        match ev.event {
+            AgentEventKind::Compaction(compaction) => compactions.push(compaction),
+            AgentEventKind::Provider(ProviderEvent::Done { .. }) => provider_dones += 1,
+            AgentEventKind::Provider(
+                ProviderEvent::TextDelta { text } | ProviderEvent::TextComplete { text },
+            ) if text.contains("LLM summary of the seed turns") => {
+                leaked_summary = true;
+            }
+            _ => {}
+        }
+    }
+
+    assert_eq!(
+        compactions.len(),
+        1,
+        "exactly one live compaction event must broadcast",
+    );
+    let compaction = &compactions[0];
+    assert!(
+        compaction.events_compacted > 0,
+        "the event must report the hidden turns",
+    );
+    assert!(
+        compaction.tokens_before > compaction.tokens_after,
+        "reclaim must be positive: {} -> {}",
+        compaction.tokens_before,
+        compaction.tokens_after,
+    );
+    assert!(matches!(
+        compaction.summary_source,
+        CompactionSummaryKind::Llm
+    ));
+    let usage = compaction
+        .summarization_usage
+        .as_ref()
+        .expect("summarization usage must be carried");
+    assert_eq!(usage.input_tokens, 10);
+    assert_eq!(usage.output_tokens, 5);
+
+    assert!(
+        !leaked_summary,
+        "the summarization sub-call's text must never leak onto the agent stream",
+    );
+    assert_eq!(
+        provider_dones, 1,
+        "only the main call's Done may broadcast — the summarization sub-call's must not",
+    );
+
+    // The session-store Compaction event is unchanged by the live broadcast.
+    let persisted_summary = store.events().into_iter().find_map(|e| match e {
+        SessionEvent::Compaction { summary, .. } => Some(summary),
+        _ => None,
+    });
+    assert_eq!(
+        persisted_summary.as_deref(),
+        Some("LLM summary of the seed turns"),
+    );
 }
 
 /// Track L finding 1 (failure policy): a failed summarization call

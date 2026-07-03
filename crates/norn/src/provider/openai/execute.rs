@@ -6,8 +6,10 @@
 //! contributes only the Responses-specific payload construction and the
 //! [`SseEventMapper`] adapter over [`map_sse_event`].
 
+use std::collections::HashMap;
+
 use super::request::build_payload;
-use super::sse::{SseEvent, map_sse_event};
+use super::sse::{SseEvent, map_sse_event, output_item_added_call_id};
 use crate::error::ProviderError;
 use crate::provider::events::ProviderEvent;
 use crate::provider::exec::{SseEventMapper, StreamExecutor};
@@ -46,17 +48,66 @@ impl SenderProvider {
             message_count = request.messages.len(),
             "responses request starting"
         );
-        let mut mapper = ResponsesMapper;
+        let mut mapper = ResponsesMapper::default();
         self.executor.execute(body, &mut mapper, &tx).await
     }
 }
 
-/// Stateless [`SseEventMapper`] over the Responses API dispatcher.
-struct ResponsesMapper;
+/// Stateful [`SseEventMapper`] over the Responses API dispatcher.
+///
+/// The wire dispatch itself is stateless ([`map_sse_event`]); this mapper adds
+/// the one piece of per-response state the dispatcher cannot hold: the
+/// `item_id` -> `call_id` correlation announced by `response.output_item.added`
+/// for tool calls. Each streaming tool-input fragment
+/// ([`ProviderEvent::ToolCallDelta`]) is stamped with its `call_id` so an
+/// embedder can correlate live input streaming with the tool call its UI knows
+/// by `call_id` (the streaming `item_id` is an internal merge key the embedder
+/// never sees on the completed call). The map is cleared at response end
+/// (terminal `Done`/error) so no correlation leaks across responses.
+#[derive(Default)]
+struct ResponsesMapper {
+    /// Tool-call `item_id` (`fc_*` / `ctc_*`) -> `call_id` (`call_*`),
+    /// populated from `response.output_item.added`.
+    call_ids: HashMap<String, String>,
+}
 
 impl SseEventMapper for ResponsesMapper {
     fn map_event(&mut self, event: &SseEvent) -> Vec<Result<ProviderEvent, ProviderError>> {
-        map_sse_event(event).into_iter().collect()
+        // Record the correlation the instant the item is announced. Per the
+        // Responses API lifecycle this `output_item.added` always precedes the
+        // item's argument-delta events, so the map is populated before any
+        // delta this mapper must stamp.
+        if event.event_type == "response.output_item.added"
+            && let Some((item_id, call_id)) = output_item_added_call_id(event)
+        {
+            self.call_ids.insert(item_id, call_id);
+        }
+
+        let mut mapped: Vec<Result<ProviderEvent, ProviderError>> =
+            map_sse_event(event).into_iter().collect();
+
+        let mut response_ended = false;
+        for result in &mut mapped {
+            match result {
+                Ok(ProviderEvent::ToolCallDelta {
+                    item_id, call_id, ..
+                }) => {
+                    // The stateless dispatcher leaves `call_id` unset; fill it
+                    // from the announced correlation. A miss (item never
+                    // announced) leaves it `None` — honest, never fabricated.
+                    if call_id.is_none() {
+                        *call_id = self.call_ids.get(item_id).cloned();
+                    }
+                }
+                Ok(ProviderEvent::Done { .. }) | Err(_) => response_ended = true,
+                Ok(_) => {}
+            }
+        }
+        if response_ended {
+            self.call_ids.clear();
+        }
+
+        mapped
     }
 
     /// The Responses API always terminates a stream with a
@@ -121,6 +172,82 @@ mod streaming_tests {
     use crate::provider::traits::Provider as _;
     use futures_util::StreamExt;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    #[test]
+    fn responses_mapper_stamps_call_id_from_output_item_added() {
+        // C7: the announced `output_item.added` correlation (item_id -> call_id)
+        // is stamped onto the item's subsequent argument-delta events so an
+        // embedder can correlate live tool input with the call its UI knows.
+        let mut mapper = ResponsesMapper::default();
+        let added = SseEvent {
+            event_type: "response.output_item.added".to_string(),
+            data: serde_json::json!({
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "call_id": "call_1",
+                    "name": "read",
+                    "arguments": "",
+                }
+            }),
+        };
+        assert!(
+            mapper.map_event(&added).is_empty(),
+            "output_item.added itself maps to no ProviderEvent",
+        );
+        let delta = SseEvent {
+            event_type: "response.function_call_arguments.delta".to_string(),
+            data: serde_json::json!({"item_id": "fc_1", "delta": "{\"path\""}),
+        };
+        match mapper.map_event(&delta).as_slice() {
+            [
+                Ok(ProviderEvent::ToolCallDelta {
+                    item_id, call_id, ..
+                }),
+            ] => {
+                assert_eq!(item_id, "fc_1");
+                assert_eq!(
+                    call_id.as_deref(),
+                    Some("call_1"),
+                    "call_id must be stamped"
+                );
+            }
+            other => panic!("expected a stamped ToolCallDelta, got {other:?}"),
+        }
+
+        // Terminal Done clears the map: a stray delta for the same item on a
+        // fresh response is no longer correlated (no cross-response leakage).
+        let done = SseEvent {
+            event_type: "response.completed".to_string(),
+            data: serde_json::json!({
+                "response": {"status": "completed", "usage": {"input_tokens": 1, "output_tokens": 1}}
+            }),
+        };
+        let _ = mapper.map_event(&done);
+        match mapper.map_event(&delta).as_slice() {
+            [Ok(ProviderEvent::ToolCallDelta { call_id, .. })] => {
+                assert_eq!(*call_id, None, "the map is cleared at response end");
+            }
+            other => panic!("expected an uncorrelated ToolCallDelta, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn responses_mapper_delta_without_added_is_uncorrelated() {
+        // A delta whose item was never announced carries `call_id: None` —
+        // honest, never fabricated.
+        let mut mapper = ResponsesMapper::default();
+        let delta = SseEvent {
+            event_type: "response.function_call_arguments.delta".to_string(),
+            data: serde_json::json!({"item_id": "fc_x", "delta": "{"}),
+        };
+        match mapper.map_event(&delta).as_slice() {
+            [Ok(ProviderEvent::ToolCallDelta { call_id, .. })] => {
+                assert_eq!(*call_id, None);
+            }
+            other => panic!("expected ToolCallDelta, got {other:?}"),
+        }
+    }
 
     fn build_request() -> ProviderRequest {
         ProviderRequest {

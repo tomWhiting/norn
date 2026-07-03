@@ -91,14 +91,19 @@ impl EdgeAccum {
         }
     }
 
-    fn observe(&mut self, at: DateTime<Utc>, seq: u64) {
+    fn observe(&mut self, at: DateTime<Utc>, seq: Option<u64>) {
         if at < self.first_at {
             self.first_at = at;
         }
         if at > self.last_at {
             self.last_at = at;
         }
-        if seq > self.last_seq {
+        // Unsequenced injections (cron/watch/process/embedder) carry no
+        // router seq — they update the edge's timing but not its high-water
+        // sequence mark.
+        if let Some(seq) = seq
+            && seq > self.last_seq
+        {
             self.last_seq = seq;
         }
     }
@@ -206,7 +211,7 @@ pub(crate) fn derive_message_edges(
                 let accum = accums
                     .entry((from_id, to_id))
                     .or_insert_with(|| EdgeAccum::new(sent_at));
-                accum.observe(sent_at, seq);
+                accum.observe(sent_at, Some(seq));
                 message_edges.insert(message_id, (from_id, to_id));
                 accum.from_label = Some(from);
                 accum.to_label = Some(to);
@@ -220,6 +225,7 @@ pub(crate) fn derive_message_edges(
             AgentMessageLifecycle::Delivered {
                 message_id,
                 from_id,
+                from,
                 to_id,
                 seq,
                 delivered_at,
@@ -238,6 +244,15 @@ pub(crate) fn derive_message_edges(
                     .entry((from_id, to_id))
                     .or_insert_with(|| EdgeAccum::new(delivered_at));
                 accum.observe(delivered_at, seq);
+                // Fill the sender label from the delivery when no `Sent`
+                // record supplied it — the unsequenced harness sources
+                // (`norn:cron` / `norn:watch` / `norn:process-manager`) use a
+                // nil `from_id`, so without this the edge would render the
+                // bare nil UUID instead of the source's label. A later `Sent`
+                // still overwrites with the canonical registry label.
+                if accum.from_label.is_none() && !from.is_empty() {
+                    accum.from_label = Some(from);
+                }
                 accum.delivered_ids.insert(message_id);
             }
         }
@@ -286,7 +301,7 @@ fn handle_pending_lifecycle(
             let accum = accums
                 .entry((from_id, to_id))
                 .or_insert_with(|| EdgeAccum::new(queued_at));
-            accum.observe(queued_at, 0);
+            accum.observe(queued_at, None);
             accum.from_label = Some(from);
             accum.to_label = Some(to);
             if accum.queued_ids.insert(message_id) {
@@ -334,7 +349,7 @@ fn handle_pending_lifecycle(
             let accum = accums
                 .entry((from_id, to_id))
                 .or_insert_with(|| EdgeAccum::new(dequeued_at));
-            accum.observe(dequeued_at, 0);
+            accum.observe(dequeued_at, None);
             accum.dequeued_ids.insert(message_id);
         }
     }
@@ -443,8 +458,9 @@ mod tests {
         let lifecycle = AgentMessageLifecycle::Delivered {
             message_id,
             from_id,
+            from: String::new(),
             to_id,
-            seq,
+            seq: Some(seq),
             delivered_at: DateTime::parse_from_rfc3339(delivered_at).unwrap().to_utc(),
         };
         SessionEvent::Custom {
@@ -748,8 +764,9 @@ mod tests {
             let lifecycle = AgentMessageLifecycle::Delivered {
                 message_id: Uuid::from_u128(99),
                 from_id: child,
+                from: String::new(),
                 to_id: caller,
-                seq: 1,
+                seq: Some(1),
                 delivered_at: DateTime::parse_from_rfc3339("2026-06-12T10:00:00Z")
                     .unwrap()
                     .to_utc(),

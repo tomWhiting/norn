@@ -39,6 +39,9 @@ use crate::r#loop::config::AgentLoopConfig;
 use crate::r#loop::conversation_state::{ConversationRequestState, event_produces_prompt_message};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::tokens::estimate_prompt_tokens;
+use crate::provider::agent_event::{
+    AgentCompaction, AgentEventSender, COMPACTION_EVENT_TYPE, CompactionSummaryKind,
+};
 use crate::provider::request::{Message, ToolDefinition};
 use crate::provider::traits::Provider;
 use crate::provider::usage::Usage;
@@ -86,6 +89,10 @@ pub(super) struct PreflightArgs<'a> {
     /// The step's cooperative cancellation token, raced against the
     /// compaction-summarization provider call.
     pub(super) cancel: Option<&'a tokio_util::sync::CancellationToken>,
+    /// Live agent-event channel. When present and a compaction fires, a
+    /// [`AgentCompaction`] event is broadcast so embedders can surface the
+    /// history rewrite and account for the summarization spend.
+    pub(super) event_tx: Option<&'a AgentEventSender>,
 }
 
 /// What the preflight did, reported back to the runner.
@@ -210,7 +217,7 @@ pub(super) async fn run_context_preflight(
         args.store,
         SessionEvent::Custom {
             base: EventBase::new(args.store.last_event_id()),
-            event_type: "loop.compaction_summarization".to_string(),
+            event_type: COMPACTION_EVENT_TYPE.to_string(),
             data: serde_json::json!({
                 "summary_kind": summary_kind,
                 "summarization_error": summarization_error,
@@ -256,6 +263,32 @@ pub(super) async fn run_context_preflight(
         request_input_estimate =
             estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools);
     }
+
+    // C4: broadcast the completed compaction live so an embedder can surface
+    // the history rewrite and fold the summarization spend into its
+    // accounting — the twin of the `loop.compaction_summarization` audit
+    // record appended above. `tokens_before` is the pre-rewrite estimate over
+    // the full conversation; `tokens_after` reflects the compacted view.
+    if let Some(tx) = args.event_tx {
+        let summary_source = match &run.summary_source {
+            CompactionSummarySource::Llm => CompactionSummaryKind::Llm,
+            CompactionSummarySource::MechanicalDigestFallback { error } => {
+                CompactionSummaryKind::MechanicalDigestFallback {
+                    error: error.clone(),
+                }
+            }
+        };
+        tx.send_compaction(AgentCompaction {
+            compaction_id: run.outcome.compaction_id.clone(),
+            events_compacted: run.outcome.newly_superseded.len(),
+            tokens_before: u64::try_from(estimated).unwrap_or(u64::MAX),
+            tokens_after: u64::try_from(request_input_estimate).unwrap_or(u64::MAX),
+            summary_source,
+            summarization_usage: summarization_usage.clone(),
+            compacted_at: chrono::Utc::now(),
+        });
+    }
+
     Ok(PreflightOutcome {
         request_input_estimate: Some(request_input_estimate),
         summarization_usage,

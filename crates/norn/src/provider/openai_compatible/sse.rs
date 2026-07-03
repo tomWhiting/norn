@@ -153,10 +153,16 @@ impl ChatCompletionsMapper {
             state.call_id = Some(id);
         }
         if let Some(function) = call.function {
+            // The Chat Completions stream carries the tool-call `id` on the
+            // first chunk of each call; `state.call_id` is therefore `Some`
+            // from that chunk onward and correlates every fragment of this
+            // call. It is `None` only until the id chunk is seen — honest,
+            // never fabricated.
             if let Some(name) = function.name {
                 state.name = Some(name.clone());
                 out.push(Ok(ProviderEvent::ToolCallDelta {
                     item_id: key.item_id(),
+                    call_id: state.call_id.clone(),
                     name: Some(name),
                     arguments_delta: String::new(),
                     kind: ToolCallKind::Function,
@@ -167,6 +173,7 @@ impl ChatCompletionsMapper {
                 if !arguments.is_empty() {
                     out.push(Ok(ProviderEvent::ToolCallDelta {
                         item_id: key.item_id(),
+                        call_id: state.call_id.clone(),
                         name: None,
                         arguments_delta: arguments,
                         kind: ToolCallKind::Function,
@@ -187,10 +194,17 @@ impl ChatCompletionsMapper {
             tool_index: 0,
         };
         let state = self.tool_calls.entry(key).or_default();
+        // The deprecated top-level `function_call` streaming shape carries no
+        // per-call id, so there is no `call_id` to correlate — emit a literal
+        // `None`. (Reading `state.call_id` here would be wrong: this legacy
+        // slot shares `ToolKey { tool_index: 0 }` with the modern
+        // `tool_calls[0]` path, so a stream mixing both shapes could otherwise
+        // stamp that call's id onto a legacy delta — a fabricated correlation.)
         if let Some(name) = function.name {
             state.name = Some(name.clone());
             out.push(Ok(ProviderEvent::ToolCallDelta {
                 item_id: key.item_id(),
+                call_id: None,
                 name: Some(name),
                 arguments_delta: String::new(),
                 kind: ToolCallKind::Function,
@@ -201,6 +215,7 @@ impl ChatCompletionsMapper {
             if !arguments.is_empty() {
                 out.push(Ok(ProviderEvent::ToolCallDelta {
                     item_id: key.item_id(),
+                    call_id: None,
                     name: None,
                     arguments_delta: arguments,
                     kind: ToolCallKind::Function,

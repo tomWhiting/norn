@@ -58,17 +58,21 @@ pub(super) fn drain_and_partition(
 ///
 /// Router-sequenced messages sort by their per-recipient `seq` (the
 /// authoritative order — timestamps from concurrent senders are not
-/// monotonic); unsequenced direct sends follow, ordered by timestamp. Each
-/// router-sequenced message additionally appends an
-/// [`AgentMessageLifecycle::Delivered`] audit event immediately **after**
-/// its framed `UserMessage` (adjacent events, same parent chain) so the
-/// store records the delivery half of the `agent_message.*` trail, and —
-/// when the step has a live event channel — broadcasts the same `Delivered`
-/// via [`AgentEventSender::send_message`], mirroring the dual-carrier `Sent`
-/// emission at the send site. Direct sends that bypassed the router (no
-/// `seq`) have no `Sent` record to pair with and emit no `Delivered`. The
-/// audit follows (not precedes) the content append so a failure between the
-/// two can never leave a durable record claiming delivery of a message
+/// monotonic); unsequenced direct sends follow, ordered by timestamp. Every
+/// injected message — router-sequenced inter-agent traffic **and** the
+/// unsequenced harness sources (schedule/cron `norn:cron`, process-manager
+/// completions `norn:process-manager`, watch alerts `norn:watch`, and generic
+/// embedder injections) — appends an [`AgentMessageLifecycle::Delivered`]
+/// audit event immediately **after** its framed `UserMessage` (adjacent
+/// events, same parent chain) so the store records the delivery, and — when
+/// the step has a live event channel — broadcasts the same `Delivered` via
+/// [`AgentEventSender::send_message`] so an embedder never sees a response to
+/// an invisible stimulus. Router traffic carries `seq: Some(..)` and pairs
+/// with a preceding `Sent`; the unsequenced sources carry `seq: None` and
+/// have no `Sent` half. The `Delivered` `from` label preserves the injecting
+/// source (`norn:cron` etc.) even though those sources use a nil sender id.
+/// The audit follows (not precedes) the content append so a failure between
+/// the two can never leave a durable record claiming delivery of a message
 /// whose content never landed.
 ///
 /// # Partial-failure durability
@@ -109,57 +113,60 @@ pub(super) async fn inject_inbound_messages(
         .await?;
 
         // The content is durable; from here the message is delivered and
-        // must be consumed even if the secondary audit append fails.
-        let seq = msg.seq;
-        let delivered = seq.map(|seq| AgentMessageLifecycle::Delivered {
+        // must be consumed even if the secondary audit append fails. Every
+        // injected message emits the Delivered dual-carrier — router traffic
+        // (`seq: Some`) and unsequenced harness/embedder sources (`seq: None`)
+        // alike — so an embedder transcript never shows a response to an
+        // invisible stimulus. `from` preserves the injecting source's label
+        // (nil `from_id` for the internal `norn:*` sources).
+        let msg = msgs.remove(0);
+        let delivered = AgentMessageLifecycle::Delivered {
             message_id: msg.id,
             from_id: msg.sender_id,
+            from: msg.from.clone(),
             to_id: msg.to_id,
-            seq,
+            seq: msg.seq,
             delivered_at: chrono::Utc::now(),
-        });
-        let msg = msgs.remove(0);
+        };
 
-        if let Some(delivered) = delivered {
-            match serde_json::to_value(&delivered) {
-                Ok(data) => {
-                    // Best-effort: the message is already delivered, so a
-                    // failed audit append is an observability gap, not a
-                    // lost message — log it rather than re-queueing (which
-                    // would duplicate the delivered content) or dropping it
-                    // silently.
-                    if let Err(error) = append_and_notify(
-                        store,
-                        SessionEvent::Custom {
-                            base: EventBase::new(store.last_event_id()),
-                            event_type: AGENT_MESSAGE_DELIVERED_EVENT_TYPE.to_string(),
-                            data,
-                        },
-                        hooks,
-                    )
-                    .await
-                    {
-                        tracing::error!(
-                            message_id = %msg.id,
-                            %error,
-                            "failed to persist agent_message.delivered audit event \
-                             after its message was already delivered",
-                        );
-                    }
-                }
-                Err(error) => {
-                    // Unreachable for this plain struct, but a lost audit
-                    // record must never be silent.
+        match serde_json::to_value(&delivered) {
+            Ok(data) => {
+                // Best-effort: the message is already delivered, so a
+                // failed audit append is an observability gap, not a
+                // lost message — log it rather than re-queueing (which
+                // would duplicate the delivered content) or dropping it
+                // silently.
+                if let Err(error) = append_and_notify(
+                    store,
+                    SessionEvent::Custom {
+                        base: EventBase::new(store.last_event_id()),
+                        event_type: AGENT_MESSAGE_DELIVERED_EVENT_TYPE.to_string(),
+                        data,
+                    },
+                    hooks,
+                )
+                .await
+                {
                     tracing::error!(
                         message_id = %msg.id,
                         %error,
-                        "failed to serialize agent_message.delivered audit event",
+                        "failed to persist agent_message.delivered audit event \
+                         after its message was already delivered",
                     );
                 }
             }
-            if let Some(tx) = event_tx {
-                tx.send_message(delivered);
+            Err(error) => {
+                // Unreachable for this plain struct, but a lost audit
+                // record must never be silent.
+                tracing::error!(
+                    message_id = %msg.id,
+                    %error,
+                    "failed to serialize agent_message.delivered audit event",
+                );
             }
+        }
+        if let Some(tx) = event_tx {
+            tx.send_message(delivered);
         }
 
         user_event_ids.push(user_event_id);

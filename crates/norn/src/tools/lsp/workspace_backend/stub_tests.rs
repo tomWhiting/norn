@@ -111,13 +111,7 @@ while True:
 fn stub_server_config(binary: &str, env: Vec<(String, String)>) -> ServerConfig {
     ServerConfig {
         env,
-        ..ServerConfig::new(
-            "rust-analyzer",
-            binary,
-            ["rust"],
-            ["*.rs"],
-            ["Cargo.toml"],
-        )
+        ..ServerConfig::new("rust-analyzer", binary, ["rust"], ["*.rs"], ["Cargo.toml"])
     }
 }
 

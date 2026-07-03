@@ -955,8 +955,9 @@ mod tests {
         let lifecycle = AgentMessageLifecycle::Delivered {
             message_id,
             from_id,
+            from: String::new(),
             to_id,
-            seq,
+            seq: Some(seq),
             delivered_at: Utc::now(),
         };
         store

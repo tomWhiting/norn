@@ -437,6 +437,23 @@ pub(crate) fn agent_event_to_value(
             "type": "stream_retry",
             "attempt": retry.attempt,
         })),
+        norn::provider::AgentEventKind::Compaction(compaction) => {
+            // Serialize the typed payload verbatim, tagged for the driven
+            // protocol like the other non-provider events. A serialization
+            // failure must never silently drop the event — warn like the
+            // sibling `*_event_to_value` helpers.
+            let mut value = match serde_json::to_value(compaction) {
+                Ok(value) => value,
+                Err(err) => {
+                    tracing::warn!("failed to serialize compaction event to NDJSON: {err}");
+                    return None;
+                }
+            };
+            if let Value::Object(map) = &mut value {
+                map.insert("type".to_string(), json!("compaction"));
+            }
+            Some(value)
+        }
     }
 }
 
@@ -471,7 +488,7 @@ pub(crate) fn agent_event_method(agent_event: &norn::provider::AgentEvent) -> &'
         },
         AgentEventKind::Message(_) => "event/message",
         AgentEventKind::UsageEstimate(_) | AgentEventKind::StreamRetry(_) => "event/progress",
-        AgentEventKind::Subagent(_) => "event/raw",
+        AgentEventKind::Subagent(_) | AgentEventKind::Compaction(_) => "event/raw",
     }
 }
 
@@ -576,12 +593,17 @@ fn provider_event_to_value(event: &ProviderEvent) -> Option<Value> {
         }),
         ProviderEvent::ToolCallDelta {
             item_id,
+            call_id,
             name,
             arguments_delta,
             kind,
         } => json!({
             "type": "tool_call_delta",
             "item_id": item_id,
+            // C7: the `call_id` (`call_*`) an embedder correlates live tool
+            // input against — `null` when the provider has not surfaced it yet
+            // (Anthropic input fragments); always present on the Responses path.
+            "call_id": call_id,
             "name": name,
             "arguments_delta": arguments_delta,
             "kind": kind,
@@ -1057,6 +1079,7 @@ mod tests {
     fn provider_event_tool_call_delta_includes_item_id_name_arguments() {
         let event = ProviderEvent::ToolCallDelta {
             item_id: "fc_1".to_owned(),
+            call_id: Some("call_1".to_owned()),
             name: Some("read".to_owned()),
             arguments_delta: "{\"path\":\"".to_owned(),
             kind: norn::provider::request::ToolCallKind::Function,
@@ -1065,6 +1088,8 @@ mod tests {
         let parsed: Value = serde_json::from_str(&line).unwrap();
         assert_eq!(parsed["type"].as_str(), Some("tool_call_delta"));
         assert_eq!(parsed["item_id"].as_str(), Some("fc_1"));
+        // C7: the correlation id an embedder needs to match live tool input.
+        assert_eq!(parsed["call_id"].as_str(), Some("call_1"));
         assert_eq!(parsed["name"].as_str(), Some("read"));
     }
 

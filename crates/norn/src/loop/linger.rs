@@ -418,6 +418,7 @@ mod tests {
         vec![
             ProviderEvent::ToolCallDelta {
                 item_id: format!("tc-{answer}"),
+                call_id: None,
                 name: Some("structured_output".to_string()),
                 arguments_delta: format!(r#"{{"answer":"{answer}"}}"#),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -900,8 +901,93 @@ mod tests {
         }
         assert_eq!(
             delivered,
-            vec![(message_id, 7, recipient_id)],
+            vec![(message_id, Some(7), recipient_id)],
             "exactly one live Delivered must broadcast, paired to the routed send",
+        );
+    }
+
+    /// C1: an *unsequenced* injection (schedule/cron, watch, process
+    /// manager, or a direct embedder send) must broadcast the same
+    /// `Delivered` event so an embedder transcript never shows a response
+    /// to an invisible stimulus. `seq` is `None` and the harness `from`
+    /// label (`norn:cron`) is preserved even though `from_id` is nil.
+    #[tokio::test]
+    async fn unsequenced_injection_broadcasts_live_delivered_event() {
+        use crate::provider::agent_event::{
+            AgentEvent, AgentEventKind, AgentEventSender, AgentMessageLifecycle,
+        };
+
+        let provider = MockProvider::new(vec![text_turn("first"), text_turn("second")]);
+        let store = EventStore::new();
+        let mut ctx = crate::r#loop::loop_context::LoopContext::new("system");
+        let (tx, mut inbound) = inbound_channel(4);
+
+        let recipient_id = Uuid::new_v4();
+        let message_id = Uuid::new_v4();
+        // Cron/watch/process sources inject with a nil sender id and carry
+        // their identity in the `from` label.
+        tx.send(ChannelMessage {
+            id: message_id,
+            sender_id: Uuid::nil(),
+            from: "norn:cron".to_string(),
+            role: None,
+            to_id: recipient_id,
+            content: "scheduled reminder fired".to_string(),
+            kind: MessageKind::Steer,
+            seq: None,
+            timestamp: Utc::now(),
+        })
+        .await
+        .expect("send");
+
+        let (event_tx, mut event_rx) = tokio::sync::broadcast::channel::<AgentEvent>(16);
+        let sender = AgentEventSender::new(event_tx, recipient_id, "root".to_string());
+
+        let executor = MockToolExecutor::empty();
+        let config = AgentLoopConfig::default();
+        let result = run_agent_step(AgentStepRequest {
+            provider: &provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "prompt",
+            tools: &[],
+            output_schema: None,
+            model: "test-model",
+            config: &config,
+            event_tx: Some(&sender),
+            inbound: Some(&mut inbound),
+            loop_context: &mut ctx,
+            cancel: None,
+        })
+        .await
+        .expect("run_agent_step");
+        assert!(matches!(result, AgentStepResult::Completed { .. }));
+
+        let mut delivered = Vec::new();
+        while let Ok(event) = event_rx.try_recv() {
+            if let AgentEventKind::Message(AgentMessageLifecycle::Delivered {
+                message_id: mid,
+                from_id,
+                from,
+                seq,
+                to_id,
+                ..
+            }) = event.event
+            {
+                delivered.push((mid, from_id, from, seq, to_id));
+            }
+        }
+        assert_eq!(
+            delivered,
+            vec![(
+                message_id,
+                Uuid::nil(),
+                "norn:cron".to_string(),
+                None,
+                recipient_id
+            )],
+            "an unsequenced injection must broadcast a Delivered event with \
+             seq None and the norn:cron sender label preserved",
         );
     }
 

@@ -94,6 +94,7 @@ fn done_event_with_response(reason: StopReason, response_id: &str) -> ProviderEv
 fn tool_call_delta(item_id: &str, name: Option<&str>, args: &str) -> ProviderEvent {
     ProviderEvent::ToolCallDelta {
         item_id: item_id.to_string(),
+        call_id: None,
         name: name.map(String::from),
         arguments_delta: args.to_string(),
         kind: crate::provider::request::ToolCallKind::Function,

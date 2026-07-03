@@ -87,6 +87,22 @@ pub fn handle_agent_event(
         // there is no buffered partial to reset — the typed marker is
         // consumed here (deliberate ignore, not an unknown event).
         AgentEventKind::StreamRetry(_) => {}
+        // Auto-compaction rewrote the conversation: log it so the history
+        // change is explained rather than mysterious.
+        AgentEventKind::Compaction(compaction) => {
+            let reclaimed = compaction
+                .tokens_before
+                .saturating_sub(compaction.tokens_after);
+            state.activity_log.push(ActivityLogEntry {
+                agent_role: agent_event.agent_role.to_string(),
+                tool_name: format!(
+                    "compacted context (−{reclaimed} tok, {} events)",
+                    compaction.events_compacted
+                ),
+                description: None,
+                at: Instant::now(),
+            });
+        }
     }
     Ok(())
 }
@@ -113,9 +129,7 @@ fn message_activity_entry(
             format!("msg:{} → {to}", kind.as_str()),
             Some(content.clone()),
         ),
-        AgentMessageLifecycle::Delivered { seq, .. } => {
-            (format!("msg delivered (seq {seq})"), None)
-        }
+        AgentMessageLifecycle::Delivered { seq, .. } => (delivered_label(*seq), None),
     };
     ActivityLogEntry {
         agent_role: agent_role.to_string(),
@@ -131,8 +145,18 @@ fn message_activity(lifecycle: &AgentMessageLifecycle) -> AgentActivity {
             AgentActivity::Running(format!("msg:{} → {to}", kind.as_str()))
         }
         AgentMessageLifecycle::Delivered { seq, .. } => {
-            AgentActivity::Result(format!("msg delivered (seq {seq})"))
+            AgentActivity::Result(delivered_label(*seq))
         }
+    }
+}
+
+/// Human label for a delivered message: the router sequence when present,
+/// or a plain marker for an unsequenced injection (cron/watch/process/
+/// embedder), which has no seq to show.
+fn delivered_label(seq: Option<u64>) -> String {
+    match seq {
+        Some(seq) => format!("msg delivered (seq {seq})"),
+        None => "msg delivered".to_string(),
     }
 }
 
@@ -294,6 +318,7 @@ pub fn handle_provider_event(
         }
         ProviderEvent::ToolCallDelta {
             item_id,
+            call_id: _,
             name,
             arguments_delta,
             kind: _,
@@ -775,8 +800,9 @@ mod tests {
         let lifecycle = AgentMessageLifecycle::Delivered {
             message_id: uuid::Uuid::from_u128(9),
             from_id: uuid::Uuid::from_u128(1),
+            from: "/parent/worker".to_owned(),
             to_id: uuid::Uuid::from_u128(2),
-            seq: 7,
+            seq: Some(7),
             delivered_at: chrono::Utc::now(),
         };
         let entry = message_activity_entry("root", &lifecycle, std::time::Instant::now());
@@ -1015,6 +1041,7 @@ mod tests {
             "spawn/haiku",
             ProviderEvent::ToolCallDelta {
                 item_id: "tc".to_string(),
+                call_id: None,
                 name: Some("bash".to_string()),
                 arguments_delta: "{}".to_string(),
                 kind: norn::provider::request::ToolCallKind::Function,

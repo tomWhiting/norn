@@ -616,6 +616,7 @@ mod tests {
                     vec![
                         ProviderEvent::ToolCallDelta {
                             item_id: "tc-noop".to_owned(),
+                            call_id: None,
                             name: Some("noop".to_owned()),
                             arguments_delta: "{}".to_owned(),
                             kind: crate::provider::request::ToolCallKind::Function,

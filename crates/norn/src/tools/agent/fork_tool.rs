@@ -636,6 +636,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "structured-out".to_string(),
+                    call_id: None,
                     name: Some("structured_output".to_string()),
                     arguments_delta: payload.to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -765,6 +766,7 @@ mod tests {
             responses: StdMutex::new(vec![vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "structured-out".to_string(),
+                    call_id: None,
                     name: Some("structured_output".to_string()),
                     arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -1056,6 +1058,7 @@ mod tests {
         let turn1 = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "tc1".to_string(),
+                call_id: None,
                 name: Some("identity".to_string()),
                 arguments_delta: "{}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -1065,6 +1068,7 @@ mod tests {
         let turn2 = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "structured-out".to_string(),
+                call_id: None,
                 name: Some("structured_output".to_string()),
                 arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -1164,6 +1168,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "tc-skill".to_string(),
+                    call_id: None,
                     name: Some("skill".to_string()),
                     arguments_delta: json!({"name": "greet"}).to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -1173,6 +1178,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "structured-out".to_string(),
+                    call_id: None,
                     name: Some("structured_output".to_string()),
                     arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -1244,6 +1250,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "tc-cron".to_string(),
+                    call_id: None,
                     name: Some("cron".to_string()),
                     arguments_delta:
                         json!({"op": "schedule", "every": "2h", "message": "fork check-in"})
@@ -1255,6 +1262,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "structured-out".to_string(),
+                    call_id: None,
                     name: Some("structured_output".to_string()),
                     arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -1493,6 +1501,7 @@ mod tests {
                 vec![
                     ProviderEvent::ToolCallDelta {
                         item_id: "structured-out".to_string(),
+                        call_id: None,
                         name: Some("structured_output".to_string()),
                         arguments_delta: json!({"response": "done", "requirements": {}})
                             .to_string(),
@@ -1574,6 +1583,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "structured-out".to_string(),
+                    call_id: None,
                     name: Some("structured_output".to_string()),
                     arguments_delta: valid.to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -1721,6 +1731,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "tc-id".to_string(),
+                    call_id: None,
                     name: Some("identity".to_string()),
                     arguments_delta: "{}".to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -1738,6 +1749,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "structured-out".to_string(),
+                    call_id: None,
                     name: Some("structured_output".to_string()),
                     arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -1809,6 +1821,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "tc-id".to_string(),
+                    call_id: None,
                     name: Some("identity".to_string()),
                     arguments_delta: "{}".to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -1839,6 +1852,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "structured-out".to_string(),
+                    call_id: None,
                     name: Some("structured_output".to_string()),
                     arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -1946,6 +1960,7 @@ mod tests {
         let turn1 = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "tc1".to_string(),
+                call_id: None,
                 name: Some("victim".to_string()),
                 arguments_delta: r#"{"command": "rm -rf /"}"#.to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -1955,6 +1970,7 @@ mod tests {
         let turn2 = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "structured-out".to_string(),
+                call_id: None,
                 name: Some("structured_output".to_string()),
                 arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -2065,6 +2081,7 @@ mod tests {
         vec![
             ProviderEvent::ToolCallDelta {
                 item_id: item_id.to_string(),
+                call_id: None,
                 name: Some("read".to_string()),
                 arguments_delta: json!({ "path": path }).to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -2091,6 +2108,7 @@ mod tests {
             vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "structured-out".to_string(),
+                    call_id: None,
                     name: Some("structured_output".to_string()),
                     arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -2195,6 +2213,7 @@ mod tests {
         let turn1 = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "tc1".to_string(),
+                call_id: None,
                 name: Some("identity".to_string()),
                 arguments_delta: "{}".to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -2204,6 +2223,7 @@ mod tests {
         let turn2 = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "structured-out".to_string(),
+                call_id: None,
                 name: Some("structured_output".to_string()),
                 arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -2800,6 +2820,7 @@ mod tests {
         let turn1 = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "tc-log".to_string(),
+                call_id: None,
                 name: Some("action_log".to_string()),
                 arguments_delta: json!({ "query": "list" }).to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -2809,6 +2830,7 @@ mod tests {
         let turn2 = vec![
             ProviderEvent::ToolCallDelta {
                 item_id: "structured-out".to_string(),
+                call_id: None,
                 name: Some("structured_output".to_string()),
                 arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                 kind: crate::provider::request::ToolCallKind::Function,
@@ -2932,6 +2954,7 @@ mod tests {
             responses: StdMutex::new(vec![vec![
                 ProviderEvent::ToolCallDelta {
                     item_id: "structured-out".to_string(),
+                    call_id: None,
                     name: Some("structured_output".to_string()),
                     arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -3242,6 +3265,7 @@ mod tests {
                 0 => Ok(Box::pin(stream::iter(vec![
                     Ok(ProviderEvent::ToolCallDelta {
                         item_id: "tc-grandchild".to_string(),
+                        call_id: None,
                         name: Some("spawn_agent".to_string()),
                         arguments_delta: json!({
                             "task": "fork-grandchild-task",
@@ -3287,6 +3311,7 @@ mod tests {
                 _ => Ok(Box::pin(stream::iter(vec![
                     Ok(ProviderEvent::ToolCallDelta {
                         item_id: "structured-out".to_string(),
+                        call_id: None,
                         name: Some("structured_output".to_string()),
                         arguments_delta: json!({
                             "response": "fork done after grandchild",

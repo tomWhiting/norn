@@ -134,6 +134,7 @@ impl StepMachine<'_> {
                 prompt_message_len: self.new_input_len,
             },
             cancel: self.cancel.as_ref(),
+            event_tx: self.event_tx,
         })
         .await?;
         // Summarization tokens are real provider spend: account them
