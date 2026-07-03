@@ -1,4 +1,5 @@
 #![allow(
+    unsafe_code,
     clippy::unwrap_used,
     clippy::expect_used,
     clippy::panic,
@@ -53,6 +54,66 @@ fn expand_tilde_for_test(path: &str) -> std::path::PathBuf {
     }
 }
 
+/// Guard that points `NORN_HOME` at a temp dir so migrated/backgrounded spools
+/// land there, restoring the prior value on drop. Paired with `#[serial]`.
+struct HomeGuard {
+    prior: Option<std::ffi::OsString>,
+}
+
+impl HomeGuard {
+    fn set(path: &std::path::Path) -> Self {
+        let prior = std::env::var_os("NORN_HOME");
+        // SAFETY: paired with `#[serial]`; no concurrent reader observes it.
+        unsafe { std::env::set_var("NORN_HOME", path) };
+        Self { prior }
+    }
+}
+
+impl Drop for HomeGuard {
+    fn drop(&mut self) {
+        match &self.prior {
+            Some(v) => unsafe { std::env::set_var("NORN_HOME", v) },
+            None => unsafe { std::env::remove_var("NORN_HOME") },
+        }
+    }
+}
+
+/// A context carrying a `SessionId` and a (sinkless) `ProcessManager`, so the
+/// bash tool can background and migrate through it.
+fn ctx_with_manager(session: &str) -> (ToolContext, Arc<crate::process::ProcessManager>) {
+    let ctx = ToolContext::empty();
+    ctx.insert_extension(Arc::new(SessionId(session.to_owned())));
+    let manager = Arc::new(crate::process::ProcessManager::new(
+        Some(session.to_owned()),
+        None,
+    ));
+    ctx.insert_extension(Arc::clone(&manager));
+    (ctx, manager)
+}
+
+async fn wait_terminal(handle: &crate::process::ProcessHandle) {
+    for _ in 0..600 {
+        if !handle.is_running() {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("process did not terminate in time");
+}
+
+/// Wait until the spool's on-disk content contains `needle` (the drains flush
+/// asynchronously after the direct child exits).
+async fn wait_spool_contains(handle: &crate::process::ProcessHandle, needle: &str) {
+    for _ in 0..600 {
+        let (bytes, _) = handle.spool().read_from(0).await.expect("spool read");
+        if String::from_utf8_lossy(&bytes).contains(needle) {
+            return;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("spool never contained {needle:?}");
+}
+
 #[test]
 fn bash_args_schema_matches_previous_hand_written_schema() {
     let expected_schema = json!({
@@ -70,6 +131,10 @@ fn bash_args_schema_matches_previous_hand_written_schema() {
             "working_dir": {
                 "type": "string",
                 "description": "Working directory for the subprocess. Resolved like file-tool paths: `~` expands to the home directory and relative paths resolve against the agent's working directory."
+            },
+            "run_in_background": {
+                "type": "boolean",
+                "description": "Run detached in the background instead of waiting. Returns immediately with a process id and spool path; the process runs with no timeout until it exits or you kill it. Cannot be combined with `timeout`. Check on it with the `process` tool."
             }
         },
         "required": ["command"],
@@ -164,11 +229,14 @@ async fn output_over_threshold_redirects_to_file_with_shape_and_content() {
     assert!(absolute.parent().expect("session dir").is_dir());
 }
 
+/// R4: a foreground command that redirected before its timeout migrates to the
+/// background; the pre-migration (redirected) output is seeded into the spool.
 #[tokio::test]
-async fn timeout_with_partial_output_redirects_to_file() {
-    let ctx = ToolContext::empty();
-    let session_id = format!("bash-timeout-test-{}", Uuid::new_v4());
-    ctx.insert_extension(Arc::new(SessionId(session_id)));
+#[serial_test::serial]
+async fn timeout_with_partial_output_migrates_and_seeds_spool() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, manager) = ctx_with_manager("bash-migrate-redirect");
     let tool = BashTool::new();
     let env = envelope(json!({
         "command": "yes P | head -c 23000; printf '\\n'; sleep 5",
@@ -177,22 +245,16 @@ async fn timeout_with_partial_output_redirects_to_file() {
 
     let out = tool.execute(&env, &ctx).await.expect("bash ok");
 
-    assert!(out.is_error());
-    assert_eq!(out.content["timed_out"].as_bool(), Some(true));
+    assert!(!out.is_error(), "migration is a success: {:?}", out.content);
+    assert_eq!(out.content["migrated"].as_bool(), Some(true));
+    // The pre-migration snapshot was over the inline threshold, so it is
+    // reported as redirected; the spool holds the full pre-migration output.
     assert_eq!(out.content["output_redirected"].as_bool(), Some(true));
-    assert!(out.content["output_chars"].as_u64().unwrap_or_default() >= 23_001);
-    assert!(
-        out.content["hint"]
-            .as_str()
-            .expect("hint")
-            .contains("Command timed out after 1s")
-    );
-    let path = out.content["output_path"].as_str().expect("output_path");
-    let content = tokio::fs::read_to_string(expand_tilde_for_test(path))
-        .await
-        .expect("read log");
-    assert!(content.contains("P\nP\nP\n"));
-    assert!(content.len() > 23_000);
+    let process_id = out.content["process_id"].as_str().expect("process_id");
+    let handle = manager.get(process_id).expect("registered");
+    let (bytes, _) = handle.spool().read_from(0).await.expect("spool read");
+    assert!(String::from_utf8_lossy(&bytes).contains("P\nP\nP\n"));
+    handle.kill().await;
 }
 
 #[tokio::test]
@@ -224,8 +286,46 @@ async fn stderr_captured_separately() {
     );
 }
 
+/// R4 headline: a foreground command that outruns its timeout is migrated to
+/// the background instead of killed — it keeps running under the manager.
 #[tokio::test]
-async fn timeout_kills_long_running_process() {
+#[serial_test::serial]
+async fn timeout_migrates_long_running_process() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, manager) = ctx_with_manager("bash-migrate-running");
+    let tool = BashTool::new();
+    let env = envelope(json!({
+        "command": "sleep 3; echo finished",
+        "timeout": 1_u64,
+    }));
+
+    let started = std::time::Instant::now();
+    let out = tool.execute(&env, &ctx).await.expect("bash ok");
+    assert!(
+        started.elapsed() < std::time::Duration::from_secs(2),
+        "migration returns promptly at the timeout boundary",
+    );
+    assert!(!out.is_error(), "migration is a success: {:?}", out.content);
+    assert_eq!(out.content["migrated"].as_bool(), Some(true));
+    let process_id = out.content["process_id"].as_str().expect("process_id");
+    let handle = manager.get(process_id).expect("registered");
+    assert!(handle.is_running(), "the migrated process keeps running");
+
+    // ~2s later it exits on its own and the spool holds its post-migration output.
+    wait_terminal(&handle).await;
+    assert_eq!(
+        handle.status(),
+        crate::process::ProcessStatus::Exited { code: 0 }
+    );
+    wait_spool_contains(&handle, "finished").await;
+}
+
+/// R4: `ToolErrorKind::Timeout` is no longer produced by the bash tool. On the
+/// degenerate path where no manager is wired, a timeout still kills the tree,
+/// but the honest failure is the missing infrastructure — never `Timeout`.
+#[tokio::test]
+async fn timeout_without_manager_is_missing_extension_never_timeout() {
     let tool = BashTool::new();
     let env = envelope(json!({
         "command": "sleep 5",
@@ -237,6 +337,11 @@ async fn timeout_kills_long_running_process() {
         .expect("bash ok");
     assert!(out.is_error());
     assert_eq!(out.content["timed_out"].as_bool(), Some(true));
+    assert_eq!(
+        out.error().expect("error").kind,
+        crate::tool::failure::ToolErrorKind::MissingExtension,
+        "the removed Timeout failure is never produced",
+    );
 }
 
 #[tokio::test]
@@ -704,9 +809,10 @@ fn process_alive(pid: i64) -> bool {
         .is_ok_and(|s| s.success())
 }
 
-/// A timeout must kill the entire process tree, not just the `sh`
-/// wrapper: the grandchild `sleep` recorded in the pid file has to be
-/// gone shortly after the tool returns.
+/// On the degenerate no-manager path a timeout must still kill the entire
+/// process tree, not just the `sh` wrapper: the grandchild `sleep` recorded in
+/// the pid file has to be gone shortly after the tool returns. (With a manager
+/// wired the command would migrate instead — see the migration tests.)
 #[cfg(unix)]
 #[tokio::test]
 async fn timeout_kills_the_whole_process_tree() {
@@ -745,4 +851,320 @@ async fn timeout_kills_the_whole_process_tree() {
         );
         tokio::time::sleep(std::time::Duration::from_millis(100)).await;
     }
+}
+
+/// R3: `run_in_background` returns immediately with a process id, spool path,
+/// and check guidance; the process later shows Exited(0) with its output
+/// spooled.
+#[tokio::test]
+#[serial_test::serial]
+async fn run_in_background_returns_immediately_and_spools() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, manager) = ctx_with_manager("bash-bg");
+    let tool = BashTool::new();
+
+    let started = std::time::Instant::now();
+    let out = tool
+        .execute(
+            &envelope(json!({ "command": "sleep 1 && echo done", "run_in_background": true })),
+            &ctx,
+        )
+        .await
+        .expect("bash ok");
+    assert!(
+        started.elapsed() < std::time::Duration::from_millis(800),
+        "run_in_background returns well under a second",
+    );
+    assert!(!out.is_error());
+    assert_eq!(out.content["background"].as_bool(), Some(true));
+    let process_id = out.content["process_id"].as_str().expect("process_id");
+    assert!(out.content["spool_path"].as_str().is_some());
+    assert!(
+        out.content["hint"]
+            .as_str()
+            .expect("hint")
+            .contains("process tool")
+    );
+
+    let handle = manager.get(process_id).expect("registered");
+    wait_terminal(&handle).await;
+    assert_eq!(
+        handle.status(),
+        crate::process::ProcessStatus::Exited { code: 0 }
+    );
+    wait_spool_contains(&handle, "done").await;
+}
+
+/// R3: `run_in_background` combined with `timeout` is a structured
+/// `InvalidArguments` failure naming the conflict — a background process has no
+/// timeout (owner ruling).
+#[tokio::test]
+#[serial_test::serial]
+async fn run_in_background_with_timeout_is_invalid_arguments() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, _manager) = ctx_with_manager("bash-bg-conflict");
+    let tool = BashTool::new();
+    let err = tool
+        .execute(
+            &envelope(json!({
+                "command": "sleep 1",
+                "run_in_background": true,
+                "timeout": 30_u64,
+            })),
+            &ctx,
+        )
+        .await
+        .expect_err("conflict is a hard pre-validation error");
+    match err {
+        ToolError::PreValidationFailed { payload } => {
+            assert_eq!(
+                payload.kind,
+                crate::tool::failure::ToolErrorKind::InvalidArguments
+            );
+            assert!(payload.message.contains("timeout"));
+        }
+        other => panic!("expected InvalidArguments, got {other:?}"),
+    }
+}
+
+/// R3: a manager-owned background process keeps spooling a backgrounded
+/// grandchild's output after the direct child exits — no drain grace cuts it
+/// off (contrast with the foreground `streams_still_open` path).
+#[tokio::test]
+#[serial_test::serial]
+async fn run_in_background_captures_grandchild_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, manager) = ctx_with_manager("bash-bg-grandchild");
+    let tool = BashTool::new();
+    let out = tool
+        .execute(
+            &envelope(json!({
+                "command": "(sleep 1; echo late) & echo early",
+                "run_in_background": true,
+            })),
+            &ctx,
+        )
+        .await
+        .expect("bash ok");
+    let process_id = out.content["process_id"].as_str().expect("process_id");
+    let handle = manager.get(process_id).expect("registered");
+    wait_terminal(&handle).await; // direct child exits after printing "early"
+    wait_spool_contains(&handle, "late").await; // grandchild keeps spooling
+    let (bytes, _) = handle.spool().read_from(0).await.expect("spool read");
+    let text = String::from_utf8_lossy(&bytes);
+    assert!(text.contains("early"), "direct output: {text}");
+    assert!(
+        text.contains("late"),
+        "grandchild output kept spooling: {text}"
+    );
+    manager.shutdown();
+}
+
+/// R4 / F3 (a): `timeout: 0` waits forever and never migrates — even with a
+/// manager wired, a fast command run with `timeout: 0` completes inline and the
+/// migration machinery never engages (no `migrated` flag, no process id, no
+/// adopted registry entry).
+#[tokio::test]
+#[serial_test::serial]
+async fn timeout_zero_completes_without_migrating() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, manager) = ctx_with_manager("bash-timeout-zero");
+    let tool = BashTool::new();
+    let out = tool
+        .execute(
+            &envelope(json!({ "command": "echo done", "timeout": 0_u64 })),
+            &ctx,
+        )
+        .await
+        .expect("bash ok");
+    assert!(!out.is_error());
+    assert!(
+        out.content.get("migrated").is_none(),
+        "timeout:0 never migrates: {:?}",
+        out.content,
+    );
+    assert!(
+        out.content.get("process_id").is_none(),
+        "no background process is created",
+    );
+    assert_eq!(out.content["exit_code"].as_i64(), Some(0));
+    assert!(
+        out.content["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("done"),
+    );
+    assert!(
+        manager.list().is_empty(),
+        "the migration machinery never adopted anything",
+    );
+}
+
+/// Poll a file into existence and parse its trimmed contents. The migrating
+/// shell writes these marker files near t=0, well before migration at the 1s
+/// timeout, but poll defensively rather than racing the filesystem.
+#[cfg(unix)]
+async fn read_marker(path: &std::path::Path) -> String {
+    for _ in 0..600 {
+        if let Ok(contents) = std::fs::read_to_string(path) {
+            let trimmed = contents.trim();
+            if !trimmed.is_empty() {
+                return trimmed.to_owned();
+            }
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+    panic!("marker file {path:?} never appeared");
+}
+
+/// R4 / F3 (b): the process group survives migration intact. The adopted handle
+/// references the same pgid the shell was spawned into (on Unix the group
+/// leader's pid == its `$$`), and a kill *after* migration reaches the whole
+/// group — a backgrounded grandchild sharing the group is reaped.
+#[cfg(unix)]
+#[tokio::test]
+#[serial_test::serial]
+async fn pgid_survives_migration_and_post_migration_kill_reaches_the_group() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let pgid_file = dir.path().join("pgid.txt");
+    let gc_file = dir.path().join("grandchild.pid");
+    let (ctx, manager) = ctx_with_manager("bash-migrate-pgid");
+    let tool = BashTool::new();
+    // The shell records its own pid ($$, which equals the pgid under
+    // process_group(0)) and a backgrounded grandchild's pid, then sleeps past
+    // the 1s timeout so it migrates rather than completing.
+    let env = envelope(json!({
+        "command": format!(
+            "echo $$ > '{}'; sleep 30 & echo $! > '{}'; sleep 5",
+            pgid_file.display(),
+            gc_file.display(),
+        ),
+        "timeout": 1_u64,
+    }));
+    let out = tool.execute(&env, &ctx).await.expect("bash ok");
+    assert_eq!(out.content["migrated"].as_bool(), Some(true));
+    let process_id = out.content["process_id"].as_str().expect("process_id");
+    let handle = manager.get(process_id).expect("registered");
+
+    // Same pgid before/after adopt: the shell's recorded group id equals the
+    // adopted handle's pid.
+    let shell_pgid: u32 = read_marker(&pgid_file).await.parse().expect("pgid parses");
+    assert_eq!(
+        handle.pid(),
+        Some(shell_pgid),
+        "the adopted handle references the original process group, unchanged by migration",
+    );
+
+    // A grandchild sharing the group is alive before the kill.
+    let gc_pid: i64 = read_marker(&gc_file).await.parse().expect("gc pid parses");
+    assert!(process_alive(gc_pid), "grandchild alive before the kill");
+
+    // Kill after migration reaches the whole group: the grandchild dies.
+    handle.kill().await;
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+    while process_alive(gc_pid) {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "grandchild (pid {gc_pid}) survived the post-migration group kill",
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+}
+
+/// R4 / F5: when the pre-migration seed is delivered INLINE the model has
+/// already seen it, so the process's model-output cursor is advanced past the
+/// seed at adopt time — the first op=output returns only new post-migration
+/// output, never a verbatim re-delivery of the seed.
+#[tokio::test]
+#[serial_test::serial]
+async fn inline_migration_seed_is_not_re_delivered_by_first_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, manager) = ctx_with_manager("bash-migrate-inline-seed");
+    let tool = BashTool::new();
+    let env = envelope(json!({
+        "command": "echo seed-line; sleep 3; echo after-line",
+        "timeout": 1_u64,
+    }));
+    let out = tool.execute(&env, &ctx).await.expect("bash ok");
+    assert_eq!(out.content["migrated"].as_bool(), Some(true));
+    // A small seed is delivered inline in the migrated result.
+    assert!(
+        out.content["stdout"]
+            .as_str()
+            .unwrap_or_default()
+            .contains("seed-line"),
+        "the seed is delivered inline: {:?}",
+        out.content,
+    );
+    assert!(
+        out.content.get("output_redirected").is_none(),
+        "a small seed is inline, not redirected",
+    );
+    let process_id = out.content["process_id"].as_str().expect("process_id");
+    let handle = manager.get(process_id).expect("registered");
+
+    // Post-migration output arrives ~2s later.
+    wait_spool_contains(&handle, "after-line").await;
+    let (bytes, _) = manager
+        .model_output(process_id)
+        .await
+        .expect("known id")
+        .expect("read ok");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    assert!(
+        text.contains("after-line"),
+        "the first output returns the new post-migration output: {text}",
+    );
+    assert!(
+        !text.contains("seed-line"),
+        "the inline seed is NOT re-delivered — the model already saw it inline: {text}",
+    );
+    handle.kill().await;
+}
+
+/// R4 / F5: when the pre-migration seed is a disk REDIRECT (large output) the
+/// model saw only a spool path, never the bytes — so the model cursor stays at
+/// 0 and the first op=output returns the full seed from the start.
+#[tokio::test]
+#[serial_test::serial]
+async fn redirected_migration_seed_is_delivered_by_first_output() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, manager) = ctx_with_manager("bash-migrate-redirect-seed");
+    let tool = BashTool::new();
+    // >22000 chars before the 1s timeout forces a redirect snapshot.
+    let env = envelope(json!({
+        "command": "yes REDIRECTSEED | head -c 23000; printf '\\n'; sleep 5",
+        "timeout": 1_u64,
+    }));
+    let out = tool.execute(&env, &ctx).await.expect("bash ok");
+    assert_eq!(out.content["migrated"].as_bool(), Some(true));
+    assert_eq!(
+        out.content["output_redirected"].as_bool(),
+        Some(true),
+        "a large seed is a redirect, not inline: {:?}",
+        out.content,
+    );
+    let process_id = out.content["process_id"].as_str().expect("process_id");
+    let handle = manager.get(process_id).expect("registered");
+
+    // The model cursor is at 0: the first op=output returns the seed content the
+    // model never saw inline.
+    let (bytes, _) = manager
+        .model_output(process_id)
+        .await
+        .expect("known id")
+        .expect("read ok");
+    let text = String::from_utf8_lossy(&bytes).into_owned();
+    assert!(
+        text.contains("REDIRECTSEED"),
+        "the redirected seed IS delivered by the first output (cursor started at 0)",
+    );
+    handle.kill().await;
 }

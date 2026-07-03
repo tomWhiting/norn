@@ -7,7 +7,7 @@
 //! registry handle are published on the registry's shared [`ToolContext`] so
 //! the tool resolves them exactly as it would at runtime.
 
-#![allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
+#![allow(unsafe_code, clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 
 use std::sync::Arc;
 
@@ -186,6 +186,90 @@ fn seed_original(
         post_validate_outcome: None,
         level_1_only: false,
     });
+}
+
+/// NP-001 R7: dispatching the `check_output` follow-up a backgrounded bash
+/// result registers actually runs the `process` tool's `output` op for that
+/// process, end-to-end through `dispatch_follow_up`.
+#[tokio::test]
+#[serial_test::serial]
+async fn dispatched_check_output_runs_the_process_output_op() {
+    let dir = tempfile::tempdir().unwrap();
+    let prior = std::env::var_os("NORN_HOME");
+    // SAFETY: this test is `#[serial]`; no concurrent reader observes the var.
+    unsafe { std::env::set_var("NORN_HOME", dir.path()) };
+
+    let mut registry = ToolRegistry::new();
+    registry.register(Box::new(FollowUpTool::new()));
+    registry.register(Box::new(crate::tools::process::ProcessTool::new()));
+    let registry = Arc::new(registry);
+    let ctx = registry.shared_context().expect("shared context");
+    let log = Arc::new(ActionLog::new(Arc::new(EventStore::new())));
+    ctx.insert_extension(Arc::clone(&log));
+    ctx.insert_extension(Arc::new(SharedToolRegistry(Arc::clone(&registry))));
+
+    let manager = Arc::new(crate::process::ProcessManager::new(
+        Some("sess".to_owned()),
+        None,
+    ));
+    ctx.insert_extension(Arc::clone(&manager));
+    let cwd = std::env::current_dir().unwrap();
+    let handle = manager
+        .spawn("echo hello-followup", &cwd, None)
+        .await
+        .unwrap();
+    // Wait for the output to be spooled (the drains flush asynchronously after
+    // the child exits), so the dispatched output op returns it deterministically.
+    for _ in 0..600 {
+        let (bytes, _) = handle.spool().read_from(0).await.unwrap();
+        if String::from_utf8_lossy(&bytes).contains("hello-followup") {
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    // A backgrounded bash result registers exactly this follow-up (Replace mode).
+    seed_original(
+        &log,
+        "tc-bg",
+        serde_json::json!({ "command": "echo hello-followup", "run_in_background": true }),
+        vec![follow_up_action_with_args_mode(
+            "check_output",
+            "process",
+            serde_json::json!({ "op": "output", "id": handle.label() }),
+            FollowUpArgsMode::Replace,
+            ExpiryCondition::Never,
+        )],
+    );
+
+    let out = registry
+        .execute(
+            "follow_up",
+            "test-call",
+            serde_json::json!({ "tool_call_id": "tc-bg", "action": "check_output" }),
+        )
+        .await
+        .expect("dispatch succeeds");
+
+    assert_eq!(
+        out["process_id"],
+        handle.label(),
+        "the correct process was queried"
+    );
+    assert!(
+        out["output"]
+            .as_str()
+            .unwrap_or("")
+            .contains("hello-followup"),
+        "the process output op ran and returned the process's output: {out}",
+    );
+
+    manager.shutdown();
+    // SAFETY: restore under the same `#[serial]` guarantee.
+    match prior {
+        Some(v) => unsafe { std::env::set_var("NORN_HOME", v) },
+        None => unsafe { std::env::remove_var("NORN_HOME") },
+    }
 }
 
 #[tokio::test]

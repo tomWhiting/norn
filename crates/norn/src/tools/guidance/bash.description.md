@@ -1,1 +1,1 @@
-Execute a shell command via sh -c. Returns combined exit code, stdout, and stderr. Commands are classified into a risk tier before execution.
+Execute a shell command via sh -c. Returns combined exit code, stdout, and stderr. Commands are classified into a risk tier before execution. Pass run_in_background to detach a long-running command and get a process id instead of waiting; a foreground command that outruns its timeout is moved to the background rather than killed. Track either with the process tool.

@@ -653,6 +653,18 @@ impl AgentBuilder {
             &event_store,
             agent_id,
             self.inbound_tx.clone(),
+            agent_registry_for_schedule.clone(),
+        );
+        // NP-001 background-process manager: install it on the shared context
+        // (the `process` tool resolves it) and bind its shutdown guard to the
+        // loop context. Ordered after scheduling so the durable pending store
+        // exists — the completion sink queues completions into it.
+        crate::agent::arming::arm_process_manager(
+            shared.as_ref(),
+            &mut loop_context,
+            &event_store,
+            agent_id,
+            self.inbound_tx.clone(),
             agent_registry_for_schedule,
         );
 
@@ -1370,6 +1382,7 @@ mod tests {
             "close_agent",
             "agents",
             "cron",
+            "process",
         ];
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")

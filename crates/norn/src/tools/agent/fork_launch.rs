@@ -172,6 +172,17 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
                     .get_extension::<crate::tools::agent::handle::AgentWakeRegistry>(),
             },
         ));
+        // NP-001: arm the fork's own background-process manager on its tool
+        // context, mirroring the spawn launch — processes are in-session state
+        // and are killed when the fork's wrapper task ends.
+        crate::agent::arming::arm_process_manager(
+            fork_ctx.as_ref(),
+            &mut loop_ctx,
+            &child_store,
+            fork_id,
+            Some(inbound_tx.clone()),
+            Some(Arc::clone(&agent_registry)),
+        );
     } else {
         // Structurally unreachable: `SubAgentExecutor::shared_context`
         // always returns the fork context it was constructed with.

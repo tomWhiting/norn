@@ -14,15 +14,19 @@ use parking_lot::RwLock;
 use uuid::Uuid;
 
 use crate::agent::pending_messages::PendingAgentMessages;
+use crate::agent::process_delivery::ProcessCompletionDelivery;
 use crate::agent::registry::AgentRegistry;
 use crate::r#loop::config::AgentLoopConfig;
+use crate::r#loop::inbound::InboundSender;
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::tokens::SimpleTokenEstimator;
+use crate::process::{ProcessManager, ProcessManagerGuard};
 use crate::session::context_edit::ContextEdits;
 use crate::session::store::EventStore;
 use crate::skill::SkillCatalog;
-use crate::tool::context::ToolContext;
+use crate::tool::context::{SessionId, ToolContext};
 use crate::tool::registry::ToolRegistry;
+use crate::tools::agent::AgentWakeRegistry;
 
 /// Whether the `skill` tool is on a child's resolved tool surface: it must
 /// be present (and un-gated) in the shared parent registry *and* admitted
@@ -190,10 +194,81 @@ pub(crate) fn arm_root_schedule_executor(
     ));
 }
 
+/// Arm an agent's background-process manager (NP-001) — the single shared
+/// mechanism every launch path (root build, spawn, fork) uses, so the manager
+/// wiring cannot drift between root and children, exactly like
+/// [`arm_root_schedule_executor`] and its child counterparts.
+///
+/// Builds the durable completion sink ([`ProcessCompletionDelivery`]) from the
+/// same handles the schedule executor uses, constructs a [`ProcessManager`]
+/// whose spools live under this agent's session (or a per-run UUID when no
+/// [`SessionId`] is installed), installs it as a `ToolContext` extension (the
+/// `process` tool resolves it), and binds its [`ProcessManagerGuard`] to the
+/// loop context so dropping the agent kills every still-running process group.
+/// Processes are in-session state: a resumed session starts with an empty
+/// registry (spools remain on disk), so nothing is rebuilt from events here.
+///
+/// Call after scheduling is armed, which ensures the durable pending store
+/// exists — the completion sink queues into the same store.
+pub(crate) fn arm_process_manager(
+    shared: &ToolContext,
+    loop_context: &mut LoopContext,
+    event_store: &Arc<EventStore>,
+    agent_id: Uuid,
+    inbound_tx: Option<InboundSender>,
+    agent_registry: Option<Arc<RwLock<AgentRegistry>>>,
+) {
+    let session_id = shared.get_extension::<SessionId>().map(|s| s.0.clone());
+    let sink = Arc::new(ProcessCompletionDelivery {
+        agent_id,
+        inbound: inbound_tx,
+        pending: loop_context.pending_agent_messages.clone(),
+        event_store: Arc::clone(event_store),
+        registry: agent_registry,
+        wake_registry: shared.get_extension::<AgentWakeRegistry>(),
+    });
+    let manager = Arc::new(ProcessManager::new(session_id, Some(sink)));
+    shared.insert_extension(Arc::clone(&manager));
+    loop_context.process_manager = Some(ProcessManagerGuard::new(manager));
+}
+
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
 mod tests {
     use super::*;
+
+    /// A `NORN_HOME` guard so a spawned process's spool lands under a temp dir,
+    /// serialised via `#[serial]`.
+    struct HomeGuard {
+        prior: Option<std::ffi::OsString>,
+    }
+
+    impl HomeGuard {
+        fn set(path: &std::path::Path) -> Self {
+            let prior = std::env::var_os("NORN_HOME");
+            // SAFETY: paired with `#[serial]`; no concurrent reader observes it.
+            unsafe { std::env::set_var("NORN_HOME", path) };
+            Self { prior }
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(v) => unsafe { std::env::set_var("NORN_HOME", v) },
+                None => unsafe { std::env::remove_var("NORN_HOME") },
+            }
+        }
+    }
+
+    /// Whether a pid is still live, via `kill -0` (no unsafe libc call).
+    #[cfg(unix)]
+    fn process_alive(pid: i64) -> bool {
+        std::process::Command::new("kill")
+            .args(["-0", &pid.to_string()])
+            .status()
+            .is_ok_and(|s| s.success())
+    }
 
     /// The shared arming installs the estimator and the context-edit
     /// tracker on the loop context and fills an unset window from the
@@ -277,6 +352,102 @@ mod tests {
         );
         assert!(loop_context.token_estimator.is_some());
         assert!(loop_context.context_edits.is_some());
+    }
+
+    /// NP-001 R9: arming installs the `ProcessManager` extension (the `process`
+    /// tool resolves it) and binds its shutdown guard to the loop context, for
+    /// any agent — root or child — that goes through this shared mechanism.
+    #[test]
+    fn arm_process_manager_installs_extension_and_shutdown_guard() {
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SessionId("sess".to_owned())));
+        let mut loop_context = LoopContext::new("base");
+        loop_context.pending_agent_messages = Some(Arc::new(PendingAgentMessages::new()));
+        let event_store = Arc::new(EventStore::new());
+        let agent_id = Uuid::new_v4();
+
+        assert!(ctx.get_extension::<ProcessManager>().is_none());
+        arm_process_manager(&ctx, &mut loop_context, &event_store, agent_id, None, None);
+
+        assert!(
+            ctx.get_extension::<ProcessManager>().is_some(),
+            "the process tool's manager extension is installed",
+        );
+        assert!(
+            loop_context.process_manager.is_some(),
+            "the shutdown guard is bound to the loop context",
+        );
+    }
+
+    /// R9 / F4: dropping the `LoopContext` (which owns the
+    /// `ProcessManagerGuard`) runs the manager's shutdown at the runtime-drop
+    /// level — a still-running process group is killed, so an OS pid probe of a
+    /// backgrounded grandchild fails afterwards. This proves teardown through
+    /// the real arming path and guard drop, not merely a direct
+    /// `ProcessManager::shutdown` call.
+    #[cfg(unix)]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn dropping_the_loop_context_kills_running_process_groups() {
+        let dir = tempfile::tempdir().unwrap();
+        let _home = HomeGuard::set(dir.path());
+        let gc_file = dir.path().join("grandchild.pid");
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(SessionId("sess".to_owned())));
+        let mut loop_context = LoopContext::new("base");
+        loop_context.pending_agent_messages = Some(Arc::new(PendingAgentMessages::new()));
+        let event_store = Arc::new(EventStore::new());
+        let agent_id = Uuid::new_v4();
+
+        arm_process_manager(&ctx, &mut loop_context, &event_store, agent_id, None, None);
+        let manager = ctx
+            .get_extension::<ProcessManager>()
+            .expect("manager armed on the tool context");
+        let cwd = std::env::current_dir().unwrap();
+        let handle = manager
+            .spawn(
+                &format!("sleep 300 & echo $! > '{}'; sleep 300", gc_file.display()),
+                &cwd,
+                None,
+            )
+            .await
+            .unwrap();
+
+        // Probe the backgrounded grandchild (it shares the process group): its
+        // parent is the shell, so after the group kill init reaps it and
+        // `kill -0` then fails. The shell child itself would linger as a zombie
+        // (the aborted supervisor never reaps it), so it is not a reliable probe.
+        let gc_pid: i64 = {
+            let mut found = None;
+            for _ in 0..600 {
+                if let Ok(text) = std::fs::read_to_string(&gc_file)
+                    && let Ok(pid) = text.trim().parse()
+                {
+                    found = Some(pid);
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+            }
+            found.expect("grandchild pid recorded")
+        };
+        assert!(process_alive(gc_pid), "the grandchild is alive after spawn");
+        let _ = handle;
+
+        // Drop the loop context: its ProcessManagerGuard shuts the manager down
+        // and kills the still-running group — even though the manager Arc still
+        // lingers on the tool context.
+        drop(loop_context);
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while process_alive(gc_pid) {
+            assert!(
+                std::time::Instant::now() < deadline,
+                "grandchild (pid {gc_pid}) survived the loop-context drop",
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+        // The manager Arc lingered, but the guard drop already ran shutdown.
+        drop(manager);
     }
 
     /// A child's skill listing is gated on the `skill` tool being on the

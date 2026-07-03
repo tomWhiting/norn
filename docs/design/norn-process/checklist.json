@@ -4,63 +4,171 @@
     {
       "name": "Process Manager Core",
       "items": [
-        {"id": "C1", "text": "process/mod.rs contains only pub mod declarations and re-exports; logic lives in manager.rs, spool.rs, handle.rs.", "done": false},
-        {"id": "C2", "text": "ProcessManager spawns background commands detached from any tool call, in their own process group, owning the stdout/stderr pipes for the process lifetime.", "done": false},
-        {"id": "C3", "text": "The manager registry tracks processes under stable short ids with statuses (running, exited, killed) and imposes no cap on process count.", "done": false},
-        {"id": "C4", "text": "A manager-owned background process is subject to no timeout, turn limit, or lifetime bound — it runs until it exits or is killed.", "done": false},
-        {"id": "C5", "text": "ProcessHandle exposes status inspection, process-group kill, and exit notification.", "done": false},
-        {"id": "C6", "text": "Runtime shutdown kills every still-running manager-owned process group and finalizes its spool; spool files persist on disk after shutdown.", "done": false}
+        {
+          "id": "C1",
+          "text": "process/mod.rs contains only pub mod declarations and re-exports; logic lives in manager.rs, spool.rs, handle.rs.",
+          "done": true
+        },
+        {
+          "id": "C2",
+          "text": "ProcessManager spawns background commands detached from any tool call, in their own process group, owning the stdout/stderr pipes for the process lifetime.",
+          "done": true
+        },
+        {
+          "id": "C3",
+          "text": "The manager registry tracks processes under stable short ids with statuses (running, exited, killed) and imposes no cap on process count.",
+          "done": true
+        },
+        {
+          "id": "C4",
+          "text": "A manager-owned background process is subject to no timeout, turn limit, or lifetime bound — it runs until it exits or is killed.",
+          "done": true
+        },
+        {
+          "id": "C5",
+          "text": "ProcessHandle exposes status inspection, process-group kill, and exit notification.",
+          "done": true
+        },
+        {
+          "id": "C6",
+          "text": "Runtime shutdown kills every still-running manager-owned process group and finalizes its spool; spool files persist on disk after shutdown.",
+          "done": true
+        }
       ]
     },
     {
       "name": "Spool",
       "items": [
-        {"id": "C7", "text": "Each process spools stdout and stderr to a single arrival-ordered on-disk file with stream-tagged lines and no size cap.", "done": false},
-        {"id": "C8", "text": "Spools live under <norn_dir>/outputs/<session_id>/processes/ when a SessionId exists, and under a generated run-id in the same tree otherwise (NORN_HOME-aware via config::paths::norn_dir).", "done": false},
-        {"id": "C9", "text": "Incremental spool reads return only content appended since the reader's cursor; multiple readers hold independent cursors.", "done": false},
-        {"id": "C10", "text": "The spool publishes append notifications (committed-length watch) so a subscriber reacts to new output without polling — the watch attach seam.", "done": false}
+        {
+          "id": "C7",
+          "text": "Each process spools stdout and stderr to a single arrival-ordered on-disk file with stream-tagged lines and no size cap.",
+          "done": true
+        },
+        {
+          "id": "C8",
+          "text": "Spools live under <norn_dir>/outputs/<session_id>/processes/ when a SessionId exists, and under a generated run-id in the same tree otherwise (NORN_HOME-aware via config::paths::norn_dir).",
+          "done": true
+        },
+        {
+          "id": "C9",
+          "text": "Incremental spool reads return only content appended since the reader's cursor; multiple readers hold independent cursors.",
+          "done": true
+        },
+        {
+          "id": "C10",
+          "text": "The spool publishes append notifications (committed-length watch) so a subscriber reacts to new output without polling — the watch attach seam.",
+          "done": true
+        }
       ]
     },
     {
       "name": "Bash Integration",
       "items": [
-        {"id": "C11", "text": "bash accepts run_in_background and, when true, returns immediately with the process id, spool path, and check instructions.", "done": false},
-        {"id": "C12", "text": "A foreground bash command reaching its timeout is migrated to the background manager instead of killed; the result states it moved and how to check on it.", "done": false},
-        {"id": "C13", "text": "Foreground drain-grace semantics for shell-backgrounded children (cmd &) are byte-for-byte unchanged; manager-owned processes never pass through drain-grace.", "done": false},
-        {"id": "C14", "text": "Backgrounded and migrated bash results register follow-up actions for checking output and killing the process.", "done": false}
+        {
+          "id": "C11",
+          "text": "bash accepts run_in_background and, when true, returns immediately with the process id, spool path, and check instructions.",
+          "done": true
+        },
+        {
+          "id": "C12",
+          "text": "A foreground bash command reaching its timeout is migrated to the background manager instead of killed; the result states it moved and how to check on it.",
+          "done": true
+        },
+        {
+          "id": "C13",
+          "text": "Foreground drain-grace semantics for shell-backgrounded children (cmd &) are byte-for-byte unchanged; manager-owned processes never pass through drain-grace.",
+          "done": true
+        },
+        {
+          "id": "C14",
+          "text": "Backgrounded and migrated bash results register follow-up actions for checking output and killing the process.",
+          "done": true
+        }
       ]
     },
     {
       "name": "Process Tool",
       "items": [
-        {"id": "C15", "text": "A process tool provides output, status, kill, and list operations over manager-owned processes.", "done": false},
-        {"id": "C16", "text": "The output operation returns new-since-last-check content plus current status, advancing the model's cursor.", "done": false}
+        {
+          "id": "C15",
+          "text": "A process tool provides output, status, kill, and list operations over manager-owned processes.",
+          "done": true
+        },
+        {
+          "id": "C16",
+          "text": "The output operation returns new-since-last-check content plus current status, advancing the model's cursor.",
+          "done": true
+        }
       ]
     },
     {
       "name": "Wake on Completion",
       "items": [
-        {"id": "C17", "text": "Process exit delivers a completion notice as an injected message via the durable path: live inbound steer when a channel is open, else the durable pending store with an agent_message.queued audit, plus an idle-child wake request.", "done": false},
-        {"id": "C18", "text": "A completion notice wakes a lingering agent at its would-stop boundary via the steer wake set.", "done": false}
+        {
+          "id": "C17",
+          "text": "Process exit delivers a completion notice as an injected message via the durable path: live inbound steer when a channel is open, else the durable pending store with an agent_message.queued audit, plus an idle-child wake request.",
+          "done": true
+        },
+        {
+          "id": "C18",
+          "text": "A completion notice wakes a lingering agent at its would-stop boundary via the steer wake set.",
+          "done": true
+        }
       ]
     },
     {
       "name": "Watches",
       "items": [
-        {"id": "C19", "text": "A watch (brief + agent-authored filter script) attaches to any manager-owned process at spawn or later, and detaches via unwatch; list surfaces active watches.", "done": false},
-        {"id": "C20", "text": "Watch filters run deterministically against new spool regions on append notification — no model calls anywhere in the watch path.", "done": false},
-        {"id": "C21", "text": "A filter match delivers an injected alert message carrying watch id, process id, brief, the matching excerpt, and the examined spool range.", "done": false},
-        {"id": "C22", "text": "Filter execution failures are surfaced to the agent as alerts — never swallowed, never silently disabling the watch.", "done": false},
-        {"id": "C23", "text": "On process exit the remaining unexamined spool region is filtered before the completion notice is delivered; watches then end.", "done": false},
-        {"id": "C24", "text": "No caps on watch count per process or matches per watch.", "done": false},
-        {"id": "C25", "text": "The watch layer consumes only the ProcessHandle subscription seam — it never reaches into manager or spool internals.", "done": false}
+        {
+          "id": "C19",
+          "text": "A watch (brief + agent-authored filter script) attaches to any manager-owned process at spawn or later, and detaches via unwatch; list surfaces active watches.",
+          "done": false
+        },
+        {
+          "id": "C20",
+          "text": "Watch filters run deterministically against new spool regions on append notification — no model calls anywhere in the watch path.",
+          "done": false
+        },
+        {
+          "id": "C21",
+          "text": "A filter match delivers an injected alert message carrying watch id, process id, brief, the matching excerpt, and the examined spool range.",
+          "done": false
+        },
+        {
+          "id": "C22",
+          "text": "Filter execution failures are surfaced to the agent as alerts — never swallowed, never silently disabling the watch.",
+          "done": false
+        },
+        {
+          "id": "C23",
+          "text": "On process exit the remaining unexamined spool region is filtered before the completion notice is delivered; watches then end.",
+          "done": false
+        },
+        {
+          "id": "C24",
+          "text": "No caps on watch count per process or matches per watch.",
+          "done": false
+        },
+        {
+          "id": "C25",
+          "text": "The watch layer consumes only the ProcessHandle subscription seam — it never reaches into manager or spool internals.",
+          "done": false
+        }
       ]
     },
     {
       "name": "Gates",
       "items": [
-        {"id": "C26", "text": "cargo clippy --workspace --all-targets -- -D warnings passes clean.", "done": false},
-        {"id": "C27", "text": "cargo fmt --check passes clean.", "done": false}
+        {
+          "id": "C26",
+          "text": "cargo clippy --workspace --all-targets -- -D warnings passes clean.",
+          "done": false
+        },
+        {
+          "id": "C27",
+          "text": "cargo fmt --check passes clean.",
+          "done": false
+        }
       ]
     }
   ]

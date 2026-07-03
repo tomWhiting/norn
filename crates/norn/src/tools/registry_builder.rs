@@ -113,6 +113,19 @@ pub fn register_cron_tool(registry: &mut ToolRegistry) {
     registry.register(Box::new(crate::tools::cron::CronTool::new()));
 }
 
+/// Register the `process` background-process control tool.
+///
+/// Deliberately **not** part of [`register_standard_tools`]: the tool resolves
+/// the [`ProcessManager`](crate::process::ProcessManager) extension that
+/// assembly installs (and arms the completion sink for), so it is registered
+/// only by assembly paths that also wire the manager — exactly like `cron` and
+/// its schedule handle. A registry assembled without the manager therefore
+/// carries no `process` tool at all, rather than one that fails
+/// `MissingExtension` at call time.
+pub fn register_process_tool(registry: &mut ToolRegistry) {
+    registry.register(Box::new(crate::tools::process::ProcessTool::new()));
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {

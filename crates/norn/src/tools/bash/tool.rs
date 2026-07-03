@@ -10,11 +10,12 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::ToolError;
+use crate::process::{ProcessHandle, ProcessManager};
 use crate::tool::ToolArgs;
-use crate::tool::context::ToolContext;
+use crate::tool::context::{ProcessEnv, ToolContext};
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
-use crate::tool::follow_up::{Confidence, ExpiryCondition, FollowUpAction};
+use crate::tool::follow_up::{Confidence, ExpiryCondition, FollowUpAction, FollowUpArgsMode};
 use crate::tool::lifecycle::PreValidateOutcome;
 use crate::tool::output_budget::READ_DEFAULT_LINE_LIMIT;
 use crate::tool::risk::{BashRiskTier, classify_risk};
@@ -23,8 +24,13 @@ use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 
 use super::cd_track::apply_cd_from_command;
 use super::output::{CapturedOutput, OutputCapture};
-use super::process::{DEFAULT_DRAIN_GRACE, run_shell};
+use super::process::{DEFAULT_DRAIN_GRACE, ShellOutcome, run_shell};
 use crate::tools::confinement::check_confinement;
+
+/// The [`ProcessManager`] extension type name, used in the typed
+/// missing-extension failure when a background spawn or migration is requested
+/// without a manager wired.
+const PROCESS_MANAGER_EXTENSION: &str = "norn::process::ProcessManager";
 
 /// Default command timeout (seconds) when none is supplied by the caller.
 pub(super) const DEFAULT_TIMEOUT_SECS: u64 = 120;
@@ -49,6 +55,9 @@ pub(super) struct BashArgs {
     /// Working directory for the subprocess. Resolved like file-tool paths: `~` expands to the home directory and relative paths resolve against the agent's working directory.
     #[serde(default)]
     working_dir: Option<String>,
+    /// Run detached in the background instead of waiting. Returns immediately with a process id and spool path; the process runs with no timeout until it exits or you kill it. Cannot be combined with `timeout`. Check on it with the `process` tool.
+    #[serde(default)]
+    run_in_background: Option<bool>,
 }
 
 /// Bash tool: executes shell commands with streaming output and risk tagging.
@@ -99,6 +108,108 @@ impl Default for BashTool {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Build the model-facing content for a completed foreground run (the
+/// historical inline / disk-redirected result shape).
+fn completed_content(
+    execution: &super::process::ShellExecution,
+    timeout_secs: u64,
+    tier: BashRiskTier,
+) -> Value {
+    match &execution.captured {
+        CapturedOutput::Inline { stdout, stderr } => json!({
+            "exit_code": execution.exit_code,
+            "stdout": stdout,
+            "stderr": stderr,
+            "timed_out": execution.timed_out,
+            "streams_still_open": execution.streams_still_open,
+            "metadata": {
+                "risk_tier": tier,
+                "timeout_secs": timeout_secs,
+            }
+        }),
+        CapturedOutput::Redirected {
+            output_path,
+            output_chars,
+        } => json!({
+            "exit_code": execution.exit_code,
+            "output_redirected": true,
+            "output_path": output_path,
+            "output_chars": output_chars,
+            "timed_out": execution.timed_out,
+            "streams_still_open": execution.streams_still_open,
+            "hint": REDIRECT_HINT,
+            "metadata": {
+                "risk_tier": tier,
+                "timeout_secs": timeout_secs,
+            }
+        }),
+    }
+}
+
+/// Build the model-facing content for a `run_in_background` spawn (R3): the
+/// process id, spool path, command, and check guidance.
+fn background_content(handle: &ProcessHandle, command: &str, tier: BashRiskTier) -> Value {
+    let id = handle.label();
+    json!({
+        "background": true,
+        "process_id": id,
+        "spool_path": handle.spool().display_path(),
+        "command": command,
+        "hint": format!(
+            "Started in the background as process {id}. It runs with no timeout until it exits \
+             or you kill it. Check its output with the process tool (op=output, id={id}), or \
+             stop it (op=kill, id={id})."
+        ),
+        "metadata": { "risk_tier": tier }
+    })
+}
+
+/// Build the model-facing content for a command migrated at its timeout
+/// boundary (R4): `migrated: true`, the process id, spool path, the output
+/// captured before migration, and explicit guidance on how to check on it.
+fn migrated_content(
+    handle: &ProcessHandle,
+    command: &str,
+    timeout_secs: u64,
+    tier: BashRiskTier,
+    snapshot: CapturedOutput,
+) -> Value {
+    let id = handle.label();
+    let spool_path = handle.spool().display_path();
+    let hint = format!(
+        "This command exceeded its {timeout_secs}s timeout and was moved to the background as \
+         process {id} instead of being killed — it is still running and nothing was lost. Check \
+         its new output with the process tool (op=output, id={id}), or stop it (op=kill, \
+         id={id}). Its full output is spooled at {spool_path}."
+    );
+    let mut content = match snapshot {
+        CapturedOutput::Inline { stdout, stderr } => json!({
+            "stdout": stdout,
+            "stderr": stderr,
+        }),
+        CapturedOutput::Redirected {
+            output_path,
+            output_chars,
+        } => json!({
+            "output_redirected": true,
+            "output_path": output_path,
+            "output_chars": output_chars,
+        }),
+    };
+    if let Some(map) = content.as_object_mut() {
+        map.insert("migrated".to_owned(), Value::Bool(true));
+        map.insert("process_id".to_owned(), Value::String(id.to_owned()));
+        map.insert("spool_path".to_owned(), Value::String(spool_path));
+        map.insert("command".to_owned(), Value::String(command.to_owned()));
+        map.insert("hint".to_owned(), Value::String(hint));
+        map.insert(
+            "metadata".to_owned(),
+            json!({ "risk_tier": tier, "timeout_secs": timeout_secs }),
+        );
+    }
+    content
 }
 
 #[async_trait]
@@ -195,12 +306,55 @@ impl Tool for BashTool {
             None => ctx.working_dir(),
         };
 
+        let manager = ctx.get_extension::<ProcessManager>();
+
+        // Explicit backgrounding (R3): spawn through the manager and return at
+        // once. A background process has no timeout (owner ruling), so
+        // combining `run_in_background` with `timeout` is a structured error.
+        if args.run_in_background.unwrap_or(false) {
+            if args.timeout.is_some() {
+                return Err(ToolError::PreValidationFailed {
+                    payload: ToolErrorPayload::new(
+                        ToolErrorKind::InvalidArguments,
+                        "run_in_background cannot be combined with timeout: a background \
+                         process has no timeout — it runs until it exits or is killed",
+                    )
+                    .with_detail(json!({
+                        "run_in_background": true,
+                        "timeout": args.timeout,
+                    })),
+                });
+            }
+            let Some(manager) = manager else {
+                return Err(ToolError::MissingExtension {
+                    extension: PROCESS_MANAGER_EXTENSION.to_owned(),
+                });
+            };
+            let process_env = ctx.get_extension::<ProcessEnv>();
+            let handle = manager
+                .spawn(&args.command, &child_cwd, process_env.as_deref())
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("failed to start background process: {e}"),
+                })?;
+            return Ok(ToolOutput::success(background_content(
+                &handle,
+                &args.command,
+                tier,
+            )));
+        }
+
+        // Foreground path. When a manager is wired and the timeout is bounded,
+        // reaching it migrates the command to the background instead of killing
+        // it (R4); timeout: 0 waits forever and never migrates.
+        let migrate = manager.is_some() && timeout_secs != 0;
         let capture = OutputCapture::new(ctx, envelope);
-        let execution = run_shell(
+        let outcome = run_shell(
             &args.command,
             &child_cwd,
             timeout_secs,
             self.drain_grace,
+            migrate,
             ctx,
             Arc::clone(&capture),
         )
@@ -215,78 +369,98 @@ impl Tool for BashTool {
         // failed substitutions like `cd $(cmd-that-failed)`.
         apply_cd_from_command(ctx, &args.command);
 
-        let mut content = match execution.captured {
-            CapturedOutput::Inline { stdout, stderr } => json!({
-                "exit_code": execution.exit_code,
-                "stdout": stdout,
-                "stderr": stderr,
-                "timed_out": execution.timed_out,
-                "streams_still_open": execution.streams_still_open,
-                "metadata": {
-                    "risk_tier": tier,
-                    "timeout_secs": timeout_secs,
-                }
-            }),
-            CapturedOutput::Redirected {
-                output_path,
-                output_chars,
-            } => {
-                let hint = if execution.timed_out {
-                    format!(
-                        "Command timed out after {timeout_secs}s. Partial output was captured to disk. Use the read tool to inspect what was produced before the timeout."
+        match outcome {
+            ShellOutcome::Migrated(handoff) => {
+                let manager = manager.ok_or_else(|| ToolError::ExecutionFailed {
+                    reason: "internal error: a command migrated without a process manager"
+                        .to_owned(),
+                })?;
+                let handle = manager
+                    .adopt(
+                        &args.command,
+                        handoff.child,
+                        handoff.stdout_task,
+                        handoff.stderr_task,
                     )
-                } else {
-                    REDIRECT_HINT.to_owned()
-                };
-                json!({
-                    "exit_code": execution.exit_code,
-                    "output_redirected": true,
-                    "output_path": output_path,
-                    "output_chars": output_chars,
-                    "timed_out": execution.timed_out,
-                    "streams_still_open": execution.streams_still_open,
-                    "hint": hint,
-                    "metadata": {
-                        "risk_tier": tier,
-                        "timeout_secs": timeout_secs,
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        reason: format!("failed to migrate command to the background: {e}"),
+                    })?;
+                // Attach the spool AFTER adopt (the spool is created inside
+                // adopt, keyed to the assigned id, so it cannot be built
+                // earlier). If teeing cannot be enabled, the child is already
+                // registered and supervised but its post-migration output would
+                // go nowhere — a half-migrated zombie. Rather than leave that,
+                // kill the adoptee and return a named error (F6).
+                let snapshot = match capture.attach_spool(Arc::clone(handle.spool())).await {
+                    Ok(snapshot) => snapshot,
+                    Err(attach_error) => {
+                        let final_status = handle.kill().await;
+                        return Err(ToolError::ExecutionFailed {
+                            reason: format!(
+                                "failed to attach the migrated command's output spool for \
+                                 process {label}: {attach_error}; the adopted process was killed \
+                                 to avoid a half-migrated state (final status {final_status:?})",
+                                label = handle.label(),
+                            ),
+                        });
                     }
-                })
+                };
+                // F5: when the seed was delivered inline the model has already
+                // seen it, so its output cursor starts past the seed; a redirect
+                // seed leaves the cursor at 0 (see `MigrationSnapshot`).
+                manager.set_model_cursor(handle.label(), snapshot.model_cursor_seed);
+                Ok(ToolOutput::success(migrated_content(
+                    &handle,
+                    &args.command,
+                    timeout_secs,
+                    tier,
+                    snapshot.output,
+                )))
             }
-        };
-
-        if execution.streams_still_open
-            && let Some(map) = content.as_object_mut()
-        {
-            map.insert(
-                "streams_still_open_note".to_owned(),
-                Value::String(STREAMS_OPEN_NOTE.to_owned()),
-            );
+            ShellOutcome::Completed(execution) => {
+                let mut content = completed_content(&execution, timeout_secs, tier);
+                if execution.streams_still_open
+                    && let Some(map) = content.as_object_mut()
+                {
+                    map.insert(
+                        "streams_still_open_note".to_owned(),
+                        Value::String(STREAMS_OPEN_NOTE.to_owned()),
+                    );
+                }
+                if execution.timed_out {
+                    // Degenerate path: the command reached its timeout but no
+                    // ProcessManager is wired to migrate it, so it was killed.
+                    // The old `Timeout` failure was replaced by migration; the
+                    // honest signal here is the missing infrastructure.
+                    return Ok(ToolOutput::failure_with_content(
+                        content,
+                        ToolErrorPayload::new(
+                            ToolErrorKind::MissingExtension,
+                            format!(
+                                "command exceeded its {timeout_secs}s timeout and was killed: no \
+                                 ProcessManager is wired to migrate it to the background"
+                            ),
+                        )
+                        .with_detail(json!({
+                            "timeout_secs": timeout_secs,
+                            "extension": PROCESS_MANAGER_EXTENSION,
+                        })),
+                    ));
+                }
+                if execution.exit_code != 0 {
+                    return Ok(ToolOutput::failure_with_content(
+                        content,
+                        ToolErrorPayload::new(
+                            ToolErrorKind::ExecutionFailed,
+                            format!("command exited with code {}", execution.exit_code),
+                        )
+                        .with_detail(json!({ "exit_code": execution.exit_code })),
+                    ));
+                }
+                Ok(ToolOutput::success(content))
+            }
         }
-
-        if execution.timed_out {
-            return Ok(ToolOutput::failure_with_content(
-                content,
-                ToolErrorPayload::new(
-                    ToolErrorKind::Timeout,
-                    format!("command timed out after {timeout_secs}s"),
-                )
-                .with_detail(serde_json::json!({
-                    "timeout_secs": timeout_secs,
-                    "exit_code": execution.exit_code,
-                })),
-            ));
-        }
-        if execution.exit_code != 0 {
-            return Ok(ToolOutput::failure_with_content(
-                content,
-                ToolErrorPayload::new(
-                    ToolErrorKind::ExecutionFailed,
-                    format!("command exited with code {}", execution.exit_code),
-                )
-                .with_detail(serde_json::json!({ "exit_code": execution.exit_code })),
-            ));
-        }
-        Ok(ToolOutput::success(content))
     }
 
     /// Register rerun follow-ups available after any completed execution.
@@ -305,6 +479,33 @@ impl Tool for BashTool {
         ctx: &ToolContext,
     ) -> Vec<FollowUpAction> {
         let _ = ctx;
+        // Backgrounded (R3) and migrated (R4) results target the process tool:
+        // check the process's new output, or kill it. These replace the
+        // foreground rerun set — a background spawn is not "rerun".
+        if let Some(process_id) = output.content.get("process_id").and_then(Value::as_str) {
+            return vec![
+                FollowUpAction {
+                    action: "check_output".to_string(),
+                    description: format!("Fetch new output from background process {process_id}"),
+                    tool: "process".to_string(),
+                    args: json!({ "op": "output", "id": process_id }),
+                    args_mode: FollowUpArgsMode::Replace,
+                    expires: ExpiryCondition::Never,
+                    confidence: Confidence::High,
+                    before_content: crate::tool::follow_up::BeforeContentSource::Unavailable,
+                },
+                FollowUpAction {
+                    action: "kill_process".to_string(),
+                    description: format!("Kill background process {process_id}"),
+                    tool: "process".to_string(),
+                    args: json!({ "op": "kill", "id": process_id }),
+                    args_mode: FollowUpArgsMode::Replace,
+                    expires: ExpiryCondition::Never,
+                    confidence: Confidence::Medium,
+                    before_content: crate::tool::follow_up::BeforeContentSource::Unavailable,
+                },
+            ];
+        }
         let timeout_secs = output
             .content
             .get("metadata")

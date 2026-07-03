@@ -1,0 +1,1 @@
+Inspect and control background processes started by bash (run_in_background) or moved to the background when a foreground command outran its timeout. Ops: output (new output since your last check, plus status), status, kill, list. Background processes run with no timeout until they exit or you kill them.

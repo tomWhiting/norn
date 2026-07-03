@@ -15,6 +15,7 @@ pub mod instance;
 pub mod message_router;
 pub mod output;
 pub mod pending_messages;
+pub mod process_delivery;
 pub(crate) mod prompt_install;
 pub mod registry;
 pub(crate) mod registry_assembly;

@@ -33,6 +33,7 @@ mod patch_resolve;
 mod patch_stage;
 
 mod patch_parse;
+pub mod process;
 pub mod read;
 mod read_stream;
 pub mod registry_builder;
@@ -72,6 +73,7 @@ pub use self::patch::ApplyPatchTool;
 #[cfg(feature = "libyggd-ast")]
 pub use self::patch_entity::LibygdEntityExtractor;
 pub use self::patch_entity::{EntityExtractor, ExtractedEntity};
+pub use self::process::{PROCESS_TOOL_NAME, ProcessTool};
 pub use self::registry_builder::register_standard_tools;
 pub use self::search::SearchTool;
 

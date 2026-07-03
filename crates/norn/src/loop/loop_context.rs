@@ -229,6 +229,17 @@ pub struct LoopContext {
     /// concerned; nothing in the loop reads it.
     pub schedule_executor: Option<crate::schedule::ScheduleExecutorGuard>,
 
+    /// Guard binding the agent's background-process manager
+    /// ([`crate::process::ProcessManager`]) to this loop's lifetime.
+    ///
+    /// Set by every assembly launch path that arms the manager (root build,
+    /// spawn, fork). Dropping the loop context — the agent instance for a root,
+    /// the controller task for a child — runs the manager's shutdown: every
+    /// still-running process group is killed and its spool left on disk, so a
+    /// norn exit never silently orphans a manager-owned child. Inert data as
+    /// far as the runner is concerned; nothing in the loop reads it.
+    pub process_manager: Option<crate::process::ProcessManagerGuard>,
+
     /// Optional always-on `NORN.md` context loader. When present,
     /// [`Self::refresh_context_if_stale`] stats both layers per
     /// iteration and reports back whether `system_sections[0]` needs
@@ -344,6 +355,7 @@ impl LoopContext {
             agent_id: None,
             pending_agent_messages: None,
             schedule_executor: None,
+            process_manager: None,
             context_loader: None,
             base_prefix: String::new(),
             base_suffix: String::new(),

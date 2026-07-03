@@ -53,6 +53,7 @@ pub(crate) fn build_base_tool_registry(
     let mut registry = ToolRegistry::new();
     register_standard_tools(&mut registry, lsp_backend);
     crate::tools::registry_builder::register_cron_tool(&mut registry);
+    crate::tools::registry_builder::register_process_tool(&mut registry);
     // Replace the standard bash tool with one carrying the overridden drain
     // grace. Caller-registered replacements (extra tools named `bash`) are
     // registered afterwards and win, matching registry semantics.

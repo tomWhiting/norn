@@ -1,6 +1,25 @@
 //! Subprocess lifecycle for the bash tool: process-group spawning,
-//! timeout enforcement that kills the whole process tree, and bounded
+//! timeout-boundary migration to the background manager, and bounded
 //! draining of the child's output streams.
+//!
+//! ## Shell-backgrounded child vs manager-owned process
+//!
+//! Two distinct notions of "background" meet here; keep them separate:
+//!
+//! - A **shell-backgrounded child of a foreground run** (`server &`) is an
+//!   orphan holding *this* tool's pipes after the shell exits. Draining is
+//!   bounded by the grace period below; its later output is lost and the
+//!   result is annotated `streams_still_open`. This behaviour is unchanged.
+//! - A **manager-owned background process**
+//!   ([`crate::process::ProcessManager`]) — created by `run_in_background` or
+//!   by timeout migration — has its pipes owned and spooled for its whole
+//!   life, including its own backgrounded grandchildren's output. No grace
+//!   period applies; there is nothing to cut off.
+//!
+//! When a foreground command reaches its timeout it is **migrated** to the
+//! manager (its live child and drain tasks handed off, R4), never killed —
+//! slow-but-healthy work is never lost to an arbitrary cutoff. The only
+//! timeout-kill left is the degenerate path where no manager is wired.
 //!
 //! On Unix the shell is spawned into its **own process group**
 //! (`process_group(0)`, a safe std/tokio API), so a timeout can kill
@@ -51,7 +70,9 @@ pub(super) const DEFAULT_DRAIN_GRACE: Duration = Duration::from_secs(2);
 pub(super) struct ShellExecution {
     /// Child exit code, or [`SIGNAL_KILLED_EXIT_CODE`] when killed by signal.
     pub(super) exit_code: i32,
-    /// Whether the command was killed because it exceeded its timeout.
+    /// Whether the command was killed because it exceeded its timeout. Only
+    /// ever `true` on the degenerate no-manager path (migration replaces the
+    /// timeout kill when a manager is available).
     pub(super) timed_out: bool,
     /// Whether stdout/stderr were still open when draining was cut off —
     /// a background child is holding the pipe and output may be incomplete.
@@ -60,12 +81,43 @@ pub(super) struct ShellExecution {
     pub(super) captured: CapturedOutput,
 }
 
+/// The live child and its still-running drain tasks, handed to the process
+/// manager when a foreground command reaches its timeout (R4). The drains are
+/// deliberately **not** settled and the process is **not** killed — the
+/// manager takes ownership and keeps spooling.
+pub(super) struct MigrationHandoff {
+    /// The live shell child (its own process group on Unix).
+    pub(super) child: Child,
+    /// The stdout drain task, still running.
+    pub(super) stdout_task: JoinHandle<std::io::Result<()>>,
+    /// The stderr drain task, still running.
+    pub(super) stderr_task: JoinHandle<std::io::Result<()>>,
+}
+
+/// The result of running a foreground shell command: either it completed (on
+/// its own, or was killed at its timeout when no manager is wired), or it
+/// reached its timeout and is being migrated to the background manager.
+pub(super) enum ShellOutcome {
+    /// The command finished; build the normal result.
+    Completed(ShellExecution),
+    /// The command reached its timeout and is handed off for migration.
+    Migrated(MigrationHandoff),
+}
+
 /// Runs `command` via `sh -c` in `cwd`, streaming output into `capture`.
 ///
-/// `timeout_secs == 0` means wait forever. On timeout the entire
-/// process tree is killed (see module docs) and `timed_out` is set.
-/// `drain_grace` bounds how long the output drains may stay open after
-/// the shell exits (see [`DEFAULT_DRAIN_GRACE`]).
+/// `timeout_secs == 0` means wait forever (never migrates). When
+/// `migrate_on_timeout` is `true` and the command reaches its timeout, the
+/// live child and its still-running drains are handed back as
+/// [`ShellOutcome::Migrated`] (the caller passes them to the manager) — the
+/// process is **not** killed and the drains are **not** settled. When
+/// `migrate_on_timeout` is `false` (no manager wired) a timeout falls back to
+/// killing the whole process tree and returns a completed result with
+/// `timed_out` set.
+///
+/// `drain_grace` bounds how long the output drains may stay open after the
+/// shell exits on the completed path (see [`DEFAULT_DRAIN_GRACE`]); it does not
+/// apply to a migrated process (the manager owns its pipes with no grace).
 ///
 /// # Errors
 ///
@@ -76,9 +128,10 @@ pub(super) async fn run_shell(
     cwd: &Path,
     timeout_secs: u64,
     drain_grace: Duration,
+    migrate_on_timeout: bool,
     ctx: &ToolContext,
     capture: Arc<OutputCapture>,
-) -> Result<ShellExecution, ToolError> {
+) -> Result<ShellOutcome, ToolError> {
     let mut cmd = build_shell_command(command, cwd, ctx);
     let mut child = cmd.spawn().map_err(|e| ToolError::ExecutionFailed {
         reason: format!("failed to spawn `sh`: {e}"),
@@ -108,6 +161,16 @@ pub(super) async fn run_shell(
                 (status, false)
             }
             () = tokio::time::sleep(Duration::from_secs(timeout_secs)) => {
+                if migrate_on_timeout {
+                    // Hand the live child and its still-running drains to the
+                    // manager: no kill, no settle, no finalize — the process
+                    // keeps running and its output keeps flowing.
+                    return Ok(ShellOutcome::Migrated(MigrationHandoff {
+                        child,
+                        stdout_task,
+                        stderr_task,
+                    }));
+                }
                 kill_process_tree(&mut child).await;
                 let status = child.wait().await.map_err(|e| ToolError::ExecutionFailed {
                     reason: format!("failed to wait on killed child: {e}"),
@@ -126,12 +189,12 @@ pub(super) async fn run_shell(
     let (stdout_open, stderr_open) = (stdout_open?, stderr_open?);
     let captured = capture.finalize().await?;
 
-    Ok(ShellExecution {
+    Ok(ShellOutcome::Completed(ShellExecution {
         exit_code: status.code().unwrap_or(SIGNAL_KILLED_EXIT_CODE),
         timed_out,
         streams_still_open: stdout_open || stderr_open,
         captured,
-    })
+    }))
 }
 
 /// Builds the `sh -c` command: piped stdio, the agent's working

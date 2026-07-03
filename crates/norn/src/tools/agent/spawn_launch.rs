@@ -331,6 +331,18 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
                 wake_registry: child_ctx.get_extension::<AgentWakeRegistry>(),
             },
         ));
+        // NP-001: arm the child's own background-process manager on its tool
+        // context — the same shared mechanism the root builder uses — so the
+        // `process` tool resolves and the child's background processes are
+        // killed when its controller task ends.
+        crate::agent::arming::arm_process_manager(
+            child_ctx.as_ref(),
+            &mut loop_ctx,
+            &store,
+            child_id,
+            Some(inbound_tx.clone()),
+            Some(Arc::clone(&agent_registry)),
+        );
     } else {
         // Structurally unreachable: `SubAgentExecutor::shared_context`
         // always returns the child context it was constructed with. Say so
