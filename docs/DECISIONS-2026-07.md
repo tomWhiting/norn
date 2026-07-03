@@ -139,6 +139,26 @@ two are behaviors an agent explicitly wrote "needs sign-off" against. Full detai
    replaying every missed occurrence as a burst (an 8-hour sleep on `every: "1m"` would
    otherwise inject ~480 stacked steers). Same semantics, same rationale, new code path —
    surfaced by the N-026 Fable review.
+   (f) **NP-001/NP-002 in-flight rulings (flagged for owner confirmation)**: spool paths gain
+   a per-run subdirectory (`…/processes/<run-uuid>/pN.log`) because the flat scheme let a
+   resumed session's fresh manager clobber the prior run's `p1.log` — contradicting the
+   brief's own "spools persist" intent (NP-001 re-review residual). Recorded NP-001
+   residual, accepted: a model-cursor region claimed before a failing disk read is not
+   re-offered (loud error; rollback would risk double-delivery under concurrency).
+   NP-002 rulings (reviewer-approved, flagged for owner confirmation): filter exits 126/127
+   are watch-ERRORS, not no-matches — under `sh -c` a nonexistent filter binary exits 127
+   rather than failing to spawn, so R4's "broken filter must alert" is unsatisfiable under a
+   literal "any non-zero = no match"; the reserved shell codes are the only distinguishing
+   signal and the failure mode is conservative. And a WATCHED process's completion notice
+   waits for its output pipes to close (drain-join) so the final region is filtered losslessly
+   before "it's done" — an immortal pipe-holding grandchild therefore defers a watched
+   process's completion until pipe close, kill, or shutdown (unwatched processes keep NP-001
+   timing exactly; `op=kill` is the escape hatch; documented in the process guidance).
+   Recorded NP-002 residual, accepted under the no-timeout ruling: an agent-authored filter
+   that never exits wedges its own watch run (in-flight runs are deliberately uninterruptible
+   by unwatch; `op=kill` does not reach the filter — it is norn's child, not the watched
+   group's) and defers that process's completion notice until shutdown; `kill_on_drop`
+   guarantees nothing outlives norn. Self-inflicted, loud at shutdown, on the ledger.
 
 Beyond these, §5.1 (R1 D1-D7) were **applied autonomously while the owner was away** and are all
 reversible on `hardening/final-state` before merge — the owner may override any of them.

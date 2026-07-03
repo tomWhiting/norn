@@ -29,6 +29,7 @@ use super::*;
 use crate::error::ToolError;
 use crate::tool::context::{SessionId, ToolContext};
 use crate::tool::envelope::ToolEnvelope;
+use crate::tool::failure::ToolErrorKind;
 use crate::tool::lifecycle::PreValidateOutcome;
 use crate::tool::risk::{BashRiskTier, classify_risk};
 use crate::tool::scheduling::ToolEffect;
@@ -135,6 +136,22 @@ fn bash_args_schema_matches_previous_hand_written_schema() {
             "run_in_background": {
                 "type": "boolean",
                 "description": "Run detached in the background instead of waiting. Returns immediately with a process id and spool path; the process runs with no timeout until it exits or you kill it. Cannot be combined with `timeout`. Check on it with the `process` tool."
+            },
+            "watch": {
+                "type": "object",
+                "required": ["brief", "filter"],
+                "properties": {
+                    "brief": {
+                        "type": "string",
+                        "description": "A human-readable statement of what to watch for (e.g. \"a compile error\")."
+                    },
+                    "filter": {
+                        "type": "string",
+                        "description": "A shell filter script run via `sh -c` over each new spool region on stdin. Exit 0 means match (its stdout is the excerpt that wakes you); any other exit means no match, except exits 126 and 127, which the shell reserves (command not executable, and command not found) and which are reported as watch errors rather than no-matches."
+                    }
+                },
+                "additionalProperties": false,
+                "description": "Optional deterministic watch to attach at spawn (only with `run_in_background`). A `{brief, filter}` object: the filter runs via `sh -c` over each new spool region and a match (exit 0) wakes you with the matching excerpt. Attach more later with the `process` tool (op=watch)."
             }
         },
         "required": ["command"],
@@ -894,6 +911,69 @@ async fn run_in_background_returns_immediately_and_spools() {
         crate::process::ProcessStatus::Exited { code: 0 }
     );
     wait_spool_contains(&handle, "done").await;
+}
+
+/// NP-002 R1a: `run_in_background` with a `watch: {brief, filter}` argument
+/// spawns the process with exactly one active watch visible in `list` output,
+/// and echoes the assigned watch id in the tool result.
+#[tokio::test]
+#[serial_test::serial]
+async fn run_in_background_with_a_watch_attaches_it_at_spawn() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, manager) = ctx_with_manager("bash-watch");
+    let tool = BashTool::new();
+
+    let out = tool
+        .execute(
+            &envelope(json!({
+                "command": "sleep 30",
+                "run_in_background": true,
+                "watch": { "brief": "any error", "filter": "grep -i error" },
+            })),
+            &ctx,
+        )
+        .await
+        .expect("bash ok");
+    assert!(!out.is_error());
+    let process_id = out.content["process_id"].as_str().expect("process_id");
+    let watch_id = out.content["watch_id"].as_str().expect("watch_id echoed");
+    assert!(watch_id.starts_with('w'));
+
+    let watches = manager.watches_for(process_id);
+    assert_eq!(watches.len(), 1, "exactly one watch active at spawn");
+    assert_eq!(watches[0].watch_id, watch_id);
+    assert_eq!(watches[0].brief, "any error");
+    manager.shutdown();
+}
+
+/// NP-002 R1a: a `watch` argument without `run_in_background` is a structured
+/// `InvalidArguments` failure — a watch attaches to a managed background
+/// process, and there is none in the foreground path.
+#[tokio::test]
+#[serial_test::serial]
+async fn watch_without_run_in_background_is_invalid_arguments() {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let _home = HomeGuard::set(dir.path());
+    let (ctx, _manager) = ctx_with_manager("bash-watch-bad");
+    let tool = BashTool::new();
+
+    let err = tool
+        .execute(
+            &envelope(json!({
+                "command": "echo hi",
+                "watch": { "brief": "b", "filter": "cat" },
+            })),
+            &ctx,
+        )
+        .await
+        .expect_err("watch without background is rejected");
+    match err {
+        ToolError::PreValidationFailed { payload } => {
+            assert_eq!(payload.kind, ToolErrorKind::InvalidArguments);
+        }
+        other => panic!("expected InvalidArguments pre-validation, got {other:?}"),
+    }
 }
 
 /// R3: `run_in_background` combined with `timeout` is a structured

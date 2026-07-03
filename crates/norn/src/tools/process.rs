@@ -23,8 +23,10 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::error::ToolError;
-use crate::process::{ProcessHandle, ProcessManager, ProcessStatus};
-use crate::tool::context::ToolContext;
+use crate::process::{
+    ProcessHandle, ProcessManager, ProcessStatus, Watch, WatchAttachError, WatchError,
+};
+use crate::tool::context::{ProcessEnv, ToolContext};
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::output_budget::{READ_OUTPUT_CHAR_LIMIT, ToolOutputBudget};
@@ -56,6 +58,15 @@ struct ProcessArgs {
     op: ProcessOp,
     #[serde(default)]
     id: Option<String>,
+    /// The watch's human-readable brief (op=watch).
+    #[serde(default)]
+    brief: Option<String>,
+    /// The agent-authored `sh -c` filter script (op=watch).
+    #[serde(default)]
+    filter: Option<String>,
+    /// The watch id to detach (op=unwatch).
+    #[serde(default)]
+    watch_id: Option<String>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize)]
@@ -65,6 +76,8 @@ enum ProcessOp {
     Status,
     Kill,
     List,
+    Watch,
+    Unwatch,
 }
 
 fn invalid_arguments(reason: String, detail: Value) -> ToolOutput {
@@ -190,7 +203,7 @@ fn op_status(manager: &ProcessManager, args: &ProcessArgs) -> ToolOutput {
     let Some(handle) = manager.get(id) else {
         return not_found(id);
     };
-    ToolOutput::success(describe(&handle))
+    ToolOutput::success(describe(manager, &handle))
 }
 
 async fn op_kill(manager: &ProcessManager, args: &ProcessArgs) -> ToolOutput {
@@ -215,15 +228,108 @@ async fn op_kill(manager: &ProcessManager, args: &ProcessArgs) -> ToolOutput {
 }
 
 fn op_list(manager: &ProcessManager) -> ToolOutput {
-    let processes: Vec<Value> = manager.list().iter().map(describe).collect();
+    let processes: Vec<Value> = manager
+        .list()
+        .iter()
+        .map(|handle| describe(manager, handle))
+        .collect();
     ToolOutput::success(json!({
         "count": processes.len(),
         "processes": processes,
     }))
 }
 
-/// The full status description of one process (shared by `status` and `list`).
-fn describe(handle: &ProcessHandle) -> Value {
+/// Attach a watch to a running process (op=watch). Mutates manager state — a
+/// [`ToolEffect::Process`] operation, not `ReadOnly`.
+fn op_watch(manager: &ProcessManager, args: &ProcessArgs, ctx: &ToolContext) -> ToolOutput {
+    let id = match require_id(args) {
+        Ok(id) => id,
+        Err(failure) => return *failure,
+    };
+    let brief = match require_field(args.brief.as_deref(), "brief") {
+        Ok(value) => value.to_owned(),
+        Err(failure) => return *failure,
+    };
+    let filter = match require_field(args.filter.as_deref(), "filter") {
+        Ok(value) => value.to_owned(),
+        Err(failure) => return *failure,
+    };
+    let cwd = ctx.working_dir();
+    let env = ctx.get_extension::<ProcessEnv>().map(|e| (*e).clone());
+    match manager.attach_watch(id, brief, filter, cwd, env) {
+        Ok(watch) => ToolOutput::success(json!({
+            "watch_id": watch.watch_id,
+            "process_id": watch.process_id,
+            "brief": watch.brief,
+            "message": format!(
+                "Watch {} attached to process {}. Its filter runs over new output as it \
+                 arrives; a match wakes you with the matching excerpt.",
+                watch.watch_id, watch.process_id,
+            ),
+        })),
+        Err(WatchAttachError::ProcessNotFound { process_id }) => not_found(&process_id),
+        Err(WatchAttachError::Terminal { process_id, status }) => ToolOutput::failure(
+            ToolErrorPayload::new(
+                ToolErrorKind::Conflict,
+                format!(
+                    "process {process_id} is already {}; there is nothing left to watch \
+                     (its spool remains readable with op=output)",
+                    status.label(),
+                ),
+            )
+            .with_detail(json!({ "process_id": process_id, "status": status.label() })),
+        ),
+    }
+}
+
+/// Detach a watch (op=unwatch). Mutates manager state — a
+/// [`ToolEffect::Process`] operation.
+fn op_unwatch(manager: &ProcessManager, args: &ProcessArgs) -> ToolOutput {
+    let watch_id = match require_field(args.watch_id.as_deref(), "watch_id") {
+        Ok(value) => value,
+        Err(failure) => return *failure,
+    };
+    match manager.detach_watch(watch_id) {
+        Ok(()) => ToolOutput::success(json!({
+            "watch_id": watch_id,
+            "detached": true,
+            "message": format!("Watch {watch_id} detached; no further regions will be examined."),
+        })),
+        Err(WatchError::NotFound) => ToolOutput::failure(
+            ToolErrorPayload::new(
+                ToolErrorKind::NotFound,
+                format!("no active watch with id {watch_id}: it is unknown or already ended"),
+            )
+            .with_detail(json!({ "watch_id": watch_id })),
+        ),
+    }
+}
+
+/// A required non-empty string argument, or a structured failure naming it.
+fn require_field<'a>(value: Option<&'a str>, name: &str) -> Result<&'a str, Box<ToolOutput>> {
+    value
+        .map(str::trim)
+        .filter(|v| !v.is_empty())
+        .ok_or_else(|| {
+            Box::new(invalid_arguments(
+                format!("this op requires a non-empty \"{name}\" argument"),
+                json!({ "argument": name }),
+            ))
+        })
+}
+
+/// The active watches attached to `handle`, as `{watch_id, brief}` objects.
+fn watch_values(manager: &ProcessManager, handle: &ProcessHandle) -> Vec<Value> {
+    manager
+        .watches_for(handle.label())
+        .iter()
+        .map(|watch: &Watch| json!({ "watch_id": watch.watch_id, "brief": watch.brief }))
+        .collect()
+}
+
+/// The full status description of one process (shared by `status` and `list`),
+/// including its active watches (NP-002 R1).
+fn describe(manager: &ProcessManager, handle: &ProcessHandle) -> Value {
     let mut map = serde_json::Map::new();
     map.insert(
         "process_id".to_owned(),
@@ -246,6 +352,10 @@ fn describe(handle: &ProcessHandle) -> Value {
     map.insert(
         "spool_size".to_owned(),
         json!(handle.spool().committed_len()),
+    );
+    map.insert(
+        "watches".to_owned(),
+        Value::Array(watch_values(manager, handle)),
     );
     Value::Object(map)
 }
@@ -276,25 +386,39 @@ impl Tool for ProcessTool {
             "properties": {
                 "op": {
                     "type": "string",
-                    "enum": ["output", "status", "kill", "list"],
-                    "description": "The operation: fetch new output, inspect status, kill the process, or list all background processes."
+                    "enum": ["output", "status", "kill", "list", "watch", "unwatch"],
+                    "description": "The operation: fetch new output, inspect status, kill the process, list all background processes, attach a deterministic filter watch, or detach one."
                 },
                 "id": {
                     "type": "string",
-                    "description": "The process id (e.g. \"p1\") for op output/status/kill. Not used by list."
+                    "description": "The process id (e.g. \"p1\") for op output/status/kill/watch. Not used by list/unwatch."
+                },
+                "brief": {
+                    "type": "string",
+                    "description": "op=watch: a human-readable statement of what to watch for (e.g. \"a compile error\")."
+                },
+                "filter": {
+                    "type": "string",
+                    "description": "op=watch: a shell filter script run via `sh -c` over each new spool region on stdin. Exit 0 means match (stdout is the excerpt that wakes you); any other exit means no match, except exits 126 and 127, which the shell reserves (command not executable, and command not found) and which are reported as watch errors rather than no-matches. e.g. \"grep -i error\"."
+                },
+                "watch_id": {
+                    "type": "string",
+                    "description": "op=unwatch: the watch id (e.g. \"w1\") to detach."
                 }
             }
         })
     }
 
     fn effect(&self) -> ToolEffect {
-        // Whole-tool effect is the conservative union: `kill` mutates process
-        // state, so the tool reports at least Process.
+        // Whole-tool effect is the conservative union: `kill`/`watch`/`unwatch`
+        // mutate manager state, so the tool reports at least Process.
         ToolEffect::Process
     }
 
     fn effect_for_args(&self, args: &Value) -> ToolEffect {
         match args.get("op").and_then(Value::as_str) {
+            // `watch`/`unwatch` mutate the manager's watch registry, so they are
+            // honestly Process, not ReadOnly (only inspection ops are ReadOnly).
             Some("output" | "status" | "list") => ToolEffect::ReadOnly,
             _ => ToolEffect::Process,
         }
@@ -318,6 +442,8 @@ impl Tool for ProcessTool {
             ProcessOp::Status => Ok(op_status(&manager, &args)),
             ProcessOp::Kill => Ok(op_kill(&manager, &args).await),
             ProcessOp::List => Ok(op_list(&manager)),
+            ProcessOp::Watch => Ok(op_watch(&manager, &args, ctx)),
+            ProcessOp::Unwatch => Ok(op_unwatch(&manager, &args)),
         }
     }
 }
@@ -584,5 +710,105 @@ mod tests {
             tool.effect_for_args(&json!({ "op": "kill" })),
             ToolEffect::Process,
         );
+    }
+
+    /// NP-002 R1: watch and unwatch mutate the manager's watch registry, so they
+    /// are honestly `Process`, not `ReadOnly`.
+    #[test]
+    fn watch_and_unwatch_are_process_effect_not_read_only() {
+        let tool = ProcessTool::new();
+        assert_eq!(
+            tool.effect_for_args(&json!({ "op": "watch" })),
+            ToolEffect::Process,
+        );
+        assert_eq!(
+            tool.effect_for_args(&json!({ "op": "unwatch" })),
+            ToolEffect::Process,
+        );
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn watch_op_attaches_and_list_surfaces_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let _home = HomeGuard::set(dir.path());
+        let manager = Arc::new(ProcessManager::new(Some("sess".to_owned()), None));
+        let cwd = std::env::current_dir().unwrap();
+        manager.spawn("sleep 30", &cwd, None).await.unwrap();
+        let ctx = armed_ctx(Arc::clone(&manager));
+
+        let attached = run(
+            &ctx,
+            json!({ "op": "watch", "id": "p1", "brief": "errors", "filter": "grep ERROR" }),
+        )
+        .await;
+        assert!(!attached.is_error());
+        let watch_id = attached.content["watch_id"].as_str().unwrap().to_owned();
+        assert!(watch_id.starts_with('w'));
+
+        // list surfaces the active watch (watch_id + brief) on the process.
+        let listed = run(&ctx, json!({ "op": "list" })).await;
+        let watches = listed.content["processes"][0]["watches"]
+            .as_array()
+            .unwrap();
+        assert_eq!(watches.len(), 1);
+        assert_eq!(watches[0]["watch_id"], watch_id);
+        assert_eq!(watches[0]["brief"], "errors");
+
+        // unwatch removes it; the process then lists no watches.
+        let detached = run(&ctx, json!({ "op": "unwatch", "watch_id": watch_id })).await;
+        assert!(!detached.is_error());
+        assert_eq!(detached.content["detached"], true);
+        let after = run(&ctx, json!({ "op": "list" })).await;
+        assert!(
+            after.content["processes"][0]["watches"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
+        manager.shutdown();
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn watch_op_on_exited_process_is_a_conflict() {
+        let dir = tempfile::tempdir().unwrap();
+        let _home = HomeGuard::set(dir.path());
+        let manager = Arc::new(ProcessManager::new(Some("sess".to_owned()), None));
+        let cwd = std::env::current_dir().unwrap();
+        let handle = manager.spawn("true", &cwd, None).await.unwrap();
+        wait_terminal(&handle).await;
+        let ctx = armed_ctx(Arc::clone(&manager));
+
+        let out = run(
+            &ctx,
+            json!({ "op": "watch", "id": "p1", "brief": "b", "filter": "cat" }),
+        )
+        .await;
+        assert!(out.is_error());
+        assert_eq!(out.error().unwrap().kind, ToolErrorKind::Conflict);
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn unwatch_unknown_is_not_found_and_watch_requires_brief_and_filter() {
+        let dir = tempfile::tempdir().unwrap();
+        let _home = HomeGuard::set(dir.path());
+        let manager = Arc::new(ProcessManager::new(Some("sess".to_owned()), None));
+        let cwd = std::env::current_dir().unwrap();
+        manager.spawn("sleep 30", &cwd, None).await.unwrap();
+        let ctx = armed_ctx(Arc::clone(&manager));
+
+        let missing = run(&ctx, json!({ "op": "unwatch", "watch_id": "w404" })).await;
+        assert!(missing.is_error());
+        assert_eq!(missing.error().unwrap().kind, ToolErrorKind::NotFound);
+
+        let no_filter = run(&ctx, json!({ "op": "watch", "id": "p1", "brief": "b" })).await;
+        assert!(no_filter.is_error());
+        assert_eq!(
+            no_filter.error().unwrap().kind,
+            ToolErrorKind::InvalidArguments
+        );
+        manager.shutdown();
     }
 }

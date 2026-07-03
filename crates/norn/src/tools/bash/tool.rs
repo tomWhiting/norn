@@ -58,6 +58,19 @@ pub(super) struct BashArgs {
     /// Run detached in the background instead of waiting. Returns immediately with a process id and spool path; the process runs with no timeout until it exits or you kill it. Cannot be combined with `timeout`. Check on it with the `process` tool.
     #[serde(default)]
     run_in_background: Option<bool>,
+    /// Optional deterministic watch to attach at spawn (only with `run_in_background`). A `{brief, filter}` object: the filter runs via `sh -c` over each new spool region and a match (exit 0) wakes you with the matching excerpt. Attach more later with the `process` tool (op=watch).
+    #[serde(default)]
+    watch: Option<WatchSpec>,
+}
+
+/// A watch to attach at spawn time (NP-002 R1a): an agent-authored filter over
+/// a background process's output.
+#[derive(Debug, Default, Deserialize, Serialize, ToolArgs)]
+pub(super) struct WatchSpec {
+    /// A human-readable statement of what to watch for (e.g. "a compile error").
+    brief: String,
+    /// A shell filter script run via `sh -c` over each new spool region on stdin. Exit 0 means match (its stdout is the excerpt that wakes you); any other exit means no match, except exits 126 and 127, which the shell reserves (command not executable, and command not found) and which are reported as watch errors rather than no-matches.
+    filter: String,
 }
 
 /// Bash tool: executes shell commands with streaming output and risk tagging.
@@ -164,6 +177,40 @@ fn background_content(handle: &ProcessHandle, command: &str, tier: BashRiskTier)
         ),
         "metadata": { "risk_tier": tier }
     })
+}
+
+/// Attach a spawn-time watch (NP-002 R1a) to a just-backgrounded process and
+/// fold the result into the tool's response `content`. The process is freshly
+/// spawned and `Running`, so attach normally succeeds; a command that exits in
+/// the microsecond before the watch attaches surfaces a `watch_error` note
+/// rather than silently dropping the watch (its output remains readable).
+fn attach_spawn_watch(
+    manager: &ProcessManager,
+    handle: &ProcessHandle,
+    watch: &WatchSpec,
+    cwd: &std::path::Path,
+    process_env: Option<&ProcessEnv>,
+    content: &mut Value,
+) {
+    let (key, value) = match manager.attach_watch(
+        handle.label(),
+        watch.brief.clone(),
+        watch.filter.clone(),
+        cwd.to_path_buf(),
+        process_env.cloned(),
+    ) {
+        Ok(attached) => ("watch_id", attached.watch_id),
+        Err(error) => (
+            "watch_error",
+            format!(
+                "the watch could not be attached ({error:?}); the process is spooling and its \
+                 output remains readable with the process tool (op=output)"
+            ),
+        ),
+    };
+    if let Some(map) = content.as_object_mut() {
+        map.insert(key.to_owned(), Value::String(value));
+    }
 }
 
 /// Build the model-facing content for a command migrated at its timeout
@@ -308,6 +355,20 @@ impl Tool for BashTool {
 
         let manager = ctx.get_extension::<ProcessManager>();
 
+        // A spawn-time watch only makes sense for a manager-owned background
+        // process — there is nothing to attach it to in the foreground path.
+        if args.watch.is_some() && !args.run_in_background.unwrap_or(false) {
+            return Err(ToolError::PreValidationFailed {
+                payload: ToolErrorPayload::new(
+                    ToolErrorKind::InvalidArguments,
+                    "watch requires run_in_background: a watch attaches to a managed background \
+                     process. Background the command, or attach a watch later with the process \
+                     tool (op=watch).",
+                )
+                .with_detail(json!({ "run_in_background": args.run_in_background })),
+            });
+        }
+
         // Explicit backgrounding (R3): spawn through the manager and return at
         // once. A background process has no timeout (owner ruling), so
         // combining `run_in_background` with `timeout` is a structured error.
@@ -337,11 +398,18 @@ impl Tool for BashTool {
                 .map_err(|e| ToolError::ExecutionFailed {
                     reason: format!("failed to start background process: {e}"),
                 })?;
-            return Ok(ToolOutput::success(background_content(
-                &handle,
-                &args.command,
-                tier,
-            )));
+            let mut content = background_content(&handle, &args.command, tier);
+            if let Some(watch) = &args.watch {
+                attach_spawn_watch(
+                    &manager,
+                    &handle,
+                    watch,
+                    &child_cwd,
+                    process_env.as_deref(),
+                    &mut content,
+                );
+            }
+            return Ok(ToolOutput::success(content));
         }
 
         // Foreground path. When a manager is wired and the timeout is bounded,

@@ -14,7 +14,7 @@ use parking_lot::RwLock;
 use uuid::Uuid;
 
 use crate::agent::pending_messages::PendingAgentMessages;
-use crate::agent::process_delivery::ProcessCompletionDelivery;
+use crate::agent::process_delivery::ProcessMessageDelivery;
 use crate::agent::registry::AgentRegistry;
 use crate::r#loop::config::AgentLoopConfig;
 use crate::r#loop::inbound::InboundSender;
@@ -199,8 +199,8 @@ pub(crate) fn arm_root_schedule_executor(
 /// wiring cannot drift between root and children, exactly like
 /// [`arm_root_schedule_executor`] and its child counterparts.
 ///
-/// Builds the durable completion sink ([`ProcessCompletionDelivery`]) from the
-/// same handles the schedule executor uses, constructs a [`ProcessManager`]
+/// Builds the durable completion/watch-alert sink ([`ProcessMessageDelivery`])
+/// from the same handles the schedule executor uses, constructs a [`ProcessManager`]
 /// whose spools live under this agent's session (or a per-run UUID when no
 /// [`SessionId`] is installed), installs it as a `ToolContext` extension (the
 /// `process` tool resolves it), and binds its [`ProcessManagerGuard`] to the
@@ -219,7 +219,7 @@ pub(crate) fn arm_process_manager(
     agent_registry: Option<Arc<RwLock<AgentRegistry>>>,
 ) {
     let session_id = shared.get_extension::<SessionId>().map(|s| s.0.clone());
-    let sink = Arc::new(ProcessCompletionDelivery {
+    let sink = Arc::new(ProcessMessageDelivery {
         agent_id,
         inbound: inbound_tx,
         pending: loop_context.pending_agent_messages.clone(),

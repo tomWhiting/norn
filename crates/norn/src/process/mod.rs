@@ -16,6 +16,9 @@
 //!   committed-length watch.
 //! - [`handle`] — [`ProcessHandle`]: status, process-group kill, exit
 //!   notification, and the subscription seam.
+//! - [`watch`]/[`watch_exec`] — [`Watch`] records, the per-manager
+//!   [`WatchRegistry`](watch::WatchRegistry), and the deterministic incremental
+//!   filter execution (NP-002) that consumes the subscription seam.
 //!
 //! ## Watch attach seam (NP-002 / INTERNAL-AGENTS §5)
 //!
@@ -24,13 +27,17 @@
 //! the exit-notification watch. Together these are the attach point the
 //! deterministic watches of NP-002 consume — a subscriber reacts to new output
 //! and to exit without polling and without reaching into manager or spool
-//! internals. This brief (NP-001) designs the seam; NP-002 uses it. No watch,
-//! filter, or matching logic exists here.
+//! internals. NP-001 designed the seam; the [`watch`]/[`watch_exec`] modules
+//! (NP-002) consume it — the deterministic watch layer attaches here and never
+//! reaches into manager or spool internals.
 
 pub mod handle;
 pub mod manager;
 pub mod spool;
+pub mod watch;
+pub mod watch_exec;
 
 pub use handle::{ProcessCompletion, ProcessHandle, ProcessStatus};
-pub use manager::{ProcessCompletionSink, ProcessManager, ProcessManagerGuard, SIGNAL_EXIT_CODE};
+pub use manager::{ProcessManager, ProcessManagerGuard, ProcessNotifier, SIGNAL_EXIT_CODE};
 pub use spool::{Spool, SpoolReader, StreamTag};
+pub use watch::{Watch, WatchAlert, WatchAlertKind, WatchAttachError, WatchError};

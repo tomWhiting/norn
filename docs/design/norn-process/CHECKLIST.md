@@ -35,15 +35,15 @@
 
 ## Watches
 
-- [ ] **C19** — A watch (brief + agent-authored filter script) attaches to any manager-owned process at spawn or later, and detaches via unwatch; list surfaces active watches.
-- [ ] **C20** — Watch filters run deterministically against new spool regions on append notification — no model calls anywhere in the watch path.
-- [ ] **C21** — A filter match delivers an injected alert message carrying watch id, process id, brief, the matching excerpt, and the examined spool range.
-- [ ] **C22** — Filter execution failures are surfaced to the agent as alerts — never swallowed, never silently disabling the watch.
-- [ ] **C23** — On process exit the remaining unexamined spool region is filtered before the completion notice is delivered; watches then end.
-- [ ] **C24** — No caps on watch count per process or matches per watch.
-- [ ] **C25** — The watch layer consumes only the ProcessHandle subscription seam — it never reaches into manager or spool internals.
+- [x] **C19** — A watch (brief + agent-authored filter script) attaches to any manager-owned process at spawn or later, and detaches via unwatch; list surfaces active watches.
+- [x] **C20** — Watch filters run deterministically against new spool regions on append notification — no model calls anywhere in the watch path.
+- [x] **C21** — A filter match delivers an injected alert message carrying watch id, process id, brief, the matching excerpt, and the examined spool range.
+- [x] **C22** — Filter execution failures are surfaced to the agent as alerts — never swallowed, never silently disabling the watch.
+- [x] **C23** — On process exit the remaining unexamined spool region is filtered before the completion notice is delivered; watches then end.
+- [x] **C24** — No caps on watch count per process or matches per watch.
+- [x] **C25** — The watch layer consumes only the ProcessHandle subscription seam — it never reaches into manager or spool internals.
 
 ## Gates
 
-- [ ] **C26** — cargo clippy --workspace --all-targets -- -D warnings passes clean.
-- [ ] **C27** — cargo fmt --check passes clean.
+- [x] **C26** — cargo clippy --workspace --all-targets -- -D warnings passes clean.
+- [x] **C27** — cargo fmt --check passes clean.
