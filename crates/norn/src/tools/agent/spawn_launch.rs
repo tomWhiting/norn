@@ -30,6 +30,7 @@ use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
+use crate::r#loop::config::ToolExecutor;
 use crate::r#loop::inbound::{InboundChannel, inbound_channel};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::runner::{
@@ -307,6 +308,39 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     let wake_pending_for_task = Arc::clone(&wake_pending);
     let inbound_tx_for_task = inbound_tx.clone();
     let run_cancel = cancel.clone();
+
+    // In-session cron (N-026): arm the child's schedule executor on its own
+    // tool context — the same shared mechanism the root builder uses — so
+    // the `cron` tool resolves its `ScheduleHandle` for spawned children
+    // too. The store starts empty (children never resume; their lifecycle
+    // events persist to the child's own store). The guard rides on the
+    // child's loop context, which the controller task owns, so the executor
+    // aborts when the controller ends — no timer outlives the child. An
+    // idle-parked child is woken through the shared wake registry when a
+    // schedule fires (the wake tool's queue-then-wake contract).
+    if let Some(child_ctx) = executor.shared_context() {
+        loop_ctx.schedule_executor = Some(crate::schedule::arm_schedule_executor(
+            child_ctx.as_ref(),
+            Arc::new(crate::schedule::ScheduleStore::new()),
+            crate::schedule::ScheduleDelivery {
+                agent_id: child_id,
+                inbound: Some(inbound_tx.clone()),
+                pending: loop_ctx.pending_agent_messages.clone(),
+                event_store: Arc::clone(&store),
+                registry: Some(Arc::clone(&agent_registry)),
+                wake_registry: child_ctx.get_extension::<AgentWakeRegistry>(),
+            },
+        ));
+    } else {
+        // Structurally unreachable: `SubAgentExecutor::shared_context`
+        // always returns the child context it was constructed with. Say so
+        // rather than silently launching an unschedulable child.
+        tracing::error!(
+            child_id = %child_id,
+            "spawn launch: the child executor exposes no shared tool context; \
+             the schedule executor cannot arm and the cron tool will not resolve",
+        );
+    }
 
     let join_handle = tokio::spawn(async move {
         let mut child_config = ChildLoopConfig::resolve(loop_config);

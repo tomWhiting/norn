@@ -27,6 +27,7 @@ use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
+use crate::r#loop::config::ToolExecutor;
 use crate::r#loop::inbound::{InboundChannel, InboundSender};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
@@ -149,6 +150,37 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
     // wrapper records as the run's real outcome through its normal
     // terminal sequence below. Mirrors the spawn wrapper.
     let run_cancel = cancel.clone();
+
+    // In-session cron (N-026): arm the fork's schedule executor on its own
+    // tool context, mirroring the spawn launch. The store starts EMPTY —
+    // the fork's event store is a snapshot of the parent's, and rebuilding
+    // from it would duplicate the parent's schedules into the fork; a
+    // schedule belongs to the owning session only. The guard rides on the
+    // fork's loop context, which the wrapper task owns, so the executor
+    // aborts when the fork ends.
+    if let Some(fork_ctx) = executor.shared_context() {
+        loop_ctx.schedule_executor = Some(crate::schedule::arm_schedule_executor(
+            fork_ctx.as_ref(),
+            Arc::new(crate::schedule::ScheduleStore::new()),
+            crate::schedule::ScheduleDelivery {
+                agent_id: fork_id,
+                inbound: Some(inbound_tx.clone()),
+                pending: loop_ctx.pending_agent_messages.clone(),
+                event_store: Arc::clone(&child_store),
+                registry: Some(Arc::clone(&agent_registry)),
+                wake_registry: fork_ctx
+                    .get_extension::<crate::tools::agent::handle::AgentWakeRegistry>(),
+            },
+        ));
+    } else {
+        // Structurally unreachable: `SubAgentExecutor::shared_context`
+        // always returns the fork context it was constructed with.
+        tracing::error!(
+            fork_id = %fork_id,
+            "fork launch: the fork executor exposes no shared tool context; \
+             the schedule executor cannot arm and the cron tool will not resolve",
+        );
+    }
 
     let join_handle = tokio::spawn(async move {
         let started = Instant::now();

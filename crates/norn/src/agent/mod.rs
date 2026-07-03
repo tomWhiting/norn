@@ -33,7 +33,7 @@ pub use fork::{
     format_fork_failure, format_fork_result, format_spawn_failure, format_spawn_result,
     inject_synthetic_fork_result, slugify_requirement_name, verify_no_orphan_tool_calls,
 };
-pub use goals::{ContinuationPolicy, Goal, GoalSignal, GoalTracker, ScheduleEntry, Scheduler};
+pub use goals::{ContinuationPolicy, Goal, GoalSignal, GoalTracker};
 pub use handle::{AgentHandle, ResolvedAgentInfo};
 pub use instance::{Agent, AgentParts};
 pub use message_router::{MessageRouter, RouteError};

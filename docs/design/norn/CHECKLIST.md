@@ -130,8 +130,8 @@
 
 ## In-Session Scheduling
 
-- [ ] **C99** — A cron tool provides schedule, list, and cancel operations supporting relative wake-ups ("in N"), time-of-day, looping intervals (minutes/hours/days), and full cron expressions, with no caps on schedule count or interval
-- [ ] **C100** — Fired schedules deliver as injected messages through the durable delivery path and actually wake gate-idle and lingering agents
-- [ ] **C101** — Schedules persist as session events; resume restores pending schedules (past-due one-shots fire immediately marked late, recurring schedules re-arm from resume time without backfill)
-- [ ] **C102** — Looping schedules re-arm on fire; one-shot schedules complete after firing
-- [ ] **C103** — The goals.rs Scheduler/ScheduleEntry scaffolding is deleted and replaced by the schedule module — no zombie code; GoalTracker remains untouched
+- [x] **C99** — A cron tool provides schedule, list, and cancel operations supporting relative wake-ups ("in N"), time-of-day, looping intervals (minutes/hours/days), and full cron expressions, with no caps on schedule count or interval
+- [x] **C100** — Fired schedules deliver as injected messages through the durable delivery path and actually wake gate-idle and lingering agents
+- [x] **C101** — Schedules persist as session events; resume restores pending schedules (past-due one-shots fire immediately marked late, recurring schedules re-arm from resume time without backfill)
+- [x] **C102** — Looping schedules re-arm on fire; one-shot schedules complete after firing
+- [x] **C103** — The goals.rs Scheduler/ScheduleEntry scaffolding is deleted and replaced by the schedule module — no zombie code; GoalTracker remains untouched

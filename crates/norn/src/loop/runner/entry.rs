@@ -224,6 +224,15 @@ pub async fn run_agent_step_from_messages(
 async fn run_agent_step_common(
     mut request: AgentStepRunRequest<'_>,
 ) -> Result<AgentStepResult, NornError> {
+    // Lazily arm the schedule executor if it was parked at build time
+    // (assembly can construct an agent outside a Tokio runtime, before
+    // `block_on`). We are now inside a runtime, so this spawns the executor
+    // on the first step; it is idempotent (a no-op once armed), so later
+    // steps pay only a branch. Without this, a build-then-`block_on` agent
+    // would persist its schedules but never fire them live.
+    if let Some(guard) = request.loop_context.schedule_executor.as_mut() {
+        guard.ensure_armed();
+    }
     let timeout_state = shared_timeout_state();
     let started = std::time::Instant::now();
     let store = request.store;

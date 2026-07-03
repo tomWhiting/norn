@@ -11,6 +11,7 @@ pub mod bash;
 mod confinement;
 pub mod context_paths;
 pub mod conventions;
+pub mod cron;
 pub mod diagnostics_check;
 pub mod diagnostics_infra;
 pub mod edit;
@@ -51,6 +52,7 @@ pub use self::agents::AgentsTool;
 pub use self::bash::BashTool;
 pub use self::context_paths::ContextSearchPaths;
 pub use self::conventions::ConventionsConfig;
+pub use self::cron::{CRON_TOOL_NAME, CronTool};
 pub use self::follow_up::FollowUpTool;
 
 /// Public diagnostics API facade for post-validation infrastructure.

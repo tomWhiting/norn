@@ -219,6 +219,16 @@ pub struct LoopContext {
     /// messages through the normal `<agent_message>` path.
     pub pending_agent_messages: Option<Arc<crate::agent::PendingAgentMessages>>,
 
+    /// Guard binding the agent's in-session schedule executor
+    /// ([`crate::schedule::executor`]) to this loop's lifetime.
+    ///
+    /// Set by every assembly launch path that arms scheduling (root build,
+    /// spawn, fork). Dropping the loop context — the agent instance for a
+    /// root, the controller task for a child — aborts the executor task, so
+    /// no timer outlives its agent. Inert data as far as the runner is
+    /// concerned; nothing in the loop reads it.
+    pub schedule_executor: Option<crate::schedule::ScheduleExecutorGuard>,
+
     /// Optional always-on `NORN.md` context loader. When present,
     /// [`Self::refresh_context_if_stale`] stats both layers per
     /// iteration and reports back whether `system_sections[0]` needs
@@ -333,6 +343,7 @@ impl LoopContext {
             action_log: None,
             agent_id: None,
             pending_agent_messages: None,
+            schedule_executor: None,
             context_loader: None,
             base_prefix: String::new(),
             base_suffix: String::new(),

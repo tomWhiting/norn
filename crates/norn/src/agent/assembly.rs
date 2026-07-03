@@ -158,8 +158,11 @@ pub(crate) fn skill_tool_config_from_settings(
 }
 
 /// Build the ungated tool registry: the standard set (with the bash drain
-/// grace applied when overridden), plus the caller's extra tools, minus the
-/// excluded names.
+/// grace applied when overridden), plus the `cron` scheduling tool — this
+/// is the `AgentBuilder` path, which always arms the schedule executor the
+/// tool resolves, so registries assembled by a bare
+/// `register_standard_tools` call carry no `cron` tool — plus the caller's
+/// extra tools, minus the excluded names.
 pub(crate) fn build_base_tool_registry(
     lsp_backend: Option<Arc<dyn LspBackend>>,
     extra_tools: Vec<Box<dyn Tool + Send + Sync>>,
@@ -168,6 +171,7 @@ pub(crate) fn build_base_tool_registry(
 ) -> ToolRegistry {
     let mut registry = ToolRegistry::new();
     register_standard_tools(&mut registry, lsp_backend);
+    crate::tools::registry_builder::register_cron_tool(&mut registry);
     // Replace the standard bash tool with one carrying the overridden drain
     // grace. Caller-registered replacements (extra tools named `bash`) are
     // registered afterwards and win, matching registry semantics.
@@ -567,6 +571,60 @@ pub(crate) fn arm_auto_compaction(
         config.context_window_limit =
             crate::model_catalog::smallest_context_window_for_model(model);
     }
+}
+
+/// Arm the root agent's in-session schedule executor (N-026) — the root
+/// half of the shared mechanism the spawn/fork launch paths mirror at
+/// their own construction sites, exactly like [`arm_auto_compaction`].
+///
+/// Rebuilds the [`ScheduleStore`](crate::schedule::ScheduleStore) from the
+/// session's `schedule.*` events (a fresh session arms empty; a resume
+/// re-arms survivors — past-due one-shots fire immediately marked late,
+/// recurring schedules re-arm from resume time with no backfill), installs
+/// the [`ScheduleHandle`](crate::schedule::ScheduleHandle) extension the
+/// `cron` tool resolves, spawns the live executor, and binds its guard to
+/// the loop context so dropping the agent aborts the timer task — timers
+/// die with the process; only the event record survives, for resume.
+///
+/// When no agent coordination is installed the root still gets a durable
+/// pending store (rebuilt from events, exactly as `install_agent_infra`
+/// builds one) so a fired schedule with no live channel is queued somewhere
+/// the next step's pending flush actually reads.
+///
+/// An embedder that hand-rolls
+/// [`run_agent_step`](crate::agent_loop::runner::run_agent_step) without
+/// going through assembly never calls this and therefore has no executor
+/// and no `cron` tool — the same discoverable contract as
+/// [`arm_auto_compaction`]'s.
+pub(crate) fn arm_root_schedule_executor(
+    shared: &ToolContext,
+    loop_context: &mut LoopContext,
+    event_store: &Arc<EventStore>,
+    agent_id: Uuid,
+    inbound_tx: Option<crate::r#loop::inbound::InboundSender>,
+    agent_registry: Option<Arc<RwLock<AgentRegistry>>>,
+) {
+    if loop_context.pending_agent_messages.is_none() {
+        loop_context.pending_agent_messages = Some(Arc::new(PendingAgentMessages::from_events(
+            &event_store.events(),
+        )));
+    }
+    let schedule_store = Arc::new(crate::schedule::ScheduleStore::from_events(
+        &event_store.events(),
+        chrono::Utc::now(),
+    ));
+    loop_context.schedule_executor = Some(crate::schedule::arm_schedule_executor(
+        shared,
+        schedule_store,
+        crate::schedule::ScheduleDelivery {
+            agent_id,
+            inbound: inbound_tx,
+            pending: loop_context.pending_agent_messages.clone(),
+            event_store: Arc::clone(event_store),
+            registry: agent_registry,
+            wake_registry: shared.get_extension::<crate::tools::agent::AgentWakeRegistry>(),
+        },
+    ));
 }
 
 /// Populate the loop context's execution infrastructure: retry policy

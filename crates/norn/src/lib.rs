@@ -12,6 +12,7 @@ pub mod profile;
 pub mod provider;
 pub mod rules;
 pub mod runtime_init;
+pub mod schedule;
 pub mod session;
 
 pub mod skill;

@@ -132,7 +132,13 @@ two are behaviors an agent explicitly wrote "needs sign-off" against. Full detai
    (e) **Cron tool requirements** (for the brief): relative wake-ups ("in N"), time-of-day,
    and looping intervals (minutes/hours/days); fired schedules deliver as injected messages;
    schedules persist as session events (resume restores); no caps on count or interval;
-   in-session first, daemon phase later.
+   in-session first, daemon phase later. **Extension applied 2026-07-04 (flagged for owner
+   confirmation)**: the resume ruling's no-backfill semantics are extended to LIVE catch-up —
+   after a process suspend (laptop sleep freezes timers while wall time jumps), a recurring
+   schedule fires ONCE and re-arms from now with the skipped occurrences logged, instead of
+   replaying every missed occurrence as a burst (an 8-hour sleep on `every: "1m"` would
+   otherwise inject ~480 stacked steers). Same semantics, same rationale, new code path —
+   surfaced by the N-026 Fable review.
 
 Beyond these, §5.1 (R1 D1-D7) were **applied autonomously while the owner was away** and are all
 reversible on `hardening/final-state` before merge — the owner may override any of them.

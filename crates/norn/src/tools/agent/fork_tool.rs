@@ -1234,6 +1234,89 @@ mod tests {
         );
     }
 
+    /// N-026 R6 (fork path): the fork's own tool context carries a
+    /// `ScheduleHandle`, proven behaviorally — the fork calls the `cron`
+    /// tool mid-run and the `schedule.created` event lands on the FORK's
+    /// event store (never the parent's: a fork's schedules are its own).
+    #[tokio::test]
+    async fn forked_child_resolves_cron_tool_against_its_own_schedule_handle() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc-cron".to_string(),
+                    name: Some("cron".to_string()),
+                    arguments_delta:
+                        json!({"op": "schedule", "every": "2h", "message": "fork check-in"})
+                            .to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "structured-out".to_string(),
+                    name: Some("structured_output".to_string()),
+                    arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: None,
+            }],
+        ]));
+
+        let mut registry = ToolRegistry::new();
+        crate::tools::registry_builder::register_cron_tool(&mut registry);
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(registry),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({
+                    "request": "schedule a check-in", "model": "gpt-5.5", "requirements": [],
+                })),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        let child_store = Arc::clone(&handle.event_store);
+        handle.join_handle.await.expect("join");
+
+        let created = |store: &EventStore| {
+            store.events().into_iter().any(|e| {
+                matches!(
+                    &e,
+                    SessionEvent::Custom { event_type, .. }
+                        if event_type == crate::schedule::SCHEDULE_CREATED_EVENT_TYPE
+                )
+            })
+        };
+        assert!(
+            created(&child_store),
+            "the fork's cron call must persist schedule.created to the fork's own store",
+        );
+        assert!(
+            !created(&parent_store),
+            "the fork's schedule must never leak onto the parent's store",
+        );
+    }
+
     /// R4: `ForkComplete` event appended to parent's timeline with a
     /// round-trippable variant tag.
     #[tokio::test]

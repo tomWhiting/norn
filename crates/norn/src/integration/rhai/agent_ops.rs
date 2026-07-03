@@ -340,7 +340,12 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             // here. If script children ever gain a real tool surface, they
             // must get their own child context (as the spawn/fork tools
             // build), or their spawns would be charged to the host's
-            // identity and budget.
+            // identity and budget. Concretely for N-026 cron: this shared
+            // context carries the HOST's `ScheduleHandle`, so a script child
+            // that could reach the `cron` tool would create schedules against
+            // the host's store and identity — but it is shown zero tools, so
+            // cron is unreachable here and the trap stays closed until that
+            // tool-surface change lands.
             //
             // Cancellation boundary (W3.5, deliberate): script children run
             // with `cancel: None` — the rhai host owns no run token to

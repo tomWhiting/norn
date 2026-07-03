@@ -989,6 +989,69 @@ mod tests {
         assert_eq!(*status_rx.borrow_and_update(), AgentStatus::Idle);
     }
 
+    /// N-026 R6 (spawn path): the spawned child's own tool context carries
+    /// a `ScheduleHandle`, proven behaviorally — the child calls the `cron`
+    /// tool and the `schedule.created` event lands on the CHILD's event
+    /// store. A missing extension would fail the call with
+    /// `MissingExtension` and no such event could exist.
+    #[tokio::test]
+    async fn spawned_child_resolves_cron_tool_against_its_own_schedule_handle() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc-cron".to_string(),
+                    name: Some("cron".to_string()),
+                    arguments_delta:
+                        r#"{"op":"schedule","in":"12h","message":"check the long job"}"#.to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "scheduled".to_string(),
+                },
+                done_event(),
+            ],
+        ]));
+        let parent = Uuid::new_v4();
+        let agent_registry = AgentRegistry::shared();
+        let mut tools = ToolRegistry::new();
+        crate::tools::registry_builder::register_cron_tool(&mut tools);
+        let ctx = parent_ctx(
+            provider,
+            parent,
+            &agent_registry,
+            Arc::new(tools),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "schedule a check-in", "model": "haiku", "role": "worker"}),
+        )
+        .await;
+
+        let child_store = ctx
+            .get_extension::<AgentHandles>()
+            .expect("AgentHandles installed")
+            .event_store(child_id)
+            .expect("child event store tracked");
+        let created = child_store.events().into_iter().any(|e| {
+            matches!(
+                &e,
+                SessionEvent::Custom { event_type, .. }
+                    if event_type == crate::schedule::SCHEDULE_CREATED_EVENT_TYPE
+            )
+        });
+        assert!(
+            created,
+            "the child's cron call must persist schedule.created to the child's own store",
+        );
+    }
+
     #[tokio::test]
     async fn spawn_agent_without_infra_returns_missing_extension() {
         let tool = SpawnAgentTool::new();

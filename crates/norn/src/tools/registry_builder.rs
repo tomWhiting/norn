@@ -97,6 +97,22 @@ pub fn register_standard_tools(
     registry.register(Box::new(AgentsTool::new()));
 }
 
+/// Register the `cron` in-session scheduling tool.
+///
+/// Deliberately **not** part of [`register_standard_tools`]: the tool
+/// resolves the [`ScheduleHandle`](crate::schedule::ScheduleHandle)
+/// extension that
+/// [`arm_schedule_executor`](crate::schedule::arm_schedule_executor)
+/// installs at agent assembly, so it is registered only by assembly paths
+/// that also arm the executor (`build_base_tool_registry` — the
+/// `AgentBuilder` path, whose every launch arms the executor for root and
+/// children alike). A registry assembled without the executor — a bare
+/// [`register_standard_tools`] call — therefore carries no `cron` tool at
+/// all, rather than a tool that fails `MissingExtension` at call time.
+pub fn register_cron_tool(registry: &mut ToolRegistry) {
+    registry.register(Box::new(crate::tools::cron::CronTool::new()));
+}
+
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
@@ -160,6 +176,7 @@ mod tests {
     fn every_standard_tool_schema_root_is_an_object() {
         let mut registry = ToolRegistry::new();
         register_standard_tools(&mut registry, None);
+        register_cron_tool(&mut registry);
 
         let names: Vec<String> = registry.names().map(str::to_owned).collect();
         for name in names {
@@ -184,6 +201,7 @@ mod tests {
     fn every_standard_tool_downlevels_to_an_openai_compliant_schema() {
         let mut registry = ToolRegistry::new();
         register_standard_tools(&mut registry, None);
+        register_cron_tool(&mut registry);
 
         let names: Vec<String> = registry.names().map(str::to_owned).collect();
         for name in names {
@@ -211,6 +229,26 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// N-026: `cron` is deliberately absent from the standard set — a
+    /// registry assembled without the schedule executor must not offer a
+    /// tool that fails `MissingExtension` at call time. Only
+    /// [`register_cron_tool`] (called by the assembly path that arms the
+    /// executor) registers it.
+    #[test]
+    fn cron_is_absent_from_standard_set_and_added_by_its_own_registrar() {
+        let mut registry = ToolRegistry::new();
+        register_standard_tools(&mut registry, None);
+        assert!(
+            registry.get("cron").is_none(),
+            "the standard set carries no cron tool without the executor",
+        );
+        register_cron_tool(&mut registry);
+        assert!(
+            registry.get("cron").is_some(),
+            "the dedicated registrar adds the cron tool",
+        );
     }
 
     #[test]
