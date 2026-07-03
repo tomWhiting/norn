@@ -50,19 +50,21 @@ use uuid::Uuid;
 
 use crate::agent::assembly::{
     AgentConfigPresence, AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay,
-    ToolContextParts, apply_base_to_loop_context, assemble_tool_context, build_base_tool_registry,
-    collect_tool_definitions, effective_agent_config, install_agent_infra,
-    install_runtime_base_extensions, install_tool_catalog, populate_loop_context,
-    resolve_base_profile, resolve_runtime_overlay, resolve_working_dir, restore_session_state,
-    validate_workspace_root,
+    ToolContextParts, apply_base_to_loop_context, assemble_tool_context, collect_tool_definitions,
+    effective_agent_config, install_agent_infra, install_runtime_base_extensions,
+    install_tool_catalog, populate_loop_context, resolve_base_profile, resolve_runtime_overlay,
+    resolve_working_dir, restore_session_state, validate_workspace_root,
 };
-use crate::agent::build_support::{resolve_coordination, resolve_root_agent_id};
+use crate::agent::build_support::{
+    compute_read_exempt_roots, resolve_coordination, resolve_root_agent_id, validate_build_inputs,
+};
 use crate::agent::child_policy::ChildPolicy;
 use crate::agent::handle::ResolvedAgentInfo;
 use crate::agent::instance::Agent;
 use crate::agent::output::RunOutcome;
 use crate::agent::prompt_install::{SystemPromptInstall, install_system_prompt};
 use crate::agent::registry::AgentRegistry;
+use crate::agent::registry_assembly::build_base_tool_registry;
 use crate::agent::session_spec::SessionRequest;
 use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::agent_loop::event_schemas::EventSchemaSet;
@@ -223,43 +225,14 @@ impl AgentBuilder {
     ///   create, resume, or fork the persisted session.
     pub fn build(mut self) -> Result<Agent, NornError> {
         let invalid = |reason: String| NornError::Config(ConfigError::InvalidConfig { reason });
-        if self.event_channel_capacity == Some(0) {
-            return Err(invalid(
-                "event_channel_capacity is 0 — the event broadcast channel needs a \
-                 non-zero capacity; pick one sized to how fast consumers drain"
-                    .to_string(),
-            ));
-        }
-        if self.inbound_capacity == Some(0) {
-            return Err(invalid(
-                "inbound_capacity is 0 — the inbound steering channel needs a \
-                 non-zero capacity"
-                    .to_string(),
-            ));
-        }
-        if self.session.is_some() && self.session_request.is_some() {
-            return Err(invalid(
-                "both .session(store) and .open_session(..) are set — pass either an \
-                 in-memory event store or a managed persisted session, not both"
-                    .to_string(),
-            ));
-        }
-        if self.child_result_capacity == Some(0) {
-            return Err(invalid(
-                "child_result_capacity is 0 — the child-result channel needs a \
-                 non-zero capacity"
-                    .to_string(),
-            ));
-        }
-        if let Some(policy) = self.child_policy.as_ref()
-            && policy.inbound_capacity == 0
-        {
-            return Err(invalid(
-                "child_policy.inbound_capacity is 0 — a child's inbound steering \
-                 channel needs a non-zero capacity"
-                    .to_string(),
-            ));
-        }
+        validate_build_inputs(
+            self.event_channel_capacity,
+            self.inbound_capacity,
+            self.session.is_some(),
+            self.session_request.is_some(),
+            self.child_result_capacity,
+            self.child_policy.as_ref(),
+        )?;
         // Coordination envelope: required exactly when the agent-coordination
         // runtime is wired, rejected when it could only be silently ignored.
         let coordination = resolve_coordination(
@@ -365,7 +338,7 @@ impl AgentBuilder {
             && !base.skill_catalog.is_empty()
         {
             registry.register(Box::new(crate::tools::skill::SkillTool::with_config(
-                crate::agent::assembly::skill_tool_config_from_settings(&base.settings),
+                crate::agent::registry_assembly::skill_tool_config_from_settings(&base.settings),
             )));
         }
 
@@ -468,7 +441,7 @@ impl AgentBuilder {
             // matching the child paths (never advertise what cannot be
             // called). `registry` here is post-`from_profile` and
             // post-`set_disallowed`, so `get` reflects the final surface.
-            crate::agent::assembly::apply_skill_listing(
+            crate::agent::arming::apply_skill_listing(
                 &mut loop_context,
                 &base.skill_catalog,
                 registry.get("skill").is_some(),
@@ -510,11 +483,7 @@ impl AgentBuilder {
         // when it equals the catalogued value. Models absent from the
         // catalog (arbitrary openai-compatible ids) keep None, leaving the
         // trigger disabled exactly as before.
-        crate::agent::assembly::arm_auto_compaction(
-            &mut loop_context,
-            &mut config_override,
-            &model,
-        );
+        crate::agent::arming::arm_auto_compaction(&mut loop_context, &mut config_override, &model);
         // The system prompt only promises compaction the loop will actually
         // perform. The runtime trigger (`maybe_auto_compact`) disables itself
         // when the reserve is at or above the window — every step would
@@ -566,69 +535,9 @@ impl AgentBuilder {
 
         // Read carve-out (DECISIONS §0.6(b)): under confinement, a confined
         // agent may READ the well-known, convention-defined skill / profile /
-        // config locations that lie OUTSIDE the workspace root — the skill
-        // tool advertises companion files there, so they must be readable.
-        // Write stays fully confined; only computed when a confinement root is
-        // actually set; canonicalization + dedup + missing-drop happen in the
-        // context setter.
-        //
-        // The exempt set is deliberately limited to non-model-writable
-        // convention locations. It is NOT seeded from `runtime_base.skill_paths`,
-        // because that list includes settings-declared `skills.search_paths`
-        // merged from `cwd/.norn/settings.json` / `settings.local.json` — files
-        // INSIDE the confinement root that the confined agent can write. Seeding
-        // exemptions from them would let an agent append an arbitrary path and
-        // have the NEXT session read-exempt it: a persistent confinement escape.
-        // Settings-declared `search_paths` that point outside the workspace are
-        // therefore NOT exempt under confinement — that allowance belongs to the
-        // future operator permission-config surface (DECISIONS §0.6(b) sketch).
-        // A skill from such a path still LOADS (the skill tool reads through its
-        // own `std::fs` path in `tools/skill.rs`, never through read-tool
-        // confinement), but its companion files are not readable under
-        // confinement until that operator surface exists.
-        //
-        // `~/.norn/settings.json` itself is not exempted: exempt roots are
-        // directory prefixes (`starts_with`), so a file-granular allowance is
-        // not expressible here, and exempting its directory would be too broad
-        // (`~/.norn/` also holds `sessions/`). Nothing extra is added for it.
-        // `~/.norn/sessions/` (session transcripts for ALL workspaces) and the
-        // `~/.norn/` root itself are never exempted.
-        let read_exempt_roots = if let Some(root) = workspace_root.as_ref() {
-            let mut roots: Vec<PathBuf> = Vec::new();
-            // Narrow `~/.norn/` convention subdirs (NORN_HOME-aware via the
-            // `config::paths` helpers) — skills, profiles, and rules only,
-            // never the norn root and never `sessions/`.
-            if let Some(skills) = crate::config::paths::skills_dir() {
-                roots.push(skills);
-            }
-            if let Some(profiles) = crate::config::paths::profiles_dir() {
-                roots.push(profiles);
-            }
-            if let Some(rules) = crate::config::paths::rules_dir() {
-                roots.push(rules);
-            }
-            // Literal-home foreign-convention skill tiers, resolved exactly as
-            // `build_skill_search_paths` resolves them: rooted at the real home
-            // dir, because NORN_HOME moves only the norn root, not these
-            // (agentskills.io / Claude Code) conventions.
-            if let Some(home) = dirs::home_dir() {
-                roots.push(home.join(".agents").join("skills"));
-                roots.push(home.join(".claude").join("skills"));
-            }
-            // Home-tier profile scan dirs: only those `default_scan_dirs`
-            // yields OUTSIDE the workspace. Its project-tier entries
-            // (`cwd/.norn/profiles`, `cwd/.meridian/profiles`) live inside the
-            // confinement root and are already readable, so they need no
-            // exemption.
-            for dir in crate::profile::default_scan_dirs(&working_dir) {
-                if !dir.starts_with(root) {
-                    roots.push(dir);
-                }
-            }
-            roots
-        } else {
-            Vec::new()
-        };
+        // config locations that lie OUTSIDE the workspace root. Computed in
+        // `build_support` — empty when no confinement root is set.
+        let read_exempt_roots = compute_read_exempt_roots(workspace_root.as_deref(), &working_dir);
 
         let ctx = assemble_tool_context(ToolContextParts {
             shared_wd,
@@ -738,7 +647,7 @@ impl AgentBuilder {
         // from session events (resume restore), install the ScheduleHandle
         // the cron tool resolves, arm the live executor, and bind its guard
         // to the loop context so dropping the agent aborts the timer task.
-        crate::agent::assembly::arm_root_schedule_executor(
+        crate::agent::arming::arm_root_schedule_executor(
             shared.as_ref(),
             &mut loop_context,
             &event_store,

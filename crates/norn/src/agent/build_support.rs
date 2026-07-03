@@ -6,6 +6,7 @@
 //! contract: coordination is validated exactly when the agent-coordination
 //! runtime is wired, and root registration is honoured only alongside it.
 
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use parking_lot::RwLock;
@@ -17,6 +18,141 @@ use crate::error::{ConfigError, NornError};
 
 fn invalid(reason: String) -> NornError {
     NornError::Config(ConfigError::InvalidConfig { reason })
+}
+
+/// Reject the zero-capacity and mutually-exclusive-session builder inputs
+/// before any assembly work begins.
+///
+/// Every channel the builder may wire (event broadcast, inbound steering,
+/// child-result, and a child's own inbound steering channel) needs a
+/// non-zero capacity, and the two session-supply paths (`.session(store)`
+/// and `.open_session(..)`) are mutually exclusive. These guards run first
+/// in [`AgentBuilder::build`](crate::agent::builder::AgentBuilder::build) so
+/// a misconfigured capacity fails loudly instead of surfacing later as a
+/// closed or panicking channel.
+///
+/// # Errors
+///
+/// [`NornError::Config`] when `event_channel_capacity`, `inbound_capacity`,
+/// `child_result_capacity`, or the child policy's `inbound_capacity` is
+/// zero, or when both a session store and a managed session request are set.
+pub(crate) fn validate_build_inputs(
+    event_channel_capacity: Option<usize>,
+    inbound_capacity: Option<usize>,
+    session_present: bool,
+    session_request_present: bool,
+    child_result_capacity: Option<usize>,
+    child_policy: Option<&ChildPolicy>,
+) -> Result<(), NornError> {
+    if event_channel_capacity == Some(0) {
+        return Err(invalid(
+            "event_channel_capacity is 0 — the event broadcast channel needs a \
+             non-zero capacity; pick one sized to how fast consumers drain"
+                .to_string(),
+        ));
+    }
+    if inbound_capacity == Some(0) {
+        return Err(invalid(
+            "inbound_capacity is 0 — the inbound steering channel needs a \
+             non-zero capacity"
+                .to_string(),
+        ));
+    }
+    if session_present && session_request_present {
+        return Err(invalid(
+            "both .session(store) and .open_session(..) are set — pass either an \
+             in-memory event store or a managed persisted session, not both"
+                .to_string(),
+        ));
+    }
+    if child_result_capacity == Some(0) {
+        return Err(invalid(
+            "child_result_capacity is 0 — the child-result channel needs a \
+             non-zero capacity"
+                .to_string(),
+        ));
+    }
+    if let Some(policy) = child_policy
+        && policy.inbound_capacity == 0
+    {
+        return Err(invalid(
+            "child_policy.inbound_capacity is 0 — a child's inbound steering \
+             channel needs a non-zero capacity"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
+/// Compute the read-exempt roots for a confined agent (DECISIONS §0.6(b)):
+/// under confinement, a confined agent may READ the well-known,
+/// convention-defined skill / profile / config locations that lie OUTSIDE
+/// the workspace root — the skill tool advertises companion files there, so
+/// they must be readable. Write stays fully confined; the set is empty when
+/// no confinement root is set; canonicalization + dedup + missing-drop
+/// happen in the context setter.
+///
+/// The exempt set is deliberately limited to non-model-writable convention
+/// locations. It is NOT seeded from `runtime_base.skill_paths`, because that
+/// list includes settings-declared `skills.search_paths` merged from
+/// `cwd/.norn/settings.json` / `settings.local.json` — files INSIDE the
+/// confinement root that the confined agent can write. Seeding exemptions
+/// from them would let an agent append an arbitrary path and have the NEXT
+/// session read-exempt it: a persistent confinement escape. Settings-declared
+/// `search_paths` that point outside the workspace are therefore NOT exempt
+/// under confinement — that allowance belongs to the future operator
+/// permission-config surface (DECISIONS §0.6(b) sketch). A skill from such a
+/// path still LOADS (the skill tool reads through its own `std::fs` path in
+/// `tools/skill.rs`, never through read-tool confinement), but its companion
+/// files are not readable under confinement until that operator surface
+/// exists.
+///
+/// `~/.norn/settings.json` itself is not exempted: exempt roots are directory
+/// prefixes (`starts_with`), so a file-granular allowance is not expressible
+/// here, and exempting its directory would be too broad (`~/.norn/` also holds
+/// `sessions/`). Nothing extra is added for it. `~/.norn/sessions/` (session
+/// transcripts for ALL workspaces) and the `~/.norn/` root itself are never
+/// exempted.
+pub(crate) fn compute_read_exempt_roots(
+    workspace_root: Option<&Path>,
+    working_dir: &Path,
+) -> Vec<PathBuf> {
+    if let Some(root) = workspace_root {
+        let mut roots: Vec<PathBuf> = Vec::new();
+        // Narrow `~/.norn/` convention subdirs (NORN_HOME-aware via the
+        // `config::paths` helpers) — skills, profiles, and rules only,
+        // never the norn root and never `sessions/`.
+        if let Some(skills) = crate::config::paths::skills_dir() {
+            roots.push(skills);
+        }
+        if let Some(profiles) = crate::config::paths::profiles_dir() {
+            roots.push(profiles);
+        }
+        if let Some(rules) = crate::config::paths::rules_dir() {
+            roots.push(rules);
+        }
+        // Literal-home foreign-convention skill tiers, resolved exactly as
+        // `build_skill_search_paths` resolves them: rooted at the real home
+        // dir, because NORN_HOME moves only the norn root, not these
+        // (agentskills.io / Claude Code) conventions.
+        if let Some(home) = dirs::home_dir() {
+            roots.push(home.join(".agents").join("skills"));
+            roots.push(home.join(".claude").join("skills"));
+        }
+        // Home-tier profile scan dirs: only those `default_scan_dirs`
+        // yields OUTSIDE the workspace. Its project-tier entries
+        // (`cwd/.norn/profiles`, `cwd/.meridian/profiles`) live inside the
+        // confinement root and are already readable, so they need no
+        // exemption.
+        for dir in crate::profile::default_scan_dirs(working_dir) {
+            if !dir.starts_with(root) {
+                roots.push(dir);
+            }
+        }
+        roots
+    } else {
+        Vec::new()
+    }
 }
 
 /// The validated agent-coordination inputs: the shared registry and the

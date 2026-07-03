@@ -2,6 +2,7 @@
 
 pub use crate::error::AgentError;
 
+pub(crate) mod arming;
 pub(crate) mod assembly;
 mod build_support;
 pub mod builder;
@@ -16,6 +17,7 @@ pub mod output;
 pub mod pending_messages;
 pub(crate) mod prompt_install;
 pub mod registry;
+pub(crate) mod registry_assembly;
 pub mod result_channel;
 pub mod resume;
 pub mod session_spec;

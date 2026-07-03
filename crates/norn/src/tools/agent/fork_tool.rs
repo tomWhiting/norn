@@ -406,10 +406,10 @@ impl Tool for ForkTool {
         // root builder uses. Applied after the fork preamble + parent base
         // are composed into `loop_ctx`, so the listing lands after them.
         if let Some(catalog) = ctx.get_extension::<crate::skill::SkillCatalog>() {
-            crate::agent::assembly::install_child_skill_listing(
+            crate::agent::arming::install_child_skill_listing(
                 &mut loop_ctx,
                 &catalog,
-                crate::agent::assembly::child_skill_tool_available(
+                crate::agent::arming::child_skill_tool_available(
                     parent_registry,
                     allow_list.as_deref(),
                 ),

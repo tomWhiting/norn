@@ -405,10 +405,10 @@ impl Tool for SpawnAgentTool {
         // resolved surface. Uses the same shared mechanism + filtered
         // listing the root builder uses, so the section cannot drift.
         if let Some(catalog) = ctx.get_extension::<crate::skill::SkillCatalog>() {
-            crate::agent::assembly::install_child_skill_listing(
+            crate::agent::arming::install_child_skill_listing(
                 &mut child_loop_ctx,
                 &catalog,
-                crate::agent::assembly::child_skill_tool_available(
+                crate::agent::arming::child_skill_tool_available(
                     parent_registry,
                     allow_list.as_deref(),
                 ),

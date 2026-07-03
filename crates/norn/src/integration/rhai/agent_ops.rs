@@ -377,7 +377,7 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             // instead of dying ContextWindowExceeded. A non-catalog model
             // keeps a None window, leaving the trigger off — matching the
             // root behavior.
-            crate::agent::assembly::arm_auto_compaction(
+            crate::agent::arming::arm_auto_compaction(
                 &mut loop_ctx,
                 &mut child_config,
                 &model_for_task,

@@ -211,7 +211,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
             // model, so a long-running fork compacts instead of dying
             // ContextWindowExceeded. A non-catalog model keeps a None
             // window, leaving the trigger off — matching the root behavior.
-            crate::agent::assembly::arm_auto_compaction(&mut loop_ctx, &mut fork_config, &model);
+            crate::agent::arming::arm_auto_compaction(&mut loop_ctx, &mut fork_config, &model);
             run_agent_step(AgentStepRequest {
                 provider: provider.as_ref(),
                 executor: &executor,

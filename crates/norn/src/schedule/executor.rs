@@ -178,7 +178,7 @@ impl Drop for ScheduleExecutorGuard {
 /// This is the single shared mechanism every library-launched agent uses to
 /// arm scheduling (root at build, spawned children and forks at their launch
 /// tasks) — the same coverage pattern as
-/// [`arm_auto_compaction`](crate::agent::assembly::arm_auto_compaction). An
+/// [`arm_auto_compaction`](crate::agent::arming::arm_auto_compaction). An
 /// embedder that hand-rolls
 /// [`run_agent_step`](crate::r#loop::runner::run_agent_step) without going
 /// through assembly simply never calls this and therefore has no executor and
