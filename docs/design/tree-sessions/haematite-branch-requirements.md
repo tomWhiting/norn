@@ -24,6 +24,14 @@ R1. **Branch at an arbitrary committed point, not just tip.** Norn forks
     children from a specific event in parent history (the fork anchor).
     O(1)-ish creation from any committed root, not only the branch head.
 
+    *Granularity note (from Apollo's review of this doc, 2026-07-05):
+    anchors are COMMIT-granular natively; an anchor between commits needs a
+    derived root (fork + suffix-trim — cheap near the tip). Norn therefore
+    commits at event or small-batch boundaries, so anchor-at-any-event holds
+    without derived roots on the hot path. This is a standing assumption the
+    manager-trait seam must state explicitly: the session store's commit
+    cadence IS the fork-anchor resolution.*
+
 R2. **Branches are first-class named refs that ADVANCE.** Create, append,
     read, list — with the branch root moving past its fork point. (Today's
     buffer-only branch writes are exactly the gap; this is the heart of the
