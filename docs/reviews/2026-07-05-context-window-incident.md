@@ -97,14 +97,42 @@ consumers see error runs as "unparseable output" rather than a typed stop.
   presence: `TimedOut`/`Cancelled`/`SchemaUnreachable` already emit envelopes
   with exit 1.
 
-**Rulings needed from Tom (owner calls, not implementer guesses):**
+**Rulings needed from Tom (owner calls, not implementer guesses), with
+Sable's recommendation on each:**
 1. `ENVELOPE_VERSION` stays 1 (additive reason) or bumps to 2.
+   *Recommend: stays 1.* Precedent already forces consumers to branch on
+   `stop.reason` rather than envelope presence (`timed_out`/`cancelled`/
+   `schema_unreachable` all emit envelopes with exit 1); an added reason is
+   additive under the internally-tagged enum.
 2. Scope: `Agent`/`Session`/`Io` only, or also `Auth` (exit 3) and pre-assembly
    failures? (`Argument`/exit-2 should stay stderr-only — clap parity.)
+   *Recommend: every post-argument-parsing failure gets the envelope,
+   including `Auth` and pre-assembly* — a machine consumer can't act on
+   "which failure class" if some classes are unparseable; exit codes stay
+   unchanged as the second signal.
 3. Error envelope carries usage/events accumulated before failure, or stays minimal?
+   *Recommend: minimal now* (`output: null`, default usage, empty events),
+   matching the `write_handled_locally` precedent; partial-state carriage is
+   a separate feature with its own checkpoint semantics, not a rider.
 4. Do `renderer_failure`/`emitter_failure` get envelopes? Their rationale is
    "stdout already torn" — a clean envelope on a torn NDJSON stream may be worse.
+   *Recommend: no — stderr-only stays.* Appending a well-formed envelope to a
+   torn stream makes the output look more trustworthy than it is.
 5. Does `--output <path>` receive the error envelope too?
+   *Recommend: yes.* A consumer watching the file, not stdout, deserves the
+   same typed stop; an empty/absent file on error recreates this bug one
+   layer up.
+
+**Flock-deadline companion ruling (same consolidated list):** wire
+`with_index_lock_deadline` in `builder_from_cli` (all CLI modes) and surface
+`IndexLockTimeout` as a typed error — scope is settled by the Wave-0
+assignment; the open ruling is THE VALUE. Factual anchor for choosing it: a
+healthy index append holds the lock for well under a millisecond (append one
+line, release), so any deadline in whole seconds fires only on genuine
+pathology — the number is a patience policy, not a tuning knob.
+*Recommend: a settings key (`agent.index_lock_deadline` or session-scoped
+equivalent) with a Tom-chosen default, so operators of slow shared
+filesystems can widen it without a rebuild.*
 
 ## Rulings so far (Tom, 2026-07-05)
 
