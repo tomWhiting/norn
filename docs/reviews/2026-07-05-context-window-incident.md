@@ -224,6 +224,23 @@ works as designed; the fix below makes it the default.
    Both candidates are real defects regardless of which one bit Vespa (the stdin
    read wants a positional-prompt gate or a bound; the CLI should wire the index
    lock deadline). Not started — flagged for a ruling on scope/priority.
+
+   **RE-RANKED after Vespa's spawn-site audit (2026-07-05, clean negative on
+   #1):** every `norn --print` spawn site in their harnesses wires stdin to
+   null, not a dangling pipe — the pilot worker
+   (`meridian_dev_pipeline/worker/src/shell.rs:134`) uses `Command::output()`,
+   whose contract is that stdin is NOT inherited (child reads EOF instantly),
+   and `norn-fan-worker` sets `Stdio::null()` explicitly. The gratuitous
+   pre-assembly read still executes (null isn't a terminal) but returns
+   immediately — a landmine for future piping harnesses, not this wedge.
+   **The flock is now the lead suspect**: the doctrine pilot runs multiple
+   CONCURRENT norns by design, so a slow sibling holding `index.lock` blocks
+   session open indefinitely — no file, no output, silent 8-minute wedge.
+   Fix shape when ruled: wire `with_index_lock_deadline` in `builder_from_cli`
+   and let `IndexLockTimeout` surface as a typed error. The deadline VALUE
+   needs an owner ruling or a settings key (house rule: no invented numbers);
+   the stdin read demotes to hygiene (bound it or gate it on
+   no-positional-prompt).
 2. **Stale settings key in Tom's ~/.norn/settings.json:** `agent.compact_threshold`
    — that key never shipped. The shipped compaction keys are
    `agent.auto_compact_reserve_tokens` (reserve size or `"off"`) and
