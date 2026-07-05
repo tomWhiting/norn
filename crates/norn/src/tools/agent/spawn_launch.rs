@@ -362,7 +362,10 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         // context window from the catalog for the child's own model, so a
         // long-running spawned child compacts instead of dying
         // ContextWindowExceeded. A non-catalog model keeps a None window,
-        // leaving the trigger off — matching the root behavior.
+        // leaving the trigger off. NOTE: the root additionally hard-errors
+        // on a None/over-max window (2026-07-05 incident guard); per-model
+        // child validation is owned by the child-persistence/agent-variants
+        // units.
         crate::agent::arming::arm_auto_compaction(&mut loop_ctx, &mut child_config, &model);
         let delivered_children = loop_ctx.children_usage.clone();
         // Cheap handle to the child's durable pending store, captured

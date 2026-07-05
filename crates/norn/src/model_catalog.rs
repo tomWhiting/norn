@@ -161,6 +161,27 @@ pub fn smallest_context_window_for_model(model: &str) -> Option<u64> {
         .min()
 }
 
+/// Return the largest catalogued `max_context_window` for a model id.
+///
+/// The counterpart to [`smallest_context_window_for_model`] for
+/// *validation*: an explicitly configured window is legitimate as long as
+/// at least one backend serving this model id can honour it (e.g.
+/// gpt-5.4's standard window is 272k but its maximum is 1M, so an
+/// explicit 1M passes), and rejected only when it exceeds every backend's
+/// ceiling — the shape of the 2026-07-05 incident, where a global 272k
+/// override mis-armed a 128k model.
+#[must_use]
+pub fn largest_max_context_window_for_model(model: &str) -> Option<u64> {
+    catalog()
+        .providers
+        .iter()
+        .flat_map(|provider| provider.backends)
+        .flat_map(|backend| backend.models)
+        .filter(|entry| entry.id == model)
+        .map(|entry| entry.max_context_window)
+        .max()
+}
+
 /// Find a service tier supported by the selected backend/model pair.
 #[must_use]
 pub fn find_service_tier(

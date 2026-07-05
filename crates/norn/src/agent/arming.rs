@@ -16,6 +16,7 @@ use uuid::Uuid;
 use crate::agent::pending_messages::PendingAgentMessages;
 use crate::agent::process_delivery::ProcessMessageDelivery;
 use crate::agent::registry::AgentRegistry;
+use crate::error::ConfigError;
 use crate::r#loop::config::AgentLoopConfig;
 use crate::r#loop::inbound::InboundSender;
 use crate::r#loop::loop_context::LoopContext;
@@ -137,6 +138,67 @@ pub(crate) fn arm_auto_compaction(
     if config.context_window_limit.is_none() {
         config.context_window_limit =
             crate::model_catalog::smallest_context_window_for_model(model);
+    }
+}
+
+/// Validate the armed context window against the model catalog — the
+/// post-arming guard for the 2026-07-05 incident (owner-ruled, Tom):
+/// the window is set by the model unless an override is wanted, an
+/// override the model cannot honour is an error, and an unknown model is
+/// an error ("it probably means the wrong model code").
+///
+/// Two rejections, both loud, never a silent clamp (a clamp hides config
+/// drift — the incident's global 272k override on a 128k model would
+/// have become an invisible mystery):
+///
+/// - **Explicit window above the model's ceiling.** For a catalogued
+///   model, an armed window above
+///   [`largest_max_context_window_for_model`](crate::model_catalog::largest_max_context_window_for_model)
+///   can only come from explicit config (the fill never exceeds the
+///   catalog) and means every protection threshold sits beyond the real
+///   wall — token warnings and auto-compaction mathematically cannot
+///   fire before the provider rejects.
+/// - **No window at all.** After the fill, a `None` window means the
+///   model is not in the catalog AND no explicit window was supplied;
+///   running would silently disable the protections, which is the ruled-
+///   against state.
+///
+/// Called by `AgentBuilder::build` for the root (covering TUI, print,
+/// and driven mode through the one shared assembly funnel). Child launch
+/// paths (spawn/fork/rhai) still fill-without-validating; per-model child
+/// window validation is owned by the child-persistence/agent-variants
+/// units where child model resolution is being reworked.
+pub(crate) fn validate_context_window(
+    config: &AgentLoopConfig,
+    model: &str,
+) -> Result<(), ConfigError> {
+    match config.context_window_limit {
+        Some(limit) => {
+            if let Some(max) = crate::model_catalog::largest_max_context_window_for_model(model)
+                && limit > max
+            {
+                return Err(ConfigError::InvalidConfig {
+                    reason: format!(
+                        "configured context window {limit} exceeds model '{model}'s maximum \
+                         of {max} (model catalog) — token warnings and auto-compaction would \
+                         sit beyond the real window and never fire. Remove or lower the \
+                         explicit window (settings agent.context_window, -c context_window, \
+                         or the builder limit); with no explicit value the window is taken \
+                         from the model catalog",
+                    ),
+                });
+            }
+            Ok(())
+        }
+        None => Err(ConfigError::InvalidConfig {
+            reason: format!(
+                "model '{model}' is not in the model catalog and no context window is \
+                 configured — check the model id for a typo first. For a deliberate \
+                 uncatalogued model, set agent.context_window in settings, pass \
+                 -c context_window=<tokens>, or set the builder's context window; without \
+                 one, token warnings and auto-compaction stay disabled",
+            ),
+        }),
     }
 }
 
@@ -352,6 +414,103 @@ mod tests {
         );
         assert!(loop_context.token_estimator.is_some());
         assert!(loop_context.context_edits.is_some());
+    }
+
+    /// 2026-07-05 incident repro: a global 272k settings override on
+    /// gpt-5.3-codex-spark (max 128k) armed every threshold beyond the
+    /// real wall. Validation must reject it loudly, naming the model and
+    /// both numbers.
+    #[test]
+    fn validate_rejects_explicit_window_above_catalog_max() {
+        let config = AgentLoopConfig {
+            context_window_limit: Some(272_000),
+            ..AgentLoopConfig::default()
+        };
+        let err = validate_context_window(&config, "gpt-5.3-codex-spark")
+            .expect_err("272k on a 128k-max model must be rejected");
+        let reason = err.to_string();
+        assert!(
+            reason.contains("gpt-5.3-codex-spark"),
+            "names the model: {reason}"
+        );
+        assert!(
+            reason.contains("272000"),
+            "names the configured value: {reason}"
+        );
+        assert!(reason.contains("128000"), "names the catalog max: {reason}");
+    }
+
+    /// An explicit window at or below the model's catalogued maximum is
+    /// legitimate — including a max-window override above the standard
+    /// window on models that support one (validation is against
+    /// `max_context_window`, not `context_window`).
+    #[test]
+    fn validate_accepts_windows_up_to_catalog_max() {
+        let exact = AgentLoopConfig {
+            context_window_limit: Some(128_000),
+            ..AgentLoopConfig::default()
+        };
+        validate_context_window(&exact, "gpt-5.3-codex-spark")
+            .expect("a window equal to the model max is valid");
+
+        let model = crate::model_catalog::default_selection().model;
+        let max = crate::model_catalog::largest_max_context_window_for_model(model)
+            .expect("test precondition: default model is catalogued");
+        let at_max = AgentLoopConfig {
+            context_window_limit: Some(max),
+            ..AgentLoopConfig::default()
+        };
+        validate_context_window(&at_max, model).expect("catalog max is valid");
+    }
+
+    /// The catalog fill composed with validation: a catalogued model with
+    /// no explicit window arms from the catalog and validates clean — the
+    /// zero-config path every CLI run takes.
+    #[test]
+    fn validate_accepts_catalog_filled_window() {
+        let mut loop_context = LoopContext::new("base");
+        let mut config = AgentLoopConfig::default();
+        arm_auto_compaction(&mut loop_context, &mut config, "gpt-5.3-codex-spark");
+        assert_eq!(config.context_window_limit, Some(128_000));
+        validate_context_window(&config, "gpt-5.3-codex-spark")
+            .expect("catalog-filled window validates");
+    }
+
+    /// Owner ruling (Tom, 2026-07-05): an unknown model "probably means
+    /// the wrong model code" — running with protections silently disabled
+    /// is the ruled-against state, so a None window after the fill is a
+    /// hard error that leads with the typo hypothesis.
+    #[test]
+    fn validate_rejects_non_catalog_model_without_explicit_window() {
+        let config = AgentLoopConfig::default();
+        let err = validate_context_window(&config, "not-in-catalog-model-xyz")
+            .expect_err("unknown model with no window must be rejected");
+        let reason = err.to_string();
+        assert!(
+            reason.contains("not-in-catalog-model-xyz"),
+            "names the model: {reason}"
+        );
+        assert!(
+            reason.contains("typo"),
+            "leads with the typo hypothesis: {reason}"
+        );
+        assert!(
+            reason.contains("agent.context_window"),
+            "names the config keys that fix it: {reason}",
+        );
+    }
+
+    /// A deliberate uncatalogued model with an explicit window is
+    /// legitimate (local/openai-compatible ids); validation has no
+    /// catalog ceiling to check it against and passes it through.
+    #[test]
+    fn validate_accepts_non_catalog_model_with_explicit_window() {
+        let config = AgentLoopConfig {
+            context_window_limit: Some(32_000),
+            ..AgentLoopConfig::default()
+        };
+        validate_context_window(&config, "not-in-catalog-model-xyz")
+            .expect("explicit window on an uncatalogued model is valid");
     }
 
     /// NP-001 R9: arming installs the `ProcessManager` extension (the `process`

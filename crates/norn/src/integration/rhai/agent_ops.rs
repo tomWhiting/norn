@@ -375,8 +375,10 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
             // context and fill its context window from the catalog for the
             // child's own model, so a long-running script child compacts
             // instead of dying ContextWindowExceeded. A non-catalog model
-            // keeps a None window, leaving the trigger off — matching the
-            // root behavior.
+            // keeps a None window, leaving the trigger off. NOTE: the root
+            // additionally hard-errors on a None/over-max window
+            // (2026-07-05 incident guard); per-model child validation is
+            // owned by the child-persistence/agent-variants units.
             crate::agent::arming::arm_auto_compaction(
                 &mut loop_ctx,
                 &mut child_config,

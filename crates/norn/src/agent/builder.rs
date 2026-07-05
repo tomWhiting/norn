@@ -480,10 +480,16 @@ impl AgentBuilder {
         // The fill runs only when the merged window is still None — every
         // explicit source (settings, `-c` overrides) has already been
         // overlaid above, so an explicit window stays authoritative even
-        // when it equals the catalogued value. Models absent from the
-        // catalog (arbitrary openai-compatible ids) keep None, leaving the
-        // trigger disabled exactly as before.
+        // when it equals the catalogued value. The validation that follows
+        // is the 2026-07-05 incident guard (owner-ruled): an explicit
+        // window the model cannot honour is a hard error (a global 272k
+        // settings override silently mis-armed a 128k model — protections
+        // armed beyond the real wall never fire), and a model absent from
+        // the catalog with no explicit window is a hard error rather than
+        // a silently-unprotected run.
         crate::agent::arming::arm_auto_compaction(&mut loop_context, &mut config_override, &model);
+        crate::agent::arming::validate_context_window(&config_override, &model)
+            .map_err(NornError::Config)?;
         // The system prompt only promises compaction the loop will actually
         // perform. The runtime trigger (`maybe_auto_compact`) disables itself
         // when the reserve is at or above the window — every step would
@@ -717,6 +723,11 @@ impl AgentBuilder {
 #[cfg(test)]
 #[allow(clippy::expect_used, clippy::panic)]
 mod tests {
+    /// Explicit window for test fixtures: "test-model" is deliberately
+    /// uncatalogued, and `build` now hard-errors on an unarmed window
+    /// (2026-07-05 incident guard). `272_000` is gpt-5.5's catalogued
+    /// standard window (assets/models.json) — factual, not invented.
+    const TEST_CONTEXT_WINDOW: u64 = 272_000;
     use serde_json::Value;
 
     use super::*;
@@ -785,6 +796,7 @@ mod tests {
     fn zero_tool_agent_builds_for_transform_only_use() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .allowed_tools(&[])
             .build()
@@ -814,6 +826,7 @@ mod tests {
     async fn build_registers_cron_tool_and_arms_schedule_executor() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
@@ -841,6 +854,7 @@ mod tests {
     async fn without_tools_removes_cron_from_the_surface() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .without_tools(&["cron"])
             .build()
@@ -875,6 +889,7 @@ mod tests {
         let before = chrono::Utc::now();
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .session(session)
             .build()
@@ -903,6 +918,7 @@ mod tests {
     async fn dropping_agent_aborts_schedule_executor() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
@@ -951,6 +967,7 @@ mod tests {
     fn build_includes_all_standard_tools_by_default() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
@@ -977,6 +994,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .load_runtime_base()
             .diagnostic_infra(infra)
@@ -1066,6 +1084,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(workspace.path())
             .workspace_root(workspace.path())
             .load_runtime_base()
@@ -1132,6 +1151,7 @@ mod tests {
                 ..Profile::default()
             })
             .working_dir(temp.path())
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .reasoning_effort(ReasoningEffort::High)
             .service_tier(ServiceTier::Fast)
             .allowed_tools(&["read"])
@@ -1165,6 +1185,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .diagnostic_infra(infra)
             .build()
@@ -1184,6 +1205,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .build()
             .expect("build succeeds");
@@ -1200,6 +1222,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .hooks(Arc::new(registry))
             .diagnostic_infra(infra)
@@ -1229,6 +1252,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .load_runtime_base()
             .build()
@@ -1248,6 +1272,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
@@ -1278,6 +1303,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
@@ -1328,6 +1354,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .extension(Arc::new(Marker(7)))
             .build()
@@ -1346,6 +1373,7 @@ mod tests {
     fn without_tools_excludes_named_tools() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .without_tools(&["bash", "write"])
             .build()
@@ -1386,6 +1414,7 @@ mod tests {
         ];
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .without_tools(&names)
             .build()
@@ -1407,6 +1436,7 @@ mod tests {
             .working_dir(std::env::temp_dir())
             .profile(profile)
             .model("override-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .build()
             .expect("build succeeds");
         assert_eq!(agent.model, "override-model");
@@ -1416,6 +1446,7 @@ mod tests {
     async fn run_executes_and_returns_output() {
         let outcome = AgentBuilder::new(provider_with(text_completion("Hello from the agent")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .run("say hello")
             .await
@@ -1442,6 +1473,7 @@ mod tests {
         for prompt in ["", "   ", "\n\t "] {
             let agent = AgentBuilder::new(provider_with(vec![]))
                 .model("test-model")
+                .context_window_limit(TEST_CONTEXT_WINDOW)
                 .working_dir(std::env::temp_dir())
                 .build()
                 .expect("build succeeds");
@@ -1464,6 +1496,7 @@ mod tests {
     async fn handle_subscription_delivers_events() {
         let agent = AgentBuilder::new(provider_with(text_completion("streamed")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .event_channel_capacity(64)
             .build()
@@ -1486,6 +1519,7 @@ mod tests {
     fn subscribe_without_event_channel_is_none() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
@@ -1500,6 +1534,7 @@ mod tests {
     fn zero_channel_capacities_fail_build() {
         let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .event_channel_capacity(0)
             .build();
@@ -1509,6 +1544,7 @@ mod tests {
         ));
         let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .inbound_capacity(0)
             .build();
@@ -1534,6 +1570,7 @@ mod tests {
         let reason = invalid_config_reason(
             AgentBuilder::new(provider_with(vec![]))
                 .model("test-model")
+                .context_window_limit(TEST_CONTEXT_WINDOW)
                 .working_dir(std::env::temp_dir())
                 .agent_registry(AgentRegistry::shared())
                 .build(),
@@ -1548,6 +1585,7 @@ mod tests {
         let reason = invalid_config_reason(
             AgentBuilder::new(provider_with(vec![]))
                 .model("test-model")
+                .context_window_limit(TEST_CONTEXT_WINDOW)
                 .working_dir(std::env::temp_dir())
                 .agent_registry(AgentRegistry::shared())
                 .child_policy(test_child_policy())
@@ -1559,6 +1597,7 @@ mod tests {
         let reason = invalid_config_reason(
             AgentBuilder::new(provider_with(vec![]))
                 .model("test-model")
+                .context_window_limit(TEST_CONTEXT_WINDOW)
                 .working_dir(std::env::temp_dir())
                 .agent_registry(AgentRegistry::shared())
                 .child_result_capacity(256)
@@ -1574,6 +1613,7 @@ mod tests {
         let reason = invalid_config_reason(
             AgentBuilder::new(provider_with(vec![]))
                 .model("test-model")
+                .context_window_limit(TEST_CONTEXT_WINDOW)
                 .working_dir(std::env::temp_dir())
                 .child_policy(test_child_policy())
                 .build(),
@@ -1584,6 +1624,7 @@ mod tests {
         let reason = invalid_config_reason(
             AgentBuilder::new(provider_with(vec![]))
                 .model("test-model")
+                .context_window_limit(TEST_CONTEXT_WINDOW)
                 .working_dir(std::env::temp_dir())
                 .child_result_capacity(256)
                 .build(),
@@ -1599,6 +1640,7 @@ mod tests {
         let reason = invalid_config_reason(
             AgentBuilder::new(provider_with(vec![]))
                 .model("test-model")
+                .context_window_limit(TEST_CONTEXT_WINDOW)
                 .working_dir(std::env::temp_dir())
                 .agent_registry(AgentRegistry::shared())
                 .child_policy(test_child_policy())
@@ -1612,6 +1654,7 @@ mod tests {
         let reason = invalid_config_reason(
             AgentBuilder::new(provider_with(vec![]))
                 .model("test-model")
+                .context_window_limit(TEST_CONTEXT_WINDOW)
                 .working_dir(std::env::temp_dir())
                 .agent_registry(AgentRegistry::shared())
                 .child_policy(policy)
@@ -1632,6 +1675,7 @@ mod tests {
         let policy = test_child_policy();
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_registry(AgentRegistry::shared())
             .child_policy(policy.clone())
@@ -1664,6 +1708,7 @@ mod tests {
     fn default_built_agent_publishes_its_own_run_token() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_registry(AgentRegistry::shared())
             .child_policy(test_child_policy())
@@ -1696,6 +1741,7 @@ mod tests {
         let id = Uuid::new_v4();
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_id(id)
             .agent_registry(AgentRegistry::shared())
@@ -1718,6 +1764,7 @@ mod tests {
         let unrouted_id = Uuid::new_v4();
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_id(unrouted_id)
             .agent_registry(AgentRegistry::shared())
@@ -1745,6 +1792,7 @@ mod tests {
     fn event_channel_is_published_for_subagents() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .event_channel_capacity(16)
             .build()
@@ -1778,6 +1826,7 @@ mod tests {
     fn inbound_sender_available_pre_build_and_on_handle() {
         let builder = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .inbound_capacity(8);
         let pre_build = builder
@@ -1805,6 +1854,7 @@ mod tests {
                 ..Profile::default()
             })
             .model("resolved-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .agent_id(id)
             .allowed_tools(&["read", "search"])
@@ -1835,6 +1885,7 @@ mod tests {
     fn default_profile_yields_no_profile_name() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
@@ -1847,6 +1898,7 @@ mod tests {
     async fn handle_cancel_stops_run_with_cancelled_reason() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
@@ -1893,6 +1945,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .tool(Box::new(CustomTool))
             .build()
@@ -1908,6 +1961,7 @@ mod tests {
     fn default_retry_policy_is_two_one_second_two_x() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
@@ -1926,6 +1980,7 @@ mod tests {
     fn retry_policy_setter_applies_to_loop_context() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .retry_policy(RetryPolicy {
                 max_retries: 7,
@@ -1942,6 +1997,7 @@ mod tests {
         token.cancel();
         let outcome = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .cancel_token(token)
             .run("go")
@@ -1962,6 +2018,7 @@ mod tests {
     async fn session_resume_accumulates_events() {
         let first = AgentBuilder::new(provider_with(text_completion("first")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .run("question one")
             .await
@@ -1975,6 +2032,7 @@ mod tests {
 
         let second = AgentBuilder::new(provider_with(text_completion("second")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .session(store)
             .run("question two")
@@ -1994,6 +2052,7 @@ mod tests {
     async fn agent_registry_wires_fork_spawn_infra() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_registry(AgentRegistry::shared())
             .child_policy(test_child_policy())
@@ -2032,6 +2091,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .hooks(shared_hooks)
             .diagnostic_infra(infra)
@@ -2082,6 +2142,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .hooks(Arc::new(registry))
             .diagnostic_infra(infra)
@@ -2120,6 +2181,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .load_runtime_base()
             .diagnostics(Arc::clone(&custom))
@@ -2159,6 +2221,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_registry(AgentRegistry::shared())
             .child_policy(test_child_policy())
@@ -2207,6 +2270,7 @@ mod tests {
         let agent_registry = AgentRegistry::shared();
         let mut agent = AgentBuilder::new(provider_with(text_completion("child finished")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_registry(Arc::clone(&agent_registry))
             .child_policy(test_child_policy())
@@ -2275,6 +2339,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(&root)
             .workspace_root(&root)
             .build()
@@ -2330,6 +2395,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(&root)
             .build()
             .expect("build succeeds");
@@ -2366,6 +2432,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .workspace_root(temp.path().join("does-not-exist"))
             .build();
@@ -2387,6 +2454,7 @@ mod tests {
         std::fs::write(&file, "not a dir").expect("write file");
         let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .workspace_root(&file)
             .build();
@@ -2406,6 +2474,7 @@ mod tests {
     async fn bash_drain_grace_override_reaches_the_bash_tool() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .bash_drain_grace(std::time::Duration::from_millis(200))
             .build()
@@ -2440,6 +2509,7 @@ mod tests {
     fn bash_drain_grace_with_bash_excluded_fails_build() {
         let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .bash_drain_grace(std::time::Duration::from_secs(1))
             .without_tools(&["bash"])
@@ -2463,6 +2533,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .load_runtime_base()
             .agent_config(AgentLoopConfig {
@@ -2485,13 +2556,21 @@ mod tests {
         );
     }
 
-    /// Companion to the finding 3 regression: with no compaction configured
-    /// anywhere, the guidance must stay out of the system prompt.
+    /// Companion to the finding 3 regression: with compaction disabled
+    /// (reserve off), the guidance must stay out of the system prompt.
+    /// A windowless build is no longer the way to express "no compaction"
+    /// — that now hard-errors (2026-07-05 incident guard) — so the honest
+    /// no-compaction state is an armed window with the reserve disabled.
     #[test]
     fn no_auto_compact_guidance_without_compaction_config() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
             .working_dir(std::env::temp_dir())
+            .agent_config(AgentLoopConfig {
+                context_window_limit: Some(TEST_CONTEXT_WINDOW),
+                auto_compact_reserve_tokens: None,
+                ..AgentLoopConfig::default()
+            })
             .build()
             .expect("build succeeds");
         assert!(
@@ -2594,27 +2673,69 @@ mod tests {
         );
     }
 
-    /// A model absent from the catalog keeps an unset window (no error), so
-    /// the auto-compaction trigger stays disabled exactly as before.
+    /// 2026-07-05 incident guard (owner-ruled): a model absent from the
+    /// catalog with no explicit window is rejected at build — running with
+    /// the protections silently disabled is the ruled-against state, and
+    /// an unknown model "probably means the wrong model code".
     #[test]
-    fn unknown_model_leaves_window_unset_and_trigger_disabled() {
+    fn unknown_model_without_window_is_rejected_at_build() {
         let temp = tempfile::tempdir().expect("tempdir");
-        let agent = AgentBuilder::new(provider_with(vec![]))
+        let result = AgentBuilder::new(provider_with(vec![]))
             .model("not-in-catalog")
             .working_dir(temp.path())
-            .build()
-            .expect("build succeeds");
+            .build();
+        let Err(err) = result else {
+            panic!("uncatalogued model with no window must be rejected");
+        };
 
-        assert_eq!(
-            agent.config.context_window_limit, None,
-            "an uncatalogued model must leave the window unset",
+        let reason = err.to_string();
+        assert!(
+            reason.contains("not-in-catalog"),
+            "names the model: {reason}"
         );
         assert!(
-            !agent
-                .loop_context
-                .base_system_instruction()
-                .contains("automatically summarised or cleared"),
-            "no window means the trigger is disabled, so no guidance",
+            reason.contains("typo"),
+            "leads with the typo hypothesis: {reason}"
+        );
+
+        // The explicit-window escape hatch assembles fine.
+        let temp = tempfile::tempdir().expect("tempdir");
+        AgentBuilder::new(provider_with(vec![]))
+            .model("not-in-catalog")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
+            .working_dir(temp.path())
+            .build()
+            .expect("explicit window arms an uncatalogued model");
+    }
+
+    /// The 2026-07-05 incident shape through the real assembly funnel: a
+    /// catalogued 128k model with an explicit 272k window must fail
+    /// `build()` itself — this pins the guard staying wired into build,
+    /// not just its unit logic in `arming`.
+    #[test]
+    fn oversized_explicit_window_is_rejected_at_build() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let result = AgentBuilder::new(provider_with(vec![]))
+            .model("gpt-5.3-codex-spark")
+            .context_window_limit(272_000)
+            .working_dir(temp.path())
+            .build();
+        let Err(err) = result else {
+            panic!("explicit window above the catalog maximum must be rejected");
+        };
+
+        let reason = err.to_string();
+        assert!(
+            reason.contains("gpt-5.3-codex-spark"),
+            "names the model: {reason}"
+        );
+        assert!(
+            reason.contains("272000"),
+            "names the configured value: {reason}"
+        );
+        assert!(
+            reason.contains("128000"),
+            "names the catalog maximum: {reason}"
         );
     }
 
@@ -2668,6 +2789,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .load_runtime_base()
             .build()
@@ -2725,6 +2847,7 @@ mod tests {
         ]);
         let output = AgentBuilder::new(provider)
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .load_runtime_base()
             .run("run a command")
@@ -2797,6 +2920,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .session(store)
             .build()
@@ -2844,6 +2968,7 @@ mod tests {
         let schema = serde_json::json!({"type": "object", "required": ["verdict"]});
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .output_schema(schema.clone())
             .build()
@@ -2881,6 +3006,7 @@ mod tests {
         let schema = serde_json::json!({"type": "string"});
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .load_runtime_base()
             .output_schema(schema.clone())
@@ -2904,6 +3030,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .load_runtime_base()
             .context_window_limit(4_242)
@@ -2952,6 +3079,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider_with(text_completion("persisted")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .open_session(
                 &manager,
@@ -3015,6 +3143,7 @@ mod tests {
 
         let first = AgentBuilder::new(provider_with(text_completion("first")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .open_session(&manager, spec(), DurabilityPolicy::Flush)
             .build()
@@ -3025,6 +3154,7 @@ mod tests {
 
         let retry = AgentBuilder::new(provider_with(text_completion("second")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .open_session(&manager, spec(), DurabilityPolicy::Flush)
             .build()
@@ -3047,6 +3177,7 @@ mod tests {
         let manager = manager_in(sessions.path());
         let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .session(EventStore::new())
             .open_session(
@@ -3070,6 +3201,7 @@ mod tests {
         let manager = manager_in(sessions.path());
         let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_config(AgentLoopConfig {
                 cache_key: Some("explicit-key".to_owned()),
@@ -3098,6 +3230,7 @@ mod tests {
         let manager = manager_in(sessions.path());
         let result = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .open_session(
                 &manager,
@@ -3124,6 +3257,7 @@ mod tests {
 
         let source = AgentBuilder::new(provider_with(text_completion("origin")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .open_session(
                 &manager,
@@ -3142,6 +3276,7 @@ mod tests {
 
         let fork = AgentBuilder::new(provider_with(text_completion("forked")))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
             .open_session(
                 &manager,
@@ -3230,6 +3365,7 @@ mod tests {
         ));
         let agent = AgentBuilder::new(Arc::clone(&hosted_provider) as Arc<dyn Provider>)
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("hosted build succeeds");
@@ -3277,6 +3413,7 @@ mod tests {
         let plain_provider = Arc::new(MockProvider::new(text_completion("second")));
         let agent = AgentBuilder::new(Arc::clone(&plain_provider) as Arc<dyn Provider>)
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .session(store)
             .build()
@@ -3328,6 +3465,7 @@ mod tests {
         schemas.set(EventType::Text, serde_json::json!({"type": "string"}));
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .event_schemas(schemas)
             .build()
@@ -3353,6 +3491,7 @@ mod tests {
         let store = Arc::new(VariableStore::with_builtins().with_session_id("custom-session"));
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .variables(Arc::clone(&store))
             .build()
@@ -3405,6 +3544,7 @@ mod tests {
     fn disallowed_tools_setter_denies_named_tools() {
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .allowed_tools(&["read", "bash"])
             .disallowed_tools(&["bash"])
@@ -3425,6 +3565,7 @@ mod tests {
 
         let default_agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_registry(AgentRegistry::shared())
             .child_policy(test_child_policy())
@@ -3443,6 +3584,7 @@ mod tests {
 
         let tui_agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_registry(AgentRegistry::shared())
             .child_policy(test_child_policy())
@@ -3468,6 +3610,7 @@ mod tests {
         let registry = AgentRegistry::shared();
         let agent = AgentBuilder::new(provider_with(vec![]))
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_registry(Arc::clone(&registry))
             .child_policy(test_child_policy())
@@ -3493,6 +3636,7 @@ mod tests {
         let reason = invalid_config_reason(
             AgentBuilder::new(provider_with(vec![]))
                 .model("test-model")
+                .context_window_limit(TEST_CONTEXT_WINDOW)
                 .working_dir(std::env::temp_dir())
                 .register_root("/root".to_string(), "lead".to_string())
                 .build(),

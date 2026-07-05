@@ -302,6 +302,11 @@ impl Agent {
 #[cfg(test)]
 #[allow(clippy::expect_used)]
 mod tests {
+    /// Explicit window for test fixtures: "test-model" is deliberately
+    /// uncatalogued, and `build` now hard-errors on an unarmed window
+    /// (2026-07-05 incident guard). `272_000` is gpt-5.5's catalogued
+    /// standard window (assets/models.json) — factual, not invented.
+    const TEST_CONTEXT_WINDOW: u64 = 272_000;
     use super::*;
     use crate::agent::builder::AgentBuilder;
     use crate::provider::mock::MockProvider;
@@ -320,6 +325,7 @@ mod tests {
         let id = Uuid::new_v4();
         let agent = AgentBuilder::new(mock_provider())
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .agent_id(id)
             .event_channel_capacity(16)
@@ -402,6 +408,7 @@ mod tests {
 
         let agent = AgentBuilder::new(provider)
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .hooks(Arc::new(registry))
             .build()
@@ -419,6 +426,7 @@ mod tests {
     fn into_parts_has_no_event_channel_when_unconfigured() {
         let agent = AgentBuilder::new(mock_provider())
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .build()
             .expect("build succeeds");
