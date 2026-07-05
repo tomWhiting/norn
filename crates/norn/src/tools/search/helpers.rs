@@ -130,9 +130,26 @@ pub(super) struct WalkedTree {
 /// failures (unreadable directories, unresolvable entries) are collected
 /// into `skipped` rather than silently dropping subtrees.
 ///
+/// `.git` entries encountered during the walk are never descended into,
+/// even with `include_ignored` set: the `ignore` crate only excludes
+/// `.git` as a by-product of its hidden-file filter, so disabling the
+/// standard filters would otherwise pour VCS internals (objects, packs,
+/// hooks) into results meant for dotfiles and gitignored artefacts.
+/// Naming a `.git` directory as the walk root still works — the
+/// exclusion applies below the root only, so a deliberate look inside
+/// git plumbing remains possible.
+///
+/// Files matching [`is_sensitive_file_name`] (environment files, private
+/// keys, certificates, credential files) are excluded from every walk —
+/// default and `include_ignored` alike — and reported in `skipped` so an
+/// empty result is never mistaken for "no such file". Owner ruling (Tom,
+/// 2026-07-06): search must never sweep secret material into session
+/// logs incidentally; deliberate access goes through `read` or an
+/// explicitly named path.
+///
 /// When `root` is a regular file (not a directory) it is returned as the
-/// single entry, bypassing ignore rules — an explicitly named file is
-/// always searched.
+/// single entry, bypassing ignore rules and the sensitive-file exclusion
+/// — an explicitly named file is always searched.
 pub(super) fn walk_tree(root: &Path, include_ignored: bool) -> WalkedTree {
     let mut entries: Vec<WalkedEntry> = Vec::new();
     let mut skipped: Vec<SkippedEntry> = Vec::new();
@@ -151,6 +168,9 @@ pub(super) fn walk_tree(root: &Path, include_ignored: bool) -> WalkedTree {
     } else {
         builder.require_git(false);
     }
+    builder.filter_entry(|entry| {
+        entry.depth() == 0 || entry.file_name() != std::ffi::OsStr::new(".git")
+    });
 
     for result in builder.build() {
         match result {
@@ -161,6 +181,13 @@ pub(super) fn walk_tree(root: &Path, include_ignored: bool) -> WalkedTree {
                 match entry.file_type() {
                     Some(file_type) => {
                         let is_file = file_type.is_file();
+                        if is_file && is_sensitive_file_name(entry.file_name()) {
+                            skipped.push(SkippedEntry {
+                                path: entry.path().to_string_lossy().into_owned(),
+                                reason: SENSITIVE_SKIP_REASON.to_owned(),
+                            });
+                            continue;
+                        }
                         entries.push(WalkedEntry {
                             path: entry.into_path(),
                             is_file,
@@ -179,6 +206,58 @@ pub(super) fn walk_tree(root: &Path, include_ignored: bool) -> WalkedTree {
     entries.sort_by(|a, b| a.path.cmp(&b.path));
     skipped.sort_by(|a, b| a.path.cmp(&b.path));
     WalkedTree { entries, skipped }
+}
+
+/// Reason string attached to sensitive-file exclusions, telling the model
+/// how to proceed deliberately instead of concluding "no matches".
+const SENSITIVE_SKIP_REASON: &str = "excluded from search: likely secret material \
+     (environment/key/certificate/credential file); use the read tool on the exact \
+     path if you genuinely need its contents";
+
+/// File extensions that denote environment, key, or certificate material.
+///
+/// Compared case-insensitively against the final `.`-separated component,
+/// so `env` here covers both `.env` itself and `production.env`.
+const SENSITIVE_EXTENSIONS: &[&str] = &[
+    "env", "pem", "key", "p12", "pfx", "der", "ppk", "jks", "crt", "cer",
+];
+
+/// Exact filenames that are credential stores by definition.
+const SENSITIVE_FILENAMES: &[&str] = &[
+    "id_rsa",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    ".netrc",
+    ".pgpass",
+    ".htpasswd",
+];
+
+/// Whether a filename denotes always-sensitive material that search walks
+/// must never surface incidentally (owner ruling, Tom 2026-07-06).
+///
+/// Covers environment files in their common shapes (`.env`, `.env.local`,
+/// `production.env`), key/certificate material by extension, and canonical
+/// credential filenames (SSH private keys, `.netrc`, `.pgpass`,
+/// `.htpasswd`). Matching is case-insensitive on the filename only —
+/// non-UTF-8 names cannot match any pattern and are treated as
+/// non-sensitive.
+pub(super) fn is_sensitive_file_name(name: &std::ffi::OsStr) -> bool {
+    let Some(name) = name.to_str() else {
+        return false;
+    };
+    let lower = name.to_ascii_lowercase();
+    // `.env.local` and friends: the extension check below only sees the
+    // final component (`local`), so the `.env.` prefix is matched here.
+    if lower.starts_with(".env.") {
+        return true;
+    }
+    if let Some((_, ext)) = lower.rsplit_once('.')
+        && SENSITIVE_EXTENSIONS.contains(&ext)
+    {
+        return true;
+    }
+    SENSITIVE_FILENAMES.contains(&lower.as_str())
 }
 
 /// Convert a walker error into a [`SkippedEntry`], attributing it to the
@@ -207,5 +286,74 @@ fn walk_error_path(err: &ignore::Error) -> Option<&Path> {
         | ignore::Error::Glob { .. }
         | ignore::Error::UnrecognizedFileType(_)
         | ignore::Error::InvalidDefinition => None,
+    }
+}
+
+#[cfg(test)]
+mod sensitive_name_tests {
+    use super::is_sensitive_file_name;
+    use std::ffi::OsStr;
+
+    #[test]
+    fn env_files_in_all_common_shapes_are_sensitive() {
+        for name in [
+            ".env",
+            ".env.local",
+            ".env.production",
+            "production.env",
+            ".ENV",
+        ] {
+            assert!(is_sensitive_file_name(OsStr::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn key_and_certificate_extensions_are_sensitive() {
+        for name in [
+            "server.pem",
+            "SERVER.PEM",
+            "private.key",
+            ".key",
+            "bundle.p12",
+            "store.pfx",
+            "cert.der",
+            "login.ppk",
+            "trust.jks",
+            "site.crt",
+            "site.cer",
+        ] {
+            assert!(is_sensitive_file_name(OsStr::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn credential_filenames_are_sensitive() {
+        for name in [
+            "id_rsa",
+            "id_dsa",
+            "id_ecdsa",
+            "id_ed25519",
+            ".netrc",
+            ".pgpass",
+            ".htpasswd",
+        ] {
+            assert!(is_sensitive_file_name(OsStr::new(name)), "{name}");
+        }
+    }
+
+    #[test]
+    fn ordinary_and_public_files_are_not_sensitive() {
+        for name in [
+            "envelope.txt",
+            "environment.rs",
+            "monkey.txt",
+            "README.md",
+            "id_rsa.pub",
+            "keyboard.rs",
+            "env",
+            "Cargo.toml",
+        ] {
+            assert!(!is_sensitive_file_name(OsStr::new(name)), "{name}");
+        }
     }
 }

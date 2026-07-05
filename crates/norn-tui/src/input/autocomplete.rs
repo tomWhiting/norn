@@ -585,7 +585,9 @@ pub fn generate_file_candidates(
 /// `.norn/`, `.gitignore`, and other dot-prefixed paths the user may
 /// want to attach. `.gitignore` (and the other ignore files) still
 /// filter the walk so build artefacts and explicitly-ignored paths do
-/// not appear.
+/// not appear. `.git` itself is pruned explicitly: with the hidden
+/// filter off nothing else excludes it, and VCS internals are never
+/// attachment candidates.
 pub fn walk_entries(root: &Path) -> Vec<(String, bool)> {
     let walker = WalkBuilder::new(root)
         .hidden(false)
@@ -593,6 +595,9 @@ pub fn walk_entries(root: &Path) -> Vec<(String, bool)> {
         .git_global(true)
         .git_exclude(true)
         .follow_links(false)
+        .filter_entry(|entry| {
+            entry.depth() == 0 || entry.file_name() != std::ffi::OsStr::new(".git")
+        })
         .build();
 
     let mut entries: Vec<(String, bool)> = Vec::new();

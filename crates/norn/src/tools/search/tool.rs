@@ -50,6 +50,8 @@ struct SearchArgs {
     #[serde(default)]
     ast_query: Option<String>,
     /// Include entries normally excluded by gitignore/hidden-file rules.
+    /// `.git` internals and sensitive files (environment files, keys,
+    /// certificates, credential files) stay excluded regardless.
     #[serde(default)]
     include_ignored: bool,
 }
@@ -142,7 +144,7 @@ impl Tool for SearchTool {
                 },
                 "include_ignored": {
                     "type": "boolean",
-                    "description": "Include entries normally excluded by gitignore rules and hidden-file filtering. Defaults to false."
+                    "description": "Include entries normally excluded by gitignore rules and hidden-file filtering. Defaults to false. Two exclusions always hold: the .git directory is never traversed, and sensitive files (.env*/*.env, key/certificate material like .pem/.key/.p12, credential files like id_rsa/.netrc) are never searched — they are listed under `skipped` instead; use the read tool on the exact path for deliberate access."
                 }
             },
             "additionalProperties": false
@@ -999,7 +1001,8 @@ mod tests {
 
     // -- Ignore rules ----------------------------------------------------
 
-    /// Lay out a tree with a gitignored dir, a hidden file, and a plain file.
+    /// Lay out a tree with a gitignored dir, a hidden file, a plain file,
+    /// `.git` internals, and sensitive files (env + key material).
     fn ignore_fixture() -> tempfile::TempDir {
         let dir = tempdir().expect("tempdir");
         std::fs::write(dir.path().join(".gitignore"), "target/\n").expect("write .gitignore");
@@ -1009,6 +1012,11 @@ mod tests {
         std::fs::write(dir.path().join(".hidden.txt"), "needle\n").expect("write hidden");
         std::fs::create_dir(dir.path().join("src")).expect("mkdir src");
         std::fs::write(dir.path().join("src").join("a.txt"), "needle\n").expect("write a.txt");
+        std::fs::create_dir(dir.path().join(".git")).expect("mkdir .git");
+        std::fs::write(dir.path().join(".git").join("config"), "needle\n")
+            .expect("write .git/config");
+        std::fs::write(dir.path().join(".env"), "needle\n").expect("write .env");
+        std::fs::write(dir.path().join("server.pem"), "needle\n").expect("write server.pem");
         dir
     }
 
@@ -1060,6 +1068,111 @@ mod tests {
         assert!(paths.iter().any(|p| p.ends_with(".hidden.txt")));
         assert!(paths.iter().any(|p| p.ends_with("target/gen.txt")));
         assert!(paths.iter().any(|p| p.ends_with("src/a.txt")));
+
+        // Even with the flag, `.git` internals and sensitive files stay out.
+        assert!(
+            !paths.iter().any(|p| p.contains("/.git/")),
+            "never inside .git: {paths:?}"
+        );
+        assert!(
+            !paths
+                .iter()
+                .any(|p| p.ends_with("/.env") || p.ends_with("server.pem")),
+            "never sensitive files: {paths:?}"
+        );
+
+        // The sensitive exclusions are reported, not silent.
+        let skipped = out.content["skipped"].as_array().expect("skipped array");
+        for name in [".env", "server.pem"] {
+            assert!(
+                skipped.iter().any(|s| {
+                    s["path"].as_str().is_some_and(|p| p.ends_with(name))
+                        && s["reason"]
+                            .as_str()
+                            .is_some_and(|r| r.contains("secret material"))
+                }),
+                "{name} must appear in skipped with the sensitive reason: {skipped:?}"
+            );
+        }
+    }
+
+    /// Sensitive files are excluded from DEFAULT walks too — `server.pem`
+    /// is neither hidden nor gitignored, so without the sensitivity rule
+    /// it would match here.
+    #[tokio::test]
+    async fn sensitive_files_excluded_from_default_walk() {
+        let dir = ignore_fixture();
+        let tool = SearchTool::new();
+        let out = tool
+            .execute(
+                &envelope(json!({
+                    "pattern": "needle",
+                    "path": dir.path().to_string_lossy(),
+                })),
+                &ToolContext::empty(),
+            )
+            .await
+            .expect("search ok");
+
+        let paths = match_paths(&out);
+        assert!(
+            !paths.iter().any(|p| p.ends_with("server.pem")),
+            "plain-visible key material must not match: {paths:?}"
+        );
+        let skipped = out.content["skipped"].as_array().expect("skipped array");
+        assert!(
+            skipped.iter().any(|s| {
+                s["path"]
+                    .as_str()
+                    .is_some_and(|p| p.ends_with("server.pem"))
+            }),
+            "server.pem exclusion must be reported: {skipped:?}"
+        );
+    }
+
+    /// An explicitly named sensitive file is still searchable — the
+    /// exclusion guards incidental sweeps, not deliberate access.
+    #[tokio::test]
+    async fn explicitly_named_sensitive_file_is_searched() {
+        let dir = ignore_fixture();
+        let tool = SearchTool::new();
+        let out = tool
+            .execute(
+                &envelope(json!({
+                    "pattern": "needle",
+                    "path": dir.path().join(".env").to_string_lossy(),
+                })),
+                &ToolContext::empty(),
+            )
+            .await
+            .expect("search ok");
+
+        let paths = match_paths(&out);
+        assert_eq!(paths.len(), 1, "explicit .env root is searched: {paths:?}");
+        assert!(paths[0].ends_with("/.env"));
+    }
+
+    /// Naming `.git` itself as the walk root still works — the pruning
+    /// applies below the root only.
+    #[tokio::test]
+    async fn explicit_git_root_is_walkable() {
+        let dir = ignore_fixture();
+        let tool = SearchTool::new();
+        let out = tool
+            .execute(
+                &envelope(json!({
+                    "pattern": "needle",
+                    "path": dir.path().join(".git").to_string_lossy(),
+                    "include_ignored": true,
+                })),
+                &ToolContext::empty(),
+            )
+            .await
+            .expect("search ok");
+
+        let paths = match_paths(&out);
+        assert_eq!(paths.len(), 1, "explicit .git root is walked: {paths:?}");
+        assert!(paths[0].ends_with(".git/config"));
     }
 
     #[tokio::test]

@@ -18,7 +18,10 @@
 //! [`ToolEffect::ReadOnly`](crate::tool::scheduling::ToolEffect::ReadOnly) so
 //! the scheduler may dispatch multiple Search calls concurrently with other
 //! read-only tools. Walks honour gitignore/hidden-file rules by default
-//! (`include_ignored: true` disables that), respect the agent's workspace
+//! (`include_ignored: true` disables that), never traverse `.git`
+//! internals, never surface sensitive files (environment files, key and
+//! certificate material, credential files — reported in `skipped`
+//! instead; owner ruling 2026-07-06), respect the agent's workspace
 //! confinement, and report unreadable entries in a `skipped` array.
 
 mod ast_search;
