@@ -64,9 +64,16 @@ Non-negotiables learned the hard way:
   the fix re-proven at 2MB with an amplifying filter — both are now permanent regression
   tests). When an implementer claims "already delivered live," make the reviewer verify
   the delivery mechanism, not the claim.
-- **Expect NOT READY.** In the monitor-stack campaign every single unit failed review at
-  least once. That is the process working. A campaign where everything passes first
-  review has a broken reviewer, not a great implementer.
+- **Expect NOT READY — as the prior, not a quota.** In the monitor-stack campaign every
+  single unit failed review at least once; that is the process working, and a campaign
+  where everything sails through first review should make you suspect the reviewer
+  before the implementer. But never make findings *obligatory*: a reviewer who must
+  find something to look credible manufactures marginal findings, and that noise
+  trains orchestrators to discount reviews — the opposite of the goal. A clean READY
+  on a small, well-specified diff is valid WHEN the verified-clean list proves the
+  attack surface was actually walked (name what was checked and how, not just "looks
+  good"). Calibrate reviewers in both directions: track misses AND false positives.
+  (Amended 2026-07-04 after Dr. Spaceman's pushback — accepted.)
 
 ## 3. Briefs for implementers (how to prompt Opus)
 
@@ -133,7 +140,14 @@ underspecified gaps with plausible-looking guesses. So:
   from a transcript.
 - **One builder per target dir, ever.** Parallelize *reviews* of disjoint scopes freely;
   serialize anything that runs cargo on the same tree. Stuck-cargo deadlocks and corrupt
-  target dirs cost more than parallelism buys.
+  target dirs cost more than parallelism buys. *Sanctioned escape hatch (added
+  2026-07-04, Dr. Spaceman's pushback — accepted): git worktrees with separate
+  `CARGO_TARGET_DIR` give genuinely parallel builders with zero corruption risk — the
+  rule is one builder per target dir, not one builder per repo. Cost it first: each
+  target dir in this workspace runs 30-60G+, and disk crises are not hypothetical
+  (2026-07-04: 3.5G free mid-campaign). Measure free disk, budget one full target per
+  concurrent builder, and tear worktrees down after landing. The systemic fix for
+  build contention remains the shared diagnostics job server (roadmap).*
 - **Exit codes are the only truth.** `cargo … | tail` masks failure ($? is tail's).
   rust-analyzer diagnostics mid-fleet are stale noise. If a suite "passed" through a
   pipe, re-run it capturing the real exit code.
