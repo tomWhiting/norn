@@ -158,8 +158,9 @@ pub(crate) enum ResolvedAgent {
 /// the registry, including agents that already finished.
 ///
 /// Resolution order: live holder of the path → terminal-but-unreclaimed
-/// holder of the path → completion record of the most recently reclaimed
-/// holder → (for UUIDs) registered entry → completion record.
+/// holder of the path → completion record of the reclaimed holder →
+/// (for UUIDs) registered entry → completion record. Paths are unique
+/// for all time (ruling Q2), so each stage has at most one candidate.
 ///
 /// "Not registered" is only ever reported for identifiers with no record
 /// at all: an agent that completed and was reclaimed resolves to

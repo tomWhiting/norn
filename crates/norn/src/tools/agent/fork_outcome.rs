@@ -310,9 +310,9 @@ pub(super) fn append_fork_complete(
 mod tests {
     use super::*;
     use crate::agent::child_policy::ChildPolicy;
-    use std::sync::Arc;
     use crate::agent::fork::format_fork_outcome;
     use crate::error::SessionError;
+    use std::sync::Arc;
 
     /// Documented-proposal policy used by tests — a deliberate test-caller
     /// choice, never a library default.

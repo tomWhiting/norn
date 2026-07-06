@@ -77,7 +77,7 @@ pub enum AgentsCommand {
 /// Mirrors the coordination tools' resolution order so every tool tells
 /// the same story about the same agent: live holder of the path →
 /// terminal-but-unreclaimed holder of the path → completion record of the
-/// most recently reclaimed holder → (for UUIDs) registered entry →
+/// reclaimed holder → (for UUIDs) registered entry →
 /// completion record.
 enum Resolved {
     /// A registered entry — live, or terminal but not yet reclaimed.

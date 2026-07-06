@@ -178,7 +178,7 @@ pub fn slugify_name_stem(raw: &str, fallback: &str) -> String {
 pub struct ChildBranchRequest {
     /// The child's session id — the SAME id as its agent-registry entry
     /// (one identity across registry, index row, file, and branch
-    /// events; ruling D-idspace, UUIDv4 per R8).
+    /// events; ruling D-idspace, `UUIDv4` per R8).
     pub child_session_id: String,
     /// Slugified name stem (`fork`, `spawn`, a role/variant label). The
     /// minted per-parent name is `{stem}-{8-hex}` — the 8-character
@@ -393,8 +393,10 @@ impl SessionBinding {
                     parent_path: self.path_address.clone(),
                 });
             }
-            (Persistence::Ephemeral, ChildDurability::Ephemeral)
-            | (Persistence::Persistent { .. }, ChildDurability::Ephemeral) => None,
+            (
+                Persistence::Ephemeral | Persistence::Persistent { .. },
+                ChildDurability::Ephemeral,
+            ) => None,
             (
                 Persistence::Persistent {
                     brancher,
@@ -555,7 +557,7 @@ fn materialize_child(
 /// Mint a per-parent-unique child name: `{stem}-{8 hex}` (the 8-char
 /// suffix mirrors R8's short-id display convention), retrying with fresh
 /// randomness until it clears the ever-used set. Collisions are
-/// astronomically rare (8 hex chars of a fresh UUIDv4 per attempt), so
+/// astronomically rare (8 hex chars of a fresh `UUIDv4` per attempt), so
 /// the loop is unbounded by design — a cap would be an invented limit.
 fn mint_child_name(stem: &str, used: &HashSet<String>) -> String {
     loop {
@@ -597,7 +599,7 @@ mod tests {
     struct Root {
         _tmp: tempfile::TempDir,
         manager: SessionManager,
-        root_id: String,
+        id: String,
         store: Arc<EventStore>,
         binding: Arc<SessionBinding>,
     }
@@ -620,7 +622,7 @@ mod tests {
         Root {
             _tmp: tmp,
             manager,
-            root_id,
+            id: root_id,
             store: Arc::new(opened.store),
             binding,
         }
@@ -628,7 +630,10 @@ mod tests {
 
     #[test]
     fn slugify_stem_normalizes_and_falls_back() {
-        assert_eq!(slugify_name_stem("Code Reviewer!", "spawn"), "code-reviewer");
+        assert_eq!(
+            slugify_name_stem("Code Reviewer!", "spawn"),
+            "code-reviewer"
+        );
         assert_eq!(slugify_name_stem("fork/gpt-5.5", "fork"), "fork-gpt-5-5");
         assert_eq!(slugify_name_stem("!!!", "spawn"), "spawn");
         assert_eq!(slugify_name_stem("", "fork"), "fork");
@@ -654,8 +659,8 @@ mod tests {
     }
 
     /// The primitive end to end: persistent child gets a real on-disk
-    /// timeline at the slugged path, an index row with rel_path +
-    /// parent_id, and the parent's reservation event — with the
+    /// timeline at the slugged path, an index row with `rel_path` +
+    /// `parent_id`, and the parent's reservation event — with the
     /// PARENT-FIRST ordering observable in the produced artifacts.
     #[test]
     fn branch_child_persists_child_with_linkage() {
@@ -663,12 +668,15 @@ mod tests {
         let req = request("reviewer", ChildDurability::Persist);
         let child = root.binding.branch_child(&root.store, &req).unwrap();
 
-        assert_eq!(child.session_id.as_deref(), Some(req.child_session_id.as_str()));
+        assert_eq!(
+            child.session_id.as_deref(),
+            Some(req.child_session_id.as_str())
+        );
         let name = child.path_address.rsplit('/').next().unwrap();
         assert!(name.starts_with("reviewer-"));
 
         // Parent reservation is durable in the parent's file.
-        let parent_entry = root.manager.resolve(&root.root_id).unwrap();
+        let parent_entry = root.manager.resolve(&root.id).unwrap();
         let parent_read =
             read_session_events_for_entry(root.manager.data_dir(), &parent_entry).unwrap();
         let reservation = parent_read
@@ -690,7 +698,7 @@ mod tests {
                 _ => None,
             })
             .expect("the parent's file must carry the ChildBranch reservation");
-        assert_eq!(reservation.0.as_deref(), Some(root.root_id.as_str()));
+        assert_eq!(reservation.0.as_deref(), Some(root.id.as_str()));
         assert_eq!(
             reservation.1.as_deref(),
             Some(req.child_session_id.as_str())
@@ -701,9 +709,9 @@ mod tests {
         // Index row: rel_path + parent linkage.
         let rows = read_index(root.manager.data_dir()).unwrap();
         let row = rows.iter().find(|e| e.id == req.child_session_id).unwrap();
-        let expected_rel = format!("{}/children/{name}.jsonl", root.root_id);
+        let expected_rel = format!("{}/children/{name}.jsonl", root.id);
         assert_eq!(row.rel_path.as_deref(), Some(expected_rel.as_str()));
-        assert_eq!(row.parent_id.as_deref(), Some(root.root_id.as_str()));
+        assert_eq!(row.parent_id.as_deref(), Some(root.id.as_str()));
 
         // The child file exists at the nested path and write-through
         // persistence is live: its header event is already on disk, and
@@ -734,7 +742,7 @@ mod tests {
     }
 
     /// PARENT-FIRST ordering, observed BETWEEN the steps: after the
-    /// reservation append the parent's file carries the ChildBranch on
+    /// reservation append the parent's file carries the `ChildBranch` on
     /// disk while no child file exists yet; materialization then creates
     /// it. This drives the split halves of `branch_child` directly.
     #[test]
@@ -747,7 +755,7 @@ mod tests {
         let path_address = format!("root/worker-{}", &Uuid::new_v4().simple().to_string()[..8]);
         let reservation = SessionEvent::ChildBranch {
             base: EventBase::new(anchor.clone()),
-            parent_session_id: Some(root.root_id.clone()),
+            parent_session_id: Some(root.id.clone()),
             child_session_id: Some(req.child_session_id.clone()),
             path_address: path_address.clone(),
             parent_event_anchor: anchor,
@@ -757,7 +765,7 @@ mod tests {
 
         // OBSERVE: reservation durable, child absent — the exact crash
         // residue parent-first ordering promises.
-        let parent_entry = root.manager.resolve(&root.root_id).unwrap();
+        let parent_entry = root.manager.resolve(&root.id).unwrap();
         let on_disk =
             read_session_events_for_entry(root.manager.data_dir(), &parent_entry).unwrap();
         assert!(
@@ -769,7 +777,7 @@ mod tests {
         );
         let rel = format!(
             "{}/children/{}.jsonl",
-            root.root_id,
+            root.id,
             child_path_slug(&path_address)
         );
         assert!(
@@ -787,12 +795,11 @@ mod tests {
         // Steps 3–4: materialize, then everything exists.
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.root_id.clone(),
+            root.id.clone(),
             DurabilityPolicy::Flush,
         ));
         let (child_store, _binding) =
-            materialize_child(&brancher, &root.root_id, &path_address, &req, &reservation)
-                .unwrap();
+            materialize_child(&brancher, &root.id, &path_address, &req, &reservation).unwrap();
         assert!(root.manager.data_dir().join(&rel).exists());
         assert_eq!(child_store.len(), 1, "provenance header appended");
     }
@@ -807,7 +814,7 @@ mod tests {
         let path_address = "root/worker-feedbeef".to_owned();
         let rel_path = format!(
             "{}/children/{}.jsonl",
-            root.root_id,
+            root.id,
             child_path_slug(&path_address)
         );
         let orphan_abs = root.manager.data_dir().join(&rel_path);
@@ -816,7 +823,7 @@ mod tests {
 
         let reservation = SessionEvent::ChildBranch {
             base: EventBase::new(None),
-            parent_session_id: Some(root.root_id.clone()),
+            parent_session_id: Some(root.id.clone()),
             child_session_id: Some(req.child_session_id.clone()),
             path_address: path_address.clone(),
             parent_event_anchor: None,
@@ -824,10 +831,10 @@ mod tests {
         };
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.root_id.clone(),
+            root.id.clone(),
             DurabilityPolicy::Flush,
         ));
-        let err = materialize_child(&brancher, &root.root_id, &path_address, &req, &reservation)
+        let err = materialize_child(&brancher, &root.id, &path_address, &req, &reservation)
             .expect_err("an occupied slug path must refuse hard");
         assert!(
             matches!(&err, SessionPersistError::ChildPathOccupied { rel_path: r } if *r == rel_path),
@@ -841,7 +848,7 @@ mod tests {
     }
 
     /// Mint-collision on the index row: a foreign row claiming the same
-    /// rel_path refuses the insert typed.
+    /// `rel_path` refuses the insert typed.
     #[test]
     fn mint_collision_with_orphan_index_row_is_hard_typed_error() {
         let root = persistent_root();
@@ -849,7 +856,7 @@ mod tests {
         let path_address = "root/worker-0badcafe".to_owned();
         let rel_path = format!(
             "{}/children/{}.jsonl",
-            root.root_id,
+            root.id,
             child_path_slug(&path_address)
         );
         // Foreign row claiming the same rel_path under a different id.
@@ -866,14 +873,14 @@ mod tests {
             total_input_tokens: 0,
             total_output_tokens: 0,
             total_cache_read_tokens: 0,
-            rel_path: Some(rel_path.clone()),
-            parent_id: Some(root.root_id.clone()),
+            rel_path: Some(rel_path),
+            parent_id: Some(root.id.clone()),
         };
         insert_child_index_entry(root.manager.data_dir(), &foreign, None).unwrap();
 
         let reservation = SessionEvent::ChildBranch {
             base: EventBase::new(None),
-            parent_session_id: Some(root.root_id.clone()),
+            parent_session_id: Some(root.id.clone()),
             child_session_id: Some(req.child_session_id.clone()),
             path_address: path_address.clone(),
             parent_event_anchor: None,
@@ -881,17 +888,17 @@ mod tests {
         };
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.root_id.clone(),
+            root.id.clone(),
             DurabilityPolicy::Flush,
         ));
-        let err = materialize_child(&brancher, &root.root_id, &path_address, &req, &reservation)
+        let err = materialize_child(&brancher, &root.id, &path_address, &req, &reservation)
             .expect_err("a claimed rel_path must refuse hard");
         assert!(
             matches!(err, SessionPersistError::ChildPathOccupied { .. }),
             "expected ChildPathOccupied",
         );
         // And a same-ID duplicate refuses as IdExists.
-        foreign.rel_path = Some(format!("{}/children/other.jsonl", root.root_id));
+        foreign.rel_path = Some(format!("{}/children/other.jsonl", root.id));
         let dup = insert_child_index_entry(root.manager.data_dir(), &foreign, None).unwrap_err();
         assert!(matches!(dup, SessionPersistError::IdExists { .. }));
     }
@@ -912,7 +919,7 @@ mod tests {
             "ephemeral propagates down",
         );
 
-        let parent_entry = root.manager.resolve(&root.root_id).unwrap();
+        let parent_entry = root.manager.resolve(&root.id).unwrap();
         let on_disk =
             read_session_events_for_entry(root.manager.data_dir(), &parent_entry).unwrap();
         let reservation = on_disk
@@ -939,7 +946,7 @@ mod tests {
             !root
                 .manager
                 .data_dir()
-                .join(&root.root_id)
+                .join(&root.id)
                 .join("children")
                 .exists(),
         );
@@ -969,7 +976,11 @@ mod tests {
         assert!(child.session_id.is_none());
         assert!(matches!(
             &store.events()[0],
-            SessionEvent::ChildBranch { child_session_id: None, parent_session_id: None, .. }
+            SessionEvent::ChildBranch {
+                child_session_id: None,
+                parent_session_id: None,
+                ..
+            }
         ));
     }
 
@@ -993,16 +1004,16 @@ mod tests {
         drop(root.store);
         let resumed = root
             .manager
-            .resume(&root.root_id, DurabilityPolicy::Flush)
+            .resume(&root.id, DurabilityPolicy::Flush)
             .unwrap();
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.root_id.clone(),
+            root.id.clone(),
             DurabilityPolicy::Flush,
         ));
         let rebuilt = SessionBinding::persistent_root(
             Arc::clone(&brancher),
-            root.root_id.clone(),
+            root.id,
             &resumed.store.events(),
         );
         assert!(
@@ -1041,17 +1052,16 @@ mod tests {
         let child_path = child.path_address.clone();
         drop(child);
 
-        let resumed = root.manager.resume(&child_id, DurabilityPolicy::Flush).unwrap();
+        let resumed = root
+            .manager
+            .resume(&child_id, DurabilityPolicy::Flush)
+            .unwrap();
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.root_id.clone(),
+            root.id,
             DurabilityPolicy::Flush,
         ));
-        let rebuilt = SessionBinding::persistent_root(
-            brancher,
-            child_id,
-            &resumed.store.events(),
-        );
+        let rebuilt = SessionBinding::persistent_root(brancher, child_id, &resumed.store.events());
         assert_eq!(rebuilt.path_address(), child_path);
     }
 
@@ -1066,7 +1076,7 @@ mod tests {
         root.store
             .append(SessionEvent::ChildBranch {
                 base: EventBase::new(root.store.last_event_id()),
-                parent_session_id: Some(root.root_id.clone()),
+                parent_session_id: Some(root.id.clone()),
                 child_session_id: Some(Uuid::new_v4().to_string()),
                 path_address: format!("root/{ghost_name}"),
                 parent_event_anchor: root.store.last_event_id(),
@@ -1079,7 +1089,7 @@ mod tests {
         // Resume: the dangling reference must not break replay.
         let resumed = root
             .manager
-            .resume(&root.root_id, DurabilityPolicy::Flush)
+            .resume(&root.id, DurabilityPolicy::Flush)
             .unwrap();
         assert_eq!(resumed.replay.skipped_lines, 0);
 
@@ -1087,14 +1097,10 @@ mod tests {
         // different name.
         let brancher = Arc::new(SessionBrancher::new(
             root.manager.clone(),
-            root.root_id.clone(),
+            root.id.clone(),
             DurabilityPolicy::Flush,
         ));
-        let binding = SessionBinding::persistent_root(
-            brancher,
-            root.root_id.clone(),
-            &resumed.store.events(),
-        );
+        let binding = SessionBinding::persistent_root(brancher, root.id, &resumed.store.events());
         assert!(binding.ever_used_names().contains(ghost_name));
         let store = Arc::new(resumed.store);
         let fresh = binding
@@ -1124,10 +1130,7 @@ mod tests {
 
         let child_name = child.path_address.rsplit('/').next().unwrap();
         let grand_name = grandchild.path_address.rsplit('/').next().unwrap();
-        let expected_rel = format!(
-            "{}/children/{child_name}--{grand_name}.jsonl",
-            root.root_id
-        );
+        let expected_rel = format!("{}/children/{child_name}--{grand_name}.jsonl", root.id);
         assert!(
             root.manager.data_dir().join(&expected_rel).exists(),
             "grandchild file must live at the full-path slug",

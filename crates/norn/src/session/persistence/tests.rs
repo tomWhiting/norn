@@ -2079,9 +2079,9 @@ fn deleted_fork_variant_line_is_skipped_by_tolerant_reader() {
     );
 }
 
-/// Child index rows (rel_path + parent_id) are additive: legacy rows
+/// Child index rows (`rel_path` + `parent_id`) are additive: legacy rows
 /// without the fields deserialize with `None` and keep resolving to the
-/// flat path; new rows resolve through rel_path.
+/// flat path; new rows resolve through `rel_path`.
 #[test]
 fn rel_path_rows_resolve_nested_and_legacy_rows_stay_flat() {
     let tmp = tempfile::tempdir().unwrap();

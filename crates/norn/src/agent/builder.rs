@@ -308,8 +308,7 @@ impl AgentBuilder {
         // and the no-session default stay deliberately ephemeral (the
         // `--no-session` honesty axis: children then run memory-only, with
         // the typed `session: None` branch event on the parent timeline).
-        let mut session_binding =
-            Arc::new(crate::session::SessionBinding::ephemeral_root());
+        let mut session_binding = Arc::new(crate::session::SessionBinding::ephemeral_root());
         if let Some(request) = self.session_request.take() {
             // The manager and fsync cadence survive the open: the child
             // brancher applies the SAME data dir, lock deadline, and
@@ -3243,6 +3242,8 @@ mod tests {
     /// a silent sink-less snapshot).
     #[tokio::test]
     async fn run_outcome_store_keeps_persisting_after_run() {
+        use crate::session::events::{EventBase, SessionEvent};
+
         let temp = tempfile::tempdir().expect("tempdir");
         let sessions = tempfile::tempdir().expect("session dir");
         let manager = manager_in(sessions.path());
@@ -3270,7 +3271,6 @@ mod tests {
             .expect("event store returned");
 
         // Post-run embedder append: must reach the SAME on-disk session.
-        use crate::session::events::{EventBase, SessionEvent};
         store
             .append(SessionEvent::UserMessage {
                 base: EventBase::new(store.last_event_id()),

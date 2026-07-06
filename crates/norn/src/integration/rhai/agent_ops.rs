@@ -353,7 +353,11 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
                 working_dir: ctx.working_dir.get().display().to_string(),
             },
         )
-        .map_err(|e| Box::new(rhai_error(format!("spawn_agent: session branch failed: {e}"))))?;
+        .map_err(|e| {
+            Box::new(rhai_error(format!(
+                "spawn_agent: session branch failed: {e}"
+            )))
+        })?;
     let child_store = branched.store;
 
     guard
@@ -1220,15 +1224,17 @@ mod tests {
             .expect("script child session indexed");
         let rel = row.rel_path.as_deref().expect("child rows carry rel_path");
         assert!(
-            rel.starts_with(&format!("{root_id}/children/scout-")) && rel.ends_with(".jsonl"),
+            rel.starts_with(&format!("{root_id}/children/scout-"))
+                && std::path::Path::new(rel)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl")),
             "script-child file must live under the root's children/ dir: {rel}",
         );
         assert_eq!(row.parent_id.as_deref(), Some(root_id.as_str()));
         assert!(tmp.path().join(rel).exists(), "child timeline file exists");
 
         // The child's run events are ON DISK (Gap 1, rhai site).
-        let child_read =
-            read_session_events_for_entry(tmp.path(), &row).expect("child replays");
+        let child_read = read_session_events_for_entry(tmp.path(), &row).expect("child replays");
         assert!(
             child_read
                 .events
@@ -1259,10 +1265,12 @@ mod tests {
             "the host's file must carry the child's reservation",
         );
         let has_custom = |wanted: &str| {
-            host_read.events.iter().any(|e| matches!(
-                e,
-                SessionEvent::Custom { event_type, .. } if event_type == wanted
-            ))
+            host_read.events.iter().any(|e| {
+                matches!(
+                    e,
+                    SessionEvent::Custom { event_type, .. } if event_type == wanted
+                )
+            })
         };
         assert!(
             has_custom(SUBAGENT_STARTED_EVENT_TYPE),

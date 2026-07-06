@@ -406,7 +406,10 @@ pub fn append_events(
     // The mandatory index lookup doubles as the path resolution: a child
     // entry's `rel_path` locates the nested file; legacy/root entries fall
     // through to the flat derivation.
-    let Some(entry) = read_index(data_dir)?.into_iter().find(|e| e.id == session_id) else {
+    let Some(entry) = read_index(data_dir)?
+        .into_iter()
+        .find(|e| e.id == session_id)
+    else {
         return Err(SessionPersistError::NotFound {
             input: session_id.to_owned(),
         });

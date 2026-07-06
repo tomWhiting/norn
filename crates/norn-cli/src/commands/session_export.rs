@@ -144,7 +144,10 @@ fn export_markdown(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCo
                 ..
             } => {
                 let session = child_session_id.as_deref().unwrap_or("ephemeral");
-                println!("_Branch ({}) -> {path_address} [{session}]_\n", kind.as_str());
+                println!(
+                    "_Branch ({}) -> {path_address} [{session}]_\n",
+                    kind.as_str()
+                );
             }
             SessionEvent::ForkComplete {
                 forked_session_id,

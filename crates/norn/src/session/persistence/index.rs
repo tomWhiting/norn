@@ -236,7 +236,9 @@ pub fn insert_child_index_entry(
         });
     }
     if let Some(rel_path) = entry.rel_path.as_deref()
-        && existing.iter().any(|e| e.rel_path.as_deref() == Some(rel_path))
+        && existing
+            .iter()
+            .any(|e| e.rel_path.as_deref() == Some(rel_path))
     {
         return Err(SessionPersistError::ChildPathOccupied {
             rel_path: rel_path.to_owned(),

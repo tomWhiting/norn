@@ -34,8 +34,8 @@ use serde::Deserialize;
 use super::delegation::{
     auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
 };
-use super::fork_launch::{ForkLaunch, launch_fork};
 use super::fork_context::build_fork_context;
+use super::fork_launch::{ForkLaunch, launch_fork};
 use super::fork_seed::seed_fork_events;
 use super::handle::AgentHandles;
 use super::infra::{
@@ -1496,7 +1496,10 @@ mod tests {
             .expect("fork session indexed");
         let rel = row.rel_path.as_deref().expect("child rows carry rel_path");
         assert!(
-            rel.starts_with(&format!("{root_id}/children/fork-")) && rel.ends_with(".jsonl"),
+            rel.starts_with(&format!("{root_id}/children/fork-"))
+                && std::path::Path::new(rel)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl")),
             "child file must live under the root's children/ dir: {rel}",
         );
         assert_eq!(row.parent_id.as_deref(), Some(root_id.as_str()));
@@ -1506,8 +1509,7 @@ mod tests {
         // the fork's own run events).
         let child_file = tmp.path().join(rel);
         assert!(child_file.exists(), "fork timeline file must exist on disk");
-        let child_read =
-            read_session_events_for_entry(tmp.path(), &row).expect("child replays");
+        let child_read = read_session_events_for_entry(tmp.path(), &row).expect("child replays");
         assert!(
             child_read
                 .events

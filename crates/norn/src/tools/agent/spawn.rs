@@ -799,17 +799,11 @@ mod tests {
 
     /// Read a persisted session's events back from DISK through its index
     /// row — never from memory — so assertions prove durability.
-    fn events_on_disk(
-        manager: &crate::session::SessionManager,
-        id: &str,
-    ) -> Vec<SessionEvent> {
+    fn events_on_disk(manager: &crate::session::SessionManager, id: &str) -> Vec<SessionEvent> {
         let entry = manager.resolve(id).expect("session indexed");
-        crate::session::persistence::io::read_session_events_for_entry(
-            manager.data_dir(),
-            &entry,
-        )
-        .expect("session replays from disk")
-        .events
+        crate::session::persistence::io::read_session_events_for_entry(manager.data_dir(), &entry)
+            .expect("session replays from disk")
+            .events
     }
 
     /// Drives a spawn until the child is no longer actively running.
@@ -2616,7 +2610,9 @@ mod tests {
         let rel = row.rel_path.as_deref().expect("child rows carry rel_path");
         assert!(
             rel.starts_with(&format!("{root_session_id}/children/worker-"))
-                && rel.ends_with(".jsonl"),
+                && std::path::Path::new(rel)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl")),
             "child file must live under the root's children/ dir: {rel}",
         );
         assert_eq!(row.parent_id.as_deref(), Some(root_session_id.as_str()));
