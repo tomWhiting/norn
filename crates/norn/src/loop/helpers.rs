@@ -535,6 +535,7 @@ pub async fn ensure_tool_results_complete(store: &EventStore) {
                 output: serde_json::json!({
                     "error": "execution cancelled before completion"
                 }),
+                spool_ref: None,
                 duration_ms: 0,
             };
             if let Err(e) = append_off_executor(store, event) {

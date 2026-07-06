@@ -804,6 +804,7 @@ mod tests {
                 tool_call_id: tool_call_id.to_owned(),
                 tool_name: tool_name.to_owned(),
                 output,
+                spool_ref: None,
                 duration_ms,
             })
             .unwrap();
@@ -1701,6 +1702,7 @@ mod tests {
                 tool_call_id: "tc-1".to_owned(),
                 tool_name: "read".to_owned(),
                 output: serde_json::json!({}),
+                spool_ref: None,
                 duration_ms: 1,
             })
             .unwrap();

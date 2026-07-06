@@ -304,6 +304,6 @@ mod tests {
             store,
             Some("abc-123".to_owned()),
         );
-        assert_eq!(state.session_id.as_deref(), Some("abc-123"));
+        assert_eq!(state.current_session_id().as_deref(), Some("abc-123"));
     }
 }

@@ -62,7 +62,7 @@ use crate::tool::envelope::{ToolEnvelope, split_envelope_fields};
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::follow_up::FollowUpAction;
 use crate::tool::output_budget::{
-    MODEL_OUTPUT_INLINE_CHAR_LIMIT, ToolOutputBudget, cap_model_output,
+    MODEL_OUTPUT_INLINE_CHAR_LIMIT, ToolOutputBudget, project_model_output,
 };
 
 use super::helpers::append_and_notify;
@@ -242,7 +242,25 @@ pub(super) fn model_safe_tool_output(
     output: &Value,
     inline_char_limit: usize,
 ) -> Value {
-    cap_model_output(tool_name, tool_call_id, output, inline_char_limit)
+    project_model_output(tool_name, tool_call_id, output, inline_char_limit).value
+}
+
+/// Run a spool write with the file I/O kept off the async executor,
+/// mirroring [`append_off_executor`](super::helpers::append_off_executor):
+/// on a multi-thread runtime the blocking write runs under
+/// `block_in_place`; elsewhere (current-thread runtime, no runtime) it
+/// runs inline, exactly like the sink writes on those flavors.
+fn spool_write_off_executor(
+    spool: &crate::session::spool::SpoolWriter,
+    event_id: &crate::session::events::EventId,
+    output: &Value,
+) -> Result<String, crate::session::persistence::SessionPersistError> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| spool.write(event_id, output))
+        }
+        _ => spool.write(event_id, output),
+    }
 }
 
 /// Identity and payload of one tool result to append via
@@ -273,6 +291,18 @@ pub(super) struct ToolResultRecord<'a> {
 
 /// Append a tool result to both the event store and the local messages vec,
 /// and broadcast it on the streaming channel if available.
+///
+/// The persisted event carries the bounded model-facing projection of
+/// `record.output`; when the projection replaced an over-budget payload
+/// and the store has a spool attached, the **full** output is first
+/// written verbatim to the session's `spool/` directory and the event
+/// records the durable spool reference (session-fidelity Gap 5). The
+/// spool write precedes the event append — the same
+/// write-through-before-visibility ordering as the primary log — so a
+/// durable event never claims a spool payload that was not written
+/// through. A spool write failure is a typed error and the event is not
+/// appended (retrying constructs a fresh event, so the orphaned attempt
+/// file, if any, is never referenced).
 pub(super) async fn append_tool_result(
     store: &EventStore,
     messages: &mut Vec<Message>,
@@ -284,19 +314,44 @@ pub(super) async fn append_tool_result(
         tool_call_id,
         tool_name,
         kind,
-        output,
+        output: full_output,
         duration_ms,
         inline_char_limit,
     } = record;
-    let output = model_safe_tool_output(tool_name, tool_call_id, output, inline_char_limit);
+    let projection = project_model_output(tool_name, tool_call_id, full_output, inline_char_limit);
+    let output = projection.value;
     let parent = store.last_event_id();
+    let base = EventBase::new(parent);
+    let spool_ref = if projection.truncated {
+        match store.spool() {
+            Some(spool) => Some(
+                spool_write_off_executor(spool, &base.id, full_output).map_err(|error| {
+                    crate::error::SessionError::StorageError {
+                        reason: format!(
+                            "failed to spool full output of tool '{tool_name}' \
+                             (call {tool_call_id}): {error}",
+                        ),
+                    }
+                })?,
+            ),
+            // No spool attached: sink-less stores have no session
+            // directory to spool into, and an embedder-built sink
+            // without an attached spool made that configuration choice
+            // explicitly (see `EventStore::attach_spool`). The event
+            // honestly records no reference rather than a dangling one.
+            None => None,
+        }
+    } else {
+        None
+    };
     append_and_notify(
         store,
         SessionEvent::ToolResult {
-            base: EventBase::new(parent),
+            base,
             tool_call_id: tool_call_id.to_string(),
             tool_name: tool_name.to_string(),
             output: output.clone(),
+            spool_ref,
             duration_ms,
         },
         hooks,
@@ -1532,5 +1587,278 @@ mod tests {
             .expect("tool-result content is infallible by construction");
         let parsed: Value = serde_json::from_str(content).expect("content is valid JSON");
         assert_eq!(parsed, output, "the echoed content round-trips the output");
+    }
+
+    // -- Gap 5: full-output spool (session-fidelity inventory) ---------
+
+    use crate::session::manager::{CreateSessionOptions, SessionManager};
+    use crate::session::persistence::SessionPersistError;
+    use crate::session::spool::SpoolWriter;
+    use crate::session::store::{DurabilityPolicy, PersistenceSink};
+
+    /// Open a fresh manager-backed session in `data_dir`, returning its
+    /// ID and sink-plus-spool-equipped store.
+    fn open_spooled_session(data_dir: &std::path::Path) -> (String, EventStore) {
+        let manager = SessionManager::new(data_dir);
+        let opened = manager
+            .create(
+                CreateSessionOptions {
+                    model: "test-model".to_owned(),
+                    working_dir: "/tmp".to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .expect("create session");
+        (opened.entry.id, opened.store)
+    }
+
+    /// An over-budget payload noticeably larger than the head/tail
+    /// previews, so the bounded projection is provably not the full
+    /// output.
+    fn oversized_output() -> Value {
+        json!({ "stdout": "x".repeat(50_000) })
+    }
+
+    async fn append_oversized(
+        store: &EventStore,
+        messages: &mut Vec<Message>,
+        inline_char_limit: usize,
+    ) -> Result<(), crate::error::SessionError> {
+        append_tool_result(
+            store,
+            messages,
+            ToolResultRecord {
+                tool_call_id: "tc-spool",
+                tool_name: "bash",
+                kind: crate::provider::request::ToolCallKind::Function,
+                output: &oversized_output(),
+                duration_ms: 1,
+                inline_char_limit,
+            },
+            None,
+            None,
+        )
+        .await
+    }
+
+    /// End-to-end spool round-trip on a manager-opened session: the full
+    /// oversized output lands verbatim (no cap, no compression) in the
+    /// ruled layout's `<data-dir>/<session-id>/spool/`, the persisted
+    /// event carries the bounded projection plus a resolvable reference,
+    /// the model-facing message echoes only the capped form, and a
+    /// process-restart-shaped resume still resolves the reference to the
+    /// full output — the forensics path.
+    #[tokio::test]
+    async fn oversized_tool_result_spools_full_output_verbatim() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (session_id, store) = open_spooled_session(tmp.path());
+        let full = oversized_output();
+        let mut messages = Vec::new();
+
+        append_oversized(&store, &mut messages, 1_000)
+            .await
+            .expect("append succeeds");
+
+        // Persisted event: capped projection + spool reference.
+        let events = store.events();
+        assert_eq!(events.len(), 1);
+        let SessionEvent::ToolResult {
+            base,
+            output,
+            spool_ref,
+            ..
+        } = &events[0]
+        else {
+            panic!("expected ToolResult, got {:?}", events[0]);
+        };
+        assert_eq!(output["truncated_for_model"], true);
+        let spool_ref = spool_ref
+            .as_deref()
+            .expect("over-budget output must carry a spool reference");
+        assert_eq!(spool_ref, format!("{session_id}/spool/{}.bin", base.id));
+
+        // Verbatim bytes on disk under the ruled layout — the exact
+        // serialized output, uncompressed and uncapped.
+        let path = crate::session::spool::resolve_spool_ref(tmp.path(), spool_ref)
+            .expect("reference resolves");
+        assert_eq!(
+            std::fs::read(&path).expect("spool file readable"),
+            serde_json::to_vec(&full).expect("serialize"),
+            "spool bytes must be the verbatim serialized output",
+        );
+
+        // The model-facing echo is the bounded projection, not the full
+        // payload.
+        let content = messages[0].content.as_deref().expect("content present");
+        assert!(content.contains("truncated_for_model"));
+        assert!(
+            content.len() < serde_json::to_string(&full).expect("serialize").len(),
+            "the prompt-facing copy must be smaller than the full output",
+        );
+
+        // Forensics after a restart: resume replays the event from disk
+        // and its reference still resolves to the full output.
+        drop(store);
+        let resumed = SessionManager::new(tmp.path())
+            .resume(&session_id, DurabilityPolicy::Flush)
+            .expect("resume");
+        let events = resumed.store.events();
+        let SessionEvent::ToolResult {
+            spool_ref: Some(replayed_ref),
+            ..
+        } = &events[0]
+        else {
+            panic!("replayed event must keep its spool reference");
+        };
+        assert_eq!(
+            crate::session::spool::read_spooled_output(tmp.path(), replayed_ref)
+                .expect("forensics path resolves the full output"),
+            full,
+        );
+    }
+
+    /// Within-budget outputs spool nothing: the event carries the full
+    /// output inline with no reference, and no spool directory is
+    /// created.
+    #[tokio::test]
+    async fn within_budget_tool_result_records_no_spool_reference() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (session_id, store) = open_spooled_session(tmp.path());
+        let output = json!({ "ok": true });
+        let mut messages = Vec::new();
+
+        append_tool_result(
+            &store,
+            &mut messages,
+            ToolResultRecord {
+                tool_call_id: "tc-small",
+                tool_name: "read",
+                kind: crate::provider::request::ToolCallKind::Function,
+                output: &output,
+                duration_ms: 1,
+                inline_char_limit: MODEL_OUTPUT_INLINE_CHAR_LIMIT,
+            },
+            None,
+            None,
+        )
+        .await
+        .expect("append succeeds");
+
+        let events = store.events();
+        let SessionEvent::ToolResult {
+            output: persisted,
+            spool_ref,
+            ..
+        } = &events[0]
+        else {
+            panic!("expected ToolResult");
+        };
+        assert_eq!(persisted, &output, "within-budget output persists inline");
+        assert!(spool_ref.is_none());
+        assert!(
+            !tmp.path().join(&session_id).exists(),
+            "no spool directory is created for within-budget outputs",
+        );
+    }
+
+    /// A store with no spool attached (sink-less, or an embedder-built
+    /// sink that made that configuration choice) still appends the capped
+    /// projection and honestly records no reference — never a dangling
+    /// one.
+    #[tokio::test]
+    async fn store_without_spool_appends_capped_projection_without_reference() {
+        let store = EventStore::new();
+        let mut messages = Vec::new();
+
+        append_oversized(&store, &mut messages, 1_000)
+            .await
+            .expect("append succeeds");
+
+        let events = store.events();
+        let SessionEvent::ToolResult {
+            output, spool_ref, ..
+        } = &events[0]
+        else {
+            panic!("expected ToolResult");
+        };
+        assert_eq!(output["truncated_for_model"], true);
+        assert!(
+            spool_ref.is_none(),
+            "a spool-less store must not claim a reference",
+        );
+    }
+
+    /// Durability ordering, direction one: the spool write-through
+    /// precedes the event append, so a spool failure is a typed error and
+    /// NO event is appended — a durable event can never reference a spool
+    /// payload that was not written through.
+    #[tokio::test]
+    async fn spool_write_failure_is_typed_and_appends_no_event() {
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (session_id, store) = open_spooled_session(tmp.path());
+        // Occupy the session's sibling-directory path with a regular FILE
+        // so the spool directory cannot be created underneath it.
+        std::fs::write(tmp.path().join(&session_id), b"not a directory").expect("block dir");
+        let mut messages = Vec::new();
+
+        let err = append_oversized(&store, &mut messages, 1_000)
+            .await
+            .expect_err("spool write must fail");
+        assert!(
+            matches!(err, crate::error::SessionError::StorageError { .. }),
+            "expected typed StorageError, got {err:?}",
+        );
+        assert!(
+            store.is_empty(),
+            "no event may be appended when its spool payload was not written through",
+        );
+        assert!(messages.is_empty(), "no model-facing echo either");
+    }
+
+    /// Durability ordering, direction two: a sink failure AFTER the spool
+    /// write-through (the crash window between the two steps) leaves an
+    /// unreferenced orphan spool file — never a durable event with a
+    /// dangling reference.
+    #[tokio::test]
+    async fn sink_failure_after_spool_write_leaves_orphan_never_dangling() {
+        struct FailingSink;
+        impl PersistenceSink for FailingSink {
+            fn persist(&mut self, _event: &SessionEvent) -> Result<(), SessionPersistError> {
+                Err(SessionPersistError::Io(std::io::Error::other("disk full")))
+            }
+        }
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let mut store = EventStore::with_sink(Box::new(FailingSink));
+        store.attach_spool(SpoolWriter::for_session(
+            tmp.path(),
+            "sess-ordering",
+            DurabilityPolicy::Flush,
+        ));
+        let mut messages = Vec::new();
+
+        let err = append_oversized(&store, &mut messages, 1_000)
+            .await
+            .expect_err("sink failure must surface");
+        assert!(
+            matches!(err, crate::error::SessionError::StorageError { .. }),
+            "expected typed StorageError, got {err:?}",
+        );
+        assert!(store.is_empty(), "the failed event never reaches memory");
+
+        // The spool payload was already written through — exactly the
+        // artifact the write ordering permits in the crash window: an
+        // orphan file no durable event references.
+        let spool_dir = tmp.path().join("sess-ordering").join("spool");
+        let orphans: Vec<_> = std::fs::read_dir(&spool_dir)
+            .expect("spool dir exists: the write preceded the append")
+            .collect::<Result<_, _>>()
+            .expect("readable");
+        assert_eq!(orphans.len(), 1, "exactly the one written-through payload");
+        assert_eq!(
+            std::fs::read(orphans[0].path()).expect("orphan readable"),
+            serde_json::to_vec(&oversized_output()).expect("serialize"),
+            "the orphan holds the verbatim full output",
+        );
     }
 }

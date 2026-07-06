@@ -212,6 +212,7 @@ mod tests {
             tool_call_id: "call_1".to_string(),
             tool_name: "read".to_string(),
             output: serde_json::json!({"content": "file body"}),
+            spool_ref: None,
             duration_ms: 3,
         }
     }

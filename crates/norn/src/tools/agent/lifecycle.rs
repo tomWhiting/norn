@@ -19,9 +19,19 @@
 //! child task launches, so the `Started` event always precedes the
 //! child's own provider events on the channel.
 //! [`LifecycleEmitter::emit_completed`] is called from the child's
-//! wrapper task once the run reaches a terminal outcome. Store appends
-//! are best-effort (logged on failure) — the audit record must never
-//! abort result delivery.
+//! wrapper task once the run reaches a terminal outcome.
+//!
+//! Store-append failures are **typed at the source** (session-fidelity
+//! inventory, Gap 10): every emitter returns the append error. What the
+//! caller does with it depends on where it stands: `emit_started` runs
+//! inside the spawning tool call and propagates (the launch is aborted
+//! before the child exists); `emit_completed` runs in the child's
+//! detached wrapper after the run already finished, where the child's
+//! result — the primary content — must still be delivered to the
+//! parent, so the wrapper logs the failure at error level instead of
+//! aborting delivery (the result's own injection into the parent store
+//! rides the primary write-through contract and fails the parent's run
+//! typed under a persistent sink fault).
 
 use std::sync::Arc;
 
@@ -29,6 +39,7 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 use crate::agent::output::AgentStopReason;
+use crate::error::SessionError;
 use crate::provider::agent_event::{
     AgentEventSender, AgentMessageLifecycle, SubagentDescriptor, SubagentLifecycle,
 };
@@ -38,36 +49,36 @@ use crate::session::store::EventStore;
 
 /// Append an [`AgentMessageLifecycle`] audit record to `store` as a
 /// [`SessionEvent::Custom`] (`agent_message.sent` /
-/// `agent_message.delivered`), best-effort: failures are logged, never
-/// propagated — the audit record must never abort message delivery,
-/// matching [`LifecycleEmitter::emit`]'s store-append contract.
-pub(crate) fn append_message_audit(store: &EventStore, event: &AgentMessageLifecycle) {
+/// `agent_message.delivered`).
+///
+/// Failures are typed, never swallowed (session-fidelity inventory,
+/// Gap 10): the audit event joins the primary write-through contract.
+/// Callers on a tool-call path propagate the error to the model —
+/// with wording that states whether the underlying message was already
+/// delivered, so a typed audit failure never provokes a duplicate send.
+///
+/// # Errors
+///
+/// [`SessionError::StorageError`] when the lifecycle event cannot be
+/// serialized, and the store's own append error when the write-through
+/// persist fails.
+pub(crate) fn append_message_audit(
+    store: &EventStore,
+    event: &AgentMessageLifecycle,
+) -> Result<(), SessionError> {
     let event_type = event.session_event_type();
-    match serde_json::to_value(event) {
-        Ok(data) => {
-            let session_event = SessionEvent::Custom {
-                base: EventBase::new(store.last_event_id()),
-                event_type: event_type.to_owned(),
-                data,
-            };
-            if let Err(e) = store.append(session_event) {
-                tracing::warn!(
-                    message_id = %event.message_id(),
-                    event_type,
-                    error = %e,
-                    "agent message audit: failed to append event to store",
-                );
-            }
-        }
-        Err(e) => {
-            tracing::warn!(
-                message_id = %event.message_id(),
-                event_type,
-                error = %e,
-                "agent message audit: failed to serialize lifecycle event",
-            );
-        }
-    }
+    let data = serde_json::to_value(event).map_err(|e| SessionError::StorageError {
+        reason: format!(
+            "failed to serialize {event_type} audit event for message {}: {e}",
+            event.message_id(),
+        ),
+    })?;
+    store.append(SessionEvent::Custom {
+        base: EventBase::new(store.last_event_id()),
+        event_type: event_type.to_owned(),
+        data,
+    })?;
+    Ok(())
 }
 
 /// Terminal outcome projection handed to
@@ -144,13 +155,20 @@ impl LifecycleEmitter {
 
     /// Emit [`SubagentLifecycle::Started`] on both carriers. Called by
     /// the tool before the child task launches.
-    pub(super) fn emit_started(&self) {
+    ///
+    /// # Errors
+    ///
+    /// The parent-store audit append error. Callers run inside the
+    /// spawning tool call, before anything irreversible happened, so
+    /// they propagate it and abort the launch — the durable log never
+    /// silently misses a child that did run.
+    pub(super) fn emit_started(&self) -> Result<(), SessionError> {
         self.emit(SubagentLifecycle::Started {
             parent_id: self.parent_id,
             child_id: self.child_id,
             descriptor: self.descriptor.clone(),
             started_at: self.started_at,
-        });
+        })
     }
 
     /// Emit [`SubagentLifecycle::Completed`] on both carriers. Called
@@ -158,7 +176,18 @@ impl LifecycleEmitter {
     /// outcome — unconditionally, including when a subagent-stop hook
     /// suppressed the registry's terminal transition (the run itself
     /// did finish; the hook only blocks the registry state change).
-    pub(super) fn emit_completed(&self, completion: SubagentCompletion) {
+    ///
+    /// # Errors
+    ///
+    /// The parent-store audit append error. The wrapper handles it by
+    /// logging at error level and continuing with result delivery: the
+    /// child's result is the primary content and must still reach the
+    /// parent (whose own injection of it propagates persist failures
+    /// through the primary write-through contract).
+    pub(super) fn emit_completed(
+        &self,
+        completion: SubagentCompletion,
+    ) -> Result<(), SessionError> {
         self.emit(SubagentLifecycle::Completed {
             parent_id: self.parent_id,
             child_id: self.child_id,
@@ -170,42 +199,37 @@ impl LifecycleEmitter {
             succeeded: completion.succeeded,
             error: completion.error,
             stop: completion.stop,
-        });
+        })
     }
 
     /// Broadcast on the live channel and append the audit record to the
-    /// parent's store.
-    fn emit(&self, event: SubagentLifecycle) {
+    /// parent's store. The live broadcast happens regardless of the
+    /// store outcome — a subscriber must not lose the event because the
+    /// durable side failed — and the store error is returned typed.
+    ///
+    /// # Errors
+    ///
+    /// [`SessionError::StorageError`] when the lifecycle event cannot be
+    /// serialized, and the parent store's own append error when the
+    /// write-through persist fails.
+    fn emit(&self, event: SubagentLifecycle) -> Result<(), SessionError> {
         let event_type = event.session_event_type();
         let serialized = serde_json::to_value(&event);
         if let Some(sender) = self.sender.as_ref() {
             sender.send_subagent(event);
         }
-        match serialized {
-            Ok(data) => {
-                let session_event = SessionEvent::Custom {
-                    base: EventBase::new(self.parent_store.last_event_id()),
-                    event_type: event_type.to_owned(),
-                    data,
-                };
-                if let Err(e) = self.parent_store.append(session_event) {
-                    tracing::warn!(
-                        child_id = %self.child_id,
-                        event_type,
-                        error = %e,
-                        "subagent lifecycle: failed to append audit event to parent store",
-                    );
-                }
-            }
-            Err(e) => {
-                tracing::warn!(
-                    child_id = %self.child_id,
-                    event_type,
-                    error = %e,
-                    "subagent lifecycle: failed to serialize lifecycle event",
-                );
-            }
-        }
+        let data = serialized.map_err(|e| SessionError::StorageError {
+            reason: format!(
+                "failed to serialize {event_type} lifecycle event for child {}: {e}",
+                self.child_id,
+            ),
+        })?;
+        self.parent_store.append(SessionEvent::Custom {
+            base: EventBase::new(self.parent_store.last_event_id()),
+            event_type: event_type.to_owned(),
+            data,
+        })?;
+        Ok(())
     }
 }
 
@@ -251,22 +275,24 @@ mod tests {
         let child_sender = root.for_child(Uuid::from_u128(2), "spawn/haiku".to_owned());
         let (emitter, parent_id, child_id) = emitter(Some(child_sender), Arc::clone(&store));
 
-        emitter.emit_started();
-        emitter.emit_completed(SubagentCompletion {
-            usage: Usage {
-                input_tokens: 7,
-                output_tokens: 3,
-                ..Usage::default()
-            },
-            subtree_usage: Usage {
-                input_tokens: 12,
-                output_tokens: 5,
-                ..Usage::default()
-            },
-            succeeded: true,
-            error: None,
-            stop: None,
-        });
+        emitter.emit_started().expect("started audit appends");
+        emitter
+            .emit_completed(SubagentCompletion {
+                usage: Usage {
+                    input_tokens: 7,
+                    output_tokens: 3,
+                    ..Usage::default()
+                },
+                subtree_usage: Usage {
+                    input_tokens: 12,
+                    output_tokens: 5,
+                    ..Usage::default()
+                },
+                succeeded: true,
+                error: None,
+                stop: None,
+            })
+            .expect("completed audit appends");
 
         // Live carrier: child-tagged Started then Completed.
         let first = rx.try_recv().expect("started on channel");
@@ -334,14 +360,16 @@ mod tests {
     fn emits_to_store_when_no_channel_installed() {
         let store = Arc::new(EventStore::new());
         let (emitter, _, _) = emitter(None, Arc::clone(&store));
-        emitter.emit_started();
-        emitter.emit_completed(SubagentCompletion {
-            usage: Usage::default(),
-            subtree_usage: Usage::default(),
-            succeeded: false,
-            error: Some("provider exploded".to_owned()),
-            stop: None,
-        });
+        emitter.emit_started().expect("started audit appends");
+        emitter
+            .emit_completed(SubagentCompletion {
+                usage: Usage::default(),
+                subtree_usage: Usage::default(),
+                succeeded: false,
+                error: Some("provider exploded".to_owned()),
+                stop: None,
+            })
+            .expect("completed audit appends");
         let events = store.events();
         assert_eq!(events.len(), 2, "audit record must not depend on channel");
         match &events[1] {
@@ -351,5 +379,81 @@ mod tests {
             }
             other => panic!("expected Custom completed event, got {other:?}"),
         }
+    }
+
+    /// A sink that fails every persist, standing in for a faulted
+    /// session store (session-fidelity Gap 10).
+    struct FailingSink;
+    impl crate::session::store::PersistenceSink for FailingSink {
+        fn persist(
+            &mut self,
+            _event: &SessionEvent,
+        ) -> Result<(), crate::session::persistence::SessionPersistError> {
+            Err(crate::session::persistence::SessionPersistError::Io(
+                std::io::Error::other("disk full"),
+            ))
+        }
+    }
+
+    /// Gap 10: a failing sink on the parent store surfaces the lifecycle
+    /// audit appends as typed errors — never a silent audit hole — while
+    /// the live broadcast still reaches subscribers (a live listener must
+    /// not lose the event because the durable side failed).
+    #[test]
+    fn emit_surfaces_sink_failure_typed_and_still_broadcasts() {
+        let (tx, mut rx) = broadcast::channel::<AgentEvent>(16);
+        let store = Arc::new(EventStore::with_sink(Box::new(FailingSink)));
+        let root = AgentEventSender::new(tx, Uuid::from_u128(1), "root".to_owned());
+        let child_sender = root.for_child(Uuid::from_u128(2), "spawn/haiku".to_owned());
+        let (emitter, _, child_id) = emitter(Some(child_sender), Arc::clone(&store));
+
+        let err = emitter
+            .emit_started()
+            .expect_err("the sink failure must surface typed");
+        assert!(
+            matches!(err, SessionError::StorageError { .. }),
+            "expected StorageError, got {err:?}",
+        );
+        assert!(store.is_empty(), "the failed audit never reaches memory");
+
+        let live = rx.try_recv().expect("live broadcast still delivered");
+        assert_eq!(live.agent_id, child_id);
+
+        let err = emitter
+            .emit_completed(SubagentCompletion {
+                usage: Usage::default(),
+                subtree_usage: Usage::default(),
+                succeeded: true,
+                error: None,
+                stop: None,
+            })
+            .expect_err("completed shares the same typed contract");
+        assert!(matches!(err, SessionError::StorageError { .. }));
+    }
+
+    /// Gap 10: the inter-agent message audit append surfaces sink
+    /// failures typed to its caller instead of logging and continuing.
+    #[test]
+    fn append_message_audit_surfaces_sink_failure_typed() {
+        let store = EventStore::with_sink(Box::new(FailingSink));
+        let sent = AgentMessageLifecycle::Sent {
+            message_id: Uuid::from_u128(9),
+            from_id: Uuid::from_u128(1),
+            from: "root".to_owned(),
+            to_id: Uuid::from_u128(2),
+            to: "worker".to_owned(),
+            kind: crate::r#loop::inbound::MessageKind::Update,
+            seq: 1,
+            content: "status".to_owned(),
+            sent_at: Utc::now(),
+        };
+
+        let err =
+            append_message_audit(&store, &sent).expect_err("the sink failure must surface typed");
+        assert!(
+            matches!(err, SessionError::StorageError { .. }),
+            "expected StorageError, got {err:?}",
+        );
+        assert!(store.is_empty(), "the failed audit never reaches memory");
     }
 }

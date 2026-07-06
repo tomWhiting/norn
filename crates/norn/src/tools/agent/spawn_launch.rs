@@ -176,7 +176,22 @@ pub(crate) fn requeue_stranded_inbound(
     if stranded.is_empty() {
         return;
     }
-    requeue_undelivered_inbound(store, Some(child_id), pending, &mut stranded, window);
+    // The controller task has no caller left to fail: the queued-audit
+    // error is typed at the source (session-fidelity Gap 10) and logged
+    // at error level here — the child's terminal flow (result delivery,
+    // registry reclamation) must still complete, and the in-memory
+    // pending record remains redeliverable while the process lives.
+    if let Err(error) =
+        requeue_undelivered_inbound(store, Some(child_id), pending, &mut stranded, window)
+    {
+        tracing::error!(
+            child_id = %child_id,
+            %error,
+            "failed to persist queued audit event(s) while sweeping the \
+             child's stranded inbound channel; affected messages will not \
+             survive a restart",
+        );
+    }
 }
 
 fn mark_idle_in_registry(registry: &RwLock<AgentRegistry>, child_id: Uuid) {
@@ -453,13 +468,28 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
             let subtree_usage = summary.usage.clone() + summary.children_usage.clone();
             let succeeded = summary.status == AgentStatus::Completed;
 
-            lifecycle.emit_completed(SubagentCompletion {
+            // A Completed-audit persist failure is typed at the source and
+            // handled here, not propagated: the child's result is the
+            // primary content and must still reach the parent (aborting
+            // delivery would convert an observability gap into content
+            // loss — the same documented trade as the delivered-audit,
+            // session-fidelity Gap 10). Under a persistent sink fault the
+            // parent's own injection of the delivered result fails its run
+            // typed through the primary write-through contract.
+            if let Err(error) = lifecycle.emit_completed(SubagentCompletion {
                 usage: summary.usage.clone(),
                 subtree_usage,
                 succeeded,
                 error: summary.error.clone(),
                 stop: summary.stop.clone(),
-            });
+            }) {
+                tracing::error!(
+                    child_id = %child_id,
+                    %error,
+                    "failed to persist the subagent.completed audit event on \
+                     the parent store; the child's result is still delivered",
+                );
+            }
             deliver_step_result(result_sender.as_ref(), child_id, &agent_role, &summary).await;
 
             if !persistent {
@@ -531,13 +561,26 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
                             Some(message) => {
                                 let mut stranded = vec![message];
                                 stranded.extend(inbound_rx.drain());
-                                requeue_undelivered_inbound(
+                                // Same handling as `requeue_stranded_inbound`:
+                                // typed at the source, error-logged here — the
+                                // parked controller has no caller to fail and
+                                // must keep serving wake/cancel (Gap 10).
+                                if let Err(error) = requeue_undelivered_inbound(
                                     store.as_ref(),
                                     Some(child_id),
                                     pending_messages.as_deref(),
                                     &mut stranded,
                                     UndeliveredWindow::IdlePark,
-                                );
+                                ) {
+                                    tracing::error!(
+                                        child_id = %child_id,
+                                        %error,
+                                        "failed to persist queued audit event(s) \
+                                         for messages received while parked; \
+                                         affected messages will not survive a \
+                                         restart",
+                                    );
+                                }
                             }
                             None => inbound_open = false,
                         }

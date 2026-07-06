@@ -54,6 +54,7 @@ mod tests {
             tool_call_id: format!("call_{name}"),
             tool_name: name.to_string(),
             output,
+            spool_ref: None,
             duration_ms: 1,
         }
     }

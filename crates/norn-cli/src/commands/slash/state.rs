@@ -65,9 +65,13 @@ pub struct SlashState {
     /// `run_agent_step` and read by `/session`.
     pub cumulative_usage: Arc<Mutex<Usage>>,
 
-    /// Session ID, when persistence is enabled. `None` for `--no-session`
-    /// invocations.
-    pub session_id: Option<String>,
+    /// Live session ID, when persistence is enabled. `None` for
+    /// `--no-session` invocations. Behind a mutex because `/clear`
+    /// rotates the slash state into a fresh persisted session (the
+    /// post-clear store must be as durable as the pre-clear one —
+    /// session-fidelity Gap 12) and the handler closures must observe
+    /// the rotated ID.
+    pub session_id: Arc<Mutex<Option<String>>>,
 
     /// Filesystem location of the session JSONL store. Read by `/name`
     /// when it persists the new name through
@@ -130,7 +134,7 @@ impl SlashState {
             output_schema: Arc::new(Mutex::new(seed.output_schema)),
             session_name: Arc::new(Mutex::new(seed.session_name)),
             cumulative_usage: Arc::new(Mutex::new(Usage::default())),
-            session_id: seed.session_id,
+            session_id: Arc::new(Mutex::new(seed.session_id)),
             data_dir: seed.data_dir,
             no_session: seed.no_session,
             variable_pairs: seed.variable_pairs,
@@ -150,6 +154,12 @@ impl SlashState {
     #[must_use]
     pub fn current_store(&self) -> Arc<EventStore> {
         Arc::clone(&self.store.lock())
+    }
+
+    /// Snapshot the live session ID (`None` under `--no-session`).
+    #[must_use]
+    pub fn current_session_id(&self) -> Option<String> {
+        self.session_id.lock().clone()
     }
 
     /// Replace the live event store with `new_store`. Called by the

@@ -77,6 +77,21 @@ pub enum SessionPersistError {
         matches: Vec<String>,
     },
 
+    /// A persisted spool reference failed validation. References become
+    /// paths under the session data directory
+    /// (`<session-id>/spool/<event-id>.bin`), so the read side
+    /// ([`read_spooled_output`](crate::session::spool::read_spooled_output))
+    /// rejects anything that could traverse outside it or that does not
+    /// match the shape [`SpoolWriter::write`](crate::session::spool::SpoolWriter::write)
+    /// produces.
+    #[error("invalid spool reference '{spool_ref}': {reason}")]
+    InvalidSpoolRef {
+        /// The rejected reference.
+        spool_ref: String,
+        /// Why it was rejected.
+        reason: String,
+    },
+
     /// A caller-supplied session ID failed validation. Session IDs become
     /// file names (`{id}.jsonl`), so the explicit-ID path
     /// ([`SessionManager::open_or_resume`](crate::session::SessionManager::open_or_resume))

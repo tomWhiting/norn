@@ -44,6 +44,7 @@ use uuid::Uuid;
 
 use crate::provider::usage::Usage;
 use crate::session::events::{EventBase, SessionEvent};
+use crate::session::spool::SpoolWriter;
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
 
 use super::persistence::index::{
@@ -380,8 +381,14 @@ impl SessionManager {
             replayed_events: events.len(),
             skipped_lines: artifacts.skipped_lines,
         };
+        let mut store = EventStore::with_sink_and_events(Box::new(sink), events);
+        store.attach_spool(SpoolWriter::for_session(
+            &self.data_dir,
+            &entry.id,
+            durability,
+        ));
         Ok(OpenSession {
-            store: EventStore::with_sink_and_events(Box::new(sink), events),
+            store,
             entry,
             replay,
         })
@@ -539,8 +546,14 @@ impl SessionManager {
             durability,
             self.index_lock_deadline,
         )?;
+        let mut store = EventStore::with_sink(Box::new(sink));
+        store.attach_spool(SpoolWriter::for_session(
+            &self.data_dir,
+            &entry.id,
+            durability,
+        ));
         Ok(OpenSession {
-            store: EventStore::with_sink(Box::new(sink)),
+            store,
             entry,
             replay: ReplaySummary::default(),
         })
@@ -574,8 +587,14 @@ impl SessionManager {
             replayed_events: artifacts.events.len(),
             skipped_lines: artifacts.skipped_lines,
         };
+        let mut store = EventStore::with_sink_and_events(Box::new(sink), artifacts.events);
+        store.attach_spool(SpoolWriter::for_session(
+            &self.data_dir,
+            &entry.id,
+            durability,
+        ));
         Ok(OpenSession {
-            store: EventStore::with_sink_and_events(Box::new(sink), artifacts.events),
+            store,
             entry,
             replay,
         })

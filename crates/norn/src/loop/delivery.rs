@@ -131,11 +131,15 @@ pub(super) async fn inject_inbound_messages(
 
         match serde_json::to_value(&delivered) {
             Ok(data) => {
-                // Best-effort: the message is already delivered, so a
-                // failed audit append is an observability gap, not a
-                // lost message — log it rather than re-queueing (which
-                // would duplicate the delivered content) or dropping it
-                // silently.
+                // DELIBERATELY best-effort — the one secondary append that
+                // stays so (session-fidelity inventory, Gap 10: documented
+                // as an observability gap, never a lost message). The
+                // framed content is already durable and the message is
+                // already delivered; propagating here would either
+                // re-queue it (duplicating delivered content on retry) or
+                // fail a step whose stimulus the model already consumed.
+                // The failure is still loud: error-level, with the
+                // message id.
                 if let Err(error) = append_and_notify(
                     store,
                     SessionEvent::Custom {
@@ -357,15 +361,29 @@ impl UndeliveredWindow {
 /// message. Without an agent identity or pending store (loops assembled
 /// outside agent coordination) the loss is logged per message at error
 /// level rather than passing silently.
+///
+/// # Errors
+///
+/// The first `agent_message.queued` audit-append failure, after every
+/// message has still been attempted (session-fidelity Gap 10). The
+/// queued audit is the **only durable copy** of a re-queued message —
+/// the pending store rebuilds from these events on resume — so a sink
+/// failure here is content-at-risk, not mere observability: the
+/// in-memory pending record is retained (redeliverable while the
+/// process lives) and the error is surfaced typed so a caller with a
+/// success to report can refuse to report it. The no-pending-store path
+/// stays log-only: it is a wiring limitation of coordination-less
+/// loops, not a sink fault, and no durable copy was ever promised
+/// there.
 pub(crate) fn requeue_undelivered_inbound(
     store: &EventStore,
     agent_id: Option<uuid::Uuid>,
     pending: Option<&PendingAgentMessages>,
     follow_up_buffer: &mut Vec<ChannelMessage>,
     window: UndeliveredWindow,
-) {
+) -> Result<(), SessionError> {
     if follow_up_buffer.is_empty() {
-        return;
+        return Ok(());
     }
     let undelivered = std::mem::take(follow_up_buffer);
     let (Some(agent_id), Some(pending)) = (agent_id, pending) else {
@@ -379,8 +397,9 @@ pub(crate) fn requeue_undelivered_inbound(
                  on the loop context; the acknowledged message is lost",
             );
         }
-        return;
+        return Ok(());
     };
+    let mut first_error: Option<SessionError> = None;
     for mut msg in undelivered {
         // Redelivery targets this loop's agent regardless of how the
         // original send addressed the channel (router sends stamp the
@@ -413,9 +432,17 @@ pub(crate) fn requeue_undelivered_inbound(
                 message_id = %message_id,
                 %error,
                 "failed to persist the queued audit event for a re-queued \
-                 inbound message; the in-memory pending record is still held",
+                 inbound message; the in-memory pending record is still held \
+                 but the message will NOT survive a restart",
             );
+            if first_error.is_none() {
+                first_error = Some(error);
+            }
         }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
     }
 }
 

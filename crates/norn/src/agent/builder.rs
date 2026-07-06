@@ -2914,6 +2914,7 @@ mod tests {
                 tool_call_id: "tc-resume".to_owned(),
                 tool_name: "read".to_owned(),
                 output: serde_json::json!({"lines": 12}),
+                spool_ref: None,
                 duration_ms: 4,
             })
             .expect("append tool result");

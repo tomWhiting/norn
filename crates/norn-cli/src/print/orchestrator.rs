@@ -367,8 +367,25 @@ pub(super) async fn orchestrate(
         // before the post-turn checkpoint (e.g. a bare `/compact` prompt).
         checkpoint_session(&store).await?;
     }
-    if apply_clear_request(&slash_state) {
-        tracing::debug!("conversation cleared via /clear in print mode");
+    // `/clear` carries the same sink discipline as startup (session-
+    // fidelity Gap 12): on a persisted invocation the slash state
+    // rotates into a fresh sink-registered session, so anything a
+    // driver appends through `SlashState::current_store()` afterwards
+    // is exactly as durable as pre-clear appends. The durability policy
+    // is the CLI's explicit `Flush` choice — the same one the session
+    // front door passes in `from_cli` (D4).
+    match apply_clear_request(&slash_state, norn::session::DurabilityPolicy::Flush)? {
+        Some(crate::commands::slash::ClearOutcome::RotatedToNewSession { new_session_id }) => {
+            tracing::debug!(
+                %new_session_id,
+                "conversation cleared via /clear in print mode; slash state \
+                 rotated into a fresh persisted session",
+            );
+        }
+        Some(crate::commands::slash::ClearOutcome::ClearedInMemory) => {
+            tracing::debug!("conversation cleared via /clear in print mode (--no-session)",);
+        }
+        None => {}
     }
 
     let format = cli.output_format.unwrap_or(OutputFormat::Text);

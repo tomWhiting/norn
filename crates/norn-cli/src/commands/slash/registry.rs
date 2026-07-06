@@ -372,11 +372,14 @@ fn clear_handler(state: &SlashState) -> CustomSlashHandler {
 
 fn session_handler(state: &SlashState) -> CustomSlashHandler {
     let store_cell = Arc::clone(&state.store);
-    let session_id = state.session_id.clone();
+    let session_id = Arc::clone(&state.session_id);
     let session_name = Arc::clone(&state.session_name);
     let cumulative = Arc::clone(&state.cumulative_usage);
     Arc::new(move |_arg| {
-        let id = session_id.as_deref().unwrap_or("<no-session>");
+        // Re-read the live cell on every invocation: `/clear` rotates
+        // the slash state into a fresh persisted session.
+        let id_snapshot = session_id.lock().clone();
+        let id = id_snapshot.as_deref().unwrap_or("<no-session>");
         let name_snapshot = session_name.lock().clone();
         let name_str = name_snapshot.as_deref().unwrap_or("unnamed");
         let store_arc = Arc::clone(&store_cell.lock());
@@ -408,7 +411,7 @@ fn session_handler(state: &SlashState) -> CustomSlashHandler {
 
 fn name_handler(state: &SlashState) -> CustomSlashHandler {
     let session_name = Arc::clone(&state.session_name);
-    let session_id = state.session_id.clone();
+    let session_id = Arc::clone(&state.session_id);
     let data_dir = state.data_dir.clone();
     let no_session = state.no_session;
     Arc::new(move |arg| {
@@ -419,7 +422,10 @@ fn name_handler(state: &SlashState) -> CustomSlashHandler {
         }
         *session_name.lock() = Some(trimmed.to_owned());
         eprintln!("Session named: {trimmed}");
-        if !no_session && let Some(id) = session_id.as_deref() {
+        // Re-read the live cell: after a `/clear` rotation the name must
+        // land on the NEW session's index entry, never the retired one.
+        let id_snapshot = session_id.lock().clone();
+        if !no_session && let Some(id) = id_snapshot.as_deref() {
             persist_session_name(&data_dir, id, trimmed);
         }
         Ok(Vec::new())
