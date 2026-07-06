@@ -93,7 +93,11 @@ pub fn run(cli: &Cli) -> ExitCode {
             // R2: even this pre-runtime failure is post-argument-parsing,
             // so plain machine formats still get the typed error stop. A
             // jsonrpc peer expects JSON-RPC frames only, never a print
-            // envelope, so driven mode is excluded.
+            // envelope, so driven mode is excluded. Known divergence: the
+            // stderr line above is byte-frozen from before the envelope
+            // existed and has no class prefix, while the envelope message
+            // is the `PrintError` Display (`agent error: …`) like every
+            // other emit site — see the `StopInfo::Error::message` doc.
             if cli.protocol != Some(Protocol::Jsonrpc) {
                 emit_error_envelope(
                     cli,

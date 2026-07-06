@@ -105,8 +105,19 @@ pub enum StopInfo {
     /// this stop from its `PrintError` directly. The envelope stays
     /// minimal: `output` is `null`, usage is zeroed, events are empty.
     Error {
-        /// Human-readable failure description — the stderr line without
-        /// the `norn: ` prefix.
+        /// Human-readable failure description: the `Display` rendering of
+        /// the CLI's typed print error, class-prefixed (`agent error: …`,
+        /// `auth error: …`, `I/O error: …`, `session error: …`). At most
+        /// emit sites this is also the stderr line without its `norn: `
+        /// prefix; two sites keep stderr wording byte-frozen from before
+        /// this envelope existed and therefore diverge: the pre-runtime
+        /// tokio-runtime-build failure (`norn: failed to build tokio
+        /// runtime: …`, no class prefix) and the forwarded `session
+        /// resume` / `session fork` resolve failures (human lines like
+        /// `Session not found: …`). The message here is always the
+        /// class-prefixed `PrintError` Display regardless; machine
+        /// consumers correlate on `class`, never by string-matching
+        /// stderr.
         message: String,
         /// Machine-stable failure class: `agent` | `auth` | `io` |
         /// `session`. Argument errors (exit 2) never reach the envelope

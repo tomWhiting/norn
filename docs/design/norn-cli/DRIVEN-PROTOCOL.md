@@ -228,6 +228,12 @@ partial-state carriage is explicitly out of scope. `model` is `null`
 when the failure occurred before the model was resolved (pre-assembly);
 `session_id` is `null` when no session was opened.
 
+This includes the subcommand spellings of the same operation: a
+print-bound machine-format `norn -p -f json session resume <id>` /
+`session fork <id>` whose identifier fails to resolve BEFORE the forward
+to the agent path emits the same `session`-classed envelope (`model` and
+`session_id` `null`), exactly like `norn -p -f json --resume <id>`.
+
 Boundaries:
 
 - **Argument/usage errors (exit 2) emit NOTHING on stdout** — clap

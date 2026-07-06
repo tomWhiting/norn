@@ -16,4 +16,5 @@ pub use output::{
     extract_output_and_usage, render_json, render_text,
 };
 pub use provider::{BuiltProvider, ProviderBuildError, build_provider};
+pub(crate) use step_output::emit_error_envelope;
 pub use stream_renderer::{StreamRendererHandle, spawn_stream_renderer};

@@ -188,6 +188,74 @@ fn pre_assembly_auth_failure_emits_terminal_event_in_stream_json_mode() {
     assert_error_envelope(&event, "auth");
 }
 
+/// R2, subcommand spelling: `norn -p -f json session resume <stale-id>`
+/// fails at resolve BEFORE the forward to the agent path — the same
+/// operation as `--resume <stale-id>`, so it emits the same
+/// `session`-classed envelope with `model`/`session_id` null, while the
+/// stderr line and exit code stay byte-identical to before.
+#[test]
+fn session_resume_stale_id_emits_session_envelope_in_json_mode() {
+    let out = run_print(&["-p", "-f", "json", "session", "resume", "deadbeef"], true);
+
+    assert_eq!(out.status.code(), Some(1), "resolve failures still exit 1");
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let envelope: Value = serde_json::from_str(stdout.trim())
+        .unwrap_or_else(|err| panic!("stdout must be one JSON envelope ({err}): {stdout:?}"));
+    assert_error_envelope(&envelope, "session");
+    assert!(
+        envelope["model"].is_null(),
+        "the failure precedes assembly — no resolved model: {envelope}"
+    );
+    assert!(envelope["session_id"].is_null(), "{envelope}");
+    assert_eq!(envelope["events"], json!([]), "minimal payload (R3)");
+    // The stderr surface is byte-identical to before — the envelope is
+    // strictly additive.
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(
+        stderr.contains("Session not found: deadbeef"),
+        "stderr line stays: {stderr:?}"
+    );
+}
+
+/// The `session fork <stale-id>` spelling in `-f stream-json`: exactly
+/// one terminal `completed` event carrying the session-classed error
+/// stop — never an empty stream.
+#[test]
+fn session_fork_stale_id_emits_terminal_event_in_stream_json_mode() {
+    let out = run_print(
+        &["-p", "-f", "stream-json", "session", "fork", "deadbeef"],
+        true,
+    );
+
+    assert_eq!(out.status.code(), Some(1));
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    let lines: Vec<&str> = stdout.lines().filter(|l| !l.trim().is_empty()).collect();
+    assert_eq!(
+        lines.len(),
+        1,
+        "no run ever started — exactly the terminal event: {stdout:?}"
+    );
+    let event: Value = serde_json::from_str(lines[0]).unwrap();
+    assert_eq!(event["type"], json!("completed"), "{event}");
+    assert_error_envelope(&event, "session");
+}
+
+/// The same resolve failure in text mode stays stderr-only: the human
+/// format never gets an envelope, on the subcommand spelling too.
+#[test]
+fn session_resume_stale_id_text_mode_emits_nothing_on_stdout() {
+    let out = run_print(&["-p", "session", "resume", "deadbeef"], true);
+
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        out.stdout.is_empty(),
+        "text mode never gets an envelope: {:?}",
+        String::from_utf8_lossy(&out.stdout)
+    );
+    let stderr = String::from_utf8(out.stderr).unwrap();
+    assert!(stderr.contains("Session not found: deadbeef"), "{stderr:?}");
+}
+
 /// R5: `--output PATH` receives the error envelope; stdout stays empty
 /// (the file is the selected surface), and the exit code is unchanged.
 #[test]
