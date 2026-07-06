@@ -29,7 +29,7 @@ use crate::provider::usage::Usage;
 /// invariant violation: it is logged loudly via
 /// [`log_terminal_transition_violation`] but never propagated — the
 /// wrapper still owes result delivery.
-pub(super) fn mark_terminal_in_registry(
+pub(crate) fn mark_terminal_in_registry(
     registry: &RwLock<AgentRegistry>,
     child_id: Uuid,
     terminal_status: AgentStatus,
@@ -58,18 +58,18 @@ fn value_to_text(value: &serde_json::Value) -> Option<String> {
 /// Pure projection of a child's loop outcome, consumed by the spawn
 /// result-channel sender. Carries no registry side effects so callers can
 /// decide whether to also call [`mark_terminal_in_registry`].
-pub(super) struct ChildOutcomeSummary {
+pub(crate) struct ChildOutcomeSummary {
     /// Terminal registry status: `Completed` only for
     /// [`AgentStepResult::Completed`], otherwise `Failed`.
-    pub(super) status: AgentStatus,
+    pub(crate) status: AgentStatus,
     /// Display text of the child's output on success.
-    pub(super) output_text: Option<String>,
+    pub(crate) output_text: Option<String>,
     /// Explanatory error (including any partial output) when the child did
     /// not complete.
-    pub(super) error: Option<String>,
+    pub(crate) error: Option<String>,
     /// Typed stop reason when the child's run stopped early; `None` on
     /// completion or hard error.
-    pub(super) stop: Option<AgentStopReason>,
+    pub(crate) stop: Option<AgentStopReason>,
     /// Accumulated token usage across every provider call the child
     /// made — populated on every [`AgentStepResult`] arm. On the hard
     /// [`NornError`] arm this is [`Usage::default`] (all zeros): the
@@ -77,7 +77,7 @@ pub(super) struct ChildOutcomeSummary {
     /// usage, so any tokens consumed before a mid-run hard error are
     /// genuinely unavailable here — zeros mean "unknown", not "none
     /// consumed". See [`extract_outcome_summary`]'s `Err` arm.
-    pub(super) usage: Usage,
+    pub(crate) usage: Usage,
     /// Summed `subtree_usage` of every grandchild result the child's
     /// loop delivered (W3.6 usage rollup) — from the
     /// [`AgentStepResult`] arm on every loop outcome, and from the
@@ -87,7 +87,7 @@ pub(super) struct ChildOutcomeSummary {
     /// but the delivered grandchild spend is still real). Disjoint from
     /// [`Self::usage`]: `usage + children_usage` is the child's subtree
     /// total with each agent counted exactly once.
-    pub(super) children_usage: Usage,
+    pub(crate) children_usage: Usage,
 }
 
 /// Project an [`AgentStepResult`] outcome into a [`ChildOutcomeSummary`].
@@ -107,7 +107,7 @@ pub(super) struct ChildOutcomeSummary {
 /// already delivered are real spend (W3.6). On every `Ok` arm the value
 /// from the step result is authoritative (the two agree by construction:
 /// the arm is a snapshot of the same accumulator).
-pub(super) fn extract_outcome_summary(
+pub(crate) fn extract_outcome_summary(
     outcome: Result<AgentStepResult, NornError>,
     delivered_children_usage: Usage,
 ) -> ChildOutcomeSummary {

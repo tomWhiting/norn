@@ -94,7 +94,7 @@ fn tag_for_event(event: &SessionEvent) -> ContentTag {
         | SessionEvent::AssistantMessage { .. }
         | SessionEvent::SpokenResponse { .. }
         | SessionEvent::ModelChange { .. }
-        | SessionEvent::Fork { .. }
+        | SessionEvent::ChildBranch { .. }
         | SessionEvent::ForkComplete { .. }
         | SessionEvent::Label { .. } => ContentTag::Message,
         SessionEvent::ToolResult { .. } => ContentTag::ToolResult,

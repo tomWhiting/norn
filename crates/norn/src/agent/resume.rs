@@ -121,7 +121,7 @@ pub fn rebuild_action_log(action_log: &ActionLog, events: &[SessionEvent]) {
             // data.
             SessionEvent::UserMessage { .. }
             | SessionEvent::ModelChange { .. }
-            | SessionEvent::Fork { .. }
+            | SessionEvent::ChildBranch { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
             | SessionEvent::Custom { .. }

@@ -290,12 +290,14 @@ impl AgentBuilder {
         self
     }
 
-    /// Resume a session from a prior run's in-memory [`EventStore`]. A
-    /// fresh store is created when unset. For disk-persisted sessions,
+    /// Resume a session from a prior run's [`EventStore`] — typically the
+    /// live `Arc` a previous [`RunOutcome`](crate::agent::RunOutcome)
+    /// surfaced on its payload (sink included, when that run persisted).
+    /// A fresh store is created when unset. For disk-persisted sessions,
     /// prefer [`Self::open_session`] — the two are mutually exclusive and
     /// setting both fails the build.
     #[must_use]
-    pub fn session(mut self, store: EventStore) -> Self {
+    pub fn session(mut self, store: Arc<EventStore>) -> Self {
         self.session = Some(store);
         self
     }

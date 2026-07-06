@@ -43,7 +43,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use crate::provider::usage::Usage;
-use crate::session::events::{EventBase, SessionEvent};
+use crate::session::branch::ROOT_PATH_ADDRESS;
+use crate::session::events::{ChildBranchKind, EventBase, SessionEvent};
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
 
 use super::persistence::index::{
@@ -51,7 +52,9 @@ use super::persistence::index::{
     read_index, remove_index_entry, resolve_latest_session_in_working_dir, resolve_session,
     update_index_entry,
 };
-use super::persistence::io::{append_events, read_session_events, session_file_path};
+use super::persistence::io::{
+    append_events, read_session_events_for_entry, resolved_session_file_path,
+};
 use super::persistence::replay::ReplayArtifacts;
 use super::persistence::types::{
     SESSION_FORMAT_VERSION, SessionIndexEntry, SessionPersistError, SessionStatus,
@@ -182,10 +185,21 @@ impl SessionManager {
         &self.data_dir
     }
 
-    /// Create a fresh session: mint a UUID v7 ID, register it in the
-    /// index, and return a sink-equipped store ready for its first
-    /// append (the session file is created immediately, with its
-    /// version-header line).
+    /// The configured inter-process index-lock acquisition deadline
+    /// (`None` = wait indefinitely). Exposed so the child-branching
+    /// authority ([`crate::session::SessionBinding`]) applies the same
+    /// bound to the index operations it performs on this manager's data
+    /// directory.
+    #[must_use]
+    pub fn index_lock_deadline(&self) -> Option<Duration> {
+        self.index_lock_deadline
+    }
+
+    /// Create a fresh session: mint a UUID v4 ID (R8 — v7's shared
+    /// timestamp prefix defeats git-style short-prefix eyeballing),
+    /// register it in the index, and return a sink-equipped store ready
+    /// for its first append (the session file is created immediately,
+    /// with its version-header line).
     ///
     /// # Errors
     ///
@@ -199,7 +213,7 @@ impl SessionManager {
         options: CreateSessionOptions,
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
-        let entry = new_index_entry(Uuid::now_v7().to_string(), options);
+        let entry = new_index_entry(Uuid::new_v4().to_string(), options);
         append_index_entry(&self.data_dir, &entry, self.index_lock_deadline)?;
         self.open_fresh(entry, durability)
     }
@@ -287,9 +301,14 @@ impl SessionManager {
     }
 
     /// Fork a session: copy every recovered source event into a brand
-    /// new session (durable batch append), append a `Fork` event whose
-    /// `source_event_id` is the source's last event, and return the new
-    /// session's sink-equipped store pre-loaded with the copied history.
+    /// new session (durable batch append), append a
+    /// [`SessionEvent::ChildBranch`] provenance marker (kind `Fork`,
+    /// anchored at the source's last event, `parent_session_id` = the
+    /// source), and return the new session's sink-equipped store
+    /// pre-loaded with the copied history. The fork is a new primary
+    /// line (`path_address` = `root`), not a child of a live parent —
+    /// the marker lives in the fork's own file and the source file is
+    /// untouched.
     ///
     /// `source` resolves like [`Self::resume`]. `options` populates the
     /// new index entry — callers typically pass the source session's
@@ -344,7 +363,7 @@ impl SessionManager {
         options: CreateSessionOptions,
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
-        let artifacts = read_session_events(&self.data_dir, &source_entry.id)?;
+        let artifacts = read_session_events_for_entry(&self.data_dir, source_entry)?;
         let last_event_id = artifacts
             .events
             .last()
@@ -355,16 +374,19 @@ impl SessionManager {
             .id
             .clone();
 
-        let new_entry = new_index_entry(Uuid::now_v7().to_string(), options);
+        let new_entry = new_index_entry(Uuid::new_v4().to_string(), options);
         append_index_entry(&self.data_dir, &new_entry, self.index_lock_deadline)?;
 
-        let fork_event = SessionEvent::Fork {
+        let fork_marker = SessionEvent::ChildBranch {
             base: EventBase::new(Some(last_event_id.clone())),
-            source_event_id: last_event_id,
-            forked_session_id: new_entry.id.clone(),
+            parent_session_id: Some(source_entry.id.clone()),
+            child_session_id: Some(new_entry.id.clone()),
+            path_address: ROOT_PATH_ADDRESS.to_owned(),
+            parent_event_anchor: Some(last_event_id),
+            kind: ChildBranchKind::Fork,
         };
         let mut events = artifacts.events;
-        events.push(fork_event);
+        events.push(fork_marker);
         append_events(&self.data_dir, &new_entry.id, &events, false)?;
 
         // Re-resolve so the returned entry carries the event count and
@@ -372,7 +394,7 @@ impl SessionManager {
         let entry = resolve_session(&self.data_dir, &new_entry.id)?;
         let sink = JsonlSink::open_registered(
             &self.data_dir,
-            &entry.id,
+            &entry,
             durability,
             self.index_lock_deadline,
         )?;
@@ -471,7 +493,7 @@ impl SessionManager {
         id_or_name: &str,
     ) -> Result<(SessionIndexEntry, ReplayArtifacts), SessionPersistError> {
         let entry = resolve_session(&self.data_dir, id_or_name)?;
-        let artifacts = read_session_events(&self.data_dir, &entry.id)?;
+        let artifacts = read_session_events_for_entry(&self.data_dir, &entry)?;
         Ok((entry, artifacts))
     }
 
@@ -506,6 +528,12 @@ impl SessionManager {
     /// then remove its index entry under the inter-process lock.
     /// Returns the removed entry.
     ///
+    /// Deleting a **root** session also deletes its `{id}/` sibling
+    /// directory (the `children/` timelines minted under it) and every
+    /// index row whose `rel_path` lives inside that directory — a root's
+    /// children are meaningless without the root and would otherwise
+    /// linger as phantom rows over deleted files.
+    ///
     /// # Errors
     ///
     /// Resolution errors, a file-removal failure (the index entry is
@@ -513,7 +541,7 @@ impl SessionManager {
     /// lingers), and index-rewrite failures.
     pub fn delete(&self, id_or_name: &str) -> Result<SessionIndexEntry, SessionPersistError> {
         let entry = resolve_session(&self.data_dir, id_or_name)?;
-        let path = session_file_path(&self.data_dir, &entry.id);
+        let path = resolved_session_file_path(&self.data_dir, &entry);
         if let Err(error) = fs::remove_file(&path)
             && error.kind() != std::io::ErrorKind::NotFound
         {
@@ -521,6 +549,30 @@ impl SessionManager {
                 error.kind(),
                 format!("failed to delete session file {}: {error}", path.display()),
             )));
+        }
+        // Root sessions may own a `{id}/` directory of child timelines;
+        // remove it (and the rows pointing into it) with the root.
+        let children_dir = self.data_dir.join(&entry.id);
+        if entry.rel_path.is_none() && children_dir.is_dir() {
+            fs::remove_dir_all(&children_dir).map_err(|error| {
+                SessionPersistError::Io(std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "failed to delete child-session directory {}: {error}",
+                        children_dir.display(),
+                    ),
+                ))
+            })?;
+            let prefix = format!("{}/", entry.id);
+            for child in read_index(&self.data_dir)? {
+                if child
+                    .rel_path
+                    .as_deref()
+                    .is_some_and(|rel| rel.starts_with(&prefix))
+                {
+                    remove_index_entry(&self.data_dir, &child.id, self.index_lock_deadline)?;
+                }
+            }
         }
         remove_index_entry(&self.data_dir, &entry.id, self.index_lock_deadline)?;
         Ok(entry)
@@ -535,7 +587,7 @@ impl SessionManager {
     ) -> Result<OpenSession, SessionPersistError> {
         let sink = JsonlSink::open_registered(
             &self.data_dir,
-            &entry.id,
+            &entry,
             durability,
             self.index_lock_deadline,
         )?;
@@ -555,7 +607,7 @@ impl SessionManager {
         entry: SessionIndexEntry,
         durability: DurabilityPolicy,
     ) -> Result<OpenSession, SessionPersistError> {
-        let artifacts = read_session_events(&self.data_dir, &entry.id)?;
+        let artifacts = read_session_events_for_entry(&self.data_dir, &entry)?;
         let actual_count = u64::try_from(artifacts.events.len()).unwrap_or(u64::MAX);
         let entry = reconcile_index_entry(
             &self.data_dir,
@@ -566,7 +618,7 @@ impl SessionManager {
         );
         let sink = JsonlSink::open_registered(
             &self.data_dir,
-            &entry.id,
+            &entry,
             durability,
             self.index_lock_deadline,
         )?;
@@ -598,6 +650,8 @@ fn new_index_entry(id: String, options: CreateSessionOptions) -> SessionIndexEnt
         total_input_tokens: 0,
         total_output_tokens: 0,
         total_cache_read_tokens: 0,
+        rel_path: None,
+        parent_id: None,
     }
 }
 
@@ -687,6 +741,7 @@ mod tests {
     use super::*;
     use crate::session::events::EventUsage;
     use crate::session::persistence::index::index_file_path;
+    use crate::session::persistence::io::{read_session_events, session_file_path};
 
     fn options(model: &str) -> CreateSessionOptions {
         CreateSessionOptions {
@@ -1023,22 +1078,28 @@ mod tests {
             .unwrap();
         assert_ne!(fork.entry.id, source_id);
         assert_eq!(fork.entry.model, "gpt-fork");
-        assert_eq!(fork.replay.replayed_events, 3, "2 copied + Fork marker");
+        assert_eq!(fork.replay.replayed_events, 3, "2 copied + branch marker");
         assert_eq!(fork.store.len(), 3);
         assert_eq!(
             fork.entry.event_count, 3,
             "returned entry reflects the batch append",
         );
         match fork.store.events().last().unwrap() {
-            SessionEvent::Fork {
-                source_event_id,
-                forked_session_id,
+            SessionEvent::ChildBranch {
+                parent_session_id,
+                child_session_id,
+                path_address,
+                parent_event_anchor,
+                kind,
                 ..
             } => {
-                assert_eq!(source_event_id, &last_id);
-                assert_eq!(forked_session_id, &fork.entry.id);
+                assert_eq!(parent_session_id.as_deref(), Some(source_id.as_str()));
+                assert_eq!(child_session_id.as_deref(), Some(fork.entry.id.as_str()));
+                assert_eq!(path_address, ROOT_PATH_ADDRESS);
+                assert_eq!(parent_event_anchor.as_ref(), Some(&last_id));
+                assert_eq!(*kind, ChildBranchKind::Fork);
             }
-            other => panic!("expected Fork tail, got {other:?}"),
+            other => panic!("expected ChildBranch tail, got {other:?}"),
         }
 
         // The fork's sink is live: an append after forking persists.

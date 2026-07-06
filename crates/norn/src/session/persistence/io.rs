@@ -12,9 +12,17 @@ use crate::session::events::{EventId, SessionEvent};
 
 use super::index::{read_index, sum_usage_from_events, update_session_index};
 use super::replay::ReplayArtifacts;
-use super::types::{SESSION_FORMAT_VERSION, SessionFileHeader, SessionPersistError};
+use super::types::{
+    SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,
+};
 
-/// Return the JSONL file path for `session_id` under `data_dir`.
+/// Return the flat JSONL file path for `session_id` under `data_dir`.
+///
+/// This is the **legacy/root derivation** only. Child sessions carry
+/// their real location on [`SessionIndexEntry::rel_path`]; every caller
+/// that holds an index entry must resolve through
+/// [`resolved_session_file_path`] instead, or a child id would silently
+/// map onto a flat file that does not exist.
 ///
 /// Callers passing an id that did not come out of the session index must
 /// validate it first (see [`is_reserved_session_id`] and the manager's
@@ -22,6 +30,20 @@ use super::types::{SESSION_FORMAT_VERSION, SessionFileHeader, SessionPersistErro
 #[must_use]
 pub fn session_file_path(data_dir: &Path, session_id: &str) -> PathBuf {
     data_dir.join(format!("{session_id}.jsonl"))
+}
+
+/// Resolve an index entry's session file path: the entry's
+/// [`rel_path`](SessionIndexEntry::rel_path) joined onto `data_dir` when
+/// present (child sessions), otherwise the flat legacy derivation
+/// (`{data_dir}/{id}.jsonl`). Legacy rows have no `rel_path` and keep
+/// resolving exactly as before the nested layout existed — zero
+/// migration.
+#[must_use]
+pub fn resolved_session_file_path(data_dir: &Path, entry: &SessionIndexEntry) -> PathBuf {
+    entry.rel_path.as_ref().map_or_else(
+        || session_file_path(data_dir, &entry.id),
+        |rel| data_dir.join(rel),
+    )
 }
 
 /// Name stems the persistence layer reserves for its own files in the
@@ -248,10 +270,32 @@ pub fn read_session_events(
 ) -> Result<ReplayArtifacts, SessionPersistError> {
     ensure_session_id_not_reserved(session_id)?;
     let path = session_file_path(data_dir, session_id);
+    read_session_events_at(&path, session_id)
+}
+
+/// [`read_session_events`], resolving the file through the index entry's
+/// [`rel_path`](SessionIndexEntry::rel_path) when present — the read path
+/// for callers that hold an entry (resume, export, reconcile), which is
+/// the only way a nested child session's file is found.
+pub fn read_session_events_for_entry(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+) -> Result<ReplayArtifacts, SessionPersistError> {
+    ensure_session_id_not_reserved(&entry.id)?;
+    let path = resolved_session_file_path(data_dir, entry);
+    read_session_events_at(&path, &entry.id)
+}
+
+/// The shared open-and-read step behind both read fronts: an absent file
+/// is an empty (never-appended) session, not an error.
+fn read_session_events_at(
+    path: &Path,
+    session_id: &str,
+) -> Result<ReplayArtifacts, SessionPersistError> {
     if !path.exists() {
         return Ok(ReplayArtifacts::default());
     }
-    let file = File::open(&path)?;
+    let file = File::open(path)?;
     read_session_events_from(BufReader::new(file), session_id)
 }
 
@@ -359,12 +403,15 @@ pub fn append_events(
         return Ok(());
     }
     ensure_session_id_not_reserved(session_id)?;
-    if !read_index(data_dir)?.iter().any(|e| e.id == session_id) {
+    // The mandatory index lookup doubles as the path resolution: a child
+    // entry's `rel_path` locates the nested file; legacy/root entries fall
+    // through to the flat derivation.
+    let Some(entry) = read_index(data_dir)?.into_iter().find(|e| e.id == session_id) else {
         return Err(SessionPersistError::NotFound {
             input: session_id.to_owned(),
         });
-    }
-    let path = session_file_path(data_dir, session_id);
+    };
+    let path = resolved_session_file_path(data_dir, &entry);
     let mut file = open_session_append(&path)?;
     let mut buf = Vec::new();
     for event in events {

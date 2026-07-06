@@ -7,11 +7,10 @@
 //! agent id with parent links mirroring the spawn/fork genealogy carried
 //! on [`AgentToolInfra`](crate::tools::agent::AgentToolInfra)
 //! (`agent_id` / `parent_id`). It is anchored on **agent ids**, not
-//! [`SessionTree`](crate::session::tree::SessionTree) session ids,
-//! because the session tree is an optional orchestrator-published
-//! extension — spawn and fork in standalone mode create disconnected
-//! stores with no session id, yet their action logs must still be
-//! reachable from the parent.
+//! session ids, because a child of an ephemeral parent has no session id
+//! at all — yet its action log must still be reachable from the parent.
+//! (Persistent children unify the two: their session id IS their agent
+//! id.)
 //!
 //! The tree is published on the shared
 //! [`ToolContext`](crate::tool::context::ToolContext) as an

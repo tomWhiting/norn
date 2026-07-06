@@ -287,7 +287,7 @@ const fn session_event_variant_name(event: &SessionEvent) -> &'static str {
         SessionEvent::ToolResult { .. } => "ToolResult",
         SessionEvent::ModelChange { .. } => "ModelChange",
         SessionEvent::Compaction { .. } => "Compaction",
-        SessionEvent::Fork { .. } => "Fork",
+        SessionEvent::ChildBranch { .. } => "ChildBranch",
         SessionEvent::ForkComplete { .. } => "ForkComplete",
         SessionEvent::Label { .. } => "Label",
         SessionEvent::Custom { .. } => "Custom",

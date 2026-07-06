@@ -116,7 +116,7 @@ pub struct AgentBuilder {
     pub(super) agent_config: AgentLoopConfig,
     pub(super) agent_config_present: AgentConfigPresence,
     pub(super) retry_policy: Option<RetryPolicy>,
-    pub(super) session: Option<EventStore>,
+    pub(super) session: Option<Arc<EventStore>>,
     pub(super) session_request: Option<SessionRequest>,
     pub(super) event_channel_capacity: Option<usize>,
     pub(super) cancel: Option<CancellationToken>,
@@ -301,7 +301,22 @@ impl AgentBuilder {
         // working directory are resolved — the index entry records the
         // values the agent actually runs with.
         let mut opened_session: Option<(crate::session::SessionIndexEntry, ReplaySummary)> = None;
+        // The root's session-branching identity (child-persistence V2): a
+        // disk-persisted session yields a persistent binding — the single
+        // allocation authority every spawn/fork/rhai child mint under this
+        // agent routes through — while the in-memory `.session(store)` path
+        // and the no-session default stay deliberately ephemeral (the
+        // `--no-session` honesty axis: children then run memory-only, with
+        // the typed `session: None` branch event on the parent timeline).
+        let mut session_binding =
+            Arc::new(crate::session::SessionBinding::ephemeral_root());
         if let Some(request) = self.session_request.take() {
+            // The manager and fsync cadence survive the open: the child
+            // brancher applies the SAME data dir, lock deadline, and
+            // durability the root itself runs with — inherited, never
+            // invented here.
+            let manager = request.manager.clone();
+            let durability = request.durability;
             let opened = request
                 .open(&model, &working_dir.display().to_string())
                 .map_err(|e| {
@@ -317,7 +332,31 @@ impl AgentBuilder {
                      session history is incomplete",
                 );
             }
-            self.session = Some(opened.store);
+            // The children/ directory is keyed by the ROOT session id: for
+            // a flat (root) session that is the session's own id; resuming
+            // a nested child session directly keeps branching into the same
+            // root-keyed directory its `rel_path` points into, so
+            // grandchild files keep their full-path slugs across restarts.
+            let root_for_children = opened
+                .entry
+                .rel_path
+                .as_deref()
+                .and_then(|rel| rel.split('/').next())
+                .map_or_else(|| opened.entry.id.clone(), str::to_owned);
+            let brancher = Arc::new(crate::session::SessionBrancher::new(
+                manager,
+                root_for_children,
+                durability,
+            ));
+            // Replayed history seeds the ever-used child-name set (Q2
+            // for-all-time uniqueness) and recovers a resumed child's own
+            // path address from its provenance header.
+            session_binding = Arc::new(crate::session::SessionBinding::persistent_root(
+                brancher,
+                opened.entry.id.clone(),
+                &opened.store.events(),
+            ));
+            self.session = Some(Arc::new(opened.store));
             opened_session = Some((opened.entry, opened.replay));
         }
 
@@ -628,6 +667,7 @@ impl AgentBuilder {
                     registry: agent_registry,
                     provider: Arc::clone(&self.provider),
                     event_store: Arc::clone(&event_store),
+                    session: Arc::clone(&session_binding),
                     id: agent_id,
                     envelope,
                     // Children address "parent" through the router even at
@@ -891,7 +931,7 @@ mod tests {
             .model("test-model")
             .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
-            .session(session)
+            .session(Arc::new(session))
             .build()
             .expect("resume build succeeds");
         let handle = agent
@@ -2922,7 +2962,7 @@ mod tests {
             .model("test-model")
             .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
-            .session(store)
+            .session(Arc::new(store))
             .build()
             .expect("build succeeds");
 
@@ -3130,6 +3170,129 @@ mod tests {
         );
     }
 
+    /// Child-persistence V2: `open_session` arms the root's persistent
+    /// [`crate::session::SessionBinding`] on the coordination infra —
+    /// the single allocation authority every spawn/fork child mint
+    /// routes through — keyed to the opened session's id. Without
+    /// `open_session` (in-memory `.session(..)` or nothing) the binding
+    /// is the deliberate ephemeral root.
+    #[tokio::test]
+    async fn open_session_installs_persistent_branching_binding() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sessions = tempfile::tempdir().expect("session dir");
+        let manager = manager_in(sessions.path());
+
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
+            .working_dir(temp.path())
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .open_session(
+                &manager,
+                SessionSpec::Create { name: None },
+                DurabilityPolicy::Flush,
+            )
+            .build()
+            .expect("build succeeds");
+        let entry_id = agent.session_entry().expect("entry").id.clone();
+        let infra = agent
+            .registry
+            .shared_context()
+            .expect("shared tool context")
+            .get_extension::<crate::tools::agent::AgentToolInfra>()
+            .expect("coordination infra installed");
+        assert!(
+            infra.session.is_persistent(),
+            "an opened session must arm a persistent branching binding",
+        );
+        assert_eq!(
+            infra.session.session_id(),
+            Some(entry_id.as_str()),
+            "the binding is keyed to the opened session",
+        );
+        assert_eq!(infra.session.path_address(), "root");
+
+        // No open_session: the binding is the deliberate ephemeral root.
+        let ephemeral = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
+            .working_dir(temp.path())
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .build()
+            .expect("build succeeds");
+        let infra = ephemeral
+            .registry
+            .shared_context()
+            .expect("shared tool context")
+            .get_extension::<crate::tools::agent::AgentToolInfra>()
+            .expect("coordination infra installed");
+        assert!(
+            !infra.session.is_persistent(),
+            "without a persisted session the binding is honestly ephemeral",
+        );
+    }
+
+    /// Gap 14 closure: the `RunOutcome` payload carries the LIVE
+    /// sink-equipped store `Arc` — appends made by the embedder AFTER
+    /// the run still write through to disk, even with the fork/spawn
+    /// coordination infra installed (the `Arc` cycle that used to force
+    /// a silent sink-less snapshot).
+    #[tokio::test]
+    async fn run_outcome_store_keeps_persisting_after_run() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let sessions = tempfile::tempdir().expect("session dir");
+        let manager = manager_in(sessions.path());
+
+        let outcome = AgentBuilder::new(provider_with(text_completion("done")))
+            .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
+            .working_dir(temp.path())
+            // Coordination infra installed: this is exactly the shape
+            // whose Arc cycle used to trigger the snapshot fallback.
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .open_session(
+                &manager,
+                SessionSpec::Create { name: None },
+                DurabilityPolicy::Flush,
+            )
+            .run("first turn")
+            .await
+            .expect("run succeeds");
+        let store = outcome
+            .into_output()
+            .event_store
+            .expect("event store returned");
+
+        // Post-run embedder append: must reach the SAME on-disk session.
+        use crate::session::events::{EventBase, SessionEvent};
+        store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(store.last_event_id()),
+                content: "appended after the run".to_owned(),
+            })
+            .expect("post-run append accepted");
+
+        let index = crate::session::read_index(sessions.path()).expect("index");
+        let entry = &index[0];
+        let read = crate::session::read_session_events(sessions.path(), &entry.id)
+            .expect("session readable");
+        assert!(
+            read.events.iter().any(|e| matches!(
+                e,
+                SessionEvent::UserMessage { content, .. }
+                    if content == "appended after the run"
+            )),
+            "a post-run append must still write through to disk — the \
+             returned store carries the live sink, never a snapshot",
+        );
+    }
+
     /// `open_session(OpenOrResume)` with the same deterministic id
     /// resumes the prior run's history — the retry-safe activity path.
     #[tokio::test]
@@ -3179,7 +3342,7 @@ mod tests {
             .model("test-model")
             .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
-            .session(EventStore::new())
+            .session(Arc::new(EventStore::new()))
             .open_session(
                 &manager,
                 SessionSpec::Create { name: None },

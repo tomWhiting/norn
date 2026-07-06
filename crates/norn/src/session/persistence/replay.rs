@@ -122,7 +122,7 @@ impl ReplayArtifacts {
             SessionEvent::UserMessage { .. }
             | SessionEvent::ToolResult { .. }
             | SessionEvent::ModelChange { .. }
-            | SessionEvent::Fork { .. }
+            | SessionEvent::ChildBranch { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
             | SessionEvent::Custom { .. }

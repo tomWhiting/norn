@@ -111,6 +111,37 @@ pub enum SessionPersistError {
         id: String,
     },
 
+    /// A child mint found the on-disk location for its freshly reserved
+    /// name already occupied — an orphan slug file or an index row with
+    /// the same relative path. Under parent-first write ordering the new
+    /// code can never produce this state itself; it means external
+    /// tampering or residue from a pre-parent-first writer. The mint
+    /// refuses hard: truncating the orphan would destroy another agent's
+    /// history and appending would interleave two agents in one file.
+    #[error(
+        "child session path '{rel_path}' is already occupied by a file or index row \
+         that the current mint did not create; refusing to touch it"
+    )]
+    ChildPathOccupied {
+        /// The contested path, relative to the data directory.
+        rel_path: String,
+    },
+
+    /// A persistent child was requested under an ephemeral parent. An
+    /// ephemeral parent has no session directory to hang a child file off,
+    /// so the request is refused typed at the mint boundary — never
+    /// discovered later as a missing-directory I/O failure. Pass
+    /// `ChildDurability::Ephemeral` (the honest propagation of the
+    /// parent's own choice) or run the parent with a persisted session.
+    #[error(
+        "cannot mint a persistent child under ephemeral parent '{parent_path}': \
+         the parent has no persisted session; mint the child ephemeral or persist the parent"
+    )]
+    EphemeralParent {
+        /// The ephemeral parent's coordination path address.
+        parent_path: String,
+    },
+
     /// `EventStore::append` rejected an event during resume reconstruction.
     #[error("event store rejected resumed event: {0}")]
     EventStore(String),
@@ -136,7 +167,9 @@ pub enum SessionStatus {
 /// One row in `index.jsonl`.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SessionIndexEntry {
-    /// UUID v7 identifier for the session.
+    /// Session identifier — a UUID v4 by default (R8: v7's shared
+    /// timestamp prefix defeats git-style short-prefix eyeballing), or a
+    /// validated caller-supplied opaque string.
     pub id: String,
     /// Optional human-readable name (set via `/name` or `--session-name`).
     pub name: Option<String>,
@@ -166,4 +199,19 @@ pub struct SessionIndexEntry {
     /// Cumulative cache-read tokens across all turns.
     #[serde(default)]
     pub total_cache_read_tokens: u64,
+    /// The session file's path **relative to the data directory**, for
+    /// sessions whose file does not live at the flat `{id}.jsonl`
+    /// derivation — child sessions live at
+    /// `{root-id}/children/{path-slug}.jsonl`. Absent (`None`) for
+    /// legacy/root sessions, which keep resolving through the flat
+    /// derivation unchanged — zero migration of old rows. Discovery stays
+    /// manifest-driven: nothing ever crawls the directory.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rel_path: Option<String>,
+    /// Session id of the parent this session was branched from (the
+    /// index-side half of the durable parent↔child linkage; the
+    /// event-side half is the parent's `ChildBranch` event). `None` for
+    /// root sessions.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parent_id: Option<String>,
 }

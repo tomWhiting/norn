@@ -14,7 +14,7 @@ use crate::provider::usage::Usage;
 use crate::session::events::{EventId, SessionEvent};
 use crate::session::persistence::SessionPersistError;
 use crate::session::persistence::index::{sum_usage_from_events, update_session_index};
-use crate::session::persistence::io::{open_session_append, session_file_path};
+use crate::session::persistence::io::open_session_append;
 
 /// Append-only, in-memory event store.
 ///
@@ -235,11 +235,14 @@ impl JsonlSink {
         })
     }
 
-    /// Open the session file for `session_id` under `data_dir` and
-    /// register the sink against that session's index entry, so
-    /// `event_count`, usage totals, and `updated_at` in `index.jsonl`
-    /// are kept in step (batched per the [`DurabilityPolicy`], under the
-    /// inter-process index lock — see the type-level docs).
+    /// Open the session file for `entry` under `data_dir` — the entry's
+    /// [`rel_path`](crate::session::persistence::SessionIndexEntry::rel_path)
+    /// when present (nested child sessions), the flat `{id}.jsonl`
+    /// derivation otherwise — and register the sink against that
+    /// session's index entry, so `event_count`, usage totals, and
+    /// `updated_at` in `index.jsonl` are kept in step (batched per the
+    /// [`DurabilityPolicy`], under the inter-process index lock — see
+    /// the type-level docs).
     ///
     /// `index_lock_deadline` bounds the inter-process index-lock wait
     /// of every delta flush this sink performs (`None` = wait
@@ -249,23 +252,23 @@ impl JsonlSink {
     ///
     /// # Errors
     ///
-    /// Returns [`SessionPersistError::InvalidSessionId`] when
-    /// `session_id` is reserved by the persistence layer (it would name a
+    /// Returns [`SessionPersistError::InvalidSessionId`] when the
+    /// entry's id is reserved by the persistence layer (it would name a
     /// persistence-owned file such as `index.jsonl`, never session data),
     /// and an error if the session file cannot be opened or the header
     /// cannot be written.
     pub fn open_registered(
         data_dir: &Path,
-        session_id: &str,
+        entry: &crate::session::persistence::SessionIndexEntry,
         durability: DurabilityPolicy,
         index_lock_deadline: Option<Duration>,
     ) -> Result<Self, SessionPersistError> {
-        crate::session::persistence::io::ensure_session_id_not_reserved(session_id)?;
-        let path = session_file_path(data_dir, session_id);
+        crate::session::persistence::io::ensure_session_id_not_reserved(&entry.id)?;
+        let path = crate::session::persistence::io::resolved_session_file_path(data_dir, entry);
         let mut sink = Self::open_with(&path, durability)?;
         sink.index = Some(IndexRegistration {
             data_dir: data_dir.to_path_buf(),
-            session_id: session_id.to_owned(),
+            session_id: entry.id.clone(),
             pending_events: 0,
             pending_usage: Usage::default(),
             lock_deadline: index_lock_deadline,

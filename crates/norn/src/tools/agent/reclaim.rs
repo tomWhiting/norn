@@ -55,10 +55,11 @@
 //! terminal-transition time is an invariant violation and is logged as
 //! an error, never silently tolerated.
 //!
-//! In `SessionTree` mode the child's audit trail outlives reclamation —
-//! the handle's `EventStore` aliases the tree's branch store. In
-//! standalone mode the delivered result message is the parent's record;
-//! dropping the handle releases the child's private store. Either way
+//! Under a persistent parent the child's audit trail outlives
+//! reclamation — its store writes through to a real on-disk timeline
+//! under the root's `children/` directory. Under an ephemeral parent the
+//! delivered result message is the parent's record; dropping the handle
+//! releases the child's memory-only store. Either way
 //! the registry retains an
 //! [`AgentTombstone`](crate::agent::registry::AgentTombstone) so
 //! coordination tools can report the completion honestly for the rest of

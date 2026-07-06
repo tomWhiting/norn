@@ -173,7 +173,7 @@ pub fn builder_from_cli(
     // the one library `open_session` front door with an explicit
     // `Flush` durability.
     if cli.no_session {
-        builder = builder.session(EventStore::new());
+        builder = builder.session(std::sync::Arc::new(EventStore::new()));
     } else if let Some(spec) = session_spec_from_cli(cli, &cwd) {
         let manager = SessionManager::new(session_data_dir());
         builder = builder.open_session(&manager, spec, DurabilityPolicy::Flush);

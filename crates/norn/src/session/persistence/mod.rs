@@ -10,6 +10,12 @@
 //! +-- {session_id}.jsonl   version-header line, then one
 //!                           [`SessionEvent`](crate::session::events::SessionEvent)
 //!                           per line, append-only
+//! +-- {root_id}/           a persisted root's child-session directory
+//!     +-- children/         (see [`crate::session::branch`]): one
+//!         +-- {slug}.jsonl   full-path-slug-keyed timeline per child,
+//!                            located through the index row's
+//!                            [`SessionIndexEntry::rel_path`] — never a
+//!                            directory crawl
 //! +-- ...
 //! +-- index.jsonl.tmp.*    transient -- present only during an atomic
 //!                           index rewrite that has not yet been renamed
@@ -37,7 +43,7 @@ pub use index::{
 };
 pub use io::{
     RESERVED_SESSION_ID_STEMS, append_events, is_reserved_session_id, read_session_events,
-    session_file_path,
+    read_session_events_for_entry, resolved_session_file_path, session_file_path,
 };
 pub use replay::ReplayArtifacts;
 pub use types::{

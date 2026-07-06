@@ -181,7 +181,7 @@ fn event_to_message(
             }),
 
         SessionEvent::ModelChange { .. }
-        | SessionEvent::Fork { .. }
+        | SessionEvent::ChildBranch { .. }
         | SessionEvent::ForkComplete { .. }
         | SessionEvent::Label { .. }
         | SessionEvent::Custom { .. }

@@ -344,6 +344,8 @@ mod tests {
             total_output_tokens: 0,
             total_cache_read_tokens: 0,
             format_version: 0,
+            rel_path: None,
+            parent_id: None,
         };
         let newer = SessionIndexEntry {
             id: "22222222-2222-7222-8222-222222222222".to_owned(),
@@ -358,6 +360,8 @@ mod tests {
             total_output_tokens: 0,
             total_cache_read_tokens: 0,
             format_version: 0,
+            rel_path: None,
+            parent_id: None,
         };
         write_index_atomic(tmp.path(), &[older, newer]).unwrap();
 

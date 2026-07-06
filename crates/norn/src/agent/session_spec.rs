@@ -18,7 +18,7 @@ use crate::session::{CreateSessionOptions, OpenSession, SessionManager, SessionP
 /// [`SessionManager`].
 #[derive(Clone, Debug)]
 pub enum SessionSpec {
-    /// Create a fresh session under a newly minted UUID v7 id.
+    /// Create a fresh session under a newly minted UUID v4 id (R8).
     Create {
         /// Optional human-readable name recorded in the index entry.
         name: Option<String>,

@@ -69,6 +69,20 @@ pub struct AgentToolInfra {
     /// itself is never mutated through this handle; callers wrap it in a
     /// [`SubAgentExecutor`] with an optional per-spawn allow-list instead.
     pub tool_registry: Option<Arc<ToolRegistry>>,
+    /// This agent's session-branching identity
+    /// ([`SessionBinding`](crate::session::SessionBinding)): its path
+    /// address, its own session id (when persisted), and the allocation
+    /// authority its child mints route through. Spawn, fork, and the rhai
+    /// spawn surface call
+    /// [`SessionBinding::branch_child`](crate::session::SessionBinding::branch_child)
+    /// on this to mint every child store — persistent children get real
+    /// write-through timelines under the root's `children/` directory;
+    /// an ephemeral binding (`--no-session`, embedder-supplied stores)
+    /// propagates ephemerality down the subtree with the honest
+    /// `session: None` branch event. Constructors choose explicitly:
+    /// [`SessionBinding::ephemeral_root`](crate::session::SessionBinding::ephemeral_root)
+    /// is the deliberate no-persistence choice, never a silent fallback.
+    pub session: Arc<crate::session::SessionBinding>,
 }
 
 /// The calling agent's own run-cancellation token, published on the
@@ -385,6 +399,7 @@ mod tests {
             parent_id,
             grant: None,
             tool_registry: registry,
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         })
     }
 

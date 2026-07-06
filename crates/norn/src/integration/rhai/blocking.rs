@@ -171,6 +171,8 @@ mod tests {
                 inbound_capacity: 8,
                 loop_config: None,
             },
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
+            events: None,
         }
     }
 

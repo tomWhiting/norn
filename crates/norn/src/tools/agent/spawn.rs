@@ -19,7 +19,7 @@ use serde::Deserialize;
 use super::delegation::{
     auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
 };
-use super::handle::{AgentHandles, AgentWakeRegistry, ChildBranchMetadata, SharedSessionTree};
+use super::handle::{AgentHandles, AgentWakeRegistry, ChildBranchMetadata};
 use super::infra::{
     AgentCancellation, SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list,
 };
@@ -28,7 +28,6 @@ use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
 use super::spawn_context::build_child_context;
 use super::spawn_launch::{ChildLaunch, launch_child};
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope, MessagingScope};
-use crate::agent::fork::ContextFilter;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::result_channel::ChildResultSender;
 use crate::error::ToolError;
@@ -38,8 +37,8 @@ use crate::profile::{default_scan_dirs, from_profile, resolve_profile};
 use crate::provider::agent_event::{AgentEventSender, SubagentDescriptor, SubagentKind};
 use crate::provider::request::ToolDefinition;
 use crate::session::action_log::ActionLog;
-use crate::session::store::EventStore;
-use crate::session::tree::{BranchConfig, SessionMetadata, SessionStatus};
+use crate::session::events::ChildBranchKind;
+use crate::session::{ChildBranchRequest, slugify_name_stem};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::registry::ToolRegistry;
@@ -142,62 +141,6 @@ fn build_tool_definitions(
     allow_list: Option<&[String]>,
 ) -> Vec<ToolDefinition> {
     crate::provider::surface::collect_function_definitions(registry, allow_list)
-}
-
-/// Resolve the child's [`EventStore`] and, when an orchestrator published a
-/// [`SharedSessionTree`], the child's own tree handle (NA-008 R3).
-///
-/// When `parent_ctx` carries a [`SharedSessionTree`], the child's store is
-/// created as a named branch under the parent's session via
-/// [`crate::session::tree::SessionTree::branch`] — which also appends a
-/// `Fork` event to the parent's store — and the returned
-/// [`SharedSessionTree`] is keyed to the *child's* `SessionId` so
-/// grandchildren branch correctly. The branch metadata records the child's
-/// model and a `spawned/{profile-or-role}` role label.
-///
-/// When the extension is absent (standalone mode) the child gets a fresh,
-/// disconnected [`EventStore`] and no tree handle — exactly as before
-/// NA-008.
-///
-/// # Errors
-///
-/// Returns [`ToolError::ExecutionFailed`] when the session-tree branch
-/// fails or the branched session id is unexpectedly absent from the tree.
-fn resolve_child_store(
-    parent_ctx: &ToolContext,
-    model: &str,
-    role_label: &str,
-) -> Result<(Arc<EventStore>, Option<SharedSessionTree>), ToolError> {
-    let Some(parent_tree) = parent_ctx.get_extension::<SharedSessionTree>() else {
-        return Ok((Arc::new(EventStore::new()), None));
-    };
-
-    let branch_config = BranchConfig {
-        context_filter: ContextFilter::default(),
-        metadata: SessionMetadata {
-            created_at: Utc::now(),
-            model: model.to_owned(),
-            role: Some(format!("spawned/{role_label}")),
-            status: SessionStatus::Active,
-        },
-    };
-    let child_session_id = parent_tree
-        .tree
-        .branch(parent_tree.session_id, branch_config)
-        .map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("spawn_agent: session-tree branch failed: {e}"),
-        })?;
-    let store = parent_tree
-        .tree
-        .get_store(child_session_id)
-        .ok_or_else(|| ToolError::ExecutionFailed {
-            reason: "spawn_agent: branched session id missing from session tree".to_owned(),
-        })?;
-    let child_tree = SharedSessionTree {
-        tree: Arc::clone(&parent_tree.tree),
-        session_id: child_session_id,
-    };
-    Ok((store, Some(child_tree)))
 }
 
 /// Public tool name for the Norn spawn delegation tool.
@@ -456,11 +399,30 @@ impl Tool for SpawnAgentTool {
         child_loop_ctx.agent_id = Some(child_id);
         child_loop_ctx.pending_agent_messages = Some(Arc::clone(&infra.pending_messages));
 
-        // Resolve the child's event store: a named branch under the parent's
-        // session when an orchestrator published a SessionTree, otherwise a
-        // standalone store (NA-008 R3). In tree mode `child_tree` carries the
-        // child's own SessionId for grandchild branching.
-        let (child_store, child_tree) = resolve_child_store(ctx, &args.model, &role_label)?;
+        // Mint the child's session through the parent's branching binding
+        // (V2-R2): a persistent parent yields a real write-through child
+        // timeline under the root's children/ dir, with the ChildBranch
+        // reservation durably on the parent's timeline PARENT-FIRST; an
+        // ephemeral parent propagates ephemerality with the honest
+        // `session: None` reservation. The branched binding rides on the
+        // child's infra so grandchild mints recurse structurally.
+        let branched = infra
+            .session
+            .branch_child(
+                &infra.event_store,
+                &ChildBranchRequest {
+                    child_session_id: child_id.to_string(),
+                    name_stem: slugify_name_stem(&role_label, "spawn"),
+                    kind: ChildBranchKind::Spawn,
+                    durability: infra.session.child_durability(),
+                    model: args.model.clone(),
+                    working_dir: ctx.working_dir().display().to_string(),
+                },
+            )
+            .map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("spawn_agent: session branch failed: {e}"),
+            })?;
+        let child_store = Arc::clone(&branched.store);
 
         // All fallible setup is done — confirm the reservation. From here
         // the launch is unconditional and the completion wrapper owns the
@@ -501,7 +463,7 @@ impl Tool for SpawnAgentTool {
             child_id,
             Arc::clone(&child_store),
             ctx,
-            child_tree,
+            Arc::clone(&branched.binding),
             child_policy.clone(),
             child_cancel.clone(),
         );
@@ -696,7 +658,7 @@ mod tests {
     use crate::provider::traits::ProviderStream;
     use crate::provider::usage::Usage;
     use crate::session::events::SessionEvent;
-    use crate::session::tree::SessionTree;
+    use crate::session::store::EventStore;
     use crate::tool::traits::{Tool as TestTool, ToolOutput as TestToolOutput};
 
     fn envelope_for(args: serde_json::Value) -> ToolEnvelope {
@@ -770,6 +732,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: Some(tool_registry),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         });
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
@@ -777,6 +740,76 @@ mod tests {
         ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
         ctx.insert_extension(Arc::new(test_envelope()));
         ctx
+    }
+
+    /// A persistent parent context: a real `SessionManager` root session
+    /// in `tmp`, its sink-equipped store on the infra, and a persistent
+    /// [`SessionBinding`](crate::session::SessionBinding) so spawned
+    /// children mint REAL on-disk timelines (V2-R2).
+    fn persistent_parent_ctx(
+        tmp: &std::path::Path,
+        provider: Arc<dyn Provider>,
+        parent_id: Uuid,
+        agent_registry: &Arc<RwLock<AgentRegistry>>,
+        tool_registry: Arc<ToolRegistry>,
+    ) -> (ToolContext, crate::session::SessionManager, String) {
+        use crate::session::manager::{CreateSessionOptions, SessionManager};
+        use crate::session::store::DurabilityPolicy;
+        use crate::session::{SessionBinding, SessionBrancher};
+        let manager = SessionManager::new(tmp);
+        let opened = manager
+            .create(
+                CreateSessionOptions {
+                    model: "haiku".to_owned(),
+                    working_dir: "/work".to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .expect("create root session");
+        let root_session_id = opened.entry.id.clone();
+        let binding = Arc::new(SessionBinding::persistent_root(
+            Arc::new(SessionBrancher::new(
+                manager.clone(),
+                root_session_id.clone(),
+                DurabilityPolicy::Flush,
+            )),
+            root_session_id.clone(),
+            &[],
+        ));
+        let infra = Arc::new(AgentToolInfra {
+            registry: Arc::clone(agent_registry),
+            router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
+            provider,
+            event_store: Arc::new(opened.store),
+            agent_id: parent_id,
+            parent_id: None,
+            grant: None,
+            tool_registry: Some(tool_registry),
+            session: binding,
+        });
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+        ctx.insert_extension(Arc::new(AgentHandles::new()));
+        ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
+        ctx.insert_extension(Arc::new(test_envelope()));
+        (ctx, manager, root_session_id)
+    }
+
+    /// Read a persisted session's events back from DISK through its index
+    /// row — never from memory — so assertions prove durability.
+    fn events_on_disk(
+        manager: &crate::session::SessionManager,
+        id: &str,
+    ) -> Vec<SessionEvent> {
+        let entry = manager.resolve(id).expect("session indexed");
+        crate::session::persistence::io::read_session_events_for_entry(
+            manager.data_dir(),
+            &entry,
+        )
+        .expect("session replays from disk")
+        .events
     }
 
     /// Drives a spawn until the child is no longer actively running.
@@ -1085,6 +1118,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: None,
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         });
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
@@ -1126,6 +1160,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         });
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
@@ -2306,6 +2341,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         };
         let parent_ctx = ToolContext::empty();
         let policy = Arc::new(crate::config::permissions::PermissionPolicy::from_patterns(
@@ -2322,7 +2358,7 @@ mod tests {
             Uuid::new_v4(),
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(crate::session::SessionBinding::ephemeral_root()),
             test_envelope().child_policy,
             tokio_util::sync::CancellationToken::new(),
         );
@@ -2479,9 +2515,9 @@ mod tests {
         );
     }
 
-    /// R3 (standalone mode): with no [`SharedSessionTree`] installed, the
-    /// child's events are still reachable through `AgentHandle.event_store`,
-    /// and the [`AgentHandles`] accessors expose the store, the provenance
+    /// R3 (ephemeral parent): under an ephemeral parent the child's events
+    /// are still reachable through `AgentHandle.event_store`, and the
+    /// [`AgentHandles`] accessors expose the store, the provenance
     /// metadata, and the child id.
     #[tokio::test]
     async fn child_event_store_accessible_via_agent_handle() {
@@ -2536,13 +2572,15 @@ mod tests {
         );
     }
 
-    /// R3 (SessionTree mode): when an orchestrator publishes a
-    /// [`SharedSessionTree`], the child's [`EventStore`] is created as a
-    /// named branch under the parent's session — the parent gains a `Fork`
-    /// event, the branch carries `spawned/<role>` metadata, and
-    /// `handle.event_store` aliases the tree's branch store.
+    /// V2-R2 (persistent parent): the spawned child's store is a REAL
+    /// write-through timeline under the root's `children/` dir — the index
+    /// row carries `rel_path` + `parent_id`, the child's own run events
+    /// land on disk, and the parent's file carries the `ChildBranch`
+    /// reservation naming the child (parent-first ordering's durable
+    /// record).
     #[tokio::test]
-    async fn spawn_uses_session_tree_branch_when_extension_present() {
+    async fn spawn_under_persistent_parent_persists_child_timeline() {
+        let tmp = tempfile::tempdir().expect("tempdir");
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
             ProviderEvent::TextDelta {
                 text: "branched child".to_string(),
@@ -2551,25 +2589,13 @@ mod tests {
         ]]));
         let parent = Uuid::new_v4();
         let agent_registry = AgentRegistry::shared();
-        let ctx = parent_ctx(
+        let (ctx, manager, root_session_id) = persistent_parent_ctx(
+            tmp.path(),
             provider,
             parent,
             &agent_registry,
             Arc::new(ToolRegistry::new()),
-            Arc::new(MessageRouter::new()),
         );
-
-        let tree = Arc::new(SessionTree::new(SessionMetadata {
-            created_at: Utc::now(),
-            model: "opus".to_string(),
-            role: Some("root".to_string()),
-            status: SessionStatus::Active,
-        }));
-        let root_id = tree.root();
-        ctx.insert_extension(Arc::new(SharedSessionTree {
-            tree: Arc::clone(&tree),
-            session_id: root_id,
-        }));
 
         let tool = SpawnAgentTool::new();
         let out = tool
@@ -2580,38 +2606,55 @@ mod tests {
             .await
             .expect("spawn");
         let child_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).expect("uuid");
-
-        let children = tree.list_children(root_id);
-        assert_eq!(children.len(), 1, "child session branched under the root");
-        let child_session_id = children[0];
-
-        let child_node = tree.get(child_session_id).expect("child session node");
-        assert_eq!(child_node.parent, Some(root_id));
-        assert_eq!(
-            child_node.metadata.role.as_deref(),
-            Some("spawned/worker"),
-            "branch metadata records the spawned/<role> label",
-        );
-
-        let root_events = tree.get_store(root_id).expect("root store").events();
-        assert!(
-            root_events
-                .iter()
-                .any(|e| matches!(e, SessionEvent::Fork { .. })),
-            "branching appends a Fork event to the parent's store",
-        );
-
-        let tree_store = tree.get_store(child_session_id).expect("child store");
-        let handle_store = ctx
-            .get_extension::<AgentHandles>()
-            .unwrap()
-            .event_store(child_id)
-            .expect("child store remains reachable while idle");
-        assert!(
-            Arc::ptr_eq(&tree_store, &handle_store),
-            "handle.event_store must alias the SessionTree branch store",
-        );
         wait_for_child_status(&ctx, child_id, AgentStatus::Idle).await;
+
+        // Index row: rel_path under the root's children/ dir + parent
+        // linkage; the file really exists at the nested path.
+        let row = manager
+            .resolve(&child_id.to_string())
+            .expect("child session indexed under the SAME id as its agent");
+        let rel = row.rel_path.as_deref().expect("child rows carry rel_path");
+        assert!(
+            rel.starts_with(&format!("{root_session_id}/children/worker-"))
+                && rel.ends_with(".jsonl"),
+            "child file must live under the root's children/ dir: {rel}",
+        );
+        assert_eq!(row.parent_id.as_deref(), Some(root_session_id.as_str()));
+        assert!(
+            tmp.path().join(rel).exists(),
+            "child timeline file must exist on disk",
+        );
+
+        // The child's run events are ON DISK — write-through, not
+        // memory-only (Gap 1 closure).
+        let child_events = events_on_disk(&manager, &child_id.to_string());
+        assert!(
+            child_events
+                .iter()
+                .any(|e| matches!(e, SessionEvent::ChildBranch { .. })),
+            "the child's file carries its ChildBranch provenance header",
+        );
+        assert!(
+            child_events.iter().any(|e| matches!(
+                e,
+                SessionEvent::AssistantMessage { content, .. } if content.contains("branched child")
+            )),
+            "the child's own run output must reach its on-disk timeline",
+        );
+
+        // Parent side ON DISK: the ChildBranch reservation names the child.
+        let parent_events = events_on_disk(&manager, &root_session_id);
+        assert!(
+            parent_events.iter().any(|e| matches!(
+                e,
+                SessionEvent::ChildBranch {
+                    child_session_id: Some(c),
+                    path_address,
+                    ..
+                } if *c == child_id.to_string() && path_address.starts_with("root/worker-")
+            )),
+            "the parent's file must carry the child's reservation: {parent_events:?}",
+        );
     }
 
     // NH-006 R5 / C56 + C57: SubagentHook fires on launch (`start`)
@@ -3025,6 +3068,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         };
         let mut parent_ctx =
             ToolContext::with_working_dir(SharedWorkingDir::new(PathBuf::from("/tmp/parent-wd")));
@@ -3035,7 +3079,7 @@ mod tests {
             Uuid::new_v4(),
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(crate::session::SessionBinding::ephemeral_root()),
             test_envelope().child_policy,
             tokio_util::sync::CancellationToken::new(),
         );
@@ -3077,6 +3121,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         };
         let parent_ctx = ToolContext::empty();
         let hooks = Arc::new(HookRegistry::new());
@@ -3087,7 +3132,7 @@ mod tests {
             Uuid::new_v4(),
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(crate::session::SessionBinding::ephemeral_root()),
             test_envelope().child_policy,
             tokio_util::sync::CancellationToken::new(),
         );
@@ -3659,6 +3704,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         });
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
@@ -3848,6 +3894,7 @@ mod tests {
                 parent_id: None,
                 grant: None,
                 tool_registry: Some(Arc::new(registry)),
+                session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
             });
             let ctx = ToolContext::empty();
             ctx.insert_extension(infra);
@@ -4353,12 +4400,16 @@ mod tests {
         let mut tool_registry = ToolRegistry::new();
         tool_registry.register(Box::new(SpawnAgentTool::new()));
         let root_id = Uuid::new_v4();
-        let ctx = parent_ctx(
+        // Persistent parent (V2-R2): child and grandchild conversations
+        // land on REAL on-disk timelines, readable after reclamation —
+        // and Gap 11's depth-2 traffic is asserted from disk below.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (ctx, manager, root_session_id) = persistent_parent_ctx(
+            tmp.path(),
             provider,
             root_id,
             &agent_registry,
             Arc::new(tool_registry),
-            Arc::new(MessageRouter::new()),
         );
         let mut envelope = test_envelope();
         envelope.child_policy.delegation.remaining_depth = 2;
@@ -4370,20 +4421,6 @@ mod tests {
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
         ctx.insert_extension(Arc::new(ReclaimOnResultDelivery));
-
-        // Session tree so the child's conversation store stays reachable
-        // after reclamation.
-        let tree = Arc::new(SessionTree::new(SessionMetadata {
-            created_at: Utc::now(),
-            model: "opus".to_string(),
-            role: Some("root".to_string()),
-            status: SessionStatus::Active,
-        }));
-        let root_session = tree.root();
-        ctx.insert_extension(Arc::new(SharedSessionTree {
-            tree: Arc::clone(&tree),
-            session_id: root_session,
-        }));
 
         let tool = SpawnAgentTool::new();
         let out = tool
@@ -4465,14 +4502,17 @@ mod tests {
         );
         drop(reg);
 
-        // One-hop delivery into the child's conversation: the child's
-        // session branch holds the framed grandchild result.
-        let child_sessions = tree.list_children(root_session);
-        assert_eq!(child_sessions.len(), 1, "child branched under the root");
-        let child_store = tree
-            .get_store(child_sessions[0])
-            .expect("child store survives reclamation in tree mode");
-        let injected = child_store.events().iter().any(|event| {
+        // One-hop delivery into the child's conversation, DURABLY: the
+        // child's on-disk session holds the framed grandchild result
+        // (Gap 1 + Gap 11 closure asserted from disk, not memory).
+        let rows = crate::session::persistence::index::read_index(manager.data_dir())
+            .expect("index reads");
+        let child_row = rows
+            .iter()
+            .find(|r| r.parent_id.as_deref() == Some(root_session_id.as_str()))
+            .expect("child session row indexed under the root");
+        let child_events = events_on_disk(&manager, &child_row.id);
+        let injected = child_events.iter().any(|event| {
             matches!(
                 event,
                 SessionEvent::UserMessage { content, .. }
@@ -4482,13 +4522,28 @@ mod tests {
         });
         assert!(
             injected,
-            "the grandchild's framed result must be injected into the child's conversation",
+            "the grandchild's framed result must be durably injected into \
+             the child's conversation",
         );
-        // And the grandchild's session branched under the child's session.
-        assert_eq!(
-            tree.list_children(child_sessions[0]).len(),
-            1,
-            "grandchild session branches under the child's session",
+        // And the grandchild's session persisted under the child, keyed by
+        // the full-path slug in the SAME root-keyed children/ dir.
+        let grandchild_row = rows
+            .iter()
+            .find(|r| r.parent_id.as_deref() == Some(child_row.id.as_str()))
+            .expect("grandchild session row indexed under the child");
+        let grandchild_rel = grandchild_row.rel_path.as_deref().expect("rel_path");
+        assert!(
+            grandchild_rel.starts_with(&format!("{root_session_id}/children/"))
+                && grandchild_rel.contains("--"),
+            "grandchild file must be keyed by the full path slug: {grandchild_rel}",
+        );
+        assert!(
+            tmp.path().join(grandchild_rel).exists(),
+            "grandchild timeline file must exist on disk",
+        );
+        assert!(
+            !events_on_disk(&manager, &grandchild_row.id).is_empty(),
+            "the grandchild's own events must reach disk (Gap 11)",
         );
     }
 
@@ -5342,12 +5397,15 @@ mod tests {
         let mut tool_registry = ToolRegistry::new();
         tool_registry.register(Box::new(SpawnAgentTool::new()));
         let root_id = Uuid::new_v4();
-        let ctx = parent_ctx(
+        // Persistent parent so the child's conversation is readable from
+        // its on-disk timeline for the injected-frame assertion.
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let (ctx, manager, root_session_id) = persistent_parent_ctx(
+            tmp.path(),
             provider,
             root_id,
             &agent_registry,
             Arc::new(tool_registry),
-            Arc::new(MessageRouter::new()),
         );
         let mut envelope = test_envelope();
         envelope.child_policy.delegation.remaining_depth = 2;
@@ -5355,20 +5413,6 @@ mod tests {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel(16);
         ctx.insert_extension(Arc::new(ChildResultSender(Arc::new(tx))));
-
-        // Session tree so the child's conversation store stays reachable
-        // for the injected-frame assertion.
-        let tree = Arc::new(SessionTree::new(SessionMetadata {
-            created_at: Utc::now(),
-            model: "opus".to_string(),
-            role: Some("root".to_string()),
-            status: SessionStatus::Active,
-        }));
-        let root_session = tree.root();
-        ctx.insert_extension(Arc::new(SharedSessionTree {
-            tree: Arc::clone(&tree),
-            session_id: root_session,
-        }));
 
         // The mid-tree child is granted a linger through the per-spawn
         // child_policy argument — the exact surface R5 adds.
@@ -5443,11 +5487,16 @@ mod tests {
         assert_eq!(child_result.subtree_usage.output_tokens, 183);
 
         // The grandchild's framed result was injected into the *child's*
-        // conversation through the normal drain path.
-        let child_sessions = tree.list_children(root_session);
-        assert_eq!(child_sessions.len(), 1, "child branched under the root");
-        let child_store = tree.get_store(child_sessions[0]).expect("child store");
-        let injected = child_store.events().iter().any(|event| {
+        // conversation through the normal drain path — read back from the
+        // child's ON-DISK timeline.
+        let rows = crate::session::persistence::index::read_index(manager.data_dir())
+            .expect("index reads");
+        let child_row = rows
+            .iter()
+            .find(|r| r.parent_id.as_deref() == Some(root_session_id.as_str()))
+            .expect("child session row indexed under the root");
+        let child_events = events_on_disk(&manager, &child_row.id);
+        let injected = child_events.iter().any(|event| {
             matches!(
                 event,
                 SessionEvent::UserMessage { content, .. }

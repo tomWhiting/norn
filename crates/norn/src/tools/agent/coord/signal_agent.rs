@@ -688,6 +688,7 @@ mod tests {
                 parent_store: Arc::clone(parent_store),
             }),
             tool_registry: None,
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         })
     }
 
@@ -1237,6 +1238,7 @@ mod tests {
             parent_id: Some(parent),
             grant: None,
             tool_registry: None,
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         });
 
         let ctx = ctx_with(infra);

@@ -1,4 +1,5 @@
-//! Session event types: message, model change, compaction, fork, label, custom.
+//! Session event types: message, model change, compaction, child branch,
+//! label, custom.
 
 use std::fmt;
 use std::str::FromStr;
@@ -107,6 +108,30 @@ pub struct EventUsage {
     pub cost_usd: Option<f64>,
 }
 
+/// How a child session was minted from its parent — carried on
+/// [`SessionEvent::ChildBranch`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ChildBranchKind {
+    /// A fresh-identity child (`spawn_agent` / script spawn): seeded only
+    /// with its task, no parent history.
+    Spawn,
+    /// A same-identity fork: seeded with the parent's full history copy.
+    Fork,
+}
+
+impl ChildBranchKind {
+    /// The wire/display label (`"spawn"` / `"fork"`), matching the serde
+    /// form.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Spawn => "spawn",
+            Self::Fork => "fork",
+        }
+    }
+}
+
 /// A single session event. Each variant embeds an [`EventBase`] via the
 /// `base` field. Events are self-contained — no accumulated state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -207,14 +232,38 @@ pub enum SessionEvent {
         replaced_event_ids: Vec<EventId>,
     },
 
-    /// A fork event linking to a child session.
-    Fork {
+    /// The durable branch-point recording that a child session was minted
+    /// under this timeline.
+    ///
+    /// Appended to the **parent's** store as the child's name reservation
+    /// (PARENT-FIRST: this event is durable before any child file or index
+    /// row keyed by the name exists), and to the **child's** store as its
+    /// provenance header. The parent's ever-used child-name set is replayed
+    /// from these events — a name recorded here is reserved for all time
+    /// within that parent, even for ephemeral children (whose reservation
+    /// append is the only durable trace they leave).
+    ChildBranch {
         /// Common event metadata.
         base: EventBase,
-        /// The event from which the fork originated.
-        source_event_id: EventId,
-        /// ID of the forked child session.
-        forked_session_id: String,
+        /// Session id of the minting parent. `None` when the parent itself
+        /// runs ephemeral (no persisted session). Lets a fork-seeded child
+        /// distinguish reservation events it inherited in its seed copy
+        /// from reservations it appended as a parent itself.
+        parent_session_id: Option<String>,
+        /// The child's session id. `None` records an ephemeral child
+        /// honestly — absence stated, never a fake id.
+        child_session_id: Option<String>,
+        /// The child's full coordination path address, e.g.
+        /// `root/fork-1a2b3c4d`. The last segment is the reserved
+        /// per-parent name.
+        path_address: String,
+        /// The parent's last event id at branch time (`None` for an empty
+        /// parent log) — the durable anchor for where in the parent's
+        /// timeline the branch occurred.
+        parent_event_anchor: Option<EventId>,
+        /// Whether the child was minted by `fork` (history-seeded) or
+        /// `spawn` (fresh).
+        kind: ChildBranchKind,
     },
 
     /// Completion reference for a previously forked child session.
@@ -222,15 +271,21 @@ pub enum SessionEvent {
     /// Appended to the parent's timeline when a forked sub-agent reaches a
     /// terminal status. Carries a pointer to the child session plus the
     /// validated structured output, accumulated token usage, and wall-clock
-    /// duration. This is a *completion reference*, not a content merge — the
-    /// child's own events remain in the [`SessionTree`](crate::session::tree::SessionTree)
-    /// branch, and visualisers can render the branch joining back at this
-    /// event without flattening the tree into a DAG.
+    /// duration. This is a *completion reference*, not a content merge —
+    /// the child's own events remain in its own session file (under the
+    /// root's `children/` directory), and visualisers can render the branch
+    /// joining back at this event without flattening the tree into a DAG.
     ForkComplete {
         /// Common event metadata.
         base: EventBase,
-        /// ID of the forked child session this event reports back on.
-        forked_session_id: String,
+        /// Session id of the forked child this event reports back on.
+        /// `None` when the fork ran ephemeral and left no session file —
+        /// absence stated honestly, never a registry-id stand-in that
+        /// points at a session existing nowhere on disk. Events persisted
+        /// before this field became optional always carry a value and
+        /// deserialize as `Some`.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        forked_session_id: Option<String>,
         /// Structured output produced by the fork (validated against the
         /// fork's output schema when one was supplied).
         result_summary: serde_json::Value,
@@ -298,7 +353,7 @@ impl SessionEvent {
             | Self::ToolResult { base, .. }
             | Self::ModelChange { base, .. }
             | Self::Compaction { base, .. }
-            | Self::Fork { base, .. }
+            | Self::ChildBranch { base, .. }
             | Self::ForkComplete { base, .. }
             | Self::Label { base, .. }
             | Self::Custom { base, .. }
@@ -586,14 +641,17 @@ mod tests {
                 summary: String::new(),
                 replaced_event_ids: vec![],
             },
-            SessionEvent::Fork {
+            SessionEvent::ChildBranch {
                 base: base(),
-                source_event_id: id,
-                forked_session_id: String::new(),
+                parent_session_id: None,
+                child_session_id: None,
+                path_address: "root/spawn-abcd1234".to_owned(),
+                parent_event_anchor: Some(id),
+                kind: ChildBranchKind::Spawn,
             },
             SessionEvent::ForkComplete {
                 base: base(),
-                forked_session_id: String::new(),
+                forked_session_id: None,
                 result_summary: serde_json::Value::Null,
                 usage: EventUsage::default(),
                 duration_ms: 0,
@@ -618,6 +676,101 @@ mod tests {
         ];
         for e in &events {
             let _ = e.base();
+        }
+    }
+
+    /// Old persisted `ForkComplete` lines always carried a
+    /// `forked_session_id` string; after the field became `Option` they
+    /// must deserialize as `Some(..)` — no old-file breakage.
+    #[test]
+    fn fork_complete_old_shape_deserializes_as_some() {
+        let old_line = serde_json::json!({
+            "type": "ForkComplete",
+            "base": {
+                "id": EventId::new().to_string(),
+                "parent_id": null,
+                "timestamp": Utc::now(),
+            },
+            "forked_session_id": "0192f7e2-aaaa-bbbb-cccc-1234567890ab",
+            "result_summary": {"response": "done"},
+            "usage": {
+                "input_tokens": 1,
+                "output_tokens": 2,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+            },
+            "duration_ms": 42,
+        });
+        let parsed: SessionEvent =
+            serde_json::from_value(old_line).expect("old-shape line deserializes");
+        match parsed {
+            SessionEvent::ForkComplete {
+                forked_session_id, ..
+            } => {
+                assert_eq!(
+                    forked_session_id.as_deref(),
+                    Some("0192f7e2-aaaa-bbbb-cccc-1234567890ab"),
+                    "the always-present old field must land as Some",
+                );
+            }
+            other => panic!("expected ForkComplete, got {other:?}"),
+        }
+    }
+
+    /// An ephemeral fork's `ForkComplete` omits the key entirely and a
+    /// missing key deserializes as `None` — honest absence round-trips.
+    #[test]
+    fn fork_complete_none_omits_key_and_roundtrips() {
+        let event = SessionEvent::ForkComplete {
+            base: EventBase::new(None),
+            forked_session_id: None,
+            result_summary: serde_json::Value::Null,
+            usage: EventUsage::default(),
+            duration_ms: 0,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        assert!(
+            !json.contains("forked_session_id"),
+            "None must omit the key: {json}",
+        );
+        let parsed: SessionEvent = serde_json::from_str(&json).expect("deserialize");
+        match parsed {
+            SessionEvent::ForkComplete {
+                forked_session_id, ..
+            } => assert!(forked_session_id.is_none()),
+            other => panic!("expected ForkComplete, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn child_branch_serde_roundtrip() {
+        let anchor = EventId::new();
+        let event = SessionEvent::ChildBranch {
+            base: EventBase::new(None),
+            parent_session_id: Some("parent-id".to_owned()),
+            child_session_id: Some("child-id".to_owned()),
+            path_address: "root/reviewer-1a2b3c4d".to_owned(),
+            parent_event_anchor: Some(anchor.clone()),
+            kind: ChildBranchKind::Fork,
+        };
+        let json = serde_json::to_string(&event).expect("serialize");
+        let parsed: SessionEvent = serde_json::from_str(&json).expect("deserialize");
+        match parsed {
+            SessionEvent::ChildBranch {
+                parent_session_id,
+                child_session_id,
+                path_address,
+                parent_event_anchor,
+                kind,
+                ..
+            } => {
+                assert_eq!(parent_session_id.as_deref(), Some("parent-id"));
+                assert_eq!(child_session_id.as_deref(), Some("child-id"));
+                assert_eq!(path_address, "root/reviewer-1a2b3c4d");
+                assert_eq!(parent_event_anchor, Some(anchor));
+                assert_eq!(kind, ChildBranchKind::Fork);
+            }
+            other => panic!("expected ChildBranch, got {other:?}"),
         }
     }
 }

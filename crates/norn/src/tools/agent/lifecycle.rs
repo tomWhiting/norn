@@ -72,7 +72,7 @@ pub(crate) fn append_message_audit(store: &EventStore, event: &AgentMessageLifec
 
 /// Terminal outcome projection handed to
 /// [`LifecycleEmitter::emit_completed`].
-pub(super) struct SubagentCompletion {
+pub(crate) struct SubagentCompletion {
     /// Accumulated token usage across every provider call the child made.
     ///
     /// Honest limitation: when the child's run ended in a hard
@@ -83,7 +83,7 @@ pub(super) struct SubagentCompletion {
     /// [`AgentStepResult`](crate::agent_loop::runner::AgentStepResult) arm
     /// (timeout, cancellation, truncation, schema exhaustion, max
     /// iterations) does carry real accumulated usage.
-    pub(super) usage: Usage,
+    pub(crate) usage: Usage,
     /// Aggregated usage of the child's entire delegation subtree (W3.6):
     /// [`Self::usage`] plus the summed `subtree_usage` of every result
     /// the child's own loop delivered. Computed by the wrapper as
@@ -92,14 +92,14 @@ pub(super) struct SubagentCompletion {
     /// are still folded in (read from the shared
     /// [`ChildrenUsage`](crate::agent_loop::children_usage::ChildrenUsage)
     /// accumulator, which survives the unwound task).
-    pub(super) subtree_usage: Usage,
+    pub(crate) subtree_usage: Usage,
     /// Whether the child's run completed successfully.
-    pub(super) succeeded: bool,
+    pub(crate) succeeded: bool,
     /// Explanatory error when `succeeded` is `false`.
-    pub(super) error: Option<String>,
+    pub(crate) error: Option<String>,
     /// Typed stop reason when the child stopped early; `None` on
     /// success or hard error.
-    pub(super) stop: Option<AgentStopReason>,
+    pub(crate) stop: Option<AgentStopReason>,
 }
 
 /// Per-child emitter for the typed [`SubagentLifecycle`] events.
@@ -108,7 +108,7 @@ pub(super) struct SubagentCompletion {
 /// installed), the parent's event store, and the child's identity /
 /// provenance, so the spawn and fork wrappers emit identical, complete
 /// events without recomputing any of it.
-pub(super) struct LifecycleEmitter {
+pub(crate) struct LifecycleEmitter {
     /// Child-tagged sender on the shared broadcast channel. `None` when
     /// the runtime installed no channel — session-store emission still
     /// happens.
@@ -124,7 +124,7 @@ pub(super) struct LifecycleEmitter {
 impl LifecycleEmitter {
     /// Build an emitter for one child. `started_at` is captured by the
     /// caller immediately before launch and shared by both phases.
-    pub(super) fn new(
+    pub(crate) fn new(
         sender: Option<AgentEventSender>,
         parent_store: Arc<EventStore>,
         parent_id: Uuid,
@@ -144,7 +144,7 @@ impl LifecycleEmitter {
 
     /// Emit [`SubagentLifecycle::Started`] on both carriers. Called by
     /// the tool before the child task launches.
-    pub(super) fn emit_started(&self) {
+    pub(crate) fn emit_started(&self) {
         self.emit(SubagentLifecycle::Started {
             parent_id: self.parent_id,
             child_id: self.child_id,
@@ -158,7 +158,7 @@ impl LifecycleEmitter {
     /// outcome — unconditionally, including when a subagent-stop hook
     /// suppressed the registry's terminal transition (the run itself
     /// did finish; the hook only blocks the registry state change).
-    pub(super) fn emit_completed(&self, completion: SubagentCompletion) {
+    pub(crate) fn emit_completed(&self, completion: SubagentCompletion) {
         self.emit(SubagentLifecycle::Completed {
             parent_id: self.parent_id,
             child_id: self.child_id,

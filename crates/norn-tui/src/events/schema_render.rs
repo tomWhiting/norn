@@ -151,15 +151,23 @@ pub fn render_event(
         SessionEvent::Compaction { summary, .. } => {
             render_dim_status_line(&format!("compaction: {summary}"))
         }
-        SessionEvent::Fork {
-            forked_session_id, ..
-        } => render_dim_status_line(&format!("forked → {forked_session_id}")),
+        SessionEvent::ChildBranch {
+            path_address,
+            child_session_id,
+            kind,
+            ..
+        } => render_dim_status_line(&format!(
+            "branch ({}) → {path_address} [{}]",
+            kind.as_str(),
+            child_session_id.as_deref().unwrap_or("ephemeral"),
+        )),
         SessionEvent::ForkComplete {
             forked_session_id,
             duration_ms,
             ..
         } => render_dim_status_line(&format!(
-            "fork complete ← {forked_session_id} ({duration_ms}ms)"
+            "fork complete ← {} ({duration_ms}ms)",
+            forked_session_id.as_deref().unwrap_or("ephemeral"),
         )),
         SessionEvent::Label {
             label, description, ..
@@ -861,14 +869,20 @@ mod tests {
     }
 
     #[test]
-    fn render_event_dispatches_fork() {
-        let event = SessionEvent::Fork {
+    fn render_event_dispatches_child_branch() {
+        let event = SessionEvent::ChildBranch {
             base: base(),
-            source_event_id: EventId::new(),
-            forked_session_id: "sess_abc".to_owned(),
+            parent_session_id: Some("parent_1".to_owned()),
+            child_session_id: Some("sess_abc".to_owned()),
+            path_address: "root/fork-1a2b3c4d".to_owned(),
+            parent_event_anchor: Some(EventId::new()),
+            kind: norn::session::events::ChildBranchKind::Fork,
         };
         let out = render_event(&event, &caps(), DisplayToggles::default(), 80);
-        assert!(out.contains("forked → sess_abc"), "got: {out:?}");
+        assert!(
+            out.contains("branch (fork) → root/fork-1a2b3c4d [sess_abc]"),
+            "got: {out:?}"
+        );
     }
 
     #[test]

@@ -105,7 +105,7 @@ impl ContextFilter {
             }),
             SessionEvent::ModelChange { .. }
             | SessionEvent::Compaction { .. }
-            | SessionEvent::Fork { .. }
+            | SessionEvent::ChildBranch { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
             | SessionEvent::Custom { .. }
@@ -336,10 +336,10 @@ pub fn format_spawn_failure(agent_id: Uuid, agent_role: &str, error: &str) -> St
     )
 }
 
-/// Format a [`ForkOutcome`](crate::tools::agent::fork_pipeline::ForkOutcome)
+/// Format a [`ForkOutcome`](crate::tools::agent::fork_outcome::ForkOutcome)
 /// into the `(succeeded, formatted_message, error)` triple for the child
 /// result channel. Lives here alongside the other format functions so
-/// `fork_pipeline.rs` stays under the 500-line production code limit.
+/// `fork_outcome.rs` stays under the 500-line production code limit.
 #[must_use]
 pub(crate) fn format_fork_outcome(
     fork_id: Uuid,

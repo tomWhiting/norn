@@ -412,6 +412,7 @@ mod tests {
             parent_id,
             grant: None,
             tool_registry: None,
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         })
     }
 
