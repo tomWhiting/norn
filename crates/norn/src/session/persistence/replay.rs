@@ -64,6 +64,16 @@ pub struct ReplayArtifacts {
     /// [`SessionEvent::Compaction`] — the durable supersession marks the
     /// prompt view must re-apply on resume.
     pub superseded_event_ids: HashSet<EventId>,
+    /// Every event id targeted by a persisted suppress
+    /// [`SessionEvent::ContextMark`] — the durable suppression marks the
+    /// prompt view must re-apply on resume
+    /// ([`ContextEdits::mark_suppressed`](crate::session::context_edit::ContextEdits::mark_suppressed)).
+    pub suppressed_event_ids: HashSet<EventId>,
+    /// Every event id targeted by a persisted inject
+    /// [`SessionEvent::ContextMark`] — the durable injection tags the
+    /// prompt view must re-apply on resume
+    /// ([`ContextEdits::mark_injected`](crate::session::context_edit::ContextEdits::mark_injected)).
+    pub injected_event_ids: HashSet<EventId>,
 }
 
 impl ReplayArtifacts {
@@ -115,6 +125,18 @@ impl ReplayArtifacts {
                 self.superseded_event_ids
                     .extend(replaced_event_ids.iter().cloned());
             }
+            SessionEvent::ContextMark {
+                mark,
+                target_event_id,
+                ..
+            } => match mark {
+                crate::session::events::ContextMarkKind::Suppress => {
+                    self.suppressed_event_ids.insert(target_event_id.clone());
+                }
+                crate::session::events::ContextMarkKind::Inject => {
+                    self.injected_event_ids.insert(target_event_id.clone());
+                }
+            },
             // The remaining variants carry nothing any resume consumer
             // derives. Enumerated (no wildcard) so a new event variant
             // forces a decision here instead of silently contributing

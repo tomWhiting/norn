@@ -19,6 +19,7 @@ use crate::r#loop::delivery::{UndeliveredWindow, requeue_undelivered_inbound};
 use crate::r#loop::helpers::{ensure_tool_results_complete, persist_before_injection_audit};
 use crate::r#loop::inbound::{ChannelMessage, InboundChannel};
 use crate::r#loop::loop_context::LoopContext;
+use crate::r#loop::stop_records::{StepStopContext, record_abnormal_step_stop};
 use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
@@ -272,7 +273,12 @@ async fn run_agent_step_common(
     // here lets the exit path below persist it durably on the drop path (F2).
     let mut before_injection_buffer: Vec<RuleInjection> = Vec::new();
     let before_hooks = request.loop_context.hooks.clone();
-    let result = if let Some(budget) = request.config.step_timeout {
+    // Copied out before `request` moves into the inner future: the
+    // abnormal-stop records below need the configured budgets after the
+    // timeout branch has dropped that future.
+    let step_budget = request.config.step_timeout;
+    let max_iterations = request.config.max_iterations;
+    let result = if let Some(budget) = step_budget {
         let inner = run_agent_step_inner(
             request,
             Arc::clone(&timeout_state),
@@ -295,7 +301,7 @@ async fn run_agent_step_common(
     } else {
         run_agent_step_inner(
             request,
-            timeout_state,
+            Arc::clone(&timeout_state),
             inbound.as_deref_mut(),
             &mut follow_up_buffer,
             &mut before_injection_buffer,
@@ -327,6 +333,26 @@ async fn run_agent_step_common(
             );
         }
     }
+    // An abnormal stop (timeout / cancellation / max-iterations) leaves a
+    // typed `loop.step_stopped` record on the agent's own timeline — and,
+    // when the cut dropped a provider call mid-stream, a
+    // `loop.partial_output` record carrying the aborted call's content
+    // (session-fidelity Gaps 6 & 7). Record-only: resume replays these as
+    // history but takes no action from them. Runs after
+    // `ensure_tool_results_complete` so the repaired tool results precede
+    // the stop record in store order.
+    record_abnormal_step_stop(
+        StepStopContext {
+            store,
+            hooks: before_hooks.as_deref(),
+            timeout_state: &timeout_state,
+            elapsed: started.elapsed(),
+            step_timeout: step_budget,
+            max_iterations,
+        },
+        &result,
+    )
+    .await;
     // Update messages the sender was told were delivered buffer until a
     // would-stop boundary; a step ending anywhere else (max-iterations,
     // schema-unreachable, truncation, cancellation, timeout, or an error

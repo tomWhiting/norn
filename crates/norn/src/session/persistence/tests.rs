@@ -2028,3 +2028,88 @@ fn preexisting_empty_file_is_not_retro_stamped_with_header() {
         "a headerless file reads as pre-versioning format",
     );
 }
+
+// -- Session-fidelity Gap 8: durable context marks in replay ------------
+
+/// A session file written **before** the `ContextMark` variant and the
+/// `loop.step_stopped` / `loop.partial_output` records existed must still
+/// load in full: raw JSONL lines exactly as an old binary wrote them —
+/// no new variants anywhere — parse with zero skips and empty
+/// suppressed/injected artifact sets.
+#[test]
+fn old_format_session_file_without_new_variants_still_loads() {
+    let file = concat!(
+        r#"{"norn_session_format":1}"#,
+        "\n",
+        r#"{"type":"UserMessage","base":{"id":"old-u1","parent_id":null,"timestamp":"2026-01-02T03:04:05Z"},"content":"hello"}"#,
+        "\n",
+        r#"{"type":"AssistantMessage","base":{"id":"old-a1","parent_id":"old-u1","timestamp":"2026-01-02T03:04:06Z"},"content":"hi","thinking":"","tool_calls":[],"usage":{"input_tokens":3,"output_tokens":2,"cache_read_tokens":1,"cache_write_tokens":0}}"#,
+        "\n",
+        r#"{"type":"Compaction","base":{"id":"old-c1","parent_id":null,"timestamp":"2026-01-02T03:04:07Z"},"summary":"old summary","replaced_event_ids":["old-u1"]}"#,
+        "\n",
+        r#"{"type":"Custom","base":{"id":"old-x1","parent_id":null,"timestamp":"2026-01-02T03:04:08Z"},"event_type":"loop.truncated","data":{"stop_reason":"max_tokens"}}"#,
+        "\n",
+    );
+    let artifacts = io::read_session_events_from(
+        std::io::BufReader::new(std::io::Cursor::new(file.as_bytes().to_vec())),
+        "old-format",
+    )
+    .unwrap();
+
+    assert_eq!(artifacts.skipped_lines, 0, "every old line must parse");
+    assert_eq!(artifacts.events.len(), 4);
+    let superseded: EventId = "old-u1".parse().unwrap();
+    assert!(artifacts.superseded_event_ids.contains(&superseded));
+    assert!(
+        artifacts.suppressed_event_ids.is_empty(),
+        "an old file carries no suppress marks",
+    );
+    assert!(
+        artifacts.injected_event_ids.is_empty(),
+        "an old file carries no inject marks",
+    );
+    assert_eq!(artifacts.usage.input_tokens, 3);
+    assert_eq!(artifacts.usage.output_tokens, 2);
+}
+
+/// Persisted `ContextMark` lines rebuild the suppressed and injected
+/// artifact sets — the file-reader half of the Gap 8 resume path — and
+/// the in-memory `from_events` path derives the identical sets.
+#[test]
+fn context_mark_lines_rebuild_suppress_and_inject_sets() {
+    let file = concat!(
+        r#"{"norn_session_format":1}"#,
+        "\n",
+        r#"{"type":"UserMessage","base":{"id":"m-u1","parent_id":null,"timestamp":"2026-07-06T00:00:01Z"},"content":"keep"}"#,
+        "\n",
+        r#"{"type":"UserMessage","base":{"id":"m-u2","parent_id":null,"timestamp":"2026-07-06T00:00:02Z"},"content":"noisy"}"#,
+        "\n",
+        r#"{"type":"ContextMark","base":{"id":"m-s1","parent_id":null,"timestamp":"2026-07-06T00:00:03Z"},"mark":"suppress","target_event_id":"m-u2"}"#,
+        "\n",
+        r#"{"type":"UserMessage","base":{"id":"m-u3","parent_id":null,"timestamp":"2026-07-06T00:00:04Z"},"content":"injected note"}"#,
+        "\n",
+        r#"{"type":"ContextMark","base":{"id":"m-i1","parent_id":null,"timestamp":"2026-07-06T00:00:05Z"},"mark":"inject","target_event_id":"m-u3"}"#,
+        "\n",
+    );
+    let artifacts = io::read_session_events_from(
+        std::io::BufReader::new(std::io::Cursor::new(file.as_bytes().to_vec())),
+        "context-marks",
+    )
+    .unwrap();
+
+    assert_eq!(artifacts.skipped_lines, 0);
+    assert_eq!(artifacts.events.len(), 5);
+    let suppressed: EventId = "m-u2".parse().unwrap();
+    let injected: EventId = "m-u3".parse().unwrap();
+    assert_eq!(artifacts.suppressed_event_ids.len(), 1);
+    assert!(artifacts.suppressed_event_ids.contains(&suppressed));
+    assert_eq!(artifacts.injected_event_ids.len(), 1);
+    assert!(artifacts.injected_event_ids.contains(&injected));
+
+    let from_events = ReplayArtifacts::from_events(artifacts.events.clone());
+    assert_eq!(
+        from_events.suppressed_event_ids,
+        artifacts.suppressed_event_ids
+    );
+    assert_eq!(from_events.injected_event_ids, artifacts.injected_event_ids);
+}

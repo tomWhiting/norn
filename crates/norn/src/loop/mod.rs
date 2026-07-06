@@ -61,6 +61,7 @@ pub mod retry;
 mod rule_wiring;
 pub mod runner;
 pub mod schema;
+mod stop_records;
 mod summarization;
 mod tool_dispatch;
 

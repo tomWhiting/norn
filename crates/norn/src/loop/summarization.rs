@@ -102,8 +102,11 @@ pub(super) async fn request_compaction_summary(
         context_management: None,
     };
     // event_tx is deliberately None: streaming summarization deltas to
-    // observers would be indistinguishable from assistant output.
-    let response = call_provider(provider, request, None).await?;
+    // observers would be indistinguishable from assistant output. The
+    // partial capture is None for the same reason — a hard-cut
+    // summarization call is not assistant output and must not be
+    // persisted as the step's partial content.
+    let response = call_provider(provider, request, None, None).await?;
     Ok(SummarizationResponse {
         text: response.text,
         usage: response.usage,

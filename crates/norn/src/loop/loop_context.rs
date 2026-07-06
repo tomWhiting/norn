@@ -160,23 +160,24 @@ pub struct LoopContext {
     /// once estimated usage crosses `context_window_limit − reserve`.
     pub context_edits: Option<ContextEdits>,
 
-    /// Whether persisted compaction supersession marks have been loaded
-    /// into [`Self::context_edits`].
+    /// Whether persisted context-edit marks (compaction supersession,
+    /// suppress, inject) have been loaded into [`Self::context_edits`].
     ///
     /// The runner loads persisted marks **once per loop context** — its
     /// first step walks the store (see `run_agent_step_inner`) — covering
     /// drivers that resume a session with a fresh [`ContextEdits`]
-    /// without going through the library's resume path. Every compaction
-    /// appended after that point marks supersession at append time on
-    /// the tracker itself ([`ContextEdits::summarize`],
-    /// [`ContextEdits::compact`],
+    /// without going through the library's resume path. Every mark
+    /// applied after that point lands on the tracker at apply time
+    /// ([`ContextEdits::suppress`], [`ContextEdits::inject`],
+    /// [`ContextEdits::summarize`], [`ContextEdits::compact`],
     /// [`ContextEdits::commit_compaction_plan`]), so no per-step store
     /// re-walk exists. Drivers that pre-load marks (resume via
-    /// [`ReplayArtifacts`](crate::session::ReplayArtifacts) plus
-    /// [`ContextEdits::mark_superseded`]) may set this to `true` to skip
-    /// the runner's one-time walk; leaving it `false` costs exactly one
+    /// [`ReplayArtifacts`](crate::session::ReplayArtifacts) plus the
+    /// [`ContextEdits::mark_superseded`] / `mark_suppressed` /
+    /// `mark_injected` restorers) may set this to `true` to skip the
+    /// runner's one-time walk; leaving it `false` costs exactly one
     /// idempotent walk on the first step.
-    pub compaction_marks_loaded: bool,
+    pub context_marks_loaded: bool,
 
     /// Optional diagnostic collector. When present, the runner pushes a
     /// [`NornDiagnostic`](crate::integration::NornDiagnostic) at three sites
@@ -349,7 +350,7 @@ impl LoopContext {
             token_estimator: None,
             variables: None,
             context_edits: None,
-            compaction_marks_loaded: false,
+            context_marks_loaded: false,
             diagnostics: None,
             action_log: None,
             agent_id: None,
@@ -826,7 +827,7 @@ mod tests {
         let mut ctx = LoopContext::new("base");
         ctx.rules = Some(RuleEngine::new(vec![]));
         let mut edits = ContextEdits::new();
-        edits.suppress(id);
+        edits.suppress(&store, id).expect("suppress");
         ctx.context_edits = Some(edits);
 
         ctx.clear_dynamic_sections();
@@ -873,7 +874,7 @@ mod tests {
 
         // Compact the marker out of the view → rule re-fires on next trigger.
         if let Some(edits) = ctx.context_edits.as_mut() {
-            edits.suppress(id);
+            edits.suppress(&store, id).expect("suppress");
         }
         ctx.rebuild_rule_presence(&store);
         let after = ctx.rules.as_ref().unwrap().process_event(&event).await;

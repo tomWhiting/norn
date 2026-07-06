@@ -2,12 +2,18 @@
 //!
 //! These operations mark events without deleting them. The [`EventStore`]
 //! is never mutated by context editing — only new events (compactions,
-//! injections) are appended.
+//! injections, and the durable
+//! [`ContextMark`](crate::session::events::SessionEvent::ContextMark)
+//! twins of suppress/inject marks) are appended. Every mark is durable at
+//! the moment it is applied, so a resumed session rebuilds the identical
+//! prompt view via [`ContextEdits::apply_persisted_marks`] (or the
+//! equivalent single-pass
+//! [`ReplayArtifacts`](crate::session::ReplayArtifacts) restorers).
 
 use std::collections::{BTreeMap, HashSet};
 
 use crate::error::SessionError;
-use crate::session::events::{EventBase, EventId, SessionEvent};
+use crate::session::events::{ContextMarkKind, EventBase, EventId, SessionEvent};
 use crate::session::store::EventStore;
 
 /// Result of a successful [`ContextEdits::auto_compact_keeping_recent_turns`]
@@ -154,24 +160,84 @@ impl ContextEdits {
         self.clear_usage_floor();
     }
 
-    /// Rebuild persisted compaction marks from the append-only store.
-    ///
-    /// This is idempotent and intentionally only restores compaction
-    /// supersession. Suppression and injection marks are live editing state and
-    /// are not represented by durable session events.
+    /// Restore suppression marks from ids that were already derived
+    /// elsewhere — typically
+    /// [`ReplayArtifacts::suppressed_event_ids`](crate::session::ReplayArtifacts::suppressed_event_ids)
+    /// from a single-pass session replay. Idempotent. Does **not** append
+    /// new [`SessionEvent::ContextMark`] events: the marks being restored
+    /// are already durable.
+    pub fn mark_suppressed(&mut self, ids: impl IntoIterator<Item = EventId>) {
+        self.suppressed.extend(ids);
+        // Same invariant as `mark_superseded`: growing the suppressed set
+        // shrinks the prompt view, so any established floor must go.
+        self.clear_usage_floor();
+    }
+
+    /// Restore injection marks from ids that were already derived
+    /// elsewhere — typically
+    /// [`ReplayArtifacts::injected_event_ids`](crate::session::ReplayArtifacts::injected_event_ids)
+    /// from a single-pass session replay. Idempotent. Injection tags never
+    /// shrink the prompt view, so the usage floor is untouched.
+    pub fn mark_injected(&mut self, ids: impl IntoIterator<Item = EventId>) {
+        self.injected.extend(ids);
+    }
+
+    /// Rebuild every persisted context-edit mark from the append-only
+    /// store: compaction supersession (from [`SessionEvent::Compaction`]
+    /// `replaced_event_ids`) plus suppression and injection marks (from
+    /// their durable [`SessionEvent::ContextMark`] twins). Idempotent.
     ///
     /// Callers that already hold a single-pass
     /// [`ReplayArtifacts`](crate::session::ReplayArtifacts) should pass its
-    /// `superseded_event_ids` to [`Self::mark_superseded`] instead — this
+    /// `superseded_event_ids` / `suppressed_event_ids` /
+    /// `injected_event_ids` to the `mark_*` restorers instead — this
     /// method walks the whole store again.
-    pub fn apply_persisted_compactions(&mut self, store: &EventStore) {
-        for event in store.events() {
-            if let SessionEvent::Compaction {
-                replaced_event_ids, ..
-            } = event
-            {
-                self.mark_superseded(replaced_event_ids);
+    pub fn apply_persisted_marks(&mut self, store: &EventStore) {
+        let mut view_shrank = false;
+        store.with_events(|events| {
+            for event in events {
+                match event {
+                    SessionEvent::Compaction {
+                        replaced_event_ids, ..
+                    } => {
+                        view_shrank |= !replaced_event_ids.is_empty();
+                        self.superseded.extend(replaced_event_ids.iter().cloned());
+                    }
+                    SessionEvent::ContextMark {
+                        mark,
+                        target_event_id,
+                        ..
+                    } => match mark {
+                        ContextMarkKind::Suppress => {
+                            view_shrank = true;
+                            self.suppressed.insert(target_event_id.clone());
+                        }
+                        ContextMarkKind::Inject => {
+                            self.injected.insert(target_event_id.clone());
+                        }
+                    },
+                    SessionEvent::UserMessage { .. }
+                    | SessionEvent::AssistantMessage { .. }
+                    | SessionEvent::SpokenResponse { .. }
+                    | SessionEvent::ToolResult { .. }
+                    | SessionEvent::ModelChange { .. }
+                    | SessionEvent::Fork { .. }
+                    | SessionEvent::ForkComplete { .. }
+                    | SessionEvent::Label { .. }
+                    | SessionEvent::Custom { .. }
+                    | SessionEvent::RuleInjection { .. } => {}
+                }
             }
+        });
+        // Same floor invariant as the live edit surfaces: supersession and
+        // suppression marks shrink the prompt view, so an established usage
+        // floor must go — but only when such a mark was actually restored.
+        // A store without them (including the runner's one-time first-step
+        // walk over a fresh session) must not wipe a floor the current
+        // step's provider calls already established. Injection marks never
+        // shrink the view and leave the floor alone.
+        if view_shrank {
+            self.clear_usage_floor();
         }
     }
 
@@ -179,9 +245,31 @@ impl ContextEdits {
 
     /// Mark an event as suppressed. Suppressed events are excluded from
     /// prompt construction but remain in the store unchanged.
-    pub fn suppress(&mut self, event_id: EventId) {
+    ///
+    /// The mark is made durable first: a
+    /// [`SessionEvent::ContextMark`] twin is appended to `store` before
+    /// the live set mutates, so the live prompt view and a resumed one can
+    /// never diverge — on append failure *neither* holds the mark and the
+    /// error propagates. Returns the ID of the appended mark event.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`SessionError::EventAppendFailed`] if the durable mark
+    /// cannot be appended; the event is then **not** suppressed live
+    /// either.
+    pub fn suppress(
+        &mut self,
+        store: &EventStore,
+        event_id: EventId,
+    ) -> Result<EventId, SessionError> {
+        let mark_id = store.append(SessionEvent::ContextMark {
+            base: EventBase::new(None),
+            mark: ContextMarkKind::Suppress,
+            target_event_id: event_id.clone(),
+        })?;
         self.suppressed.insert(event_id);
         self.clear_usage_floor();
+        Ok(mark_id)
     }
 
     /// Check whether an event is suppressed.
@@ -404,19 +492,30 @@ impl ContextEdits {
 
     /// Inject an external event into the session.
     ///
-    /// The event is appended to the store normally. Its ID is tracked as
-    /// injected so prompt construction can tag it appropriately.
+    /// The event is appended to the store normally, followed by a durable
+    /// [`SessionEvent::ContextMark`] twin recording the injection, and its
+    /// ID is tracked live so prompt construction can tag it appropriately.
+    /// The live set only mutates after both appends succeed, so the live
+    /// prompt view and a resumed one can never diverge: on a mark-append
+    /// failure the injected event exists in the store as a plain event —
+    /// live and resumed views agree on that too — and the error
+    /// propagates.
     ///
     /// # Errors
     ///
-    /// Returns [`SessionError::EventAppendFailed`] if the event cannot be
-    /// appended.
+    /// Returns [`SessionError::EventAppendFailed`] if the event or its
+    /// durable injection mark cannot be appended.
     pub fn inject(
         &mut self,
         store: &EventStore,
         event: SessionEvent,
     ) -> Result<EventId, SessionError> {
         let id = store.append(event)?;
+        store.append(SessionEvent::ContextMark {
+            base: EventBase::new(None),
+            mark: ContextMarkKind::Inject,
+            target_event_id: id.clone(),
+        })?;
         self.injected.insert(id.clone());
         Ok(id)
     }
@@ -471,6 +570,7 @@ pub fn build_compaction_digest(
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
             | SessionEvent::RuleInjection { .. }
+            | SessionEvent::ContextMark { .. }
             | SessionEvent::SpokenResponse { .. } => other_events += 1,
         }
     }
@@ -527,6 +627,7 @@ fn compact_boundary_after_tool_results(events: &[SessionEvent], assistant_idx: u
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
             | SessionEvent::RuleInjection { .. }
+            | SessionEvent::ContextMark { .. }
             | SessionEvent::SpokenResponse { .. }
             | SessionEvent::Compaction { .. } => {}
         }
@@ -580,7 +681,7 @@ mod tests {
         let mut edits = ContextEdits::new();
 
         assert!(!edits.is_suppressed(&id));
-        edits.suppress(id.clone());
+        let mark_id = edits.suppress(&store, id.clone()).expect("suppress");
         assert!(edits.is_suppressed(&id));
 
         let original = store.get(&id).expect("still in store");
@@ -588,6 +689,93 @@ mod tests {
             SessionEvent::UserMessage { content, .. } => assert_eq!(content, "hello"),
             _ => panic!("wrong variant"),
         }
+
+        // The durable twin landed in the store, targeting the event.
+        let mark = store.get(&mark_id).expect("mark persisted");
+        match mark {
+            SessionEvent::ContextMark {
+                mark,
+                target_event_id,
+                ..
+            } => {
+                assert_eq!(mark, ContextMarkKind::Suppress);
+                assert_eq!(target_event_id, id);
+            }
+            _ => panic!("expected ContextMark"),
+        }
+    }
+
+    #[test]
+    fn apply_persisted_marks_rebuilds_suppress_and_inject() {
+        let store = EventStore::new();
+        let kept = store.append(user_msg("kept")).expect("append");
+        let mut edits = ContextEdits::new();
+        let suppressed = store.append(user_msg("suppressed")).expect("append");
+        edits
+            .suppress(&store, suppressed.clone())
+            .expect("suppress");
+        let injected = edits.inject(&store, user_msg("injected")).expect("inject");
+
+        // Process-restart shape: a fresh tracker over the same store.
+        let mut rebuilt = ContextEdits::new();
+        rebuilt.apply_persisted_marks(&store);
+
+        assert!(rebuilt.is_suppressed(&suppressed));
+        assert!(!rebuilt.is_suppressed(&kept));
+        assert!(rebuilt.is_injected(&injected));
+        assert!(!rebuilt.is_injected(&kept));
+
+        // Idempotent: a second application changes nothing.
+        rebuilt.apply_persisted_marks(&store);
+        assert!(rebuilt.is_suppressed(&suppressed));
+        assert!(rebuilt.is_injected(&injected));
+    }
+
+    #[test]
+    fn apply_persisted_marks_touches_floor_only_when_the_view_shrinks() {
+        // No supersession or suppression marks in the store: the walk must
+        // leave an established floor alone (the runner's one-time
+        // first-step walk runs on stores like this).
+        let store = EventStore::new();
+        store.append(user_msg("plain")).expect("append");
+        let mut edits = ContextEdits::new();
+        edits.inject(&store, user_msg("injected")).expect("inject");
+        let mut walked = ContextEdits::new();
+        walked.set_usage_floor(9_999);
+        walked.apply_persisted_marks(&store);
+        assert_eq!(
+            walked.usage_floor(),
+            Some(9_999),
+            "inject-only restoration grows the view and must keep the floor",
+        );
+
+        // A restored suppress mark shrinks the view: the floor must go.
+        let target = store.append(user_msg("noisy")).expect("append");
+        edits.suppress(&store, target).expect("suppress");
+        walked.apply_persisted_marks(&store);
+        assert_eq!(
+            walked.usage_floor(),
+            None,
+            "suppression restoration shrinks the view and must clear the floor",
+        );
+    }
+
+    #[test]
+    fn mark_suppressed_clears_floor_and_mark_injected_does_not() {
+        let mut edits = ContextEdits::new();
+        edits.set_usage_floor(100_000);
+        edits.mark_injected([EventId::new()]);
+        assert_eq!(
+            edits.usage_floor(),
+            Some(100_000),
+            "injection restore grows the view and must keep the floor",
+        );
+        edits.mark_suppressed([EventId::new()]);
+        assert_eq!(
+            edits.usage_floor(),
+            None,
+            "suppression restore shrinks the view and must clear the floor",
+        );
     }
 
     // -- Usage floor -------------------------------------------------------
@@ -618,7 +806,7 @@ mod tests {
         let id = store.append(user_msg("m")).expect("append");
         let mut edits = ContextEdits::new();
         edits.set_usage_floor(100_000);
-        edits.suppress(id);
+        edits.suppress(&store, id).expect("suppress");
         assert_eq!(edits.usage_floor(), None, "suppress must clear the floor");
 
         // summarize
@@ -799,7 +987,7 @@ mod tests {
         let id2 = store.append(user_msg("b")).expect("append");
 
         let mut edits = ContextEdits::new();
-        edits.suppress(id1.clone());
+        edits.suppress(&store, id1.clone()).expect("suppress");
         edits
             .summarize(&store, vec![id2.clone()], "sum".to_owned())
             .expect("summarize");
@@ -951,7 +1139,9 @@ mod tests {
         let suppressed = store.append(user_msg("suppressed")).expect("append");
 
         let mut edits = ContextEdits::new();
-        edits.suppress(suppressed.clone());
+        edits
+            .suppress(&store, suppressed.clone())
+            .expect("suppress");
         let first = edits
             .summarize(&store, vec![oldest.clone()], "first summary".to_owned())
             .expect("summarize");
@@ -1194,7 +1384,19 @@ mod tests {
 
         assert!(edits.is_injected(&id));
         assert!(store.get(&id).is_some());
-        assert_eq!(store.len(), 1);
+        // The injected event plus its durable ContextMark twin.
+        assert_eq!(store.len(), 2);
+        match &store.events()[1] {
+            SessionEvent::ContextMark {
+                mark,
+                target_event_id,
+                ..
+            } => {
+                assert_eq!(*mark, ContextMarkKind::Inject);
+                assert_eq!(*target_event_id, id);
+            }
+            other => panic!("expected the durable inject mark, got {other:?}"),
+        }
     }
 
     #[test]
