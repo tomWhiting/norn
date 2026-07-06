@@ -191,8 +191,21 @@ async fn execute(cli: &Cli) -> Result<ExitCode, PrintError> {
 
     let output_schema = parse_output_schema(cli.output_schema.as_deref())?;
 
-    let parts = assemble_print_agent(cli).await?;
-    orchestrate(cli, parts, effective_prompt, output_schema, None).await
+    let assembly = assemble_print_agent(cli).await?;
+    orchestrate(cli, assembly, effective_prompt, output_schema, None).await
+}
+
+/// The assembled print agent plus the driver-resolved configuration the
+/// orchestrator still needs after assembly (values that live on
+/// [`ResolvedInvocation`](crate::runtime::ResolvedInvocation) but have no
+/// home on the library's `AgentParts`).
+pub(super) struct PrintAssembly {
+    /// The decomposed agent the step loop drives.
+    pub parts: AgentParts,
+    /// The resolved session index-lock deadline, applied by the slash
+    /// surface to every lock-taking `SessionManager` it constructs
+    /// (`/name`'s index rename).
+    pub index_lock_deadline: std::time::Duration,
 }
 
 /// Assemble the headless print agent through the single library-owned
@@ -212,8 +225,9 @@ async fn execute(cli: &Cli) -> Result<ExitCode, PrintError> {
 ///
 /// [`PrintError::Argument`] / [`PrintError::Auth`] when resolution,
 /// provider construction, or `build()` reject the invocation.
-pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<AgentParts, PrintError> {
+pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, PrintError> {
     let resolved = resolve_invocation(cli)?;
+    let index_lock_deadline = resolved.index_lock_deadline;
 
     // Debug-dump file naming (D4): the provider is built before the
     // session id is minted, so the dump file is named from the only
@@ -260,7 +274,10 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<AgentParts, PrintE
     // happens during `build()`: the assembled registry is the authoritative
     // reference for which flag-named tools exist.
     warn_unmatched_tool_flag_names(&parts.registry, &resolved.applied);
-    Ok(parts)
+    Ok(PrintAssembly {
+        parts,
+        index_lock_deadline,
+    })
 }
 
 /// Read stdin in full when it is not a TTY. Returns [`None`] when stdin
@@ -303,11 +320,15 @@ pub(super) fn parse_output_schema(raw: Option<&str>) -> Result<Option<Value>, Pr
 
 pub(super) async fn orchestrate(
     cli: &Cli,
-    mut parts: AgentParts,
+    assembly: PrintAssembly,
     prompt: String,
     output_schema: Option<Value>,
     driven_run: Option<DrivenRun>,
 ) -> Result<ExitCode, PrintError> {
+    let PrintAssembly {
+        mut parts,
+        index_lock_deadline,
+    } = assembly;
     // Split the driven-mode context into the shared driver (result + events,
     // consulted throughout) and the stdin reader (consumed once, by the
     // mid-run intervene loop at step time). Keeping them apart lets the many
@@ -342,6 +363,7 @@ pub(super) async fn orchestrate(
         },
         Arc::clone(&store),
         output_session_id.clone(),
+        index_lock_deadline,
         output_schema,
     );
     parts.loop_context.slash_commands = Some(slash_registry.clone());

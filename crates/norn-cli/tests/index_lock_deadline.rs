@@ -65,6 +65,58 @@ fn c_override_outranks_settings() {
     assert_eq!(deadline, Duration::from_millis(75));
 }
 
+/// Review A3 (2026-07-06): the merge layer carries
+/// `agent.index_lock_deadline_ms` across settings tiers — local beats
+/// project beats user — and the merged winner is what
+/// [`resolve_index_lock_deadline`] applies. Deleting the field's
+/// `pick_scalar` arm in `merge_agent` fails this fence.
+#[test]
+fn merged_tiers_local_beats_project_beats_user_through_resolution() {
+    use norn::config::merge_settings;
+
+    let mut user = settings_with_deadline_ms(1_000);
+    let mut project = settings_with_deadline_ms(2_000);
+    let mut local = settings_with_deadline_ms(3_000);
+    let mut cli_layer = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli_layer);
+    validate_settings(&merged).unwrap();
+
+    let deadline = resolve_index_lock_deadline(&merged, &ConfigOverrides::default()).unwrap();
+    assert_eq!(deadline, Duration::from_secs(3), "local tier wins");
+}
+
+/// Review A3 (2026-07-06): a value set only in the user tier survives
+/// the merge and reaches [`resolve_index_lock_deadline`] — it must
+/// resolve to the user's value, never fall through to the compiled
+/// default as if the setting had been dropped.
+#[test]
+fn user_tier_only_deadline_survives_merge_through_resolution() {
+    use norn::config::merge_settings;
+
+    let mut user = settings_with_deadline_ms(1_234);
+    let mut project = NornSettings::default();
+    let mut local = NornSettings::default();
+    let mut cli_layer = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli_layer);
+    validate_settings(&merged).unwrap();
+    assert_eq!(
+        merged
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.index_lock_deadline_ms),
+        Some(1_234),
+        "the merge must not drop a user-tier-only value",
+    );
+
+    let deadline = resolve_index_lock_deadline(&merged, &ConfigOverrides::default()).unwrap();
+    assert_eq!(deadline, Duration::from_millis(1_234));
+    assert_ne!(
+        deadline,
+        Duration::from_millis(DEFAULT_INDEX_LOCK_DEADLINE_MS),
+        "the user-tier value must win over the compiled default",
+    );
+}
+
 /// With no settings and no `-c` override the owner-ruled compiled default
 /// applies — the CLI never falls back to the library's indefinite wait.
 #[test]

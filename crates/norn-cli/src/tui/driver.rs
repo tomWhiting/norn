@@ -240,6 +240,10 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         initial_prompt,
         data_dir: persist_data_dir,
         session_id: persist_session_id,
+        // Bounds the `/new` rotation's index-lock wait — resolved from
+        // settings / `-c index_lock_deadline_ms` alongside the rest of
+        // the invocation, same value `builder_from_cli` applied.
+        index_lock_deadline: resolved.index_lock_deadline,
         root_event_sender,
         agent_event_rx,
         root_inbound: parts.inbound.take(),
