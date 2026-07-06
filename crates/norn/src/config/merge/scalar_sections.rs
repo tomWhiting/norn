@@ -191,6 +191,12 @@ pub(super) fn merge_agent(
             &mut lcl.delegation_depth,
             &mut ovr.delegation_depth,
         ),
+        index_lock_deadline_ms: pick_scalar(
+            &mut usr.index_lock_deadline_ms,
+            &mut prj.index_lock_deadline_ms,
+            &mut lcl.index_lock_deadline_ms,
+            &mut ovr.index_lock_deadline_ms,
+        ),
     })
 }
 

@@ -222,13 +222,20 @@ pub struct SlashStateInputs<'a> {
 
 /// Build a [`SlashState`] and [`SlashCommandRegistry`] from the assembled
 /// slash inputs.
+///
+/// `index_lock_deadline` is the driver-resolved session index-lock
+/// deadline (`ResolvedInvocation::index_lock_deadline`); the slash
+/// handlers apply it to every lock-taking `SessionManager` they
+/// construct (`/name`'s index rename), so a wedged sibling process can
+/// never hang the interactive surface inside a handler.
 pub fn build_slash_state_from_bundle(
     cli: &Cli,
     inputs: SlashStateInputs<'_>,
     store: Arc<EventStore>,
     session_id: Option<String>,
+    index_lock_deadline: std::time::Duration,
 ) -> (SlashState, SlashCommandRegistry) {
-    build_slash_state_inner(cli, inputs, store, session_id, None)
+    build_slash_state_inner(cli, inputs, store, session_id, index_lock_deadline, None)
 }
 
 /// Variant that accepts a pre-parsed output schema, avoiding a
@@ -239,9 +246,17 @@ pub fn build_slash_state_with_schema(
     inputs: SlashStateInputs<'_>,
     store: Arc<EventStore>,
     session_id: Option<String>,
+    index_lock_deadline: std::time::Duration,
     output_schema: Option<Value>,
 ) -> (SlashState, SlashCommandRegistry) {
-    build_slash_state_inner(cli, inputs, store, session_id, output_schema)
+    build_slash_state_inner(
+        cli,
+        inputs,
+        store,
+        session_id,
+        index_lock_deadline,
+        output_schema,
+    )
 }
 
 fn build_slash_state_inner(
@@ -249,6 +264,7 @@ fn build_slash_state_inner(
     inputs: SlashStateInputs<'_>,
     store: Arc<EventStore>,
     session_id: Option<String>,
+    index_lock_deadline: std::time::Duration,
     output_schema_override: Option<Value>,
 ) -> (SlashState, SlashCommandRegistry) {
     let tools: Vec<(String, String)> = inputs
@@ -275,6 +291,7 @@ fn build_slash_state_inner(
         session_id,
         data_dir: session_data_dir(),
         no_session: cli.no_session,
+        index_lock_deadline,
         variable_pairs,
         tools,
         store,
