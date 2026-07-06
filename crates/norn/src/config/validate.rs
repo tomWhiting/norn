@@ -18,6 +18,10 @@
 //!   [`crate::config::types::HookEntry`]).
 //! - **MCP server definitions** must specify at least one of `command` or
 //!   `url`; an entry that has neither has no executable shape.
+//! - **Numeric ranges** whose zero form is semantically a deadlock:
+//!   `provider.rate_limit` (zero permits can never be acquired) and
+//!   `agent.index_lock_deadline_ms` (a zero deadline can never acquire
+//!   the session-index lock).
 //!
 //! Unknown top-level keys are *not* surfaced here — they are warned about
 //! in the loader (see [`crate::config::loader`]) before typed conversion
@@ -139,6 +143,19 @@ fn validate_numeric_ranges(settings: &NornSettings) -> Result<(), ConfigError> {
             reason: format!(
                 "invalid value for agent.conversation_state: {mode} (expected auto, manual, manual_replay, or provider_threaded)",
             ),
+        });
+    }
+    // A zero index-lock deadline expires before the first non-blocking
+    // acquisition attempt: a zero deadline can never acquire the lock, so
+    // every session open/append would fail with a spurious timeout. Catch
+    // it at config time.
+    if let Some(agent) = settings.agent.as_ref()
+        && agent.index_lock_deadline_ms == Some(0)
+    {
+        return Err(ConfigError::InvalidConfig {
+            reason: "invalid value for agent.index_lock_deadline_ms: 0 (a zero deadline can \
+                     never acquire the lock)"
+                .to_string(),
         });
     }
     // A zero rate limit constructs `Semaphore::new(0)`, whose `acquire()` loop
@@ -502,6 +519,44 @@ mod tests {
             reason.contains("greater than zero"),
             "reason missing zero rejection: {reason}"
         );
+    }
+
+    #[test]
+    fn zero_index_lock_deadline_caught() {
+        // A zero deadline expires before the first acquisition attempt —
+        // it can never take the lock, so every session open would fail
+        // with a spurious timeout.
+        let s = NornSettings {
+            agent: Some(AgentSettings {
+                index_lock_deadline_ms: Some(0),
+                ..AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(
+            reason.contains("agent.index_lock_deadline_ms"),
+            "reason missing field: {reason}"
+        );
+        assert!(
+            reason.contains("a zero deadline can never acquire the lock"),
+            "reason missing zero rejection: {reason}"
+        );
+    }
+
+    #[test]
+    fn nonzero_index_lock_deadline_passes() {
+        let s = NornSettings {
+            agent: Some(AgentSettings {
+                index_lock_deadline_ms: Some(10_000),
+                ..AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        validate_settings(&s).unwrap();
     }
 
     #[test]

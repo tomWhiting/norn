@@ -32,7 +32,8 @@ use crate::cli::{BuildError, Cli};
 use crate::config::{
     AppliedOverrides, ConfigOverrides, apply_config_overrides_to_loop, apply_loop_config_overrides,
     apply_settings_to_agent_config, collect_extension_uris, default_agent_loop_config,
-    load_rule_engine, merge_event_schemas, parse_inline_or_file, parse_kv, session_data_dir,
+    load_rule_engine, merge_event_schemas, parse_inline_or_file, parse_kv,
+    resolve_index_lock_deadline, session_data_dir,
 };
 use crate::runtime::build_write_tool;
 
@@ -172,10 +173,21 @@ pub fn builder_from_cli(
     // store; every other flag combination opens a managed session through
     // the one library `open_session` front door with an explicit
     // `Flush` durability.
+    //
+    // The index-lock deadline is resolved unconditionally (invalid config
+    // errors loudly even under `--no-session`) and bounds every index
+    // mutation the manager performs: without it, `file.lock()` blocks
+    // forever behind a wedged sibling process and every new norn on the
+    // machine silently hangs before a session file even exists. On expiry
+    // the typed `SessionPersistError::IndexLockTimeout` propagates through
+    // the normal build/open error surface, naming the lock file and the
+    // deadline.
+    let index_lock_deadline = resolve_index_lock_deadline(settings, &config_overrides)?;
     if cli.no_session {
         builder = builder.session(std::sync::Arc::new(EventStore::new()));
     } else if let Some(spec) = session_spec_from_cli(cli, &cwd) {
-        let manager = SessionManager::new(session_data_dir());
+        let manager = SessionManager::new(session_data_dir())
+            .with_index_lock_deadline(Some(index_lock_deadline));
         builder = builder.open_session(&manager, spec, DurabilityPolicy::Flush);
     }
 

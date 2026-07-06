@@ -93,7 +93,7 @@ async fn run_accepted(
 ) -> Result<ExitCode, PrintError> {
     let output_schema = parse_output_schema(cli.output_schema.as_deref())?;
 
-    let parts = assemble_print_agent(cli).await?;
+    let assembly = assemble_print_agent(cli).await?;
 
     // The stdin reader that carried initialize/run/execute keeps being read
     // during the run so mid-run intervene/* requests reach the agent.
@@ -102,7 +102,7 @@ async fn run_accepted(
         reader,
     };
 
-    orchestrate(cli, parts, prompt, output_schema, Some(driven_run)).await
+    orchestrate(cli, assembly, prompt, output_schema, Some(driven_run)).await
 }
 
 /// The join handle + stop signal for the mid-run intervene reader task.

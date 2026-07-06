@@ -493,6 +493,20 @@ pub struct AgentSettings {
     /// `cli_coordination_envelope`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub delegation_depth: Option<u32>,
+
+    /// Deadline, in milliseconds, for acquiring the inter-process
+    /// session-index lock
+    /// ([`SessionManager::with_index_lock_deadline`](crate::session::SessionManager::with_index_lock_deadline)).
+    /// Consumed by the CLI's assembly funnel (`builder_from_cli`), which
+    /// applies it to the [`SessionManager`](crate::session::SessionManager)
+    /// it constructs; the library's own default stays `None` (indefinite
+    /// wait) so embedders choose their own bound. Zero is rejected by
+    /// [`validate_settings`](crate::config::validate_settings) — a zero
+    /// deadline can never acquire the lock. Overridable via
+    /// `-c index_lock_deadline_ms=<u64>`; unset defers to the CLI's
+    /// owner-ruled default of `10_000` ms.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub index_lock_deadline_ms: Option<u64>,
 }
 
 // ---------------------------------------------------------------------------
@@ -954,6 +968,8 @@ mod tests {
         assert!(agent.reasoning_summary.is_none());
         assert!(agent.service_tier.is_none());
         assert!(agent.prompt_command_timeout.is_none());
+        assert!(agent.delegation_depth.is_none());
+        assert!(agent.index_lock_deadline_ms.is_none());
 
         let retry = RetrySettings::default();
         assert!(retry.max_retries.is_none());
@@ -1054,6 +1070,8 @@ mod tests {
         assert!(agent.reasoning_summary.is_none());
         assert!(agent.service_tier.is_none());
         assert!(agent.prompt_command_timeout.is_none());
+        assert!(agent.delegation_depth.is_none());
+        assert!(agent.index_lock_deadline_ms.is_none());
         assert!(s.provider.is_none());
         assert!(s.retry.is_none());
         assert!(s.permissions.is_none());
@@ -1184,6 +1202,7 @@ mod tests {
                 service_tier: Some("fast".to_owned()),
                 prompt_command_timeout: Some("10s".to_owned()),
                 delegation_depth: Some(2),
+                index_lock_deadline_ms: Some(10_000),
             }),
             retry: Some(RetrySettings {
                 max_retries: Some(5),
@@ -1282,6 +1301,7 @@ mod tests {
         assert_eq!(ra.step_timeout, oa.step_timeout);
         assert_eq!(ra.reasoning_effort, oa.reasoning_effort);
         assert_eq!(ra.delegation_depth, oa.delegation_depth);
+        assert_eq!(ra.index_lock_deadline_ms, oa.index_lock_deadline_ms);
         let rr = roundtripped.retry.as_ref().unwrap();
         let or_ = original.retry.as_ref().unwrap();
         assert_eq!(rr.max_retries, or_.max_retries);

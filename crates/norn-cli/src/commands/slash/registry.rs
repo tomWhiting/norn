@@ -411,6 +411,7 @@ fn name_handler(state: &SlashState) -> CustomSlashHandler {
     let session_id = state.session_id.clone();
     let data_dir = state.data_dir.clone();
     let no_session = state.no_session;
+    let index_lock_deadline = state.index_lock_deadline;
     Arc::new(move |arg| {
         let trimmed = arg.trim();
         if trimmed.is_empty() {
@@ -420,14 +421,28 @@ fn name_handler(state: &SlashState) -> CustomSlashHandler {
         *session_name.lock() = Some(trimmed.to_owned());
         eprintln!("Session named: {trimmed}");
         if !no_session && let Some(id) = session_id.as_deref() {
-            persist_session_name(&data_dir, id, trimmed);
+            persist_session_name(&data_dir, index_lock_deadline, id, trimmed);
         }
         Ok(Vec::new())
     })
 }
 
-fn persist_session_name(data_dir: &Path, session_id: &str, name: &str) {
-    if let Err(err) = SessionManager::new(data_dir).rename(session_id, Some(name.to_owned())) {
+/// Persist a `/name` rename to the session index.
+///
+/// `index_lock_deadline` bounds the inter-process index-lock wait
+/// (review A2, 2026-07-06): `rename` rewrites the index under the lock,
+/// and without a deadline a wedged sibling process would freeze the
+/// running interactive surface inside this handler forever. On expiry
+/// the typed timeout surfaces through the existing warning path and the
+/// session keeps running with the in-memory name.
+fn persist_session_name(
+    data_dir: &Path,
+    index_lock_deadline: std::time::Duration,
+    session_id: &str,
+    name: &str,
+) {
+    let manager = SessionManager::new(data_dir).with_index_lock_deadline(Some(index_lock_deadline));
+    if let Err(err) = manager.rename(session_id, Some(name.to_owned())) {
         eprintln!("norn: warning: failed to update session index: {err}");
     }
 }
@@ -482,6 +497,8 @@ mod tests {
             session_id: None,
             data_dir: PathBuf::from("/tmp/norn-cli-slash-registry"),
             no_session: true,
+            // Test configuration: generous bound, never contended here.
+            index_lock_deadline: std::time::Duration::from_secs(10),
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store: Arc::new(EventStore::new()),
@@ -760,6 +777,75 @@ mod tests {
         let registry = build_slash_registry(&state, None);
         fire(&registry, "name", "");
         assert!(state.session_name_snapshot().is_none());
+    }
+
+    /// Regression (review A2, 2026-07-06): `/name` used to construct its
+    /// [`SessionManager`] with no index-lock deadline, so a wedged
+    /// sibling process froze the running interactive surface inside the
+    /// handler forever. With the state-carried deadline applied, a held
+    /// lock degrades to the existing warning path — the handler returns
+    /// promptly with the in-memory name set — and the rename lands once
+    /// the holder releases.
+    #[test]
+    fn name_handler_with_held_lock_warns_instead_of_hanging() {
+        use norn::session::store::DurabilityPolicy;
+        use norn::session::{CreateSessionOptions, SessionManager};
+
+        let tmp = tempfile::tempdir().unwrap();
+        let opened = SessionManager::new(tmp.path())
+            .create(
+                CreateSessionOptions {
+                    model: "gpt-x".to_owned(),
+                    working_dir: "/work".to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .unwrap();
+        let session_id = opened.entry.id.clone();
+        drop(opened);
+
+        let mut seed = empty_seed();
+        seed.session_id = Some(session_id.clone());
+        seed.data_dir = tmp.path().to_path_buf();
+        seed.no_session = false;
+        // 50ms deadline — legitimate test configuration for a fast test.
+        seed.index_lock_deadline = std::time::Duration::from_millis(50);
+        let state = SlashState::new(seed);
+        let registry = build_slash_registry(&state, None);
+
+        // Hold the advisory lock the way a wedged sibling norn process
+        // would: an independent file description with the exclusive OS
+        // lock (mirrors tests/index_lock_deadline.rs).
+        let holder = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(tmp.path().join("index.lock"))
+            .unwrap();
+        holder.lock().unwrap();
+
+        let started = std::time::Instant::now();
+        fire(&registry, "name", "held-lock-name");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(5),
+            "/name must time out on the held lock, not hang: waited {:?}",
+            started.elapsed(),
+        );
+        // The in-memory name is set even though the index rename timed out.
+        assert_eq!(
+            state.session_name_snapshot().as_deref(),
+            Some("held-lock-name"),
+        );
+
+        // Holder releases: the same deadline persists the next rename.
+        holder.unlock().unwrap();
+        drop(holder);
+        fire(&registry, "name", "post-release-name");
+        let renamed = SessionManager::new(tmp.path())
+            .resolve(&session_id)
+            .unwrap();
+        assert_eq!(renamed.name.as_deref(), Some("post-release-name"));
     }
 
     #[test]

@@ -185,6 +185,7 @@ fn event_to_message(
         | SessionEvent::ForkComplete { .. }
         | SessionEvent::Label { .. }
         | SessionEvent::Custom { .. }
+        | SessionEvent::ContextMark { .. }
         | SessionEvent::SpokenResponse { .. }
         | SessionEvent::Compaction { .. } => None,
     }

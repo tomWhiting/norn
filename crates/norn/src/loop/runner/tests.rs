@@ -3480,7 +3480,7 @@ async fn persisted_compaction_marks_load_once_per_loop_context() {
     let executor = MockToolExecutor::empty();
     let mut loop_ctx = LoopContext::new("system");
     loop_ctx.context_edits = Some(crate::session::context_edit::ContextEdits::new());
-    assert!(!loop_ctx.compaction_marks_loaded);
+    assert!(!loop_ctx.context_marks_loaded);
 
     let result = run_step_with(
         StepArgs {
@@ -3498,7 +3498,7 @@ async fn persisted_compaction_marks_load_once_per_loop_context() {
     .await;
     assert_completed(result);
     assert!(
-        loop_ctx.compaction_marks_loaded,
+        loop_ctx.context_marks_loaded,
         "the first step must record the one-time load",
     );
 
@@ -3567,7 +3567,7 @@ async fn persisted_compaction_marks_load_once_per_loop_context() {
     assert!(
         contains(&requests[1], "first"),
         "a per-step store re-walk crept back in — step 2 hid an event \
-         that only apply_persisted_compactions could have marked: {:?}",
+         that only apply_persisted_marks could have marked: {:?}",
         requests[1].messages,
     );
 }
@@ -4325,6 +4325,55 @@ async fn auto_compaction_broadcasts_live_event_and_hides_summarization_stream() 
     assert_eq!(
         persisted_summary.as_deref(),
         Some("LLM summary of the seed turns"),
+    );
+
+    // Session-fidelity Gap 9: the persisted `loop.compaction_summarization`
+    // audit record carries the SAME facts as the live broadcast — a
+    // log-only consumer reproduces the live event's accounting exactly.
+    let persisted_audit = store
+        .events()
+        .into_iter()
+        .find_map(|e| match e {
+            SessionEvent::Custom {
+                event_type, data, ..
+            } if event_type == "loop.compaction_summarization" => Some(data),
+            _ => None,
+        })
+        .expect("the compaction-summarization audit record must persist");
+    assert_eq!(
+        persisted_audit["compaction_id"].as_str(),
+        Some(compaction.compaction_id.to_string().as_str()),
+        "audit: {persisted_audit}",
+    );
+    assert_eq!(
+        persisted_audit["events_compacted"].as_u64(),
+        Some(compaction.events_compacted as u64),
+    );
+    assert_eq!(
+        persisted_audit["tokens_before"].as_u64(),
+        Some(compaction.tokens_before),
+    );
+    assert_eq!(
+        persisted_audit["tokens_after"].as_u64(),
+        Some(compaction.tokens_after),
+    );
+    assert_eq!(persisted_audit["model"].as_str(), Some("test-model"));
+    assert_eq!(compaction.model, "test-model");
+    assert_eq!(
+        persisted_audit["freed_token_estimate"].as_u64(),
+        Some(compaction.freed_token_estimate as u64),
+    );
+    assert_eq!(
+        persisted_audit["summary_kind"].as_str(),
+        Some("llm_summary"),
+    );
+    assert_eq!(
+        persisted_audit["usage"]["input_tokens"].as_u64(),
+        Some(usage.input_tokens),
+    );
+    assert_eq!(
+        persisted_audit["usage"]["output_tokens"].as_u64(),
+        Some(usage.output_tokens),
     );
 }
 
@@ -5837,4 +5886,342 @@ async fn token_warning_fires_on_the_usage_floor_and_carries_all_numbers() {
     assert_eq!(data["usage_floor"].as_u64(), Some(9_999));
     assert_eq!(data["effective"].as_u64(), Some(9_999));
     assert_eq!(data["limit"].as_u64(), Some(5_000));
+}
+
+// -- Session-fidelity Gaps 6 & 7: abnormal-stop and hard-cut-partial ----
+// records on the agent's own timeline.
+
+/// Store index and data of every Custom event of `event_type`.
+fn customs_of_type(store: &EventStore, event_type: &str) -> Vec<(usize, Value)> {
+    store
+        .events()
+        .iter()
+        .enumerate()
+        .filter_map(|(idx, event)| match event {
+            SessionEvent::Custom {
+                event_type: ty,
+                data,
+                ..
+            } if ty == event_type => Some((idx, data.clone())),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Provider whose only call streams thinking and text deltas, then hangs
+/// with no `Done` — the shape of a call a step timeout or cancellation
+/// hard-cuts mid-stream.
+struct PartialThenHangs;
+
+impl Provider for PartialThenHangs {
+    fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        use futures_util::StreamExt as _;
+        let events: Vec<Result<ProviderEvent, ProviderError>> = vec![
+            Ok(thinking_delta("mulling it over ")),
+            Ok(text_delta("the answer ")),
+            Ok(text_delta("is 4")),
+        ];
+        Ok(Box::pin(stream::iter(events).chain(stream::pending())))
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+}
+
+/// Gap 6 + 7 (timeout): a step cut by `step_timeout` mid-provider-stream
+/// must leave BOTH durable records — the aborted call's partial content
+/// (`loop.partial_output`, marked hard-cut) and the typed stop reason
+/// (`loop.step_stopped`) — in that order, on the agent's own store.
+#[tokio::test(start_paused = true)]
+async fn step_timeout_persists_partial_output_and_stop_record() {
+    let provider = PartialThenHangs;
+    let executor = MockToolExecutor::empty();
+    let store = EventStore::new();
+    let config = AgentLoopConfig {
+        step_timeout: Some(Duration::from_secs(5)),
+        ..AgentLoopConfig::default()
+    };
+    let mut loop_ctx = LoopContext::new("system");
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_ctx,
+        cancel: None,
+    })
+    .await
+    .expect("timeout is a stop outcome, not an error");
+    assert!(matches!(result, AgentStepResult::TimedOut { .. }));
+
+    let partials = customs_of_type(&store, "loop.partial_output");
+    assert_eq!(partials.len(), 1, "exactly one partial-output record");
+    let (partial_idx, partial) = &partials[0];
+    assert_eq!(partial["stop_reason"].as_str(), Some("timeout"));
+    assert_eq!(partial["hard_cut"].as_bool(), Some(true));
+    assert_eq!(partial["text"].as_str(), Some("the answer is 4"));
+    assert_eq!(partial["thinking"].as_str(), Some("mulling it over "));
+    assert_eq!(partial["text_chars"].as_u64(), Some(15));
+    assert_eq!(partial["thinking_chars"].as_u64(), Some(16));
+
+    let stops = customs_of_type(&store, "loop.step_stopped");
+    assert_eq!(stops.len(), 1, "exactly one stop record");
+    let (stop_idx, stop) = &stops[0];
+    assert_eq!(stop["stop_reason"].as_str(), Some("timeout"));
+    assert_eq!(stop["iterations"].as_u64(), Some(1));
+    assert_eq!(stop["budget_ms"].as_u64(), Some(5_000));
+    assert!(stop["elapsed_ms"].is_u64(), "elapsed must be recorded");
+    assert!(
+        partial_idx < stop_idx,
+        "the partial content precedes the stop that cut it",
+    );
+}
+
+/// Gap 7 (cancellation): a cancel that wins the provider-call race is
+/// the other hard cut — the aborted call's partial content must persist,
+/// marked with the cancelled stop reason.
+#[tokio::test(start_paused = true)]
+async fn cancellation_mid_stream_persists_partial_output_and_stop_record() {
+    let provider = PartialThenHangs;
+    let executor = MockToolExecutor::empty();
+    let store = EventStore::new();
+    let config = default_config();
+    let mut loop_ctx = LoopContext::new("system");
+    let token = CancellationToken::new();
+    let trigger = token.clone();
+    tokio::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        trigger.cancel();
+    });
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_ctx,
+        cancel: Some(token),
+    })
+    .await
+    .expect("cancellation is a stop outcome, not an error");
+    assert!(matches!(result, AgentStepResult::Cancelled { .. }));
+
+    let partials = customs_of_type(&store, "loop.partial_output");
+    assert_eq!(partials.len(), 1, "the aborted call's content must persist");
+    let (_, partial) = &partials[0];
+    assert_eq!(partial["stop_reason"].as_str(), Some("cancelled"));
+    assert_eq!(partial["hard_cut"].as_bool(), Some(true));
+    assert_eq!(partial["text"].as_str(), Some("the answer is 4"));
+
+    let stops = customs_of_type(&store, "loop.step_stopped");
+    assert_eq!(stops.len(), 1);
+    assert_eq!(stops[0].1["stop_reason"].as_str(), Some("cancelled"));
+}
+
+/// Gap 6 (cancellation at the gate): a token already cancelled before the
+/// first iteration leaves the typed stop record — and no partial-output
+/// record, because no provider call was in flight.
+#[tokio::test]
+async fn cancellation_at_gate_persists_stop_record_without_partial() {
+    let provider = MockProvider::new(vec![]);
+    let executor = MockToolExecutor::empty();
+    let store = EventStore::new();
+    let config = default_config();
+    let mut loop_ctx = LoopContext::new("system");
+    let token = CancellationToken::new();
+    token.cancel();
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_ctx,
+        cancel: Some(token),
+    })
+    .await
+    .expect("cancellation is a stop outcome, not an error");
+    assert!(matches!(result, AgentStepResult::Cancelled { .. }));
+
+    let stops = customs_of_type(&store, "loop.step_stopped");
+    assert_eq!(stops.len(), 1);
+    let (_, stop) = &stops[0];
+    assert_eq!(stop["stop_reason"].as_str(), Some("cancelled"));
+    assert_eq!(stop["iterations"].as_u64(), Some(0));
+    assert!(
+        customs_of_type(&store, "loop.partial_output").is_empty(),
+        "no provider call was cut, so no partial may be fabricated",
+    );
+}
+
+/// Gap 6 (max-iterations): exhausting the iteration cap leaves the typed
+/// stop record carrying the cap that fired.
+#[tokio::test]
+async fn max_iterations_persists_typed_stop_record() {
+    let provider = MockProvider::new(vec![vec![
+        tool_call_delta("tc1", Some("read_file"), "{}"),
+        done_event(StopReason::ToolUse),
+    ]]);
+    let executor = MockToolExecutor::new(read_file_handlers());
+    let store = EventStore::new();
+    let config = AgentLoopConfig {
+        max_iterations: Some(1),
+        ..AgentLoopConfig::default()
+    };
+    let mut loop_ctx = LoopContext::new("system");
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[read_file_tool_def()],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_ctx,
+        cancel: None,
+    })
+    .await
+    .expect("max-iterations is a stop outcome, not an error");
+    assert!(matches!(
+        result,
+        AgentStepResult::MaxIterationsReached { .. }
+    ));
+
+    let stops = customs_of_type(&store, "loop.step_stopped");
+    assert_eq!(stops.len(), 1);
+    let (_, stop) = &stops[0];
+    assert_eq!(stop["stop_reason"].as_str(), Some("max_iterations"));
+    assert_eq!(stop["max_iterations"].as_u64(), Some(1));
+    assert_eq!(stop["iterations"].as_u64(), Some(1));
+    assert!(
+        customs_of_type(&store, "loop.partial_output").is_empty(),
+        "the last provider call assembled fully; nothing was cut",
+    );
+}
+
+/// A step that completes normally leaves neither abnormal-stop record.
+#[tokio::test]
+async fn completed_step_leaves_no_abnormal_stop_records() {
+    let provider = MockProvider::new(vec![vec![
+        text_delta("all done"),
+        done_event(StopReason::EndTurn),
+    ]]);
+    let executor = MockToolExecutor::empty();
+    let store = EventStore::new();
+
+    let result = run_step(
+        &provider,
+        &executor,
+        &store,
+        &[],
+        None,
+        &default_config(),
+        None,
+    )
+    .await;
+    let _ = assert_completed(result);
+
+    assert!(customs_of_type(&store, "loop.step_stopped").is_empty());
+    assert!(customs_of_type(&store, "loop.partial_output").is_empty());
+}
+
+/// Gap 7, the post-assembly window: the provider call completes and
+/// assembles, but a `PostLlm` hook (arbitrary user shell hooks run here)
+/// hangs until the step timeout fires — BEFORE `persist_assistant_turn`
+/// appends the `AssistantMessage`. The capture must stay armed through
+/// that window so the complete response survives as the durable
+/// `loop.partial_output` record instead of vanishing entirely.
+#[tokio::test(start_paused = true)]
+async fn timeout_during_post_llm_hook_persists_the_assembled_response_as_partial() {
+    struct HangingPostLlm;
+    #[async_trait::async_trait]
+    impl crate::integration::hooks::PostLlmHook for HangingPostLlm {
+        async fn after_llm(&self, _summary: &crate::integration::hooks::LlmCallSummary) {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    let provider = MockProvider::new(vec![vec![
+        thinking_delta("mulling it over "),
+        text_delta("the answer "),
+        text_delta("is 4"),
+        done_event(StopReason::EndTurn),
+    ]]);
+    let executor = MockToolExecutor::empty();
+    let store = EventStore::new();
+    let config = AgentLoopConfig {
+        step_timeout: Some(Duration::from_secs(5)),
+        ..AgentLoopConfig::default()
+    };
+    let mut hooks = crate::integration::hooks::HookRegistry::new();
+    hooks.register(crate::integration::hooks::Hook::PostLlm(Box::new(
+        HangingPostLlm,
+    )));
+    let mut loop_ctx = LoopContext::new("system");
+    loop_ctx.hooks = Some(std::sync::Arc::new(hooks));
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_ctx,
+        cancel: None,
+    })
+    .await
+    .expect("timeout is a stop outcome, not an error");
+    assert!(matches!(result, AgentStepResult::TimedOut { .. }));
+
+    // The cut landed after assembly but before the durable append: no
+    // AssistantMessage may exist for the turn...
+    assert!(
+        !store
+            .events()
+            .iter()
+            .any(|e| matches!(e, SessionEvent::AssistantMessage { .. })),
+        "the turn never reached persist_assistant_turn",
+    );
+    // ...so the partial record is the ONLY durable copy of the complete
+    // response, and it must carry everything the stream produced.
+    let partials = customs_of_type(&store, "loop.partial_output");
+    assert_eq!(partials.len(), 1, "exactly one partial-output record");
+    let (_, partial) = &partials[0];
+    assert_eq!(partial["stop_reason"].as_str(), Some("timeout"));
+    assert_eq!(partial["hard_cut"].as_bool(), Some(true));
+    assert_eq!(partial["text"].as_str(), Some("the answer is 4"));
+    assert_eq!(partial["thinking"].as_str(), Some("mulling it over "));
+
+    let stops = customs_of_type(&store, "loop.step_stopped");
+    assert_eq!(stops.len(), 1);
+    assert_eq!(stops[0].1["stop_reason"].as_str(), Some("timeout"));
 }

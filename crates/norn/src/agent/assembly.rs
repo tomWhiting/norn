@@ -459,6 +459,8 @@ pub(crate) fn restore_session_state(
         let artifacts = crate::session::ReplayArtifacts::from_events(event_store.events());
         if let Some(edits) = loop_context.context_edits.as_mut() {
             edits.mark_superseded(artifacts.superseded_event_ids.iter().cloned());
+            edits.mark_suppressed(artifacts.suppressed_event_ids.iter().cloned());
+            edits.mark_injected(artifacts.injected_event_ids.iter().cloned());
         }
         crate::agent::resume::rebuild_action_log(&action_log, &artifacts.events);
     }

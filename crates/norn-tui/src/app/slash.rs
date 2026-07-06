@@ -145,8 +145,18 @@ fn write_dim_line(message: &str, guard: &mut TerminalGuard) -> Result<(), TuiErr
 /// never the rotated-out one. Pure store-stack work with no terminal
 /// I/O, so both the success and the failure path are unit-testable
 /// without a [`TerminalGuard`].
+///
+/// `index_lock_deadline` bounds the inter-process index-lock wait the
+/// create (and the sink it registers) performs: without it a wedged
+/// sibling process would freeze the running TUI inside the `/new`
+/// handler forever. On expiry the typed
+/// [`SessionPersistError::IndexLockTimeout`] propagates to `handle_new`'s
+/// error path, which keeps the current session fully intact. The same
+/// deadline rides on the returned binding's manager, bounding every
+/// child-mint index insert too.
 fn create_new_session_store(
     data_dir: &std::path::Path,
+    index_lock_deadline: std::time::Duration,
     model: &str,
 ) -> Result<(String, EventStore, Arc<SessionBinding>), SessionPersistError> {
     // Same derivation as the CLI driver's startup path, but propagated
@@ -154,7 +164,7 @@ fn create_new_session_store(
     // error and keeps the current session rather than silently
     // indexing a session with an empty working directory.
     let working_dir = std::env::current_dir()?.to_string_lossy().into_owned();
-    let manager = SessionManager::new(data_dir);
+    let manager = SessionManager::new(data_dir).with_index_lock_deadline(Some(index_lock_deadline));
     let opened = manager.create(
         CreateSessionOptions {
             model: model.to_owned(),
@@ -209,7 +219,7 @@ async fn handle_new(
     let (new_id, new_store, new_binding) = if let (Some(data_dir), Some(_old_id)) =
         (runtime.data_dir.as_ref(), runtime.session_id.as_ref())
     {
-        match create_new_session_store(data_dir, &runtime.model) {
+        match create_new_session_store(data_dir, runtime.index_lock_deadline, &runtime.model) {
             Ok((new_id, store, binding)) => (Some(new_id), store, binding),
             Err(err) => {
                 tracing::error!(
@@ -561,6 +571,10 @@ mod tests {
     use norn::session::events::{EventBase, SessionEvent};
     use norn::session::{read_index, read_session_events};
 
+    /// Index-lock deadline for the store fixtures — generous test
+    /// configuration; no test here contends the lock.
+    const TEST_LOCK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
     #[test]
     fn create_new_session_store_registers_session_in_index() {
         // Regression for the H20 bug: `/new` previously opened a raw
@@ -568,7 +582,8 @@ mod tests {
         // index — unlistable and unresumable. The full stack must
         // index it.
         let tmp = tempfile::tempdir().unwrap();
-        let (id, _store, _binding) = create_new_session_store(tmp.path(), "test-model").unwrap();
+        let (id, _store, _binding) =
+            create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model").unwrap();
         let index = read_index(tmp.path()).unwrap();
         assert!(
             index.iter().any(|e| e.id == id),
@@ -584,7 +599,8 @@ mod tests {
         // registered sink, and the index entry must track them — the
         // raw-sink path bypassed index maintenance entirely.
         let tmp = tempfile::tempdir().unwrap();
-        let (id, store, _binding) = create_new_session_store(tmp.path(), "test-model").unwrap();
+        let (id, store, _binding) =
+            create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model").unwrap();
         store
             .append(SessionEvent::UserMessage {
                 base: EventBase::new(None),
@@ -611,7 +627,8 @@ mod tests {
     #[test]
     fn create_new_session_store_session_is_resumable() {
         let tmp = tempfile::tempdir().unwrap();
-        let (id, store, _binding) = create_new_session_store(tmp.path(), "test-model").unwrap();
+        let (id, store, _binding) =
+            create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model").unwrap();
         store
             .append(SessionEvent::UserMessage {
                 base: EventBase::new(None),
@@ -637,7 +654,7 @@ mod tests {
         let tmp = tempfile::tempdir().unwrap();
         let bogus_dir = tmp.path().join("not-a-dir");
         std::fs::write(&bogus_dir, b"occupied").unwrap();
-        let result = create_new_session_store(&bogus_dir, "test-model");
+        let result = create_new_session_store(&bogus_dir, TEST_LOCK_DEADLINE, "test-model");
         assert!(
             result.is_err(),
             "creating a session under a file path must fail loudly",

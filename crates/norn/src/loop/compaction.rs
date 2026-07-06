@@ -132,7 +132,8 @@ fn estimate_event_tokens(
             | SessionEvent::ChildBranch { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
-            | SessionEvent::Custom { .. } => 0,
+            | SessionEvent::Custom { .. }
+            | SessionEvent::ContextMark { .. } => 0,
         };
         total = total.saturating_add(tokens);
     }
@@ -419,6 +420,38 @@ fn fallback_digest(
     })
 }
 
+/// Text and thinking deltas accumulated by an **in-flight** provider
+/// call — content the stream has produced but no assembled response has
+/// yet persisted.
+///
+/// Maintained by the runner's provider-call collector
+/// ([`call_provider`](crate::agent_loop::runner) via the shared
+/// [`TimeoutState`]): reset at the start of every stream attempt (a retry
+/// discards the failed attempt's partials, mirroring the live
+/// `StreamRetry` marker) and cleared only once the `AssistantMessage`
+/// event is durably appended (`persist_assistant_turn`) — assembly alone
+/// does not disarm it, because the post-LLM hook window between assembly
+/// and the append can still be hard-cut. When a step timeout or
+/// cancellation cuts the call mid-stream or in that window, this is the
+/// only surviving copy of what the model had said — the exit path
+/// persists it as a `loop.partial_output` record.
+#[derive(Clone, Debug, Default)]
+pub struct InFlightPartial {
+    /// Assistant text deltas accumulated so far, in stream order.
+    pub text: String,
+    /// Thinking/reasoning-summary deltas accumulated so far, in stream
+    /// order.
+    pub thinking: String,
+}
+
+impl InFlightPartial {
+    /// Whether the stream had produced any content before the cut.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.text.is_empty() && self.thinking.is_empty()
+    }
+}
+
 /// Mutable handle shared between the runner's main body and the outer
 /// `tokio::time::timeout` wrapper used by R2 (`step_timeout`). Stored
 /// behind a [`parking_lot::Mutex`] so the timeout closure can capture an
@@ -433,6 +466,10 @@ pub struct TimeoutState {
     /// runner's running total after every usage-bearing provider call so a
     /// timed-out step still reports the spend it incurred.
     pub usage: crate::provider::usage::Usage,
+    /// Partial content of the in-flight provider call, when one is
+    /// mid-stream. `None` between calls and after every completed
+    /// assembly; `Some` (possibly empty) while a stream attempt runs.
+    pub in_flight_partial: Option<InFlightPartial>,
 }
 
 /// Convenience alias for `Arc<Mutex<TimeoutState>>`.

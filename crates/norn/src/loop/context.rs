@@ -78,17 +78,27 @@ pub fn for_each_visible_event(
             continue;
         }
 
+        // Events with no tag are bookkeeping (durable context-mark
+        // twins); they are structurally invisible to the prompt view —
+        // even the injected-tag override never applies to them.
+        let Some(base_tag) = tag_for_event(event) else {
+            continue;
+        };
         let tag = if edits.is_injected(id) {
             ContentTag::Injection
         } else {
-            tag_for_event(event)
+            base_tag
         };
 
         visit(event, tag);
     }
 }
 
-fn tag_for_event(event: &SessionEvent) -> ContentTag {
+/// The content tag an event carries in the prompt view, or `None` for
+/// events the view structurally excludes:
+/// [`SessionEvent::ContextMark`] is the durable twin of a live edit mark
+/// — a record *about* the view, never content *in* it.
+fn tag_for_event(event: &SessionEvent) -> Option<ContentTag> {
     match event {
         SessionEvent::UserMessage { .. }
         | SessionEvent::AssistantMessage { .. }
@@ -96,11 +106,12 @@ fn tag_for_event(event: &SessionEvent) -> ContentTag {
         | SessionEvent::ModelChange { .. }
         | SessionEvent::ChildBranch { .. }
         | SessionEvent::ForkComplete { .. }
-        | SessionEvent::Label { .. } => ContentTag::Message,
-        SessionEvent::ToolResult { .. } => ContentTag::ToolResult,
-        SessionEvent::Compaction { .. } => ContentTag::Compaction,
-        SessionEvent::Custom { event_type, .. } => ContentTag::Custom(event_type.clone()),
-        SessionEvent::RuleInjection { rule_id, .. } => ContentTag::Rule(rule_id.clone()),
+        | SessionEvent::Label { .. } => Some(ContentTag::Message),
+        SessionEvent::ToolResult { .. } => Some(ContentTag::ToolResult),
+        SessionEvent::Compaction { .. } => Some(ContentTag::Compaction),
+        SessionEvent::Custom { event_type, .. } => Some(ContentTag::Custom(event_type.clone())),
+        SessionEvent::RuleInjection { rule_id, .. } => Some(ContentTag::Rule(rule_id.clone())),
+        SessionEvent::ContextMark { .. } => None,
     }
 }
 
@@ -170,11 +181,151 @@ mod tests {
         let _id3 = store.append(user_msg("also keep")).expect("append");
 
         let mut edits = ContextEdits::new();
-        edits.suppress(id2);
+        edits.suppress(&store, id2).expect("suppress");
 
         let view = construct_prompt(&store, &edits);
         assert_eq!(view.events.len(), 2);
         assert_eq!(view.events[0].base().id, id1);
+    }
+
+    #[test]
+    fn context_mark_events_are_invisible_to_the_prompt_view() {
+        let store = EventStore::new();
+        let keep = store.append(user_msg("keep")).expect("append");
+        let hide = store.append(user_msg("hide")).expect("append");
+        let mut edits = ContextEdits::new();
+        edits.suppress(&store, hide).expect("suppress");
+        edits.inject(&store, user_msg("note")).expect("inject");
+
+        // Store now holds: keep, hide, ContextMark(suppress), note,
+        // ContextMark(inject). The view holds only real content.
+        assert_eq!(store.len(), 5);
+        let view = construct_prompt(&store, &edits);
+        assert_eq!(view.events.len(), 2, "marks must never surface");
+        assert_eq!(view.events[0].base().id, keep);
+        assert_eq!(view.tags, vec![ContentTag::Message, ContentTag::Injection]);
+    }
+
+    /// Gap 8 closure: suppress and injection marks applied live must
+    /// survive a process restart. The live history is round-tripped
+    /// through the JSONL wire format and the tolerant reader (the same
+    /// path `SessionManager::resume` uses), a fresh store and tracker are
+    /// rebuilt from the [`ReplayArtifacts`], and the *effective* prompt
+    /// view — event ids, tags, and rendered provider messages — must be
+    /// identical to the pre-restart one.
+    #[test]
+    fn restart_shaped_resume_rebuilds_identical_prompt_view() {
+        use crate::session::conversion::prompt_events_to_messages;
+        use crate::session::persistence::io::read_session_events_from;
+
+        // Live session: content, a suppression, an injection, and a
+        // compaction, all through the real edit surfaces.
+        let store = EventStore::new();
+        store.append(user_msg("q0")).expect("append");
+        store.append(assistant_msg("a0")).expect("append");
+        let noisy = store.append(user_msg("noisy aside")).expect("append");
+        store.append(user_msg("q1")).expect("append");
+        store.append(assistant_msg("a1")).expect("append");
+
+        let mut edits = ContextEdits::new();
+        edits.suppress(&store, noisy).expect("suppress");
+        edits
+            .inject(&store, user_msg("operator note"))
+            .expect("inject");
+        let old_ids: Vec<_> = store
+            .events()
+            .iter()
+            .take(2)
+            .map(|e| e.base().id.clone())
+            .collect();
+        edits
+            .summarize(&store, old_ids, "summary of turn 0".to_owned())
+            .expect("summarize");
+
+        let live_view = construct_prompt(&store, &edits);
+
+        // Process restart: serialize every event as a JSONL line and read
+        // it back through the tolerant reader.
+        let mut file = Vec::new();
+        for event in store.events() {
+            serde_json::to_writer(&mut file, &event).expect("serialize line");
+            file.push(b'\n');
+        }
+        let artifacts = read_session_events_from(std::io::Cursor::new(file), "restart-test")
+            .expect("tolerant read");
+        assert_eq!(artifacts.skipped_lines, 0, "every line must parse");
+
+        let resumed_store = EventStore::new();
+        for event in artifacts.events.clone() {
+            resumed_store.append(event).expect("replay append");
+        }
+        let mut resumed_edits = ContextEdits::new();
+        resumed_edits.mark_superseded(artifacts.superseded_event_ids.iter().cloned());
+        resumed_edits.mark_suppressed(artifacts.suppressed_event_ids.iter().cloned());
+        resumed_edits.mark_injected(artifacts.injected_event_ids.iter().cloned());
+
+        let resumed_view = construct_prompt(&resumed_store, &resumed_edits);
+
+        let live_ids: Vec<_> = live_view
+            .events
+            .iter()
+            .map(|e| e.base().id.clone())
+            .collect();
+        let resumed_ids: Vec<_> = resumed_view
+            .events
+            .iter()
+            .map(|e| e.base().id.clone())
+            .collect();
+        assert_eq!(live_ids, resumed_ids, "same events, same order");
+        assert_eq!(live_view.tags, resumed_view.tags, "same tags");
+
+        // The effective conversation the model would see is identical.
+        let live_msgs = prompt_events_to_messages(&live_view.events);
+        let resumed_msgs = prompt_events_to_messages(&resumed_view.events);
+        assert_eq!(live_msgs.len(), resumed_msgs.len());
+        for (live, resumed) in live_msgs.iter().zip(&resumed_msgs) {
+            assert_eq!(live.role, resumed.role);
+            assert_eq!(live.content, resumed.content);
+        }
+        // And the suppressed event genuinely stays out after restart.
+        assert!(
+            live_msgs
+                .iter()
+                .all(|m| m.content.as_deref() != Some("noisy aside")),
+            "the suppressed event must not resurface",
+        );
+    }
+
+    /// The other resume shape: a fresh tracker over the same live store
+    /// (no file round-trip), restored through
+    /// [`ContextEdits::apply_persisted_marks`] — the walk the step runner
+    /// performs when `context_marks_loaded` is false.
+    #[test]
+    fn apply_persisted_marks_rebuilds_identical_prompt_view() {
+        let store = EventStore::new();
+        store.append(user_msg("kept")).expect("append");
+        let hidden = store.append(user_msg("hidden")).expect("append");
+        let mut edits = ContextEdits::new();
+        edits.suppress(&store, hidden).expect("suppress");
+        edits.inject(&store, user_msg("injected")).expect("inject");
+        let live_view = construct_prompt(&store, &edits);
+
+        let mut rebuilt = ContextEdits::new();
+        rebuilt.apply_persisted_marks(&store);
+        let rebuilt_view = construct_prompt(&store, &rebuilt);
+
+        let live_ids: Vec<_> = live_view
+            .events
+            .iter()
+            .map(|e| e.base().id.clone())
+            .collect();
+        let rebuilt_ids: Vec<_> = rebuilt_view
+            .events
+            .iter()
+            .map(|e| e.base().id.clone())
+            .collect();
+        assert_eq!(live_ids, rebuilt_ids);
+        assert_eq!(live_view.tags, rebuilt_view.tags);
     }
 
     #[test]
@@ -210,7 +361,7 @@ mod tests {
             .expect("append");
 
         let mut edits = ContextEdits::new();
-        edits.suppress(suppressed);
+        edits.suppress(&store, suppressed).expect("suppress");
 
         let view = construct_prompt(&store, &edits);
         let msgs = prompt_events_to_messages(&view.events);
@@ -277,8 +428,8 @@ mod tests {
         }
 
         let mut edits = ContextEdits::new();
-        edits.suppress(ids[4].clone());
-        edits.suppress(ids[8].clone());
+        edits.suppress(&store, ids[4].clone()).expect("suppress");
+        edits.suppress(&store, ids[8].clone()).expect("suppress");
         edits
             .summarize(&store, ids[0..3].to_vec(), "compact summary".to_owned())
             .expect("summarize");

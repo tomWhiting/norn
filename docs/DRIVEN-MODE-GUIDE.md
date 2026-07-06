@@ -212,9 +212,17 @@ prints (`envelope_version: 1`). `stop` is internally tagged on `reason`:
 | `timed_out` | `elapsed_ms`, `iterations` | partial output, if any | 1 |
 | `cancelled` | — | `null` | 1 |
 | `truncated` | `truncation` (`max_tokens` \| `content_filter`), `iterations` | partial text, if any | 1 |
+| `error` | `message`, `class` (`agent` \| `auth` \| `io` \| `session`) | `null` | 1, or 3 for `auth` |
 
 With `--output-schema`, a `completed` envelope's `output` is the
 schema-validated JSON value (not a string).
+
+The `error` reason appears only in **plain** print mode (`-p -f json` /
+`-f stream-json`), where every post-argument-parsing failure emits this
+envelope so a machine consumer never sees an empty stdout; argument
+errors (exit 2) stay stderr-only. In driven mode you will never receive
+an `error` stop — a failing accepted `run/execute` is answered as the
+id-matched `-32603` error response instead (§7).
 
 **There is deliberately no `retryable` field.** Whether a stop is worth
 retrying depends on *your* budget and how you value the partial — Norn

@@ -199,6 +199,17 @@ pub fn render_event(
                 format!("{header}\n{content}")
             }
         }
+        SessionEvent::ContextMark {
+            mark,
+            target_event_id,
+            ..
+        } => {
+            let kind = match mark {
+                norn::session::events::ContextMarkKind::Suppress => "suppress",
+                norn::session::events::ContextMarkKind::Inject => "inject",
+            };
+            render_dim_status_line(&format!("context mark: {kind} → {target_event_id}"))
+        }
     }
 }
 

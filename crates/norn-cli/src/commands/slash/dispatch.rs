@@ -104,6 +104,8 @@ mod tests {
             session_id: None,
             data_dir: PathBuf::from("/tmp/norn-cli-dispatch-tests"),
             no_session: true,
+            // Test configuration: generous bound, never contended here.
+            index_lock_deadline: std::time::Duration::from_secs(10),
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store: Arc::new(EventStore::new()),

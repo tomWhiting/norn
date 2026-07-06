@@ -94,6 +94,18 @@ pub struct ConfigOverrides {
     /// `-c server_compaction_threshold_tokens=<u64>` → provider compaction threshold.
     pub server_compaction_threshold_tokens: Option<u64>,
 
+    // -- SessionManager fields ---------------------------------------------
+    /// `-c index_lock_deadline_ms=<u64>` → the acquisition deadline (in
+    /// milliseconds) the CLI's [`SessionManager`](norn::session::SessionManager)
+    /// applies when taking the inter-process session-index lock
+    /// (`SessionManager::with_index_lock_deadline`). Outranks
+    /// `agent.index_lock_deadline_ms` from settings; unset defers to that
+    /// setting, then to the owner-ruled compiled default
+    /// ([`DEFAULT_INDEX_LOCK_DEADLINE_MS`](crate::config::overrides::DEFAULT_INDEX_LOCK_DEADLINE_MS)).
+    /// Zero is rejected at parse time — a zero deadline can never acquire
+    /// the lock.
+    pub index_lock_deadline_ms: Option<u64>,
+
     // -- Coordination fields ---------------------------------------------
     /// `-c delegation_depth=<u32>` → the root agent's
     /// [`DelegationBudget::remaining_depth`](norn::agent::child_policy::DelegationBudget::remaining_depth)
@@ -270,6 +282,15 @@ impl ConfigOverrides {
                 self.server_compaction_threshold_tokens =
                     Some(parse_typed::<u64>(key, "u64", value)?);
             }
+            "index_lock_deadline_ms" => {
+                let parsed = parse_typed::<u64>(key, "u64", value)?;
+                if parsed == 0 {
+                    return Err(BuildError::Argument(format!(
+                        "invalid value for {key}: a zero deadline can never acquire the lock",
+                    )));
+                }
+                self.index_lock_deadline_ms = Some(parsed);
+            }
             "base_url" => {
                 self.base_url = Some(value.to_owned());
             }
@@ -427,6 +448,7 @@ mod tests {
         assert!(overrides.compact_keep_turns.is_none());
         assert!(overrides.conversation_state.is_none());
         assert!(overrides.server_compaction_threshold_tokens.is_none());
+        assert!(overrides.index_lock_deadline_ms.is_none());
         assert!(overrides.base_url.is_none());
         assert!(overrides.max_retries.is_none());
         assert!(overrides.request_timeout.is_none());
@@ -589,6 +611,48 @@ mod tests {
         assert_eq!(
             overrides.conversation_state,
             Some(ConversationStateMode::Auto),
+        );
+    }
+
+    /// `-c index_lock_deadline_ms=<u64>` parses into the `SessionManager`
+    /// override; zero and non-integer values are loud parse errors naming
+    /// the key.
+    #[test]
+    fn parse_index_lock_deadline_ms_sets_value() {
+        let overrides = ConfigOverrides::parse(&["index_lock_deadline_ms=250".to_owned()]).unwrap();
+        assert_eq!(overrides.index_lock_deadline_ms, Some(250));
+
+        let unset = ConfigOverrides::parse(&[]).unwrap();
+        assert_eq!(unset.index_lock_deadline_ms, None, "unset stays None");
+    }
+
+    #[test]
+    fn parse_index_lock_deadline_ms_rejects_zero() {
+        let err = ConfigOverrides::parse(&["index_lock_deadline_ms=0".to_owned()])
+            .expect_err("a zero deadline must error");
+        let BuildError::Argument(msg) = err else {
+            panic!("expected an Argument error, got {err:?}");
+        };
+        assert!(
+            msg.contains("index_lock_deadline_ms"),
+            "the error names the key: {msg}"
+        );
+        assert!(
+            msg.contains("a zero deadline can never acquire the lock"),
+            "the error explains the rejection: {msg}"
+        );
+    }
+
+    #[test]
+    fn parse_index_lock_deadline_ms_rejects_garbage() {
+        let err = ConfigOverrides::parse(&["index_lock_deadline_ms=soon".to_owned()])
+            .expect_err("a non-integer deadline must error");
+        let BuildError::Argument(msg) = err else {
+            panic!("expected an Argument error, got {err:?}");
+        };
+        assert!(
+            msg.contains("index_lock_deadline_ms") && msg.contains("u64") && msg.contains("soon"),
+            "the error names key, type, and value: {msg}"
         );
     }
 

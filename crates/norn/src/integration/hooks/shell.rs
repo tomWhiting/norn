@@ -291,6 +291,7 @@ const fn session_event_variant_name(event: &SessionEvent) -> &'static str {
         SessionEvent::ForkComplete { .. } => "ForkComplete",
         SessionEvent::Label { .. } => "Label",
         SessionEvent::Custom { .. } => "Custom",
+        SessionEvent::ContextMark { .. } => "ContextMark",
         SessionEvent::RuleInjection { .. } => "RuleInjection",
     }
 }
