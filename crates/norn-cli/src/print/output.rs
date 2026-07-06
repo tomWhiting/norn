@@ -8,11 +8,20 @@
 //! - [`render_json`]: a single JSON envelope on stdout (NC18) holding
 //!   `output`, `usage`, `model`, `session_id`, `events`, `result`,
 //!   `diagnostics`.
-//! - [`spawn_stream_renderer`]: a background tokio task that consumes
-//!   `ProviderEvent`s arriving on the [`tokio::sync::broadcast`] channel
-//!   and writes one NDJSON object per line to stdout as they arrive.
-//!   [`emit_stream_completed`] writes the final `completed` event after
-//!   `run_agent_step` returns.
+//! - [`super::stream_renderer::spawn_stream_renderer`]: a background
+//!   tokio task that consumes `ProviderEvent`s arriving on the
+//!   [`tokio::sync::broadcast`] channel and writes one NDJSON object per
+//!   line to stdout as they arrive (the per-event payload mapping lives
+//!   HERE, in [`agent_event_to_value`]). [`emit_stream_completed`]
+//!   writes the final `completed` event after `run_agent_step` returns.
+//!
+//! On a FAILED plain-mode run the same two machine surfaces still emit a
+//! terminal envelope, carrying [`StopInfo::Error`]
+//! (`{"reason":"error","message":...,"class":...}`) with a minimal
+//! payload — see `super::step_output::emit_error_envelope` for the
+//! emission rules and the owner-ruled boundaries (argument errors and
+//! torn streams stay stderr-only; driven mode answers over JSON-RPC
+//! instead).
 //!
 //! Every formatter takes its writers as parameters (`&mut dyn Write`) so
 //! tests can capture both streams without touching the process's real
@@ -28,7 +37,6 @@ use norn::provider::usage::Usage;
 use norn::session::events::SessionEvent;
 use serde::Serialize;
 use serde_json::{Value, json};
-use tokio::sync::broadcast::error::RecvError;
 
 /// Result of writing the final output. Errors propagate up so the
 /// orchestrator can report them.
@@ -85,6 +93,25 @@ pub enum StopInfo {
         truncation: &'static str,
         /// Completed provider iterations, including the truncated one.
         iterations: u32,
+    },
+    /// The run failed with a typed error before producing a result
+    /// (provider call, auth, session persistence, I/O). Emitted by plain
+    /// print mode for every post-argument-parsing failure so machine
+    /// consumers receive a parseable typed stop instead of bare stderr +
+    /// a non-zero exit (owner rulings 2026-07-06,
+    /// `docs/reviews/2026-07-05-context-window-incident.md` "Second
+    /// bug"). Never produced by [`StopInfo::from_result`] — an
+    /// `AgentStepResult` has no error variant; the orchestrator builds
+    /// this stop from its `PrintError` directly. The envelope stays
+    /// minimal: `output` is `null`, usage is zeroed, events are empty.
+    Error {
+        /// Human-readable failure description — the stderr line without
+        /// the `norn: ` prefix.
+        message: String,
+        /// Machine-stable failure class: `agent` | `auth` | `io` |
+        /// `session`. Argument errors (exit 2) never reach the envelope
+        /// (clap parity), so there is no `argument` class.
+        class: String,
     },
 }
 
@@ -262,8 +289,10 @@ pub struct JsonEnvelope<'a> {
     pub output: Option<&'a Value>,
     /// Token usage subset (input + output only).
     pub usage: UsageOut,
-    /// Model identifier used for the call.
-    pub model: &'a str,
+    /// Model identifier used for the call. `None` (serialised `null`)
+    /// only on an error envelope for a failure that occurred before the
+    /// model was resolved (pre-assembly).
+    pub model: Option<&'a str>,
     /// Session ID if persistence is enabled; `null` when `--no-session`.
     pub session_id: Option<&'a str>,
     /// Session events emitted during this step.
@@ -284,119 +313,11 @@ pub fn render_json<W: Write>(stdout: &mut W, envelope: &JsonEnvelope<'_>) -> IoR
     Ok(())
 }
 
-/// Handle to the background stream renderer spawned by
-/// [`spawn_stream_renderer`].
-///
-/// The renderer cannot rely on broadcast-channel closure to terminate:
-/// the tool registry's shared `ToolContext` holds a
-/// [`norn::provider::SharedAgentEventChannel`] extension with an owned
-/// `Sender` clone (for subagent event forwarding), so the channel stays
-/// open for as long as the runtime exists — awaiting closure alone hangs
-/// forever (REVIEW C1). [`Self::finish`] sends an explicit shutdown
-/// signal; the renderer drains every event already buffered on its
-/// receiver, writes them, and exits.
-pub struct StreamRendererHandle {
-    /// Explicit shutdown trigger consumed by [`Self::finish`].
-    shutdown: tokio::sync::oneshot::Sender<()>,
-    /// The renderer task itself.
-    task: tokio::task::JoinHandle<()>,
-}
-
-impl StreamRendererHandle {
-    /// Signal the renderer to drain its buffered events and stop, then
-    /// wait for the task to finish.
-    ///
-    /// Call this only after the step's own senders have been dropped —
-    /// events broadcast after the shutdown signal are not rendered.
-    ///
-    /// # Errors
-    ///
-    /// Returns the [`tokio::task::JoinError`] when the renderer task
-    /// panicked or was cancelled.
-    pub async fn finish(self) -> Result<(), tokio::task::JoinError> {
-        // A failed send means the receiver half is gone, i.e. the task
-        // already exited on its own (channel closed / stdout broken) —
-        // not an error; the join below still completes.
-        let _ = self.shutdown.send(());
-        self.task.await
-    }
-}
-
-/// Spawn the streaming renderer for `stream-json` mode (NC-003 R8).
-///
-/// Subscribes to `tx`, then writes one NDJSON object per line to stdout
-/// for every [`ProviderEvent`]. The task exits when the broadcast sender
-/// is dropped, when the [`StreamRendererHandle::finish`] shutdown signal
-/// fires (after draining the events already buffered), or when stdout
-/// breaks. Lagged receivers skip the missed events (best-effort —
-/// downstream pipes may miss events; the brief accepts this trade-off).
-///
-/// When `partial` is `false` (the default), only complete events are
-/// emitted: `text`, `thinking`, `tool_call`, `tool_result`, `done`.
-/// Delta events (`text_delta`, `thinking_delta`, `tool_call_delta`) are
-/// silently consumed. When `partial` is `true`, all events are emitted.
-///
-/// Returns a [`StreamRendererHandle`]; callers MUST terminate the task
-/// via [`StreamRendererHandle::finish`] rather than awaiting channel
-/// closure — the registry's shared-context sender clone keeps the
-/// channel open for the lifetime of the runtime (REVIEW C1).
-#[must_use]
-pub fn spawn_stream_renderer(
-    tx: &tokio::sync::broadcast::Sender<norn::provider::AgentEvent>,
-    partial: bool,
-) -> StreamRendererHandle {
-    let mut rx = tx.subscribe();
-    let (shutdown_tx, mut shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-    let task = tokio::spawn(async move {
-        loop {
-            tokio::select! {
-                // Biased: always drain events that are already ready
-                // before observing shutdown, so nothing broadcast ahead
-                // of the signal is dropped. The shutdown branch returns
-                // immediately, so the completed oneshot is never polled
-                // again.
-                biased;
-                received = rx.recv() => match received {
-                    Ok(agent_event) => {
-                        if !write_stream_event(&agent_event, partial) {
-                            return;
-                        }
-                    }
-                    Err(RecvError::Closed) => return,
-                    Err(RecvError::Lagged(n)) => {
-                        tracing::warn!(missed = n, "stream renderer lagged — {n} events dropped");
-                    }
-                },
-                // Resolves on the explicit signal AND when the handle is
-                // dropped without calling finish() — the renderer must
-                // never outlive its orchestrator.
-                _ = &mut shutdown_rx => {
-                    drain_buffered_events(&mut rx, partial);
-                    return;
-                }
-            }
-        }
-    });
-    StreamRendererHandle {
-        shutdown: shutdown_tx,
-        task,
-    }
-}
-
-/// Write one agent event as an NDJSON line on stdout, honouring the
-/// `partial` delta filter. Returns `false` when stdout is gone (broken
-/// pipe) and the renderer should stop.
-fn write_stream_event(agent_event: &norn::provider::AgentEvent, partial: bool) -> bool {
-    let Some(line) = agent_event_to_ndjson(agent_event, partial) else {
-        return true;
-    };
-    let mut stdout = std::io::stdout().lock();
-    stdout.write_all(line.as_bytes()).is_ok()
-        && stdout.write_all(b"\n").is_ok()
-        && stdout.flush().is_ok()
-}
-
-fn agent_event_to_ndjson(
+/// Serialise one agent event to its NDJSON wire line, honouring the
+/// `partial` delta filter. Returns [`None`] for events with no on-wire
+/// representation. Consumed by the stream renderer
+/// ([`super::stream_renderer`]).
+pub(crate) fn agent_event_to_ndjson(
     agent_event: &norn::provider::AgentEvent,
     partial: bool,
 ) -> Option<String> {
@@ -535,29 +456,6 @@ fn message_event_to_value(lifecycle: &norn::provider::AgentMessageLifecycle) -> 
         obj.insert("type".to_owned(), json!(type_label));
     }
     Some(value)
-}
-
-/// Drain and render the events already buffered on `rx` after a
-/// shutdown signal. `try_recv` never blocks, so this terminates even
-/// while the shared-context sender clone keeps the channel open.
-fn drain_buffered_events(
-    rx: &mut tokio::sync::broadcast::Receiver<norn::provider::AgentEvent>,
-    partial: bool,
-) {
-    use tokio::sync::broadcast::error::TryRecvError;
-    loop {
-        match rx.try_recv() {
-            Ok(agent_event) => {
-                if !write_stream_event(&agent_event, partial) {
-                    return;
-                }
-            }
-            Err(TryRecvError::Empty | TryRecvError::Closed) => return,
-            Err(TryRecvError::Lagged(n)) => {
-                tracing::warn!(missed = n, "stream renderer lagged — {n} events dropped");
-            }
-        }
-    }
 }
 
 fn is_delta_event(event: &ProviderEvent) -> bool {
@@ -759,64 +657,6 @@ mod tests {
         provider_event_to_value(event).map(|value| value.to_string())
     }
 
-    /// REVIEW C1 regression: the renderer must terminate via the
-    /// explicit shutdown handle even while an outstanding `Sender`
-    /// clone (the registry's `SharedAgentEventChannel` extension in
-    /// production) keeps the broadcast channel open. Pre-fix, the task
-    /// awaited `RecvError::Closed` forever and this test timed out.
-    #[tokio::test]
-    async fn renderer_finishes_despite_outstanding_sender_clone() {
-        let (tx, _rx) = tokio::sync::broadcast::channel::<norn::provider::AgentEvent>(16);
-        // Simulates the SharedAgentEventChannel extension: a clone that
-        // outlives the step and is never dropped before the await.
-        let registry_clone = tx.clone();
-
-        let handle = spawn_stream_renderer(&tx, false);
-        drop(tx);
-
-        tokio::time::timeout(std::time::Duration::from_secs(10), handle.finish())
-            .await
-            .expect("renderer must exit via explicit shutdown despite a live sender clone")
-            .expect("renderer task must not panic");
-
-        drop(registry_clone);
-    }
-
-    /// A renderer task that panics must surface the `JoinError` from
-    /// `finish()` (the orchestrator maps it onto the agent-error exit
-    /// path) — never be swallowed as a clean completion.
-    #[tokio::test]
-    async fn finish_surfaces_renderer_panic_as_join_error() {
-        let (shutdown, _shutdown_rx) = tokio::sync::oneshot::channel::<()>();
-        let task = tokio::spawn(async {
-            panic!("simulated renderer panic");
-        });
-        let handle = StreamRendererHandle { shutdown, task };
-        let err = handle
-            .finish()
-            .await
-            .expect_err("finish() must report the panicked task");
-        assert!(err.is_panic(), "JoinError must carry the panic: {err}");
-    }
-
-    /// The legacy termination path still works: with every sender
-    /// dropped the channel closes and the task exits without any
-    /// shutdown signal (`finish()` then joins an already-finished task).
-    #[tokio::test]
-    async fn renderer_exits_on_channel_closure_without_shutdown_signal() {
-        let (tx, _rx) = tokio::sync::broadcast::channel::<norn::provider::AgentEvent>(16);
-        let handle = spawn_stream_renderer(&tx, false);
-        drop(tx);
-
-        // Give the task a moment to observe Closed, then join via
-        // finish(); the send side of the shutdown signal failing is
-        // tolerated by design.
-        tokio::time::timeout(std::time::Duration::from_secs(10), handle.finish())
-            .await
-            .expect("renderer must exit when the channel closes")
-            .expect("renderer task must not panic");
-    }
-
     fn diag_warning() -> NornDiagnostic {
         NornDiagnostic {
             severity: DiagnosticSeverity::Warning,
@@ -909,7 +749,7 @@ mod tests {
             stop: &StopInfo::Completed,
             output: Some(&output),
             usage: UsageOut::from(&usage),
-            model: "gpt-5",
+            model: Some("gpt-5"),
             session_id: Some("abc"),
             events: &[],
             diagnostics: &[],
@@ -941,7 +781,7 @@ mod tests {
             stop: &StopInfo::Completed,
             output: None,
             usage: UsageOut::from(&usage),
-            model: "gpt-5",
+            model: Some("gpt-5"),
             session_id: None,
             events: &[],
             diagnostics: &[],
@@ -978,7 +818,7 @@ mod tests {
             stop: &stop,
             output: output.as_ref(),
             usage: UsageOut::from(&usage),
-            model: "gpt-5",
+            model: Some("gpt-5"),
             session_id: None,
             events: &[],
             diagnostics: &[],
@@ -1169,6 +1009,58 @@ mod tests {
         assert_eq!(truncated["reason"], json!("truncated"));
         assert_eq!(truncated["truncation"], json!("max_tokens"));
         assert_eq!(truncated["iterations"], json!(1));
+    }
+
+    /// The error stop serialises under the same internally-tagged
+    /// contract as every other reason: consumers branch on
+    /// `stop.reason == "error"` and read `message` + `class` directly
+    /// (owner ruling R1: adding a reason is additive, the envelope
+    /// version stays 1).
+    #[test]
+    fn stop_info_error_serialises_reason_message_and_class() {
+        let stop = StopInfo::Error {
+            message: "agent error: connection refused".to_owned(),
+            class: "agent".to_owned(),
+        };
+        let value = serde_json::to_value(&stop).unwrap();
+        assert_eq!(
+            value,
+            json!({
+                "reason": "error",
+                "message": "agent error: connection refused",
+                "class": "agent",
+            })
+        );
+    }
+
+    /// An error envelope for a pre-assembly failure carries `model: null`
+    /// — the only stop reason where the model can be unresolved.
+    #[test]
+    fn json_envelope_error_stop_with_unresolved_model_serialises_null() {
+        let usage = Usage::default();
+        let stop = StopInfo::Error {
+            message: "auth error: missing key".to_owned(),
+            class: "auth".to_owned(),
+        };
+        let envelope = JsonEnvelope {
+            envelope_version: ENVELOPE_VERSION,
+            stop: &stop,
+            output: None,
+            usage: UsageOut::from(&usage),
+            model: None,
+            session_id: None,
+            events: &[],
+            diagnostics: &[],
+        };
+        let mut stdout = Vec::new();
+        render_json(&mut stdout, &envelope).unwrap();
+        let parsed: Value =
+            serde_json::from_str(String::from_utf8(stdout).unwrap().trim_end()).unwrap();
+        assert_eq!(parsed["stop"]["reason"], json!("error"));
+        assert_eq!(parsed["stop"]["class"], json!("auth"));
+        assert!(parsed["model"].is_null());
+        assert!(parsed["output"].is_null());
+        assert!(parsed["session_id"].is_null());
     }
 
     /// `TimedOut` and `Truncated` carry real usage and partial output on

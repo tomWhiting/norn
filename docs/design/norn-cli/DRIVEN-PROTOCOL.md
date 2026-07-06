@@ -188,7 +188,7 @@ same contract fields. Shape (envelope version 1):
     "cache_read_tokens": 0, "cache_write_tokens": 0,
     "cost_usd": 0.0
   },
-  "model": "<model id>",
+  "model": "<model id | null>",
   "session_id": "<id | null>",
   "events": [ ...session events of this step ],
   "diagnostics": [ ... ]
@@ -205,11 +205,46 @@ same contract fields. Shape (envelope version 1):
 | `timed_out` | `elapsed_ms` (int), `iterations` (int) | partial output, if any | 1 |
 | `cancelled` | — | `null` | 1 |
 | `truncated` | `truncation` (`max_tokens` \| `content_filter`), `iterations` (int) | partial text, if any | 1 |
+| `error` | `message` (string), `class` (`agent` \| `auth` \| `io` \| `session`) | `null` | 1 (`agent`/`io`/`session`), 3 (`auth`) |
 
 The stream-json `completed` event is
 `{ "type": "completed", "envelope_version": 1, "stop": {...}, "output": ...,
 "usage": { "input_tokens", "output_tokens" } }`, emitted after any
 `{"type":"diagnostic",...}` lines.
+
+### The `error` stop (plain print mode only)
+
+Owner-ruled 2026-07-06 (`docs/reviews/2026-07-05-context-window-incident.md`
+"Second bug"): plain `-p -f json` / `-f stream-json` emits the envelope
+with `stop.reason: "error"` for **every post-argument-parsing failure**
+— provider/agent-runtime, auth, session persistence, I/O, including
+pre-assembly failures — instead of leaving stdout empty. The envelope is
+strictly ADDITIVE: the stderr line and the exit code are unchanged, and
+`envelope_version` stays 1 (adding a reason is additive; consumers
+already branch on `stop.reason`, not on envelope presence — `timed_out`
+/ `cancelled` / `schema_unreachable` set that precedent). The payload is
+minimal: `output: null`, zeroed usage, empty `events` / `diagnostics`;
+partial-state carriage is explicitly out of scope. `model` is `null`
+when the failure occurred before the model was resolved (pre-assembly);
+`session_id` is `null` when no session was opened.
+
+Boundaries:
+
+- **Argument/usage errors (exit 2) emit NOTHING on stdout** — clap
+  parity: there is no `argument` class.
+- **A torn stream gets no envelope**: when the stream-json renderer
+  itself fails (panic/cancellation), the NDJSON already on stdout is
+  incomplete and appending a well-formed terminal event would make the
+  output look more trustworthy than it is. stderr + exit 1 only.
+- **`--output PATH` receives the error envelope** exactly like a
+  terminal success envelope — a consumer watching the file deserves the
+  same typed stop.
+- **`-f text` never gets an envelope** — it is the human format; the
+  stderr line is the failure surface.
+- **Driven mode never emits an error stop envelope.** An accepted
+  `run/execute` that fails is answered with the id-matched `-32603`
+  error Response (see Error codes); the driven stdout carries JSON-RPC
+  frames only.
 
 **There is deliberately NO `retryable` field.** Whether a stop is worth
 retrying is the *caller's* judgment — it depends on the caller's budget,
