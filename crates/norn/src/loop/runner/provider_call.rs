@@ -181,6 +181,15 @@ impl StepMachine<'_> {
         )
         .await?;
 
+        // The turn is durable: only now may the Gap 7 capture disarm.
+        // Clearing at assembly time (inside `call_provider`) would open a
+        // window — the `run_post_llm` hooks between assembly and this
+        // append run arbitrary user shell hooks — where a step timeout or
+        // cancellation loses the complete response from the durable log.
+        // Cross-call staleness is guarded by the per-attempt reset at the
+        // top of `call_provider`.
+        self.timeout_state.lock().in_flight_partial = None;
+
         self.messages.push(Message {
             role: MessageRole::Assistant,
             content: message_content,

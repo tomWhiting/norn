@@ -211,25 +211,26 @@ pub(super) async fn run_context_preflight(
 
     let summarization_usage = run.summarization_usage;
 
-    let Some(edits) = args.loop_context.context_edits.as_ref() else {
+    if let Some(edits) = args.loop_context.context_edits.as_ref() {
+        if apply_compaction_in_flight(
+            args.store,
+            edits,
+            &run.outcome,
+            &args.layout,
+            args.messages,
+            args.conversation_state,
+        ) {
+            request_input_estimate =
+                estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools);
+        }
+    } else {
         // Unreachable by construction: `maybe_auto_compact` only fires when
-        // a ContextEdits tracker is present. Guarded rather than unwrapped.
+        // a ContextEdits tracker is present. Guarded rather than unwrapped —
+        // and NOT an early return: the compaction is already committed to
+        // the store, so the audit record and live broadcast below must
+        // still fire. The in-flight rewrite simply could not be evaluated,
+        // which the accounting reports as `tokens_after == tokens_before`.
         tracing::error!("compaction fired without a ContextEdits tracker");
-        return Ok(PreflightOutcome {
-            request_input_estimate: Some(request_input_estimate),
-            summarization_usage,
-        });
-    };
-    if apply_compaction_in_flight(
-        args.store,
-        edits,
-        &run.outcome,
-        &args.layout,
-        args.messages,
-        args.conversation_state,
-    ) {
-        request_input_estimate =
-            estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools);
     }
 
     // The pre-/post-rewrite accounting shared verbatim by the persisted

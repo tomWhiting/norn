@@ -200,10 +200,12 @@ pub(super) fn classify_response(
 /// are mirrored into
 /// [`TimeoutState::in_flight_partial`](crate::agent_loop::compaction::TimeoutState)
 /// as they arrive: the capture is reset when the stream attempt starts and
-/// cleared once the response assembles. If the step's timeout or
-/// cancellation drops this future mid-stream, whatever the model had
-/// produced survives in the shared state for the exit path to persist —
-/// otherwise a hard cut loses that content entirely (Gap 7).
+/// stays armed until the runner durably appends the `AssistantMessage`
+/// (`persist_assistant_turn` clears it after the append). If the step's
+/// timeout or cancellation drops this future mid-stream — or in the
+/// hook-running window between assembly and the append — whatever the
+/// model had produced survives in the shared state for the exit path to
+/// persist; otherwise a hard cut loses that content entirely (Gap 7).
 pub(super) async fn call_provider(
     provider: &dyn Provider,
     request: ProviderRequest,
@@ -254,12 +256,13 @@ pub(super) async fn call_provider(
             transient: None,
         })
     })?;
-    if let Some(state) = partial_capture {
-        // The response assembled: its full content is persisted on the
-        // AssistantMessage event, so there is no in-flight partial left
-        // to lose.
-        state.lock().in_flight_partial = None;
-    }
+    // The capture is deliberately NOT cleared here: assembly is not
+    // durability. Between this return and the `AssistantMessage` append,
+    // `run_post_llm` hooks run arbitrary user shell hooks — a step timeout
+    // or cancellation landing in that window would otherwise lose the
+    // complete response from the durable log (the exact loss class Gap 7
+    // closes). The runner clears the capture in `persist_assistant_turn`,
+    // immediately after the append succeeds.
     Ok(assembled)
 }
 

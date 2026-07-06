@@ -428,10 +428,12 @@ fn fallback_digest(
 /// ([`call_provider`](crate::agent_loop::runner) via the shared
 /// [`TimeoutState`]): reset at the start of every stream attempt (a retry
 /// discards the failed attempt's partials, mirroring the live
-/// `StreamRetry` marker) and cleared once the response assembles (the
-/// full content is then persisted on the `AssistantMessage` event). When
-/// a step timeout or cancellation hard-cuts the call mid-stream, this is
-/// the only surviving copy of what the model had said — the exit path
+/// `StreamRetry` marker) and cleared only once the `AssistantMessage`
+/// event is durably appended (`persist_assistant_turn`) — assembly alone
+/// does not disarm it, because the post-LLM hook window between assembly
+/// and the append can still be hard-cut. When a step timeout or
+/// cancellation cuts the call mid-stream or in that window, this is the
+/// only surviving copy of what the model had said — the exit path
 /// persists it as a `loop.partial_output` record.
 #[derive(Clone, Debug, Default)]
 pub struct InFlightPartial {

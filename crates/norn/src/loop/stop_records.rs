@@ -17,10 +17,17 @@
 //! as a hard-cut partial. Both are record-only: resume replays them as
 //! history but takes no action from them.
 //!
-//! These appends run *after* the step result is decided (the timeout path
-//! has already dropped the inner future), so a persist failure here never
-//! rewrites the outcome: it is logged at error level, matching the exit
-//! path's established convention for post-decision audit appends.
+//! DELIBERATELY KEPT BEST-EFFORT (cited per the loud-and-typed secondary
+//! append contract): these appends run *after* the step result is decided
+//! — the timeout path has already dropped the inner future and the typed
+//! [`AgentStepResult::TimedOut`]/[`AgentStepResult::Cancelled`] outcome
+//! carries the step's real accumulated usage. Propagating a persist
+//! failure from here would *replace* that typed result with an error,
+//! discarding the very stop attribution and spend accounting these
+//! records exist to preserve. A failure is therefore logged at error
+//! level (never silently), matching the exit path's established
+//! convention for post-decision audit appends
+//! (`persist_before_injection_audit` in `runner/entry.rs`).
 
 use std::time::Duration;
 
@@ -106,6 +113,9 @@ pub(super) async fn record_abnormal_step_stop(
                     "thinking_chars": partial.thinking.chars().count(),
                 }),
             };
+            // Kept best-effort: propagating would replace the typed
+            // TimedOut/Cancelled result (and its real usage) — see the
+            // module doc. Loud, never silent.
             if let Err(error) = append_and_notify(ctx.store, event, ctx.hooks).await {
                 tracing::error!(
                     %error,
@@ -141,6 +151,9 @@ pub(super) async fn record_abnormal_step_stop(
         event_type: STEP_STOPPED_EVENT_TYPE.to_string(),
         data,
     };
+    // Kept best-effort: propagating would replace the typed
+    // TimedOut/Cancelled/MaxIterationsReached result (and its real usage)
+    // — see the module doc. Loud, never silent.
     if let Err(error) = append_and_notify(ctx.store, event, ctx.hooks).await {
         tracing::error!(
             %error,

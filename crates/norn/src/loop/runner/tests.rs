@@ -6148,3 +6148,80 @@ async fn completed_step_leaves_no_abnormal_stop_records() {
     assert!(customs_of_type(&store, "loop.step_stopped").is_empty());
     assert!(customs_of_type(&store, "loop.partial_output").is_empty());
 }
+
+/// Gap 7, the post-assembly window: the provider call completes and
+/// assembles, but a `PostLlm` hook (arbitrary user shell hooks run here)
+/// hangs until the step timeout fires — BEFORE `persist_assistant_turn`
+/// appends the `AssistantMessage`. The capture must stay armed through
+/// that window so the complete response survives as the durable
+/// `loop.partial_output` record instead of vanishing entirely.
+#[tokio::test(start_paused = true)]
+async fn timeout_during_post_llm_hook_persists_the_assembled_response_as_partial() {
+    struct HangingPostLlm;
+    #[async_trait::async_trait]
+    impl crate::integration::hooks::PostLlmHook for HangingPostLlm {
+        async fn after_llm(&self, _summary: &crate::integration::hooks::LlmCallSummary) {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    let provider = MockProvider::new(vec![vec![
+        thinking_delta("mulling it over "),
+        text_delta("the answer "),
+        text_delta("is 4"),
+        done_event(StopReason::EndTurn),
+    ]]);
+    let executor = MockToolExecutor::empty();
+    let store = EventStore::new();
+    let config = AgentLoopConfig {
+        step_timeout: Some(Duration::from_secs(5)),
+        ..AgentLoopConfig::default()
+    };
+    let mut hooks = crate::integration::hooks::HookRegistry::new();
+    hooks.register(crate::integration::hooks::Hook::PostLlm(Box::new(
+        HangingPostLlm,
+    )));
+    let mut loop_ctx = LoopContext::new("system");
+    loop_ctx.hooks = Some(std::sync::Arc::new(hooks));
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: None,
+        loop_context: &mut loop_ctx,
+        cancel: None,
+    })
+    .await
+    .expect("timeout is a stop outcome, not an error");
+    assert!(matches!(result, AgentStepResult::TimedOut { .. }));
+
+    // The cut landed after assembly but before the durable append: no
+    // AssistantMessage may exist for the turn...
+    assert!(
+        !store
+            .events()
+            .iter()
+            .any(|e| matches!(e, SessionEvent::AssistantMessage { .. })),
+        "the turn never reached persist_assistant_turn",
+    );
+    // ...so the partial record is the ONLY durable copy of the complete
+    // response, and it must carry everything the stream produced.
+    let partials = customs_of_type(&store, "loop.partial_output");
+    assert_eq!(partials.len(), 1, "exactly one partial-output record");
+    let (_, partial) = &partials[0];
+    assert_eq!(partial["stop_reason"].as_str(), Some("timeout"));
+    assert_eq!(partial["hard_cut"].as_bool(), Some(true));
+    assert_eq!(partial["text"].as_str(), Some("the answer is 4"));
+    assert_eq!(partial["thinking"].as_str(), Some("mulling it over "));
+
+    let stops = customs_of_type(&store, "loop.step_stopped");
+    assert_eq!(stops.len(), 1);
+    assert_eq!(stops[0].1["stop_reason"].as_str(), Some("timeout"));
+}
