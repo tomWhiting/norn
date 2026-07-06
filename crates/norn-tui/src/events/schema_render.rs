@@ -827,6 +827,7 @@ mod tests {
             tool_call_id: "tc_1".to_owned(),
             tool_name: "bash".to_owned(),
             output: json!({"exit_code": 0, "stdout": "ok\n", "stderr": ""}),
+            spool_ref: None,
             duration_ms: 100,
         };
         let out = render_event(&event, &caps(), DisplayToggles::default(), 80);

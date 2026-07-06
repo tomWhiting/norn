@@ -762,6 +762,7 @@ fn fixture_store(scenario: &str) -> Result<EventStore, Box<dyn std::error::Error
             tool_call_id: "call_prior_resume".to_string(),
             tool_name: "resume_tool".to_string(),
             output: serde_json::json!("prior tool resume result"),
+            spool_ref: None,
             duration_ms: 12,
         })?;
     }

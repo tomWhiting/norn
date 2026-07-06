@@ -12,7 +12,7 @@ use serde_json::{Map, Value, json};
 pub const MODEL_OUTPUT_INLINE_CHAR_LIMIT: usize = 64_000;
 
 /// Number of leading and trailing characters retained when a structured value
-/// exceeds the effective inline limit passed to [`cap_model_output`].
+/// exceeds the effective inline limit passed to [`project_model_output`].
 const MODEL_OUTPUT_PREVIEW_CHARS: usize = 4_000;
 
 /// Default number of lines returned by `read` when no limit is supplied.
@@ -91,7 +91,20 @@ impl Default for ToolOutputBudget {
     }
 }
 
-/// Return a provider-message-safe representation of `output`, bounded to
+/// Bounded model-facing projection of one tool output, carrying whether
+/// the bound actually fired so callers can preserve the full payload
+/// (e.g. spool it) exactly when data would otherwise be lost.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ModelOutputProjection {
+    /// The value safe for model-facing context: the unmodified output
+    /// when within budget, otherwise the bounded head/tail replacement.
+    pub value: Value,
+    /// `true` when [`value`](Self::value) replaced an over-budget
+    /// payload; `false` when it is the caller's output unchanged.
+    pub truncated: bool,
+}
+
+/// Return a provider-message-safe projection of `output`, bounded to
 /// `inline_char_limit` serialized characters.
 ///
 /// `inline_char_limit` comes from the installed
@@ -102,19 +115,23 @@ impl Default for ToolOutputBudget {
 /// Small values are cloned unchanged. Oversized values become a compact JSON
 /// object with size metadata and head/tail previews. This is intentionally a
 /// pure transformation: it does not discard the caller's original value or write
-/// side files. Event stores and action logs can still keep the full value while
-/// provider messages receive this bounded projection.
+/// side files. The persisted `ToolResult` append spools the full value when
+/// [`ModelOutputProjection::truncated`] is set, so the durable record keeps
+/// full fidelity while provider messages receive this bounded projection.
 #[must_use]
-pub fn cap_model_output(
+pub fn project_model_output(
     tool_name: &str,
     tool_call_id: &str,
     output: &Value,
     inline_char_limit: usize,
-) -> Value {
+) -> ModelOutputProjection {
     let serialized = model_content_string(output);
     let original_chars = serialized.chars().count();
     if original_chars <= inline_char_limit {
-        return output.clone();
+        return ModelOutputProjection {
+            value: output.clone(),
+            truncated: false,
+        };
     }
 
     let mut capped = Map::new();
@@ -141,7 +158,10 @@ pub fn cap_model_output(
         "tail".to_owned(),
         json!(tail_chars(&serialized, MODEL_OUTPUT_PREVIEW_CHARS)),
     );
-    Value::Object(capped)
+    ModelOutputProjection {
+        value: Value::Object(capped),
+        truncated: true,
+    }
 }
 
 fn model_content_string(value: &Value) -> String {
@@ -193,18 +213,20 @@ mod tests {
     use super::*;
 
     #[test]
-    fn cap_model_output_leaves_small_values_unchanged() {
+    fn project_model_output_leaves_small_values_unchanged() {
         let value = json!({ "ok": true });
-        assert_eq!(
-            cap_model_output("x", "call", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT),
-            value
-        );
+        let projection = project_model_output("x", "call", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT);
+        assert!(!projection.truncated);
+        assert_eq!(projection.value, value);
     }
 
     #[test]
-    fn cap_model_output_replaces_large_values_with_preview() {
+    fn project_model_output_replaces_large_values_with_preview() {
         let value = Value::String("a".repeat(MODEL_OUTPUT_INLINE_CHAR_LIMIT + 1));
-        let capped = cap_model_output("read", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT);
+        let projection =
+            project_model_output("read", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT);
+        assert!(projection.truncated);
+        let capped = projection.value;
         assert_eq!(capped["truncated_for_model"], true);
         assert_eq!(capped["tool_name"], "read");
         assert_eq!(capped["tool_call_id"], "call-1");
@@ -215,19 +237,21 @@ mod tests {
     /// caps at that limit — the documented default is not hardcoded into
     /// the cap itself.
     #[test]
-    fn cap_model_output_honors_a_smaller_installed_limit() {
+    fn project_model_output_honors_a_smaller_installed_limit() {
         let small_limit = 100;
         let value = Value::String("a".repeat(small_limit + 1));
-        let capped = cap_model_output("read", "call-1", &value, small_limit);
+        let projection = project_model_output("read", "call-1", &value, small_limit);
+        assert!(projection.truncated);
+        let capped = projection.value;
         assert_eq!(capped["truncated_for_model"], true);
         assert_eq!(capped["inline_char_limit"], small_limit);
         assert_eq!(capped["original_chars"], small_limit + 1);
 
         // The same value passes untouched under the documented default.
-        assert_eq!(
-            cap_model_output("read", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT),
-            value,
-        );
+        let default_projection =
+            project_model_output("read", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT);
+        assert!(!default_projection.truncated);
+        assert_eq!(default_projection.value, value);
     }
 
     #[test]
@@ -243,20 +267,21 @@ mod tests {
     }
 
     #[test]
-    fn cap_model_output_preserves_follow_ups_and_error() {
+    fn projection_preserves_follow_ups_and_error() {
         let value = json!({
             "error": { "kind": "execution_failed", "message": "bad" },
             "follow_ups": [{ "action": "next" }],
             "content": "a".repeat(MODEL_OUTPUT_INLINE_CHAR_LIMIT + 1),
         });
-        let capped = cap_model_output("read", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT);
+        let capped =
+            project_model_output("read", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT).value;
         assert_eq!(capped["truncated_for_model"], true);
         assert_eq!(capped["error"]["message"], "bad");
         assert_eq!(capped["follow_ups"][0]["action"], "next");
     }
 
     #[test]
-    fn cap_model_output_preserves_diagnostic_feedback() {
+    fn projection_preserves_diagnostic_feedback() {
         let value = json!({
             "diagnostics": [{ "message": "syntax error" }],
             "advisories": [{ "message": "split this file", "required": true }],
@@ -266,7 +291,8 @@ mod tests {
             "check_overrides": [{ "check_name": "post_validate_mode" }],
             "content": "a".repeat(MODEL_OUTPUT_INLINE_CHAR_LIMIT + 1),
         });
-        let capped = cap_model_output("write", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT);
+        let capped =
+            project_model_output("write", "call-1", &value, MODEL_OUTPUT_INLINE_CHAR_LIMIT).value;
         assert_eq!(capped["truncated_for_model"], true);
         assert_eq!(capped["diagnostics"][0]["message"], "syntax error");
         assert_eq!(capped["advisories"][0]["message"], "split this file");

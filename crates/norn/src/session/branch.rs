@@ -69,6 +69,7 @@ use crate::session::persistence::index::insert_child_index_entry;
 use crate::session::persistence::types::{
     SESSION_FORMAT_VERSION, SessionIndexEntry, SessionPersistError, SessionStatus,
 };
+use crate::session::spool::SpoolWriter;
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
 
 /// The canonical path address of a primary line (a root session). Child
@@ -521,7 +522,16 @@ fn materialize_child(
         brancher.durability,
         brancher.manager.index_lock_deadline(),
     )?;
-    let store = EventStore::with_sink(Box::new(sink));
+    let mut store = EventStore::with_sink(Box::new(sink));
+    // The child spools oversized tool outputs into the SAME root-keyed
+    // `<root-id>/spool/` directory its timeline lives under (the ruled
+    // layout: one `<root-uuid>/` dir holding `children/` and `spool/`),
+    // exactly where `SessionManager` re-arms it on a later resume.
+    store.attach_spool(SpoolWriter::for_session(
+        brancher.manager.data_dir(),
+        &brancher.root_session_id,
+        brancher.durability,
+    ));
     // The child's provenance header: the same ChildBranch record, as the
     // child's first own event (fresh event id — the parent's copy keeps
     // its own).

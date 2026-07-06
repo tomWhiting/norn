@@ -45,6 +45,7 @@ use uuid::Uuid;
 use crate::provider::usage::Usage;
 use crate::session::branch::ROOT_PATH_ADDRESS;
 use crate::session::events::{ChildBranchKind, EventBase, SessionEvent};
+use crate::session::spool::SpoolWriter;
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
 
 use super::persistence::index::{
@@ -59,6 +60,21 @@ use super::persistence::replay::ReplayArtifacts;
 use super::persistence::types::{
     SESSION_FORMAT_VERSION, SessionIndexEntry, SessionPersistError, SessionStatus,
 };
+
+/// The session id whose `{id}/spool/` directory a session's oversized
+/// tool outputs spool into: the owning ROOT session's id. Root (and
+/// legacy) entries spool under their own id; child sessions — whose
+/// `rel_path` is `{root-id}/children/{slug}.jsonl` — spool into the SAME
+/// root-keyed directory their timeline lives under (the ruled layout:
+/// one `<root-uuid>/` dir holding `children/` and `spool/`), so a child
+/// resumed later spools exactly where it spooled when minted.
+fn spool_root_id(entry: &SessionIndexEntry) -> &str {
+    entry
+        .rel_path
+        .as_deref()
+        .and_then(|rel| rel.split('/').next())
+        .unwrap_or(&entry.id)
+}
 
 /// Caller-supplied metadata recorded in the index entry of a newly
 /// created session (also the create arm of
@@ -402,8 +418,14 @@ impl SessionManager {
             replayed_events: events.len(),
             skipped_lines: artifacts.skipped_lines,
         };
+        let mut store = EventStore::with_sink_and_events(Box::new(sink), events);
+        store.attach_spool(SpoolWriter::for_session(
+            &self.data_dir,
+            spool_root_id(&entry),
+            durability,
+        ));
         Ok(OpenSession {
-            store: EventStore::with_sink_and_events(Box::new(sink), events),
+            store,
             entry,
             replay,
         })
@@ -591,8 +613,14 @@ impl SessionManager {
             durability,
             self.index_lock_deadline,
         )?;
+        let mut store = EventStore::with_sink(Box::new(sink));
+        store.attach_spool(SpoolWriter::for_session(
+            &self.data_dir,
+            spool_root_id(&entry),
+            durability,
+        ));
         Ok(OpenSession {
-            store: EventStore::with_sink(Box::new(sink)),
+            store,
             entry,
             replay: ReplaySummary::default(),
         })
@@ -626,8 +654,14 @@ impl SessionManager {
             replayed_events: artifacts.events.len(),
             skipped_lines: artifacts.skipped_lines,
         };
+        let mut store = EventStore::with_sink_and_events(Box::new(sink), artifacts.events);
+        store.attach_spool(SpoolWriter::for_session(
+            &self.data_dir,
+            spool_root_id(&entry),
+            durability,
+        ));
         Ok(OpenSession {
-            store: EventStore::with_sink_and_events(Box::new(sink), artifacts.events),
+            store,
             entry,
             replay,
         })

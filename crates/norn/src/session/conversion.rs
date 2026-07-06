@@ -382,6 +382,7 @@ mod tests {
             tool_call_id: "tc1".to_owned(),
             tool_name: "read".to_owned(),
             output: serde_json::json!({"content": "file data"}),
+            spool_ref: None,
             duration_ms: 42,
         }];
         let msgs = events_to_messages(&events);
@@ -399,6 +400,7 @@ mod tests {
             tool_call_id: "tc1".to_owned(),
             tool_name: "bash".to_owned(),
             output: serde_json::Value::String("hello world".to_owned()),
+            spool_ref: None,
             duration_ms: 5,
         }];
         let msgs = events_to_messages(&events);
@@ -454,6 +456,7 @@ mod tests {
                 tool_call_id: "call_tc1".to_owned(),
                 tool_name: "bash".to_owned(),
                 output: serde_json::json!({"stdout": "/home/user"}),
+                spool_ref: None,
                 duration_ms: 10,
             },
             SessionEvent::AssistantMessage {

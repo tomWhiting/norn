@@ -15,6 +15,7 @@ pub mod events;
 pub mod manager;
 pub mod mutation_ledger;
 pub mod persistence;
+pub mod spool;
 pub mod store;
 
 pub use action_log::{ActionLog, ActionLogContext, ActionLogDetail, ActionLogEntry, Outcome};
@@ -37,4 +38,5 @@ pub use persistence::{
     session_file_path, sum_usage_from_events, update_index_entry, update_session_index,
     write_index_atomic,
 };
+pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};
 pub use store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};

@@ -561,7 +561,18 @@ impl Tool for SpawnAgentTool {
             descriptor,
             Utc::now(),
         );
-        lifecycle.emit_started();
+        // The Started audit joins the primary write-through contract
+        // (session-fidelity Gap 10): if it cannot persist, the launch is
+        // aborted here — before the child task exists — so the durable
+        // log can never silently miss a child that actually ran.
+        lifecycle
+            .emit_started()
+            .map_err(|error| ToolError::ExecutionFailed {
+                reason: format!(
+                    "failed to persist the subagent.started audit event; \
+                     spawn aborted before launch: {error}",
+                ),
+            })?;
 
         let handle = launch_child(ChildLaunch {
             provider: Arc::clone(&infra.provider),

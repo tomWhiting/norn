@@ -259,6 +259,9 @@ fn signal_agent(
         .router
         .try_deliver(to_id, msg)
         .map_err(|e| Box::new(rhai_error(format!("signal_agent: {e}"))))?;
+    // The Sent audit joins the primary write-through contract
+    // (session-fidelity Gap 10). The message is ALREADY delivered at this
+    // point, so the error wording rules out a duplicate resend.
     append_message_audit(
         &ctx.event_store,
         &AgentMessageLifecycle::Sent {
@@ -272,7 +275,13 @@ fn signal_agent(
             content: body,
             sent_at,
         },
-    );
+    )
+    .map_err(|error| {
+        Box::new(rhai_error(format!(
+            "signal_agent: message {message_id} WAS delivered (seq {seq}); do \
+             NOT resend it. Persisting the durable Sent audit failed: {error}",
+        )))
+    })?;
     Ok(seq)
 }
 
@@ -381,7 +390,12 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         descriptor,
         Utc::now(),
     );
-    lifecycle.emit_started();
+    lifecycle.emit_started().map_err(|error| {
+        Box::new(rhai_error(format!(
+            "spawn_agent: failed to persist the subagent.started audit \
+                 event; spawn aborted before launch: {error}"
+        )))
+    })?;
 
     let provider = Arc::clone(&ctx.provider);
     let registry_for_executor = Arc::clone(registry);
@@ -473,13 +487,24 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         // usage is honestly zero.
         let summary = extract_outcome_summary(outcome, Usage::default());
         let subtree_usage = summary.usage.clone() + summary.children_usage.clone();
-        lifecycle.emit_completed(SubagentCompletion {
+        // A Completed-audit persist failure is typed at the source and
+        // handled here, not propagated: the task has no caller left to
+        // fail, and the registry terminal transition below must still
+        // run (the same contract as the spawn/fork launch wrappers).
+        if let Err(error) = lifecycle.emit_completed(SubagentCompletion {
             usage: summary.usage.clone(),
             subtree_usage,
             succeeded: summary.status == AgentStatus::Completed,
             error: summary.error.clone(),
             stop: summary.stop.clone(),
-        });
+        }) {
+            tracing::error!(
+                child_id = %real_id,
+                %error,
+                "rhai spawn_agent: failed to persist the subagent.completed \
+                 audit event on the host store",
+            );
+        }
         mark_terminal_in_registry(&agent_registry, real_id, summary.status);
     });
 

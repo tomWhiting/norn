@@ -160,6 +160,7 @@ impl NornWrappedClaudeCode {
                                 tool_call_id: tool_use_id.clone(),
                                 tool_name: String::new(),
                                 output: content.clone(),
+                                spool_ref: None,
                                 duration_ms: 0,
                             });
                         } else if let ContentItem::Text { text } = item {

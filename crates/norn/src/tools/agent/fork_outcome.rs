@@ -270,20 +270,25 @@ fn classify_step_result(result: AgentStepResult, duration: std::time::Duration) 
 
 /// Append a [`SessionEvent::ForkComplete`] to the parent's store (R4).
 ///
-/// Best-effort: a failure here is logged but does not propagate. The fork's
-/// own audit trail already lives on its own session file — this event is
-/// the completion reference on the parent's timeline.
+/// The completion reference on the parent's timeline. A persist failure
+/// is typed at the source (session-fidelity Gap 10); the launch wrapper
+/// — which has no caller left to fail — logs it at error level and
+/// continues with result delivery (the fork's result is the primary
+/// content and still reaches the parent).
 ///
 /// `forked_session_id` is `Some` only when the fork has a real session
 /// file; an ephemeral fork records honest `None` — the old fallback to the
 /// registry id (a durable pointer to a session existing nowhere on disk)
 /// is gone.
+///
+/// # Errors
+///
+/// The parent store's append error when the write-through persist fails.
 pub(super) fn append_fork_complete(
     parent_store: &EventStore,
     forked_session_id: Option<String>,
     outcome: &ForkOutcome,
-    fork_id: Uuid,
-) {
+) -> Result<(), crate::error::SessionError> {
     let event = SessionEvent::ForkComplete {
         base: EventBase::new(parent_store.last_event_id()),
         forked_session_id,
@@ -297,13 +302,8 @@ pub(super) fn append_fork_complete(
         },
         duration_ms: u64::try_from(outcome.duration.as_millis()).unwrap_or(u64::MAX),
     };
-    if let Err(e) = parent_store.append(event) {
-        tracing::warn!(
-            fork_id = %fork_id,
-            error = %e,
-            "fork: failed to append ForkComplete event to parent store",
-        );
-    }
+    parent_store.append(event)?;
+    Ok(())
 }
 
 #[cfg(test)]

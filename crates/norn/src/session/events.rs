@@ -225,8 +225,22 @@ pub enum SessionEvent {
         tool_call_id: String,
         /// Name of the tool that was executed.
         tool_name: String,
-        /// Structured output from the tool.
+        /// Structured output from the tool. When the tool's full output
+        /// exceeded the model-facing inline budget, this is the bounded
+        /// head/tail projection and [`spool_ref`](Self::ToolResult::spool_ref)
+        /// points at the verbatim full payload.
         output: serde_json::Value,
+        /// Data-dir-relative reference
+        /// (`<session-id>/spool/<event-id>.bin`) to the spooled verbatim
+        /// full output, present only when `output` is the bounded
+        /// projection of an over-budget payload persisted through a
+        /// spool-equipped store. Resolved via
+        /// [`read_spooled_output`](crate::session::spool::read_spooled_output).
+        /// `None` for outputs within budget (the event carries the full
+        /// output inline) and for events persisted before the spool
+        /// existed.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        spool_ref: Option<String>,
         /// Execution duration in milliseconds.
         duration_ms: u64,
     },
@@ -473,10 +487,74 @@ mod tests {
             tool_call_id: "tc_1".to_owned(),
             tool_name: "Read".to_owned(),
             output: serde_json::json!({"lines": 42}),
+            spool_ref: None,
             duration_ms: 150,
         };
         let json = serde_json::to_string(&event).expect("serialize");
         let _: SessionEvent = serde_json::from_str(&json).expect("deserialize");
+    }
+
+    #[test]
+    fn tool_result_line_without_spool_ref_deserializes_as_none() {
+        // A JSONL line persisted before the spool existed (session-fidelity
+        // Gap 5) has no `spool_ref` field and must deserialize with
+        // #[serde(default)] to `None`.
+        let legacy = serde_json::json!({
+            "type": "ToolResult",
+            "base": {
+                "id": EventId::new().to_string(),
+                "parent_id": null,
+                "timestamp": Utc::now(),
+            },
+            "tool_call_id": "tc_pre_spool",
+            "tool_name": "read",
+            "output": {"lines": 42},
+            "duration_ms": 5,
+        });
+        let parsed: SessionEvent =
+            serde_json::from_value(legacy).expect("legacy line deserializes");
+        match parsed {
+            SessionEvent::ToolResult { spool_ref, .. } => {
+                assert!(spool_ref.is_none(), "missing field defaults to None");
+            }
+            _ => panic!("expected ToolResult"),
+        }
+    }
+
+    #[test]
+    fn tool_result_spool_ref_round_trips_and_none_is_not_serialized() {
+        // The reference must survive append/read intact, and within-budget
+        // results (`None`) keep the exact line shape events had before the
+        // spool existed — `skip_serializing_if` elides the field.
+        let spooled = SessionEvent::ToolResult {
+            base: EventBase::new(None),
+            tool_call_id: "tc_spooled".to_owned(),
+            tool_name: "bash".to_owned(),
+            output: serde_json::json!({"truncated_for_model": true}),
+            spool_ref: Some("sess-1/spool/evt-1.bin".to_owned()),
+            duration_ms: 9,
+        };
+        let json = serde_json::to_string(&spooled).expect("serialize");
+        match serde_json::from_str::<SessionEvent>(&json).expect("deserialize") {
+            SessionEvent::ToolResult { spool_ref, .. } => {
+                assert_eq!(spool_ref.as_deref(), Some("sess-1/spool/evt-1.bin"));
+            }
+            _ => panic!("expected ToolResult"),
+        }
+
+        let inline = SessionEvent::ToolResult {
+            base: EventBase::new(None),
+            tool_call_id: "tc_inline".to_owned(),
+            tool_name: "bash".to_owned(),
+            output: serde_json::json!({"ok": true}),
+            spool_ref: None,
+            duration_ms: 1,
+        };
+        let json = serde_json::to_string(&inline).expect("serialize");
+        assert!(
+            !json.contains("spool_ref"),
+            "a None spool_ref must not appear on the persisted line: {json}",
+        );
     }
 
     #[test]
@@ -711,6 +789,7 @@ mod tests {
                 tool_call_id: String::new(),
                 tool_name: String::new(),
                 output: serde_json::Value::Null,
+                spool_ref: None,
                 duration_ms: 0,
             },
             SessionEvent::ModelChange {

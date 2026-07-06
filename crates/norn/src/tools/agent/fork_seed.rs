@@ -65,6 +65,7 @@ pub(super) fn seed_fork_events(
             tool_call_id: orphan.id.clone(),
             tool_name,
             output,
+            spool_ref: None,
             duration_ms: 0,
         });
     }

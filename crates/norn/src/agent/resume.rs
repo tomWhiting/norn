@@ -222,6 +222,7 @@ mod tests {
             tool_call_id: call_id.to_owned(),
             tool_name: name.to_owned(),
             output,
+            spool_ref: None,
             duration_ms: 7,
         }
     }
