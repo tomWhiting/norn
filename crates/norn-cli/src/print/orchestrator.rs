@@ -49,9 +49,12 @@ use serde_json::Value;
 
 use super::driven::{execute_driven, finish_intervene_loop, spawn_intervene_loop};
 use super::jsonrpc::{DrivenRun, SharedRunDriver};
-use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage, spawn_stream_renderer};
+use super::output::{StopInfo, drain_diagnostics, extract_output_and_usage};
 use super::provider::build_provider;
-use super::step_output::{StepOutput, driven_result_value, write_handled_locally, write_output};
+use super::step_output::{
+    StepOutput, driven_result_value, emit_error_envelope, write_handled_locally, write_output,
+};
+use super::stream_renderer::spawn_stream_renderer;
 use crate::cli::BuildError;
 use crate::cli::ExitCode;
 use crate::cli::{Cli, OutputFormat, Protocol};
@@ -87,6 +90,22 @@ pub fn run(cli: &Cli) -> ExitCode {
         Ok(rt) => rt,
         Err(err) => {
             eprintln!("norn: failed to build tokio runtime: {err}");
+            // R2: even this pre-runtime failure is post-argument-parsing,
+            // so plain machine formats still get the typed error stop. A
+            // jsonrpc peer expects JSON-RPC frames only, never a print
+            // envelope, so driven mode is excluded. Known divergence: the
+            // stderr line above is byte-frozen from before the envelope
+            // existed and has no class prefix, while the envelope message
+            // is the `PrintError` Display (`agent error: …`) like every
+            // other emit site — see the `StopInfo::Error::message` doc.
+            if cli.protocol != Some(Protocol::Jsonrpc) {
+                emit_error_envelope(
+                    cli,
+                    &PrintError::Agent(format!("failed to build tokio runtime: {err}")),
+                    None,
+                    None,
+                );
+            }
             return ExitCode::AgentError;
         }
     };
@@ -124,6 +143,15 @@ pub enum PrintError {
     /// Session persistence failed (exit code 1).
     #[error("session error: {0}")]
     Session(String),
+    /// The stream renderer tore stdout mid-run — panic or cancellation —
+    /// so the NDJSON already written is incomplete (exit code 1). Never
+    /// followed by an error envelope: appending a well-formed terminal
+    /// event to a torn stream would make the output look more
+    /// trustworthy than it is (owner ruling R4, 2026-07-06). The Display
+    /// prefix deliberately matches [`PrintError::Agent`] so the stderr
+    /// line is unchanged from when this failure rode the `Agent` variant.
+    #[error("agent error: {0}")]
+    StreamTorn(String),
 }
 
 impl PrintError {
@@ -133,7 +161,24 @@ impl PrintError {
         match self {
             Self::Argument(_) => ExitCode::ArgumentError,
             Self::Auth(_) => ExitCode::AuthError,
-            Self::Agent(_) | Self::Io(_) | Self::Session(_) => ExitCode::AgentError,
+            Self::Agent(_) | Self::Io(_) | Self::Session(_) | Self::StreamTorn(_) => {
+                ExitCode::AgentError
+            }
+        }
+    }
+
+    /// The machine-stable `stop.class` this failure carries on the typed
+    /// error envelope, or `None` when the failure must stay stderr-only:
+    /// argument errors keep clap parity (exit 2 — owner ruling R2) and a
+    /// torn stream gets no envelope at all (owner ruling R4).
+    #[must_use]
+    pub const fn envelope_class(&self) -> Option<&'static str> {
+        match self {
+            Self::Argument(_) | Self::StreamTorn(_) => None,
+            Self::Auth(_) => Some("auth"),
+            Self::Agent(_) => Some("agent"),
+            Self::Io(_) => Some("io"),
+            Self::Session(_) => Some("session"),
         }
     }
 }
@@ -185,13 +230,21 @@ async fn execute(cli: &Cli) -> Result<ExitCode, PrintError> {
         return execute_driven(cli).await;
     }
 
-    let stdin_content = read_stdin_if_piped()?;
+    // Every failure from here on is post-argument-parsing: the machine
+    // formats get the typed error envelope IN ADDITION to the stderr line
+    // and the unchanged exit code (owner ruling R2, 2026-07-06). The
+    // model and session id are not resolved yet at these sites, so the
+    // envelope's nullable fields stay null.
+    let stdin_content = read_stdin_if_piped().map_err(|err| fail_before_assembly(cli, err))?;
     let positional = cli.prompt.join(" ");
     let effective_prompt = compose_prompt(stdin_content.as_deref(), &positional);
 
-    let output_schema = parse_output_schema(cli.output_schema.as_deref())?;
+    let output_schema = parse_output_schema(cli.output_schema.as_deref())
+        .map_err(|err| fail_before_assembly(cli, err))?;
 
-    let assembly = assemble_print_agent(cli).await?;
+    let assembly = assemble_print_agent(cli)
+        .await
+        .map_err(|err| fail_before_assembly(cli, err))?;
     orchestrate(cli, assembly, effective_prompt, output_schema, None).await
 }
 
@@ -206,6 +259,17 @@ pub(super) struct PrintAssembly {
     /// surface to every lock-taking `SessionManager` it constructs
     /// (`/name`'s index rename).
     pub index_lock_deadline: std::time::Duration,
+}
+
+/// Route a plain-mode pre-assembly failure through the error-envelope
+/// emitter and hand the error back unchanged for the stderr line + exit
+/// code. Argument errors emit nothing (clap parity — R2); the emitter
+/// filters by class. Driven mode never reaches this path — [`execute`]
+/// branches into [`execute_driven`] first, and its post-acceptance
+/// failures are answered as id-matched JSON-RPC error responses.
+fn fail_before_assembly(cli: &Cli, err: PrintError) -> PrintError {
+    emit_error_envelope(cli, &err, None, None);
+    err
 }
 
 /// Assemble the headless print agent through the single library-owned
@@ -318,7 +382,46 @@ pub(super) fn parse_output_schema(raw: Option<&str>) -> Result<Option<Value>, Pr
     Ok(Some(parsed))
 }
 
+/// Run the assembled agent and dispatch its output, wrapping the run so
+/// that EVERY plain-mode failure — dispatch, compaction, checkpoint, the
+/// step itself, output writing — additionally emits the typed error
+/// envelope (owner ruling R2). The envelope is filtered by class inside
+/// [`emit_error_envelope`]: argument errors and a torn stream stay
+/// stderr-only (R2 / R4). Driven mode is excluded here and answers its
+/// failures as the id-matched JSON-RPC error response in
+/// [`execute_driven`] — emitting an envelope too would double-report on a
+/// frame-only stdout.
 pub(super) async fn orchestrate(
+    cli: &Cli,
+    assembly: PrintAssembly,
+    prompt: String,
+    output_schema: Option<Value>,
+    driven_run: Option<DrivenRun>,
+) -> Result<ExitCode, PrintError> {
+    // Captured before the run consumes the assembly: an error envelope
+    // names the model and session the failed run was assembled with (R3
+    // keeps the payload minimal; the nullable fields stay null only when
+    // genuinely unknown, i.e. pre-assembly).
+    let model = assembly.parts.model.clone();
+    let session_id: Option<String> = assembly
+        .parts
+        .session_entry
+        .as_ref()
+        .map(|entry| entry.id.clone());
+    let is_driven = driven_run.is_some();
+
+    let result = orchestrate_run(cli, assembly, prompt, output_schema, driven_run).await;
+
+    if !is_driven && let Err(err) = result.as_ref() {
+        emit_error_envelope(cli, err, Some(&model), session_id.as_deref());
+    }
+    result
+}
+
+/// The fallible body of [`orchestrate`]: stdin/slash dispatch, the agent
+/// step, session checkpointing, and output dispatch. Kept separate so the
+/// wrapper above can observe ANY failure exactly once.
+async fn orchestrate_run(
     cli: &Cli,
     assembly: PrintAssembly,
     prompt: String,
@@ -649,8 +752,10 @@ async fn checkpoint_session(store: &Arc<EventStore>) -> Result<(), PrintError> {
 /// cancellation) onto the agent-error path: the NDJSON already written to
 /// stdout is incomplete, so the run must surface the failure on stderr
 /// and exit non-zero instead of emitting a clean `completed` envelope.
+/// Typed [`PrintError::StreamTorn`] so the error-envelope emitter skips
+/// it (owner ruling R4): no terminal event is appended to a torn stream.
 fn renderer_failure(err: &tokio::task::JoinError) -> PrintError {
-    PrintError::Agent(format!(
+    PrintError::StreamTorn(format!(
         "stream renderer task failed ({kind}): {err}; streamed output on stdout is incomplete",
         kind = if err.is_panic() { "panic" } else { "cancelled" },
     ))
@@ -760,6 +865,35 @@ mod tests {
             PrintError::Session("x".to_owned()).exit_code(),
             ExitCode::AgentError
         );
+        assert_eq!(
+            PrintError::StreamTorn("x".to_owned()).exit_code(),
+            ExitCode::AgentError
+        );
+    }
+
+    /// Owner rulings R2/R4: every failure class maps to its machine-stable
+    /// envelope class, EXCEPT argument errors (clap parity, exit 2) and a
+    /// torn stream (no envelope on incomplete NDJSON) — those emit nothing.
+    #[test]
+    fn envelope_class_covers_every_variant() {
+        assert_eq!(PrintError::Argument("x".to_owned()).envelope_class(), None);
+        assert_eq!(
+            PrintError::StreamTorn("x".to_owned()).envelope_class(),
+            None
+        );
+        assert_eq!(
+            PrintError::Auth("x".to_owned()).envelope_class(),
+            Some("auth")
+        );
+        assert_eq!(
+            PrintError::Agent("x".to_owned()).envelope_class(),
+            Some("agent")
+        );
+        assert_eq!(PrintError::Io("x".to_owned()).envelope_class(), Some("io"));
+        assert_eq!(
+            PrintError::Session("x".to_owned()).envelope_class(),
+            Some("session")
+        );
     }
 
     #[test]
@@ -859,13 +993,20 @@ mod tests {
         let join_err = task.await.expect_err("task must panic");
         let err = renderer_failure(&join_err);
         match &err {
-            PrintError::Agent(message) => {
+            PrintError::StreamTorn(message) => {
                 assert!(message.contains("panic"), "message: {message}");
                 assert!(message.contains("incomplete"), "message: {message}");
             }
-            other => panic!("expected Agent, got {other:?}"),
+            other => panic!("expected StreamTorn, got {other:?}"),
         }
         assert_eq!(err.exit_code(), ExitCode::AgentError);
+        assert_eq!(
+            err.envelope_class(),
+            None,
+            "a torn stream never gets an error envelope (R4)"
+        );
+        // The stderr line is unchanged from the pre-StreamTorn rendering.
+        assert!(err.to_string().starts_with("agent error: "));
     }
 
     /// A cancelled renderer task is also a failure (output torn), mapped
@@ -879,10 +1020,10 @@ mod tests {
         let join_err = task.await.expect_err("task must be cancelled");
         let err = renderer_failure(&join_err);
         match &err {
-            PrintError::Agent(message) => {
+            PrintError::StreamTorn(message) => {
                 assert!(message.contains("cancelled"), "message: {message}");
             }
-            other => panic!("expected Agent, got {other:?}"),
+            other => panic!("expected StreamTorn, got {other:?}"),
         }
         assert_eq!(err.exit_code(), ExitCode::AgentError);
     }

@@ -276,10 +276,11 @@ mod tests {
         Arc::new(MockProvider::new(Vec::new()))
     }
 
-    /// Explicit window for the fixture: "test-model" is deliberately
-    /// uncatalogued, and `build` hard-errors on an unarmed window
+    /// Explicit window for tests whose model id is deliberately
+    /// uncatalogued, and `build` now hard-errors on an unarmed window
     /// (2026-07-05 incident guard). `272_000` is gpt-5.5's catalogued
     /// standard window (assets/models.json) — factual, not invented.
+    /// Same constant the libnorn builder/instance tests use.
     const TEST_CONTEXT_WINDOW: u64 = 272_000;
 
     /// R1.6: the TUI's coordination chain — `.agent_registry` +

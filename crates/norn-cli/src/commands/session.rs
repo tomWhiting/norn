@@ -14,14 +14,17 @@
 //! (which covers `not found`, `ambiguous prefix`, and other operational
 //! failures here), 2 argument error, 3 auth error.
 
+use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
 use norn::config::{NornSettings, load_settings, merge_settings, validate_settings};
 
 use crate::cli::ExitCode;
-use crate::cli::{BuildError, Cli, SessionCmd, SessionListFormat};
+use crate::cli::{BuildError, Cli, Mode, Protocol, SessionCmd, SessionListFormat, detect_mode};
 use crate::config::{ConfigOverrides, resolve_index_lock_deadline, session_data_dir};
+use crate::print::emit_error_envelope;
+use crate::print::orchestrator::PrintError;
 use crate::session::{SessionIndexEntry, SessionManager, SessionPersistError};
 
 use super::session_export;
@@ -256,7 +259,7 @@ fn run_show(data_dir: &Path, input: &str) -> ExitCode {
 fn run_resume(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -> ExitCode {
     let resolved = match SessionManager::new(data_dir).resolve(input) {
         Ok(entry) => entry,
-        Err(err) => return report_persist_error(&err),
+        Err(err) => return fail_forwarded_resolve(&cli, &err),
     };
     cli.resume = Some(resolved.id);
     cli.fork = None;
@@ -271,7 +274,7 @@ fn run_resume(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>)
 fn run_fork(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -> ExitCode {
     let resolved = match SessionManager::new(data_dir).resolve(input) {
         Ok(entry) => entry,
-        Err(err) => return report_persist_error(&err),
+        Err(err) => return fail_forwarded_resolve(&cli, &err),
     };
     cli.fork = Some(resolved.id);
     cli.resume = None;
@@ -303,6 +306,48 @@ fn run_remove(data_dir: &Path, input: &str, deadline: Duration) -> ExitCode {
 // ---------------------------------------------------------------------------
 // Shared error rendering
 // ---------------------------------------------------------------------------
+
+/// Resolve failed before `resume`/`fork` forwarded to the agent path.
+///
+/// The stderr rendering and the exit code are byte-identical to every
+/// other session-subcommand failure ([`report_persist_error`]).
+/// ADDITIONALLY, when the forwarded invocation was bound for plain print
+/// mode, the typed error envelope is emitted first, so
+/// `norn -p -f json session resume <stale>` fails as parseably as the
+/// `norn -p -f json --resume <stale>` spelling of the same operation —
+/// owner ruling R2 (2026-07-06): EVERY post-argument-parsing failure of a
+/// print-bound machine-format invocation gets a typed stop, pre-assembly
+/// included.
+fn fail_forwarded_resolve(cli: &Cli, err: &SessionPersistError) -> ExitCode {
+    emit_forwarded_resolve_envelope(cli, err);
+    report_persist_error(err)
+}
+
+/// Emit the `session`-classed error envelope for a resolve failure on a
+/// forwarded `resume`/`fork` invocation, iff that invocation was bound
+/// for plain print mode.
+///
+/// Uses the exact mode computation `main.rs::run_agent` would have
+/// applied after the forward ([`detect_mode`] over the `--print` flag and
+/// the real stdin/stdout TTY state): the envelope belongs to the output
+/// surface the forwarded run WOULD have used, never to the TUI. A
+/// JSON-RPC peer (`--protocol jsonrpc`) is excluded the same way the
+/// orchestrator's own pre-runtime emit site excludes it — that stdout
+/// carries frames only, and a print envelope would corrupt the stream.
+/// Text format and the class filter are handled inside
+/// [`emit_error_envelope`] itself. Model and session id are `null`: the
+/// failure precedes assembly (R3 minimal payload).
+fn emit_forwarded_resolve_envelope(cli: &Cli, err: &SessionPersistError) {
+    if cli.protocol == Some(Protocol::Jsonrpc) {
+        return;
+    }
+    let stdin_is_tty = std::io::stdin().is_terminal();
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    if detect_mode(cli.print, stdin_is_tty, stdout_is_tty) != Mode::Print {
+        return;
+    }
+    emit_error_envelope(cli, &PrintError::Session(err.to_string()), None, None);
+}
 
 fn report_persist_error(err: &SessionPersistError) -> ExitCode {
     match err {
