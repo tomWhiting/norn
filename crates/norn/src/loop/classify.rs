@@ -6,6 +6,7 @@ use serde_json::Value;
 use crate::error::{NornError, ProviderError, SessionError};
 use crate::integration::hooks::HookRegistry;
 use crate::r#loop::assembly::{AssembledResponse, assemble_response};
+use crate::r#loop::compaction::{InFlightPartial, SharedTimeoutState};
 use crate::r#loop::config::TruncationKind;
 use crate::r#loop::helpers::append_and_notify;
 use crate::r#loop::schema::validate_against_schema;
@@ -194,11 +195,28 @@ pub(super) fn classify_response(
 /// so the retry policy classifies the real error (5xx retryable, quota
 /// terminal, ...) instead of the turn dying later on a generic
 /// "stream ended without a Done event".
+///
+/// When `partial_capture` is supplied, the in-flight text/thinking deltas
+/// are mirrored into
+/// [`TimeoutState::in_flight_partial`](crate::agent_loop::compaction::TimeoutState)
+/// as they arrive: the capture is reset when the stream attempt starts and
+/// stays armed until the runner durably appends the `AssistantMessage`
+/// (`persist_assistant_turn` clears it after the append). If the step's
+/// timeout or cancellation drops this future mid-stream — or in the
+/// hook-running window between assembly and the append — whatever the
+/// model had produced survives in the shared state for the exit path to
+/// persist; otherwise a hard cut loses that content entirely (Gap 7).
 pub(super) async fn call_provider(
     provider: &dyn Provider,
     request: ProviderRequest,
     event_tx: Option<&AgentEventSender>,
+    partial_capture: Option<&SharedTimeoutState>,
 ) -> Result<AssembledResponse, NornError> {
+    if let Some(state) = partial_capture {
+        // A fresh attempt discards any previous attempt's partials — the
+        // durable analogue of the live `StreamRetry` reset marker.
+        state.lock().in_flight_partial = Some(InFlightPartial::default());
+    }
     let mut stream = provider.stream(request)?;
     let mut events: Vec<ProviderEvent> = Vec::new();
 
@@ -207,13 +225,28 @@ pub(super) async fn call_provider(
         if let Some(sender) = event_tx {
             sender.send(event.clone());
         }
+        if let Some(state) = partial_capture {
+            match &event {
+                ProviderEvent::TextDelta { text } => {
+                    if let Some(partial) = state.lock().in_flight_partial.as_mut() {
+                        partial.text.push_str(text);
+                    }
+                }
+                ProviderEvent::ThinkingDelta { text } => {
+                    if let Some(partial) = state.lock().in_flight_partial.as_mut() {
+                        partial.thinking.push_str(text);
+                    }
+                }
+                _ => {}
+            }
+        }
         if let ProviderEvent::Error { error } = event {
             return Err(NornError::Provider(error));
         }
         events.push(event);
     }
 
-    assemble_response(&events).ok_or_else(|| {
+    let assembled = assemble_response(&events).ok_or_else(|| {
         // Terminal by construction (`transient: None`): the transport-level
         // cutoff cases surface earlier as retryable `StreamInterrupted`
         // from the executor; a stream that yielded events but no `Done` is
@@ -222,7 +255,15 @@ pub(super) async fn call_provider(
             reason: "provider stream ended without a Done event".to_string(),
             transient: None,
         })
-    })
+    })?;
+    // The capture is deliberately NOT cleared here: assembly is not
+    // durability. Between this return and the `AssistantMessage` append,
+    // `run_post_llm` hooks run arbitrary user shell hooks — a step timeout
+    // or cancellation landing in that window would otherwise lose the
+    // complete response from the durable log (the exact loss class Gap 7
+    // closes). The runner clears the capture in `persist_assistant_turn`,
+    // immediately after the append succeeds.
+    Ok(assembled)
 }
 
 /// [`call_provider`] under the loop's retry policy.
@@ -232,7 +273,8 @@ pub(super) async fn call_provider(
 /// A typed [`AgentStreamRetry`] marker is broadcast immediately before
 /// every retry attempt's stream begins, so observers reset the failed
 /// attempt's partial output instead of rendering the replay appended to
-/// it.
+/// it. The in-flight `partial_capture` resets the same way — each
+/// attempt starts a fresh capture inside [`call_provider`].
 ///
 /// # Errors
 ///
@@ -243,6 +285,7 @@ pub(super) async fn call_provider_with_retry(
     provider: &dyn Provider,
     request: ProviderRequest,
     event_tx: Option<&AgentEventSender>,
+    partial_capture: Option<&SharedTimeoutState>,
 ) -> Result<AssembledResponse, NornError> {
     let attempts = std::sync::atomic::AtomicU32::new(0);
     crate::r#loop::retry::retry_with_backoff(policy, || {
@@ -256,7 +299,7 @@ pub(super) async fn call_provider_with_retry(
             {
                 sender.send_stream_retry(AgentStreamRetry { attempt });
             }
-            call_provider(provider, req, event_tx).await
+            call_provider(provider, req, event_tx, partial_capture).await
         }
     })
     .await
@@ -499,7 +542,7 @@ mod tests {
             },
         ]]);
 
-        let err = call_provider(&provider, empty_request(), None)
+        let err = call_provider(&provider, empty_request(), None, None)
             .await
             .expect_err("in-band Error event must fail the call");
         match err {
@@ -537,9 +580,10 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
         let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
 
-        let response = call_provider_with_retry(&policy, &provider, empty_request(), Some(&sender))
-            .await
-            .expect("second attempt succeeds");
+        let response =
+            call_provider_with_retry(&policy, &provider, empty_request(), Some(&sender), None)
+                .await
+                .expect("second attempt succeeds");
         assert_eq!(response.text, "full answer");
 
         let mut received = Vec::new();
@@ -589,9 +633,10 @@ mod tests {
         let (tx, mut rx) = tokio::sync::broadcast::channel::<AgentEvent>(32);
         let sender = AgentEventSender::new(tx, uuid::Uuid::nil(), "root".to_owned());
 
-        let response = call_provider_with_retry(&policy, &provider, empty_request(), Some(&sender))
-            .await
-            .expect("first attempt succeeds");
+        let response =
+            call_provider_with_retry(&policy, &provider, empty_request(), Some(&sender), None)
+                .await
+                .expect("first attempt succeeds");
         assert_eq!(response.text, "clean");
 
         while let Ok(event) = rx.try_recv() {

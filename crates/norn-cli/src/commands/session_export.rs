@@ -166,6 +166,17 @@ fn export_markdown(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCo
             } => {
                 println!("### Rule: {rule_id}\n\n{content}\n");
             }
+            SessionEvent::ContextMark {
+                mark,
+                target_event_id,
+                ..
+            } => {
+                let kind = match mark {
+                    norn::session::events::ContextMarkKind::Suppress => "suppress",
+                    norn::session::events::ContextMarkKind::Inject => "inject",
+                };
+                println!("_Context mark: {kind} -> {target_event_id}_\n");
+            }
         }
     }
     ExitCode::Success

@@ -72,6 +72,7 @@ pub(super) fn event_produces_prompt_message(
         | SessionEvent::ForkComplete { .. }
         | SessionEvent::Label { .. }
         | SessionEvent::Custom { .. }
+        | SessionEvent::ContextMark { .. }
         | SessionEvent::SpokenResponse { .. } => false,
     }
 }

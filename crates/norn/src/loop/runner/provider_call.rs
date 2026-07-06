@@ -47,6 +47,12 @@ impl StepMachine<'_> {
                 self.provider,
                 request,
                 self.event_tx,
+                // Mirror in-flight deltas into the shared timeout state so
+                // a hard cut (step timeout dropping this future, or the
+                // cancel arm below winning the select) leaves the partial
+                // content recoverable for the exit path's
+                // `loop.partial_output` record (Gap 7).
+                Some(&self.timeout_state),
             );
             match self.cancel.as_ref() {
                 Some(token) => tokio::select! {
@@ -174,6 +180,15 @@ impl StepMachine<'_> {
             self.loop_context.hooks.as_deref(),
         )
         .await?;
+
+        // The turn is durable: only now may the Gap 7 capture disarm.
+        // Clearing at assembly time (inside `call_provider`) would open a
+        // window — the `run_post_llm` hooks between assembly and this
+        // append run arbitrary user shell hooks — where a step timeout or
+        // cancellation loses the complete response from the durable log.
+        // Cross-call staleness is guarded by the per-attempt reset at the
+        // top of `call_provider`.
+        self.timeout_state.lock().in_flight_partial = None;
 
         self.messages.push(Message {
             role: MessageRole::Assistant,
