@@ -68,6 +68,37 @@ pub(super) fn grant_child_policy(
 /// A spawner with no registry entry (an unregistered root) has no path
 /// prefix, so its children land at `/{kind}/{uuid}` — exactly the
 /// pre-recursion shape.
+/// Run [`SessionBinding::branch_child`] off the async executor.
+///
+/// The mint performs blocking file I/O — an inter-process index-lock
+/// wait plus child-file creation (and an fsync under fsyncing
+/// durability policies) — which must never run inline on an executor
+/// worker ([`SessionManager`](crate::session::SessionManager)'s
+/// documented off-executor rule; the same treatment the write-through
+/// sink appends and the spool writes get). On a multi-thread runtime
+/// the mint runs inside [`tokio::task::block_in_place`] — the
+/// borrowed-data form, matching `append_store_event_off_executor` —
+/// and elsewhere (current-thread runtime, where `block_in_place`
+/// panics by contract, or no runtime) it runs inline, exactly like the
+/// sink writes on those flavors.
+///
+/// # Errors
+///
+/// Propagates [`SessionBinding::branch_child`]'s typed errors
+/// unchanged.
+pub(crate) fn branch_child_off_executor(
+    binding: &crate::session::SessionBinding,
+    parent_store: &crate::session::store::EventStore,
+    request: &crate::session::ChildBranchRequest,
+) -> Result<crate::session::BranchedChild, crate::session::SessionPersistError> {
+    match tokio::runtime::Handle::try_current() {
+        Ok(handle) if handle.runtime_flavor() == tokio::runtime::RuntimeFlavor::MultiThread => {
+            tokio::task::block_in_place(|| binding.branch_child(parent_store, request))
+        }
+        _ => binding.branch_child(parent_store, request),
+    }
+}
+
 pub(crate) fn auto_child_path(
     registry: &Arc<RwLock<AgentRegistry>>,
     spawner_id: Uuid,

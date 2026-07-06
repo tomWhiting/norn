@@ -3236,6 +3236,83 @@ mod tests {
         );
     }
 
+    /// F9 end-to-end: a builder WITHOUT a persisted session (the
+    /// `--no-session` shape: an in-memory `.session(..)` store) arms the
+    /// ephemeral binding, and a real spawn through the built agent's
+    /// tool surface records the honest `session: None` `ChildBranch`
+    /// reservation on the root's store — absence stated typed, never a
+    /// fake id, and no session file or index anywhere.
+    #[tokio::test]
+    async fn no_session_spawn_records_honest_none_branch_event() {
+        use crate::session::events::SessionEvent;
+        use crate::tool::envelope::ToolEnvelope;
+        use crate::tool::traits::Tool as _;
+
+        let agent = AgentBuilder::new(provider_with(text_completion("child done")))
+            .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
+            .working_dir(std::env::temp_dir())
+            .agent_registry(AgentRegistry::shared())
+            .child_policy(test_child_policy())
+            .child_result_capacity(16)
+            .session(Arc::new(crate::session::EventStore::new()))
+            .build()
+            .expect("build succeeds");
+        let shared = agent
+            .registry
+            .shared_context()
+            .expect("shared tool context");
+
+        let tool = crate::tools::agent::SpawnAgentTool::new();
+        let out = tool
+            .execute(
+                &ToolEnvelope {
+                    tool_call_id: "call-ephemeral".to_owned(),
+                    tool_name: "spawn_agent".to_owned(),
+                    model_args: serde_json::json!({
+                        "task": "t", "model": "test-model", "role": "worker",
+                    }),
+                    metadata: serde_json::Value::Null,
+                },
+                shared.as_ref(),
+            )
+            .await
+            .expect("spawn under an ephemeral root succeeds");
+        assert!(!out.is_error(), "{:?}", out.content);
+
+        let reservation = agent
+            .event_store
+            .events()
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::ChildBranch {
+                    parent_session_id,
+                    child_session_id,
+                    path_address,
+                    ..
+                } => Some((
+                    parent_session_id.clone(),
+                    child_session_id.clone(),
+                    path_address.clone(),
+                )),
+                _ => None,
+            })
+            .expect("the no-session root's store carries the ChildBranch reservation");
+        assert_eq!(
+            reservation.0, None,
+            "--no-session root: parent_session_id is honest None",
+        );
+        assert_eq!(
+            reservation.1, None,
+            "--no-session child: child_session_id is honest None, never a fake id",
+        );
+        assert!(
+            reservation.2.starts_with("root/worker-"),
+            "the name is still reserved on the parent timeline: {}",
+            reservation.2,
+        );
+    }
+
     /// Gap 14 closure: the `RunOutcome` payload carries the LIVE
     /// sink-equipped store `Arc` — appends made by the embedder AFTER
     /// the run still write through to disk, even with the fork/spawn

@@ -349,35 +349,37 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
     // children/ dir, with the ChildBranch reservation durably on the
     // host's timeline PARENT-FIRST; an ephemeral host propagates
     // ephemerality with the honest `session: None` reservation.
-    let branched = ctx
-        .session
-        .branch_child(
-            &ctx.event_store,
-            &ChildBranchRequest {
-                child_session_id: real_id.to_string(),
-                name_stem,
-                kind: ChildBranchKind::Spawn,
-                durability: ctx.session.child_durability(),
-                model: model.clone(),
-                working_dir: ctx.working_dir.get().display().to_string(),
-            },
-        )
-        .map_err(|e| {
-            Box::new(rhai_error(format!(
-                "spawn_agent: session branch failed: {e}"
-            )))
-        })?;
+    // The mint's blocking file I/O runs off the executor when the sync
+    // rhai host function is driven from inside a runtime thread (F5).
+    let branched = crate::tools::agent::delegation::branch_child_off_executor(
+        &ctx.session,
+        &ctx.event_store,
+        &ChildBranchRequest {
+            child_session_id: real_id.to_string(),
+            name_stem,
+            kind: ChildBranchKind::Spawn,
+            durability: ctx.session.child_durability(),
+            model: model.clone(),
+            working_dir: ctx.working_dir.get().display().to_string(),
+        },
+    )
+    .map_err(|e| {
+        Box::new(rhai_error(format!(
+            "spawn_agent: session branch failed: {e}"
+        )))
+    })?;
     let child_store = branched.store;
-
-    guard
-        .confirm()
-        .map_err(|e| Box::new(rhai_error(format!("spawn_agent: confirm: {e}"))))?;
 
     // Typed lifecycle on both carriers (the rhai-fidelity fix riding
     // Gap 1): `Started` before the child task launches; the task emits
     // `Completed`. Both land as durable Custom audit records on the
     // host's store; the live broadcast additionally fires when the
-    // embedder wired a channel.
+    // embedder wired a channel. The Started audit fires BEFORE the
+    // reservation is confirmed: on a persist failure the guard's RAII
+    // rollback reclaims the registry slot, so a refused spawn can never
+    // leave a phantom Active child pinning the parent's concurrency
+    // budget (the only residue is the already-tolerated burned name +
+    // dangling reservation).
     let child_event_sender = ctx
         .events
         .as_ref()
@@ -396,6 +398,13 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
                  event; spawn aborted before launch: {error}"
         )))
     })?;
+
+    // All fallible setup is done — confirm the reservation. From here
+    // the launch is unconditional and the task owns the entry's
+    // terminal transition.
+    guard
+        .confirm()
+        .map_err(|e| Box::new(rhai_error(format!("spawn_agent: confirm: {e}"))))?;
 
     let provider = Arc::clone(&ctx.provider);
     let registry_for_executor = Arc::clone(registry);

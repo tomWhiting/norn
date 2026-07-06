@@ -405,24 +405,59 @@ impl Tool for SpawnAgentTool {
         // reservation durably on the parent's timeline PARENT-FIRST; an
         // ephemeral parent propagates ephemerality with the honest
         // `session: None` reservation. The branched binding rides on the
-        // child's infra so grandchild mints recurse structurally.
-        let branched = infra
-            .session
-            .branch_child(
-                &infra.event_store,
-                &ChildBranchRequest {
-                    child_session_id: child_id.to_string(),
-                    name_stem: slugify_name_stem(&role_label, "spawn"),
-                    kind: ChildBranchKind::Spawn,
-                    durability: infra.session.child_durability(),
-                    model: args.model.clone(),
-                    working_dir: ctx.working_dir().display().to_string(),
-                },
-            )
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("spawn_agent: session branch failed: {e}"),
-            })?;
+        // child's infra so grandchild mints recurse structurally. The
+        // mint's blocking file I/O runs off the executor (F5).
+        let branched = super::delegation::branch_child_off_executor(
+            &infra.session,
+            &infra.event_store,
+            &ChildBranchRequest {
+                child_session_id: child_id.to_string(),
+                name_stem: slugify_name_stem(&role_label, "spawn"),
+                kind: ChildBranchKind::Spawn,
+                durability: infra.session.child_durability(),
+                model: args.model.clone(),
+                working_dir: ctx.working_dir().display().to_string(),
+            },
+        )
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("spawn_agent: session branch failed: {e}"),
+        })?;
         let child_store = Arc::clone(&branched.store);
+
+        let child_event_sender = ctx
+            .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
+            .map(|ch| {
+                AgentEventSender::new(ch.0.clone(), child_id, format!("spawn/{}", args.model))
+            });
+
+        // Typed lifecycle: `Started` is emitted before the child task
+        // launches, so it always precedes the child's own provider
+        // events on the broadcast channel; the wrapper task emits
+        // `Completed`. Both phases also land as Custom audit events on
+        // the parent's session store.
+        let lifecycle = LifecycleEmitter::new(
+            child_event_sender.clone(),
+            Arc::clone(&infra.event_store),
+            infra.agent_id,
+            child_id,
+            descriptor,
+            Utc::now(),
+        );
+        // The Started audit joins the primary write-through contract
+        // (session-fidelity Gap 10) and fires BEFORE the reservation is
+        // confirmed: on a persist failure the guard's RAII rollback
+        // reclaims the registry slot, so a refused spawn can never leave
+        // a phantom Active child pinning the parent's concurrency budget
+        // (the only residue is the already-tolerated burned name +
+        // dangling reservation).
+        lifecycle
+            .emit_started()
+            .map_err(|error| ToolError::ExecutionFailed {
+                reason: format!(
+                    "failed to persist the subagent.started audit event; \
+                     spawn aborted before launch: {error}",
+                ),
+            })?;
 
         // All fallible setup is done — confirm the reservation. From here
         // the launch is unconditional and the completion wrapper owns the
@@ -541,38 +576,6 @@ impl Tool for SpawnAgentTool {
         // this receiver at the same step boundaries the root uses — zero
         // loop changes, results bubble one hop per level.
         child_loop_ctx.child_result_rx = child_result_rx;
-
-        let child_event_sender = ctx
-            .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
-            .map(|ch| {
-                AgentEventSender::new(ch.0.clone(), child_id, format!("spawn/{}", args.model))
-            });
-
-        // Typed lifecycle: `Started` is emitted before the child task
-        // launches, so it always precedes the child's own provider
-        // events on the broadcast channel; the wrapper task emits
-        // `Completed`. Both phases also land as Custom audit events on
-        // the parent's session store.
-        let lifecycle = LifecycleEmitter::new(
-            child_event_sender.clone(),
-            Arc::clone(&infra.event_store),
-            infra.agent_id,
-            child_id,
-            descriptor,
-            Utc::now(),
-        );
-        // The Started audit joins the primary write-through contract
-        // (session-fidelity Gap 10): if it cannot persist, the launch is
-        // aborted here — before the child task exists — so the durable
-        // log can never silently miss a child that actually ran.
-        lifecycle
-            .emit_started()
-            .map_err(|error| ToolError::ExecutionFailed {
-                reason: format!(
-                    "failed to persist the subagent.started audit event; \
-                     spawn aborted before launch: {error}",
-                ),
-            })?;
 
         let handle = launch_child(ChildLaunch {
             provider: Arc::clone(&infra.provider),
@@ -806,6 +809,82 @@ mod tests {
         ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
         ctx.insert_extension(Arc::new(test_envelope()));
         (ctx, manager, root_session_id)
+    }
+
+    /// Sink double that accepts everything EXCEPT `Custom` events — lets
+    /// the `ChildBranch` reservation through but refuses the
+    /// `subagent.started` audit, isolating the Started-audit failure
+    /// path.
+    struct CustomRefusingSink;
+    impl crate::session::store::PersistenceSink for CustomRefusingSink {
+        fn persist(
+            &mut self,
+            event: &SessionEvent,
+        ) -> Result<(), crate::session::persistence::SessionPersistError> {
+            match event {
+                SessionEvent::Custom { .. } => {
+                    Err(crate::session::persistence::SessionPersistError::Io(
+                        std::io::Error::other("sink refused the audit"),
+                    ))
+                }
+                _ => Ok(()),
+            }
+        }
+    }
+
+    /// F1 regression: a `subagent.started` persist failure aborts the
+    /// spawn BEFORE the reservation is confirmed — the tool errors AND
+    /// the registry holds no phantom Active child afterwards (the
+    /// unconfirmed guard's RAII rollback reclaims the slot; a
+    /// post-confirm failure would have pinned the parent's
+    /// max_concurrent_children budget forever, with no wrapper left to
+    /// transition the entry).
+    #[tokio::test]
+    async fn started_audit_failure_aborts_spawn_without_phantom_child() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let parent = Uuid::new_v4();
+        let agent_registry = AgentRegistry::shared();
+        let infra = Arc::new(AgentToolInfra {
+            registry: Arc::clone(&agent_registry),
+            router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
+            provider,
+            event_store: Arc::new(EventStore::with_sink(Box::new(CustomRefusingSink))),
+            agent_id: parent,
+            parent_id: None,
+            grant: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
+        });
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+        ctx.insert_extension(Arc::new(AgentHandles::new()));
+        ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
+        ctx.insert_extension(Arc::new(test_envelope()));
+
+        let tool = SpawnAgentTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({"task": "t", "model": "haiku", "role": "worker"})),
+                &ctx,
+            )
+            .await
+            .expect_err("a Started-audit persist failure must abort the spawn");
+        assert!(
+            err.to_string().contains("subagent.started"),
+            "the failure names the refused audit: {err}",
+        );
+
+        // No phantom child: the unconfirmed reservation rolled back, so
+        // the registry lists nothing and the parent's concurrency budget
+        // is untouched.
+        let reg = agent_registry.read();
+        assert!(
+            reg.list().is_empty(),
+            "the rolled-back reservation must leave no registry entry: {:?}",
+            reg.list(),
+        );
+        assert!(reg.tombstones().is_empty(), "and no tombstone");
     }
 
     /// Read a persisted session's events back from DISK through its index

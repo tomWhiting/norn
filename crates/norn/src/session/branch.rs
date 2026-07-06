@@ -214,6 +214,13 @@ pub struct BranchedChild {
     /// The child's session id — `None` for ephemeral children (honest
     /// absence, never a stand-in id).
     pub session_id: Option<String>,
+    /// The parent's last event id at branch time, exactly as recorded on
+    /// the reservation's `parent_event_anchor` — captured INSIDE the
+    /// allocation lock. Fork seeding truncates its parent-history copy
+    /// at this anchor so the seed matches the recorded branch point even
+    /// when concurrent tasks append to the parent store between the mint
+    /// and the snapshot. `None` = the parent log was empty at branch.
+    pub parent_event_anchor: Option<crate::session::events::EventId>,
 }
 
 impl std::fmt::Debug for BranchedChild {
@@ -221,6 +228,7 @@ impl std::fmt::Debug for BranchedChild {
         f.debug_struct("BranchedChild")
             .field("path_address", &self.path_address)
             .field("session_id", &self.session_id)
+            .field("parent_event_anchor", &self.parent_event_anchor)
             .field("binding", &self.binding)
             .finish_non_exhaustive()
     }
@@ -430,7 +438,7 @@ impl SessionBinding {
                 .is_some()
                 .then(|| request.child_session_id.clone()),
             path_address: path_address.clone(),
-            parent_event_anchor: anchor,
+            parent_event_anchor: anchor.clone(),
             kind: request.kind,
         };
         parent_store.append(reservation.clone())?;
@@ -446,6 +454,7 @@ impl SessionBinding {
                 }),
                 path_address,
                 session_id: None,
+                parent_event_anchor: anchor,
             });
         };
 
@@ -461,6 +470,7 @@ impl SessionBinding {
             binding: Arc::new(binding),
             path_address,
             session_id: Some(request.child_session_id.clone()),
+            parent_event_anchor: anchor,
         })
     }
 }
@@ -494,28 +504,30 @@ fn materialize_child(
         rel_path: Some(rel_path.clone()),
         parent_id: Some(parent_session_id.to_owned()),
     };
-    // Mint-collision re-check BEFORE the index insert (and again after —
-    // see below): the sink APPENDS to an existing file, and adopting an
-    // orphan would interleave two agents' histories in one file. Checking
-    // first also means a refusal leaves NO index row pointing at a
-    // foreign file.
+    // Mint-collision check BEFORE the index insert: the sink APPENDS to
+    // an existing file, and adopting an orphan would interleave two
+    // agents' histories in one file. Checking before inserting means a
+    // refusal leaves NO index row pointing at a foreign file. This check
+    // handles pre-existing orphan residue; racing mints are excluded
+    // elsewhere — same-process by the binding's allocation lock, and
+    // cross-process by `insert_child_index_entry`'s id + rel_path claim
+    // checks under the inter-process index lock (the first process to
+    // insert the row owns the path; the loser is refused typed before it
+    // ever touches the file). A writer outside norn's protocol could
+    // still race file creation, but no check can close a TOCTOU window
+    // against arbitrary external writers — the locked row claim is the
+    // authoritative gate.
     let absolute = brancher.manager.data_dir().join(&rel_path);
     if absolute.exists() {
         return Err(SessionPersistError::ChildPathOccupied { rel_path });
     }
     // Index row BEFORE the file: a crash here leaves a row without a
-    // file, which resumes as an empty session (already-tolerated state);
-    // the insert re-checks id + rel_path under the inter-process lock.
+    // file, which resumes as an empty session (already-tolerated state).
     insert_child_index_entry(
         brancher.manager.data_dir(),
         &entry,
         brancher.manager.index_lock_deadline(),
     )?;
-    // Defensive final check directly before creation (the pre-insert
-    // check ran outside the inter-process index lock).
-    if absolute.exists() {
-        return Err(SessionPersistError::ChildPathOccupied { rel_path });
-    }
     let sink = JsonlSink::open_registered(
         brancher.manager.data_dir(),
         &entry,
@@ -854,6 +866,16 @@ mod tests {
             std::fs::read(&orphan_abs).unwrap(),
             b"{\"foreign\":true}\n",
             "the orphan must be byte-identical — never truncated or appended to",
+        );
+        // F2: the refusal happens BEFORE the index insert, so no row can
+        // be left pointing at the foreign file (a later resume of such a
+        // row would replay another agent's history).
+        let rows = read_index(root.manager.data_dir()).unwrap();
+        assert!(
+            !rows
+                .iter()
+                .any(|e| e.id == req.child_session_id || e.rel_path.as_deref() == Some(&*rel_path)),
+            "a refused mint must leave no index row: {rows:?}",
         );
     }
 

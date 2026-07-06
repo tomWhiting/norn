@@ -6,9 +6,13 @@
 //! projection and the full payload was discarded from the durable log
 //! (session-fidelity inventory, Gap 5). The spool closes that gap: the
 //! full output is written **verbatim** — no size cap, no compression —
-//! to `spool/` under the session's sibling directory (the ruled storage
-//! layout: `<data-dir>/<session-id>.jsonl` next to `<data-dir>/<session-id>/`
-//! containing `children/` and `spool/`), and the `ToolResult` event
+//! to `spool/` under the OWNING ROOT session's sibling directory (the
+//! ruled storage layout: `<data-dir>/<root-id>.jsonl` next to
+//! `<data-dir>/<root-id>/` containing `children/` and `spool/`). Child
+//! sessions spool into the same root-keyed directory their timeline
+//! lives under — `SessionManager` and the branching authority both
+//! derive the key from the owning root, so a child spools to one place
+//! whether freshly minted or later resumed. The `ToolResult` event
 //! carries a durable [`spool reference`](SpoolWriter::write) alongside
 //! the capped projection.
 //!
@@ -28,7 +32,8 @@
 //! # Reference format
 //!
 //! A spool reference is relative to the session **data directory**:
-//! `<session-id>/spool/<event-id>.bin`. Anchoring at the data directory
+//! `<root-session-id>/spool/<event-id>.bin` (the id component is the
+//! owning ROOT's). Anchoring at the data directory
 //! (rather than the owning session's directory) keeps references valid
 //! when events are copied between stores under the same data directory
 //! (fork seeding copies parent `ToolResult` events into child stores).

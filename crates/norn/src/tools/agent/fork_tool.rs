@@ -36,7 +36,7 @@ use super::delegation::{
 };
 use super::fork_context::build_fork_context;
 use super::fork_launch::{ForkLaunch, launch_fork};
-use super::fork_seed::seed_fork_events;
+use super::fork_seed::{seed_fork_events, truncate_seed_at_anchor};
 use super::handle::AgentHandles;
 use super::infra::{
     AgentCancellation, SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list,
@@ -278,39 +278,48 @@ impl Tool for ForkTool {
         })?;
         let fork_id = guard.id();
 
-        // Snapshot the parent history BEFORE the branch so the seed copy
-        // matches the anchor the reservation event records (the fork's
-        // own reservation is not part of its inherited history — its
-        // provenance header, appended by branch_child, carries the same
-        // record).
-        let parent_events = infra.event_store.events();
-
         // Mint the fork's session through the parent's branching binding
         // (V2-R2): a persistent parent yields a real write-through child
         // timeline under the root's children/ dir, with the ChildBranch
         // reservation durably on the parent's timeline PARENT-FIRST; an
         // ephemeral parent propagates ephemerality with the honest
         // `session: None` reservation. A failure after this point (seed,
-        // confirm) leaves a burned name + dangling reference — exactly
-        // the crash residue resume paths already tolerate.
-        let branched = infra
-            .session
-            .branch_child(
-                &infra.event_store,
-                &crate::session::ChildBranchRequest {
-                    child_session_id: fork_id.to_string(),
-                    name_stem: crate::session::slugify_name_stem("fork", "fork"),
-                    kind: crate::session::events::ChildBranchKind::Fork,
-                    durability: infra.session.child_durability(),
-                    model: args.model.clone(),
-                    working_dir: ctx.working_dir().display().to_string(),
-                },
-            )
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("fork: session branch failed: {e}"),
-            })?;
+        // started-audit) leaves a burned name + dangling reference —
+        // exactly the crash residue resume paths already tolerate. The
+        // mint's blocking file I/O runs off the executor (F5).
+        let branched = super::delegation::branch_child_off_executor(
+            &infra.session,
+            &infra.event_store,
+            &crate::session::ChildBranchRequest {
+                child_session_id: fork_id.to_string(),
+                name_stem: crate::session::slugify_name_stem("fork", "fork"),
+                kind: crate::session::events::ChildBranchKind::Fork,
+                durability: infra.session.child_durability(),
+                model: args.model.clone(),
+                working_dir: ctx.working_dir().display().to_string(),
+            },
+        )
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("fork: session branch failed: {e}"),
+        })?;
         let child_store = Arc::clone(&branched.store);
         let forked_session_id = branched.session_id.clone();
+
+        // The seed copy is the parent history UP TO the anchor the
+        // reservation recorded (captured inside the allocation lock):
+        // the snapshot is taken after the mint and truncated at the
+        // anchor, so neither the fork's own reservation nor anything a
+        // concurrent task appended between mint and snapshot can leak
+        // into the inherited history (F4). The fork's provenance header,
+        // appended by branch_child to its own file, carries the same
+        // record.
+        let parent_events = truncate_seed_at_anchor(
+            infra.event_store.events(),
+            branched.parent_event_anchor.as_ref(),
+        )
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("fork: {e}"),
+        })?;
 
         let fork_call_id = if envelope.tool_call_id.is_empty() {
             None
@@ -322,6 +331,50 @@ impl Tool for ForkTool {
                 reason: format!("fork: seeding child store failed: {e}"),
             },
         )?;
+
+        let child_event_sender = ctx
+            .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
+            .map(|ch| {
+                crate::provider::agent_event::AgentEventSender::new(
+                    ch.0.clone(),
+                    fork_id,
+                    format!("fork/{}", args.model),
+                )
+            });
+
+        // Typed lifecycle: `Started` is emitted before the fork task
+        // launches, so it always precedes the fork's own provider events
+        // on the broadcast channel; the wrapper task emits `Completed`.
+        // Both phases also land as Custom audit events on the parent's
+        // session store.
+        let lifecycle = LifecycleEmitter::new(
+            child_event_sender.clone(),
+            Arc::clone(&infra.event_store),
+            infra.agent_id,
+            fork_id,
+            SubagentDescriptor {
+                kind: SubagentKind::Fork,
+                role: "fork".to_owned(),
+                model: args.model.clone(),
+                profile: None,
+            },
+            Utc::now(),
+        );
+        // The Started audit joins the primary write-through contract
+        // (session-fidelity Gap 10) and fires BEFORE the reservation is
+        // confirmed: on a persist failure the guard's RAII rollback
+        // reclaims the registry slot, so a refused fork can never leave
+        // a phantom Active child pinning the parent's concurrency budget
+        // (the only residue is the already-tolerated burned name +
+        // dangling reservation).
+        lifecycle
+            .emit_started()
+            .map_err(|error| ToolError::ExecutionFailed {
+                reason: format!(
+                    "failed to persist the subagent.started audit event; \
+                     fork aborted before launch: {error}",
+                ),
+            })?;
 
         // All fallible setup is done — confirm the reservation. From here
         // the launch is unconditional and the completion wrapper owns the
@@ -479,15 +532,6 @@ impl Tool for ForkTool {
         } else {
             (None, None)
         };
-        let child_event_sender = ctx
-            .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
-            .map(|ch| {
-                crate::provider::agent_event::AgentEventSender::new(
-                    ch.0.clone(),
-                    fork_id,
-                    format!("fork/{}", args.model),
-                )
-            });
         let requirement_names: Vec<String> = args
             .requirements
             .iter()
@@ -503,37 +547,6 @@ impl Tool for ForkTool {
                 .run_subagent_start(&fork_id.to_string(), "fork")
                 .await;
         }
-
-        // Typed lifecycle: `Started` is emitted before the fork task
-        // launches, so it always precedes the fork's own provider events
-        // on the broadcast channel; the wrapper task emits `Completed`.
-        // Both phases also land as Custom audit events on the parent's
-        // session store.
-        let lifecycle = LifecycleEmitter::new(
-            child_event_sender.clone(),
-            Arc::clone(&infra.event_store),
-            infra.agent_id,
-            fork_id,
-            SubagentDescriptor {
-                kind: SubagentKind::Fork,
-                role: "fork".to_owned(),
-                model: args.model.clone(),
-                profile: None,
-            },
-            Utc::now(),
-        );
-        // The Started audit joins the primary write-through contract
-        // (session-fidelity Gap 10): if it cannot persist, the launch is
-        // aborted here — before the fork task exists — so the durable
-        // log can never silently miss a fork that actually ran.
-        lifecycle
-            .emit_started()
-            .map_err(|error| ToolError::ExecutionFailed {
-                reason: format!(
-                    "failed to persist the subagent.started audit event; \
-                     fork aborted before launch: {error}",
-                ),
-            })?;
 
         let handle = launch_fork(
             ForkLaunch {
@@ -1407,6 +1420,41 @@ mod tests {
         });
         let (fsid, summary) = complete.expect("ForkComplete event present");
         assert_eq!(summary["response"], "done");
+        // F9: this parent is EPHEMERAL (parent_ctx arms ephemeral_root),
+        // so the fork has no session file and the completion reference
+        // records honest absence — never a registry-id stand-in.
+        assert!(
+            fsid.is_none(),
+            "an ephemeral fork's ForkComplete must carry forked_session_id: None, got {fsid:?}",
+        );
+        // The honest `session: None` reservation is on the parent's
+        // (in-memory) timeline too — the ONLY trace an ephemeral child's
+        // name allocation leaves.
+        let reservation = events
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::ChildBranch {
+                    parent_session_id,
+                    child_session_id,
+                    path_address,
+                    ..
+                } => Some((
+                    parent_session_id.clone(),
+                    child_session_id.clone(),
+                    path_address.clone(),
+                )),
+                _ => None,
+            })
+            .expect("the ephemeral parent's store carries the ChildBranch reservation");
+        assert_eq!(
+            reservation.0, None,
+            "an ephemeral parent has no session id — honest None",
+        );
+        assert_eq!(
+            reservation.1, None,
+            "an ephemeral fork has no session id — honest None, never a fake id",
+        );
+        assert!(reservation.2.starts_with("root/fork-"), "{}", reservation.2);
 
         let event = SessionEvent::ForkComplete {
             base: EventBase::new(None),

@@ -296,6 +296,18 @@ impl AgentBuilder {
     /// A fresh store is created when unset. For disk-persisted sessions,
     /// prefer [`Self::open_session`] — the two are mutually exclusive and
     /// setting both fails the build.
+    ///
+    /// **Child persistence:** a `session(..)`-armed builder arms the
+    /// EPHEMERAL branching root — the agent's own appends persist
+    /// through whatever sink the store carries, but every spawn/fork
+    /// child it launches runs memory-only (recorded honestly as the
+    /// `session: None` branch event on this store). The builder has no
+    /// way to recover the on-disk session identity, data directory, or
+    /// index linkage from a bare store handle, and inventing them would
+    /// mint children into a directory layout the store may not belong
+    /// to. [`Self::open_session`] is the persistent-children path: it
+    /// carries the [`SessionManager`] and session identity end to end
+    /// and arms the persistent branching authority.
     #[must_use]
     pub fn session(mut self, store: Arc<EventStore>) -> Self {
         self.session = Some(store);

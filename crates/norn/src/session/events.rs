@@ -12,7 +12,12 @@ use serde::{Deserialize, Serialize};
 pub struct EventId(String);
 
 impl EventId {
-    /// Generate a new unique event ID using UUID v7 (time-sortable).
+    /// Generate a new unique event ID.
+    ///
+    /// Uses UUID v7. Nothing in norn relies on v7's time-ordering — the
+    /// event LOG's order is the file's append order, and readers never
+    /// sort by id — the version is simply retained pending an owner
+    /// ruling on whether event ids join R8's session-id switch to v4.
     pub fn new() -> Self {
         Self(uuid::Uuid::now_v7().to_string())
     }
@@ -231,8 +236,11 @@ pub enum SessionEvent {
         /// points at the verbatim full payload.
         output: serde_json::Value,
         /// Data-dir-relative reference
-        /// (`<session-id>/spool/<event-id>.bin`) to the spooled verbatim
-        /// full output, present only when `output` is the bounded
+        /// (`<root-session-id>/spool/<event-id>.bin` — the id component
+        /// is the OWNING ROOT session's; child sessions spool into the
+        /// same root-keyed directory their timeline lives under) to the
+        /// spooled verbatim full output, present only when `output` is
+        /// the bounded
         /// projection of an over-budget payload persisted through a
         /// spool-equipped store. Resolved via
         /// [`read_spooled_output`](crate::session::spool::read_spooled_output).

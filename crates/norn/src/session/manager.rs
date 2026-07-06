@@ -551,10 +551,19 @@ impl SessionManager {
     /// Returns the removed entry.
     ///
     /// Deleting a **root** session also deletes its `{id}/` sibling
-    /// directory (the `children/` timelines minted under it) and every
-    /// index row whose `rel_path` lives inside that directory — a root's
-    /// children are meaningless without the root and would otherwise
-    /// linger as phantom rows over deleted files.
+    /// directory (the `children/` timelines and `spool/` payloads minted
+    /// under it) and every index row whose `rel_path` lives inside that
+    /// directory — a root's children are meaningless without the root
+    /// and would otherwise linger as phantom rows over deleted files.
+    ///
+    /// **Spool caveat:** [`Self::fork`] copies the source's events —
+    /// including `ToolResult.spool_ref` values, which stay anchored at
+    /// the SOURCE root's `{id}/spool/` directory — without copying the
+    /// spool payloads. Deleting the source root therefore orphans those
+    /// references in the fork: resolving one afterwards degrades TYPED
+    /// ([`read_spooled_output`](crate::session::spool::read_spooled_output)
+    /// returns the missing-file persist error, never a panic), and the
+    /// fork's inline bounded projection remains intact.
     ///
     /// # Errors
     ///
@@ -572,19 +581,26 @@ impl SessionManager {
                 format!("failed to delete session file {}: {error}", path.display()),
             )));
         }
-        // Root sessions may own a `{id}/` directory of child timelines;
-        // remove it (and the rows pointing into it) with the root.
-        let children_dir = self.data_dir.join(&entry.id);
-        if entry.rel_path.is_none() && children_dir.is_dir() {
-            fs::remove_dir_all(&children_dir).map_err(|error| {
-                SessionPersistError::Io(std::io::Error::new(
-                    error.kind(),
-                    format!(
-                        "failed to delete child-session directory {}: {error}",
-                        children_dir.display(),
-                    ),
-                ))
-            })?;
+        // Root sessions may own a `{id}/` directory of child timelines
+        // (and spool payloads); remove it — and every row pointing into
+        // it — with the root. The row sweep runs UNCONDITIONALLY for
+        // roots, never gated on the directory still existing: a crash
+        // between `remove_dir_all` and the sweep on a previous delete
+        // attempt leaves phantom child rows over deleted files, and the
+        // re-run must still clear them (F3).
+        if entry.rel_path.is_none() {
+            let children_dir = self.data_dir.join(&entry.id);
+            if children_dir.is_dir() {
+                fs::remove_dir_all(&children_dir).map_err(|error| {
+                    SessionPersistError::Io(std::io::Error::new(
+                        error.kind(),
+                        format!(
+                            "failed to delete child-session directory {}: {error}",
+                            children_dir.display(),
+                        ),
+                    ))
+                })?;
+            }
             let prefix = format!("{}/", entry.id);
             for child in read_index(&self.data_dir)? {
                 if child
@@ -1538,5 +1554,100 @@ mod tests {
         fs::create_dir_all(session_file_path(tmp.path(), "occupied")).unwrap();
         let result = manager.open_or_resume("occupied", options("gpt"), DurabilityPolicy::Flush);
         assert!(result.is_err(), "open failure must not be swallowed");
+    }
+
+    /// Root + child fixture for the delete-cascade tests: a persistent
+    /// root minted through the manager, with one child timeline minted
+    /// through the branching authority.
+    fn root_with_child(manager: &SessionManager) -> (String, String, std::path::PathBuf) {
+        use crate::session::{
+            ChildBranchRequest, ChildDurability, SessionBinding, SessionBrancher,
+        };
+        let opened = manager
+            .create(options("gpt-root"), DurabilityPolicy::Flush)
+            .unwrap();
+        let root_id = opened.entry.id.clone();
+        let binding = SessionBinding::persistent_root(
+            std::sync::Arc::new(SessionBrancher::new(
+                manager.clone(),
+                root_id.clone(),
+                DurabilityPolicy::Flush,
+            )),
+            root_id.clone(),
+            &[],
+        );
+        let child = binding
+            .branch_child(
+                &opened.store,
+                &ChildBranchRequest {
+                    child_session_id: Uuid::new_v4().to_string(),
+                    name_stem: "worker".to_owned(),
+                    kind: crate::session::events::ChildBranchKind::Spawn,
+                    durability: ChildDurability::Persist,
+                    model: "gpt-child".to_owned(),
+                    working_dir: "/w".to_owned(),
+                },
+            )
+            .unwrap();
+        let child_id = child.session_id.unwrap();
+        let child_entry = manager.resolve(&child_id).unwrap();
+        let child_abs = manager
+            .data_dir()
+            .join(child_entry.rel_path.as_deref().unwrap());
+        (root_id, child_id, child_abs)
+    }
+
+    /// F3 cascade: deleting a root removes its file, its `{id}/`
+    /// directory (child timelines included), the child index rows, and
+    /// the root row — nothing phantom survives.
+    #[test]
+    fn delete_root_cascades_children_dir_and_rows() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionManager::new(tmp.path());
+        let (root_id, child_id, child_abs) = root_with_child(&manager);
+        assert!(child_abs.exists(), "fixture: child file on disk");
+
+        manager.delete(&root_id).unwrap();
+
+        assert!(!child_abs.exists(), "child timeline deleted with the root");
+        assert!(
+            !tmp.path().join(&root_id).exists(),
+            "the root's {{id}}/ directory is gone",
+        );
+        let rows = read_index(tmp.path()).unwrap();
+        assert!(
+            !rows.iter().any(|e| e.id == root_id || e.id == child_id),
+            "no root or child row survives the cascade: {rows:?}",
+        );
+    }
+
+    /// F3 crash residue: a previous delete attempt that crashed AFTER
+    /// `remove_dir_all` but BEFORE the row sweep leaves phantom child
+    /// rows over deleted files. Re-running delete must still sweep them
+    /// — the sweep is never gated on the directory existing.
+    #[test]
+    fn delete_rerun_sweeps_phantom_child_rows_after_crash_residue() {
+        let tmp = tempfile::tempdir().unwrap();
+        let manager = SessionManager::new(tmp.path());
+        let (root_id, child_id, _child_abs) = root_with_child(&manager);
+
+        // Simulate the crash residue: the children directory is already
+        // gone, but the child row (and the root) are still indexed.
+        fs::remove_dir_all(tmp.path().join(&root_id)).unwrap();
+        assert!(
+            read_index(tmp.path())
+                .unwrap()
+                .iter()
+                .any(|e| e.id == child_id),
+            "fixture: the phantom child row is present",
+        );
+
+        manager.delete(&root_id).unwrap();
+
+        let rows = read_index(tmp.path()).unwrap();
+        assert!(
+            !rows.iter().any(|e| e.id == root_id || e.id == child_id),
+            "the re-run must sweep the phantom child row: {rows:?}",
+        );
     }
 }
