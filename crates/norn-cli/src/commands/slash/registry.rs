@@ -363,7 +363,11 @@ fn clear_handler(state: &SlashState) -> CustomSlashHandler {
     let flag = Arc::clone(&state.clear_requested);
     Arc::new(move |_arg| {
         flag.store(true, Ordering::Relaxed);
-        eprintln!("Conversation cleared.");
+        // No operator print here: the handler only raises the flag. The
+        // actual clear — on a persisted invocation a fallible rotation
+        // into a fresh session (Gap 12) — happens when the orchestrator
+        // applies the flag, and IT reports the outcome, so "Conversation
+        // cleared." can never precede a failed rotation.
         Ok(Vec::new())
     })
 }

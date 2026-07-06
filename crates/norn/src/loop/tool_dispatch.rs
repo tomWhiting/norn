@@ -235,16 +235,6 @@ pub(super) fn installed_inline_char_limit(executor: &dyn ToolExecutor) -> usize 
         })
 }
 
-/// Return the bounded model-facing projection of a tool result.
-pub(super) fn model_safe_tool_output(
-    tool_name: &str,
-    tool_call_id: &str,
-    output: &Value,
-    inline_char_limit: usize,
-) -> Value {
-    project_model_output(tool_name, tool_call_id, output, inline_char_limit).value
-}
-
 /// Run a spool write with the file I/O kept off the async executor,
 /// mirroring [`append_off_executor`](super::helpers::append_off_executor):
 /// on a multi-thread runtime the blocking write runs under
@@ -303,13 +293,18 @@ pub(super) struct ToolResultRecord<'a> {
 /// through. A spool write failure is a typed error and the event is not
 /// appended (retrying constructs a fresh event, so the orphaned attempt
 /// file, if any, is never referenced).
+///
+/// Returns the bounded projection it persisted, so callers that also
+/// need the model-facing copy (the action-log record, post-tool hooks)
+/// reuse it instead of re-serializing a possibly multi-megabyte output
+/// a second time — the projection is computed exactly once per result.
 pub(super) async fn append_tool_result(
     store: &EventStore,
     messages: &mut Vec<Message>,
     record: ToolResultRecord<'_>,
     hooks: Option<&HookRegistry>,
     event_tx: Option<&AgentEventSender>,
-) -> Result<(), crate::error::SessionError> {
+) -> Result<Value, crate::error::SessionError> {
     let ToolResultRecord {
         tool_call_id,
         tool_name,
@@ -383,7 +378,7 @@ pub(super) async fn append_tool_result(
         tool_call_kind: Some(kind),
     });
 
-    Ok(())
+    Ok(output)
 }
 
 #[cfg(test)]
@@ -1624,7 +1619,7 @@ mod tests {
         store: &EventStore,
         messages: &mut Vec<Message>,
         inline_char_limit: usize,
-    ) -> Result<(), crate::error::SessionError> {
+    ) -> Result<Value, crate::error::SessionError> {
         append_tool_result(
             store,
             messages,

@@ -16,8 +16,9 @@
 //!
 //! Spool writes follow the same write-through-before-memory discipline as
 //! the primary event log: the spool file is fully handed to the OS (and
-//! fsynced, when the session's [`DurabilityPolicy`] fsyncs event lines)
-//! **before** the referencing event is appended. A durable event can
+//! fsynced — file **and** the directory-entry chain naming it — when the
+//! session's [`DurabilityPolicy`] fsyncs event lines) **before** the
+//! referencing event is appended. A durable event can
 //! therefore never reference a spool file that was not at least written
 //! through; a crash between the two leaves an unreferenced orphan file,
 //! never a dangling reference (under [`DurabilityPolicy::Flush`] an OS
@@ -93,6 +94,13 @@ impl SpoolWriter {
     /// The file is fully written (and fsynced per the session's
     /// durability policy) before this returns, so callers appending the
     /// referencing event afterwards uphold the write-through ordering.
+    /// Under an fsyncing policy the sync covers the **directory-entry
+    /// chain** as well as the file: a file `sync_all` persists content
+    /// and inode but not the parent directory's entry naming it, so
+    /// `spool/`, the session directory, and the data directory are each
+    /// synced after the file — otherwise a power loss could durably keep
+    /// the referencing event (fsynced into the long-existing session
+    /// file) while dropping the dirent of the payload it references.
     ///
     /// # Errors
     ///
@@ -112,9 +120,26 @@ impl SpoolWriter {
         file.write_all(&bytes)?;
         if self.fsync {
             file.sync_all()?;
+            // Persist the directory entries that name the freshly written
+            // file. `create_dir_all` may have minted any of these on this
+            // very write, and even a pre-existing `spool/` holds a new
+            // entry for the file itself; syncing the full chain keeps the
+            // no-dangling-reference guarantee true across power loss. The
+            // cost is three directory fsyncs, paid only on over-budget
+            // outputs.
+            sync_dir(&dir)?;
+            sync_dir(&self.data_dir.join(&self.session_id))?;
+            sync_dir(&self.data_dir)?;
         }
         Ok(format!("{}/{SPOOL_DIR_NAME}/{file_name}", self.session_id))
     }
+}
+
+/// Fsync a directory so entries created beneath it survive a power
+/// loss. Directories are opened read-only for the sync; on every Unix
+/// target this is the standard dirent-durability idiom.
+fn sync_dir(dir: &Path) -> std::io::Result<()> {
+    std::fs::File::open(dir)?.sync_all()
 }
 
 /// Resolve a persisted spool reference to the full tool output it names.
