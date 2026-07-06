@@ -398,6 +398,7 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
             tool_call_id: "call_read".to_string(),
             tool_name: "read".to_string(),
             output: serde_json::json!({"contents": "ok"}),
+            spool_ref: None,
             duration_ms: 1,
         })
         .unwrap();

@@ -20,7 +20,7 @@ use std::sync::atomic::Ordering;
 use norn::agent_loop::loop_context::LoopContext;
 use norn::session::store::EventStore;
 
-use crate::session::SessionPersistError;
+use crate::session::{CreateSessionOptions, SessionManager, SessionPersistError};
 
 use super::state::SlashState;
 
@@ -115,15 +115,87 @@ pub fn apply_compact_request(
     }
 }
 
-/// Apply the `/clear` flag if it is set. The on-disk JSONL is left
-/// untouched — only the in-memory event store is replaced.
-pub fn apply_clear_request(state: &SlashState) -> bool {
-    if state.clear_requested.swap(false, Ordering::Relaxed) {
-        state.replace_store(Arc::new(EventStore::new()));
-        true
-    } else {
-        false
+/// Outcome of [`apply_clear_request`].
+#[derive(Debug)]
+#[must_use]
+pub enum ClearOutcome {
+    /// `--no-session` invocation: the store was replaced with a fresh
+    /// sink-less in-memory store — the caller's explicit no-persistence
+    /// choice propagates across `/clear`.
+    ClearedInMemory,
+    /// Persisted invocation: the slash state rotated into a fresh
+    /// sink-registered session, so post-clear appends are exactly as
+    /// durable as pre-clear ones (session-fidelity Gap 12).
+    RotatedToNewSession {
+        /// ID of the freshly created session now behind
+        /// [`SlashState::current_store`].
+        new_session_id: String,
+    },
+}
+
+/// Apply the `/clear` flag if it is set.
+///
+/// The pre-clear session's JSONL is left untouched (append-only,
+/// already durable). What replaces the store depends on the invocation
+/// (session-fidelity Gap 12 — the post-clear store must carry the same
+/// sink discipline as the pre-clear one):
+///
+/// - `--no-session`: a fresh sink-less [`EventStore`] — the explicit
+///   no-persistence choice propagates.
+/// - persisted session: a **new** session is created through
+///   [`SessionManager`] (same model — the live `/model` value — and the
+///   retired session's working directory) and its sink-registered store
+///   is swapped in; [`SlashState::session_id`] is rotated to the new ID
+///   and the live session name resets (the old name belongs to the
+///   retired session's index entry). This mirrors the TUI's `/new`
+///   rotation: all fallible work happens before any state is touched,
+///   so a failure leaves the pre-clear state fully intact — never a
+///   silent fallback to a memory-only store.
+///
+/// The retired store's sink flushes its pending index delta when its
+/// last `Arc` drops (checkpointed earlier by the orchestrator's normal
+/// post-turn flow); its events were already written through per append.
+///
+/// # Errors
+///
+/// [`SessionPersistError`] when the retired session cannot be resolved
+/// in the index or the replacement session cannot be created. The flag
+/// is consumed either way (single-shot signal, matching `/compact`),
+/// and the store/session cells are untouched on error.
+pub fn apply_clear_request(
+    state: &SlashState,
+    durability: norn::session::DurabilityPolicy,
+) -> Result<Option<ClearOutcome>, SessionPersistError> {
+    if !state.clear_requested.swap(false, Ordering::Relaxed) {
+        return Ok(None);
     }
+    let old_session_id = state.current_session_id();
+    let (Some(old_session_id), false) = (old_session_id, state.no_session) else {
+        state.replace_store(Arc::new(EventStore::new()));
+        return Ok(Some(ClearOutcome::ClearedInMemory));
+    };
+    // Fallible work first, state mutation last (the TUI rotation's
+    // no-partially-rotated-state contract): resolve the retired entry
+    // for its working directory, then create the replacement session.
+    // The index-lock wait is bounded by the CLI's resolved deadline —
+    // creating the replacement session rewrites the index under the
+    // inter-process lock, and a wedged sibling must not freeze `/clear`.
+    let manager = SessionManager::new(&state.data_dir)
+        .with_index_lock_deadline(Some(state.index_lock_deadline));
+    let old_entry = norn::session::resolve_session(&state.data_dir, &old_session_id)?;
+    let opened = manager.create(
+        CreateSessionOptions {
+            model: state.model.lock().clone(),
+            working_dir: old_entry.working_dir,
+            name: None,
+        },
+        durability,
+    )?;
+    let new_session_id = opened.entry.id.clone();
+    state.replace_store(Arc::new(opened.store));
+    *state.session_id.lock() = Some(new_session_id.clone());
+    *state.session_name.lock() = None;
+    Ok(Some(ClearOutcome::RotatedToNewSession { new_session_id }))
 }
 
 #[cfg(test)]
@@ -183,6 +255,30 @@ mod tests {
             session_id: None,
             data_dir: PathBuf::from("/tmp/norn-cli-slash-actions"),
             no_session: true,
+            // Test configuration: generous bound, never contended here.
+            index_lock_deadline: std::time::Duration::from_secs(10),
+            variable_pairs: Vec::new(),
+            tools: Vec::new(),
+            store,
+        })
+    }
+
+    /// A persisted-session slash state, as print mode builds it when
+    /// `--no-session` is absent.
+    fn make_persisted_state(
+        store: Arc<EventStore>,
+        session_id: &str,
+        data_dir: &std::path::Path,
+    ) -> SlashState {
+        SlashState::new(SlashStateSeed {
+            model: "gpt-x".to_owned(),
+            service_tier: None,
+            reasoning_effort: None,
+            output_schema: None,
+            session_name: Some("original".to_owned()),
+            session_id: Some(session_id.to_owned()),
+            data_dir: data_dir.to_path_buf(),
+            no_session: false,
             // Test configuration: generous bound, never contended here.
             index_lock_deadline: std::time::Duration::from_secs(10),
             variable_pairs: Vec::new(),
@@ -374,15 +470,110 @@ mod tests {
         let store = Arc::new(EventStore::new());
         store.append(user("first")).unwrap();
         let state = make_state(Arc::clone(&store));
-        assert!(!apply_clear_request(&state));
+        assert!(
+            apply_clear_request(&state, norn::session::DurabilityPolicy::Flush)
+                .unwrap()
+                .is_none()
+        );
         // store unchanged
         assert_eq!(state.current_store().len(), 1);
 
         state.clear_requested.store(true, Ordering::Relaxed);
-        assert!(apply_clear_request(&state));
+        let outcome = apply_clear_request(&state, norn::session::DurabilityPolicy::Flush)
+            .unwrap()
+            .expect("flag was set");
+        assert!(
+            matches!(outcome, ClearOutcome::ClearedInMemory),
+            "--no-session keeps the explicit sink-less choice across /clear",
+        );
         assert_eq!(state.current_store().len(), 0);
         // original Arc kept by caller is not affected.
         assert_eq!(store.len(), 1);
+    }
+
+    /// Gap 12 regression: on a persisted invocation, `/clear` must rotate
+    /// into a fresh sink-registered session — events appended to the
+    /// post-clear store land on disk, byte-for-byte replayable, exactly
+    /// like pre-clear ones. A sink-less swap would pass every in-memory
+    /// assertion and silently lose everything after the clear.
+    #[test]
+    fn clear_on_persisted_session_rotates_into_a_durable_store() {
+        let tmp = tempfile::tempdir().unwrap();
+        let (old_id, old_store) = open_persisted(tmp.path());
+        old_store.append(user("pre-clear")).unwrap();
+        let state = make_persisted_state(Arc::clone(&old_store), &old_id, tmp.path());
+
+        state.clear_requested.store(true, Ordering::Relaxed);
+        let outcome = apply_clear_request(&state, norn::session::DurabilityPolicy::Flush)
+            .unwrap()
+            .expect("flag was set");
+        let ClearOutcome::RotatedToNewSession { new_session_id } = outcome else {
+            panic!("persisted /clear must rotate, not fall back to memory-only");
+        };
+        assert_ne!(
+            new_session_id, old_id,
+            "a fresh session, never the retired one"
+        );
+        assert_eq!(
+            state.current_session_id().as_deref(),
+            Some(new_session_id.as_str()),
+            "handler closures must observe the rotated session id",
+        );
+        assert!(
+            state.session_name.lock().is_none(),
+            "the retired session's name must not leak onto the new one",
+        );
+        assert_eq!(state.current_store().len(), 0, "conversation cleared");
+
+        // The heart of Gap 12: post-clear appends reach disk.
+        state.current_store().append(user("post-clear")).unwrap();
+        let new_file =
+            std::fs::read_to_string(session_file_path(tmp.path(), &new_session_id)).unwrap();
+        assert!(
+            new_file.contains("post-clear"),
+            "post-clear events must be written through to the new session \
+             file; got: {new_file}",
+        );
+        // And the retired session's file still holds only its own events.
+        let old_file = std::fs::read_to_string(session_file_path(tmp.path(), &old_id)).unwrap();
+        assert!(old_file.contains("pre-clear"));
+        assert!(!old_file.contains("post-clear"));
+
+        // The rotated session resumes cleanly through the manager.
+        let resumed = SessionManager::new(tmp.path())
+            .resume(&new_session_id, norn::session::DurabilityPolicy::Flush)
+            .unwrap();
+        assert_eq!(resumed.store.len(), 1);
+    }
+
+    /// A rotation failure must leave the pre-clear state fully intact —
+    /// typed error out, no silent memory-only fallback, store and
+    /// session id untouched.
+    #[test]
+    fn clear_rotation_failure_leaves_pre_clear_state_intact() {
+        let tmp = tempfile::tempdir().unwrap();
+        let store = Arc::new(EventStore::new());
+        store.append(user("kept")).unwrap();
+        // A session id that is not in the (empty) index: resolution fails.
+        let state = make_persisted_state(Arc::clone(&store), "missing-session", tmp.path());
+
+        state.clear_requested.store(true, Ordering::Relaxed);
+        let err = apply_clear_request(&state, norn::session::DurabilityPolicy::Flush)
+            .expect_err("resolving the retired session must fail");
+        assert!(
+            matches!(err, SessionPersistError::NotFound { .. }),
+            "expected NotFound, got {err:?}",
+        );
+        assert_eq!(
+            state.current_store().len(),
+            1,
+            "the pre-clear store must remain live on error",
+        );
+        assert_eq!(
+            state.current_session_id().as_deref(),
+            Some("missing-session"),
+            "the session id must not rotate on error",
+        );
     }
 
     fn debug_outcome(outcome: Option<&CompactOutcome>) -> String {

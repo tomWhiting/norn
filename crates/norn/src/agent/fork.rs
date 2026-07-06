@@ -403,6 +403,7 @@ pub fn inject_synthetic_fork_result(
             "status": "active",
             "message": FORK_SYNTHETIC_RESULT_MESSAGE,
         }),
+        spool_ref: None,
         duration_ms: 0,
     });
     out
@@ -521,6 +522,7 @@ mod tests {
             tool_call_id: call_id.to_string(),
             tool_name: name.to_string(),
             output: serde_json::json!({"content":"hi"}),
+            spool_ref: None,
             duration_ms: 5,
         }
     }

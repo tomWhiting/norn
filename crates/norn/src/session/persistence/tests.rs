@@ -75,6 +75,7 @@ fn one_of_each() -> Vec<SessionEvent> {
             tool_call_id: "tc_1".to_owned(),
             tool_name: "Read".to_owned(),
             output: serde_json::json!({"bytes": 42}),
+            spool_ref: None,
             duration_ms: 5,
         },
         SessionEvent::ModelChange {
@@ -1626,6 +1627,7 @@ fn replay_fixture() -> (Vec<u8>, EventId) {
         tool_call_id: "call_replay_1".to_owned(),
         tool_name: "read".to_owned(),
         output: serde_json::json!({"lines": 3}),
+        spool_ref: None,
         duration_ms: 5,
     };
     let compaction = SessionEvent::Compaction {

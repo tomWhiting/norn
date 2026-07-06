@@ -496,7 +496,18 @@ impl Tool for ForkTool {
             },
             Utc::now(),
         );
-        lifecycle.emit_started();
+        // The Started audit joins the primary write-through contract
+        // (session-fidelity Gap 10): if it cannot persist, the launch is
+        // aborted here — before the fork task exists — so the durable
+        // log can never silently miss a fork that actually ran.
+        lifecycle
+            .emit_started()
+            .map_err(|error| ToolError::ExecutionFailed {
+                reason: format!(
+                    "failed to persist the subagent.started audit event; \
+                     fork aborted before launch: {error}",
+                ),
+            })?;
 
         let handle = launch_fork(
             ForkLaunch {
@@ -976,6 +987,7 @@ mod tests {
                 tool_call_id: "tc-read".to_string(),
                 tool_name: "read".to_string(),
                 output: serde_json::json!({"content": "x"}),
+                spool_ref: None,
                 duration_ms: 1,
             })
             .expect("seed read result");
@@ -985,6 +997,7 @@ mod tests {
                 tool_call_id: "tc-search".to_string(),
                 tool_name: "search".to_string(),
                 output: serde_json::json!({"hits": []}),
+                spool_ref: None,
                 duration_ms: 1,
             })
             .expect("seed search result");

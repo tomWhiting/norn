@@ -364,13 +364,32 @@ async fn run_agent_step_common(
     if let Some(channel) = inbound {
         follow_up_buffer.extend(channel.drain());
     }
-    requeue_undelivered_inbound(
+    let requeue_result = requeue_undelivered_inbound(
         store,
         requeue_agent_id,
         requeue_pending.as_deref(),
         &mut follow_up_buffer,
         UndeliveredWindow::StepExit,
     );
+    if let Err(error) = requeue_result {
+        // The queued audit is the only durable copy of a re-queued
+        // message, so its persist failure joins the primary
+        // write-through contract (session-fidelity Gap 10): a step that
+        // would otherwise report success fails typed instead — exactly
+        // as it would had the failing sink been hit by any primary
+        // append. A step that already failed keeps its original error
+        // (never masked; the audit failure was error-logged at the
+        // append site) — same convention as the timeout-path injection
+        // audit above.
+        if result.is_ok() {
+            return Err(error.into());
+        }
+        tracing::error!(
+            %error,
+            "queued audit persist failed on the step-exit re-queue sweep \
+             of an already-failed step; keeping the step's original error",
+        );
+    }
     result
 }
 

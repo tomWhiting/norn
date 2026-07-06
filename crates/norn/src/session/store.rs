@@ -15,6 +15,7 @@ use crate::session::events::{EventId, SessionEvent};
 use crate::session::persistence::SessionPersistError;
 use crate::session::persistence::index::{sum_usage_from_events, update_session_index};
 use crate::session::persistence::io::{open_session_append, session_file_path};
+use crate::session::spool::SpoolWriter;
 
 /// Append-only, in-memory event store.
 ///
@@ -30,6 +31,7 @@ use crate::session::persistence::io::{open_session_append, session_file_path};
 pub struct EventStore {
     inner: RwLock<StoreInner>,
     sink: Option<Mutex<Box<dyn PersistenceSink>>>,
+    spool: Option<SpoolWriter>,
 }
 
 impl std::fmt::Debug for EventStore {
@@ -37,6 +39,7 @@ impl std::fmt::Debug for EventStore {
         f.debug_struct("EventStore")
             .field("len", &self.inner.read().events.len())
             .field("has_sink", &self.sink.is_some())
+            .field("has_spool", &self.spool.is_some())
             .finish()
     }
 }
@@ -389,6 +392,7 @@ impl EventStore {
                 index: HashMap::new(),
             }),
             sink: None,
+            spool: None,
         }
     }
 
@@ -400,6 +404,7 @@ impl EventStore {
                 index: HashMap::new(),
             }),
             sink: Some(Mutex::new(sink)),
+            spool: None,
         }
     }
 
@@ -416,7 +421,27 @@ impl EventStore {
         Self {
             inner: RwLock::new(StoreInner { events, index }),
             sink: Some(Mutex::new(sink)),
+            spool: None,
         }
+    }
+
+    /// Attach a [`SpoolWriter`] so oversized tool outputs appended to
+    /// this store keep their full payload durably (session-fidelity
+    /// Gap 5). Called by
+    /// [`SessionManager`](crate::session::SessionManager) on every store
+    /// it opens, before the store is shared. A store without a spool has
+    /// no session directory to spool into (sink-less stores, embedder
+    /// sinks opened outside the manager); appenders of oversized output
+    /// must not silently pretend otherwise — [`Self::spool`] makes the
+    /// absence observable.
+    pub fn attach_spool(&mut self, spool: SpoolWriter) {
+        self.spool = Some(spool);
+    }
+
+    /// The attached full-output spool, when this store has one.
+    #[must_use]
+    pub fn spool(&self) -> Option<&SpoolWriter> {
+        self.spool.as_ref()
     }
 
     /// Append an event. Returns its [`EventId`].

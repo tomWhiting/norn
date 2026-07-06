@@ -529,9 +529,24 @@ impl Tool for SignalAgentTool {
                     content: args.content,
                     sent_at,
                 };
-                append_message_audit(&infra.event_store, &sent);
+                // The Sent audit joins the primary write-through contract
+                // (session-fidelity Gap 10). The message is ALREADY
+                // delivered at this point — the router accepted it — so a
+                // persist failure surfaces typed with wording that rules
+                // out a duplicate resend, never as a silent audit hole.
+                let audit_failed =
+                    |which: &str, error: crate::error::SessionError| ToolError::ExecutionFailed {
+                        reason: format!(
+                            "message {message_id} WAS delivered (seq {seq}); do \
+                             NOT resend it. Persisting the durable Sent audit \
+                             to the {which} failed: {error}",
+                        ),
+                    };
+                append_message_audit(&infra.event_store, &sent)
+                    .map_err(|error| audit_failed("sender's session store", error))?;
                 if let Some(grant) = infra.grant.as_ref() {
-                    append_message_audit(&grant.parent_store, &sent);
+                    append_message_audit(&grant.parent_store, &sent)
+                        .map_err(|error| audit_failed("parent's session store", error))?;
                 }
                 if let Some(channel) = ctx.get_extension::<SharedAgentEventChannel>() {
                     AgentEventSender::new(channel.0.clone(), infra.agent_id, from_label)

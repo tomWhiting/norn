@@ -481,6 +481,7 @@ mod tests {
                 tool_call_id: "tc1".to_owned(),
                 tool_name: "Read".to_owned(),
                 output: serde_json::json!({}),
+                spool_ref: None,
                 duration_ms: 10,
             })
             .expect("append");

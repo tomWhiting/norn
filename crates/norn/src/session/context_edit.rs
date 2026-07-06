@@ -1037,6 +1037,7 @@ mod tests {
             tool_call_id: call_id.to_string(),
             tool_name: "read".to_string(),
             output: serde_json::json!({"ok": true}),
+            spool_ref: None,
             duration_ms: 1,
         }
     }

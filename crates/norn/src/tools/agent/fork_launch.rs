@@ -302,17 +302,41 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
             mark_fork_terminal(&agent_registry, fork_id, outcome.status);
         }
 
-        append_fork_complete(parent_store.as_ref(), forked_session_id, &outcome, fork_id);
+        // ForkComplete / Completed-audit persist failures are typed at the
+        // source and handled here, not propagated: the fork's result is the
+        // primary content and must still reach the parent (aborting
+        // delivery would convert an observability gap into content loss —
+        // the same documented trade as the delivered-audit, session-fidelity
+        // Gap 10). Under a persistent sink fault the parent's own injection
+        // of the delivered result fails its run typed through the primary
+        // write-through contract.
+        if let Err(error) =
+            append_fork_complete(parent_store.as_ref(), forked_session_id, &outcome, fork_id)
+        {
+            tracing::error!(
+                fork_id = %fork_id,
+                %error,
+                "failed to persist the ForkComplete event on the parent \
+                 store; the fork's result is still delivered",
+            );
+        }
 
         // Typed lifecycle: emit `Completed` with the fork's accumulated
         // usage, terminal outcome, and typed stop reason.
-        lifecycle.emit_completed(SubagentCompletion {
+        if let Err(error) = lifecycle.emit_completed(SubagentCompletion {
             usage: outcome.usage.clone(),
             subtree_usage: subtree_usage.clone(),
             succeeded: outcome.status == AgentStatus::Completed,
             error: outcome.error_message.clone(),
             stop: outcome.stop.clone(),
-        });
+        }) {
+            tracing::error!(
+                fork_id = %fork_id,
+                %error,
+                "failed to persist the subagent.completed audit event on \
+                 the parent store; the fork's result is still delivered",
+            );
+        }
 
         if let Some(sender) = result_sender {
             let (succeeded, formatted_message, error) =

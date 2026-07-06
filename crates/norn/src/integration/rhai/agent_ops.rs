@@ -255,6 +255,9 @@ fn signal_agent(
         .router
         .try_deliver(to_id, msg)
         .map_err(|e| Box::new(rhai_error(format!("signal_agent: {e}"))))?;
+    // The Sent audit joins the primary write-through contract
+    // (session-fidelity Gap 10). The message is ALREADY delivered at this
+    // point, so the error wording rules out a duplicate resend.
     append_message_audit(
         &ctx.event_store,
         &AgentMessageLifecycle::Sent {
@@ -268,7 +271,13 @@ fn signal_agent(
             content: body,
             sent_at,
         },
-    );
+    )
+    .map_err(|error| {
+        Box::new(rhai_error(format!(
+            "signal_agent: message {message_id} WAS delivered (seq {seq}); do \
+             NOT resend it. Persisting the durable Sent audit failed: {error}",
+        )))
+    })?;
     Ok(seq)
 }
 

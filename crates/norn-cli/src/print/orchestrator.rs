@@ -478,8 +478,9 @@ async fn orchestrate_run(
 
     // Apply action flags raised by the closures. /compact performs a
     // real `ContextEdits::auto_compact_keeping_recent_turns` against the
-    // live store; /clear replaces the in-memory store (the JSONL on
-    // disk is unaffected); /exit short-circuits with success.
+    // live store; /clear rotates into a fresh sink-registered session
+    // (the retired JSONL on disk is untouched); /exit short-circuits
+    // with success.
     if let Some(outcome) = apply_compact_request(
         parts.config.auto_compact_keep_recent_turns,
         &mut parts.loop_context,
@@ -492,8 +493,21 @@ async fn orchestrate_run(
         // before the post-turn checkpoint (e.g. a bare `/compact` prompt).
         checkpoint_session(&store).await?;
     }
-    if apply_clear_request(&slash_state) {
-        tracing::debug!("conversation cleared via /clear in print mode");
+    // `/clear` carries the same sink discipline as startup (session-
+    // fidelity Gap 12): on a persisted invocation the slash state
+    // rotates into a fresh sink-registered session, so anything a
+    // driver appends through `SlashState::current_store()` afterwards
+    // is exactly as durable as pre-clear appends. The durability policy
+    // is the CLI's explicit `Flush` choice — the same one the session
+    // front door passes in `from_cli` (D4). From here on the reported
+    // session id is the LIVE slash-state cell: after a rotation the
+    // output envelope and the driven response must name the session the
+    // events actually land in — a driver resuming by the retired id
+    // would replay the full pre-clear history it asked to leave behind.
+    let clear_report = apply_clear_and_report(&slash_state)?;
+    let output_session_id = clear_report.envelope_session_id;
+    if let Some(line) = clear_report.operator_line {
+        eprintln!("{line}");
     }
 
     let format = cli.output_format.unwrap_or(OutputFormat::Text);
@@ -739,6 +753,60 @@ async fn orchestrate_run(
 ///
 /// Runs [`EventStore::checkpoint_off_executor`] — the blocking critical
 /// section (inter-process index lock + full index rewrite + fsync)
+/// What the orchestrator reports after honouring a pending `/clear`
+/// (session-fidelity Gap 12).
+#[derive(Debug)]
+struct ClearReport {
+    /// Session id every subsequent output surface (the `-f json`
+    /// envelope, `write_handled_locally`, the driven `run/execute`
+    /// response) must carry: the **live** slash-state cell, i.e. the
+    /// rotated id after a rotation, the original id when no clear was
+    /// pending, `None` under `--no-session`.
+    envelope_session_id: Option<String>,
+    /// Operator-facing stderr line, produced only AFTER the fallible
+    /// rotation succeeded — so "Conversation cleared." can never precede
+    /// a failed rotation — and naming the new session id on a rotation
+    /// (parity with `/name`'s "Session named:" line).
+    operator_line: Option<String>,
+}
+
+/// Apply a pending `/clear` and derive what to report.
+///
+/// The durability policy is the CLI's explicit `Flush` choice — the same
+/// one the session front door passes in `from_cli` (D4).
+///
+/// # Errors
+///
+/// [`SessionPersistError`] from the rotation; the pre-clear slash state
+/// is untouched on error (see `apply_clear_request`).
+fn apply_clear_and_report(
+    slash_state: &crate::commands::slash::SlashState,
+) -> Result<ClearReport, SessionPersistError> {
+    use crate::commands::slash::ClearOutcome;
+    let operator_line =
+        match apply_clear_request(slash_state, norn::session::DurabilityPolicy::Flush)? {
+            Some(ClearOutcome::RotatedToNewSession { new_session_id }) => {
+                tracing::debug!(
+                    %new_session_id,
+                    "conversation cleared via /clear in print mode; slash state \
+                     rotated into a fresh persisted session",
+                );
+                Some(format!(
+                    "Conversation cleared. New session: {new_session_id}"
+                ))
+            }
+            Some(ClearOutcome::ClearedInMemory) => {
+                tracing::debug!("conversation cleared via /clear in print mode (--no-session)");
+                Some("Conversation cleared.".to_owned())
+            }
+            None => None,
+        };
+    Ok(ClearReport {
+        envelope_session_id: slash_state.current_session_id(),
+        operator_line,
+    })
+}
+
 /// belongs on Tokio's blocking pool, never on the executor thread the
 /// orchestrator's async path runs on.
 async fn checkpoint_session(store: &Arc<EventStore>) -> Result<(), PrintError> {
@@ -773,6 +841,128 @@ fn collect_new_events(store: &EventStore, since: usize) -> Vec<SessionEvent> {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;
+
+    use crate::commands::slash::SlashState;
+    use crate::commands::slash::state::SlashStateSeed;
+    use crate::session::{CreateSessionOptions, SessionManager};
+
+    /// A slash state as print mode seeds it, with `session_id`/`no_session`
+    /// mirroring the invocation kind.
+    fn slash_state_for(
+        data_dir: &std::path::Path,
+        session_id: Option<String>,
+        no_session: bool,
+    ) -> SlashState {
+        SlashState::new(SlashStateSeed {
+            model: "test-model".to_owned(),
+            service_tier: None,
+            reasoning_effort: None,
+            output_schema: None,
+            session_name: None,
+            session_id,
+            data_dir: data_dir.to_path_buf(),
+            no_session,
+            // Test configuration: generous bound, never contended here.
+            index_lock_deadline: std::time::Duration::from_secs(10),
+            variable_pairs: Vec::new(),
+            tools: Vec::new(),
+            store: Arc::new(EventStore::new()),
+        })
+    }
+
+    /// Gap 12 operator surface: after a `/clear` rotation, the envelope
+    /// session id and the stderr line both carry the ROTATED id — a
+    /// driver resuming by the reported id must land on the post-clear
+    /// timeline, never the retired session's full history.
+    #[test]
+    fn clear_report_carries_the_rotated_session_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let opened = SessionManager::new(tmp.path())
+            .create(
+                CreateSessionOptions {
+                    model: "test-model".to_owned(),
+                    working_dir: "/work".to_owned(),
+                    name: None,
+                },
+                norn::session::DurabilityPolicy::Flush,
+            )
+            .expect("create session");
+        let old_id = opened.entry.id;
+        let state = slash_state_for(tmp.path(), Some(old_id.clone()), false);
+        state
+            .clear_requested
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let report = apply_clear_and_report(&state).expect("rotation succeeds");
+
+        let new_id = report
+            .envelope_session_id
+            .expect("a persisted invocation keeps a session id");
+        assert_ne!(new_id, old_id, "the envelope must name the NEW session");
+        assert_eq!(
+            state.current_session_id().as_deref(),
+            Some(new_id.as_str()),
+            "the envelope id is the live cell",
+        );
+        let line = report.operator_line.expect("a clear is reported");
+        assert!(
+            line.contains(&new_id),
+            "the stderr line must name the rotated id: {line}",
+        );
+    }
+
+    /// No pending `/clear`: nothing is printed and the envelope keeps the
+    /// original session id.
+    #[test]
+    fn clear_report_without_pending_clear_keeps_the_original_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = slash_state_for(tmp.path(), Some("original-id".to_owned()), false);
+
+        let report = apply_clear_and_report(&state).expect("no-op succeeds");
+
+        assert!(report.operator_line.is_none());
+        assert_eq!(report.envelope_session_id.as_deref(), Some("original-id"));
+    }
+
+    /// `--no-session` `/clear`: the sink-less choice propagates, the
+    /// operator still gets the confirmation, and the envelope keeps
+    /// reporting no session.
+    #[test]
+    fn clear_report_no_session_confirms_without_a_session_id() {
+        let tmp = tempfile::tempdir().unwrap();
+        let state = slash_state_for(tmp.path(), None, true);
+        state
+            .clear_requested
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let report = apply_clear_and_report(&state).expect("in-memory clear succeeds");
+
+        assert_eq!(
+            report.operator_line.as_deref(),
+            Some("Conversation cleared.")
+        );
+        assert!(report.envelope_session_id.is_none());
+    }
+
+    /// A failed rotation surfaces typed and reports NOTHING — the
+    /// "Conversation cleared." line can never precede a failed rotation.
+    #[test]
+    fn clear_report_failure_prints_nothing() {
+        let tmp = tempfile::tempdir().unwrap();
+        // A session id absent from the (empty) index: resolution fails.
+        let state = slash_state_for(tmp.path(), Some("missing-session".to_owned()), false);
+        state
+            .clear_requested
+            .store(true, std::sync::atomic::Ordering::Relaxed);
+
+        let err = apply_clear_and_report(&state).expect_err("rotation must fail");
+        assert!(matches!(err, SessionPersistError::NotFound { .. }));
+        assert_eq!(
+            state.current_session_id().as_deref(),
+            Some("missing-session"),
+            "the pre-clear state stays intact on error",
+        );
+    }
 
     #[test]
     fn compose_prompt_no_stdin_returns_positional() {
