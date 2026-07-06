@@ -456,6 +456,57 @@ pub fn apply_settings_reasoning_to_profile(
     Ok(())
 }
 
+/// Compiled default for the session index-lock acquisition deadline, in
+/// milliseconds, applied by [`resolve_index_lock_deadline`] when neither
+/// settings nor `-c` supply a value.
+///
+/// Owner-delegated value (Tom, 2026-07-06, "go with your recommendations");
+/// derivation: a healthy index append holds the lock well under a
+/// millisecond, so 10s is >= 10^4 x a healthy hold and fires only on
+/// genuine pathology (a wedged sibling process). This is an owner-ruled
+/// default, not an invented one.
+pub const DEFAULT_INDEX_LOCK_DEADLINE_MS: u64 = 10_000;
+
+/// Resolve the effective session index-lock acquisition deadline for the
+/// CLI's [`SessionManager`](norn::session::SessionManager).
+///
+/// Precedence, explicit always winning: `-c index_lock_deadline_ms=<u64>`
+/// beats `agent.index_lock_deadline_ms` from the merged settings (which
+/// already encode user < project < local), which beats the compiled
+/// [`DEFAULT_INDEX_LOCK_DEADLINE_MS`]. The library's own default stays
+/// `None` (indefinite wait) — only the CLI applies this settings-derived
+/// deadline.
+///
+/// # Errors
+///
+/// Returns [`BuildError::Argument`] when either source supplies `0`: a
+/// zero deadline can never acquire the lock. The settings and `-c` parse
+/// layers already reject zero (`validate_settings` /
+/// [`ConfigOverrides::parse`](crate::config::ConfigOverrides::parse)); the
+/// check here closes the gap for programmatically constructed inputs.
+pub fn resolve_index_lock_deadline(
+    settings: &NornSettings,
+    overrides: &ConfigOverrides,
+) -> Result<Duration, BuildError> {
+    let (source, value) = if let Some(ms) = overrides.index_lock_deadline_ms {
+        ("-c index_lock_deadline_ms", ms)
+    } else if let Some(ms) = settings
+        .agent
+        .as_ref()
+        .and_then(|a| a.index_lock_deadline_ms)
+    {
+        ("agent.index_lock_deadline_ms", ms)
+    } else {
+        ("compiled default", DEFAULT_INDEX_LOCK_DEADLINE_MS)
+    };
+    if value == 0 {
+        return Err(BuildError::Argument(format!(
+            "invalid value for {source}: a zero deadline can never acquire the lock",
+        )));
+    }
+    Ok(Duration::from_millis(value))
+}
+
 fn parse_settings_duration(field: &str, value: &str) -> Result<Duration, BuildError> {
     humantime::parse_duration(value).map_err(|err| {
         BuildError::Argument(format!(
@@ -1165,6 +1216,101 @@ mod tests {
         assert_eq!(policy.max_retries, 2);
         assert_eq!(policy.initial_backoff, Duration::from_secs(1));
         assert!((policy.backoff_multiplier - 2.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn index_lock_deadline_defaults_when_unset() {
+        let deadline =
+            resolve_index_lock_deadline(&NornSettings::default(), &ConfigOverrides::default())
+                .unwrap();
+        assert_eq!(
+            deadline,
+            Duration::from_millis(super::DEFAULT_INDEX_LOCK_DEADLINE_MS),
+        );
+    }
+
+    #[test]
+    fn index_lock_deadline_settings_beat_compiled_default() {
+        use norn::config::{AgentSettings, NornSettings};
+        let settings = NornSettings {
+            agent: Some(AgentSettings {
+                index_lock_deadline_ms: Some(5_000),
+                ..AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let deadline = resolve_index_lock_deadline(&settings, &ConfigOverrides::default()).unwrap();
+        assert_eq!(deadline, Duration::from_secs(5));
+    }
+
+    #[test]
+    fn index_lock_deadline_c_override_beats_settings() {
+        use norn::config::{AgentSettings, NornSettings};
+        let settings = NornSettings {
+            agent: Some(AgentSettings {
+                index_lock_deadline_ms: Some(5_000),
+                ..AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let overrides = ConfigOverrides {
+            index_lock_deadline_ms: Some(250),
+            ..ConfigOverrides::default()
+        };
+        let deadline = resolve_index_lock_deadline(&settings, &overrides).unwrap();
+        assert_eq!(deadline, Duration::from_millis(250));
+    }
+
+    #[test]
+    fn index_lock_deadline_zero_from_settings_is_typed_error() {
+        use norn::config::{AgentSettings, NornSettings};
+        let settings = NornSettings {
+            agent: Some(AgentSettings {
+                index_lock_deadline_ms: Some(0),
+                ..AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let err = resolve_index_lock_deadline(&settings, &ConfigOverrides::default())
+            .expect_err("a zero deadline must be rejected");
+        match err {
+            BuildError::Argument(reason) => {
+                assert!(
+                    reason.contains("agent.index_lock_deadline_ms"),
+                    "reason names the settings key: {reason}",
+                );
+                assert!(
+                    reason.contains("a zero deadline can never acquire the lock"),
+                    "reason explains the rejection: {reason}",
+                );
+            }
+            other @ BuildError::Auth(_) => panic!("expected Argument, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn index_lock_deadline_zero_from_c_override_is_typed_error() {
+        // `ConfigOverrides::parse` already rejects zero; this covers a
+        // programmatically constructed override sneaking past the parser.
+        let overrides = ConfigOverrides {
+            index_lock_deadline_ms: Some(0),
+            ..ConfigOverrides::default()
+        };
+        let err = resolve_index_lock_deadline(&NornSettings::default(), &overrides)
+            .expect_err("a zero deadline must be rejected");
+        match err {
+            BuildError::Argument(reason) => {
+                assert!(
+                    reason.contains("-c index_lock_deadline_ms"),
+                    "reason names the -c key: {reason}",
+                );
+                assert!(
+                    reason.contains("a zero deadline can never acquire the lock"),
+                    "reason explains the rejection: {reason}",
+                );
+            }
+            other @ BuildError::Auth(_) => panic!("expected Argument, got {other:?}"),
+        }
     }
 
     #[test]

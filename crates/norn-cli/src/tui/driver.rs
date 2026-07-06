@@ -272,6 +272,12 @@ mod tests {
         Arc::new(MockProvider::new(Vec::new()))
     }
 
+    /// Explicit window for the fixture: "test-model" is deliberately
+    /// uncatalogued, and `build` hard-errors on an unarmed window
+    /// (2026-07-05 incident guard). `272_000` is gpt-5.5's catalogued
+    /// standard window (assets/models.json) — factual, not invented.
+    const TEST_CONTEXT_WINDOW: u64 = 272_000;
+
     /// R1.6: the TUI's coordination chain — `.agent_registry` +
     /// `.event_channel_capacity` + `.inbound_capacity` + `.register_root` +
     /// `.terminal_reclamation(false)` — produces `AgentParts` carrying the
@@ -285,6 +291,7 @@ mod tests {
         let envelope = cli_coordination_envelope(crate::runtime::DEFAULT_DELEGATION_DEPTH);
         let agent = AgentBuilder::new(mock_provider())
             .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(std::env::temp_dir())
             .execution_mode(ExecutionMode::Interactive)
             .agent_registry(AgentRegistry::shared())

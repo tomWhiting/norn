@@ -75,9 +75,16 @@ fn write_skill(cwd: &Path, name: &str) {
     .expect("write SKILL.md");
 }
 
+/// Explicit window for the fixture: "test-model" is deliberately
+/// uncatalogued, and `build` hard-errors on an unarmed window
+/// (2026-07-05 incident guard). `272_000` is gpt-5.5's catalogued
+/// standard window (assets/models.json) — factual, not invented.
+const TEST_CONTEXT_WINDOW: u64 = 272_000;
+
 fn skill_tool_present(cwd: &Path) -> bool {
     let parts = AgentBuilder::new(mock_provider())
         .model("test-model")
+        .context_window_limit(TEST_CONTEXT_WINDOW)
         .working_dir(cwd)
         .load_runtime_base()
         .build()

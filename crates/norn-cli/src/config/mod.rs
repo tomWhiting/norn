@@ -16,11 +16,12 @@ pub use event_schemas::{merge_event_schemas, parse_inline_or_file};
 pub use extensions::collect_extension_uris;
 pub use model_aliases::{ResolvedModelSelection, resolve_model_alias, resolve_model_selection};
 pub use overrides::{
-    AppliedOverrides, apply_cli_profile_overrides, apply_config_overrides_to_loop,
-    apply_loop_config_overrides, apply_settings_reasoning_to_profile,
-    apply_settings_to_agent_config, apply_working_dir, default_agent_loop_config,
-    effective_step_timeout, overlay_cli_provider_overrides, overlay_provider_profile_overrides,
-    provider_overrides_from_settings, retry_policy_from_settings_and_overrides,
+    AppliedOverrides, DEFAULT_INDEX_LOCK_DEADLINE_MS, apply_cli_profile_overrides,
+    apply_config_overrides_to_loop, apply_loop_config_overrides,
+    apply_settings_reasoning_to_profile, apply_settings_to_agent_config, apply_working_dir,
+    default_agent_loop_config, effective_step_timeout, overlay_cli_provider_overrides,
+    overlay_provider_profile_overrides, provider_overrides_from_settings,
+    resolve_index_lock_deadline, retry_policy_from_settings_and_overrides,
 };
 pub use paths::session_data_dir;
 pub use profile_loader::resolve_profile;
