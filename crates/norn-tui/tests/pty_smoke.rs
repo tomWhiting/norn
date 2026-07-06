@@ -593,6 +593,10 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
         initial_prompt,
         data_dir: None,
         session_id: None,
+        // Unused by these fixtures (ephemeral mode: `data_dir: None`
+        // never constructs a SessionManager); any bound satisfies the
+        // required field. Test configuration, not a production default.
+        index_lock_deadline: std::time::Duration::from_secs(10),
         root_event_sender,
         agent_event_rx,
         root_inbound,

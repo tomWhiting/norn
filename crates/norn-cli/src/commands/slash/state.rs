@@ -19,6 +19,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
+use std::time::Duration;
 
 use norn::provider::request::{ReasoningEffort, ServiceTier};
 use norn::provider::usage::Usage;
@@ -82,6 +83,14 @@ pub struct SlashState {
     /// index update.
     pub no_session: bool,
 
+    /// The resolved session index-lock acquisition deadline
+    /// (`resolve_index_lock_deadline`) applied to every lock-taking
+    /// [`SessionManager`](crate::session::SessionManager) a slash
+    /// handler constructs — `/name`'s index rename in particular.
+    /// Without it a wedged sibling process would hang the running
+    /// interactive surface forever inside the handler.
+    pub index_lock_deadline: Duration,
+
     /// Raw `--variables KEY=VALUE` pairs in original order. `/variables`
     /// renders them verbatim; this side-steps the
     /// [`VariableStore`](norn::integration::variables::VariableStore)
@@ -137,6 +146,7 @@ impl SlashState {
             session_id: Arc::new(Mutex::new(seed.session_id)),
             data_dir: seed.data_dir,
             no_session: seed.no_session,
+            index_lock_deadline: seed.index_lock_deadline,
             variable_pairs: seed.variable_pairs,
             tools_snapshot: Arc::new(seed.tools),
             command_descriptions: Arc::new(Mutex::new(Vec::new())),
@@ -233,6 +243,9 @@ pub struct SlashStateSeed {
     pub data_dir: PathBuf,
     /// True when `--no-session` was supplied.
     pub no_session: bool,
+    /// The resolved session index-lock acquisition deadline applied to
+    /// every lock-taking `SessionManager` a slash handler constructs.
+    pub index_lock_deadline: Duration,
     /// Raw `--variables KEY=VALUE` pairs in original order.
     pub variable_pairs: Vec<(String, String)>,
     /// Snapshot of `(tool_name, description)` pairs from the gated
@@ -258,6 +271,8 @@ mod tests {
             session_id: None,
             data_dir: PathBuf::from("/tmp/norn-cli-test"),
             no_session: true,
+            // Test configuration: generous bound, never contended here.
+            index_lock_deadline: Duration::from_secs(10),
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store,

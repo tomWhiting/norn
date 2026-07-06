@@ -14,11 +14,17 @@
 //! (which covers `not found`, `ambiguous prefix`, and other operational
 //! failures here), 2 argument error, 3 auth error.
 
+use std::io::IsTerminal;
 use std::path::Path;
+use std::time::Duration;
+
+use norn::config::{NornSettings, load_settings, merge_settings, validate_settings};
 
 use crate::cli::ExitCode;
-use crate::cli::{Cli, SessionCmd, SessionListFormat};
-use crate::config::session_data_dir;
+use crate::cli::{BuildError, Cli, Mode, Protocol, SessionCmd, SessionListFormat, detect_mode};
+use crate::config::{ConfigOverrides, resolve_index_lock_deadline, session_data_dir};
+use crate::print::emit_error_envelope;
+use crate::print::orchestrator::PrintError;
 use crate::session::{SessionIndexEntry, SessionManager, SessionPersistError};
 
 use super::session_export;
@@ -26,6 +32,13 @@ use super::session_export;
 /// Dispatch to a `norn session` subcommand. Takes ownership of the
 /// outer [`Cli`] so resume/fork can mutate it before forwarding to the
 /// agent path implemented in `main.rs`.
+///
+/// Lock discipline: `list`, `show`, `export`, and the pre-forward
+/// `resolve` in `resume`/`fork` only *read* the index (no inter-process
+/// lock), and the forwarded resume/fork run re-resolves its own deadline
+/// inside `builder_from_cli`. `remove` is the one subcommand that
+/// mutates the index directly, so it — and only it — resolves the
+/// settings-backed index-lock deadline here before touching the lock.
 pub fn run_session(cli: Cli, cmd: SessionCmd, agent: AgentEntry<'_>) -> ExitCode {
     let data_dir = session_data_dir();
     match cmd {
@@ -34,8 +47,47 @@ pub fn run_session(cli: Cli, cmd: SessionCmd, agent: AgentEntry<'_>) -> ExitCode
         SessionCmd::Resume { id } => run_resume(cli, &data_dir, &id, agent),
         SessionCmd::Fork { id } => run_fork(cli, &data_dir, &id, agent),
         SessionCmd::Export { id, format } => session_export::run_export(&data_dir, &id, format),
-        SessionCmd::Remove { id } => run_remove(&data_dir, &id),
+        SessionCmd::Remove { id } => {
+            let deadline = match resolve_subcommand_lock_deadline(&cli) {
+                Ok(deadline) => deadline,
+                Err(err) => {
+                    eprintln!("norn: {err}");
+                    return err.exit_code();
+                }
+            };
+            run_remove(&data_dir, &id, deadline)
+        }
     }
+}
+
+/// Resolve the index-lock deadline for a session subcommand that
+/// mutates the index without going through `builder_from_cli`.
+///
+/// Runs the same settings pipeline the agent path runs (`load_settings`
+/// → `merge_settings` → `validate_settings`, then the `-c` overrides
+/// from the shared top-level flag) and feeds it to
+/// [`resolve_index_lock_deadline`], so `norn session remove` honours
+/// exactly the deadline `norn -p` would — including `-c
+/// index_lock_deadline_ms=<u64>` on the recovery command itself.
+///
+/// # Errors
+///
+/// [`BuildError`] when the settings fail to load / validate or a `-c`
+/// override fails to parse — surfaced loudly (with its usual exit code)
+/// rather than silently falling back to an unbounded lock wait.
+fn resolve_subcommand_lock_deadline(cli: &Cli) -> Result<Duration, BuildError> {
+    let cwd = std::env::current_dir()?;
+    let mut layers = load_settings(&cwd)?;
+    let mut cli_layer = NornSettings::default();
+    let settings = merge_settings(
+        &mut layers.user,
+        &mut layers.project,
+        &mut layers.local,
+        &mut cli_layer,
+    );
+    validate_settings(&settings)?;
+    let overrides = ConfigOverrides::parse(&cli.config)?;
+    resolve_index_lock_deadline(&settings, &overrides)
 }
 
 /// Callback that runs the agent path with a (possibly mutated) [`Cli`].
@@ -207,7 +259,7 @@ fn run_show(data_dir: &Path, input: &str) -> ExitCode {
 fn run_resume(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -> ExitCode {
     let resolved = match SessionManager::new(data_dir).resolve(input) {
         Ok(entry) => entry,
-        Err(err) => return report_persist_error(&err),
+        Err(err) => return fail_forwarded_resolve(&cli, &err),
     };
     cli.resume = Some(resolved.id);
     cli.fork = None;
@@ -222,7 +274,7 @@ fn run_resume(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>)
 fn run_fork(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -> ExitCode {
     let resolved = match SessionManager::new(data_dir).resolve(input) {
         Ok(entry) => entry,
-        Err(err) => return report_persist_error(&err),
+        Err(err) => return fail_forwarded_resolve(&cli, &err),
     };
     cli.fork = Some(resolved.id);
     cli.resume = None;
@@ -234,8 +286,15 @@ fn run_fork(mut cli: Cli, data_dir: &Path, input: &str, agent: AgentEntry<'_>) -
 // R7: remove
 // ---------------------------------------------------------------------------
 
-fn run_remove(data_dir: &Path, input: &str) -> ExitCode {
-    match SessionManager::new(data_dir).delete(input) {
+/// `deadline` bounds the inter-process index-lock wait inside
+/// [`SessionManager::delete`]. `session remove` is the very command an
+/// operator reaches for to recover from a wedged sibling process, so an
+/// unbounded wait here would hang the recovery tool on exactly the
+/// pathology it exists to clean up; on expiry the typed
+/// [`SessionPersistError::IndexLockTimeout`] names the lock file instead.
+fn run_remove(data_dir: &Path, input: &str, deadline: Duration) -> ExitCode {
+    let manager = SessionManager::new(data_dir).with_index_lock_deadline(Some(deadline));
+    match manager.delete(input) {
         Ok(entry) => {
             eprintln!("Removed session {}.", entry.id);
             ExitCode::Success
@@ -247,6 +306,48 @@ fn run_remove(data_dir: &Path, input: &str) -> ExitCode {
 // ---------------------------------------------------------------------------
 // Shared error rendering
 // ---------------------------------------------------------------------------
+
+/// Resolve failed before `resume`/`fork` forwarded to the agent path.
+///
+/// The stderr rendering and the exit code are byte-identical to every
+/// other session-subcommand failure ([`report_persist_error`]).
+/// ADDITIONALLY, when the forwarded invocation was bound for plain print
+/// mode, the typed error envelope is emitted first, so
+/// `norn -p -f json session resume <stale>` fails as parseably as the
+/// `norn -p -f json --resume <stale>` spelling of the same operation —
+/// owner ruling R2 (2026-07-06): EVERY post-argument-parsing failure of a
+/// print-bound machine-format invocation gets a typed stop, pre-assembly
+/// included.
+fn fail_forwarded_resolve(cli: &Cli, err: &SessionPersistError) -> ExitCode {
+    emit_forwarded_resolve_envelope(cli, err);
+    report_persist_error(err)
+}
+
+/// Emit the `session`-classed error envelope for a resolve failure on a
+/// forwarded `resume`/`fork` invocation, iff that invocation was bound
+/// for plain print mode.
+///
+/// Uses the exact mode computation `main.rs::run_agent` would have
+/// applied after the forward ([`detect_mode`] over the `--print` flag and
+/// the real stdin/stdout TTY state): the envelope belongs to the output
+/// surface the forwarded run WOULD have used, never to the TUI. A
+/// JSON-RPC peer (`--protocol jsonrpc`) is excluded the same way the
+/// orchestrator's own pre-runtime emit site excludes it — that stdout
+/// carries frames only, and a print envelope would corrupt the stream.
+/// Text format and the class filter are handled inside
+/// [`emit_error_envelope`] itself. Model and session id are `null`: the
+/// failure precedes assembly (R3 minimal payload).
+fn emit_forwarded_resolve_envelope(cli: &Cli, err: &SessionPersistError) {
+    if cli.protocol == Some(Protocol::Jsonrpc) {
+        return;
+    }
+    let stdin_is_tty = std::io::stdin().is_terminal();
+    let stdout_is_tty = std::io::stdout().is_terminal();
+    if detect_mode(cli.print, stdin_is_tty, stdout_is_tty) != Mode::Print {
+        return;
+    }
+    emit_error_envelope(cli, &PrintError::Session(err.to_string()), None, None);
+}
 
 fn report_persist_error(err: &SessionPersistError) -> ExitCode {
     match err {
@@ -281,6 +382,12 @@ mod tests {
     use clap::Parser;
     use norn::session::DurabilityPolicy;
     use norn::session::events::{EventBase, SessionEvent};
+
+    /// Index-lock deadline used by every non-contended test below —
+    /// generous enough that a healthy (uncontended) lock acquisition
+    /// never trips it. Legitimate test configuration, not a production
+    /// default.
+    const TEST_LOCK_DEADLINE: Duration = Duration::from_secs(10);
 
     fn fresh(data_dir: &Path, model: &str, wd: &str) -> SessionIndexEntry {
         SessionManager::new(data_dir)
@@ -394,7 +501,7 @@ mod tests {
             false,
         )
         .unwrap();
-        let code = run_remove(tmp.path(), &entry.id);
+        let code = run_remove(tmp.path(), &entry.id, TEST_LOCK_DEADLINE);
         assert_eq!(code, ExitCode::Success);
         let index = crate::session::read_index(tmp.path()).unwrap();
         assert!(index.iter().all(|e| e.id != entry.id));
@@ -408,15 +515,60 @@ mod tests {
         // Delete the session file out from under the index entry — the
         // remove must still succeed and clean up the entry.
         std::fs::remove_file(session_file_path(tmp.path(), &entry.id)).unwrap();
-        let code = run_remove(tmp.path(), &entry.id);
+        let code = run_remove(tmp.path(), &entry.id, TEST_LOCK_DEADLINE);
         assert_eq!(code, ExitCode::Success);
     }
 
     #[test]
     fn remove_unknown_returns_agent_error() {
         let tmp = tempfile::tempdir().unwrap();
-        let code = run_remove(tmp.path(), "ghost");
+        let code = run_remove(tmp.path(), "ghost", TEST_LOCK_DEADLINE);
         assert_eq!(code, ExitCode::AgentError);
+    }
+
+    /// Regression (review A1, 2026-07-06): `norn session remove` used to
+    /// construct its [`SessionManager`] with no index-lock deadline, so a
+    /// wedged sibling process hung the very command an operator uses to
+    /// recover. With the deadline threaded through, a held lock now fails
+    /// fast with [`ExitCode::AgentError`] (the typed
+    /// `SessionPersistError::IndexLockTimeout` path), and the same
+    /// deadline succeeds once the holder releases.
+    #[test]
+    fn remove_with_held_lock_times_out_instead_of_hanging() {
+        let tmp = tempfile::tempdir().unwrap();
+        let entry = fresh(tmp.path(), "gpt", "/work");
+
+        // Hold the advisory lock the way a wedged sibling norn process
+        // would: an independent file description with the exclusive OS
+        // lock (mirrors tests/index_lock_deadline.rs).
+        let lock_path = tmp.path().join("index.lock");
+        let holder = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(&lock_path)
+            .unwrap();
+        holder.lock().unwrap();
+
+        // 50ms deadline — legitimate test configuration for a fast test.
+        let started = std::time::Instant::now();
+        let code = run_remove(tmp.path(), &entry.id, Duration::from_millis(50));
+        assert_eq!(code, ExitCode::AgentError);
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the held lock must time out, not hang: waited {:?}",
+            started.elapsed(),
+        );
+
+        // Holder releases: the same deadline now acquires the lock and
+        // the remove completes (the session file was already unlinked
+        // before the lock wait, and a missing file is tolerated).
+        holder.unlock().unwrap();
+        drop(holder);
+        let code = run_remove(tmp.path(), &entry.id, Duration::from_millis(50));
+        assert_eq!(code, ExitCode::Success);
+        let index = crate::session::read_index(tmp.path()).unwrap();
+        assert!(index.iter().all(|e| e.id != entry.id));
     }
 
     #[test]

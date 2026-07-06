@@ -177,7 +177,11 @@ pub fn apply_clear_request(
     // Fallible work first, state mutation last (the TUI rotation's
     // no-partially-rotated-state contract): resolve the retired entry
     // for its working directory, then create the replacement session.
-    let manager = SessionManager::new(&state.data_dir);
+    // The index-lock wait is bounded by the CLI's resolved deadline —
+    // creating the replacement session rewrites the index under the
+    // inter-process lock, and a wedged sibling must not freeze `/clear`.
+    let manager = SessionManager::new(&state.data_dir)
+        .with_index_lock_deadline(Some(state.index_lock_deadline));
     let old_entry = norn::session::resolve_session(&state.data_dir, &old_session_id)?;
     let opened = manager.create(
         CreateSessionOptions {
@@ -251,6 +255,8 @@ mod tests {
             session_id: None,
             data_dir: PathBuf::from("/tmp/norn-cli-slash-actions"),
             no_session: true,
+            // Test configuration: generous bound, never contended here.
+            index_lock_deadline: std::time::Duration::from_secs(10),
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store,
@@ -273,6 +279,8 @@ mod tests {
             session_id: Some(session_id.to_owned()),
             data_dir: data_dir.to_path_buf(),
             no_session: false,
+            // Test configuration: generous bound, never contended here.
+            index_lock_deadline: std::time::Duration::from_secs(10),
             variable_pairs: Vec::new(),
             tools: Vec::new(),
             store,
