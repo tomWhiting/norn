@@ -107,6 +107,25 @@ pub struct EventUsage {
     pub cost_usd: Option<f64>,
 }
 
+/// Which live context-edit mark a [`SessionEvent::ContextMark`] mirrors.
+///
+/// This is a **mechanical** discriminator: it records which of the live
+/// [`ContextEdits`](crate::session::context_edit::ContextEdits) mark sets
+/// the target event was added to, and nothing more. It deliberately
+/// carries no reason, annotation, or curation vocabulary — that layer is
+/// a separate design and must not grow here.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ContextMarkKind {
+    /// The target event is suppressed: excluded from prompt construction
+    /// while remaining in the store unchanged.
+    Suppress,
+    /// The target event entered the store through
+    /// [`ContextEdits::inject`](crate::session::context_edit::ContextEdits::inject)
+    /// and is tagged as an injection in the prompt view.
+    Inject,
+}
+
 /// A single session event. Each variant embeds an [`EventBase`] via the
 /// `base` field. Events are self-contained — no accumulated state.
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -260,6 +279,29 @@ pub enum SessionEvent {
         data: serde_json::Value,
     },
 
+    /// The durable twin of a live context-edit mark (suppress / inject).
+    ///
+    /// Appended by
+    /// [`ContextEdits`](crate::session::context_edit::ContextEdits) at the
+    /// moment the live mark is applied, so a resumed session rebuilds the
+    /// identical prompt view instead of silently resurfacing suppressed
+    /// events or losing injection tags. Compaction supersession needs no
+    /// twin — [`SessionEvent::Compaction`] already carries
+    /// `replaced_event_ids`.
+    ///
+    /// This event is pure bookkeeping: it never renders into the prompt,
+    /// produces no provider message, and carries exactly what the live
+    /// mark holds — the mark kind and the target event ID. No reasons, no
+    /// annotation vocabulary (held for a separate design).
+    ContextMark {
+        /// Common event metadata.
+        base: EventBase,
+        /// Which live mark set this event mirrors.
+        mark: ContextMarkKind,
+        /// ID of the event the mark applies to.
+        target_event_id: EventId,
+    },
+
     /// A rules-engine injection that fired and entered the active context.
     ///
     /// Persisted for every fired rule regardless of delivery mode so the
@@ -302,6 +344,7 @@ impl SessionEvent {
             | Self::ForkComplete { base, .. }
             | Self::Label { base, .. }
             | Self::Custom { base, .. }
+            | Self::ContextMark { base, .. }
             | Self::RuleInjection { base, .. } => base,
         }
     }
@@ -518,6 +561,45 @@ mod tests {
     }
 
     #[test]
+    fn context_mark_serde_roundtrip_both_kinds() {
+        for kind in [ContextMarkKind::Suppress, ContextMarkKind::Inject] {
+            let target = EventId::new();
+            let event = SessionEvent::ContextMark {
+                base: EventBase::new(None),
+                mark: kind,
+                target_event_id: target.clone(),
+            };
+            let json = serde_json::to_string(&event).expect("serialize");
+            assert!(json.contains("\"ContextMark\""), "tagged variant: {json}");
+            let parsed: SessionEvent = serde_json::from_str(&json).expect("deserialize");
+            match parsed {
+                SessionEvent::ContextMark {
+                    mark,
+                    target_event_id,
+                    ..
+                } => {
+                    assert_eq!(mark, kind);
+                    assert_eq!(target_event_id, target);
+                }
+                _ => panic!("expected ContextMark"),
+            }
+        }
+    }
+
+    #[test]
+    fn context_mark_kind_wire_names_are_snake_case() {
+        // The wire discriminator is part of the persisted format; pin it.
+        assert_eq!(
+            serde_json::to_string(&ContextMarkKind::Suppress).expect("serialize"),
+            "\"suppress\""
+        );
+        assert_eq!(
+            serde_json::to_string(&ContextMarkKind::Inject).expect("serialize"),
+            "\"inject\""
+        );
+    }
+
+    #[test]
     fn rule_injection_serde_roundtrip() {
         let event = SessionEvent::RuleInjection {
             base: EventBase::new(None),
@@ -614,6 +696,11 @@ mod tests {
                 delivery: crate::rules::types::DeliveryMode::ContextInjection,
                 timing: crate::rules::types::TriggerTiming::Before,
                 content: String::new(),
+            },
+            SessionEvent::ContextMark {
+                base: base(),
+                mark: ContextMarkKind::Suppress,
+                target_event_id: EventId::new(),
             },
         ];
         for e in &events {

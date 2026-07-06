@@ -204,38 +204,6 @@ pub(super) async fn run_context_preflight(
         "auto-compaction suppressed older prompt context"
     );
 
-    // Persist an audit record of the summarization call so its outcome
-    // and cost are visible at the session level, not only on the step's
-    // returned usage total.
-    let (summary_kind, summarization_error) = match &run.summary_source {
-        CompactionSummarySource::Llm => ("llm_summary", None),
-        CompactionSummarySource::MechanicalDigestFallback { error } => {
-            ("mechanical_digest_fallback", Some(error.clone()))
-        }
-    };
-    append_and_notify(
-        args.store,
-        SessionEvent::Custom {
-            base: EventBase::new(args.store.last_event_id()),
-            event_type: COMPACTION_EVENT_TYPE.to_string(),
-            data: serde_json::json!({
-                "summary_kind": summary_kind,
-                "summarization_error": summarization_error,
-                "model": args.model,
-                "freed_token_estimate": run.freed_token_estimate,
-                "usage": run.summarization_usage.as_ref().map(|u| serde_json::json!({
-                    "input_tokens": u.input_tokens,
-                    "output_tokens": u.output_tokens,
-                    "cache_read_tokens": u.cache_read_tokens,
-                    "cache_write_tokens": u.cache_write_tokens,
-                    "cost_usd": u.cost_usd,
-                })),
-            }),
-        },
-        hooks.as_deref(),
-    )
-    .await?;
-
     // Track L finding 2: a fired compaction cannot shrink a server-side
     // response thread, so the anchor is dropped unconditionally — the
     // next request replays the full (compacted) conversation.
@@ -264,11 +232,59 @@ pub(super) async fn run_context_preflight(
             estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools);
     }
 
+    // The pre-/post-rewrite accounting shared verbatim by the persisted
+    // audit record and the live broadcast: `tokens_before` is the estimate
+    // over the full conversation, `tokens_after` reflects the compacted
+    // view (equal to `tokens_before` when the in-flight rewrite could not
+    // be applied — the compaction still takes effect next step).
+    let tokens_before = u64::try_from(estimated).unwrap_or(u64::MAX);
+    let tokens_after = u64::try_from(request_input_estimate).unwrap_or(u64::MAX);
+    let events_compacted = run.outcome.newly_superseded.len();
+
+    // Persist the audit record of the compaction and its summarization
+    // call so the outcome, cost, and accounting are visible at the session
+    // level, not only on the step's returned usage total. Deliberately
+    // carries the same facts as the live `AgentCompaction` broadcast below
+    // — `compaction_id`, `events_compacted`, `tokens_before`,
+    // `tokens_after` included — so a log-only consumer reproduces the live
+    // event's accounting exactly (session-fidelity Gap 9).
+    let (summary_kind, summarization_error) = match &run.summary_source {
+        CompactionSummarySource::Llm => ("llm_summary", None),
+        CompactionSummarySource::MechanicalDigestFallback { error } => {
+            ("mechanical_digest_fallback", Some(error.clone()))
+        }
+    };
+    append_and_notify(
+        args.store,
+        SessionEvent::Custom {
+            base: EventBase::new(args.store.last_event_id()),
+            event_type: COMPACTION_EVENT_TYPE.to_string(),
+            data: serde_json::json!({
+                "summary_kind": summary_kind,
+                "summarization_error": summarization_error,
+                "model": args.model,
+                "freed_token_estimate": run.freed_token_estimate,
+                "compaction_id": run.outcome.compaction_id.to_string(),
+                "events_compacted": events_compacted,
+                "tokens_before": tokens_before,
+                "tokens_after": tokens_after,
+                "usage": summarization_usage.as_ref().map(|u| serde_json::json!({
+                    "input_tokens": u.input_tokens,
+                    "output_tokens": u.output_tokens,
+                    "cache_read_tokens": u.cache_read_tokens,
+                    "cache_write_tokens": u.cache_write_tokens,
+                    "cost_usd": u.cost_usd,
+                })),
+            }),
+        },
+        hooks.as_deref(),
+    )
+    .await?;
+
     // C4: broadcast the completed compaction live so an embedder can surface
     // the history rewrite and fold the summarization spend into its
     // accounting — the twin of the `loop.compaction_summarization` audit
-    // record appended above. `tokens_before` is the pre-rewrite estimate over
-    // the full conversation; `tokens_after` reflects the compacted view.
+    // record appended above, carrying the identical facts.
     if let Some(tx) = args.event_tx {
         let summary_source = match &run.summary_source {
             CompactionSummarySource::Llm => CompactionSummaryKind::Llm,
@@ -280,9 +296,11 @@ pub(super) async fn run_context_preflight(
         };
         tx.send_compaction(AgentCompaction {
             compaction_id: run.outcome.compaction_id.clone(),
-            events_compacted: run.outcome.newly_superseded.len(),
-            tokens_before: u64::try_from(estimated).unwrap_or(u64::MAX),
-            tokens_after: u64::try_from(request_input_estimate).unwrap_or(u64::MAX),
+            events_compacted,
+            tokens_before,
+            tokens_after,
+            model: args.model.to_owned(),
+            freed_token_estimate: run.freed_token_estimate,
             summary_source,
             summarization_usage: summarization_usage.clone(),
             compacted_at: chrono::Utc::now(),

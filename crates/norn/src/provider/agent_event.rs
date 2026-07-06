@@ -387,6 +387,12 @@ pub struct AgentCompaction {
     /// logged loudly), this equals `tokens_before` — the compaction is still
     /// persisted and takes effect on the next step.
     pub tokens_after: u64,
+    /// Model that ran (or was asked to run) the summarization call.
+    pub model: String,
+    /// Tokens the trigger estimated it freed (effective count minus the
+    /// trigger threshold) — the same pre-application estimate the
+    /// persisted `loop.compaction_summarization` record carries.
+    pub freed_token_estimate: usize,
     /// How the committed summary was produced.
     pub summary_source: CompactionSummaryKind,
     /// Usage of the summarization provider call — real spend the embedder

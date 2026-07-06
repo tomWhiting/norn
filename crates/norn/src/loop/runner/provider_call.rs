@@ -47,6 +47,12 @@ impl StepMachine<'_> {
                 self.provider,
                 request,
                 self.event_tx,
+                // Mirror in-flight deltas into the shared timeout state so
+                // a hard cut (step timeout dropping this future, or the
+                // cancel arm below winning the select) leaves the partial
+                // content recoverable for the exit path's
+                // `loop.partial_output` record (Gap 7).
+                Some(&self.timeout_state),
             );
             match self.cancel.as_ref() {
                 Some(token) => tokio::select! {

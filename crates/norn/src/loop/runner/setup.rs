@@ -85,18 +85,19 @@ impl<'a> StepMachine<'a> {
             }
         }
 
-        // Persisted compaction marks load once per loop context, not once per
-        // step: a driver that resumes a session with a fresh ContextEdits gets
-        // its marks from this single walk, and every compaction appended after
-        // it marks supersession at append time on the tracker itself (via
-        // ContextEdits::summarize / compact / commit_compaction_plan). A
-        // per-step re-walk here would be quadratic over a long-running loop
-        // context while adding no information.
-        if !loop_context.compaction_marks_loaded
+        // Persisted context-edit marks (compaction supersession, suppress,
+        // inject) load once per loop context, not once per step: a driver
+        // that resumes a session with a fresh ContextEdits gets its marks
+        // from this single walk, and every mark applied after it lands on
+        // the tracker at apply time (via ContextEdits::suppress / inject /
+        // summarize / compact / commit_compaction_plan). A per-step re-walk
+        // here would be quadratic over a long-running loop context while
+        // adding no information.
+        if !loop_context.context_marks_loaded
             && let Some(edits) = loop_context.context_edits.as_mut()
         {
-            edits.apply_persisted_compactions(store);
-            loop_context.compaction_marks_loaded = true;
+            edits.apply_persisted_marks(store);
+            loop_context.context_marks_loaded = true;
         }
 
         // Build the initial conversation, splicing in any slash-command
