@@ -208,6 +208,45 @@ pub fn insert_index_entry_for_new_session(
     append_entry_assuming_locked(data_dir, entry)
 }
 
+/// Insert the index row for a freshly minted **child** session, refusing
+/// typed when the child's id or its on-disk location is already claimed.
+/// The whole check-and-append holds the inter-process index lock, so two
+/// processes minting into the same data directory can never both claim a
+/// row (the in-process allocation authority is the parent's
+/// [`SessionBinding`](crate::session::SessionBinding) lock; this is the
+/// cross-process half).
+///
+/// # Errors
+///
+/// [`SessionPersistError::IdExists`] when a row with the same id exists,
+/// [`SessionPersistError::ChildPathOccupied`] when any row already claims
+/// the same `rel_path` (an orphan row from external tampering — the mint
+/// must never adopt or overwrite it), plus index I/O failures.
+/// `lock_deadline` bounds the lock wait (`None` = wait indefinitely).
+pub fn insert_child_index_entry(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+    lock_deadline: Option<Duration>,
+) -> Result<(), SessionPersistError> {
+    let _lock = lock_index(data_dir, lock_deadline)?;
+    let existing = read_index(data_dir)?;
+    if existing.iter().any(|e| e.id == entry.id) {
+        return Err(SessionPersistError::IdExists {
+            id: entry.id.clone(),
+        });
+    }
+    if let Some(rel_path) = entry.rel_path.as_deref()
+        && existing
+            .iter()
+            .any(|e| e.rel_path.as_deref() == Some(rel_path))
+    {
+        return Err(SessionPersistError::ChildPathOccupied {
+            rel_path: rel_path.to_owned(),
+        });
+    }
+    append_entry_assuming_locked(data_dir, entry)
+}
+
 /// The raw `O_APPEND` index-entry write shared by [`append_index_entry`]
 /// and [`insert_index_entry_if_absent`]. The caller MUST already hold the
 /// inter-process index lock — the lock is not re-entrant (each

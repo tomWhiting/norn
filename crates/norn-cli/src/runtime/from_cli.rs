@@ -184,7 +184,7 @@ pub fn builder_from_cli(
     // deadline.
     let index_lock_deadline = resolve_index_lock_deadline(settings, &config_overrides)?;
     if cli.no_session {
-        builder = builder.session(EventStore::new());
+        builder = builder.session(std::sync::Arc::new(EventStore::new()));
     } else if let Some(spec) = session_spec_from_cli(cli, &cwd) {
         let manager = SessionManager::new(session_data_dir())
             .with_index_lock_deadline(Some(index_lock_deadline));

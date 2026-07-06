@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use super::handle::{AgentHandles, AgentWakeRegistry, SharedSessionTree};
+use super::handle::{AgentHandles, AgentWakeRegistry};
 use super::infra::{AgentCancellation, AgentToolInfra, ParentGrant};
 use super::reclaim::ReclaimOnResultDelivery;
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
@@ -17,6 +17,7 @@ use crate::config::permissions::PermissionPolicy;
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::internal::extraction::SharedProvider;
+use crate::session::SessionBinding;
 use crate::session::action_log::ActionLog;
 use crate::session::action_log_tree::ActionLogTree;
 use crate::session::store::EventStore;
@@ -61,10 +62,13 @@ use crate::tools::task::SharedTaskStore;
 /// [`LoopContext`](crate::agent_loop::loop_context::LoopContext) so
 /// pre/post-tool hooks fire for the child's own calls.
 ///
-/// When `child_tree` is `Some` — i.e. an orchestrator published a
-/// [`SharedSessionTree`] on the parent context — it is installed on the
-/// child context keyed to the *child's* `SessionId`, so a grandchild spawn
-/// branches under the child's session in turn (NA-008 R3).
+/// `child_session` is the child's own [`SessionBinding`] — minted by the
+/// parent's
+/// [`SessionBinding::branch_child`](crate::session::SessionBinding::branch_child)
+/// alongside the child's store — stamped on the child's
+/// [`AgentToolInfra`] so the child's own spawn/fork sites mint
+/// grandchildren through the same allocation authority (depth recursion
+/// is structural, not per-call).
 ///
 /// `child_policy` is the [`ChildPolicy`] the parent grants this child —
 /// computed by the spawn tool from the parent's own grant (narrowed or
@@ -95,7 +99,7 @@ pub(super) fn build_child_context(
     child_id: Uuid,
     child_store: Arc<EventStore>,
     parent_ctx: &ToolContext,
-    child_tree: Option<SharedSessionTree>,
+    child_session: Arc<SessionBinding>,
     child_policy: ChildPolicy,
     child_cancel: tokio_util::sync::CancellationToken,
 ) -> Arc<ToolContext> {
@@ -113,6 +117,9 @@ pub(super) fn build_child_context(
             parent_store: Arc::clone(&parent_infra.event_store),
         }),
         tool_registry: parent_infra.tool_registry.as_ref().map(Arc::clone),
+        // The child's own branching identity: grandchild mints route
+        // through this binding, so depth recursion is structural.
+        session: child_session,
     };
 
     let mut child_ctx =
@@ -179,9 +186,6 @@ pub(super) fn build_child_context(
     }
     if let Some(marker) = parent_ctx.get_extension::<ReclaimOnResultDelivery>() {
         child_ctx.insert_extension(marker);
-    }
-    if let Some(tree) = child_tree {
-        child_ctx.insert_extension(Arc::new(tree));
     }
     wire_child_action_log(
         parent_infra,
@@ -278,6 +282,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: Arc::new(SessionBinding::ephemeral_root()),
         }
     }
 
@@ -317,7 +322,7 @@ mod tests {
             child_id,
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(SessionBinding::ephemeral_root()),
             test_policy(),
             tokio_util::sync::CancellationToken::new(),
         );
@@ -384,7 +389,7 @@ mod tests {
             Uuid::new_v4(),
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(SessionBinding::ephemeral_root()),
             test_policy(),
             tokio_util::sync::CancellationToken::new(),
         );
@@ -451,7 +456,7 @@ mod tests {
             first,
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(SessionBinding::ephemeral_root()),
             test_policy(),
             tokio_util::sync::CancellationToken::new(),
         );
@@ -461,7 +466,7 @@ mod tests {
             second,
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(SessionBinding::ephemeral_root()),
             test_policy(),
             tokio_util::sync::CancellationToken::new(),
         );
@@ -492,7 +497,7 @@ mod tests {
             child_id,
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(SessionBinding::ephemeral_root()),
             test_policy(),
             tokio_util::sync::CancellationToken::new(),
         );
@@ -527,7 +532,7 @@ mod tests {
             Uuid::new_v4(),
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(SessionBinding::ephemeral_root()),
             test_policy(),
             child_cancel.clone(),
         );
@@ -556,7 +561,7 @@ mod tests {
             Uuid::new_v4(),
             Arc::new(EventStore::new()),
             &parent_ctx,
-            None,
+            Arc::new(SessionBinding::ephemeral_root()),
             test_policy(),
             tokio_util::sync::CancellationToken::new(),
         );

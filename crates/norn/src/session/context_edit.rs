@@ -221,7 +221,7 @@ impl ContextEdits {
                     | SessionEvent::SpokenResponse { .. }
                     | SessionEvent::ToolResult { .. }
                     | SessionEvent::ModelChange { .. }
-                    | SessionEvent::Fork { .. }
+                    | SessionEvent::ChildBranch { .. }
                     | SessionEvent::ForkComplete { .. }
                     | SessionEvent::Label { .. }
                     | SessionEvent::Custom { .. }
@@ -566,7 +566,7 @@ pub fn build_compaction_digest(
             SessionEvent::Compaction { .. } => prior_compactions += 1,
             SessionEvent::Custom { .. }
             | SessionEvent::ModelChange { .. }
-            | SessionEvent::Fork { .. }
+            | SessionEvent::ChildBranch { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
             | SessionEvent::RuleInjection { .. }
@@ -623,7 +623,7 @@ fn compact_boundary_after_tool_results(events: &[SessionEvent], assistant_idx: u
             SessionEvent::UserMessage { .. }
             | SessionEvent::Custom { .. }
             | SessionEvent::ModelChange { .. }
-            | SessionEvent::Fork { .. }
+            | SessionEvent::ChildBranch { .. }
             | SessionEvent::ForkComplete { .. }
             | SessionEvent::Label { .. }
             | SessionEvent::RuleInjection { .. }

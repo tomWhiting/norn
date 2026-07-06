@@ -104,7 +104,7 @@ fn tag_for_event(event: &SessionEvent) -> Option<ContentTag> {
         | SessionEvent::AssistantMessage { .. }
         | SessionEvent::SpokenResponse { .. }
         | SessionEvent::ModelChange { .. }
-        | SessionEvent::Fork { .. }
+        | SessionEvent::ChildBranch { .. }
         | SessionEvent::ForkComplete { .. }
         | SessionEvent::Label { .. } => Some(ContentTag::Message),
         SessionEvent::ToolResult { .. } => Some(ContentTag::ToolResult),

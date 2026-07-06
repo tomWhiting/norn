@@ -6,23 +6,24 @@
 
 pub mod coord;
 pub(crate) mod delegation;
+pub(super) mod fork_context;
 pub(super) mod fork_launch;
-pub(super) mod fork_pipeline;
+pub(super) mod fork_outcome;
 mod fork_seed;
 pub mod fork_tool;
 pub mod handle;
 pub mod infra;
-mod lifecycle;
+pub(crate) mod lifecycle;
 pub mod reclaim;
 pub mod spawn;
 mod spawn_context;
 pub(crate) mod spawn_launch;
-mod spawn_outcome;
+pub(crate) mod spawn_outcome;
 
 pub use self::coord::{
     CloseAgentTool, SIGNAL_AGENT_TOOL_NAME, SignalAgentTool, WAKE_AGENT_TOOL_NAME, WakeAgentTool,
 };
-pub(crate) use self::fork_pipeline::ForkOutcome;
+pub(crate) use self::fork_outcome::ForkOutcome;
 pub use self::fork_tool::{FORK_TOOL_NAME, ForkTool};
 pub use self::handle::{AgentHandle, AgentHandles, AgentWakeRegistry, WakeRequestOutcome};
 pub use self::infra::{AgentCancellation, AgentToolInfra};

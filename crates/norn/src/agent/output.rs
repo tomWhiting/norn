@@ -15,6 +15,7 @@
 //! resume. [`AgentStopReason`] describes *why* a stopped run stopped, with
 //! the per-reason detail (validation errors, elapsed time, truncation kind).
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use serde_json::Value;
@@ -103,11 +104,15 @@ pub struct AgentOutput {
     /// [`ChildAgentResult`](crate::agent::result_channel::ChildAgentResult).
     pub usage: Usage,
 
-    /// The session event store, returned so callers can resume the session
-    /// by passing it back to
-    /// [`AgentBuilder::session`](super::builder::AgentBuilder::session).
-    /// `None` when the builder was asked not to surface it.
-    pub event_store: Option<EventStore>,
+    /// The LIVE session event store — the same `Arc` the run persisted
+    /// into, sink and all, so appends made by an embedder after the run
+    /// still write through to disk (the pre-Arc owned return silently
+    /// dropped the sink whenever fork/spawn infra held a reference —
+    /// session-fidelity inventory Gap 14). Pass it back to
+    /// [`AgentBuilder::session`](super::builder::AgentBuilder::session) to
+    /// resume the session in-process. `None` when the builder was asked
+    /// not to surface it.
+    pub event_store: Option<Arc<EventStore>>,
 }
 
 impl AgentOutput {
@@ -174,7 +179,7 @@ impl RunOutcome {
     /// enum to the public run surface. The `event_store` is moved onto the
     /// payload so callers can resume the session; pass `None` when the
     /// store should not be surfaced.
-    pub fn from_step_result(result: AgentStepResult, event_store: Option<EventStore>) -> Self {
+    pub fn from_step_result(result: AgentStepResult, event_store: Option<Arc<EventStore>>) -> Self {
         let stopped = |reason: AgentStopReason, output: Value, usage: Usage| Self::Stopped {
             reason,
             partial: AgentOutput {
@@ -239,7 +244,7 @@ impl RunOutcome {
     }
 
     /// Attach the event store to whichever arm carries the payload.
-    fn with_event_store(mut self, event_store: Option<EventStore>) -> Self {
+    fn with_event_store(mut self, event_store: Option<Arc<EventStore>>) -> Self {
         match &mut self {
             Self::Completed(output)
             | Self::Stopped {
@@ -352,7 +357,7 @@ mod tests {
             usage: sample_usage(),
             children_usage: Usage::default(),
         };
-        let outcome = RunOutcome::from_step_result(result, Some(EventStore::new()));
+        let outcome = RunOutcome::from_step_result(result, Some(Arc::new(EventStore::new())));
         assert!(outcome.is_completed());
         assert!(outcome.stop_reason().is_none());
         assert_eq!(
@@ -502,7 +507,7 @@ mod tests {
             children_usage: Usage::default(),
         };
         let store = store_with(&["progress so far"]);
-        let outcome = RunOutcome::from_step_result(result, Some(store));
+        let outcome = RunOutcome::from_step_result(result, Some(Arc::new(store)));
         assert!(
             outcome.output().event_store.is_some(),
             "a stopped run's partial payload must carry the event store"
@@ -547,7 +552,7 @@ mod tests {
             children_usage: Usage::default(),
         };
         let store = store_with(&["first reply", "second reply"]);
-        let outcome = RunOutcome::from_step_result(result, Some(store));
+        let outcome = RunOutcome::from_step_result(result, Some(Arc::new(store)));
         assert_eq!(outcome.output().text().as_deref(), Some("second reply"));
     }
 
@@ -561,7 +566,7 @@ mod tests {
         // A trailing tool-call-only turn produces an empty-content
         // AssistantMessage; .text() must skip it and surface the prior text.
         let store = store_with(&["the real answer", ""]);
-        let outcome = RunOutcome::from_step_result(result, Some(store));
+        let outcome = RunOutcome::from_step_result(result, Some(Arc::new(store)));
         assert_eq!(outcome.output().text().as_deref(), Some("the real answer"));
     }
 
@@ -584,7 +589,7 @@ mod tests {
             children_usage: Usage::default(),
         };
         let store = store_with(&[]);
-        let outcome = RunOutcome::from_step_result(result, Some(store));
+        let outcome = RunOutcome::from_step_result(result, Some(Arc::new(store)));
         assert!(outcome.output().text().is_none());
     }
 }

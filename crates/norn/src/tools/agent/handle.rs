@@ -30,14 +30,12 @@ use uuid::Uuid;
 use crate::agent::registry::AgentStatus;
 use crate::r#loop::inbound::InboundSender;
 use crate::session::store::EventStore;
-use crate::session::tree::{SessionId, SessionTree};
 
 /// Provenance metadata captured for each spawned child (NA-008 R3).
 ///
 /// Recorded at spawn time and stored on the child's [`AgentHandle`] so the
 /// parent can attribute the child's audit trail — who spawned it, under
-/// which profile, and when — without consulting the agent registry or the
-/// session tree.
+/// which profile, and when — without consulting the agent registry.
 #[derive(Clone, Debug)]
 pub struct ChildBranchMetadata {
     /// The spawned child's agent id.
@@ -48,25 +46,6 @@ pub struct ChildBranchMetadata {
     pub profile_name: Option<String>,
     /// Wall-clock instant the child was spawned.
     pub spawned_at: DateTime<Utc>,
-}
-
-/// Orchestrator-published handle to the shared [`SessionTree`] together with
-/// the calling agent's own session id within it (NA-008 R3).
-///
-/// When an orchestrator installs this extension on an agent's
-/// [`crate::tool::context::ToolContext`], `SpawnAgentTool` branches each
-/// child's [`EventStore`] as a named child session under [`Self::session_id`],
-/// wiring the child into the parent's session audit tree. When the extension
-/// is absent (standalone mode) the child receives a private, disconnected
-/// store instead.
-///
-/// The child is given its own `SharedSessionTree` — the same `tree`, but the
-/// child's `session_id` — so grandchildren branch correctly in turn.
-pub struct SharedSessionTree {
-    /// The shared session tree.
-    pub tree: Arc<SessionTree>,
-    /// The calling agent's session id within [`Self::tree`].
-    pub session_id: SessionId,
 }
 
 /// Live handle to a spawned sub-agent.
@@ -109,12 +88,12 @@ pub struct AgentHandle {
     pub cancel: CancellationToken,
     /// Join handle for the child's `tokio::spawn` task.
     pub join_handle: JoinHandle<()>,
-    /// The child's append-only session event store (NA-008 R3). In
-    /// `SessionTree` mode this `Arc` aliases the tree's store for the child's
-    /// session; in standalone mode it is the child's private store. Either
-    /// way the parent reads the child's audit trail — including the
-    /// `tool_use_description` recorded on every tool call — through this
-    /// handle without real-time streaming.
+    /// The child's append-only session event store (NA-008 R3) — the same
+    /// store the child's loop appends to (sink-equipped for persistent
+    /// children, memory-only for ephemeral ones). The parent reads the
+    /// child's audit trail — including the `tool_use_description` recorded
+    /// on every tool call — through this handle without real-time
+    /// streaming.
     pub event_store: Arc<EventStore>,
     /// Provenance metadata captured when the child was spawned (NA-008 R3).
     pub branch_metadata: ChildBranchMetadata,

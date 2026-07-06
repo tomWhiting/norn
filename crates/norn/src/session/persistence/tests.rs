@@ -5,7 +5,9 @@ use std::io::Write as _;
 use std::path::Path;
 
 use crate::provider::usage::Usage;
-use crate::session::events::{EventBase, EventId, EventUsage, SessionEvent, ToolCallEvent};
+use crate::session::events::{
+    ChildBranchKind, EventBase, EventId, EventUsage, SessionEvent, ToolCallEvent,
+};
 use crate::session::manager::{CreateSessionOptions, SessionManager};
 use crate::session::store::{DurabilityPolicy, JsonlSink, PersistenceSink};
 use chrono::Utc;
@@ -88,10 +90,13 @@ fn one_of_each() -> Vec<SessionEvent> {
             summary: "summary".to_owned(),
             replaced_event_ids: vec![parent.clone()],
         },
-        SessionEvent::Fork {
+        SessionEvent::ChildBranch {
             base: EventBase::new(Some(parent.clone())),
-            source_event_id: parent,
-            forked_session_id: "child".to_owned(),
+            parent_session_id: Some("parent-session".to_owned()),
+            child_session_id: Some("child".to_owned()),
+            path_address: "root/fork-1a2b3c4d".to_owned(),
+            parent_event_anchor: Some(parent),
+            kind: ChildBranchKind::Fork,
         },
         SessionEvent::Label {
             base: EventBase::new(None),
@@ -156,6 +161,8 @@ fn index_only_entry(dir: &Path) -> SessionIndexEntry {
         total_input_tokens: 0,
         total_output_tokens: 0,
         total_cache_read_tokens: 0,
+        rel_path: None,
+        parent_id: None,
     };
     append_index_entry(dir, &entry, None).unwrap();
     entry
@@ -684,6 +691,8 @@ fn resume_ambiguous_prefix_returns_error() {
             total_input_tokens: 0,
             total_output_tokens: 0,
             total_cache_read_tokens: 0,
+            rel_path: None,
+            parent_id: None,
         });
     }
     write_index_atomic(tmp.path(), &entries).unwrap();
@@ -775,15 +784,19 @@ fn fork_event_source_id_matches_last_original() {
         .unwrap();
     let all_events = fork.store.events();
     match all_events.last().unwrap() {
-        SessionEvent::Fork {
-            source_event_id,
-            forked_session_id,
+        SessionEvent::ChildBranch {
+            parent_session_id,
+            child_session_id,
+            parent_event_anchor,
+            kind,
             ..
         } => {
-            assert_eq!(source_event_id, &last_id);
-            assert_eq!(forked_session_id, &fork.entry.id);
+            assert_eq!(parent_event_anchor.as_ref(), Some(&last_id));
+            assert_eq!(parent_session_id.as_deref(), Some(entry.id.as_str()));
+            assert_eq!(child_session_id.as_deref(), Some(fork.entry.id.as_str()));
+            assert_eq!(*kind, ChildBranchKind::Fork);
         }
-        other => panic!("expected Fork tail, got {other:?}"),
+        other => panic!("expected ChildBranch tail, got {other:?}"),
     }
 }
 
@@ -1503,6 +1516,8 @@ fn reserved_ids_rejected_at_every_persistence_boundary() {
         total_input_tokens: 0,
         total_output_tokens: 0,
         total_cache_read_tokens: 0,
+        rel_path: None,
+        parent_id: None,
     };
 
     // Index insertion: a reserved id must never enter the index.
@@ -1532,7 +1547,7 @@ fn reserved_ids_rejected_at_every_persistence_boundary() {
     );
 
     // Sink open: must never attach an event sink to index.jsonl.
-    match JsonlSink::open_registered(tmp.path(), "index", DurabilityPolicy::Flush, None) {
+    match JsonlSink::open_registered(tmp.path(), &smuggled, DurabilityPolicy::Flush, None) {
         Err(SessionPersistError::InvalidSessionId { .. }) => {}
         Err(other) => panic!("JsonlSink::open_registered wrong error: {other:?}"),
         Ok(_) => panic!("JsonlSink::open_registered must reject reserved ids"),
@@ -2027,6 +2042,78 @@ fn preexisting_empty_file_is_not_retro_stamped_with_header() {
         artifacts.format_version, None,
         "a headerless file reads as pre-versioning format",
     );
+}
+
+/// Gap 2 closure: the `Fork` variant was deleted with `SessionTree`. A
+/// stray test-era file carrying a persisted `"type":"Fork"` line must
+/// degrade gracefully — the tolerant reader skips the unknown variant,
+/// counts it, and every other event still loads.
+#[test]
+fn deleted_fork_variant_line_is_skipped_by_tolerant_reader() {
+    let tmp = tempfile::tempdir().unwrap();
+    let entry = fresh_session(tmp.path());
+    append_events(tmp.path(), &entry.id, &[user_msg("before")], false).unwrap();
+
+    // Hand-write the exact wire shape the deleted variant used to emit.
+    let stray = format!(
+        "{{\"type\":\"Fork\",\"base\":{{\"id\":\"{}\",\"parent_id\":null,\
+         \"timestamp\":\"{}\"}},\"source_event_id\":\"{}\",\
+         \"forked_session_id\":\"dead-child\"}}",
+        EventId::new(),
+        Utc::now().to_rfc3339(),
+        EventId::new(),
+    );
+    let path = session_file_path(tmp.path(), &entry.id);
+    let mut file = fs::OpenOptions::new().append(true).open(&path).unwrap();
+    writeln!(file, "{stray}").unwrap();
+    drop(file);
+    append_events(tmp.path(), &entry.id, &[user_msg("after")], false).unwrap();
+
+    let artifacts = io::read_session_events(tmp.path(), &entry.id).unwrap();
+    assert_eq!(
+        artifacts.skipped_lines, 1,
+        "the deleted variant's line must be counted as skipped",
+    );
+    assert_eq!(
+        artifacts.events.len(),
+        2,
+        "every surrounding event still loads",
+    );
+}
+
+/// Child index rows (`rel_path` + `parent_id`) are additive: legacy rows
+/// without the fields deserialize with `None` and keep resolving to the
+/// flat path; new rows resolve through `rel_path`.
+#[test]
+fn rel_path_rows_resolve_nested_and_legacy_rows_stay_flat() {
+    let tmp = tempfile::tempdir().unwrap();
+    let legacy = fresh_session(tmp.path());
+    assert_eq!(legacy.rel_path, None);
+    assert_eq!(
+        io::resolved_session_file_path(tmp.path(), &legacy),
+        session_file_path(tmp.path(), &legacy.id),
+        "legacy rows keep the flat derivation",
+    );
+
+    let mut child = legacy.clone();
+    child.id = "11111111-2222-4333-8444-555555555555".to_owned();
+    child.rel_path = Some(format!("{}/children/fork-1a2b3c4d.jsonl", legacy.id));
+    child.parent_id = Some(legacy.id.clone());
+    index::insert_child_index_entry(tmp.path(), &child, None).unwrap();
+    assert_eq!(
+        io::resolved_session_file_path(tmp.path(), &child),
+        tmp.path()
+            .join(&legacy.id)
+            .join("children")
+            .join("fork-1a2b3c4d.jsonl"),
+    );
+
+    // Round-trip through the index file: the optional fields survive and
+    // legacy rows still parse.
+    let rows = index::read_index(tmp.path()).unwrap();
+    let reread = rows.iter().find(|e| e.id == child.id).unwrap();
+    assert_eq!(reread.rel_path, child.rel_path);
+    assert_eq!(reread.parent_id.as_deref(), Some(legacy.id.as_str()));
 }
 
 // -- Session-fidelity Gap 8: durable context marks in replay ------------

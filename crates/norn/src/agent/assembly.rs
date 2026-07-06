@@ -4,10 +4,9 @@
 //! `agent/builder.rs`: workspace-root validation, runtime-base overlay
 //! resolution (diagnostics, rules, hooks, agent-loop config), system-prompt
 //! construction, hook-registry finishing (diagnostic stop hook), tool-catalog
-//! / tool-definition projection, fork-spawn infrastructure wiring, and the
-//! event-store snapshot used when an `Arc` cycle prevents reclaiming the
-//! store. They carry no builder state — every input is explicit — so each
-//! phase is unit-testable on its own.
+//! / tool-definition projection, and fork-spawn infrastructure wiring. They
+//! carry no builder state — every input is explicit — so each phase is
+//! unit-testable on its own.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -170,20 +169,6 @@ pub(crate) fn install_runtime_base_extensions(
     // rules from the merged settings are silently unenforced on the
     // embedded path (the CLI installs the policy itself).
     crate::runtime_init::install_permission_policy(shared, &base.settings);
-}
-
-/// Snapshot a shared event store's events into a fresh owned store. Used only
-/// when the original cannot be reclaimed (fork/spawn Arc cycle). The
-/// persistence sink is not carried over — only the event content, which is
-/// what session resume needs.
-pub(crate) fn snapshot_store(store: &EventStore) -> EventStore {
-    let snapshot = EventStore::new();
-    for event in store.events() {
-        if let Err(err) = snapshot.append(event) {
-            tracing::warn!(error = %err, "snapshotting event store: append failed");
-        }
-    }
-    snapshot
 }
 
 /// Finish the merged hook registry by appending the diagnostic stop hook.
@@ -460,12 +445,12 @@ pub(crate) fn populate_loop_context(
 /// marks and the action ledger, so the session-lifetime queryability
 /// contract holds without per-consumer re-walks of the event history.
 pub(crate) fn restore_session_state(
-    session: Option<EventStore>,
+    session: Option<Arc<EventStore>>,
     loop_context: &mut LoopContext,
     shared_wd: SharedWorkingDir,
 ) -> (Arc<EventStore>, Arc<ActionLog>) {
     let resuming = session.is_some();
-    let event_store = Arc::new(session.unwrap_or_default());
+    let event_store = session.unwrap_or_else(|| Arc::new(EventStore::new()));
     let action_log = Arc::new(ActionLog::with_working_dir(
         Arc::clone(&event_store),
         shared_wd,
@@ -660,6 +645,15 @@ pub(crate) struct AgentInfraParts {
     pub(crate) provider: Arc<dyn Provider>,
     /// The parent agent's session event store.
     pub(crate) event_store: Arc<EventStore>,
+    /// The root agent's session-branching identity: the allocation
+    /// authority its spawn/fork/rhai child mints route through. Built by
+    /// the builder from the opened persisted session
+    /// ([`SessionBinding::persistent_root`](crate::session::SessionBinding::persistent_root))
+    /// or as the deliberate
+    /// [`SessionBinding::ephemeral_root`](crate::session::SessionBinding::ephemeral_root)
+    /// when the agent runs without a persisted session — never a silent
+    /// fallback.
+    pub(crate) session: Arc<crate::session::SessionBinding>,
     /// The parent agent's id.
     pub(crate) id: Uuid,
     /// The builder-required coordination envelope: the root's child
@@ -772,6 +766,7 @@ pub(crate) fn install_agent_infra(
         parent_id: None,
         grant: None,
         tool_registry: Some(Arc::clone(tool_registry)),
+        session: parts.session,
     };
     shared.insert_extension(Arc::new(infra));
     // W3.5 cancellation cascade: publish the root's run token so
@@ -970,6 +965,7 @@ mod tests {
                 registry: AgentRegistry::shared(),
                 provider,
                 event_store: Arc::new(EventStore::new()),
+                session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
                 id: agent_id,
                 envelope: envelope.clone(),
                 root_inbound: None,

@@ -68,7 +68,7 @@ pub(super) fn event_produces_prompt_message(
             .format_conversation_content(rule_id, content)
             .is_some(),
         SessionEvent::ModelChange { .. }
-        | SessionEvent::Fork { .. }
+        | SessionEvent::ChildBranch { .. }
         | SessionEvent::ForkComplete { .. }
         | SessionEvent::Label { .. }
         | SessionEvent::Custom { .. }

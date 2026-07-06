@@ -10,7 +10,9 @@ use uuid::Uuid;
 use crate::agent::child_policy::ChildPolicy;
 use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::AgentRegistry;
+use crate::provider::AgentEvent;
 use crate::provider::traits::Provider;
+use crate::session::SessionBinding;
 use crate::session::store::EventStore;
 use crate::tool::registry::ToolRegistry;
 
@@ -81,12 +83,31 @@ pub struct NornRhaiContext {
     /// applied onto `AgentLoopConfig::default()`, or the plain default
     /// when unset — exactly the pre-R5 behavior.
     pub child_policy: ChildPolicy,
+    /// The host agent's session-branching identity
+    /// ([`SessionBinding`]): the allocation authority `spawn_agent`
+    /// mints every script child's store through. A persistent host
+    /// (built from an open session:
+    /// [`SessionBinding::persistent_root`]) gives script children REAL
+    /// write-through timelines under the root's `children/` directory;
+    /// an ephemeral host ([`SessionBinding::ephemeral_root`], the
+    /// `--no-session` axis) propagates ephemerality with the honest
+    /// `session: None` branch event on the host's timeline. The
+    /// embedder chooses explicitly — never a silent fallback.
+    pub session: Arc<SessionBinding>,
+    /// Optional shared agent-event broadcast channel. When present,
+    /// script-spawned children stream their own [`AgentEvent`]s through
+    /// it (child-tagged, exactly like tool-spawned children) and the
+    /// typed `subagent.started` / `subagent.completed` lifecycle events
+    /// broadcast live. When `None`, the lifecycle events still land as
+    /// durable Custom audit records on the host's event store — the
+    /// durable half never depends on a live subscriber.
+    pub events: Option<tokio::sync::broadcast::Sender<AgentEvent>>,
 }
 
 // `NornRhaiContext` has all-public fields and is constructed via struct
 // literal at each call site. No `new()` constructor exists because the
-// eight-field signature would exceed clippy's `too_many_arguments` budget
-// and the struct fields already form the canonical parameter list.
+// field count would exceed clippy's `too_many_arguments` budget and the
+// struct fields already form the canonical parameter list.
 
 pub(super) fn rhai_error(s: impl Into<String>) -> EvalAltResult {
     EvalAltResult::ErrorRuntime(Dynamic::from(s.into()), rhai::Position::NONE)

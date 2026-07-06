@@ -14,16 +14,20 @@ use chrono::DateTime;
 
 use super::context::{AgentHandle, NornRhaiContext, dynamic_to_json, rhai_error};
 use crate::agent::registry::{AgentRegistry, AgentStatus};
-use crate::error::NornError;
 use crate::r#loop::LoopContext;
 use crate::r#loop::inbound::{ChannelMessage, MessageKind};
-use crate::r#loop::runner::{AgentStepRequest, AgentStepResult, ToolExecutor, run_agent_step};
-use crate::provider::agent_event::AgentMessageLifecycle;
-use crate::session::store::EventStore;
+use crate::r#loop::runner::{AgentStepRequest, ToolExecutor, run_agent_step};
+use crate::provider::AgentEventSender;
+use crate::provider::agent_event::{AgentMessageLifecycle, SubagentDescriptor, SubagentKind};
+use crate::provider::usage::Usage;
+use crate::session::events::ChildBranchKind;
+use crate::session::{ChildBranchRequest, slugify_name_stem};
 use crate::tool::context::ToolContext;
 use crate::tools::agent::append_message_audit;
 use crate::tools::agent::coord::sender_attribution;
 use crate::tools::agent::infra::SubAgentExecutor;
+use crate::tools::agent::lifecycle::{LifecycleEmitter, SubagentCompletion};
+use crate::tools::agent::spawn_outcome::{extract_outcome_summary, mark_terminal_in_registry};
 
 pub(super) fn register_handle_returning(engine: &mut Engine, context: &NornRhaiContext) {
     // spawn_agent — drives a real `run_agent_step` on the Tokio runtime
@@ -302,6 +306,17 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         ))
     })?;
 
+    // Provenance carried on both typed lifecycle phases, and the label the
+    // child's session mint slugs its per-parent name from. Captured before
+    // `reserve` consumes `role`.
+    let descriptor = SubagentDescriptor {
+        kind: SubagentKind::Spawn,
+        role: role.clone(),
+        model: model.clone(),
+        profile: None,
+    };
+    let name_stem = slugify_name_stem(&role, "spawn");
+
     // The child's grant is derived from the host's own policy by the same
     // inherit-with-decrement rule the spawn/fork tools use; a depth-0 host
     // is refused typed (W3.4 — script hosts have real budgets too).
@@ -326,6 +341,67 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
     )
     .map_err(|e| Box::new(rhai_error(format!("spawn_agent: reserve: {e}"))))?;
     let real_id = guard.id();
+
+    // Mint the child's session through the host's branching binding
+    // (V2-R2) BEFORE confirming the reservation — all fallible setup
+    // precedes confirm, exactly like the tool sites. A persistent host
+    // yields a real write-through child timeline under the root's
+    // children/ dir, with the ChildBranch reservation durably on the
+    // host's timeline PARENT-FIRST; an ephemeral host propagates
+    // ephemerality with the honest `session: None` reservation.
+    // The mint's blocking file I/O runs off the executor when the sync
+    // rhai host function is driven from inside a runtime thread (F5).
+    let branched = crate::tools::agent::delegation::branch_child_off_executor(
+        &ctx.session,
+        &ctx.event_store,
+        &ChildBranchRequest {
+            child_session_id: real_id.to_string(),
+            name_stem,
+            kind: ChildBranchKind::Spawn,
+            durability: ctx.session.child_durability(),
+            model: model.clone(),
+            working_dir: ctx.working_dir.get().display().to_string(),
+        },
+    )
+    .map_err(|e| {
+        Box::new(rhai_error(format!(
+            "spawn_agent: session branch failed: {e}"
+        )))
+    })?;
+    let child_store = branched.store;
+
+    // Typed lifecycle on both carriers (the rhai-fidelity fix riding
+    // Gap 1): `Started` before the child task launches; the task emits
+    // `Completed`. Both land as durable Custom audit records on the
+    // host's store; the live broadcast additionally fires when the
+    // embedder wired a channel. The Started audit fires BEFORE the
+    // reservation is confirmed: on a persist failure the guard's RAII
+    // rollback reclaims the registry slot, so a refused spawn can never
+    // leave a phantom Active child pinning the parent's concurrency
+    // budget (the only residue is the already-tolerated burned name +
+    // dangling reservation).
+    let child_event_sender = ctx
+        .events
+        .as_ref()
+        .map(|tx| AgentEventSender::new(tx.clone(), real_id, format!("spawn/{model}")));
+    let lifecycle = LifecycleEmitter::new(
+        child_event_sender.clone(),
+        Arc::clone(&ctx.event_store),
+        ctx.agent_id,
+        real_id,
+        descriptor,
+        Utc::now(),
+    );
+    lifecycle.emit_started().map_err(|error| {
+        Box::new(rhai_error(format!(
+            "spawn_agent: failed to persist the subagent.started audit \
+                 event; spawn aborted before launch: {error}"
+        )))
+    })?;
+
+    // All fallible setup is done — confirm the reservation. From here
+    // the launch is unconditional and the task owns the entry's
+    // terminal transition.
     guard
         .confirm()
         .map_err(|e| Box::new(rhai_error(format!("spawn_agent: confirm: {e}"))))?;
@@ -336,143 +412,110 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
     let model_for_task = model;
     let task_for_async = task;
 
-    let _join_handle: JoinHandle<Result<AgentStepResult, NornError>> =
-        ctx.runtime.spawn(async move {
-            // Dispatch the sub-agent's tool calls through the parent
-            // registry's own shared context — matching the behaviour of the
-            // prior `registry.execute()` delegation before the
-            // `SubAgentExecutor::new` signature gained `child_context`.
-            //
-            // Known boundary: this is the HOST's shared context, and the
-            // model is shown no tools (`tools: &[]` below) — the child's
-            // decremented grant on its registry entry is observability-only
-            // here. If script children ever gain a real tool surface, they
-            // must get their own child context (as the spawn/fork tools
-            // build), or their spawns would be charged to the host's
-            // identity and budget. Concretely for N-026 cron: this shared
-            // context carries the HOST's `ScheduleHandle`, so a script child
-            // that could reach the `cron` tool would create schedules against
-            // the host's store and identity — but it is shown zero tools, so
-            // cron is unreachable here and the trap stays closed until that
-            // tool-surface change lands.
-            //
-            // Cancellation boundary (W3.5, deliberate): script children run
-            // with `cancel: None` — the rhai host owns no run token to
-            // parent a child token under (NornRhaiContext carries none), so
-            // there is nothing for the cancellation cascade to chain from,
-            // and the host holds no `AgentHandle` for the child either:
-            // `close_agent` cannot cancel a script child's run. This is the
-            // pre-cascade behavior, unchanged on purpose; if script hosts
-            // ever gain a run token, create this child's token via
-            // `child_token()` here (and thread it into the request) exactly
-            // as the spawn/fork launch paths do.
-            let child_context = registry_for_executor
-                .shared_context()
-                .unwrap_or_else(|| Arc::new(ToolContext::empty()));
-            let executor = SubAgentExecutor::new(registry_for_executor, tools, child_context);
-            let child_store = EventStore::new();
-            let mut loop_ctx = LoopContext::new("You are a sub-agent. Complete the task and stop.");
-            // R5: the child's loop config is the granted ChildLoopConfig
-            // applied onto AgentLoopConfig::default(); an absent grant is
-            // byte-for-byte the default — the pre-R5 behavior. Same
-            // resolution as the spawn/fork launch wrappers.
-            let mut child_config =
-                crate::agent::child_policy::ChildLoopConfig::resolve(child_loop_config);
-            // Arm auto-compaction on the script child exactly as the root
-            // builder does (the one shared mechanism): install the token
-            // estimator and the context-edit tracker on the child's loop
-            // context and fill its context window from the catalog for the
-            // child's own model, so a long-running script child compacts
-            // instead of dying ContextWindowExceeded. A non-catalog model
-            // keeps a None window, leaving the trigger off. NOTE: the root
-            // additionally hard-errors on a None/over-max window
-            // (2026-07-05 incident guard); per-model child validation is
-            // owned by the child-persistence/agent-variants units.
-            crate::agent::arming::arm_auto_compaction(
-                &mut loop_ctx,
-                &mut child_config,
-                &model_for_task,
+    let _join_handle: JoinHandle<()> = ctx.runtime.spawn(async move {
+        // Dispatch the sub-agent's tool calls through the parent
+        // registry's own shared context — matching the behaviour of the
+        // prior `registry.execute()` delegation before the
+        // `SubAgentExecutor::new` signature gained `child_context`.
+        //
+        // Known boundary: this is the HOST's shared context, and the
+        // model is shown no tools (`tools: &[]` below) — the child's
+        // decremented grant on its registry entry is observability-only
+        // here. If script children ever gain a real tool surface, they
+        // must get their own child context (as the spawn/fork tools
+        // build), or their spawns would be charged to the host's
+        // identity and budget. Concretely for N-026 cron: this shared
+        // context carries the HOST's `ScheduleHandle`, so a script child
+        // that could reach the `cron` tool would create schedules against
+        // the host's store and identity — but it is shown zero tools, so
+        // cron is unreachable here and the trap stays closed until that
+        // tool-surface change lands. (The child DOES hold its own
+        // session binding for its store; grandchild minting only becomes
+        // reachable with that same tool-surface change.)
+        //
+        // Cancellation boundary (W3.5, deliberate): script children run
+        // with `cancel: None` — the rhai host owns no run token to
+        // parent a child token under (NornRhaiContext carries none), so
+        // there is nothing for the cancellation cascade to chain from,
+        // and the host holds no `AgentHandle` for the child either:
+        // `close_agent` cannot cancel a script child's run. This is the
+        // pre-cascade behavior, unchanged on purpose; if script hosts
+        // ever gain a run token, create this child's token via
+        // `child_token()` here (and thread it into the request) exactly
+        // as the spawn/fork launch paths do.
+        let child_context = registry_for_executor
+            .shared_context()
+            .unwrap_or_else(|| Arc::new(ToolContext::empty()));
+        let executor = SubAgentExecutor::new(registry_for_executor, tools, child_context);
+        let mut loop_ctx = LoopContext::new("You are a sub-agent. Complete the task and stop.");
+        // R5: the child's loop config is the granted ChildLoopConfig
+        // applied onto AgentLoopConfig::default(); an absent grant is
+        // byte-for-byte the default — the pre-R5 behavior. Same
+        // resolution as the spawn/fork launch wrappers.
+        let mut child_config =
+            crate::agent::child_policy::ChildLoopConfig::resolve(child_loop_config);
+        // Arm auto-compaction on the script child exactly as the root
+        // builder does (the one shared mechanism): install the token
+        // estimator and the context-edit tracker on the child's loop
+        // context and fill its context window from the catalog for the
+        // child's own model, so a long-running script child compacts
+        // instead of dying ContextWindowExceeded. A non-catalog model
+        // keeps a None window, leaving the trigger off. NOTE: the root
+        // additionally hard-errors on a None/over-max window
+        // (2026-07-05 incident guard); per-model child validation is
+        // owned by the child-persistence/agent-variants units.
+        crate::agent::arming::arm_auto_compaction(
+            &mut loop_ctx,
+            &mut child_config,
+            &model_for_task,
+        );
+        let outcome = run_agent_step(AgentStepRequest {
+            provider: provider.as_ref(),
+            executor: &executor,
+            store: child_store.as_ref(),
+            user_prompt: &task_for_async,
+            tools: &[],
+            output_schema: None,
+            model: &model_for_task,
+            config: &child_config,
+            event_tx: child_event_sender.as_ref(),
+            inbound: None,
+            loop_context: &mut loop_ctx,
+            cancel: None,
+        })
+        .await;
+
+        // Terminal projection + registry transition through the SAME
+        // classification the spawn/fork wrappers use
+        // (`extract_outcome_summary` / `mark_terminal_in_registry`): only
+        // a genuine `Completed` step is a registry `Completed`; every
+        // stopped variant and every hard error is a Failed run — a
+        // capped-out child reported `Completed` would be a silent failure
+        // in registry ground truth (REVIEW R5 HIGH-1). Script children
+        // have no delegation surface (zero tools), so delivered-children
+        // usage is honestly zero.
+        let summary = extract_outcome_summary(outcome, Usage::default());
+        let subtree_usage = summary.usage.clone() + summary.children_usage.clone();
+        // A Completed-audit persist failure is typed at the source and
+        // handled here, not propagated: the task has no caller left to
+        // fail, and the registry terminal transition below must still
+        // run (the same contract as the spawn/fork launch wrappers).
+        if let Err(error) = lifecycle.emit_completed(SubagentCompletion {
+            usage: summary.usage.clone(),
+            subtree_usage,
+            succeeded: summary.status == AgentStatus::Completed,
+            error: summary.error.clone(),
+            stop: summary.stop.clone(),
+        }) {
+            tracing::error!(
+                child_id = %real_id,
+                %error,
+                "rhai spawn_agent: failed to persist the subagent.completed \
+                 audit event on the host store",
             );
-            let outcome = run_agent_step(AgentStepRequest {
-                provider: provider.as_ref(),
-                executor: &executor,
-                store: &child_store,
-                user_prompt: &task_for_async,
-                tools: &[],
-                output_schema: None,
-                model: &model_for_task,
-                config: &child_config,
-                event_tx: None,
-                inbound: None,
-                loop_context: &mut loop_ctx,
-                cancel: None,
-            })
-            .await;
-
-            // Terminal transitions share the single-owner invariant with the
-            // spawn/fork wrappers: this task is the sole owner of the child's
-            // terminal sequence, so a failed transition means another actor
-            // mutated the entry and is logged as the violation it is.
-            //
-            // Status classification mirrors the spawn/fork wrappers
-            // (`extract_outcome_summary`): only a genuine `Completed` step
-            // is a registry `Completed` — every stopped variant
-            // (MaxIterationsReached / TimedOut / Truncated / Cancelled /
-            // SchemaUnreachable) is a Failed run. Pre-R5 the stopped
-            // variants were structurally unreachable here (script children
-            // always ran uncapped defaults); a host-granted `loop_config`
-            // makes them real, and a capped-out child reported `Completed`
-            // would be a silent failure in registry ground truth (REVIEW
-            // R5 HIGH-1).
-            match &outcome {
-                Ok(AgentStepResult::Completed { .. }) => {
-                    let mut reg = agent_registry.write();
-                    let transition = reg
-                        .mark_completing(real_id)
-                        .and_then(|()| reg.mark_completed(real_id));
-                    if let Err(e) = transition {
-                        crate::tools::agent::reclaim::log_terminal_transition_violation(
-                            &reg,
-                            real_id,
-                            "rhai spawn_agent",
-                            &e,
-                        );
-                    }
-                }
-                Ok(stopped) => {
-                    let mut reg = agent_registry.write();
-                    if let Err(e) = reg.mark_failed(real_id) {
-                        tracing::error!(
-                            child_id = %real_id,
-                            stopped = ?std::mem::discriminant(stopped),
-                            "rhai spawn_agent: child stopped without completing and \
-                             its terminal mark was stolen",
-                        );
-                        crate::tools::agent::reclaim::log_terminal_transition_violation(
-                            &reg,
-                            real_id,
-                            "rhai spawn_agent",
-                            &e,
-                        );
-                    }
-                }
-                Err(run_error) => {
-                    let mut reg = agent_registry.write();
-                    if let Err(e) = reg.mark_failed(real_id) {
-                        tracing::error!(child_id = %real_id, run_error = %run_error,
-                            "rhai spawn_agent: child run failed and its terminal mark was stolen");
-                        crate::tools::agent::reclaim::log_terminal_transition_violation(
-                            &reg,
-                            real_id,
-                            "rhai spawn_agent",
-                            &e,
-                        );
-                    }
-                }
-            }
-
-            outcome
-        });
+        }
+        mark_terminal_in_registry(&agent_registry, real_id, summary.status);
+    });
 
     Ok(AgentHandle(real_id))
 }
@@ -704,6 +747,8 @@ mod tests {
                 inbound_capacity: 8,
                 loop_config: None,
             },
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
+            events: None,
         };
         let registry = Arc::clone(&ctx.registry);
         let catalog_model = crate::model_catalog::default_selection().model;
@@ -763,6 +808,8 @@ mod tests {
                 inbound_capacity: 8,
                 loop_config: None,
             },
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
+            events: None,
         }
     }
 
@@ -1116,5 +1163,156 @@ mod tests {
             );
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
+    }
+
+    /// V2-R2, third launch site: a script child spawned under a
+    /// PERSISTENT host gets a REAL write-through timeline under the
+    /// root's `children/` dir — the index row carries `rel_path` +
+    /// `parent_id`, the child's own run events land on disk, and the
+    /// host's on-disk file carries the `ChildBranch` reservation plus
+    /// the typed `subagent.started` / `subagent.completed` lifecycle
+    /// audits (the rhai-fidelity hole).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn rhai_spawn_under_persistent_host_persists_child_timeline() {
+        use crate::provider::agent_event::{
+            SUBAGENT_COMPLETED_EVENT_TYPE, SUBAGENT_STARTED_EVENT_TYPE,
+        };
+        use crate::provider::events::{ProviderEvent, StopReason};
+        use crate::provider::usage::Usage;
+        use crate::session::manager::{CreateSessionOptions, SessionManager};
+        use crate::session::persistence::io::read_session_events_for_entry;
+        use crate::session::store::DurabilityPolicy;
+        use crate::session::{SessionBinding, SessionBrancher};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manager = SessionManager::new(tmp.path());
+        let opened = manager
+            .create(
+                CreateSessionOptions {
+                    model: "haiku".to_owned(),
+                    working_dir: "/work".to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .expect("create host session");
+        let root_id = opened.entry.id.clone();
+        let binding = Arc::new(SessionBinding::persistent_root(
+            Arc::new(SessionBrancher::new(
+                manager.clone(),
+                root_id.clone(),
+                DurabilityPolicy::Flush,
+            )),
+            root_id.clone(),
+            &[],
+        ));
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "script child output".to_owned(),
+            },
+            ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage {
+                    input_tokens: 3,
+                    output_tokens: 2,
+                    ..Usage::default()
+                },
+                response_id: None,
+            },
+        ]]));
+        let mut ctx = build_context_with_provider(provider);
+        ctx.event_store = Arc::new(opened.store);
+        ctx.session = binding;
+        let registry = Arc::clone(&ctx.registry);
+
+        let engine = build_norn_engine(&ctx);
+        let handle = engine
+            .eval::<crate::integration::rhai::AgentHandle>(
+                r#"spawn_agent(#{ task: "t", model: "haiku", role: "scout" })"#,
+            )
+            .expect("spawn_agent evaluates");
+        let child_id = handle.id();
+
+        // The script child runs detached; wait for its terminal mark.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            if registry
+                .read()
+                .get(child_id)
+                .is_some_and(|entry| entry.status.is_terminal())
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "script child never reached a terminal status",
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+
+        // Index row: rel_path under the host root's children/ dir, keyed
+        // by the SAME id as the child's registry entry.
+        let row = manager
+            .resolve(&child_id.to_string())
+            .expect("script child session indexed");
+        let rel = row.rel_path.as_deref().expect("child rows carry rel_path");
+        assert!(
+            rel.starts_with(&format!("{root_id}/children/scout-"))
+                && std::path::Path::new(rel)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl")),
+            "script-child file must live under the root's children/ dir: {rel}",
+        );
+        assert_eq!(row.parent_id.as_deref(), Some(root_id.as_str()));
+        assert!(tmp.path().join(rel).exists(), "child timeline file exists");
+
+        // The child's run events are ON DISK (Gap 1, rhai site).
+        let child_read = read_session_events_for_entry(tmp.path(), &row).expect("child replays");
+        assert!(
+            child_read
+                .events
+                .iter()
+                .any(|e| matches!(e, SessionEvent::ChildBranch { .. })),
+            "child file carries its ChildBranch provenance header",
+        );
+        assert!(
+            child_read.events.iter().any(|e| matches!(
+                e,
+                SessionEvent::AssistantMessage { content, .. }
+                    if content.contains("script child output")
+            )),
+            "the script child's own run output must reach its on-disk timeline",
+        );
+
+        // Host side ON DISK: reservation + both typed lifecycle audits
+        // (previously the rhai path emitted NO subagent events at all).
+        let host_entry = manager.resolve(&root_id).expect("host entry");
+        let host_read =
+            read_session_events_for_entry(tmp.path(), &host_entry).expect("host replays");
+        assert!(
+            host_read.events.iter().any(|e| matches!(
+                e,
+                SessionEvent::ChildBranch { child_session_id: Some(c), .. }
+                    if *c == child_id.to_string()
+            )),
+            "the host's file must carry the child's reservation",
+        );
+        let has_custom = |wanted: &str| {
+            host_read.events.iter().any(|e| {
+                matches!(
+                    e,
+                    SessionEvent::Custom { event_type, .. } if event_type == wanted
+                )
+            })
+        };
+        assert!(
+            has_custom(SUBAGENT_STARTED_EVENT_TYPE),
+            "subagent.started must land durably on the host's timeline",
+        );
+        assert!(
+            has_custom(SUBAGENT_COMPLETED_EVENT_TYPE),
+            "subagent.completed must land durably on the host's timeline",
+        );
     }
 }

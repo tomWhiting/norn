@@ -27,7 +27,8 @@ use norn::agent_loop::{
 use norn::provider::request::ServiceTier;
 use norn::session::context_edit::ContextEdits;
 use norn::session::{
-    CreateSessionOptions, DurabilityPolicy, EventStore, SessionManager, SessionPersistError,
+    CreateSessionOptions, DurabilityPolicy, EventStore, SessionBinding, SessionBrancher,
+    SessionManager, SessionPersistError,
 };
 
 use crate::TuiError;
@@ -138,21 +139,26 @@ fn write_dim_line(message: &str, guard: &mut TerminalGuard) -> Result<(), TuiErr
 /// sink using [`DurabilityPolicy::Flush`] — the same durability every
 /// other interactive open in the workspace uses.
 ///
-/// Returns the new session id and the sink-equipped store. Pure
-/// store-stack work with no terminal I/O, so both the success and the
-/// failure path are unit-testable without a [`TerminalGuard`].
+/// Returns the new session id, the sink-equipped store, and the new
+/// session's branching authority ([`SessionBinding::persistent_root`])
+/// so post-rotation spawn/fork children mint under the NEW session —
+/// never the rotated-out one. Pure store-stack work with no terminal
+/// I/O, so both the success and the failure path are unit-testable
+/// without a [`TerminalGuard`].
 ///
 /// `index_lock_deadline` bounds the inter-process index-lock wait the
 /// create (and the sink it registers) performs: without it a wedged
 /// sibling process would freeze the running TUI inside the `/new`
 /// handler forever. On expiry the typed
 /// [`SessionPersistError::IndexLockTimeout`] propagates to `handle_new`'s
-/// error path, which keeps the current session fully intact.
+/// error path, which keeps the current session fully intact. The same
+/// deadline rides on the returned binding's manager, bounding every
+/// child-mint index insert too.
 fn create_new_session_store(
     data_dir: &std::path::Path,
     index_lock_deadline: std::time::Duration,
     model: &str,
-) -> Result<(String, EventStore), SessionPersistError> {
+) -> Result<(String, EventStore, Arc<SessionBinding>), SessionPersistError> {
     // Same derivation as the CLI driver's startup path, but propagated
     // instead of defaulted: if the cwd is unreadable the user sees the
     // error and keeps the current session rather than silently
@@ -167,7 +173,16 @@ fn create_new_session_store(
         },
         DurabilityPolicy::Flush,
     )?;
-    Ok((opened.entry.id, opened.store))
+    let binding = Arc::new(SessionBinding::persistent_root(
+        Arc::new(SessionBrancher::new(
+            manager,
+            opened.entry.id.clone(),
+            DurabilityPolicy::Flush,
+        )),
+        opened.entry.id.clone(),
+        &[],
+    ));
+    Ok((opened.entry.id, opened.store, binding))
 }
 
 /// `/new` (also `/clear`) — rotate to a new session, drop conversation
@@ -201,11 +216,11 @@ async fn handle_new(
 ) -> Result<(), TuiError> {
     // Phase 1 — all fallible work, touching no app state. A failure
     // here leaves the current session running exactly as it was.
-    let (new_id, new_store) = if let (Some(data_dir), Some(_old_id)) =
+    let (new_id, new_store, new_binding) = if let (Some(data_dir), Some(_old_id)) =
         (runtime.data_dir.as_ref(), runtime.session_id.as_ref())
     {
         match create_new_session_store(data_dir, runtime.index_lock_deadline, &runtime.model) {
-            Ok((new_id, store)) => (Some(new_id), store),
+            Ok((new_id, store, binding)) => (Some(new_id), store, binding),
             Err(err) => {
                 tracing::error!(
                     "/new: failed to create session in {}: {err}",
@@ -216,7 +231,13 @@ async fn handle_new(
             }
         }
     } else {
-        (None, EventStore::new())
+        // Ephemeral mode: the rotated-in conversation stays memory-only,
+        // and so do any children it spawns — the honest propagation.
+        (
+            None,
+            EventStore::new(),
+            Arc::new(SessionBinding::ephemeral_root()),
+        )
     };
 
     // Phase 2 — infallible commit: reset the context-edit ledger for
@@ -234,6 +255,7 @@ async fn handle_new(
         &mut runtime.store,
         &mut runtime.loop_context,
         Arc::new(new_store),
+        new_binding,
     )
     .await;
     if let Some(new_id) = new_id {
@@ -560,7 +582,7 @@ mod tests {
         // index — unlistable and unresumable. The full stack must
         // index it.
         let tmp = tempfile::tempdir().unwrap();
-        let (id, _store) =
+        let (id, _store, _binding) =
             create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model").unwrap();
         let index = read_index(tmp.path()).unwrap();
         assert!(
@@ -577,7 +599,7 @@ mod tests {
         // registered sink, and the index entry must track them — the
         // raw-sink path bypassed index maintenance entirely.
         let tmp = tempfile::tempdir().unwrap();
-        let (id, store) =
+        let (id, store, _binding) =
             create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model").unwrap();
         store
             .append(SessionEvent::UserMessage {
@@ -605,7 +627,7 @@ mod tests {
     #[test]
     fn create_new_session_store_session_is_resumable() {
         let tmp = tempfile::tempdir().unwrap();
-        let (id, store) =
+        let (id, store, _binding) =
             create_new_session_store(tmp.path(), TEST_LOCK_DEADLINE, "test-model").unwrap();
         store
             .append(SessionEvent::UserMessage {

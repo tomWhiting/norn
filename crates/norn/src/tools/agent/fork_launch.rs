@@ -1,7 +1,8 @@
 //! Fork launch: the `tokio::spawn` task and completion wrapper for
 //! [`crate::tools::agent::fork_tool::ForkTool`].
 //!
-//! Hoisted from [`super::fork_pipeline`] (which keeps context
+//! Hoisted from the former fork pipeline (see [`super::fork_context`],
+//! which keeps context
 //! construction, store resolution, and outcome projection) so both
 //! modules stay inside the per-file 500-line production-code limit
 //! (CO5) — mirroring the [`super::spawn_launch`] / spawn split.
@@ -15,7 +16,7 @@ use parking_lot::RwLock;
 use tokio::sync::{mpsc, watch};
 use uuid::Uuid;
 
-use super::fork_pipeline::{
+use super::fork_outcome::{
     append_fork_complete, mark_fork_terminal, panicked_fork_outcome, project_fork_outcome,
 };
 use super::handle::{AgentHandle, ChildBranchMetadata};
@@ -35,7 +36,6 @@ use crate::provider::agent_event::AgentEventSender;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
 use crate::session::store::EventStore;
-use crate::session::tree::SessionId;
 
 /// Resources moved into a fork's `tokio::spawn` task.
 pub(super) struct ForkLaunch {
@@ -54,7 +54,9 @@ pub(super) struct ForkLaunch {
     pub(super) requirement_names: Vec<String>,
     pub(super) fork_id: Uuid,
     pub(super) parent_id: Uuid,
-    pub(super) forked_session_id: Option<SessionId>,
+    /// The fork's session id when it persists (`None` = ephemeral fork;
+    /// the `ForkComplete` reference records honest absence).
+    pub(super) forked_session_id: Option<String>,
     pub(super) event_sender: Option<AgentEventSender>,
     /// `Some` when the runtime declared
     /// [`ReclaimOnResultDelivery`](super::reclaim::ReclaimOnResultDelivery)
@@ -310,8 +312,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // Gap 10). Under a persistent sink fault the parent's own injection
         // of the delivered result fails its run typed through the primary
         // write-through contract.
-        if let Err(error) =
-            append_fork_complete(parent_store.as_ref(), forked_session_id, &outcome, fork_id)
+        if let Err(error) = append_fork_complete(parent_store.as_ref(), forked_session_id, &outcome)
         {
             tracing::error!(
                 fork_id = %fork_id,

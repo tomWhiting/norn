@@ -125,10 +125,10 @@ pub struct AgentEntry {
 pub struct AgentTombstone {
     /// The reclaimed agent's id.
     pub id: Uuid,
-    /// The hierarchical path the agent was registered at. Paths are freed
-    /// at the terminal transition, so a later agent may reuse this path;
-    /// path-based tombstone lookup returns the most recently reclaimed
-    /// holder.
+    /// The hierarchical path the agent was registered at. Paths are
+    /// unique for all time within a session (ruling Q2): the tombstone
+    /// keeps this path reserved, so a persisted address can never
+    /// resolve to a different agent.
     pub path: String,
     /// The terminal status the agent finished with.
     pub status: AgentStatus,
@@ -164,9 +164,10 @@ pub struct AgentRegistry {
     /// Completion records for reclaimed entries, keyed by agent id.
     /// Session-lifetime retention; see [`AgentTombstone`].
     tombstones: HashMap<Uuid, AgentTombstone>,
-    /// Latest reclaimed holder of each path (paths are reusable, so a
-    /// later reclamation under the same path overwrites the older record;
-    /// the older record stays reachable by id).
+    /// Reclaimed holder of each path. Paths are unique for all time
+    /// (ruling Q2 — [`Self::reserve`] refuses any previously used path),
+    /// so each path maps to exactly one reclaimed agent; this index also
+    /// keeps a reclaimed path reserved against re-minting.
     tombstone_path_index: HashMap<String, Uuid>,
 }
 
@@ -208,21 +209,19 @@ impl AgentRegistry {
             .cloned()
     }
 
-    /// Return the most recently finished *terminal* entry that was
-    /// registered at `path`, if any.
+    /// Return the *terminal* entry that was registered at `path`, if any.
     ///
-    /// Terminal transitions remove the path from the live index (so the
-    /// path is reusable) while the entry stays listed until reclaimed; this
-    /// scan keeps such entries resolvable by path so coordination tools can
-    /// report their real outcome instead of "not registered". When several
-    /// terminal entries share the path (reuse), the latest `completed_at`
-    /// wins.
+    /// Terminal transitions remove the path from the live index while the
+    /// entry stays listed until reclaimed; this scan keeps such entries
+    /// resolvable by path so coordination tools can report their real
+    /// outcome instead of "not registered". Paths are unique for all time
+    /// (ruling Q2 — [`Self::reserve`] refuses any previously used path),
+    /// so at most one entry can ever match.
     #[must_use]
     pub fn get_terminal_by_path(&self, path: &str) -> Option<AgentEntry> {
         self.entries
             .values()
-            .filter(|e| e.status.is_terminal() && e.path == path)
-            .max_by_key(|e| e.completed_at)
+            .find(|e| e.status.is_terminal() && e.path == path)
             .cloned()
     }
 
@@ -232,8 +231,9 @@ impl AgentRegistry {
         self.tombstones.get(&id).cloned()
     }
 
-    /// Return the completion record of the most recently reclaimed agent
-    /// that was registered at `path`, if any.
+    /// Return the completion record of the reclaimed agent that was
+    /// registered at `path`, if any. Paths are unique for all time
+    /// (ruling Q2), so at most one reclaimed holder can exist.
     #[must_use]
     pub fn tombstone_by_path(&self, path: &str) -> Option<AgentTombstone> {
         self.tombstone_path_index
@@ -312,10 +312,11 @@ impl AgentRegistry {
         self.set_status(id, AgentStatus::Idle)
     }
 
-    /// Transition an entry to [`AgentStatus::Completed`], freeing its path
-    /// for reuse. The entry itself stays listed (with terminal status) for
-    /// observers such as status displays until [`Self::remove_terminal`]
-    /// reclaims it.
+    /// Transition an entry to [`AgentStatus::Completed`], removing its
+    /// path from the live index (the path itself stays reserved for all
+    /// time — ruling Q2). The entry stays listed (with terminal status)
+    /// for observers such as status displays until
+    /// [`Self::remove_terminal`] reclaims it.
     ///
     /// # Errors
     ///
@@ -327,8 +328,9 @@ impl AgentRegistry {
         self.set_status(id, AgentStatus::Completed)
     }
 
-    /// Transition an entry to [`AgentStatus::Failed`], freeing its path for
-    /// reuse. The entry itself stays listed (with terminal status) for
+    /// Transition an entry to [`AgentStatus::Failed`], removing its path
+    /// from the live index (the path itself stays reserved for all time —
+    /// ruling Q2). The entry stays listed (with terminal status) for
     /// observers such as status displays until [`Self::remove_terminal`]
     /// reclaims it.
     ///
@@ -342,8 +344,9 @@ impl AgentRegistry {
         self.set_status(id, AgentStatus::Failed)
     }
 
-    /// Transition an entry to [`AgentStatus::Closed`], freeing its path for
-    /// reuse. The entry itself stays listed with terminal status until
+    /// Transition an entry to [`AgentStatus::Closed`], removing its path
+    /// from the live index (the path itself stays reserved for all time —
+    /// ruling Q2). The entry stays listed with terminal status until
     /// [`Self::remove_terminal`] reclaims it.
     ///
     /// # Errors
@@ -399,11 +402,12 @@ impl AgentRegistry {
         }
     }
 
-    /// Apply a status transition. Terminal statuses free the entry's path
-    /// immediately (so the path is reusable, mirroring the RAII rollback
-    /// of an unconfirmed [`SpawnGuard`]) but retain the entry with its
-    /// terminal status so pollers of [`Self::list`] (e.g. the TUI agent
-    /// status panel's hold window) observe the outcome. Reclamation is
+    /// Apply a status transition. Terminal statuses remove the entry's
+    /// path from the live index immediately (path resolution is
+    /// live-holders-only; the path itself stays reserved for all time —
+    /// ruling Q2) but retain the entry with its terminal status so
+    /// pollers of [`Self::list`] (e.g. the TUI agent status panel's hold
+    /// window) observe the outcome. Reclamation is
     /// explicit via [`Self::remove_terminal`]; richer outcome
     /// observability lives on the
     /// [`AgentHandle`](crate::tools::agent::AgentHandle) status watch
@@ -430,14 +434,11 @@ impl AgentRegistry {
                     if entry.completed_at.is_none() {
                         entry.completed_at = Some(Utc::now());
                     }
-                    // Free the path only while this entry still owns it.
-                    // Paths are reusable after the first terminal
-                    // transition, so a blessed same-status re-mark (or any
-                    // later terminal no-op) must not sever a *different*
-                    // live agent that has since registered under the same
-                    // path — an unconditional remove here both orphaned
-                    // that agent's path resolution and re-opened the path
-                    // for a duplicate live registration.
+                    // Remove the path from the LIVE index only while this
+                    // entry still owns it (a blessed same-status re-mark
+                    // must stay a no-op). Under for-all-time uniqueness no
+                    // other agent can hold this path, but the ownership
+                    // check stays as defense-in-depth.
                     if self.path_index.get(&entry.path) == Some(&id) {
                         self.path_index.remove(&entry.path);
                     }
@@ -480,10 +481,11 @@ impl AgentRegistry {
     ///
     /// # Errors
     ///
-    /// Returns [`AgentError::SpawnFailed`] if `path` is already in use,
-    /// the spawner's budget cannot be established, its delegation depth
-    /// is exhausted, `policy` widens its grant, or its concurrent-child
-    /// budget is full.
+    /// Returns [`AgentError::SpawnFailed`] if `path` was ever used by a
+    /// live, terminal, or reclaimed agent (paths are unique for all time
+    /// within a session — ruling Q2), the spawner's budget cannot be
+    /// established, its delegation depth is exhausted, `policy` widens
+    /// its grant, or its concurrent-child budget is full.
     pub fn reserve(
         registry: &Arc<RwLock<Self>>,
         path: String,
@@ -496,9 +498,23 @@ impl AgentRegistry {
         let id = Uuid::new_v4();
         {
             let mut guard = registry.write();
-            if guard.path_index.contains_key(&path) {
+            // Paths are unique FOR ALL TIME within the registry's lifetime
+            // (ruling Q2 / child-persistence review §8): a live holder, a
+            // terminal-but-unreclaimed holder, and a reclaimed (tombstoned)
+            // holder all block the path equally — an address that ever
+            // named an agent must never resolve to a different one. Only a
+            // rolled-back reservation (never confirmed, never an agent)
+            // frees its path.
+            if guard.entries.values().any(|e| e.path == path)
+                || guard.tombstone_path_index.contains_key(&path)
+            {
                 return Err(AgentError::SpawnFailed {
-                    reason: format!("path already in use: {path}"),
+                    reason: format!(
+                        "path already used: {path} — agent paths are unique for all \
+                         time within a session (a persisted address must never \
+                         resolve to a different agent), so a finished agent's path \
+                         is never re-minted"
+                    ),
                 });
             }
 
@@ -1029,11 +1045,14 @@ mod tests {
         assert!(registry.read().get(id).is_some());
     }
 
-    /// Fix 10 regression: a path used by a finished agent is reusable. Before
-    /// terminal cleanup, the stale `path_index` entry rejected the second
-    /// reservation forever.
+    /// Ruling Q2 / child-persistence review §8: a path used by a
+    /// finished agent is NEVER reusable — an old persisted address must
+    /// never resolve to a different agent. Terminal-but-unreclaimed and
+    /// reclaimed (tombstoned) holders both block the path; only a
+    /// rolled-back reservation (never confirmed, never an agent) frees
+    /// it.
     #[test]
-    fn terminal_cleanup_allows_path_reuse() {
+    fn used_path_is_never_reusable() {
         let registry = fresh();
         let parent = reserve(&registry, "/root", "lead", "opus", None).expect("reserve parent");
         let parent_id = parent.id();
@@ -1045,81 +1064,65 @@ mod tests {
         first.confirm().expect("confirm first");
         registry.write().mark_completed(first_id).expect("complete");
 
-        let second = reserve(&registry, "/root/worker", "dev", "haiku", Some(parent_id))
-            .expect("a completed agent's path must be reusable");
-        let second_id = second.id();
-        second.confirm().expect("confirm second");
-        assert_ne!(first_id, second_id);
-        assert_eq!(
-            registry
-                .read()
-                .get_by_path("/root/worker")
-                .expect("reused path resolves")
-                .id,
-            second_id,
+        // Terminal-but-unreclaimed holder blocks the path.
+        let err = reserve(&registry, "/root/worker", "dev", "haiku", Some(parent_id))
+            .expect_err("a finished agent's path must never be re-minted");
+        assert!(
+            matches!(&err, AgentError::SpawnFailed { reason } if reason.contains("unique for all")),
+            "the refusal names the for-all-time rule: {err}",
         );
 
-        // The failed-path variant frees the slot just the same.
-        registry.write().mark_failed(second_id).expect("fail");
-        let third = reserve(&registry, "/root/worker", "dev", "haiku", Some(parent_id))
-            .expect("a failed agent's path must be reusable");
-        drop(third);
+        // Reclaimed holder blocks it just the same.
+        assert!(registry.write().remove_terminal(first_id));
+        let err = reserve(&registry, "/root/worker", "dev", "haiku", Some(parent_id))
+            .expect_err("a reclaimed agent's path must never be re-minted");
+        assert!(matches!(err, AgentError::SpawnFailed { .. }));
+
+        // A rolled-back reservation was never an agent: its path frees.
+        {
+            let guard = reserve(&registry, "/root/rollback", "dev", "haiku", Some(parent_id))
+                .expect("reserve");
+            drop(guard);
+        }
+        let again = reserve(&registry, "/root/rollback", "dev", "haiku", Some(parent_id))
+            .expect("a rolled-back reservation's path is re-reservable");
+        drop(again);
     }
 
-    /// Regression: re-marking an already-terminal entry (a blessed
-    /// same-status no-op) after its path has been reused must not sever
-    /// the live holder from the path index — an unconditional remove both
-    /// orphaned the live agent's path resolution and permitted a duplicate
-    /// live registration under the same path.
+    /// A blessed same-status terminal re-mark stays a no-op: it must
+    /// not disturb the path bookkeeping, and the path stays reserved
+    /// (never re-mintable) throughout.
     #[test]
-    fn terminal_remark_after_path_reuse_keeps_live_holder_indexed() {
+    fn terminal_remark_is_a_noop_and_path_stays_reserved() {
         let registry = fresh();
         let first = reserve(&registry, "/root/worker", "dev", "haiku", None).expect("first");
         let first_id = first.id();
         first.confirm().expect("confirm first");
         registry.write().mark_completed(first_id).expect("complete");
 
-        // Reuse the freed path with a different live agent.
-        let second = reserve(&registry, "/root/worker", "dev", "haiku", None).expect("reuse");
-        let second_id = second.id();
-        second.confirm().expect("confirm second");
-
-        // Blessed no-op re-mark of the finished first holder.
+        // Blessed no-op re-mark of the finished holder.
         registry
             .write()
             .mark_completed(first_id)
             .expect("same-status terminal re-mark is an accepted no-op");
 
-        assert_eq!(
-            registry
-                .read()
-                .get_by_path("/root/worker")
-                .expect("the live holder must stay resolvable by path")
-                .id,
-            second_id,
+        // Live resolution stays freed; terminal resolution stays honest;
+        // the path stays reserved against re-minting.
+        let r = registry.read();
+        assert!(
+            r.get_by_path("/root/worker").is_none(),
+            "path freed from live index"
         );
+        assert_eq!(
+            r.get_terminal_by_path("/root/worker")
+                .expect("terminal holder")
+                .id,
+            first_id,
+        );
+        drop(r);
         let err = reserve(&registry, "/root/worker", "dev", "haiku", None)
-            .expect_err("a live path must never accept a duplicate registration");
+            .expect_err("a used path must never accept a new registration");
         assert!(matches!(err, AgentError::SpawnFailed { .. }));
-
-        // The same protection applies across distinct terminal statuses:
-        // re-marking Closed over Closed while a reused path is live.
-        registry.write().mark_closed(second_id).expect("close");
-        let third = reserve(&registry, "/root/worker", "dev", "haiku", None).expect("reuse again");
-        let third_id = third.id();
-        third.confirm().expect("confirm third");
-        registry
-            .write()
-            .mark_closed(second_id)
-            .expect("closed re-mark is an accepted no-op");
-        assert_eq!(
-            registry
-                .read()
-                .get_by_path("/root/worker")
-                .expect("the third holder must stay resolvable")
-                .id,
-            third_id,
-        );
     }
 
     #[test]
@@ -1223,31 +1226,27 @@ mod tests {
         id
     }
 
-    /// Path reuse keeps tombstones honest: the path index points at the
-    /// most recently reclaimed holder while the older record stays
-    /// reachable by id.
+    /// Tombstone path lookup resolves the single holder a path ever had
+    /// (paths are unique for all time — ruling Q2), and its record stays
+    /// reachable by id too.
     #[test]
-    fn tombstone_path_lookup_returns_latest_holder() {
+    fn tombstone_path_lookup_returns_the_single_holder() {
         let registry = fresh();
-        let mut ids = Vec::new();
-        for _ in 0..2 {
-            let guard = reserve(&registry, "/root/worker", "dev", "claude", None).expect("reserve");
-            let id = guard.id();
-            guard.confirm().expect("confirm");
-            registry.write().mark_completed(id).expect("complete");
-            assert!(registry.write().remove_terminal(id), "reclaim");
-            ids.push(id);
-        }
+        let guard = reserve(&registry, "/root/worker", "dev", "claude", None).expect("reserve");
+        let id = guard.id();
+        guard.confirm().expect("confirm");
+        registry.write().mark_completed(id).expect("complete");
+        assert!(registry.write().remove_terminal(id), "reclaim");
+
         let r = registry.read();
-        assert_eq!(
-            r.tombstone_by_path("/root/worker").expect("latest").id,
-            ids[1],
-            "path lookup returns the most recently reclaimed holder",
-        );
-        assert!(
-            r.tombstone(ids[0]).is_some(),
-            "the older holder's record stays reachable by id",
-        );
+        assert_eq!(r.tombstone_by_path("/root/worker").expect("holder").id, id,);
+        assert!(r.tombstone(id).is_some(), "record reachable by id");
+        drop(r);
+
+        // The reclaimed path stays reserved forever.
+        let err = reserve(&registry, "/root/worker", "dev", "claude", None)
+            .expect_err("a tombstoned path must never be re-minted");
+        assert!(matches!(err, AgentError::SpawnFailed { .. }));
     }
 
     /// A reservation rolled back by guard drop was never an agent — no

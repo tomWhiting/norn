@@ -73,7 +73,10 @@ use norn::tools::agent::AgentToolInfra;
 ///    cross-rotation-stable handle from the existing infra — the live
 ///    agent registry (the status panel's hold-window state lives
 ///    there), the message router, the provider, the agent identity, and the
-///    tool registry. When no infra was installed (the startup wiring is
+///    tool registry — while the `session` binding is REPLACED with the
+///    new session's branching authority (children spawned after the
+///    rotation must mint under the new session, never the old one's
+///    namespace). When no infra was installed (the startup wiring is
 ///    conditional on a shared context existing), none is fabricated —
 ///    agent tools keep reporting the missing [`AgentToolInfra`]
 ///    extension (a typed `MissingExtension` error) exactly as before
@@ -84,6 +87,7 @@ pub(super) async fn rotate_store_dependents(
     store_slot: &mut Arc<EventStore>,
     loop_context: &mut LoopContext,
     new_store: Arc<EventStore>,
+    new_session: Arc<norn::session::SessionBinding>,
 ) {
     // 1. Final checkpoint of the OLD store, off-executor. Components
     //    pinning Arc clones of it defer the sink's drop-flush
@@ -144,6 +148,11 @@ pub(super) async fn rotate_store_dependents(
                 parent_id: old_infra.parent_id,
                 grant: old_infra.grant.clone(),
                 tool_registry: old_infra.tool_registry.clone(),
+                // The NEW session's branching authority — children
+                // spawned after the rotation mint under the new
+                // session's namespace and children/ dir, never the
+                // rotated-out one's.
+                session: new_session,
             }));
         } else {
             // Startup wiring never installed one (it is conditional on
@@ -234,6 +243,7 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::clone(&new_store),
+            Arc::new(norn::session::SessionBinding::ephemeral_root()),
         )
         .await;
 
@@ -295,6 +305,7 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::clone(&new_store),
+            Arc::new(norn::session::SessionBinding::ephemeral_root()),
         )
         .await;
 
@@ -334,6 +345,7 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::new(EventStore::new()),
+            Arc::new(norn::session::SessionBinding::ephemeral_root()),
         )
         .await;
 
@@ -381,6 +393,7 @@ mod tests {
             parent_id,
             grant: None,
             tool_registry: Some(Arc::clone(&tool_registry)),
+            session: Arc::new(norn::session::SessionBinding::ephemeral_root()),
         }));
         let mut loop_context = LoopContext::default();
         let mut store_slot = Arc::clone(&old_store);
@@ -391,6 +404,7 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::clone(&new_store),
+            Arc::new(norn::session::SessionBinding::ephemeral_root()),
         )
         .await;
 
@@ -461,6 +475,7 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::new(EventStore::new()),
+            Arc::new(norn::session::SessionBinding::ephemeral_root()),
         )
         .await;
 
@@ -496,6 +511,7 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::clone(&new_store),
+            Arc::new(norn::session::SessionBinding::ephemeral_root()),
         )
         .await;
 
@@ -526,6 +542,7 @@ mod tests {
             &mut store_slot,
             &mut loop_context,
             Arc::clone(&new_store),
+            Arc::new(norn::session::SessionBinding::ephemeral_root()),
         )
         .await;
 

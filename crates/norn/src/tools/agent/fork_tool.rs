@@ -8,10 +8,13 @@
 //! tools — `signal_agent`, `close_agent` — work uniformly across
 //! both surfaces.
 //!
-//! The tool's `execute()` reserves a registry slot, builds the child's seed
+//! The tool's `execute()` reserves a registry slot, mints the fork's
+//! session through the parent's
+//! [`SessionBinding::branch_child`](crate::session::SessionBinding::branch_child)
+//! (a real write-through timeline under the root's `children/` dir for
+//! persistent parents; honest ephemerality otherwise), seeds the child's
 //! event store (inheriting the parent's audit trail with a synthetic
-//! tool-result for the fork call itself), branches the
-//! [`SessionTree`](crate::session::tree::SessionTree) when one is published,
+//! tool-result for the fork call itself),
 //! composes the child's [`LoopContext`] (fork preamble + parent base system
 //! instruction), filters the parent registry's tool definitions through the
 //! per-fork allow-list, launches the child via [`tokio::spawn`], and returns
@@ -31,9 +34,9 @@ use serde::Deserialize;
 use super::delegation::{
     auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
 };
+use super::fork_context::build_fork_context;
 use super::fork_launch::{ForkLaunch, launch_fork};
-use super::fork_pipeline::{build_fork_context, resolve_fork_store};
-use super::fork_seed::seed_fork_events;
+use super::fork_seed::{seed_fork_events, truncate_seed_at_anchor};
 use super::handle::AgentHandles;
 use super::infra::{
     AgentCancellation, SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list,
@@ -275,27 +278,103 @@ impl Tool for ForkTool {
         })?;
         let fork_id = guard.id();
 
-        let ((child_store, child_tree, forked_session_id), tree_seeded) =
-            resolve_fork_store(ctx, &args.model).map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("fork: {e}"),
-            })?;
+        // Mint the fork's session through the parent's branching binding
+        // (V2-R2): a persistent parent yields a real write-through child
+        // timeline under the root's children/ dir, with the ChildBranch
+        // reservation durably on the parent's timeline PARENT-FIRST; an
+        // ephemeral parent propagates ephemerality with the honest
+        // `session: None` reservation. A failure after this point (seed,
+        // started-audit) leaves a burned name + dangling reference —
+        // exactly the crash residue resume paths already tolerate. The
+        // mint's blocking file I/O runs off the executor (F5).
+        let branched = super::delegation::branch_child_off_executor(
+            &infra.session,
+            &infra.event_store,
+            &crate::session::ChildBranchRequest {
+                child_session_id: fork_id.to_string(),
+                name_stem: crate::session::slugify_name_stem("fork", "fork"),
+                kind: crate::session::events::ChildBranchKind::Fork,
+                durability: infra.session.child_durability(),
+                model: args.model.clone(),
+                working_dir: ctx.working_dir().display().to_string(),
+            },
+        )
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("fork: session branch failed: {e}"),
+        })?;
+        let child_store = Arc::clone(&branched.store);
+        let forked_session_id = branched.session_id.clone();
 
-        let parent_events = infra.event_store.events();
+        // The seed copy is the parent history UP TO the anchor the
+        // reservation recorded (captured inside the allocation lock):
+        // the snapshot is taken after the mint and truncated at the
+        // anchor, so neither the fork's own reservation nor anything a
+        // concurrent task appended between mint and snapshot can leak
+        // into the inherited history (F4). The fork's provenance header,
+        // appended by branch_child to its own file, carries the same
+        // record.
+        let parent_events = truncate_seed_at_anchor(
+            infra.event_store.events(),
+            branched.parent_event_anchor.as_ref(),
+        )
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("fork: {e}"),
+        })?;
+
         let fork_call_id = if envelope.tool_call_id.is_empty() {
             None
         } else {
             Some(envelope.tool_call_id.as_str())
         };
-        seed_fork_events(
-            child_store.as_ref(),
-            &parent_events,
-            fork_call_id,
+        seed_fork_events(child_store.as_ref(), &parent_events, fork_call_id, fork_id).map_err(
+            |e| ToolError::ExecutionFailed {
+                reason: format!("fork: seeding child store failed: {e}"),
+            },
+        )?;
+
+        let child_event_sender = ctx
+            .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
+            .map(|ch| {
+                crate::provider::agent_event::AgentEventSender::new(
+                    ch.0.clone(),
+                    fork_id,
+                    format!("fork/{}", args.model),
+                )
+            });
+
+        // Typed lifecycle: `Started` is emitted before the fork task
+        // launches, so it always precedes the fork's own provider events
+        // on the broadcast channel; the wrapper task emits `Completed`.
+        // Both phases also land as Custom audit events on the parent's
+        // session store.
+        let lifecycle = LifecycleEmitter::new(
+            child_event_sender.clone(),
+            Arc::clone(&infra.event_store),
+            infra.agent_id,
             fork_id,
-            tree_seeded,
-        )
-        .map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("fork: seeding child store failed: {e}"),
-        })?;
+            SubagentDescriptor {
+                kind: SubagentKind::Fork,
+                role: "fork".to_owned(),
+                model: args.model.clone(),
+                profile: None,
+            },
+            Utc::now(),
+        );
+        // The Started audit joins the primary write-through contract
+        // (session-fidelity Gap 10) and fires BEFORE the reservation is
+        // confirmed: on a persist failure the guard's RAII rollback
+        // reclaims the registry slot, so a refused fork can never leave
+        // a phantom Active child pinning the parent's concurrency budget
+        // (the only residue is the already-tolerated burned name +
+        // dangling reservation).
+        lifecycle
+            .emit_started()
+            .map_err(|error| ToolError::ExecutionFailed {
+                reason: format!(
+                    "failed to persist the subagent.started audit event; \
+                     fork aborted before launch: {error}",
+                ),
+            })?;
 
         // All fallible setup is done — confirm the reservation. From here
         // the launch is unconditional and the completion wrapper owns the
@@ -326,7 +405,7 @@ impl Tool for ForkTool {
             fork_id,
             Arc::clone(&child_store),
             ctx,
-            child_tree,
+            Arc::clone(&branched.binding),
             fork_policy.clone(),
             fork_cancel.clone(),
         );
@@ -453,15 +532,6 @@ impl Tool for ForkTool {
         } else {
             (None, None)
         };
-        let child_event_sender = ctx
-            .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
-            .map(|ch| {
-                crate::provider::agent_event::AgentEventSender::new(
-                    ch.0.clone(),
-                    fork_id,
-                    format!("fork/{}", args.model),
-                )
-            });
         let requirement_names: Vec<String> = args
             .requirements
             .iter()
@@ -477,37 +547,6 @@ impl Tool for ForkTool {
                 .run_subagent_start(&fork_id.to_string(), "fork")
                 .await;
         }
-
-        // Typed lifecycle: `Started` is emitted before the fork task
-        // launches, so it always precedes the fork's own provider events
-        // on the broadcast channel; the wrapper task emits `Completed`.
-        // Both phases also land as Custom audit events on the parent's
-        // session store.
-        let lifecycle = LifecycleEmitter::new(
-            child_event_sender.clone(),
-            Arc::clone(&infra.event_store),
-            infra.agent_id,
-            fork_id,
-            SubagentDescriptor {
-                kind: SubagentKind::Fork,
-                role: "fork".to_owned(),
-                model: args.model.clone(),
-                profile: None,
-            },
-            Utc::now(),
-        );
-        // The Started audit joins the primary write-through contract
-        // (session-fidelity Gap 10): if it cannot persist, the launch is
-        // aborted here — before the fork task exists — so the durable
-        // log can never silently miss a fork that actually ran.
-        lifecycle
-            .emit_started()
-            .map_err(|error| ToolError::ExecutionFailed {
-                reason: format!(
-                    "failed to persist the subagent.started audit event; \
-                     fork aborted before launch: {error}",
-                ),
-            })?;
 
         let handle = launch_fork(
             ForkLaunch {
@@ -602,7 +641,7 @@ mod tests {
     use serde_json::json;
     use uuid::Uuid;
 
-    use super::super::handle::{AgentWakeRegistry, SharedSessionTree};
+    use super::super::handle::AgentWakeRegistry;
     use super::super::infra::AgentToolInfra;
     use super::*;
     use crate::agent::fork::{FORK_SYSTEM_PREAMBLE, ForkRequirement};
@@ -617,7 +656,6 @@ mod tests {
     use crate::provider::usage::Usage;
     use crate::session::events::{EventBase, EventUsage, SessionEvent, ToolCallEvent};
     use crate::session::store::EventStore;
-    use crate::session::tree::{SessionMetadata, SessionStatus, SessionTree};
     use crate::tool::registry::ToolRegistry;
     use crate::tool::traits::{Tool as TestTool, ToolOutput as TestToolOutput};
 
@@ -699,6 +737,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: Some(tool_registry),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         });
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);
@@ -1381,6 +1420,41 @@ mod tests {
         });
         let (fsid, summary) = complete.expect("ForkComplete event present");
         assert_eq!(summary["response"], "done");
+        // F9: this parent is EPHEMERAL (parent_ctx arms ephemeral_root),
+        // so the fork has no session file and the completion reference
+        // records honest absence — never a registry-id stand-in.
+        assert!(
+            fsid.is_none(),
+            "an ephemeral fork's ForkComplete must carry forked_session_id: None, got {fsid:?}",
+        );
+        // The honest `session: None` reservation is on the parent's
+        // (in-memory) timeline too — the ONLY trace an ephemeral child's
+        // name allocation leaves.
+        let reservation = events
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::ChildBranch {
+                    parent_session_id,
+                    child_session_id,
+                    path_address,
+                    ..
+                } => Some((
+                    parent_session_id.clone(),
+                    child_session_id.clone(),
+                    path_address.clone(),
+                )),
+                _ => None,
+            })
+            .expect("the ephemeral parent's store carries the ChildBranch reservation");
+        assert_eq!(
+            reservation.0, None,
+            "an ephemeral parent has no session id — honest None",
+        );
+        assert_eq!(
+            reservation.1, None,
+            "an ephemeral fork has no session id — honest None, never a fake id",
+        );
+        assert!(reservation.2.starts_with("root/fork-"), "{}", reservation.2);
 
         let event = SessionEvent::ForkComplete {
             base: EventBase::new(None),
@@ -1401,31 +1475,64 @@ mod tests {
         }
     }
 
-    /// R4 (SessionTree mode): fork branches under the parent's session.
+    /// V2-R2 (persistent parent): fork mints a REAL on-disk child timeline
+    /// under the root's `children/` dir, the parent's file carries the
+    /// `ChildBranch` reservation (parent-first) and an honest
+    /// `ForkComplete` pointing at the child session, the index row carries
+    /// `rel_path` + `parent_id`, and the child session resumes through the
+    /// manager like any other.
     #[tokio::test]
-    async fn fork_branches_session_tree_when_extension_present() {
+    async fn fork_under_persistent_parent_persists_child_timeline() {
+        use crate::session::manager::{CreateSessionOptions, SessionManager};
+        use crate::session::persistence::io::read_session_events_for_entry;
+        use crate::session::store::DurabilityPolicy;
+        use crate::session::{SessionBinding, SessionBrancher};
+
+        let tmp = tempfile::tempdir().expect("tempdir");
+        let manager = SessionManager::new(tmp.path());
+        let opened = manager
+            .create(
+                CreateSessionOptions {
+                    model: "gpt-5.5".to_owned(),
+                    working_dir: "/work".to_owned(),
+                    name: None,
+                },
+                DurabilityPolicy::Flush,
+            )
+            .expect("create root session");
+        let root_id = opened.entry.id.clone();
+        let parent_store = Arc::new(opened.store);
+        let binding = Arc::new(SessionBinding::persistent_root(
+            Arc::new(SessionBrancher::new(
+                manager.clone(),
+                root_id.clone(),
+                DurabilityPolicy::Flush,
+            )),
+            root_id.clone(),
+            &[],
+        ));
+
         let provider =
             structured_response_provider(json!({"response": "done", "requirements": {}}));
         let parent = Uuid::new_v4();
         let agent_registry = AgentRegistry::shared();
-        let (ctx, _parent_store) = parent_ctx(
+        let infra = Arc::new(AgentToolInfra {
+            registry: Arc::clone(&agent_registry),
+            router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
             provider,
-            parent,
-            &agent_registry,
-            Arc::new(ToolRegistry::new()),
-            Arc::new(MessageRouter::new()),
-        );
-        let tree = Arc::new(SessionTree::new(SessionMetadata {
-            created_at: Utc::now(),
-            model: "opus".to_string(),
-            role: Some("root".to_string()),
-            status: SessionStatus::Active,
-        }));
-        let root_id = tree.root();
-        ctx.insert_extension(Arc::new(SharedSessionTree {
-            tree: Arc::clone(&tree),
-            session_id: root_id,
-        }));
+            event_store: Arc::clone(&parent_store),
+            agent_id: parent,
+            parent_id: None,
+            grant: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: binding,
+        });
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(infra);
+        ctx.insert_extension(Arc::new(AgentHandles::new()));
+        ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
+        ctx.insert_extension(Arc::new(test_envelope()));
 
         let tool = ForkTool::new();
         let out = tool
@@ -1443,8 +1550,88 @@ mod tests {
             .expect("handle");
         handle.join_handle.await.expect("join");
 
-        let children = tree.list_children(root_id);
-        assert_eq!(children.len(), 1, "fork must branch under the root");
+        // Index row: the fork's session is manifest-discoverable with
+        // rel_path + parent linkage.
+        let row = manager
+            .resolve(&fork_id.to_string())
+            .expect("fork session indexed");
+        let rel = row.rel_path.as_deref().expect("child rows carry rel_path");
+        assert!(
+            rel.starts_with(&format!("{root_id}/children/fork-"))
+                && std::path::Path::new(rel)
+                    .extension()
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("jsonl")),
+            "child file must live under the root's children/ dir: {rel}",
+        );
+        assert_eq!(row.parent_id.as_deref(), Some(root_id.as_str()));
+
+        // The child timeline is REAL on-disk write-through: its file exists
+        // and replays the seeded history (provenance header + seed copy +
+        // the fork's own run events).
+        let child_file = tmp.path().join(rel);
+        assert!(child_file.exists(), "fork timeline file must exist on disk");
+        let child_read = read_session_events_for_entry(tmp.path(), &row).expect("child replays");
+        assert!(
+            child_read
+                .events
+                .iter()
+                .any(|e| matches!(e, SessionEvent::ChildBranch { .. })),
+            "the child's file carries its ChildBranch provenance header",
+        );
+        assert!(
+            child_read
+                .events
+                .iter()
+                .any(|e| matches!(e, SessionEvent::AssistantMessage { .. })),
+            "the fork's own run events reach its on-disk timeline",
+        );
+
+        // Parent side, ON DISK: ChildBranch reservation (parent-first) and
+        // the honest ForkComplete reference.
+        let parent_entry = manager.resolve(&root_id).expect("root entry");
+        let parent_read =
+            read_session_events_for_entry(tmp.path(), &parent_entry).expect("parent replays");
+        let branch = parent_read
+            .events
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::ChildBranch {
+                    parent_session_id,
+                    child_session_id,
+                    path_address,
+                    ..
+                } => Some((
+                    parent_session_id.clone(),
+                    child_session_id.clone(),
+                    path_address.clone(),
+                )),
+                _ => None,
+            })
+            .expect("parent file carries the ChildBranch reservation");
+        assert_eq!(branch.0.as_deref(), Some(root_id.as_str()));
+        assert_eq!(branch.1.as_deref(), Some(fork_id.to_string().as_str()));
+        assert!(branch.2.starts_with("root/fork-"));
+        let fork_complete = parent_read
+            .events
+            .iter()
+            .find_map(|e| match e {
+                SessionEvent::ForkComplete {
+                    forked_session_id, ..
+                } => Some(forked_session_id.clone()),
+                _ => None,
+            })
+            .expect("parent file carries ForkComplete");
+        assert_eq!(
+            fork_complete.as_deref(),
+            Some(fork_id.to_string().as_str()),
+            "ForkComplete must reference the real child session, never a stand-in",
+        );
+
+        // And the child resumes through the manager like any session.
+        let resumed = manager
+            .resume(&fork_id.to_string(), DurabilityPolicy::Flush)
+            .expect("child resumes");
+        assert!(resumed.replay.replayed_events > 0);
     }
 
     /// R5: the helper returns a combined system instruction containing the
@@ -2539,6 +2726,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: None,
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         });
         let closer_ctx = ToolContext::empty();
         closer_ctx.insert_extension(closer_infra);
@@ -3030,6 +3218,7 @@ mod tests {
             parent_id: None,
             grant: None,
             tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
         });
         let ctx = ToolContext::empty();
         ctx.insert_extension(infra);

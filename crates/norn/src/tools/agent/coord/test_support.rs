@@ -59,6 +59,7 @@ pub(crate) fn build_infra(
         parent_id: None,
         grant: None,
         tool_registry: None,
+        session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
     });
     (infra, registry, router)
 }

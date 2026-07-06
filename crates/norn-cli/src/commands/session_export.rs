@@ -137,17 +137,25 @@ fn export_markdown(entry: &SessionIndexEntry, events: &[SessionEvent]) -> ExitCo
             SessionEvent::Compaction { summary, .. } => {
                 println!("_Compaction: {summary}_\n");
             }
-            SessionEvent::Fork {
-                forked_session_id, ..
+            SessionEvent::ChildBranch {
+                path_address,
+                child_session_id,
+                kind,
+                ..
             } => {
-                println!("_Fork -> {forked_session_id}_\n");
+                let session = child_session_id.as_deref().unwrap_or("ephemeral");
+                println!(
+                    "_Branch ({}) -> {path_address} [{session}]_\n",
+                    kind.as_str()
+                );
             }
             SessionEvent::ForkComplete {
                 forked_session_id,
                 duration_ms,
                 ..
             } => {
-                println!("_Fork complete <- {forked_session_id} ({duration_ms}ms)_\n");
+                let session = forked_session_id.as_deref().unwrap_or("ephemeral");
+                println!("_Fork complete <- {session} ({duration_ms}ms)_\n");
             }
             SessionEvent::Label {
                 label, description, ..

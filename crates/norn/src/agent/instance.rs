@@ -11,7 +11,6 @@ use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
-use crate::agent::assembly::snapshot_store;
 use crate::agent::handle::{AgentHandle, ResolvedAgentInfo};
 use crate::agent::output::RunOutcome;
 use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
@@ -276,26 +275,19 @@ impl Agent {
         })
         .await?;
 
-        // Drop the registry (and the executor handle cloned from it) first
-        // so that, in the no-fork/spawn case, its tool context (and any
-        // extension) releases its references and the event store can be
-        // handed back owned. When fork/spawn infra is installed the
-        // registry participates in an Arc cycle (registry -> context ->
-        // infra -> registry) inherited from `AgentToolInfra`, so
-        // `try_unwrap` falls back to a content snapshot.
+        // Hand back the LIVE store `Arc` — the same sink-equipped store the
+        // run persisted into. The previous owned-store return de-arced via
+        // `Arc::try_unwrap` with a sink-less content-snapshot fallback
+        // whenever fork/spawn infra held a reference (an Arc cycle through
+        // `AgentToolInfra`), so embedder appends after `run` silently
+        // stopped persisting (session-fidelity inventory Gap 14). Sharing
+        // the `Arc` closes that: anything appended to the returned store
+        // still writes through to disk, cycle or no cycle.
         drop(executor);
-        drop(self.registry);
-        // Release the loop's `Arc<ActionLog>` too: it holds the same
-        // `Arc<EventStore>`, so leaving it set would keep a second strong
-        // reference alive and force the snapshot fallback (losing the
-        // persistence sink) even in the no-fork/spawn case.
-        self.loop_context.action_log = None;
-        let event_store = self.event_store;
-        let store = Arc::try_unwrap(event_store).unwrap_or_else(|shared| snapshot_store(&shared));
         if let Some(hooks) = session_hooks.as_ref() {
             hooks.run_session_end(&session_id).await;
         }
-        Ok(RunOutcome::from_step_result(result, Some(store)))
+        Ok(RunOutcome::from_step_result(result, Some(self.event_store)))
     }
 }
 
