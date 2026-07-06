@@ -1,5 +1,15 @@
 # Session-Persistence Fidelity Gap Inventory
 
+> **STATUS (2026-07-07): campaign landed.** Gaps 1, 2, 3, 5, 6, 7, 8, 9,
+> 10, 11, 12, 14 are CLOSED on main across three reviewed merges —
+> `dc484f5` (events: 6/7/8/9), `ce3e822` (store: 5/10/12), `17c0eae`
+> (tree/child-persistence: 1/2/3/11/14). Gap 4 (action-log persistence)
+> is DEFERRED to its own unit (depends on the tree layout, now landed);
+> Gap 13 is live-only by design. Embedder-visible schema changes are
+> ticketed: meridian/docs/reviews/2026-07-07-norn-event-schema-pin-bump.md.
+> Open owner ruling: EventId stays UUIDv7 (nothing sorts it; it surfaces
+> in spool filenames) or joins the v4 unification.
+
 Recon date: 2026-07-04. Verified at HEAD, main @ 3cac008. All paths relative to repo root.
 Purpose: complete gap list between what happens in a norn agent run and what reaches durable
 session storage. This inventory drives the session-tree storage design campaign (see the
