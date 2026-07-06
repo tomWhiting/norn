@@ -91,6 +91,14 @@ pub struct TuiInputs {
     /// Session identifier used as the JSONL file stem. Paired with
     /// `data_dir` to locate the persistence file.
     pub session_id: Option<String>,
+    /// Deadline applied when a TUI-constructed
+    /// [`norn::session::SessionManager`] takes the inter-process
+    /// session-index lock (the `/new` rotation's session create). The
+    /// driver resolves it from settings / `-c index_lock_deadline_ms`;
+    /// without a bound, a wedged sibling process would freeze the
+    /// running TUI inside the slash handler. Consulted only when
+    /// persistence is enabled (`data_dir` is `Some`).
+    pub index_lock_deadline: std::time::Duration,
     /// Root agent's event sender — used by `run_turn` to tag root
     /// events on the shared broadcast channel.
     pub root_event_sender: norn::provider::agent_event::AgentEventSender,
@@ -176,6 +184,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         tools: inputs.tools,
         data_dir: inputs.data_dir,
         session_id: inputs.session_id,
+        index_lock_deadline: inputs.index_lock_deadline,
         root_event_sender: inputs.root_event_sender,
         root_inbound: inputs.root_inbound,
     };
@@ -263,6 +272,9 @@ pub(super) struct RuntimeRefs {
     pub(super) data_dir: Option<std::path::PathBuf>,
     /// Current session identifier. Updated on `/new` rotation.
     pub(super) session_id: Option<String>,
+    /// Index-lock deadline for TUI-constructed `SessionManager`s
+    /// (`/new` rotation). See [`TuiInputs::index_lock_deadline`].
+    pub(super) index_lock_deadline: std::time::Duration,
     /// Root agent's event sender — passed to `run_agent_step` so the
     /// root's `ProviderEvent` values are tagged and broadcast.
     pub(super) root_event_sender: norn::provider::agent_event::AgentEventSender,

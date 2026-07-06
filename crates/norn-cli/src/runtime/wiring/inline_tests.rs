@@ -16,6 +16,10 @@ mod tests {
         cli_coordination_envelope, length_limit_from_profile,
     };
 
+    /// Index-lock deadline for slash-state fixtures — generous test
+    /// configuration; no test here contends the lock.
+    const TEST_LOCK_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
+
     /// DECISIONS §0.6(d): the CLI's coordination envelope seeds the root's
     /// own delegation depth from the resolved value. The default is `2`
     /// (a child may spawn one level of its own; grandchildren are leaves),
@@ -207,8 +211,13 @@ mod tests {
         let cli = Cli::try_parse_from(["norn"]).unwrap();
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
-        let (state, registry) =
-            build_slash_state_from_bundle(&cli, slash_inputs(&parts), Arc::clone(&store), None);
+        let (state, registry) = build_slash_state_from_bundle(
+            &cli,
+            slash_inputs(&parts),
+            Arc::clone(&store),
+            None,
+            TEST_LOCK_DEADLINE,
+        );
         assert_eq!(state.model_snapshot(), parts.model);
         for name in cli_builtin_names() {
             assert!(registry.get(name).is_some(), "missing /{name}");
@@ -224,8 +233,13 @@ mod tests {
         let cli = Cli::try_parse_from(["norn", "--variables", "project=yggdrasil"]).unwrap();
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
-        let (state, _registry) =
-            build_slash_state_from_bundle(&cli, slash_inputs(&parts), store, None);
+        let (state, _registry) = build_slash_state_from_bundle(
+            &cli,
+            slash_inputs(&parts),
+            store,
+            None,
+            TEST_LOCK_DEADLINE,
+        );
         assert_eq!(
             state.variable_pairs,
             vec![("project".to_owned(), "yggdrasil".to_owned())],
@@ -240,8 +254,13 @@ mod tests {
         let cli = Cli::try_parse_from(["norn", "-s", r#"{"type":"object"}"#]).unwrap();
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
-        let (state, _registry) =
-            build_slash_state_from_bundle(&cli, slash_inputs(&parts), store, None);
+        let (state, _registry) = build_slash_state_from_bundle(
+            &cli,
+            slash_inputs(&parts),
+            store,
+            None,
+            TEST_LOCK_DEADLINE,
+        );
         assert_eq!(
             state.output_schema_snapshot(),
             Some(serde_json::json!({"type": "object"})),
@@ -303,6 +322,7 @@ mod tests {
             slash_inputs(&parts),
             store,
             Some("abc-123".to_owned()),
+            TEST_LOCK_DEADLINE,
         );
         assert_eq!(state.session_id.as_deref(), Some("abc-123"));
     }

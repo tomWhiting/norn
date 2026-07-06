@@ -11,6 +11,8 @@
 //! validation — so the three drivers share one code path instead of
 //! re-deriving it.
 
+use std::time::Duration;
+
 use norn::agent_loop::{
     effort_label, reasoning_effort_supported_for_model, unsupported_reasoning_effort_message,
 };
@@ -21,8 +23,9 @@ use crate::cli::{BuildError, Cli, ProviderKind};
 use crate::config::{
     AppliedOverrides, ConfigOverrides, ProviderConfigOverrides, apply_cli_profile_overrides,
     apply_settings_reasoning_to_profile, apply_working_dir, overlay_cli_provider_overrides,
-    overlay_provider_profile_overrides, provider_overrides_from_settings, resolve_model_selection,
-    resolve_profile, resolve_provider_selection,
+    overlay_provider_profile_overrides, provider_overrides_from_settings,
+    resolve_index_lock_deadline, resolve_model_selection, resolve_profile,
+    resolve_provider_selection,
 };
 
 /// The resolved CLI invocation state each driver needs to construct the
@@ -58,6 +61,15 @@ pub struct ResolvedInvocation {
     /// [`DEFAULT_DELEGATION_DEPTH`](crate::runtime::DEFAULT_DELEGATION_DEPTH)
     /// (`2`, DECISIONS §0.6(d)).
     pub delegation_depth: u32,
+    /// The resolved session index-lock acquisition deadline
+    /// ([`resolve_index_lock_deadline`]): `-c index_lock_deadline_ms`
+    /// wins over `agent.index_lock_deadline_ms` from settings, which
+    /// wins over the owner-ruled compiled default. Drivers apply it to
+    /// every lock-taking [`SessionManager`](norn::session::SessionManager)
+    /// they construct *outside* the `builder_from_cli` funnel (which
+    /// resolves the same value itself) — e.g. the slash `/name` index
+    /// rename and the TUI `/new` session rotation.
+    pub index_lock_deadline: Duration,
 }
 
 /// Resolve a CLI invocation into the provider selection + profile the
@@ -142,6 +154,12 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         })
         .unwrap_or(crate::runtime::DEFAULT_DELEGATION_DEPTH);
 
+    // Resolved once here so every driver-side SessionManager outside the
+    // `builder_from_cli` funnel (slash `/name` rename, TUI `/new`
+    // rotation) applies the same bounded index-lock wait the funnel
+    // itself applies — never the library's indefinite default.
+    let index_lock_deadline = resolve_index_lock_deadline(&settings, &config_overrides)?;
+
     let model = profile.model.clone();
     Ok(ResolvedInvocation {
         settings,
@@ -151,6 +169,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         provider_overrides,
         model,
         delegation_depth,
+        index_lock_deadline,
     })
 }
 

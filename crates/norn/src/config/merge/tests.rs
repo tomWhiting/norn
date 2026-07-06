@@ -12,14 +12,24 @@ use std::collections::BTreeMap;
 
 use super::merge_settings;
 use crate::config::types::{
-    HookEntry, HookSettings, LengthOverrideEntry, McpServerSettings, ModelAliasSettings,
-    NornSettings, PermissionSettings, ProviderProfileSettings, ProviderSettings, SkillToolSettings,
-    ToolSettings, WriteToolSettings,
+    AgentSettings, HookEntry, HookSettings, LengthOverrideEntry, McpServerSettings,
+    ModelAliasSettings, NornSettings, PermissionSettings, ProviderProfileSettings,
+    ProviderSettings, SkillToolSettings, ToolSettings, WriteToolSettings,
 };
 
 fn ns_model(model: &str) -> NornSettings {
     NornSettings {
         model: Some(model.to_owned()),
+        ..NornSettings::default()
+    }
+}
+
+fn ns_index_lock_deadline(ms: u64) -> NornSettings {
+    NornSettings {
+        agent: Some(AgentSettings {
+            index_lock_deadline_ms: Some(ms),
+            ..AgentSettings::default()
+        }),
         ..NornSettings::default()
     }
 }
@@ -52,6 +62,52 @@ fn scalar_project_wins_when_local_is_none() {
     let mut cli = NornSettings::default();
     let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
     assert_eq!(merged.model.as_deref(), Some("y"));
+}
+
+/// Review A3 (2026-07-06): `agent.index_lock_deadline_ms` rides the
+/// scalar-section merge like every other `[agent]` scalar — local beats
+/// project beats user. Deleting its `pick_scalar` arm in
+/// `merge_agent` fails this fence.
+#[test]
+fn agent_index_lock_deadline_local_beats_project_beats_user() {
+    let mut user = ns_index_lock_deadline(1_000);
+    let mut project = ns_index_lock_deadline(2_000);
+    let mut local = ns_index_lock_deadline(3_000);
+    let mut cli = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    assert_eq!(
+        merged.agent.unwrap().index_lock_deadline_ms,
+        Some(3_000),
+        "local tier wins",
+    );
+}
+
+#[test]
+fn agent_index_lock_deadline_project_beats_user_when_local_unset() {
+    let mut user = ns_index_lock_deadline(1_000);
+    let mut project = ns_index_lock_deadline(2_000);
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    assert_eq!(
+        merged.agent.unwrap().index_lock_deadline_ms,
+        Some(2_000),
+        "project tier wins over user when local has no value",
+    );
+}
+
+#[test]
+fn agent_index_lock_deadline_user_tier_only_value_survives_merge() {
+    let mut user = ns_index_lock_deadline(1_234);
+    let mut project = NornSettings::default();
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    assert_eq!(
+        merged.agent.unwrap().index_lock_deadline_ms,
+        Some(1_234),
+        "a user-tier-only value must not be dropped by the merge",
+    );
 }
 
 #[test]

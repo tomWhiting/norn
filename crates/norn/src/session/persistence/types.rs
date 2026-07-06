@@ -51,7 +51,8 @@ pub enum SessionPersistError {
     /// deadline the wait is indefinite and this variant is never
     /// produced.
     #[error(
-        "timed out after {waited:?} waiting for the session index lock at {}",
+        "timed out after {waited:?} waiting for the session index lock at {}; another norn \
+         process may be holding it (a wedged holder blocks every session open on this machine)",
         path.display()
     )]
     IndexLockTimeout {
