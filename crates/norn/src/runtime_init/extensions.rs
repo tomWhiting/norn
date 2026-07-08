@@ -3,8 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use crate::agent::variants::VariantCatalog;
 use crate::config::NornSettings;
 use crate::config::permissions::PermissionPolicy;
+use crate::error::{ConfigError, NornError};
 use crate::integration::DiagnosticCollector;
 use crate::r#loop::config::ToolExecutor;
 use crate::skill::SkillCatalog;
@@ -97,6 +99,51 @@ pub fn install_permission_policy(ctx: &ToolContext, settings: &NornSettings) {
         "installing consent-boundary permission policy on the shared tool context",
     );
     ctx.insert_extension(Arc::new(policy));
+}
+
+/// Build the agent-variant catalog from the merged `variants` settings and
+/// publish it as an `Arc<VariantCatalog>` on the shared tool context so
+/// `spawn_agent` / `fork` (and grandchildren, which inherit the extension)
+/// can resolve variants at spawn time.
+///
+/// Exactly one production call site exists: the runtime-base seam
+/// (`install_runtime_base_extensions` in `agent/assembly.rs`), which the CLI
+/// and every embedded builder that sets `load_runtime_base` reach through
+/// `AgentBuilder::build`. Builders without `load_runtime_base` install no
+/// catalog: variant use there — built-ins included — fails with the typed
+/// no-catalog error (decision recorded 2026-07-07; revisit if an embedded
+/// consumer needs built-ins without the runtime base).
+///
+/// The catalog always contains the built-in variants (`explorer`, `reviewer`,
+/// `implementer`), so an absent `variants` section still installs a working
+/// catalog rather than nothing — built-ins must be available with zero
+/// configuration.
+///
+/// `cwd` anchors relative `prompt_file` paths and MUST be the same working-
+/// directory value the assembly threads to
+/// [`install_context_search_paths`]. Prompt files are read eagerly by
+/// [`VariantCatalog::build`], so a missing or unreadable file fails loudly
+/// here at startup, never later at spawn time.
+///
+/// # Errors
+///
+/// Returns [`NornError::Config`] when the catalog build fails — a
+/// `prompt`/`prompt_file` conflict, an unreadable `prompt_file`, or an
+/// unrecognised `reasoning_effort`. The typed
+/// [`crate::agent::variants::VariantCatalogError`] message is carried through
+/// verbatim; the failure is a startup error and is never swallowed.
+pub fn install_variant_catalog(
+    ctx: &ToolContext,
+    settings: &NornSettings,
+    cwd: &Path,
+) -> Result<(), NornError> {
+    let catalog = VariantCatalog::build(settings.variants.as_ref(), cwd).map_err(|err| {
+        NornError::Config(ConfigError::InvalidConfig {
+            reason: err.to_string(),
+        })
+    })?;
+    ctx.insert_extension(Arc::new(catalog));
+    Ok(())
 }
 
 /// Declare delivery-anchored reclamation of finished children on the
@@ -239,6 +286,93 @@ mod tests {
         assert!(
             ctx.get_extension::<ReclaimOnResultDelivery>().is_some(),
             "marker must be installed",
+        );
+    }
+
+    /// With zero `variants` settings the catalog still installs and carries
+    /// the built-in variants — a spawn naming `explorer` must resolve even
+    /// with no configuration.
+    #[test]
+    fn install_variant_catalog_publishes_builtins_with_no_settings() {
+        let ctx = ToolContext::empty();
+        assert!(ctx.get_extension::<VariantCatalog>().is_none());
+        install_variant_catalog(&ctx, &NornSettings::default(), Path::new("."))
+            .expect("catalog with zero settings builds the built-ins");
+        let catalog = ctx
+            .get_extension::<VariantCatalog>()
+            .expect("catalog must be installed");
+        for name in ["explorer", "reviewer", "implementer"] {
+            assert!(
+                catalog.get(name).is_some(),
+                "built-in '{name}' must resolve after install",
+            );
+        }
+    }
+
+    /// A configured variant overlays the built-ins and is published on the
+    /// context alongside them.
+    #[test]
+    fn install_variant_catalog_publishes_configured_variant() {
+        use std::collections::BTreeMap;
+
+        use crate::config::types::VariantSettings;
+
+        let mut variants = BTreeMap::new();
+        variants.insert(
+            "scout".to_owned(),
+            VariantSettings {
+                prompt: Some("Scout the area.".to_owned()),
+                ..VariantSettings::default()
+            },
+        );
+        let settings = NornSettings {
+            variants: Some(variants),
+            ..NornSettings::default()
+        };
+        let ctx = ToolContext::empty();
+        install_variant_catalog(&ctx, &settings, Path::new("."))
+            .expect("configured catalog builds");
+        let catalog = ctx
+            .get_extension::<VariantCatalog>()
+            .expect("catalog installed");
+        assert!(catalog.get("scout").is_some(), "configured variant present");
+        assert!(catalog.get("explorer").is_some(), "built-ins still present");
+    }
+
+    /// A catalog build failure (bad `reasoning_effort`) propagates as a typed
+    /// config error — the install never swallows it and never installs a
+    /// partial catalog.
+    #[test]
+    fn install_variant_catalog_propagates_build_failure() {
+        use std::collections::BTreeMap;
+
+        use crate::config::types::VariantSettings;
+
+        let mut variants = BTreeMap::new();
+        variants.insert(
+            "hasty".to_owned(),
+            VariantSettings {
+                reasoning_effort: Some("turbo".to_owned()),
+                ..VariantSettings::default()
+            },
+        );
+        let settings = NornSettings {
+            variants: Some(variants),
+            ..NornSettings::default()
+        };
+        let ctx = ToolContext::empty();
+        let err = install_variant_catalog(&ctx, &settings, Path::new("."))
+            .expect_err("bad reasoning_effort must fail the install");
+        let NornError::Config(ConfigError::InvalidConfig { reason }) = err else {
+            panic!("expected Config(InvalidConfig), got {err:?}");
+        };
+        assert!(
+            reason.contains("hasty"),
+            "reason names the variant: {reason}"
+        );
+        assert!(
+            ctx.get_extension::<VariantCatalog>().is_none(),
+            "a failed build installs nothing",
         );
     }
 }

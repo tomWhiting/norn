@@ -17,21 +17,13 @@ use std::sync::Arc;
 
 use uuid::Uuid;
 
-use super::handle::{AgentHandles, AgentWakeRegistry};
+use super::handle::AgentHandles;
 use super::infra::{AgentCancellation, AgentToolInfra, ParentGrant};
-use super::spawn_context::{forward_diagnostic_infra, wire_child_action_log};
-use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
-use crate::agent::fork::ParentSystemInstruction;
-use crate::config::permissions::PermissionPolicy;
-use crate::integration::DiagnosticCollector;
-use crate::integration::hooks::HookRegistry;
-use crate::internal::extraction::SharedProvider;
+use super::spawn_context::{forward_shared_extensions, wire_child_action_log};
+use crate::agent::child_policy::ChildPolicy;
 use crate::session::SessionBinding;
 use crate::session::store::EventStore;
-use crate::tool::catalog::SharedToolCatalog;
 use crate::tool::context::{SharedWorkingDir, ToolContext};
-use crate::tool::scheduling::ToolEffectIndex;
-use crate::tools::task::SharedTaskStore;
 
 /// Construct the per-fork [`ToolContext`](crate::tool::context::ToolContext) (R3).
 ///
@@ -39,8 +31,10 @@ use crate::tools::task::SharedTaskStore;
 /// its own [`EventStore`], and its own [`SessionBinding`] (minted by the
 /// parent's `branch_child`), plus a fresh [`AgentHandles`] so the fork can
 /// spawn grandchildren in turn. Shared infrastructure is forwarded from the
-/// parent context so tasks, tool discovery, and the parent's base system
-/// instruction stay reachable from inside the fork.
+/// parent context so tasks and tool discovery stay reachable from inside
+/// the fork; the identity-free parent base the fork composed with (its
+/// `ParentSystemInstruction` for the NEXT fork level) is published by the
+/// fork tool after the fork's loop context is composed.
 ///
 /// The consent-boundary [`PermissionPolicy`] and the scheduling
 /// [`ToolEffectIndex`] are likewise forwarded: the fork's agent loop
@@ -131,56 +125,18 @@ pub(super) fn build_fork_context(
     child_ctx.insert_extension(Arc::new(child_infra));
     child_ctx.insert_extension(Arc::new(AgentCancellation(child_cancel)));
     child_ctx.insert_extension(Arc::new(AgentHandles::new()));
-    if let Some(wake_registry) = parent_ctx.get_extension::<AgentWakeRegistry>() {
-        child_ctx.insert_extension(wake_registry);
-    }
-    if let Some(task_store) = parent_ctx.get_extension::<SharedTaskStore>() {
-        child_ctx.insert_extension(task_store);
-    }
-    if let Some(catalog) = parent_ctx.get_extension::<SharedToolCatalog>() {
-        child_ctx.insert_extension(catalog);
-    }
-    // Skill infrastructure: the fork shares the parent's registry, so the
-    // `skill` tool is offered to it. Without forwarding both the search
-    // paths and the catalog the tool would always fail `MissingExtension`
-    // at execute — offered but unusable. Forwarded as `Arc` clones like the
-    // other shared infrastructure above.
-    if let Some(skill_paths) = parent_ctx.get_extension::<crate::tools::skill::SkillSearchPaths>() {
-        child_ctx.insert_extension(skill_paths);
-    }
-    if let Some(skill_catalog) = parent_ctx.get_extension::<crate::skill::SkillCatalog>() {
-        child_ctx.insert_extension(skill_catalog);
-    }
-    if let Some(diagnostics) = parent_ctx.get_extension::<DiagnosticCollector>() {
-        child_ctx.insert_extension(diagnostics);
-    }
-    forward_diagnostic_infra(parent_ctx, &mut child_ctx);
-    if let Some(sp) = parent_ctx.get_extension::<SharedProvider>() {
-        child_ctx.insert_extension(sp);
-    }
-    if let Some(parent_base) = parent_ctx.get_extension::<ParentSystemInstruction>() {
-        child_ctx.insert_extension(parent_base);
-    }
-    if let Some(policy) = parent_ctx.get_extension::<PermissionPolicy>() {
-        child_ctx.insert_extension(policy);
-    }
-    if let Some(effects) = parent_ctx.get_extension::<ToolEffectIndex>() {
-        child_ctx.insert_extension(effects);
-    }
-    if let Some(hooks) = parent_ctx.get_extension::<HookRegistry>() {
-        child_ctx.insert_extension(hooks);
-    }
-    if let Some(ch) =
-        parent_ctx.get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
-    {
-        child_ctx.insert_extension(ch);
-    }
-    if let Some(envelope) = parent_ctx.get_extension::<CoordinationEnvelope>() {
-        child_ctx.insert_extension(envelope);
-    }
-    if let Some(marker) = parent_ctx.get_extension::<super::reclaim::ReclaimOnResultDelivery>() {
-        child_ctx.insert_extension(marker);
-    }
+    // The curated shared-infrastructure forwards — the SINGLE list every
+    // child assembly site uses; see `forward_shared_extensions`.
+    //
+    // NOTE (R5): `ParentSystemInstruction` is deliberately NOT part of
+    // that list — the fork tool publishes the identity-free base it
+    // COMPOSED WITH onto this context instead, right after the fork's
+    // loop context is composed. For a root parent that value happens to
+    // equal the root's own extension, but the publish stays the fork
+    // tool's responsibility so a fork-of-fork always inherits the
+    // ORIGINAL identity-free base (never a combined base carrying a
+    // stale "Fork identity" preamble).
+    forward_shared_extensions(parent_ctx, &mut child_ctx);
     // Per-agent action log + session log-tree registration: the fork's
     // log starts empty at the fork point (its seeded conversation is its
     // memory; its action log records what *it* did). See
@@ -199,8 +155,10 @@ pub(super) fn build_fork_context(
 mod tests {
     use super::*;
     use crate::agent::registry::AgentRegistry;
+    use crate::config::permissions::PermissionPolicy;
     use crate::provider::traits::Provider;
     use crate::tool::registry::ToolRegistry;
+    use crate::tool::scheduling::ToolEffectIndex;
     use crate::tools::diagnostics::{DiagnosticInfra, build_diagnostic_infra};
     use tempfile::tempdir;
 
@@ -477,6 +435,79 @@ mod tests {
             .ok_or("HookRegistry must be forwarded to the fork context")?;
         if !Arc::ptr_eq(&forwarded, &hooks) {
             return Err("the fork must share the parent's hook registry instance".to_owned());
+        }
+        Ok(())
+    }
+
+    /// Agent-variants forwarding regression (fork side, the depth-2
+    /// case): the parent's
+    /// [`crate::agent::variants::VariantCatalog`] extension is forwarded
+    /// to the fork context, so a built-in variant resolves FROM THE
+    /// FORK's ctx with zero `variants` settings.
+    #[test]
+    fn fork_context_forwards_variant_catalog_and_resolves_builtins() -> Result<(), String> {
+        use crate::agent::message_router::MessageRouter;
+        use crate::agent::variants::VariantCatalog;
+        use crate::provider::mock::MockProvider;
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let infra = AgentToolInfra {
+            registry: AgentRegistry::shared(),
+            router: Arc::new(MessageRouter::new()),
+            pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
+            provider,
+            event_store: Arc::new(EventStore::new()),
+            agent_id: Uuid::new_v4(),
+            parent_id: None,
+            grant: None,
+            tool_registry: Some(Arc::new(ToolRegistry::new())),
+            session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
+        };
+        let parent_ctx = ToolContext::empty();
+        let catalog = Arc::new(
+            VariantCatalog::build(None, &std::env::temp_dir())
+                .map_err(|e| format!("built-in catalog builds with zero settings: {e}"))?,
+        );
+        parent_ctx.insert_extension(Arc::clone(&catalog));
+
+        let child_ctx = build_fork_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            Arc::new(SessionBinding::ephemeral_root()),
+            test_policy(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        let forwarded = child_ctx
+            .get_extension::<VariantCatalog>()
+            .ok_or("the fork context must inherit the parent's variant catalog")?;
+        if !Arc::ptr_eq(&forwarded, &catalog) {
+            return Err(
+                "the fork shares the parent's catalog instance, never a rebuild".to_owned(),
+            );
+        }
+
+        // Resolve a built-in through the real spawn-resolution path,
+        // exactly as the fork's own spawn site would.
+        let resolved = super::super::variant_resolve::resolve_spawn(
+            super::super::variant_resolve::SpawnIdentityArgs {
+                variant: Some("explorer".to_owned()),
+                profile: None,
+                role: None,
+                model: None,
+            },
+            child_ctx.get_extension::<VariantCatalog>().as_deref(),
+            "spawn_agent",
+            || Ok("parent-model".to_owned()),
+        )
+        .map_err(|e| format!("a built-in variant must resolve from the fork context: {e}"))?;
+        if resolved.role != "explorer" {
+            return Err(format!(
+                "resolved role must be 'explorer': {}",
+                resolved.role
+            ));
         }
         Ok(())
     }

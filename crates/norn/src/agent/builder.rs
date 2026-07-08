@@ -70,7 +70,7 @@ use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::agent_loop::event_schemas::EventSchemaSet;
 use crate::agent_loop::inbound::{InboundChannel, InboundSender};
 use crate::agent_loop::retry::RetryPolicy;
-use crate::error::{ConfigError, NornError, SessionError};
+use crate::error::{ConfigError, NornError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::integration::variables::{SessionVariable, VariableSource, VariableStore};
@@ -298,64 +298,25 @@ impl AgentBuilder {
         let profile_name = (!profile.name.is_empty()).then(|| profile.name.clone());
 
         // Open the managed persisted session now that the model and
-        // working directory are resolved — the index entry records the
-        // values the agent actually runs with.
+        // working directory are resolved (see `session_open` for the full
+        // contract). The root's session-branching identity
+        // (child-persistence V2): a disk-persisted session yields a
+        // persistent binding — the single allocation authority every
+        // spawn/fork/rhai child mint under this agent routes through —
+        // while the in-memory `.session(store)` path and the no-session
+        // default stay deliberately ephemeral (the `--no-session` honesty
+        // axis: children then run memory-only, with the typed
+        // `session: None` branch event on the parent timeline).
         let mut opened_session: Option<(crate::session::SessionIndexEntry, ReplaySummary)> = None;
-        // The root's session-branching identity (child-persistence V2): a
-        // disk-persisted session yields a persistent binding — the single
-        // allocation authority every spawn/fork/rhai child mint under this
-        // agent routes through — while the in-memory `.session(store)` path
-        // and the no-session default stay deliberately ephemeral (the
-        // `--no-session` honesty axis: children then run memory-only, with
-        // the typed `session: None` branch event on the parent timeline).
         let mut session_binding = Arc::new(crate::session::SessionBinding::ephemeral_root());
         if let Some(request) = self.session_request.take() {
-            // The manager and fsync cadence survive the open: the child
-            // brancher applies the SAME data dir, lock deadline, and
-            // durability the root itself runs with — inherited, never
-            // invented here.
-            let manager = request.manager.clone();
-            let durability = request.durability;
-            let opened = request
-                .open(&model, &working_dir.display().to_string())
-                .map_err(|e| {
-                    NornError::Session(SessionError::StorageError {
-                        reason: format!("open_session failed: {e}"),
-                    })
-                })?;
-            if opened.replay.skipped_lines > 0 {
-                tracing::warn!(
-                    session_id = %opened.entry.id,
-                    skipped_lines = opened.replay.skipped_lines,
-                    "open_session: tolerant reader skipped lines — the replayed \
-                     session history is incomplete",
-                );
-            }
-            // The children/ directory is keyed by the ROOT session id: for
-            // a flat (root) session that is the session's own id; resuming
-            // a nested child session directly keeps branching into the same
-            // root-keyed directory its `rel_path` points into, so
-            // grandchild files keep their full-path slugs across restarts.
-            let root_for_children = opened
-                .entry
-                .rel_path
-                .as_deref()
-                .and_then(|rel| rel.split('/').next())
-                .map_or_else(|| opened.entry.id.clone(), str::to_owned);
-            let brancher = Arc::new(crate::session::SessionBrancher::new(
-                manager,
-                root_for_children,
-                durability,
-            ));
-            // Replayed history seeds the ever-used child-name set (Q2
-            // for-all-time uniqueness) and recovers a resumed child's own
-            // path address from its provenance header.
-            session_binding = Arc::new(crate::session::SessionBinding::persistent_root(
-                brancher,
-                opened.entry.id.clone(),
-                &opened.store.events(),
-            ));
-            self.session = Some(Arc::new(opened.store));
+            let opened = crate::agent::session_open::open_root_session(
+                request,
+                &model,
+                &working_dir.display().to_string(),
+            )?;
+            session_binding = opened.binding;
+            self.session = Some(opened.store);
             opened_session = Some((opened.entry, opened.replay));
         }
 
@@ -609,9 +570,23 @@ impl AgentBuilder {
                 base,
                 diagnostics.as_ref(),
                 &working_dir,
-            );
+            )?;
         }
         install_tool_catalog(&registry, shared.as_ref());
+        // Every agent's context carries its OWN base system instruction
+        // (R5): `fork` reads this extension to hand a fork child the
+        // forker's context, so the root publishes its installed base here
+        // — the previously designed-never-wired publish end. The root's
+        // launch model rides alongside as the parent-model ground truth
+        // for spawns that omit `model` (an unregistered root has no
+        // agent-registry entry to read it from).
+        shared.insert_extension(Arc::new(crate::agent::fork::ParentSystemInstruction::new(
+            loop_context.base_system_instruction(),
+        )));
+        shared.insert_extension(Arc::new(crate::tools::agent::AgentModel {
+            model: model.clone(),
+            reasoning_effort: loop_context.reasoning_effort,
+        }));
         let registry = Arc::new(registry);
 
         // Share the same `Arc<ActionLog>` with the loop so dispatch recording
@@ -1384,6 +1359,51 @@ mod tests {
         assert_eq!(out.content["query"], "list");
         assert_eq!(out.content["count"], 1);
         assert_eq!(out.content["entries"][0]["id"], "tc-built");
+    }
+
+    /// R5 (root): after `build`, the root's shared tool context carries
+    /// its OWN base system instruction under `ParentSystemInstruction`
+    /// (the previously never-published extension the fork tool consumes)
+    /// and its launch model under `AgentModel` (the parent-model ground
+    /// truth for spawns that omit `model`).
+    #[test]
+    fn build_publishes_own_base_instruction_and_model_on_shared_context() {
+        let agent = AgentBuilder::new(provider_with(vec![]))
+            .model("test-model")
+            .context_window_limit(TEST_CONTEXT_WINDOW)
+            .working_dir(std::env::temp_dir())
+            .system_prompt("ROOT-BASE-MARKER")
+            .build()
+            .expect("build succeeds");
+
+        let shared = agent
+            .registry
+            .shared_context()
+            .expect("registry exposes its shared tool context");
+        let base = shared
+            .get_extension::<crate::agent::fork::ParentSystemInstruction>()
+            .expect("the root context must publish ParentSystemInstruction");
+        assert_eq!(
+            base.as_str(),
+            agent.loop_context.base_system_instruction(),
+            "the published value is exactly the root's installed base",
+        );
+        assert!(
+            base.as_str().contains("ROOT-BASE-MARKER"),
+            "the override flows into the published base: {}",
+            base.as_str(),
+        );
+        let live = shared
+            .get_extension::<crate::tools::agent::AgentModel>()
+            .expect("the root context must publish AgentModel");
+        assert_eq!(
+            live.model, "test-model",
+            "stamped from the actual launch model"
+        );
+        assert_eq!(
+            live.reasoning_effort, agent.loop_context.reasoning_effort,
+            "the paired effort is stamped from the same assembled loop context",
+        );
     }
 
     #[test]
@@ -2322,7 +2342,11 @@ mod tests {
             .execute(
                 "spawn_agent",
                 "spawn-call",
-                serde_json::json!({"task": "report back", "model": "haiku", "role": "worker"}),
+                serde_json::json!({
+                    "task": "report back",
+                    "model": crate::model_catalog::default_selection().model,
+                    "role": "worker",
+                }),
             )
             .await
             .expect("spawn_agent dispatches through the built context");
@@ -3270,7 +3294,9 @@ mod tests {
                     tool_call_id: "call-ephemeral".to_owned(),
                     tool_name: "spawn_agent".to_owned(),
                     model_args: serde_json::json!({
-                        "task": "t", "model": "test-model", "role": "worker",
+                        "task": "t",
+                        "model": crate::model_catalog::default_selection().model,
+                        "role": "worker",
                     }),
                     metadata: serde_json::Value::Null,
                 },

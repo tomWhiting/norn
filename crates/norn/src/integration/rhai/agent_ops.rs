@@ -286,11 +286,80 @@ fn signal_agent(
 }
 
 fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<EvalAltResult>> {
+    use crate::tools::agent::variant_resolve::{
+        lookup_variant, resolve_child_model, resolve_parent_model,
+    };
+
     let task = map_get_string(config, "task")
         .ok_or_else(|| Box::new(rhai_error("spawn_agent: missing 'task'")))?;
-    let model = map_get_string(config, "model")
-        .ok_or_else(|| Box::new(rhai_error("spawn_agent: missing 'model'")))?;
-    let role = map_get_string(config, "role").unwrap_or_else(|| "subagent".to_owned());
+
+    // Optional variant (agent-variants §8): resolved through the SAME
+    // catalog + resolution rules the spawn tool uses. The catalog rides
+    // the host registry's shared tool context; a variant requested with
+    // no catalog installed is a typed script error, never a silent
+    // no-variant spawn.
+    let host_shared = ctx
+        .tool_registry
+        .as_ref()
+        .and_then(|registry| registry.shared_context());
+    let catalog = host_shared
+        .as_ref()
+        .and_then(|shared| shared.get_extension::<crate::agent::variants::VariantCatalog>());
+    let variant = match map_get_string(config, "variant") {
+        Some(name) => Some(
+            lookup_variant(catalog.as_deref(), &name, "spawn_agent")
+                .map_err(|e| Box::new(rhai_error(e.to_string())))?
+                .clone(),
+        ),
+        None => None,
+    };
+
+    // Model resolution: explicit `model`, else the variant's (incl. the
+    // reviewer's model_required rejection), else the host's own model
+    // from runtime ground truth. Without a variant the script surface
+    // keeps its explicit-model contract unchanged.
+    let model = match (map_get_string(config, "model"), variant.as_ref()) {
+        (explicit, Some(variant)) => {
+            resolve_child_model(explicit, Some(variant), "spawn_agent", || {
+                resolve_parent_model(
+                    &ctx.registry,
+                    ctx.agent_id,
+                    host_shared.as_deref(),
+                    "spawn_agent",
+                )
+            })
+            .map_err(|e| Box::new(rhai_error(e.to_string())))?
+        }
+        (Some(explicit), None) => explicit,
+        (None, None) => return Err(Box::new(rhai_error("spawn_agent: missing 'model'"))),
+    };
+    let role = map_get_string(config, "role")
+        .or_else(|| variant.as_ref().map(|v| v.name.clone()))
+        .unwrap_or_else(|| "subagent".to_owned());
+    // Reasoning effort (owner rulings 2026-07-07): the variant's effort
+    // wins; else the child inherits the HOST's active effort from the
+    // live per-step stamp on the host's shared context — then validated
+    // against the model catalog for the child's resolved model BEFORE
+    // the reservation, through the SAME resolver the spawn tool uses
+    // (§8: the two surfaces cannot drift). Explicit-unsupported is a
+    // typed script error naming the setting; inherited-unsupported
+    // degrades to None with a warning.
+    let child_effort = crate::tools::agent::variant_resolve::resolve_child_reasoning_effort(
+        &crate::tools::agent::variant_resolve::ChildEffortInputs {
+            variant_effort: variant.as_ref().and_then(|v| v.reasoning_effort),
+            variant_name: variant.as_ref().map(|v| v.name.as_str()),
+            profile_effort: None,
+            profile_name: None,
+            parent_live_effort: host_shared
+                .as_ref()
+                .and_then(|shared| shared.get_extension::<crate::tools::agent::AgentModel>())
+                .and_then(|live| live.reasoning_effort),
+            child_model: &model,
+            child_role: &role,
+            surface: "spawn_agent",
+        },
+    )
+    .map_err(|e| Box::new(rhai_error(e.to_string())))?;
     // Auto paths nest under the host's registered path when it has one
     // (W3.4 path namespacing) — the same single implementation the
     // spawn/fork tools use, so the path shape cannot drift.
@@ -308,12 +377,13 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
 
     // Provenance carried on both typed lifecycle phases, and the label the
     // child's session mint slugs its per-parent name from. Captured before
-    // `reserve` consumes `role`.
+    // `reserve` consumes `role`. `profile` discloses the variant name when
+    // one was used, exactly like the spawn tool's descriptor.
     let descriptor = SubagentDescriptor {
         kind: SubagentKind::Spawn,
         role: role.clone(),
         model: model.clone(),
-        profile: None,
+        profile: variant.as_ref().map(|v| v.name.clone()),
     };
     let name_stem = slugify_name_stem(&role, "spawn");
 
@@ -326,10 +396,15 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         .map_err(|e| Box::new(rhai_error(format!("spawn_agent: {e}"))))?;
     // R5: the granted loop overrides ride the derivation unchanged (rhai
     // spawns have no per-spawn `child_policy` narrowing parameter yet —
-    // named follow-up — so the inherited grant is the only source). The
-    // resolved config is built inside the task below, exactly like the
-    // spawn/fork launch wrappers.
-    let child_loop_config = child_grant.loop_config;
+    // named follow-up — so the inherited grant is the only source).
+    // Child context-window validation (agent-variants §7): fill the
+    // window from the catalog for the CHILD's resolved model and validate
+    // it BEFORE the reservation, mirroring the spawn/fork tools — a
+    // failure is a clean typed script error with no burned name.
+    let mut child_config =
+        crate::agent::child_policy::ChildLoopConfig::resolve(child_grant.loop_config);
+    crate::agent::arming::arm_child_window(&mut child_config, &model)
+        .map_err(|e| Box::new(rhai_error(format!("spawn_agent: {e}"))))?;
     let guard = AgentRegistry::reserve(
         &ctx.registry,
         path,
@@ -409,30 +484,58 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
     let provider = Arc::clone(&ctx.provider);
     let registry_for_executor = Arc::clone(registry);
     let agent_registry = Arc::clone(&ctx.registry);
-    let model_for_task = model;
     let task_for_async = task;
+    let variant_prompt = variant.as_ref().and_then(|v| v.prompt.clone());
+
+    // The script child's OWN ToolContext (adversarial re-review R1,
+    // 2026-07-07) — NEVER the host's shared context: `run_agent_step`
+    // refreshes the live `AgentModel` model/effort stamp onto its
+    // executor's shared context at every step start, so dispatching a
+    // script child against the host's context let a concurrently running
+    // child overwrite the HOST's parent-model/effort ground truth (a
+    // no-model spawn issued by the host then launched on the script
+    // child's model). The child context snapshots the host's current
+    // working dir (snapshot semantics, like spawn), inherits the host's
+    // workspace confinement and read carve-out (DECISIONS §0.6(b) — a
+    // confined host must not launch a less-confined child), carries the
+    // same curated shared extensions a spawn child gets
+    // (`forward_shared_extensions` — the single list, so the surfaces
+    // cannot drift), and is stamped with the child's own live
+    // model/effort pair.
+    //
+    // Known boundary, narrowed by R1: the child context deliberately
+    // carries NO `AgentToolInfra` — script children have no delegation
+    // surface (the model is shown zero tool definitions; `tools: &[]`
+    // below), so their decremented grant on the registry entry stays
+    // observability-only, and an agent-coordination or `cron` tool
+    // reached through a permissive embedder allow-list now fails typed
+    // (`MissingExtension`) instead of executing with the HOST's identity
+    // and stores. If script children ever gain a real tool surface, give
+    // them the full spawn-tool child assembly (infra, handles, action
+    // log) — this context is the zero-tool subset of it.
+    let child_tool_ctx = {
+        let mut child_ctx = ToolContext::with_working_dir(
+            crate::tool::context::SharedWorkingDir::new(ctx.working_dir.get()),
+        );
+        if let Some(host) = host_shared.as_deref() {
+            if let Some(root) = host.workspace_root() {
+                child_ctx.confine_to_workspace(root.to_path_buf());
+                let exempt = host.read_exempt_roots().to_vec();
+                if !exempt.is_empty() {
+                    child_ctx.set_read_exempt_roots(exempt);
+                }
+            }
+            crate::tools::agent::spawn_context::forward_shared_extensions(host, &mut child_ctx);
+        }
+        child_ctx.insert_extension(Arc::new(crate::tools::agent::AgentModel {
+            model: model.clone(),
+            reasoning_effort: child_effort,
+        }));
+        Arc::new(child_ctx)
+    };
+    let model_for_task = model;
 
     let _join_handle: JoinHandle<()> = ctx.runtime.spawn(async move {
-        // Dispatch the sub-agent's tool calls through the parent
-        // registry's own shared context — matching the behaviour of the
-        // prior `registry.execute()` delegation before the
-        // `SubAgentExecutor::new` signature gained `child_context`.
-        //
-        // Known boundary: this is the HOST's shared context, and the
-        // model is shown no tools (`tools: &[]` below) — the child's
-        // decremented grant on its registry entry is observability-only
-        // here. If script children ever gain a real tool surface, they
-        // must get their own child context (as the spawn/fork tools
-        // build), or their spawns would be charged to the host's
-        // identity and budget. Concretely for N-026 cron: this shared
-        // context carries the HOST's `ScheduleHandle`, so a script child
-        // that could reach the `cron` tool would create schedules against
-        // the host's store and identity — but it is shown zero tools, so
-        // cron is unreachable here and the trap stays closed until that
-        // tool-surface change lands. (The child DOES hold its own
-        // session binding for its store; grandchild minting only becomes
-        // reachable with that same tool-surface change.)
-        //
         // Cancellation boundary (W3.5, deliberate): script children run
         // with `cancel: None` — the rhai host owns no run token to
         // parent a child token under (NornRhaiContext carries none), so
@@ -443,27 +546,33 @@ fn spawn_agent(ctx: &NornRhaiContext, config: &Map) -> Result<AgentHandle, Box<E
         // ever gain a run token, create this child's token via
         // `child_token()` here (and thread it into the request) exactly
         // as the spawn/fork launch paths do.
-        let child_context = registry_for_executor
-            .shared_context()
-            .unwrap_or_else(|| Arc::new(ToolContext::empty()));
-        let executor = SubAgentExecutor::new(registry_for_executor, tools, child_context);
-        let mut loop_ctx = LoopContext::new("You are a sub-agent. Complete the task and stop.");
-        // R5: the child's loop config is the granted ChildLoopConfig
-        // applied onto AgentLoopConfig::default(); an absent grant is
-        // byte-for-byte the default — the pre-R5 behavior. Same
-        // resolution as the spawn/fork launch wrappers.
-        let mut child_config =
-            crate::agent::child_policy::ChildLoopConfig::resolve(child_loop_config);
-        // Arm auto-compaction on the script child exactly as the root
-        // builder does (the one shared mechanism): install the token
-        // estimator and the context-edit tracker on the child's loop
-        // context and fill its context window from the catalog for the
-        // child's own model, so a long-running script child compacts
-        // instead of dying ContextWindowExceeded. A non-catalog model
-        // keeps a None window, leaving the trigger off. NOTE: the root
-        // additionally hard-errors on a None/over-max window
-        // (2026-07-05 incident guard); per-model child validation is
-        // owned by the child-persistence/agent-variants units.
+        let executor = SubAgentExecutor::new(registry_for_executor, tools, child_tool_ctx);
+        // Variant prompt + reasoning effort (agent-variants §8): the
+        // variant's prompt becomes the child's base instruction (same
+        // composition as the spawn tool's variant path) and its parsed
+        // reasoning effort rides the child's LoopContext into every
+        // provider request. Variant `tools` are deliberately NOT applied
+        // here: the model is shown zero tool definitions on this surface
+        // (`tools: &[]` below), so a tool subset would be a lie — the
+        // known boundary above governs until script children gain a real
+        // tool surface.
+        let mut loop_ctx = match variant_prompt {
+            Some(prompt) => LoopContext::new(crate::system_prompt::build_child_system_prompt(
+                &prompt,
+                &task_for_async,
+            )),
+            None => LoopContext::new("You are a sub-agent. Complete the task and stop."),
+        };
+        if let Some(effort) = child_effort {
+            loop_ctx.reasoning_effort = Some(effort);
+        }
+        // The child's loop config arrived fully resolved: the granted
+        // ChildLoopConfig applied onto the default, with the context
+        // window filled from the catalog for the child's own model and
+        // VALIDATED before the reservation (`arm_child_window` — the
+        // 2026-07-05 incident guard extended to children). Arming here
+        // installs the token estimator and the context-edit tracker on
+        // the child's loop context; the window fill is a no-op.
         crate::agent::arming::arm_auto_compaction(
             &mut loop_ctx,
             &mut child_config,
@@ -1044,6 +1153,221 @@ mod tests {
         assert!(msgs[0].role.is_none(), "tombstones carry no role");
     }
 
+    // -- agent-variants §8: the script surface honours variants ---------------
+
+    /// A variant requested with no catalog on the host's shared tool
+    /// context is a typed script error — never a silent no-variant spawn.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn spawn_agent_variant_without_catalog_is_a_script_error() {
+        let ctx = build_context();
+        let engine = build_norn_engine(&ctx);
+        let err = engine
+            .eval::<crate::integration::rhai::AgentHandle>(
+                r#"spawn_agent(#{ task: "t", variant: "explorer" })"#,
+            )
+            .expect_err("missing catalog must be refused");
+        assert!(
+            err.to_string().contains("no variant catalog is available"),
+            "the failure names the missing wiring: {err}",
+        );
+        assert!(ctx.registry.read().is_empty(), "nothing was registered");
+    }
+
+    /// The reviewer ruling on the script surface: reviewer without a
+    /// model anywhere → typed error naming `variants.reviewer.model`.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn spawn_agent_reviewer_without_model_names_config_key() {
+        let mut ctx = build_context();
+        let mut host_registry = ToolRegistry::new();
+        let host_tool_ctx = crate::tool::context::ToolContext::empty();
+        host_tool_ctx.insert_extension(Arc::new(
+            crate::agent::variants::VariantCatalog::build(None, &std::env::temp_dir())
+                .expect("built-ins build"),
+        ));
+        host_registry.set_context(Arc::new(host_tool_ctx));
+        ctx.tool_registry = Some(Arc::new(host_registry));
+
+        let engine = build_norn_engine(&ctx);
+        let err = engine
+            .eval::<crate::integration::rhai::AgentHandle>(
+                r#"spawn_agent(#{ task: "t", variant: "reviewer" })"#,
+            )
+            .expect_err("reviewer without a model must be refused");
+        assert!(
+            err.to_string().contains("variants.reviewer.model"),
+            "the failure names the missing config key: {err}",
+        );
+        assert!(ctx.registry.read().is_empty(), "nothing was registered");
+    }
+
+    /// A variant spawn on the script surface applies the variant: the
+    /// role defaults to the variant name and the registry entry carries
+    /// the resolved model.
+    #[tokio::test(flavor = "multi_thread")]
+    async fn spawn_agent_variant_resolves_role_and_model() {
+        use crate::provider::events::{ProviderEvent, StopReason};
+        use crate::provider::usage::Usage;
+
+        let provider = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_owned(),
+            },
+            ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: None,
+            },
+        ]]));
+        let mut ctx = build_context_with_provider(provider);
+        let mut host_registry = ToolRegistry::new();
+        let host_tool_ctx = crate::tool::context::ToolContext::empty();
+        host_tool_ctx.insert_extension(Arc::new(
+            crate::agent::variants::VariantCatalog::build(None, &std::env::temp_dir())
+                .expect("built-ins build"),
+        ));
+        host_registry.set_context(Arc::new(host_tool_ctx));
+        ctx.tool_registry = Some(Arc::new(host_registry));
+        let registry = Arc::clone(&ctx.registry);
+
+        let engine = build_norn_engine(&ctx);
+        let catalog_model = crate::model_catalog::default_selection().model;
+        let handle = engine
+            .eval::<crate::integration::rhai::AgentHandle>(&format!(
+                r#"spawn_agent(#{{ task: "t", variant: "explorer", model: "{catalog_model}" }})"#
+            ))
+            .expect("variant spawn succeeds");
+
+        let entry = registry.read().get(handle.id()).expect("entry registered");
+        assert_eq!(entry.role, "explorer", "role defaults to the variant name");
+        assert_eq!(entry.model, catalog_model);
+
+        // The child runs detached; wait for its terminal mark so the test
+        // never leaks a running task.
+        let deadline = std::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            if registry
+                .read()
+                .get(handle.id())
+                .is_some_and(|entry| entry.status.is_terminal())
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "script child never reached a terminal status",
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    /// Adversarial re-review R1 regression (2026-07-07): a script child's
+    /// step-start `AgentModel` refresh must land on the CHILD's own
+    /// context, never the host's shared context. The confirmed failure
+    /// this pins: script child A runs on model X; on the old shared-ctx
+    /// dispatch its step start overwrote the HOST's live stamp with X, so
+    /// a later no-model spawn resolved X instead of the host's model
+    /// (and effort contaminated identically).
+    #[tokio::test(flavor = "multi_thread")]
+    async fn script_child_step_does_not_clobber_hosts_live_model_stamp() {
+        use crate::provider::events::{ProviderEvent, StopReason};
+        use crate::provider::usage::Usage;
+
+        // Two catalogued models (factual catalog ids, never invented).
+        let host_model = "gpt-5.4-mini";
+        let child_model = crate::model_catalog::default_selection().model;
+        assert_ne!(host_model, child_model, "test precondition");
+
+        let done = |text: &str| {
+            vec![
+                ProviderEvent::TextDelta {
+                    text: text.to_owned(),
+                },
+                ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    usage: Usage::default(),
+                    response_id: None,
+                },
+            ]
+        };
+        let provider = Arc::new(MockProvider::new(vec![done("a done"), done("b done")]));
+        let mut ctx = build_context_with_provider(provider);
+        let mut host_registry = ToolRegistry::new();
+        let host_tool_ctx = crate::tool::context::ToolContext::empty();
+        host_tool_ctx.insert_extension(Arc::new(
+            crate::agent::variants::VariantCatalog::build(None, &std::env::temp_dir())
+                .expect("built-ins build"),
+        ));
+        // The host's live per-step stamp, exactly as its own
+        // `run_agent_step` maintains it: model + paired effort.
+        host_tool_ctx.insert_extension(Arc::new(crate::tools::agent::AgentModel {
+            model: host_model.to_owned(),
+            reasoning_effort: Some(crate::provider::request::ReasoningEffort::High),
+        }));
+        let host_shared = Arc::new(host_tool_ctx);
+        host_registry.set_context(Arc::clone(&host_shared));
+        ctx.tool_registry = Some(Arc::new(host_registry));
+        let registry = Arc::clone(&ctx.registry);
+
+        let wait_terminal = |id: Uuid| {
+            let registry = Arc::clone(&registry);
+            async move {
+                let deadline = std::time::Instant::now() + Duration::from_secs(30);
+                loop {
+                    if registry
+                        .read()
+                        .get(id)
+                        .is_some_and(|entry| entry.status.is_terminal())
+                    {
+                        break;
+                    }
+                    assert!(
+                        std::time::Instant::now() < deadline,
+                        "script child never reached a terminal status",
+                    );
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            }
+        };
+
+        let engine = build_norn_engine(&ctx);
+        // Script child A on model X — run it to completion, so its
+        // step-start refresh has definitely happened.
+        let a = engine
+            .eval::<crate::integration::rhai::AgentHandle>(&format!(
+                r#"spawn_agent(#{{ task: "a", role: "worker", model: "{child_model}" }})"#
+            ))
+            .expect("spawn child A");
+        wait_terminal(a.id()).await;
+
+        // The HOST's live stamp survived child A's steps untouched.
+        let live = host_shared
+            .get_extension::<crate::tools::agent::AgentModel>()
+            .expect("the host's stamp stays published");
+        assert_eq!(
+            live.model, host_model,
+            "a script child's step must never overwrite the host's live model stamp",
+        );
+        assert_eq!(
+            live.reasoning_effort,
+            Some(crate::provider::request::ReasoningEffort::High),
+            "…nor the host's paired live effort",
+        );
+
+        // The reviewer's concrete failure: a no-model variant spawn from
+        // the host now resolves the HOST's model — not child A's.
+        let b = engine
+            .eval::<crate::integration::rhai::AgentHandle>(
+                r#"spawn_agent(#{ task: "b", variant: "explorer" })"#,
+            )
+            .expect("spawn child B");
+        assert_eq!(
+            registry.read().get(b.id()).expect("B registered").model,
+            host_model,
+            "a no-model spawn must inherit the HOST's model, not the script child's",
+        );
+        wait_terminal(b.id()).await;
+    }
+
     // -- W3.4: script hosts have real delegation budgets ----------------------
 
     /// A host whose own policy has `remaining_depth = 0` may not spawn:
@@ -1077,10 +1401,11 @@ mod tests {
         let engine = build_norn_engine(&ctx);
         let registry = Arc::clone(&ctx.registry);
 
+        let catalog_model = crate::model_catalog::default_selection().model;
         let handle = engine
-            .eval::<crate::integration::rhai::AgentHandle>(
-                r#"spawn_agent(#{ task: "t", model: "claude" })"#,
-            )
+            .eval::<crate::integration::rhai::AgentHandle>(&format!(
+                r#"spawn_agent(#{{ task: "t", model: "{catalog_model}" }})"#
+            ))
             .expect("spawn succeeds");
 
         let entry = registry.read().get(handle.id()).expect("entry registered");
@@ -1124,15 +1449,17 @@ mod tests {
         let granted = ChildLoopConfig {
             step_timeout_secs: Some(300),
             linger_secs: Some(30),
+            context_window: None,
         };
         ctx.child_policy.loop_config = Some(granted);
         let engine = build_norn_engine(&ctx);
         let registry = Arc::clone(&ctx.registry);
 
+        let catalog_model = crate::model_catalog::default_selection().model;
         let handle = engine
-            .eval::<crate::integration::rhai::AgentHandle>(
-                r#"spawn_agent(#{ task: "t", model: "claude" })"#,
-            )
+            .eval::<crate::integration::rhai::AgentHandle>(&format!(
+                r#"spawn_agent(#{{ task: "t", model: "{catalog_model}" }})"#
+            ))
             .expect("spawn succeeds");
         let child_id = handle.id();
 
@@ -1228,9 +1555,10 @@ mod tests {
 
         let engine = build_norn_engine(&ctx);
         let handle = engine
-            .eval::<crate::integration::rhai::AgentHandle>(
-                r#"spawn_agent(#{ task: "t", model: "haiku", role: "scout" })"#,
-            )
+            .eval::<crate::integration::rhai::AgentHandle>(&format!(
+                r#"spawn_agent(#{{ task: "t", model: "{catalog_model}", role: "scout" }})"#,
+                catalog_model = crate::model_catalog::default_selection().model,
+            ))
             .expect("spawn_agent evaluates");
         let child_id = handle.id();
 

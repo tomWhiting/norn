@@ -73,6 +73,14 @@ mod tests {
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         AgentBuilder::new(provider)
             .model("gpt-x")
+            // Explicit window: "gpt-x" is deliberately uncatalogued and
+            // `build` hard-errors on an unarmed window (2026-07-05
+            // incident guard) — without this the fixture only passed
+            // when the developer's own ~/.norn settings happened to
+            // supply one. `272_000` is gpt-5.5's catalogued standard
+            // window (assets/models.json) — factual, not invented; same
+            // fixture convention as the library builder tests.
+            .context_window_limit(272_000)
             .working_dir(std::env::temp_dir())
             .load_runtime_base()
             .build()

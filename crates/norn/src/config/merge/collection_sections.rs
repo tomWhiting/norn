@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use crate::config::types::{
     ContextSettings, HookSettings, McpServerSettings, ModelAliasSettings, PermissionSettings,
-    ProviderProfileSettings, SkillsSettings,
+    ProviderProfileSettings, SkillsSettings, VariantSettings,
 };
 
 use super::primitives::{concat_hook_slot, concat_string_paths, merge_dedup};
@@ -130,6 +130,31 @@ pub(super) fn merge_mcp_servers(
     {
         for (name, def) in map {
             out.insert(name, def);
+        }
+    }
+    Some(out)
+}
+
+/// Merge the `variants` map by variant name: a same-name entry at a later
+/// layer replaces the earlier definition wholesale (no deep merge — D3, same
+/// as `mcp_servers`). Built-in variants are NOT a layer here; they overlay
+/// per-field at catalog build (`crate::agent::variants::VariantCatalog`).
+pub(super) fn merge_variants(
+    usr: &mut Option<BTreeMap<String, VariantSettings>>,
+    prj: &mut Option<BTreeMap<String, VariantSettings>>,
+    lcl: &mut Option<BTreeMap<String, VariantSettings>>,
+    ovr: &mut Option<BTreeMap<String, VariantSettings>>,
+) -> Option<BTreeMap<String, VariantSettings>> {
+    if usr.is_none() && prj.is_none() && lcl.is_none() && ovr.is_none() {
+        return None;
+    }
+    let mut out: BTreeMap<String, VariantSettings> = BTreeMap::new();
+    for map in [usr.take(), prj.take(), lcl.take(), ovr.take()]
+        .into_iter()
+        .flatten()
+    {
+        for (name, variant) in map {
+            out.insert(name, variant);
         }
     }
     Some(out)

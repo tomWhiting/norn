@@ -17,19 +17,21 @@ use chrono::Utc;
 use serde::Deserialize;
 
 use super::delegation::{
-    auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
+    auto_child_path, effective_child_tools, grant_child_policy, install_child_result_channel,
+    resolve_spawner_policy,
 };
 use super::handle::{AgentHandles, AgentWakeRegistry, ChildBranchMetadata};
-use super::infra::{
-    AgentCancellation, SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list,
-};
+use super::infra::{AgentCancellation, AgentModel, SubAgentExecutor, infra_from};
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
 use super::spawn_context::build_child_context;
 use super::spawn_launch::{ChildLaunch, launch_child};
-use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope, MessagingScope};
+use super::variant_resolve::{SpawnIdentityArgs, resolve_parent_model, resolve_spawn};
+use crate::agent::child_policy::{ChildLoopConfig, ChildPolicy, CoordinationEnvelope};
+use crate::agent::fork::ParentSystemInstruction;
 use crate::agent::registry::AgentRegistry;
 use crate::agent::result_channel::ChildResultSender;
+use crate::agent::variants::VariantCatalog;
 use crate::error::ToolError;
 use crate::integration::hooks::HookRegistry;
 use crate::r#loop::loop_context::LoopContext;
@@ -69,8 +71,19 @@ impl Default for SpawnAgentTool {
 #[serde(deny_unknown_fields)]
 struct SpawnAgentArgs {
     task: String,
-    model: String,
-    role: String,
+    /// Optional model id. Resolution: this argument, else the variant's
+    /// model, else the parent's own model (unless the variant requires
+    /// an explicit model — a typed error then).
+    #[serde(default)]
+    model: Option<String>,
+    /// Optional role label. Resolution: this argument, else the variant
+    /// name; with neither the spawn is a typed error.
+    #[serde(default)]
+    role: Option<String>,
+    /// Optional named agent variant (built-in or configured
+    /// `variants.<name>` settings). Mutually exclusive with `profile`.
+    #[serde(default)]
+    variant: Option<String>,
     #[serde(default)]
     profile: Option<String>,
     #[serde(default)]
@@ -95,24 +108,35 @@ struct SpawnAgentArgs {
 
 /// Build the child's [`LoopContext`] and the profile-derived tool list.
 ///
-/// When `profile_name` is `Some`, the named profile is resolved through the
-/// scanner over `scan_dirs`; its system instructions, reasoning config, and
-/// prompt commands flow into the returned [`LoopContext`] via
-/// [`from_profile`]. The gated [`ToolRegistry`] `from_profile` produces is
-/// discarded — the child shares the parent's registry — but the profile's
-/// resolved tool list is returned so the caller can use it as the per-child
-/// allow-list. When `profile_name` is `None`, a minimal context is built
-/// with the task embedded as the system instruction.
+/// When `variant_prompt` is `Some` (the spawn resolved a variant that
+/// carries a prompt), the child's base instruction is the variant prompt
+/// plus the task via
+/// [`build_child_system_prompt`](crate::system_prompt::build_child_system_prompt)
+/// — variants and profiles are mutually exclusive, so this branch never
+/// competes with profile resolution. Otherwise, when `profile_name` is
+/// `Some`, the named profile is resolved through the scanner over
+/// `scan_dirs`; its system instructions, reasoning config, and prompt
+/// commands flow into the returned [`LoopContext`] via [`from_profile`].
+/// The gated [`ToolRegistry`] `from_profile` produces is discarded — the
+/// child shares the parent's registry — but the profile's resolved tool
+/// list is returned so the caller can use it as the per-child
+/// allow-list. With neither, a minimal context is built with the task
+/// embedded as the system instruction.
 ///
 /// # Errors
 ///
 /// Returns [`ToolError::ExecutionFailed`] when a named profile cannot be
 /// resolved — spawn never silently falls back to a default profile.
 fn build_child_loop_context(
+    variant_prompt: Option<&str>,
     profile_name: Option<&str>,
     task: &str,
     scan_dirs: &[PathBuf],
 ) -> Result<(LoopContext, Option<Vec<String>>), ToolError> {
+    if let Some(prompt) = variant_prompt {
+        let base = crate::system_prompt::build_child_system_prompt(prompt, task);
+        return Ok((LoopContext::new(base), None));
+    }
     if let Some(name) = profile_name {
         let profile = resolve_profile(name, scan_dirs).map_err(|e| ToolError::ExecutionFailed {
             reason: format!("spawn_agent: profile '{name}' could not be resolved: {e}"),
@@ -167,29 +191,33 @@ impl Tool for SpawnAgentTool {
     fn input_schema(&self) -> serde_json::Value {
         serde_json::json!({
             "type": "object",
-            "required": ["task", "model", "role"],
+            "required": ["task"],
             "additionalProperties": false,
             "properties": {
                 "task": {
                     "type": "string",
-                    "description": "Self-contained task description for the sub-agent. The sub-agent sees only this string — it has no access to the parent's conversation history."
+                    "description": "Self-contained task description for the sub-agent. The sub-agent sees only this string — it has no access to the parent's conversation history. Required, and not sufficient alone: every call must ALSO pass either variant or role (task-only calls fail)."
+                },
+                "variant": {
+                    "type": "string",
+                    "description": "Optional named agent variant (built-in: \"explorer\", \"reviewer\", \"implementer\"; plus any configured variants.<name> settings). Supplies the child's prompt block, tool subset, default model, and reasoning effort. Mutually exclusive with profile. An unknown name fails with the list of available variants."
                 },
                 "model": {
                     "type": "string",
-                    "description": "Model identifier for the sub-agent (e.g. \"gpt-5.5\", \"claude-sonnet-4-5-20250514\")."
+                    "description": "Optional model identifier for the sub-agent (e.g. \"gpt-5.5\"). Omit to use the variant's model, or — when the variant sets none and does not require one, or no variant is given — your own model. The reviewer variant requires a model (variants.reviewer.model or this argument)."
                 },
                 "role": {
                     "type": "string",
-                    "description": "Role label recorded in the agent registry for observability (e.g. \"researcher\", \"code-reviewer\")."
+                    "description": "Optional role label recorded in the agent registry for observability (e.g. \"researcher\", \"code-reviewer\"). Omit to use the variant name; with neither variant nor role the spawn fails."
                 },
                 "profile": {
                     "type": "string",
-                    "description": "Optional bare profile name (e.g. \"developer\", \"code-reviewer\") resolved as a markdown profile from $WORKSPACE/.norn/profiles, $WORKSPACE/.meridian/profiles, or ~/.norn/profiles. Supplies the child's system instructions, tool allow-list, and reasoning config. Omit for a minimal default."
+                    "description": "Optional bare profile name (e.g. \"developer\", \"code-reviewer\") resolved as a markdown profile from $WORKSPACE/.norn/profiles, $WORKSPACE/.meridian/profiles, or ~/.norn/profiles. Supplies the child's system instructions, tool allow-list, and reasoning config. Mutually exclusive with variant. Omit for a minimal default."
                 },
                 "tools": {
                     "type": "array",
                     "items": { "type": "string" },
-                    "description": "Optional allow-list of tool names the sub-agent may call. Takes precedence over the profile's tool list. Omit to inherit the profile's tools, or the full parent registry when no profile is given."
+                    "description": "Optional allow-list of tool names the sub-agent may call. Takes precedence over the variant's or profile's tool list. Omit to inherit the variant's/profile's tools, or the full parent registry when neither is given. Your child's granted policy always intersects the final list (a leaf never sees spawn_agent/fork)."
                 },
                 "path": {
                     "type": "string",
@@ -246,6 +274,11 @@ impl Tool for SpawnAgentTool {
                                     "type": "integer",
                                     "minimum": 0,
                                     "description": "Linger deadline in seconds: the child waits this long at each would-stop boundary for late messages and its own children's results before stopping. Grant this to a child that delegates, so its children's late results are delivered instead of lost. Unset = the child returns the moment its model stops."
+                                },
+                                "context_window": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": "Explicit context window for the child, in tokens. Unset = filled from the model catalog for the child's resolved model. A value above a catalogued model's maximum is rejected; required for a deliberately uncatalogued model."
                                 }
                             }
                         }
@@ -318,28 +351,90 @@ impl Tool for SpawnAgentTool {
         let child_policy =
             grant_child_policy(&spawner_policy, args.child_policy.clone(), "spawn_agent")?;
 
-        // Build the child's loop context and resolve the profile's tool
-        // list. The profile scanner walks the same directories the CLI uses
-        // for top-level agents, rooted at the parent agent's working
-        // directory (not the process CWD, which can diverge from the
-        // agent's working dir in embedded runtimes).
-        let scan_dirs = default_scan_dirs(&ctx.working_dir());
-        let (mut child_loop_ctx, profile_tools) =
-            build_child_loop_context(args.profile.as_deref(), &args.task, &scan_dirs)?;
+        // Variant resolution (agent-variants R3, spec §3 steps 1–4):
+        // variant/profile exclusivity, catalog lookup, role and model
+        // resolution. Parent-model inheritance reads runtime ground truth
+        // only — the live AgentModel extension (refreshed at every step
+        // start with the step's actual model), else the caller's registry
+        // entry (see `resolve_parent_model` for why the extension wins).
+        let catalog = ctx.get_extension::<VariantCatalog>();
+        let resolution = resolve_spawn(
+            SpawnIdentityArgs {
+                variant: args.variant.clone(),
+                profile: args.profile.clone(),
+                role: args.role.clone(),
+                model: args.model.clone(),
+            },
+            catalog.as_deref(),
+            "spawn_agent",
+            || resolve_parent_model(&infra.registry, infra.agent_id, Some(ctx), "spawn_agent"),
+        )?;
+        let child_model = resolution.model.clone();
+        let child_role = resolution.role.clone();
 
-        // The explicit `tools` argument wins; otherwise fall back to the
-        // profile's resolved tool list. The chosen list gates both the
-        // child's tool execution (via `SubAgentExecutor`) and the tool
-        // definitions the child model is shown. A `MessagingScope::None`
-        // grant removes `signal_agent` from that surface entirely
-        // (defense-in-depth: the tool also refuses at execute).
-        let mut allow_list: Option<Vec<String>> = args.tools.clone().or(profile_tools);
-        if child_policy.messaging == MessagingScope::None {
-            allow_list = Some(strip_signal_agent_from_allow_list(
-                allow_list,
-                parent_registry,
-            ));
-        }
+        // Child context-window validation (spec §7): fill the child's
+        // window from the catalog for the CHILD's resolved model and
+        // validate it — mirroring the root build's arm-then-validate
+        // sequence — BEFORE anything is reserved or persisted, so a
+        // failure is a clean typed error with no burned name and no
+        // dangling reservation. The same resolved config rides into the
+        // launch below; the launch-side arming finds the window already
+        // set and leaves it untouched.
+        let mut child_config = ChildLoopConfig::resolve(child_policy.loop_config);
+        crate::agent::arming::arm_child_window(&mut child_config, &child_model).map_err(|e| {
+            ToolError::ExecutionFailed {
+                reason: format!("spawn_agent: {e}"),
+            }
+        })?;
+
+        // Build the child's loop context and resolve the variant's or
+        // profile's tool list. The profile scanner walks the same
+        // directories the CLI uses for top-level agents, rooted at the
+        // parent agent's working directory (not the process CWD, which
+        // can diverge from the agent's working dir in embedded runtimes).
+        let scan_dirs = default_scan_dirs(&ctx.working_dir());
+        let (mut child_loop_ctx, profile_tools) = build_child_loop_context(
+            resolution.variant_prompt.as_deref(),
+            args.profile.as_deref(),
+            &args.task,
+            &scan_dirs,
+        )?;
+        // Reasoning effort (spec §3.6 + owner rulings 2026-07-07):
+        // variant → profile → the parent's ACTIVE effort from the live
+        // per-step stamp, validated against the model catalog for the
+        // CHILD's resolved model BEFORE the reservation — see
+        // `resolve_child_reasoning_effort` for the full contract.
+        // Threaded onto the child's LoopContext, which the child loop's
+        // prompt assembly copies into every provider request.
+        child_loop_ctx.reasoning_effort = super::variant_resolve::resolve_child_reasoning_effort(
+            &super::variant_resolve::ChildEffortInputs {
+                variant_effort: resolution.reasoning_effort,
+                variant_name: resolution.variant_name.as_deref(),
+                profile_effort: child_loop_ctx.reasoning_effort,
+                profile_name: args.profile.as_deref(),
+                parent_live_effort: ctx
+                    .get_extension::<AgentModel>()
+                    .and_then(|live| live.reasoning_effort),
+                child_model: &child_model,
+                child_role: &child_role,
+                surface: "spawn_agent",
+            },
+        )?;
+
+        // Effective tools = allowlist ∩ policy (R6): the explicit `tools`
+        // argument wins, else the variant's subset, else the profile's
+        // list; the granted policy then strips what the child may never
+        // use — `signal_agent` under MessagingScope::None, spawn_agent
+        // AND fork for a leaf grant — at assembly, so the child's tool
+        // definitions and its `SubAgentExecutor` gate agree (the
+        // call-rejection paths stay as defence-in-depth).
+        let base_allow_list: Option<Vec<String>> = args
+            .tools
+            .clone()
+            .or(resolution.variant_tools.clone())
+            .or(profile_tools);
+        let allow_list =
+            effective_child_tools(parent_registry, base_allow_list, &child_policy, &child_role);
         let tool_defs = build_tool_definitions(parent_registry, allow_list.as_deref());
 
         // Skill listing (parity with the root): advertise "# Available
@@ -364,18 +459,28 @@ impl Tool for SpawnAgentTool {
             .path
             .unwrap_or_else(|| auto_child_path(&infra.registry, infra.agent_id, "spawn"));
 
-        // The session-tree role label and the audit-trail provenance both
-        // prefer the profile name, falling back to the role argument when no
-        // profile was given. Computed before `reserve` consumes `args.role`.
-        let role_label = args.profile.clone().unwrap_or_else(|| args.role.clone());
+        // The session-tree name label and the audit-trail provenance
+        // prefer the variant name, then the profile name, then the
+        // resolved role — so the R4 child name (and the hook matcher
+        // input) carries the variant when one was used.
+        let role_label = resolution
+            .variant_name
+            .clone()
+            .or_else(|| args.profile.clone())
+            .unwrap_or_else(|| child_role.clone());
 
-        // Provenance carried on both typed lifecycle phases. Captured
-        // before `reserve` consumes `args.role`.
+        // Provenance carried on both typed lifecycle phases: the RESOLVED
+        // role and model, with `profile` disclosing the variant name when
+        // a variant was used — `subagent.started` on the parent's
+        // timeline thereby records the variant durably.
         let descriptor = SubagentDescriptor {
             kind: SubagentKind::Spawn,
-            role: args.role.clone(),
-            model: args.model.clone(),
-            profile: args.profile.clone(),
+            role: child_role.clone(),
+            model: child_model.clone(),
+            profile: resolution
+                .variant_name
+                .clone()
+                .or_else(|| args.profile.clone()),
         };
 
         // Two-phase reservation: the guard stays unconfirmed across the
@@ -386,8 +491,8 @@ impl Tool for SpawnAgentTool {
         let guard = AgentRegistry::reserve(
             &infra.registry,
             path.clone(),
-            args.role,
-            args.model.clone(),
+            child_role.clone(),
+            child_model.clone(),
             Some(infra.agent_id),
             child_policy.clone(),
             Some(&spawner_policy),
@@ -415,7 +520,7 @@ impl Tool for SpawnAgentTool {
                 name_stem: slugify_name_stem(&role_label, "spawn"),
                 kind: ChildBranchKind::Spawn,
                 durability: infra.session.child_durability(),
-                model: args.model.clone(),
+                model: child_model.clone(),
                 working_dir: ctx.working_dir().display().to_string(),
             },
         )
@@ -427,7 +532,7 @@ impl Tool for SpawnAgentTool {
         let child_event_sender = ctx
             .get_extension::<crate::provider::agent_event::SharedAgentEventChannel>()
             .map(|ch| {
-                AgentEventSender::new(ch.0.clone(), child_id, format!("spawn/{}", args.model))
+                AgentEventSender::new(ch.0.clone(), child_id, format!("spawn/{child_model}"))
             });
 
         // Typed lifecycle: `Started` is emitted before the child task
@@ -471,7 +576,10 @@ impl Tool for SpawnAgentTool {
         let branch_metadata = ChildBranchMetadata {
             child_agent_id: child_id,
             parent_agent_id: infra.agent_id,
-            profile_name: args.profile.clone(),
+            profile_name: resolution
+                .variant_name
+                .clone()
+                .or_else(|| args.profile.clone()),
             spawned_at: Utc::now(),
         };
 
@@ -502,6 +610,19 @@ impl Tool for SpawnAgentTool {
             child_policy.clone(),
             child_cancel.clone(),
         );
+        // Every agent's context carries its OWN launch model (parent-model
+        // ground truth for the child's own spawns) and its OWN base system
+        // instruction (the carrier `fork` reads for the next level's
+        // parent-context inheritance, R5). The base is final here: the
+        // variant/profile/task instruction plus the skill listing were
+        // installed on `child_loop_ctx` above.
+        child_ctx.insert_extension(Arc::new(AgentModel {
+            model: child_model.clone(),
+            reasoning_effort: child_loop_ctx.reasoning_effort,
+        }));
+        child_ctx.insert_extension(Arc::new(ParentSystemInstruction::new(
+            child_loop_ctx.base_system_instruction(),
+        )));
         // Per-agent result channel (W3.4): a child whose grant lets it
         // delegate gets its own child-result channel — sender on its
         // context for its spawn/fork sites, receiver wired onto its loop
@@ -585,7 +706,7 @@ impl Tool for SpawnAgentTool {
             tool_defs,
             task: args.task,
             output_schema: args.output_schema,
-            model: args.model,
+            model: child_model,
             agent_registry: Arc::clone(&infra.registry),
             result_sender: result_sender.map(|s| (*s).clone()),
             child_id,
@@ -597,7 +718,7 @@ impl Tool for SpawnAgentTool {
             lifecycle,
             router: Arc::clone(&infra.router),
             inbound_capacity: child_policy.inbound_capacity,
-            loop_config: child_policy.loop_config,
+            config: child_config,
             cancel: child_cancel,
             wake_registry: persistent.then(|| Arc::clone(&wake_registry)),
             persistent,
@@ -660,6 +781,7 @@ mod tests {
 
     use super::super::infra::AgentToolInfra;
     use super::*;
+    use crate::agent::child_policy::MessagingScope;
     use crate::agent::message_router::MessageRouter;
     use crate::agent::registry::AgentStatus;
     use crate::error::ProviderError;
@@ -674,6 +796,13 @@ mod tests {
     use crate::session::events::SessionEvent;
     use crate::session::store::EventStore;
     use crate::tool::traits::{Tool as TestTool, ToolOutput as TestToolOutput};
+
+    /// Catalogued model used for child launches throughout these tests:
+    /// child launch paths validate the child's context window against the
+    /// model catalog (agent-variants §7), so an uncatalogued placeholder
+    /// would be rejected before the behavior under test runs. Factual
+    /// (the generated catalog's default), never invented.
+    const CATALOG_MODEL: &str = crate::model_catalog::default_selection().model;
 
     fn envelope_for(args: serde_json::Value) -> ToolEnvelope {
         ToolEnvelope {
@@ -865,7 +994,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let err = tool
             .execute(
-                &envelope_for(json!({"task": "t", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "t", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -1068,7 +1197,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "do it", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "do it", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -1148,7 +1277,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "schedule a check-in", "model": "haiku", "role": "worker"}),
+            json!({"task": "schedule a check-in", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -1212,7 +1341,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let err = tool
             .execute(
-                &envelope_for(json!({"task": "x", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "x", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -1252,7 +1381,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let err = tool
             .execute(
-                &envelope_for(json!({"task": "x", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "x", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -1311,7 +1440,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "introspect", "model": "haiku", "role": "worker"}),
+            json!({"task": "introspect", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -1360,7 +1489,7 @@ mod tests {
         spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "limited", "model": "haiku", "role": "worker", "tools": ["read"]}),
+            json!({"task": "limited", "model": CATALOG_MODEL, "role": "worker", "tools": ["read"]}),
         )
         .await;
 
@@ -1404,7 +1533,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "notify me", "model": "haiku", "role": "worker"}),
+            json!({"task": "notify me", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -1574,7 +1703,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "greet the user", "model": "haiku", "role": "worker"}),
+            json!({"task": "greet the user", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -1625,7 +1754,7 @@ mod tests {
         spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "greet the user", "model": "haiku", "role": "worker"}),
+            json!({"task": "greet the user", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -1677,7 +1806,7 @@ mod tests {
         spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "read only", "model": "haiku", "role": "worker", "tools": ["read"]}),
+            json!({"task": "read only", "model": CATALOG_MODEL, "role": "worker", "tools": ["read"]}),
         )
         .await;
 
@@ -1731,7 +1860,7 @@ mod tests {
         let child_id = spawn_and_join(
             &spawn_tool,
             &ctx,
-            json!({"task": "wait for later instructions", "model": "haiku", "role": "worker"}),
+            json!({"task": "wait for later instructions", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
         let initial = rx.try_recv().expect("initial child result delivered");
@@ -1849,7 +1978,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "will fail", "model": "haiku", "role": "worker"}),
+            json!({"task": "will fail", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -1908,7 +2037,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "do it", "model": "haiku", "role": "worker"}),
+            json!({"task": "do it", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -1925,7 +2054,7 @@ mod tests {
             }
             if let AgentEventKind::Subagent(lifecycle) = ev.event {
                 assert_eq!(ev.agent_id, child_id, "lifecycle events are child-tagged");
-                assert_eq!(&*ev.agent_role, "spawn/haiku");
+                assert_eq!(*ev.agent_role, format!("spawn/{CATALOG_MODEL}"));
                 subagent_events.push(lifecycle);
             }
         }
@@ -1946,7 +2075,7 @@ mod tests {
                 assert_eq!(*c, child_id);
                 assert_eq!(descriptor.kind, SubagentKind::Spawn);
                 assert_eq!(descriptor.role, "worker");
-                assert_eq!(descriptor.model, "haiku");
+                assert_eq!(descriptor.model, CATALOG_MODEL);
                 assert!(descriptor.profile.is_none());
                 assert!(
                     *started_at >= before,
@@ -2040,7 +2169,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "will fail", "model": "haiku", "role": "worker"}),
+            json!({"task": "will fail", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -2134,7 +2263,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "boom", "model": "haiku", "role": "worker"}),
+            json!({"task": "boom", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -2224,7 +2353,7 @@ mod tests {
             &ctx,
             json!({
                 "task": "answer the question",
-                "model": "haiku",
+                "model": CATALOG_MODEL,
                 "role": "worker",
                 "output_schema": {
                     "type": "object",
@@ -2289,7 +2418,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "try bash", "model": "haiku", "role": "worker", "tools": ["search"]}),
+            json!({"task": "try bash", "model": CATALOG_MODEL, "role": "worker", "tools": ["search"]}),
         )
         .await;
         // The child completed its step — the disallowed tool call did not fail
@@ -2318,7 +2447,7 @@ mod tests {
 
         let scan_dirs = vec![dir.path().to_path_buf()];
         let (loop_ctx, tools) =
-            build_child_loop_context(Some("researcher"), "find the bug", &scan_dirs)
+            build_child_loop_context(None, Some("researcher"), "find the bug", &scan_dirs)
                 .expect("profile resolves");
         assert!(
             loop_ctx.system_sections[0].contains("You are a focused researcher."),
@@ -2335,8 +2464,8 @@ mod tests {
     /// the task itself.
     #[test]
     fn build_child_loop_context_default_embeds_task() {
-        let (loop_ctx, tools) =
-            build_child_loop_context(None, "summarise the report", &[]).expect("default builds");
+        let (loop_ctx, tools) = build_child_loop_context(None, None, "summarise the report", &[])
+            .expect("default builds");
         assert!(loop_ctx.system_sections[0].contains("summarise the report"));
         assert!(
             tools.is_none(),
@@ -2352,7 +2481,7 @@ mod tests {
         let scan_dirs = vec![dir.path().to_path_buf()];
         // `LoopContext` is not `Debug`, so the `Ok` arm cannot use
         // `expect_err`; match the result explicitly instead.
-        match build_child_loop_context(Some("missing"), "task", &scan_dirs) {
+        match build_child_loop_context(None, Some("missing"), "task", &scan_dirs) {
             Err(ToolError::ExecutionFailed { reason }) => {
                 assert!(reason.contains("missing"), "{reason}");
             }
@@ -2511,7 +2640,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "try the denied tool", "model": "haiku", "role": "worker"}),
+            json!({"task": "try the denied tool", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -2569,7 +2698,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "probe it", "model": "haiku", "role": "worker"})),
+                &envelope_for(
+                    json!({"task": "probe it", "model": CATALOG_MODEL, "role": "worker"}),
+                ),
                 &ctx,
             )
             .await
@@ -2625,7 +2756,7 @@ mod tests {
         let out = tool
             .execute(
                 &envelope_for(
-                    json!({"task": "produce events", "model": "haiku", "role": "worker"}),
+                    json!({"task": "produce events", "model": CATALOG_MODEL, "role": "worker"}),
                 ),
                 &ctx,
             )
@@ -2684,7 +2815,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "branch me", "model": "haiku", "role": "worker"})),
+                &envelope_for(
+                    json!({"task": "branch me", "model": CATALOG_MODEL, "role": "worker"}),
+                ),
                 &ctx,
             )
             .await
@@ -2797,7 +2930,7 @@ mod tests {
         let _child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "do it", "model": "haiku", "role": "worker"}),
+            json!({"task": "do it", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -2866,7 +2999,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "finish", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "finish", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -2916,7 +3049,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "finish", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "finish", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -2969,7 +3102,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "finish", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "finish", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -3044,7 +3177,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "finish", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "finish", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -3121,7 +3254,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "do it", "model": "haiku", "role": "worker"}),
+            json!({"task": "do it", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -3299,7 +3432,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "read files", "model": "haiku", "role": "worker"})),
+                &envelope_for(
+                    json!({"task": "read files", "model": CATALOG_MODEL, "role": "worker"}),
+                ),
                 &ctx,
             )
             .await
@@ -3368,7 +3503,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "read rel", "model": "haiku", "role": "worker"})),
+                &envelope_for(
+                    json!({"task": "read rel", "model": CATALOG_MODEL, "role": "worker"}),
+                ),
                 &ctx,
             )
             .await
@@ -3470,7 +3607,7 @@ mod tests {
         spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "probe it", "model": "haiku", "role": "worker"}),
+            json!({"task": "probe it", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -3534,7 +3671,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "long haul", "model": "haiku", "role": "worker"})),
+                &envelope_for(
+                    json!({"task": "long haul", "model": CATALOG_MODEL, "role": "worker"}),
+                ),
                 &ctx,
             )
             .await
@@ -3662,7 +3801,7 @@ mod tests {
             .execute(
                 &envelope_for(json!({
                     "task": "inspect your log",
-                    "model": "haiku",
+                    "model": CATALOG_MODEL,
                     "role": "worker",
                     "path": "/smoke/child",
                 })),
@@ -3753,7 +3892,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "wait", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "wait", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -3800,7 +3939,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let err = tool
             .execute(
-                &envelope_for(json!({"task": "x", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "x", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -3858,7 +3997,7 @@ mod tests {
             envelope.child_policy.messaging = MessagingScope::None;
             ctx.insert_extension(Arc::new(envelope));
 
-            let mut args = json!({"task": "quiet work", "model": "haiku", "role": "worker"});
+            let mut args = json!({"task": "quiet work", "model": CATALOG_MODEL, "role": "worker"});
             if let Some(tools) = &explicit_tools {
                 args["tools"] = json!(tools);
             }
@@ -3997,7 +4136,7 @@ mod tests {
         spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "introspect", "model": "haiku", "role": "worker"}),
+            json!({"task": "introspect", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -4041,7 +4180,7 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let err = tool
             .execute(
-                &envelope_for(json!({"task": "x", "model": "haiku", "role": "worker"})),
+                &envelope_for(json!({"task": "x", "model": CATALOG_MODEL, "role": "worker"})),
                 &ctx,
             )
             .await
@@ -4087,7 +4226,7 @@ mod tests {
         let err = tool
             .execute(
                 &envelope_for(json!({
-                    "task": "x", "model": "haiku", "role": "worker",
+                    "task": "x", "model": CATALOG_MODEL, "role": "worker",
                     "child_polciy": { "inbound_capacity": 32 },
                 })),
                 &ctx,
@@ -4123,7 +4262,7 @@ mod tests {
         let err = tool
             .execute(
                 &envelope_for(json!({
-                    "task": "x", "model": "haiku", "role": "worker",
+                    "task": "x", "model": CATALOG_MODEL, "role": "worker",
                     "output_schema": {
                         "type": "object",
                         "properties": {
@@ -4170,7 +4309,7 @@ mod tests {
         let err = tool
             .execute(
                 &envelope_for(json!({
-                    "task": "x", "model": "haiku", "role": "worker",
+                    "task": "x", "model": CATALOG_MODEL, "role": "worker",
                     "child_policy": {
                         "messaging": "siblings_and_parent",
                         "delegation": {"remaining_depth": 2, "max_concurrent_children": 32},
@@ -4195,7 +4334,7 @@ mod tests {
         let err = tool
             .execute(
                 &envelope_for(json!({
-                    "task": "x", "model": "haiku", "role": "worker",
+                    "task": "x", "model": CATALOG_MODEL, "role": "worker",
                     "child_policy": {
                         "messaging": "parent_only",
                         "delegation": {"remaining_depth": 0, "max_concurrent_children": 1},
@@ -4225,7 +4364,7 @@ mod tests {
             &tool,
             &ctx,
             json!({
-                "task": "x", "model": "haiku", "role": "worker",
+                "task": "x", "model": CATALOG_MODEL, "role": "worker",
                 "child_policy": {
                     "messaging": "parent_only",
                     "delegation": {"remaining_depth": 1, "max_concurrent_children": 2},
@@ -4288,7 +4427,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "x", "model": "haiku", "role": "worker"}),
+            json!({"task": "x", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -4331,7 +4470,7 @@ mod tests {
                     call_id: None,
                     name: Some("spawn_agent".to_string()),
                     arguments_delta: json!({
-                        "task": "grandchild", "model": "haiku", "role": "leaf",
+                        "task": "grandchild", "model": CATALOG_MODEL, "role": "leaf",
                     })
                     .to_string(),
                     kind: crate::provider::request::ToolCallKind::Function,
@@ -4360,7 +4499,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "try to delegate", "model": "haiku", "role": "worker"}),
+            json!({"task": "try to delegate", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
 
@@ -4432,7 +4571,7 @@ mod tests {
                         name: Some("spawn_agent".to_string()),
                         arguments_delta: json!({
                             "task": "grandchild-task",
-                            "model": "haiku",
+                            "model": CATALOG_MODEL,
                             "role": "leaf",
                         })
                         .to_string(),
@@ -4511,7 +4650,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "child-task", "model": "haiku", "role": "lead"})),
+                &envelope_for(
+                    json!({"task": "child-task", "model": CATALOG_MODEL, "role": "lead"}),
+                ),
                 &ctx,
             )
             .await
@@ -4687,7 +4828,7 @@ mod tests {
                         name: Some("spawn_agent".to_string()),
                         arguments_delta: json!({
                             "task": "usage-grandchild-task",
-                            "model": "haiku",
+                            "model": CATALOG_MODEL,
                             "role": "leaf",
                         })
                         .to_string(),
@@ -4779,7 +4920,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "child-task", "model": "haiku", "role": "lead"})),
+                &envelope_for(
+                    json!({"task": "child-task", "model": CATALOG_MODEL, "role": "lead"}),
+                ),
                 &ctx,
             )
             .await
@@ -4912,7 +5055,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "child-task", "model": "haiku", "role": "lead"})),
+                &envelope_for(
+                    json!({"task": "child-task", "model": CATALOG_MODEL, "role": "lead"}),
+                ),
                 &ctx,
             )
             .await
@@ -5010,7 +5155,7 @@ mod tests {
                         name: Some("spawn_agent".to_string()),
                         arguments_delta: json!({
                             "task": "grandchild-task",
-                            "model": "haiku",
+                            "model": CATALOG_MODEL,
                             "role": "leaf",
                         })
                         .to_string(),
@@ -5079,7 +5224,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "child-task", "model": "haiku", "role": "lead"})),
+                &envelope_for(
+                    json!({"task": "child-task", "model": CATALOG_MODEL, "role": "lead"}),
+                ),
                 &ctx,
             )
             .await
@@ -5337,7 +5484,9 @@ mod tests {
         let tool = SpawnAgentTool::new();
         let out = tool
             .execute(
-                &envelope_for(json!({"task": "long haul", "model": "haiku", "role": "worker"})),
+                &envelope_for(
+                    json!({"task": "long haul", "model": CATALOG_MODEL, "role": "worker"}),
+                ),
                 &ctx,
             )
             .await
@@ -5428,7 +5577,7 @@ mod tests {
                         name: Some("spawn_agent".to_string()),
                         arguments_delta: json!({
                             "task": "linger-grandchild-task",
-                            "model": "haiku",
+                            "model": CATALOG_MODEL,
                             "role": "leaf",
                             // Per-spawn clearing of the inherited linger:
                             // the leaf grandchild must not linger itself,
@@ -5506,7 +5655,7 @@ mod tests {
         let out = tool
             .execute(
                 &envelope_for(json!({
-                    "task": "child-task", "model": "haiku", "role": "lead",
+                    "task": "child-task", "model": CATALOG_MODEL, "role": "lead",
                     "child_policy": {
                         "messaging": "siblings_and_parent",
                         "delegation": {
@@ -5537,6 +5686,7 @@ mod tests {
             Some(ChildLoopConfig {
                 step_timeout_secs: None,
                 linger_secs: Some(2),
+                context_window: None,
             }),
         );
 
@@ -5630,7 +5780,7 @@ mod tests {
         let err = tool
             .execute(
                 &envelope_for(json!({
-                    "task": "capped", "model": "haiku", "role": "worker",
+                    "task": "capped", "model": CATALOG_MODEL, "role": "worker",
                     "child_policy": {
                         "messaging": "siblings_and_parent",
                         "delegation": {
@@ -5690,7 +5840,7 @@ mod tests {
             &tool,
             &ctx,
             json!({
-                "task": "will time out", "model": "haiku", "role": "worker",
+                "task": "will time out", "model": CATALOG_MODEL, "role": "worker",
                 "child_policy": {
                     "messaging": "siblings_and_parent",
                     "delegation": {
@@ -5745,7 +5895,7 @@ mod tests {
         let err = tool
             .execute(
                 &envelope_for(json!({
-                    "task": "x", "model": "haiku", "role": "worker",
+                    "task": "x", "model": CATALOG_MODEL, "role": "worker",
                     "child_policy": {
                         "messaging": "siblings_and_parent",
                         "delegation": {
@@ -5801,7 +5951,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "plain", "model": "haiku", "role": "worker"}),
+            json!({"task": "plain", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
         assert_eq!(
@@ -5861,7 +6011,7 @@ mod tests {
         let child_id = spawn_and_join(
             &tool,
             &ctx,
-            json!({"task": "wait for mail", "model": "haiku", "role": "worker"}),
+            json!({"task": "wait for mail", "model": CATALOG_MODEL, "role": "worker"}),
         )
         .await;
         assert_eq!(
@@ -5959,5 +6109,832 @@ mod tests {
         .await
         .expect("child re-parks after the wake step")
         .expect("status watch open");
+    }
+
+    // ----- agent-variants (R3/R6/§7) -------------------------------------
+
+    /// Install the built-in variant catalog on a parent context, the way
+    /// the assembly seam does.
+    fn install_builtin_catalog(ctx: &ToolContext) {
+        let catalog = crate::agent::variants::VariantCatalog::build(None, &std::env::temp_dir())
+            .expect("built-in catalog builds");
+        ctx.insert_extension(Arc::new(catalog));
+    }
+
+    /// R3 + acceptance: a spawned `explorer`'s provider-facing tool list
+    /// (the actual first provider call payload) contains NO
+    /// write/edit/bash/apply_patch — registry-level filtering, not call
+    /// rejection. The parent's model is inherited (no explicit model)
+    /// from the published AgentModel ground truth.
+    #[tokio::test]
+    async fn spawned_explorer_provider_tool_list_has_no_write_tools() {
+        let captured = Arc::new(StdMutex::new(Vec::new()));
+        let provider: Arc<dyn Provider> = Arc::new(CapturingProvider {
+            captured: Arc::clone(&captured),
+            responses: StdMutex::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: "explored".to_string(),
+                },
+                done_event(),
+            ]]),
+        });
+
+        let mut registry = ToolRegistry::new();
+        for name in ["read", "search", "write", "edit", "bash", "apply_patch"] {
+            registry.register(Box::new(EchoStubTool { tool_name: name }));
+        }
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(registry),
+            Arc::new(MessageRouter::new()),
+        );
+        install_builtin_catalog(&ctx);
+        ctx.insert_extension(Arc::new(super::super::infra::AgentModel {
+            model: CATALOG_MODEL.to_owned(),
+            reasoning_effort: None,
+        }));
+
+        let tool = SpawnAgentTool::new();
+        spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "map the crate", "variant": "explorer"}),
+        )
+        .await;
+
+        let defs = captured.lock().unwrap().clone();
+        let names: Vec<String> = defs
+            .iter()
+            .map(|def| match def {
+                ProviderToolDefinition::Function(function) => function.name.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        for forbidden in ["write", "edit", "bash", "apply_patch"] {
+            assert!(
+                !names.iter().any(|n| n == forbidden),
+                "explorer's provider payload must not offer '{forbidden}': {names:?}",
+            );
+        }
+        assert!(
+            names.iter().any(|n| n == "read") && names.iter().any(|n| n == "search"),
+            "explorer keeps its read-only subset: {names:?}",
+        );
+    }
+
+    /// R6: a leaf child (granted remaining_depth == 0 — the default
+    /// derivation from a depth-1 parent) is shown NEITHER spawn_agent nor
+    /// fork in its provider payload, even with no allow-list at all.
+    #[tokio::test]
+    async fn leaf_child_provider_tool_list_omits_spawn_and_fork() {
+        let captured = Arc::new(StdMutex::new(Vec::new()));
+        let provider: Arc<dyn Provider> = Arc::new(CapturingProvider {
+            captured: Arc::clone(&captured),
+            responses: StdMutex::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: "done".to_string(),
+                },
+                done_event(),
+            ]]),
+        });
+
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(EchoStubTool { tool_name: "read" }));
+        registry.register(Box::new(SpawnAgentTool::new()));
+        registry.register(Box::new(super::super::fork_tool::ForkTool::new()));
+        let agent_registry = AgentRegistry::shared();
+        // test_envelope grants the parent depth 1 → the child's derived
+        // grant is depth 0: a leaf.
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(registry),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = SpawnAgentTool::new();
+        spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "leaf work", "model": CATALOG_MODEL, "role": "worker"}),
+        )
+        .await;
+
+        let defs = captured.lock().unwrap().clone();
+        let names: Vec<String> = defs
+            .iter()
+            .map(|def| match def {
+                ProviderToolDefinition::Function(function) => function.name.clone(),
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "spawn_agent") && !names.iter().any(|n| n == "fork"),
+            "a leaf must not SEE delegation tools: {names:?}",
+        );
+        assert!(
+            names.iter().any(|n| n == "read"),
+            "non-delegation tools survive: {names:?}",
+        );
+    }
+
+    /// Acceptance: a child spawned with NO model (and a variant that sets
+    /// none) launches on the PARENT's model — asserted against the actual
+    /// provider request, not the descriptor. The parent's model comes
+    /// from its agent-registry entry (runtime ground truth).
+    #[tokio::test]
+    async fn no_model_child_launches_on_parents_model_from_registry() {
+        // A catalogued model that is NOT the catalog default, so the
+        // assertion cannot pass by accident (factual catalog id).
+        let parent_model = "gpt-5.4-mini";
+        assert_ne!(parent_model, CATALOG_MODEL, "test precondition");
+
+        let captured = Arc::new(StdMutex::new(Vec::new()));
+        let provider: Arc<dyn Provider> = Arc::new(RequestCapturingProvider {
+            captured: Arc::clone(&captured),
+            responses: StdMutex::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: "done".to_string(),
+                },
+                done_event(),
+            ]]),
+        });
+
+        let agent_registry = AgentRegistry::shared();
+        let parent_guard = AgentRegistry::reserve(
+            &agent_registry,
+            "/parent".to_owned(),
+            "orchestrator".to_owned(),
+            parent_model.to_owned(),
+            None,
+            test_envelope().child_policy,
+            None,
+        )
+        .expect("register parent");
+        let parent_id = parent_guard.id();
+        parent_guard.confirm().expect("confirm parent");
+
+        let ctx = parent_ctx(
+            provider,
+            parent_id,
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        install_builtin_catalog(&ctx);
+
+        let tool = SpawnAgentTool::new();
+        spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "inherit", "variant": "implementer"}),
+        )
+        .await;
+
+        let requests = captured.lock().unwrap().clone();
+        assert!(!requests.is_empty(), "the child made a provider call");
+        for request in &requests {
+            assert_eq!(
+                request.model, parent_model,
+                "the child's provider calls must run on the parent's model",
+            );
+        }
+    }
+
+    /// The reviewer ruling end-to-end on the spawn surface: no model
+    /// anywhere → typed error naming `variants.reviewer.model`, and
+    /// nothing is reserved or persisted.
+    #[tokio::test]
+    async fn reviewer_without_model_fails_naming_config_key() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        install_builtin_catalog(&ctx);
+
+        let tool = SpawnAgentTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({"task": "review", "variant": "reviewer"})),
+                &ctx,
+            )
+            .await
+            .expect_err("reviewer without a model must be refused");
+        assert!(
+            err.to_string().contains("variants.reviewer.model"),
+            "the failure names the missing config key: {err}",
+        );
+        assert!(
+            agent_registry.read().is_empty(),
+            "a refused spawn reserves nothing",
+        );
+    }
+
+    /// §7: a child on an uncatalogued model is rejected BEFORE launch —
+    /// mirroring the root's `oversized_explicit_window_is_rejected_at_build`
+    /// semantics (children have no explicit-window escape hatch, so the
+    /// catalog is the only source of a truthful window) — and the
+    /// rejection leaves no registry entry.
+    #[tokio::test]
+    async fn child_with_uncatalogued_model_is_rejected_before_launch() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = SpawnAgentTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "t", "model": "not-in-catalog-model-xyz", "role": "worker",
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("an uncatalogued child model must be rejected");
+        assert!(
+            err.to_string().contains("not-in-catalog-model-xyz"),
+            "the rejection names the model: {err}",
+        );
+        assert!(
+            agent_registry.read().is_empty(),
+            "the rejection precedes the reservation",
+        );
+    }
+
+    /// H: the `subagent.started` audit on the parent's store discloses
+    /// the variant durably — descriptor.profile carries the variant name,
+    /// and the resolved role defaults to it.
+    #[tokio::test]
+    async fn subagent_started_audit_discloses_variant() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![vec![
+            ProviderEvent::TextDelta {
+                text: "done".to_string(),
+            },
+            done_event(),
+        ]]));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        install_builtin_catalog(&ctx);
+
+        let tool = SpawnAgentTool::new();
+        let child_id = spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "explore", "variant": "explorer", "model": CATALOG_MODEL}),
+        )
+        .await;
+
+        let infra = ctx
+            .get_extension::<AgentToolInfra>()
+            .expect("infra installed");
+        let started = infra
+            .event_store
+            .events()
+            .into_iter()
+            .find_map(|e| match e {
+                SessionEvent::Custom {
+                    event_type, data, ..
+                } if event_type == crate::provider::agent_event::SUBAGENT_STARTED_EVENT_TYPE => {
+                    Some(data)
+                }
+                _ => None,
+            })
+            .expect("subagent.started audit on the parent store");
+        assert_eq!(started["child_id"], child_id.to_string());
+        assert_eq!(
+            started["descriptor"]["profile"], "explorer",
+            "the variant is disclosed durably on the started audit: {started}",
+        );
+        assert_eq!(
+            started["descriptor"]["role"], "explorer",
+            "the role defaults to the variant name: {started}",
+        );
+        assert_eq!(started["descriptor"]["model"], CATALOG_MODEL);
+    }
+
+    /// F2 regression: `AgentModel` is refreshed at STEP START with the
+    /// model the step's provider requests actually use, and parent-model
+    /// inheritance prefers that live value over the registry row stamped
+    /// at build. Agent built (registered + assembly-stamped) on model A,
+    /// runtime step driven on model B, spawn with NO model from inside
+    /// that step → the child launches on B (asserted on the child's
+    /// actual provider request), the `subagent.started` descriptor
+    /// discloses B, and the parent's registry row still says A (proving
+    /// the flip in `resolve_parent_model` is what carries the switch).
+    #[tokio::test]
+    async fn runtime_model_switch_reaches_child_via_live_agent_model() {
+        use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
+
+        // Two catalogued models (factual catalog ids, never invented):
+        // A is the build-time model, B the runtime-switched step model.
+        let model_a = "gpt-5.4-mini";
+        let model_b = CATALOG_MODEL;
+        assert_ne!(model_a, model_b, "test precondition");
+
+        // The child's provider: captures the child's real request so the
+        // launch model is asserted against ground truth.
+        let child_captured = Arc::new(StdMutex::new(Vec::new()));
+        let child_provider: Arc<dyn Provider> = Arc::new(RequestCapturingProvider {
+            captured: Arc::clone(&child_captured),
+            responses: StdMutex::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: "child done".to_string(),
+                },
+                done_event(),
+            ]]),
+        });
+
+        // The parent is registered at build time on model A — the row
+        // that goes stale across a runtime `/model` switch.
+        let agent_registry = AgentRegistry::shared();
+        let parent_guard = AgentRegistry::reserve(
+            &agent_registry,
+            "/parent".to_owned(),
+            "orchestrator".to_owned(),
+            model_a.to_owned(),
+            None,
+            test_envelope().child_policy,
+            None,
+        )
+        .expect("register parent");
+        let parent_id = parent_guard.id();
+        parent_guard.confirm().expect("confirm parent");
+
+        let ctx = parent_ctx(
+            child_provider,
+            parent_id,
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        // The assembly-time stamp: model A, exactly what the builder
+        // publishes at build.
+        ctx.insert_extension(Arc::new(AgentModel {
+            model: model_a.to_owned(),
+            reasoning_effort: None,
+        }));
+        let ctx = Arc::new(ctx);
+
+        // The parent step's tool surface carries the spawn tool; the
+        // executor exposes the parent's context, so the step-start
+        // refresh lands on it (the same seam every driver uses).
+        let mut step_registry = ToolRegistry::new();
+        step_registry.register(Box::new(SpawnAgentTool::new()));
+        let executor = SubAgentExecutor::new(Arc::new(step_registry), None, Arc::clone(&ctx));
+
+        // The parent's own step: one stream that calls spawn_agent with
+        // NO model, then a closing stream.
+        let parent_provider = MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc-spawn".to_string(),
+                    call_id: None,
+                    name: Some("spawn_agent".to_string()),
+                    arguments_delta: json!({"task": "child work", "role": "worker"}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "spawned".to_string(),
+                },
+                done_event(),
+            ],
+        ]);
+
+        let store = EventStore::new();
+        let mut loop_context = LoopContext::new("base");
+        let config = crate::r#loop::config::AgentLoopConfig::default();
+        let _result = run_agent_step(AgentStepRequest {
+            provider: &parent_provider,
+            executor: &executor,
+            store: &store,
+            user_prompt: "delegate the work",
+            tools: &[],
+            output_schema: None,
+            // The runtime-switched model for THIS step — exactly what
+            // the CLI orchestrator passes after reading SlashState.model.
+            model: model_b,
+            config: &config,
+            event_tx: None,
+            inbound: None,
+            loop_context: &mut loop_context,
+            cancel: None,
+        })
+        .await
+        .expect("parent step runs");
+
+        // The step-start refresh landed on the parent's context.
+        let live = ctx
+            .get_extension::<AgentModel>()
+            .expect("AgentModel stays published");
+        assert_eq!(
+            live.model, model_b,
+            "the step-start refresh must re-publish the step's actual model",
+        );
+        // …while the registry row keeps its stale build-time stamp.
+        assert_eq!(
+            agent_registry
+                .read()
+                .get(parent_id)
+                .expect("parent registered")
+                .model,
+            model_a,
+            "the registry row is stamped at build and stays stale — the live \
+             extension is what must carry the switch",
+        );
+
+        // Wait for the spawned child to finish its step.
+        let handles = ctx
+            .get_extension::<AgentHandles>()
+            .expect("AgentHandles installed");
+        let child_id = {
+            let ids = handles.list_children();
+            assert_eq!(ids.len(), 1, "exactly one child spawned: {ids:?}");
+            ids[0]
+        };
+        let mut status_rx = handles
+            .status_rx(child_id)
+            .expect("status receiver stored for child");
+        tokio::time::timeout(Duration::from_secs(5), async {
+            status_rx
+                .wait_for(|status| *status == AgentStatus::Idle || status.is_terminal())
+                .await
+        })
+        .await
+        .expect("child reaches idle or terminal status")
+        .expect("status watch remains open");
+
+        // The child's actual provider request runs on B, not A.
+        let child_requests = child_captured.lock().unwrap().clone();
+        assert!(!child_requests.is_empty(), "the child made a provider call");
+        for request in &child_requests {
+            assert_eq!(
+                request.model, model_b,
+                "the child must inherit the LIVE step model, not the stale \
+                 build-time registry stamp",
+            );
+        }
+
+        // The subagent.started descriptor discloses B durably.
+        let infra = ctx
+            .get_extension::<AgentToolInfra>()
+            .expect("infra installed");
+        let started = infra
+            .event_store
+            .events()
+            .into_iter()
+            .find_map(|e| match e {
+                SessionEvent::Custom {
+                    event_type, data, ..
+                } if event_type == crate::provider::agent_event::SUBAGENT_STARTED_EVENT_TYPE => {
+                    Some(data)
+                }
+                _ => None,
+            })
+            .expect("subagent.started audit on the parent store");
+        assert_eq!(
+            started["descriptor"]["model"], model_b,
+            "the started descriptor discloses the live model: {started}",
+        );
+    }
+
+    /// Owner ruling 2026-07-07 (context window overrideable), end to
+    /// end through the spawn tool: an explicit
+    /// `child_policy.loop_config.context_window` above the catalogued
+    /// child model's maximum is rejected as a typed error naming the
+    /// child knob — never a silent clamp, never a launched child whose
+    /// protections sit beyond the real wall.
+    #[tokio::test]
+    async fn oversized_explicit_child_window_is_rejected_at_spawn() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = SpawnAgentTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "t",
+                    "role": "worker",
+                    "model": "gpt-5.3-codex-spark",
+                    "child_policy": {
+                        "messaging": "siblings_and_parent",
+                        "delegation": { "remaining_depth": 0, "max_concurrent_children": 4 },
+                        "inbound_capacity": 8,
+                        "loop_config": { "context_window": 272_000 },
+                    },
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("an oversized explicit child window must abort the spawn");
+        let reason = err.to_string();
+        assert!(reason.contains("272000"), "names the override: {reason}");
+        assert!(reason.contains("128000"), "names the catalog max: {reason}");
+        assert!(
+            reason.contains("child_policy.loop_config.context_window"),
+            "names the child knob: {reason}",
+        );
+        assert!(
+            agent_registry.read().list().is_empty(),
+            "the refused spawn leaves no registry entry",
+        );
+    }
+
+    /// Re-review R2, end to end through the spawn tool: a variant whose
+    /// EXPLICITLY configured reasoning effort is not supported by the
+    /// child's resolved model is refused as a typed error naming the
+    /// setting — BEFORE the reservation, so no registry entry and no
+    /// audit residue survive the refusal ("none" is declared for no
+    /// catalogued model — factual catalog content).
+    #[tokio::test]
+    async fn variant_effort_unsupported_by_child_model_is_rejected_at_spawn() {
+        use std::collections::BTreeMap;
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        let mut configured = BTreeMap::new();
+        configured.insert(
+            "scout".to_owned(),
+            crate::config::types::VariantSettings {
+                prompt: Some("Scout the area.".to_owned()),
+                reasoning_effort: Some("none".to_owned()),
+                ..crate::config::types::VariantSettings::default()
+            },
+        );
+        let catalog =
+            crate::agent::variants::VariantCatalog::build(Some(&configured), &std::env::temp_dir())
+                .expect("catalog builds");
+        ctx.insert_extension(Arc::new(catalog));
+
+        let tool = SpawnAgentTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "task": "t",
+                    "variant": "scout",
+                    "model": CATALOG_MODEL,
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("an unsupported explicit variant effort must abort the spawn");
+        let reason = err.to_string();
+        assert!(
+            reason.contains("variants.scout.reasoning_effort"),
+            "names the setting: {reason}",
+        );
+        assert!(
+            reason.contains("low, medium, high, xhigh"),
+            "lists the model's catalogued efforts: {reason}",
+        );
+        assert!(
+            agent_registry.read().list().is_empty(),
+            "the refused spawn leaves no registry entry",
+        );
+    }
+
+    /// Owner ruling 2026-07-07 (reasoning effort inherited): with no
+    /// variant effort and no profile effort, the child inherits the
+    /// parent's ACTIVE effort from the live per-step stamp — asserted on
+    /// the child's actual provider requests. A parent running with no
+    /// effort passes None through unchanged (today's behavior).
+    #[tokio::test]
+    async fn child_inherits_parents_active_reasoning_effort() {
+        use crate::provider::request::ReasoningEffort;
+
+        for (parent_effort, expected) in [
+            (Some(ReasoningEffort::High), Some(ReasoningEffort::High)),
+            (None, None),
+        ] {
+            let captured = Arc::new(StdMutex::new(Vec::new()));
+            let provider: Arc<dyn Provider> = Arc::new(RequestCapturingProvider {
+                captured: Arc::clone(&captured),
+                responses: StdMutex::new(vec![vec![
+                    ProviderEvent::TextDelta {
+                        text: "done".to_string(),
+                    },
+                    done_event(),
+                ]]),
+            });
+            let agent_registry = AgentRegistry::shared();
+            let ctx = parent_ctx(
+                provider,
+                Uuid::new_v4(),
+                &agent_registry,
+                Arc::new(ToolRegistry::new()),
+                Arc::new(MessageRouter::new()),
+            );
+            // The parent's live per-step stamp: model + effort together.
+            ctx.insert_extension(Arc::new(AgentModel {
+                model: CATALOG_MODEL.to_owned(),
+                reasoning_effort: parent_effort,
+            }));
+
+            let tool = SpawnAgentTool::new();
+            spawn_and_join(
+                &tool,
+                &ctx,
+                json!({"task": "inherit effort", "role": "worker"}),
+            )
+            .await;
+
+            let requests = captured.lock().unwrap().clone();
+            assert!(!requests.is_empty(), "the child made a provider call");
+            for request in &requests {
+                assert_eq!(
+                    request.reasoning_effort, expected,
+                    "the child inherits exactly the parent's active effort \
+                     (parent: {parent_effort:?})",
+                );
+            }
+        }
+    }
+
+    /// §3.6: a variant's reasoning effort reaches the child's actual
+    /// provider requests.
+    #[tokio::test]
+    async fn variant_reasoning_effort_reaches_child_provider_requests() {
+        use std::collections::BTreeMap;
+
+        let captured = Arc::new(StdMutex::new(Vec::new()));
+        let provider: Arc<dyn Provider> = Arc::new(RequestCapturingProvider {
+            captured: Arc::clone(&captured),
+            responses: StdMutex::new(vec![vec![
+                ProviderEvent::TextDelta {
+                    text: "done".to_string(),
+                },
+                done_event(),
+            ]]),
+        });
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+        // Owner ruling 2026-07-07: the variant's effort WINS over the
+        // parent's live effort — stamp a conflicting parent effort to
+        // prove precedence, not just presence.
+        ctx.insert_extension(Arc::new(AgentModel {
+            model: CATALOG_MODEL.to_owned(),
+            reasoning_effort: Some(crate::provider::request::ReasoningEffort::High),
+        }));
+        let mut configured = BTreeMap::new();
+        configured.insert(
+            "scout".to_owned(),
+            crate::config::types::VariantSettings {
+                prompt: Some("Scout the area.".to_owned()),
+                reasoning_effort: Some("low".to_owned()),
+                ..crate::config::types::VariantSettings::default()
+            },
+        );
+        let catalog =
+            crate::agent::variants::VariantCatalog::build(Some(&configured), &std::env::temp_dir())
+                .expect("catalog builds");
+        ctx.insert_extension(Arc::new(catalog));
+
+        let tool = SpawnAgentTool::new();
+        spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "scout it", "variant": "scout", "model": CATALOG_MODEL}),
+        )
+        .await;
+
+        let requests = captured.lock().unwrap().clone();
+        assert!(!requests.is_empty(), "the child made a provider call");
+        for request in &requests {
+            assert_eq!(
+                request.reasoning_effort,
+                Some(crate::provider::request::ReasoningEffort::Low),
+                "the variant's reasoning effort must ride every child request \
+                 (and win over the parent's live High effort)",
+            );
+        }
+    }
+
+    /// R5 (spawn side): the spawned child's own context carries ITS OWN
+    /// base system instruction under `ParentSystemInstruction` — proven
+    /// from inside the child via a probe tool — so the child's own forks
+    /// inherit the child's context, not the grandparent's.
+    #[tokio::test]
+    async fn spawned_child_context_carries_its_own_base_instruction() {
+        struct BaseProbe {
+            seen: Arc<StdMutex<Option<String>>>,
+        }
+        #[async_trait]
+        impl TestTool for BaseProbe {
+            fn name(&self) -> &'static str {
+                "base_probe"
+            }
+            fn description(&self) -> &'static str {
+                "records the ParentSystemInstruction it sees"
+            }
+            fn input_schema(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
+            fn effect(&self) -> ToolEffect {
+                ToolEffect::ReadOnly
+            }
+            async fn execute(
+                &self,
+                _envelope: &ToolEnvelope,
+                ctx: &ToolContext,
+            ) -> Result<TestToolOutput, ToolError> {
+                *self.seen.lock().unwrap() = ctx
+                    .get_extension::<crate::agent::fork::ParentSystemInstruction>()
+                    .map(|ext| ext.as_str().to_owned());
+                Ok(TestToolOutput::success(serde_json::json!({"ok": true})))
+            }
+        }
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc-probe".to_string(),
+                    call_id: None,
+                    name: Some("base_probe".to_string()),
+                    arguments_delta: "{}".to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![
+                ProviderEvent::TextDelta {
+                    text: "done".to_string(),
+                },
+                done_event(),
+            ],
+        ]));
+        let seen = Arc::new(StdMutex::new(None));
+        let mut registry = ToolRegistry::new();
+        registry.register(Box::new(BaseProbe {
+            seen: Arc::clone(&seen),
+        }));
+        let agent_registry = AgentRegistry::shared();
+        let ctx = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(registry),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = SpawnAgentTool::new();
+        spawn_and_join(
+            &tool,
+            &ctx,
+            json!({"task": "probe your base", "model": CATALOG_MODEL, "role": "worker"}),
+        )
+        .await;
+
+        let base = seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the child's context must publish ParentSystemInstruction");
+        assert!(
+            base.contains("probe your base"),
+            "the published value is the CHILD's own task-derived base: {base}",
+        );
     }
 }

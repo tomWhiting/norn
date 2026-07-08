@@ -135,12 +135,19 @@ pub(crate) fn resolve_base_profile(
 ///
 /// `diagnostics` is the *resolved* collector (caller-supplied when present,
 /// otherwise the base's own) so an embedder's collector is never displaced.
+///
+/// # Errors
+///
+/// Returns [`NornError::Config`] when the variant catalog cannot be built
+/// from the merged settings (`prompt`/`prompt_file` conflict, unreadable
+/// prompt file, unrecognised reasoning effort) — a startup error, never
+/// swallowed.
 pub(crate) fn install_runtime_base_extensions(
     shared: &ToolContext,
     base: &LoadedRuntimeBase,
     diagnostics: Option<&Arc<DiagnosticCollector>>,
     working_dir: &Path,
-) {
+) -> Result<(), NornError> {
     let effective_diagnostics =
         diagnostics.map_or_else(|| Arc::clone(&base.diagnostics), Arc::clone);
     crate::runtime_init::install_runtime_extensions(
@@ -169,6 +176,14 @@ pub(crate) fn install_runtime_base_extensions(
     // rules from the merged settings are silently unenforced on the
     // embedded path (the CLI installs the policy itself).
     crate::runtime_init::install_permission_policy(shared, &base.settings);
+    // Agent variants (R1/R2): compile the merged `variants` settings over
+    // the built-ins and publish the catalog the spawn/fork/rhai variant
+    // resolution reads. With zero settings the catalog still carries the
+    // built-ins (`explorer`, `reviewer`, `implementer`). Prompt files are
+    // read eagerly inside the build, so a broken variant fails the build
+    // here — at startup — with the typed catalog error.
+    crate::runtime_init::install_variant_catalog(shared, &base.settings, working_dir)?;
+    Ok(())
 }
 
 /// Finish the merged hook registry by appending the diagnostic stop hook.
@@ -1023,7 +1038,8 @@ mod tests {
         let base = crate::runtime_init::load_runtime_base(cwd.path(), &mut profile, None, None)
             .expect("runtime base loads");
         let ctx = ToolContext::empty();
-        install_runtime_base_extensions(&ctx, &base, None, cwd.path());
+        install_runtime_base_extensions(&ctx, &base, None, cwd.path())
+            .expect("runtime base extensions install");
 
         let snapshot = base.diagnostics.snapshot();
         assert!(
@@ -1032,5 +1048,31 @@ mod tests {
                 .any(|d| d.code == "skill-missing-description"),
             "the malformed skill must surface a diagnostic on the shared collector: {snapshot:?}",
         );
+    }
+
+    /// Agent variants: the assembly seam publishes the compiled
+    /// [`crate::agent::variants::VariantCatalog`] on the shared tool
+    /// context even with ZERO variant settings — the built-ins
+    /// (`explorer`, `reviewer`, `implementer`) are resolvable on every
+    /// runtime-base build (CLI and embedded `AgentBuilder` alike).
+    #[test]
+    fn install_runtime_base_extensions_publishes_variant_catalog_with_builtins() {
+        let cwd = tempfile::tempdir().expect("tempdir");
+        let mut profile = crate::profile::Profile::default();
+        let base = crate::runtime_init::load_runtime_base(cwd.path(), &mut profile, None, None)
+            .expect("runtime base loads");
+        let ctx = ToolContext::empty();
+        install_runtime_base_extensions(&ctx, &base, None, cwd.path())
+            .expect("runtime base extensions install");
+
+        let catalog = ctx
+            .get_extension::<crate::agent::variants::VariantCatalog>()
+            .expect("the variant catalog must be published at assembly");
+        for name in ["explorer", "reviewer", "implementer"] {
+            assert!(
+                catalog.get(name).is_some(),
+                "built-in variant '{name}' must resolve with zero settings",
+            );
+        }
     }
 }

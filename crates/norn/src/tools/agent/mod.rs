@@ -16,9 +16,10 @@ pub mod infra;
 pub(crate) mod lifecycle;
 pub mod reclaim;
 pub mod spawn;
-mod spawn_context;
+pub(crate) mod spawn_context;
 pub(crate) mod spawn_launch;
 pub(crate) mod spawn_outcome;
+pub(crate) mod variant_resolve;
 
 pub use self::coord::{
     CloseAgentTool, SIGNAL_AGENT_TOOL_NAME, SignalAgentTool, WAKE_AGENT_TOOL_NAME, WakeAgentTool,
@@ -26,7 +27,7 @@ pub use self::coord::{
 pub(crate) use self::fork_outcome::ForkOutcome;
 pub use self::fork_tool::{FORK_TOOL_NAME, ForkTool};
 pub use self::handle::{AgentHandle, AgentHandles, AgentWakeRegistry, WakeRequestOutcome};
-pub use self::infra::{AgentCancellation, AgentToolInfra};
+pub use self::infra::{AgentCancellation, AgentModel, AgentToolInfra};
 pub(crate) use self::lifecycle::append_message_audit;
 pub use self::reclaim::ReclaimOnResultDelivery;
 pub use self::spawn::{SPAWN_TOOL_NAME, SpawnAgentTool};

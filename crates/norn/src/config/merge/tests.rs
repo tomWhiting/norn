@@ -14,7 +14,7 @@ use super::merge_settings;
 use crate::config::types::{
     AgentSettings, HookEntry, HookSettings, LengthOverrideEntry, McpServerSettings,
     ModelAliasSettings, NornSettings, PermissionSettings, ProviderProfileSettings,
-    ProviderSettings, SkillToolSettings, ToolSettings, WriteToolSettings,
+    ProviderSettings, SkillToolSettings, ToolSettings, VariantSettings, WriteToolSettings,
 };
 
 fn ns_model(model: &str) -> NornSettings {
@@ -664,6 +664,7 @@ fn all_none_layers_produce_all_none_result() {
     assert!(merged.hooks.is_none());
     assert!(merged.tools.is_none());
     assert!(merged.mcp_servers.is_none());
+    assert!(merged.variants.is_none());
 }
 
 #[test]
@@ -683,4 +684,132 @@ fn empty_some_permissions_still_produces_some_result() {
     let merged = merge_settings(&mut usr, &mut prj, &mut local, &mut ovr);
     let perms = merged.permissions.expect("permissions present");
     assert_eq!(perms.deny.as_deref(), Some(&[] as &[String]));
+}
+
+// ---------------------------------------------------------------------------
+// Agent variants (D3: keyed, wholesale-by-name, later layer wins)
+// ---------------------------------------------------------------------------
+
+fn variant_map(entries: &[(&str, VariantSettings)]) -> BTreeMap<String, VariantSettings> {
+    entries
+        .iter()
+        .map(|(name, variant)| ((*name).to_owned(), variant.clone()))
+        .collect()
+}
+
+#[test]
+fn variants_same_name_project_fully_replaces_user_definition() {
+    let mut user = NornSettings {
+        variants: Some(variant_map(&[(
+            "reviewer",
+            VariantSettings {
+                description: Some("user reviewer".to_owned()),
+                prompt: Some("user prompt".to_owned()),
+                tools: Some(vec!["read".to_owned()]),
+                model: Some("user-model".to_owned()),
+                reasoning_effort: Some("low".to_owned()),
+                ..VariantSettings::default()
+            },
+        )])),
+        ..NornSettings::default()
+    };
+    let mut project = NornSettings {
+        variants: Some(variant_map(&[(
+            "reviewer",
+            VariantSettings {
+                // Only a model — everything else absent. Wholesale replace
+                // means the user's prompt/tools/effort do NOT survive.
+                model: Some("project-model".to_owned()),
+                ..VariantSettings::default()
+            },
+        )])),
+        ..NornSettings::default()
+    };
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    let variants = merged.variants.expect("variants present");
+    let reviewer = &variants["reviewer"];
+    assert_eq!(reviewer.model.as_deref(), Some("project-model"));
+    assert!(
+        reviewer.prompt.is_none(),
+        "user prompt must be discarded on wholesale replace",
+    );
+    assert!(reviewer.tools.is_none(), "user tools discarded");
+    assert!(reviewer.description.is_none(), "user description discarded");
+    assert!(reviewer.reasoning_effort.is_none(), "user effort discarded");
+}
+
+#[test]
+fn variants_distinct_names_union_across_layers() {
+    let mut user = NornSettings {
+        variants: Some(variant_map(&[(
+            "scout",
+            VariantSettings {
+                prompt: Some("scout".to_owned()),
+                ..VariantSettings::default()
+            },
+        )])),
+        ..NornSettings::default()
+    };
+    let mut project = NornSettings {
+        variants: Some(variant_map(&[(
+            "auditor",
+            VariantSettings {
+                prompt: Some("audit".to_owned()),
+                ..VariantSettings::default()
+            },
+        )])),
+        ..NornSettings::default()
+    };
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    let variants = merged.variants.expect("variants present");
+    assert_eq!(variants.len(), 2, "distinct names union");
+    assert_eq!(variants["scout"].prompt.as_deref(), Some("scout"));
+    assert_eq!(variants["auditor"].prompt.as_deref(), Some("audit"));
+}
+
+#[test]
+fn variants_none_everywhere_stays_none() {
+    let mut user = NornSettings::default();
+    let mut project = NornSettings::default();
+    let mut local = NornSettings::default();
+    let mut cli = NornSettings::default();
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    assert!(merged.variants.is_none());
+}
+
+#[test]
+fn variants_cli_layer_wins_over_local() {
+    let mut user = NornSettings::default();
+    let mut project = NornSettings::default();
+    let mut local = NornSettings {
+        variants: Some(variant_map(&[(
+            "scout",
+            VariantSettings {
+                model: Some("local-model".to_owned()),
+                ..VariantSettings::default()
+            },
+        )])),
+        ..NornSettings::default()
+    };
+    let mut cli = NornSettings {
+        variants: Some(variant_map(&[(
+            "scout",
+            VariantSettings {
+                model: Some("cli-model".to_owned()),
+                ..VariantSettings::default()
+            },
+        )])),
+        ..NornSettings::default()
+    };
+    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli);
+    let variants = merged.variants.expect("variants present");
+    assert_eq!(
+        variants["scout"].model.as_deref(),
+        Some("cli-model"),
+        "CLI (highest) layer wins wholesale over local",
+    );
 }

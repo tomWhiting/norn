@@ -225,6 +225,26 @@ pub async fn run_agent_step_from_messages(
 async fn run_agent_step_common(
     mut request: AgentStepRunRequest<'_>,
 ) -> Result<AgentStepResult, NornError> {
+    // Refresh the agent's `AgentModel` extension with the model AND the
+    // reasoning effort THIS step's provider requests actually use (the
+    // request builder reads both from the same inputs: `request.model`
+    // and `loop_context.reasoning_effort`). Assembly stamps the launch
+    // values once, but interactive surfaces switch them at runtime (the
+    // CLI's `/model` and `/effort` write `SlashState`, read back before
+    // every step) — without this per-step refresh, parent-model and
+    // parent-effort inheritance on the spawn path would resolve stale
+    // build-time values. The pair travels in ONE extension so the two
+    // can never be stamped out of sync.
+    // `ToolContext::insert_extension` replaces by `TypeId`, so this is a
+    // plain re-publish; executors without a shared context (custom
+    // embedder executors) keep the assembly-time values, exactly as
+    // before.
+    if let Some(shared) = request.executor.shared_context() {
+        shared.insert_extension(Arc::new(crate::tools::agent::AgentModel {
+            model: request.model.to_owned(),
+            reasoning_effort: request.loop_context.reasoning_effort,
+        }));
+    }
     // Lazily arm the schedule executor if it was parked at build time
     // (assembly can construct an agent outside a Tokio runtime, before
     // `block_on`). We are now inside a runtime, so this spawns the executor

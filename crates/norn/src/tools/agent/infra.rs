@@ -202,28 +202,35 @@ pub(crate) fn resolve_agent(
     })
 }
 
-/// Narrow a child's tool allow-list for its granted
-/// [`MessagingScope`](crate::agent::child_policy::MessagingScope).
+/// The model — and its paired reasoning effort — this agent is currently
+/// running on, published as one [`ToolContext`] extension at every
+/// assembly site (the `AgentBuilder` root path, and each spawn/fork
+/// child context, stamped from the actual launch values) and
+/// **refreshed at every step start** by
+/// [`run_agent_step`](crate::agent_loop::runner::run_agent_step) with
+/// the model and effort that step's provider requests actually use — so
+/// a runtime switch (the CLI's `/model`, `/effort`) is reflected here
+/// immediately, while the agent's [`AgentRegistry`] entry keeps its
+/// build-time model stamp.
 ///
-/// [`MessagingScope::None`](crate::agent::child_policy::MessagingScope::None)
-/// removes `signal_agent` from the child's surface at spawn/fork time (the
-/// tool also refuses at execute as defense-in-depth). An explicit
-/// allow-list is filtered in place; an absent allow-list ("every parent
-/// tool") is materialized from the registry minus `signal_agent`, so the
-/// child's tool definitions and its [`SubAgentExecutor`] gate agree. The
-/// result is always an explicit allow-list.
-pub(super) fn strip_signal_agent_from_allow_list(
-    allow_list: Option<Vec<String>>,
-    registry: &ToolRegistry,
-) -> Vec<String> {
-    let names = match allow_list {
-        Some(list) => list,
-        None => registry.names().map(str::to_owned).collect(),
-    };
-    names
-        .into_iter()
-        .filter(|name| name != crate::tools::agent::coord::SIGNAL_AGENT_TOOL_NAME)
-        .collect()
+/// This is the primary runtime ground truth the spawn path's
+/// parent-inheritance reads: parent-model resolution prefers this over
+/// the registry entry (the row is stamped once at build/launch and goes
+/// stale across runtime model switches), and reasoning-effort
+/// inheritance (owner ruling 2026-07-07: children inherit the parent's
+/// active effort when the variant sets none) reads
+/// [`Self::reasoning_effort`]. The two fields travel in ONE extension —
+/// stamped together at every publish site — so a child can never observe
+/// a model/effort pair that was not actually in effect for the same
+/// step. Never populated from re-read settings and never a literal.
+#[derive(Clone, Debug)]
+pub struct AgentModel {
+    /// The model id the agent's current step actually runs on.
+    pub model: String,
+    /// The reasoning effort paired with that model for the same step
+    /// (the value the step's provider requests carry from
+    /// [`LoopContext::reasoning_effort`](crate::agent_loop::loop_context::LoopContext::reasoning_effort)).
+    pub reasoning_effort: Option<crate::provider::request::ReasoningEffort>,
 }
 
 /// Tool executor handed to a spawned or forked sub-agent.

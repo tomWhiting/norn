@@ -139,6 +139,45 @@ pub(super) fn build_child_context(
     child_ctx.insert_extension(Arc::new(child_infra));
     child_ctx.insert_extension(Arc::new(AgentCancellation(child_cancel)));
     child_ctx.insert_extension(Arc::new(AgentHandles::new()));
+    forward_shared_extensions(parent_ctx, &mut child_ctx);
+    wire_child_action_log(
+        parent_infra,
+        parent_ctx,
+        child_id,
+        child_log_store,
+        &child_ctx,
+    );
+    Arc::new(child_ctx)
+}
+
+/// Forward the parent's curated shared-infrastructure extensions onto a
+/// child context — the SINGLE list every child-context assembly site
+/// (spawn's [`build_child_context`], fork's
+/// [`build_fork_context`](super::fork_context::build_fork_context), and
+/// the rhai script surface's per-child context) uses, so the forwarded
+/// set cannot drift between launch paths.
+///
+/// Covers: the wake registry, shared task store, searchable tool catalog,
+/// skill infrastructure (search paths + catalog — the child shares the
+/// parent's registry, so the `skill` tool is offered to it subject to its
+/// allow-list; without both extensions the tool would be offered but
+/// always fail `MissingExtension` at execute), the diagnostic collector
+/// and convention-diagnostics infra (+ post-check), the shared extraction
+/// provider, the consent-boundary [`PermissionPolicy`], the scheduling
+/// [`ToolEffectIndex`], the operator [`HookRegistry`], the shared
+/// agent-event channel, the [`CoordinationEnvelope`], the
+/// [`ReclaimOnResultDelivery`] marker, and the agent-variants catalog
+/// (forwarded so the child's own spawn/fork sites resolve variants —
+/// built-ins included — at every depth; without it a depth-2 spawn naming
+/// even a built-in variant fails with the no-catalog error despite the
+/// root having a perfectly good catalog).
+///
+/// Deliberately NOT forwarded here: identity-bearing extensions
+/// ([`AgentToolInfra`], [`AgentCancellation`], [`AgentHandles`],
+/// `ParentSystemInstruction`,
+/// [`AgentModel`](super::infra::AgentModel)) — each launch path
+/// publishes its child's OWN values for those.
+pub(crate) fn forward_shared_extensions(parent_ctx: &ToolContext, child_ctx: &mut ToolContext) {
     if let Some(wake_registry) = parent_ctx.get_extension::<AgentWakeRegistry>() {
         child_ctx.insert_extension(wake_registry);
     }
@@ -148,12 +187,6 @@ pub(super) fn build_child_context(
     if let Some(catalog) = parent_ctx.get_extension::<SharedToolCatalog>() {
         child_ctx.insert_extension(catalog);
     }
-    // Skill infrastructure: the child shares the parent's registry, so the
-    // `skill` tool is offered to it (subject to the child's allow-list).
-    // Without forwarding both the search paths and the catalog the tool
-    // would always fail `MissingExtension` at execute — the child could see
-    // the tool but never use it. Forwarded as `Arc` clones exactly like the
-    // other shared infrastructure above.
     if let Some(skill_paths) = parent_ctx.get_extension::<crate::tools::skill::SkillSearchPaths>() {
         child_ctx.insert_extension(skill_paths);
     }
@@ -163,7 +196,7 @@ pub(super) fn build_child_context(
     if let Some(diagnostics) = parent_ctx.get_extension::<DiagnosticCollector>() {
         child_ctx.insert_extension(diagnostics);
     }
-    forward_diagnostic_infra(parent_ctx, &mut child_ctx);
+    forward_diagnostic_infra(parent_ctx, child_ctx);
     if let Some(sp) = parent_ctx.get_extension::<SharedProvider>() {
         child_ctx.insert_extension(sp);
     }
@@ -187,14 +220,9 @@ pub(super) fn build_child_context(
     if let Some(marker) = parent_ctx.get_extension::<ReclaimOnResultDelivery>() {
         child_ctx.insert_extension(marker);
     }
-    wire_child_action_log(
-        parent_infra,
-        parent_ctx,
-        child_id,
-        child_log_store,
-        &child_ctx,
-    );
-    Arc::new(child_ctx)
+    if let Some(variants) = parent_ctx.get_extension::<crate::agent::variants::VariantCatalog>() {
+        child_ctx.insert_extension(variants);
+    }
 }
 
 /// Forward convention diagnostics into a spawned/forked child context.
@@ -546,6 +574,59 @@ mod tests {
             published.0.is_cancelled(),
             "the published extension must be the same token the launch path uses",
         );
+    }
+
+    /// Agent-variants forwarding regression (the depth-2 case): the
+    /// parent's [`crate::agent::variants::VariantCatalog`] extension is
+    /// forwarded to the child context, so a built-in variant resolves
+    /// FROM THE CHILD's ctx with zero `variants` settings — a grandchild
+    /// spawn naming `explorer` must not fail with the no-catalog error.
+    #[test]
+    fn child_context_forwards_variant_catalog_and_resolves_builtins() {
+        use crate::agent::variants::VariantCatalog;
+
+        let infra = parent_infra(Uuid::new_v4());
+        let parent_ctx = ToolContext::empty();
+        let catalog = Arc::new(
+            VariantCatalog::build(None, &std::env::temp_dir())
+                .expect("built-in catalog builds with zero settings"),
+        );
+        parent_ctx.insert_extension(Arc::clone(&catalog));
+
+        let child_ctx = build_child_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            Arc::new(SessionBinding::ephemeral_root()),
+            test_policy(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        let forwarded = child_ctx
+            .get_extension::<VariantCatalog>()
+            .expect("the child context must inherit the parent's variant catalog");
+        assert!(
+            Arc::ptr_eq(&forwarded, &catalog),
+            "the child shares the parent's catalog instance, never a rebuild",
+        );
+
+        // Resolve a built-in variant through the real spawn-resolution
+        // path, exactly as the child's own spawn site would.
+        let resolved = super::super::variant_resolve::resolve_spawn(
+            super::super::variant_resolve::SpawnIdentityArgs {
+                variant: Some("explorer".to_owned()),
+                profile: None,
+                role: None,
+                model: None,
+            },
+            child_ctx.get_extension::<VariantCatalog>().as_deref(),
+            "spawn_agent",
+            || Ok("parent-model".to_owned()),
+        )
+        .expect("a built-in variant must resolve from the child context");
+        assert_eq!(resolved.role, "explorer");
+        assert_eq!(resolved.variant_name.as_deref(), Some("explorer"));
     }
 
     #[test]

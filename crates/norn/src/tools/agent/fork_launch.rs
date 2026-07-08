@@ -23,12 +23,11 @@ use super::handle::{AgentHandle, ChildBranchMetadata};
 use super::infra::SubAgentExecutor;
 use super::lifecycle::{LifecycleEmitter, SubagentCompletion};
 use super::reclaim::{ReclaimHandshake, reclaim_delivered_child};
-use crate::agent::child_policy::ChildLoopConfig;
 use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
-use crate::r#loop::config::ToolExecutor;
+use crate::r#loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::r#loop::inbound::{InboundChannel, InboundSender};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::runner::{AgentStepRequest, run_agent_step};
@@ -93,15 +92,14 @@ pub(super) struct ForkLaunch {
     /// [`AgentHandle`]; a clone rides into the inner run's
     /// [`AgentStepRequest`]. Mirrors the spawn launch.
     pub(super) cancel: tokio_util::sync::CancellationToken,
-    /// The granted per-fork loop overrides, from the granted
+    /// The fork's fully resolved [`AgentLoopConfig`]: the granted
     /// [`ChildPolicy::loop_config`](crate::agent::child_policy::ChildPolicy::loop_config)
-    /// (R5 closure). Resolved via [`ChildLoopConfig::resolve`]: `None` →
-    /// the fork runs
-    /// [`AgentLoopConfig::default()`](crate::agent_loop::runner::AgentLoopConfig)
-    /// exactly as before R5; `Some` applies the granted subset
-    /// (`step_timeout`, `linger`) onto that default.
-    /// Mirrors the spawn launch.
-    pub(super) loop_config: Option<ChildLoopConfig>,
+    /// subset applied onto the default by the fork tool
+    /// (`ChildLoopConfig::resolve`), with the context window already
+    /// filled from the catalog for the FORK's model and VALIDATED
+    /// (`arm_child_window`) before the launch committed. Mirrors the
+    /// spawn launch.
+    pub(super) config: AgentLoopConfig,
 }
 
 /// Launch the fork on its own `tokio::spawn` task and build the parent-side
@@ -130,7 +128,7 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         hooks,
         router,
         cancel,
-        loop_config,
+        config,
     } = launch;
 
     let handle_store = Arc::clone(&child_store);
@@ -213,20 +211,15 @@ pub(super) fn launch_fork(launch: ForkLaunch, inbound_tx: InboundSender) -> Agen
         // transition, reclamation — so observers never see a dangling
         // `Started`. Mirrors the spawn wrapper.
         let inner = tokio::spawn(async move {
-            // R5: the fork's loop config is the granted ChildLoopConfig
-            // applied onto AgentLoopConfig::default(); an absent grant is
-            // byte-for-byte the default — the pre-R5 behavior.
-            let mut fork_config = ChildLoopConfig::resolve(loop_config);
+            let mut fork_config = config;
             // Arm auto-compaction on the fork exactly as the root builder
             // does (the one shared mechanism): install the token estimator
-            // and the context-edit tracker on the fork's loop context and
-            // fill its context window from the catalog for the fork's own
-            // model, so a long-running fork compacts instead of dying
-            // ContextWindowExceeded. A non-catalog model keeps a None
-            // window, leaving the trigger off. NOTE: the root additionally
-            // hard-errors on a None/over-max window (2026-07-05 incident
-            // guard); per-model child validation is owned by the
-            // child-persistence/agent-variants units.
+            // and the context-edit tracker on the fork's loop context. The
+            // context window was already filled from the catalog for the
+            // fork's own model AND validated by the fork tool before the
+            // launch committed (`arm_child_window`, the 2026-07-05
+            // incident guard extended to children), so the fill here is a
+            // no-op.
             crate::agent::arming::arm_auto_compaction(&mut loop_ctx, &mut fork_config, &model);
             run_agent_step(AgentStepRequest {
                 provider: provider.as_ref(),

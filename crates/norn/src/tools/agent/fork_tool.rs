@@ -32,20 +32,20 @@ use chrono::Utc;
 use serde::Deserialize;
 
 use super::delegation::{
-    auto_child_path, grant_child_policy, install_child_result_channel, resolve_spawner_policy,
+    auto_child_path, effective_child_tools, grant_child_policy, install_child_result_channel,
+    resolve_spawner_policy,
 };
 use super::fork_context::build_fork_context;
 use super::fork_launch::{ForkLaunch, launch_fork};
 use super::fork_seed::{seed_fork_events, truncate_seed_at_anchor};
 use super::handle::AgentHandles;
-use super::infra::{
-    AgentCancellation, SubAgentExecutor, infra_from, strip_signal_agent_from_allow_list,
-};
+use super::infra::{AgentCancellation, AgentModel, SubAgentExecutor, infra_from};
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
-use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope, MessagingScope};
+use crate::agent::child_policy::{ChildLoopConfig, ChildPolicy, CoordinationEnvelope};
 use crate::agent::fork::{
-    ForkRequirement, ParentSystemInstruction, build_fork_output_schema, combine_system_instruction,
+    ForkIdentity, ForkRequirement, ParentSystemInstruction, build_fork_output_schema,
+    build_fork_preamble, combine_system_instruction,
 };
 use crate::agent::registry::AgentRegistry;
 use crate::agent::result_channel::ChildResultSender;
@@ -194,6 +194,11 @@ impl Tool for ForkTool {
                                     "type": "integer",
                                     "minimum": 0,
                                     "description": "Linger deadline in seconds: the fork waits this long at each would-stop boundary for late messages and its own children's results before stopping. Grant this to a fork that delegates, so its children's late results are delivered instead of lost. Unset = the fork returns the moment its model stops."
+                                },
+                                "context_window": {
+                                    "type": "integer",
+                                    "minimum": 1,
+                                    "description": "Explicit context window for the fork, in tokens. Unset = filled from the model catalog for the fork's model. A value above a catalogued model's maximum is rejected; required for a deliberately uncatalogued model."
                                 }
                             }
                         }
@@ -255,6 +260,19 @@ impl Tool for ForkTool {
         // the registry re-validates from ground truth at reservation.
         let spawner_policy = resolve_spawner_policy(&infra, &coordination);
         let fork_policy = grant_child_policy(&spawner_policy, args.child_policy.clone(), "fork")?;
+
+        // Fork context-window validation (spec §7): fill the fork's
+        // window from the catalog for the FORK's model and validate it —
+        // mirroring the root build's arm-then-validate sequence — BEFORE
+        // anything is reserved or persisted, so a failure is a clean
+        // typed error with no burned name and no dangling reservation.
+        // The same resolved config rides into the launch below.
+        let mut fork_config = ChildLoopConfig::resolve(fork_policy.loop_config);
+        crate::agent::arming::arm_child_window(&mut fork_config, &args.model).map_err(|e| {
+            ToolError::ExecutionFailed {
+                reason: format!("fork: {e}"),
+            }
+        })?;
 
         // R3 / W3.4: hierarchical fork path nests under the spawning
         // agent's registry path at every depth.
@@ -420,7 +438,23 @@ impl Tool for ForkTool {
             coordination.child_result_capacity,
         );
 
-        // R5: combined system instruction = fork preamble + parent base.
+        // R4/R5: combined system instruction = structured fork preamble
+        // (identity, path address, requirements contract, delegation
+        // rights — the child is TOLD its budget) + the parent's own base
+        // system instruction from the ParentSystemInstruction extension
+        // every assembly path publishes.
+        let requirement_names: Vec<String> = args
+            .requirements
+            .iter()
+            .map(|r| crate::agent::fork::slugify_requirement_name(&r.name))
+            .collect();
+        let parent_agent_id = infra.agent_id.to_string();
+        let preamble = build_fork_preamble(&ForkIdentity {
+            parent_agent_id: &parent_agent_id,
+            path_address: &branched.path_address,
+            requirement_slugs: &requirement_names,
+            granted: &fork_policy,
+        });
         let parent_base = ctx
             .get_extension::<ParentSystemInstruction>()
             .map_or_else(String::new, |ext| ext.as_str().to_owned());
@@ -432,11 +466,28 @@ impl Tool for ForkTool {
         // `build_fork_context`), so the fork diverges from the parent
         // independently.
         let mut loop_ctx = LoopContext::with_working_dir(
-            combine_system_instruction(&parent_base),
+            combine_system_instruction(&preamble, &parent_base),
             child_ctx.shared_working_dir(),
         );
         loop_ctx.agent_id = Some(fork_id);
         loop_ctx.pending_agent_messages = Some(Arc::clone(&infra.pending_messages));
+        // Reasoning effort (owner rulings 2026-07-07: children inherit
+        // the parent's active effort): the fork has no variant/effort
+        // surface of its own, so it inherits the forker's LIVE effort
+        // from the same per-step stamp parent-model inheritance reads,
+        // validated against the model catalog for the FORK's model —
+        // inherited-only, so an unsupported pairing degrades to None
+        // with a warning, never a failed fork. A forker running with no
+        // effort passes None through unchanged.
+        loop_ctx.reasoning_effort = crate::agent::arming::arm_child_reasoning_effort(
+            ctx.get_extension::<AgentModel>()
+                .and_then(|live| live.reasoning_effort),
+            &crate::agent::arming::ChildEffortSource::Inherited { child: "fork" },
+            &args.model,
+        )
+        .map_err(|e| ToolError::ExecutionFailed {
+            reason: format!("fork: {e}"),
+        })?;
         // Hook coverage (parent → fork): the fork's loop dispatches
         // pre/post-tool hooks from its *own* LoopContext, so the parent's
         // shared registry must be installed here — otherwise operator
@@ -464,15 +515,12 @@ impl Tool for ForkTool {
 
         let output_schema = build_fork_output_schema(&args.requirements);
 
-        // Forks see every parent tool — except `signal_agent` when the
-        // granted scope is `MessagingScope::None`, which removes the tool
-        // from the fork's surface entirely (defense-in-depth: the tool
-        // also refuses at execute).
-        let allow_list: Option<Vec<String>> = if fork_policy.messaging == MessagingScope::None {
-            Some(strip_signal_agent_from_allow_list(None, parent_registry))
-        } else {
-            None
-        };
+        // Effective tools = full parent surface ∩ granted policy (R6):
+        // `signal_agent` disappears under MessagingScope::None and a leaf
+        // grant (remaining_depth == 0) strips spawn_agent AND fork — at
+        // assembly, so the fork's tool definitions and its executor gate
+        // agree (the call-rejection paths stay as defence-in-depth).
+        let allow_list = effective_child_tools(parent_registry, None, &fork_policy, "fork");
         let tool_defs = crate::provider::surface::collect_function_definitions(
             parent_registry,
             allow_list.as_deref(),
@@ -494,6 +542,23 @@ impl Tool for ForkTool {
                 ),
             );
         }
+
+        // Every agent's context carries its OWN launch model (parent-model
+        // ground truth for the fork's own spawns) and the identity-free
+        // base it COMPOSED WITH under `ParentSystemInstruction` — NOT its
+        // own combined base. The combined base opens with this fork's
+        // "Fork identity" preamble; publishing it would make a
+        // fork-of-fork stack a second (stale) identity block under its
+        // own fresh preamble. Publishing `parent_base` instead means
+        // every fork level renders fresh preamble + the original
+        // identity-free base, with exactly one identity block. (Spawn
+        // children keep publishing their own base: theirs IS the
+        // identity-free working instruction.)
+        child_ctx.insert_extension(Arc::new(AgentModel {
+            model: args.model.clone(),
+            reasoning_effort: loop_ctx.reasoning_effort,
+        }));
+        child_ctx.insert_extension(Arc::new(ParentSystemInstruction::new(parent_base.clone())));
 
         let executor = SubAgentExecutor::new(
             Arc::clone(parent_registry),
@@ -532,11 +597,6 @@ impl Tool for ForkTool {
         } else {
             (None, None)
         };
-        let requirement_names: Vec<String> = args
-            .requirements
-            .iter()
-            .map(|r| crate::agent::fork::slugify_requirement_name(&r.name))
-            .collect();
 
         // NH-006 R5 parity with spawn (C56): fire
         // SubagentHook::on_subagent_start before launching the fork.
@@ -572,7 +632,7 @@ impl Tool for ForkTool {
                 hooks,
                 router: Arc::clone(&infra.router),
                 cancel: fork_cancel,
-                loop_config: fork_policy.loop_config,
+                config: fork_config,
             },
             inbound_tx,
         );
@@ -644,6 +704,7 @@ mod tests {
     use super::super::handle::AgentWakeRegistry;
     use super::super::infra::AgentToolInfra;
     use super::*;
+    use crate::agent::child_policy::MessagingScope;
     use crate::agent::fork::{FORK_SYSTEM_PREAMBLE, ForkRequirement};
     use crate::agent::message_router::MessageRouter;
     use crate::agent::registry::AgentStatus;
@@ -677,6 +738,21 @@ mod tests {
                 ..Usage::default()
             },
             response_id: None,
+        }
+    }
+
+    /// Provider that records every full [`ProviderRequest`] it receives
+    /// while popping scripted response streams in order.
+    struct RequestCapturingProvider {
+        captured: Arc<StdMutex<Vec<ProviderRequest>>>,
+        responses: StdMutex<Vec<Vec<ProviderEvent>>>,
+    }
+
+    impl Provider for RequestCapturingProvider {
+        fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+            self.captured.lock().unwrap().push(request);
+            let seq = self.responses.lock().unwrap().remove(0);
+            Ok(Box::pin(stream::iter(seq.into_iter().map(Ok))))
         }
     }
 
@@ -1635,17 +1711,29 @@ mod tests {
     }
 
     /// R5: the helper returns a combined system instruction containing the
-    /// fork preamble verbatim *plus* the parent's base, with the preamble
-    /// first.
+    /// built fork preamble verbatim *plus* the parent's base, with the
+    /// preamble first.
     #[test]
     fn fork_loop_context_inherits_parent_base_with_preamble() {
         let parent_base = "You are the parent. Be terse.";
-        let combined = combine_system_instruction(parent_base);
+        let slugs = vec!["check_code".to_owned()];
+        let policy = test_envelope().child_policy;
+        let preamble = build_fork_preamble(&ForkIdentity {
+            parent_agent_id: "parent-agent-id",
+            path_address: "root/fork-a",
+            requirement_slugs: &slugs,
+            granted: &policy,
+        });
+        let combined = combine_system_instruction(&preamble, parent_base);
         let loop_ctx = LoopContext::new(combined);
         let base = loop_ctx.base_system_instruction();
         assert!(
             base.contains(FORK_SYSTEM_PREAMBLE),
             "preamble missing: {base}"
+        );
+        assert!(
+            base.contains("root/fork-a") && base.contains("check_code"),
+            "structured identity missing: {base}",
         );
         assert!(base.contains(parent_base), "parent missing: {base}");
         assert!(
@@ -3471,7 +3559,7 @@ mod tests {
                         name: Some("spawn_agent".to_string()),
                         arguments_delta: json!({
                             "task": "fork-grandchild-task",
-                            "model": "haiku",
+                            "model": crate::model_catalog::default_selection().model,
                             "role": "leaf",
                         })
                         .to_string(),
@@ -3736,6 +3824,396 @@ mod tests {
                 .status,
             AgentStatus::Failed,
             "a cancelled fork records Failed — never Completed",
+        );
+    }
+
+    // ----- agent-variants (R4/R5/R6/§7) -----------------------------------
+
+    /// §7 (fork side): a fork on an uncatalogued model is rejected BEFORE
+    /// anything is reserved — a typed error naming the model, no registry
+    /// entry, no burned name.
+    #[tokio::test]
+    async fn fork_with_uncatalogued_model_is_rejected_before_reservation() {
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(ToolRegistry::new()),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = ForkTool::new();
+        let err = tool
+            .execute(
+                &envelope_for(json!({
+                    "request": "r", "model": "not-in-catalog-model-xyz", "requirements": [],
+                })),
+                &ctx,
+            )
+            .await
+            .expect_err("an uncatalogued fork model must be rejected");
+        assert!(
+            err.to_string().contains("not-in-catalog-model-xyz"),
+            "the rejection names the model: {err}",
+        );
+        assert!(
+            agent_registry.read().is_empty(),
+            "the rejection precedes the reservation",
+        );
+        assert!(
+            parent_store.events().is_empty(),
+            "nothing was persisted for the refused fork",
+        );
+    }
+
+    /// R4 + R5: the fork's context carries the identity-free parent base
+    /// it COMPOSED WITH under `ParentSystemInstruction` — never its own
+    /// combined base (whose leading "Fork identity" preamble would stack
+    /// stale under a fork-of-fork's fresh preamble).
+    #[tokio::test]
+    async fn fork_child_context_carries_the_composed_with_parent_base() {
+        struct BaseProbe {
+            seen: Arc<StdMutex<Option<String>>>,
+        }
+        #[async_trait]
+        impl TestTool for BaseProbe {
+            fn name(&self) -> &'static str {
+                "base_probe"
+            }
+            fn description(&self) -> &'static str {
+                "records the ParentSystemInstruction it sees"
+            }
+            fn input_schema(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
+            fn effect(&self) -> ToolEffect {
+                ToolEffect::ReadOnly
+            }
+            async fn execute(
+                &self,
+                _envelope: &ToolEnvelope,
+                ctx: &ToolContext,
+            ) -> Result<TestToolOutput, ToolError> {
+                *self.seen.lock().unwrap() = ctx
+                    .get_extension::<ParentSystemInstruction>()
+                    .map(|ext| ext.as_str().to_owned());
+                Ok(TestToolOutput::success(serde_json::json!({"ok": true})))
+            }
+        }
+
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(vec![
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "tc-probe".to_string(),
+                    call_id: None,
+                    name: Some("base_probe".to_string()),
+                    arguments_delta: "{}".to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![
+                ProviderEvent::ToolCallDelta {
+                    item_id: "structured-out".to_string(),
+                    call_id: None,
+                    name: Some("structured_output".to_string()),
+                    arguments_delta:
+                        json!({"response": "done", "requirements": {"check_code": {}}}).to_string(),
+                    kind: crate::provider::request::ToolCallKind::Function,
+                },
+                done_event_tool_use(),
+            ],
+            vec![ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: None,
+            }],
+        ]));
+
+        let seen = Arc::new(StdMutex::new(None));
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(BaseProbe {
+            seen: Arc::clone(&seen),
+        }));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(tool_registry),
+            Arc::new(MessageRouter::new()),
+        );
+        // The forker's own base, as its assembly path would publish it.
+        ctx.insert_extension(Arc::new(ParentSystemInstruction::new("PARENT-BASE-MARKER")));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({
+                    "request": "probe your base",
+                    "model": "gpt-5.5",
+                    "requirements": [
+                        {"name": "check code", "description": "check the code"}
+                    ],
+                })),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+
+        let base = seen
+            .lock()
+            .unwrap()
+            .clone()
+            .expect("the fork's context must publish ParentSystemInstruction");
+        assert_eq!(
+            base, "PARENT-BASE-MARKER",
+            "the fork publishes the identity-free base it composed with — \
+             not its own combined base, whose fork-identity preamble would \
+             stack under a fork-of-fork's fresh preamble",
+        );
+        assert!(
+            !base.contains(FORK_SYSTEM_PREAMBLE),
+            "the published base must carry NO fork preamble: {base}",
+        );
+    }
+
+    /// Fork-of-fork regression: the grandchild's actual base instruction
+    /// (its provider request's system content) renders a fresh preamble
+    /// plus the ORIGINAL identity-free base — exactly one "Fork identity"
+    /// block, never the parent fork's stale identity stacked under it.
+    #[tokio::test]
+    async fn fork_of_fork_base_instruction_has_exactly_one_identity_block() {
+        // Provider shared by every level (the fork forwards the parent's
+        // provider): captures each request so the grandchild's system
+        // instruction can be asserted from ground truth. Scripted
+        // streams: level-1 fork calls `fork` (the nested launch), then
+        // both forks return the identical requirement-less structured
+        // output, so the concurrent pop order between level 1's closing
+        // stream and level 2's only stream cannot skew the script.
+        let structured_done = vec![
+            ProviderEvent::ToolCallDelta {
+                item_id: "structured-out".to_string(),
+                call_id: None,
+                name: Some("structured_output".to_string()),
+                arguments_delta: json!({"response": "done", "requirements": {}}).to_string(),
+                kind: crate::provider::request::ToolCallKind::Function,
+            },
+            done_event_tool_use(),
+        ];
+        let captured = Arc::new(StdMutex::new(Vec::new()));
+        let provider: Arc<dyn Provider> = Arc::new(RequestCapturingProvider {
+            captured: Arc::clone(&captured),
+            responses: StdMutex::new(vec![
+                vec![
+                    ProviderEvent::ToolCallDelta {
+                        item_id: "tc-nested-fork".to_string(),
+                        call_id: None,
+                        name: Some("fork".to_string()),
+                        arguments_delta: json!({
+                            "request": "go one level deeper",
+                            "model": "gpt-5.5",
+                            "requirements": [],
+                        })
+                        .to_string(),
+                        kind: crate::provider::request::ToolCallKind::Function,
+                    },
+                    done_event_tool_use(),
+                ],
+                structured_done.clone(),
+                structured_done,
+            ]),
+        });
+
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(ForkTool::new()));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(tool_registry),
+            Arc::new(MessageRouter::new()),
+        );
+        // Depth-2 envelope so the level-1 fork (depth 1) still carries
+        // the fork tool for the nested launch. Deliberate test values.
+        {
+            use crate::agent::child_policy::DelegationBudget;
+            ctx.insert_extension(Arc::new(CoordinationEnvelope {
+                child_policy: ChildPolicy {
+                    messaging: MessagingScope::SiblingsAndParent,
+                    delegation: DelegationBudget {
+                        remaining_depth: 2,
+                        max_concurrent_children: 4,
+                    },
+                    inbound_capacity: 8,
+                    loop_config: None,
+                },
+                child_result_capacity: 16,
+            }));
+        }
+        ctx.insert_extension(Arc::new(ParentSystemInstruction::new("PARENT-BASE-MARKER")));
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({
+                    "request": "fork twice",
+                    "model": "gpt-5.5",
+                    "requirements": [],
+                })),
+                &ctx,
+            )
+            .await
+            .expect("level-1 fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join level-1 fork");
+
+        // The grandchild runs concurrently with (and possibly beyond)
+        // level 1's join: poll until BOTH fork levels' requests are
+        // captured — two distinct system instructions carrying the fork
+        // preamble.
+        let deadline = std::time::Instant::now() + Duration::from_secs(5);
+        let fork_bases: Vec<String> = loop {
+            let mut bases: Vec<String> = captured
+                .lock()
+                .unwrap()
+                .iter()
+                .filter_map(|request| {
+                    let system = request.messages.iter().find_map(|message| {
+                        (message.role == crate::provider::request::MessageRole::System)
+                            .then(|| message.content.clone())
+                            .flatten()
+                    })?;
+                    system.contains(FORK_SYSTEM_PREAMBLE).then_some(system)
+                })
+                .collect();
+            bases.sort();
+            bases.dedup();
+            if bases.len() >= 2 {
+                break bases;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "both fork levels must issue provider requests; saw {bases:?}",
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        };
+
+        for base in &fork_bases {
+            assert_eq!(
+                base.matches("## Fork identity").count(),
+                1,
+                "every fork level renders exactly ONE identity block: {base}",
+            );
+            assert!(
+                base.contains("PARENT-BASE-MARKER"),
+                "…over the ORIGINAL identity-free base: {base}",
+            );
+        }
+    }
+
+    /// R6 (fork side): a leaf fork (granted remaining_depth == 0 — the
+    /// default derivation from a depth-1 forker) is shown NEITHER
+    /// spawn_agent nor fork in its provider payload.
+    #[tokio::test]
+    async fn leaf_fork_provider_tool_list_omits_spawn_and_fork() {
+        struct ToolsCapturingProvider {
+            captured: Arc<StdMutex<Vec<crate::provider::tools::ProviderToolDefinition>>>,
+            responses: StdMutex<Vec<Vec<ProviderEvent>>>,
+        }
+        impl Provider for ToolsCapturingProvider {
+            fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+                self.captured.lock().unwrap().clone_from(&request.tools);
+                let seq = self.responses.lock().unwrap().remove(0);
+                Ok(Box::pin(stream::iter(seq.into_iter().map(Ok))))
+            }
+        }
+
+        let captured = Arc::new(StdMutex::new(Vec::new()));
+        let provider: Arc<dyn Provider> = Arc::new(ToolsCapturingProvider {
+            captured: Arc::clone(&captured),
+            responses: StdMutex::new(vec![
+                vec![
+                    ProviderEvent::ToolCallDelta {
+                        item_id: "structured-out".to_string(),
+                        call_id: None,
+                        name: Some("structured_output".to_string()),
+                        arguments_delta: json!({"response": "done", "requirements": {}})
+                            .to_string(),
+                        kind: crate::provider::request::ToolCallKind::Function,
+                    },
+                    done_event_tool_use(),
+                ],
+                vec![ProviderEvent::Done {
+                    stop_reason: StopReason::EndTurn,
+                    usage: Usage::default(),
+                    response_id: None,
+                }],
+            ]),
+        });
+
+        let mut tool_registry = ToolRegistry::new();
+        tool_registry.register(Box::new(crate::tools::agent::SpawnAgentTool::new()));
+        tool_registry.register(Box::new(ForkTool::new()));
+        tool_registry.register(Box::new(crate::tools::read::ReadTool::new()));
+        let agent_registry = AgentRegistry::shared();
+        let (ctx, _parent_store) = parent_ctx(
+            provider,
+            Uuid::new_v4(),
+            &agent_registry,
+            Arc::new(tool_registry),
+            Arc::new(MessageRouter::new()),
+        );
+
+        let tool = ForkTool::new();
+        let out = tool
+            .execute(
+                &envelope_for(json!({"request": "r", "model": "gpt-5.5", "requirements": []})),
+                &ctx,
+            )
+            .await
+            .expect("fork");
+        let fork_id = Uuid::parse_str(out.content["agent_id"].as_str().unwrap()).unwrap();
+        let handle = ctx
+            .get_extension::<AgentHandles>()
+            .unwrap()
+            .remove(fork_id)
+            .expect("handle");
+        handle.join_handle.await.expect("join");
+
+        let names: Vec<String> = captured
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|def| match def {
+                crate::provider::tools::ProviderToolDefinition::Function(function) => {
+                    function.name.clone()
+                }
+                other => format!("{other:?}"),
+            })
+            .collect();
+        assert!(
+            !names.iter().any(|n| n == "spawn_agent") && !names.iter().any(|n| n == "fork"),
+            "a leaf fork must not SEE delegation tools: {names:?}",
+        );
+        assert!(
+            names.iter().any(|n| n == "read"),
+            "non-delegation tools survive: {names:?}",
         );
     }
 }

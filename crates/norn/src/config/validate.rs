@@ -53,6 +53,7 @@ pub fn validate_settings(settings: &NornSettings) -> Result<(), ConfigError> {
     validate_permissions(settings)?;
     validate_hooks(settings)?;
     validate_mcp_servers(settings)?;
+    validate_variants(settings)?;
     Ok(())
 }
 
@@ -373,6 +374,73 @@ fn validate_mcp_servers(settings: &NornSettings) -> Result<(), ConfigError> {
         }
     }
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Agent variants
+// ---------------------------------------------------------------------------
+
+/// Validate the `variants` section: each definition must carry a clean name,
+/// at most one prompt source, a non-empty model (when present), non-empty
+/// tool-name entries, and a recognised reasoning-effort name (when present).
+///
+/// This mirrors the catalog build's own guards
+/// ([`crate::agent::variants::VariantCatalogError`]) so a defect is a typed
+/// config error at the settings boundary rather than a startup failure at
+/// assembly — the `prompt`/`prompt_file` conflict and the reasoning-effort name
+/// set are checked in BOTH places on purpose (validation is the early,
+/// cheap boundary; the catalog is the load-bearing authority that also reads
+/// the prompt file). The reasoning-effort name set is derived by round-
+/// tripping through [`crate::provider::request::ReasoningEffort`]'s own serde
+/// form — the SAME authority the catalog and `runtime_init` parse against —
+/// so no second name list can drift out of sync.
+fn validate_variants(settings: &NornSettings) -> Result<(), ConfigError> {
+    let Some(variants) = settings.variants.as_ref() else {
+        return Ok(());
+    };
+    for (name, variant) in variants {
+        check_nonempty_clean("variants key", name)?;
+        if variant.prompt.is_some() && variant.prompt_file.is_some() {
+            return Err(ConfigError::InvalidConfig {
+                reason: format!(
+                    "variant '{name}': prompt and prompt_file are mutually exclusive — set one",
+                ),
+            });
+        }
+        if let Some(model) = variant.model.as_deref() {
+            check_nonempty_clean(&format!("variants.{name}.model"), model)?;
+        }
+        if let Some(tools) = variant.tools.as_ref() {
+            for tool in tools {
+                check_nonempty_clean(&format!("variants.{name}.tools"), tool)?;
+            }
+        }
+        if let Some(effort) = variant.reasoning_effort.as_deref() {
+            check_reasoning_effort(&format!("variants.{name}.reasoning_effort"), effort)?;
+        }
+    }
+    Ok(())
+}
+
+/// Syntactic check for a reasoning-effort name, delegated to
+/// [`crate::provider::request::ReasoningEffort`]'s serde form. The value is
+/// lower-cased before the round-trip so validation accepts the same case-
+/// insensitive spellings the catalog build and `runtime_init`'s parser do,
+/// without hand-maintaining a second name list.
+fn check_reasoning_effort(field: &str, value: &str) -> Result<(), ConfigError> {
+    let lowered = value.to_lowercase();
+    let parsed = serde_json::from_value::<crate::provider::request::ReasoningEffort>(
+        serde_json::Value::String(lowered),
+    );
+    if parsed.is_ok() {
+        return Ok(());
+    }
+    Err(ConfigError::InvalidConfig {
+        reason: format!(
+            "invalid value for {field}: '{value}' \
+             (expected one of: none, low, medium, high, xhigh)",
+        ),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -1143,5 +1211,184 @@ mod tests {
             ..NornSettings::default()
         };
         validate_settings(&s).unwrap();
+    }
+
+    // -----------------------------------------------------------------------
+    // Agent variants
+    // -----------------------------------------------------------------------
+
+    fn variant_settings_map(
+        name: &str,
+        variant: crate::config::types::VariantSettings,
+    ) -> NornSettings {
+        let mut variants = BTreeMap::new();
+        variants.insert(name.to_owned(), variant);
+        NornSettings {
+            variants: Some(variants),
+            ..NornSettings::default()
+        }
+    }
+
+    #[test]
+    fn variant_fully_valid_passes() {
+        use crate::config::types::VariantSettings;
+        let s = variant_settings_map(
+            "scout",
+            VariantSettings {
+                description: Some("scouting".to_owned()),
+                prompt: Some("Scout the area.".to_owned()),
+                tools: Some(vec!["read".to_owned(), "search".to_owned()]),
+                model: Some("some-model".to_owned()),
+                reasoning_effort: Some("XHigh".to_owned()),
+                ..VariantSettings::default()
+            },
+        );
+        validate_settings(&s).unwrap();
+    }
+
+    #[test]
+    fn variant_prompt_file_only_passes() {
+        use crate::config::types::VariantSettings;
+        let s = variant_settings_map(
+            "scout",
+            VariantSettings {
+                prompt_file: Some("scout.md".to_owned()),
+                ..VariantSettings::default()
+            },
+        );
+        // A prompt_file that does not exist is NOT a config-validate error —
+        // the catalog build is the authority that reads it (fail-loud at
+        // assembly). Validation only rejects the prompt/prompt_file conflict.
+        validate_settings(&s).unwrap();
+    }
+
+    #[test]
+    fn variant_empty_name_caught() {
+        use crate::config::types::VariantSettings;
+        let s = variant_settings_map("   ", VariantSettings::default());
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(reason.contains("variants key"), "{reason}");
+        assert!(reason.to_lowercase().contains("empty"), "{reason}");
+    }
+
+    #[test]
+    fn variant_control_char_name_caught() {
+        use crate::config::types::VariantSettings;
+        let s = variant_settings_map("sco\u{0007}ut", VariantSettings::default());
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(reason.to_lowercase().contains("control"), "{reason}");
+    }
+
+    #[test]
+    fn variant_prompt_and_prompt_file_conflict_caught() {
+        use crate::config::types::VariantSettings;
+        let s = variant_settings_map(
+            "clash",
+            VariantSettings {
+                prompt: Some("inline".to_owned()),
+                prompt_file: Some("also-a-file.md".to_owned()),
+                ..VariantSettings::default()
+            },
+        );
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(
+            reason.contains("clash"),
+            "reason must name the variant: {reason}"
+        );
+        assert!(
+            reason.contains("mutually exclusive"),
+            "reason must explain the conflict: {reason}",
+        );
+    }
+
+    #[test]
+    fn variant_empty_model_caught() {
+        use crate::config::types::VariantSettings;
+        let s = variant_settings_map(
+            "scout",
+            VariantSettings {
+                model: Some("   ".to_owned()),
+                ..VariantSettings::default()
+            },
+        );
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(reason.contains("variants.scout.model"), "{reason}");
+        assert!(reason.to_lowercase().contains("empty"), "{reason}");
+    }
+
+    #[test]
+    fn variant_empty_tool_entry_caught() {
+        use crate::config::types::VariantSettings;
+        let s = variant_settings_map(
+            "scout",
+            VariantSettings {
+                tools: Some(vec!["read".to_owned(), String::new()]),
+                ..VariantSettings::default()
+            },
+        );
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(reason.contains("variants.scout.tools"), "{reason}");
+        assert!(reason.to_lowercase().contains("empty"), "{reason}");
+    }
+
+    #[test]
+    fn variant_unknown_reasoning_effort_caught() {
+        use crate::config::types::VariantSettings;
+        let s = variant_settings_map(
+            "hasty",
+            VariantSettings {
+                reasoning_effort: Some("turbo".to_owned()),
+                ..VariantSettings::default()
+            },
+        );
+        let err = validate_settings(&s).unwrap_err();
+        let ConfigError::InvalidConfig { reason } = err else {
+            panic!("expected InvalidConfig variant");
+        };
+        assert!(
+            reason.contains("variants.hasty.reasoning_effort"),
+            "{reason}",
+        );
+        assert!(
+            reason.contains("turbo"),
+            "reason must name the value: {reason}"
+        );
+        assert!(
+            reason.contains("none, low, medium, high, xhigh"),
+            "reason must list the accepted set: {reason}",
+        );
+    }
+
+    /// The accepted effort names are matched case-insensitively (the same
+    /// authority the catalog and `runtime_init` parse against).
+    #[test]
+    fn variant_reasoning_effort_is_case_insensitive() {
+        use crate::config::types::VariantSettings;
+        for effort in ["none", "LOW", "Medium", "high", "xHigh"] {
+            let s = variant_settings_map(
+                "scout",
+                VariantSettings {
+                    reasoning_effort: Some(effort.to_owned()),
+                    ..VariantSettings::default()
+                },
+            );
+            validate_settings(&s)
+                .unwrap_or_else(|err| panic!("effort '{effort}' must validate: {err:?}"));
+        }
     }
 }

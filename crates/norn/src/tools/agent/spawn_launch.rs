@@ -25,12 +25,11 @@ use super::spawn_outcome::{
     extract_outcome_summary, mark_terminal_in_registry, panic_outcome_summary,
 };
 use crate::agent::PendingAgentMessages;
-use crate::agent::child_policy::ChildLoopConfig;
 use crate::agent::message_router::MessageRouter;
 use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::integration::hooks::{HookOutcome, HookRegistry};
-use crate::r#loop::config::ToolExecutor;
+use crate::r#loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::r#loop::inbound::{InboundChannel, inbound_channel};
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::runner::{
@@ -112,16 +111,15 @@ pub(super) struct ChildLaunch {
     /// [`ChildPolicy::inbound_capacity`](crate::agent::child_policy::ChildPolicy::inbound_capacity)
     /// (DECISION M4 — never a hardcoded library value).
     pub(super) inbound_capacity: usize,
-    /// The granted per-child loop overrides, from the granted
+    /// The child's fully resolved [`AgentLoopConfig`]: the granted
     /// [`ChildPolicy::loop_config`](crate::agent::child_policy::ChildPolicy::loop_config)
-    /// (R5 closure). The wrapper resolves it via
-    /// [`ChildLoopConfig::resolve`]: `None` → the child runs
-    /// [`AgentLoopConfig::default()`](crate::agent_loop::runner::AgentLoopConfig)
-    /// exactly as before R5; `Some` applies the granted subset
-    /// (`step_timeout`, `linger`) onto that default —
-    /// a granted linger lets this child wait at its stop boundaries for
-    /// its own children's late results.
-    pub(super) loop_config: Option<ChildLoopConfig>,
+    /// subset applied onto the default by the spawn tool
+    /// (`ChildLoopConfig::resolve`), with the context window already
+    /// filled from the catalog for the CHILD's resolved model and
+    /// VALIDATED (`arm_child_window`) before the launch committed —
+    /// the wrapper never re-derives it, so an unvalidated window cannot
+    /// reach a running child.
+    pub(super) config: AgentLoopConfig,
     /// The child's run-cancellation token (W3.5 cancellation cascade):
     /// created by the spawn tool as a child of the spawner's published
     /// [`AgentCancellation`](super::infra::AgentCancellation) token —
@@ -307,7 +305,7 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
         lifecycle,
         router,
         inbound_capacity,
-        loop_config,
+        config,
         cancel,
         wake_registry,
         persistent,
@@ -370,17 +368,14 @@ pub(super) fn launch_child(launch: ChildLaunch) -> AgentHandle {
     }
 
     let join_handle = tokio::spawn(async move {
-        let mut child_config = ChildLoopConfig::resolve(loop_config);
+        let mut child_config = config;
         // Arm auto-compaction on the child exactly as the root builder does
         // (the one shared mechanism): install the token estimator and the
-        // context-edit tracker on the child's loop context and fill its
-        // context window from the catalog for the child's own model, so a
-        // long-running spawned child compacts instead of dying
-        // ContextWindowExceeded. A non-catalog model keeps a None window,
-        // leaving the trigger off. NOTE: the root additionally hard-errors
-        // on a None/over-max window (2026-07-05 incident guard); per-model
-        // child validation is owned by the child-persistence/agent-variants
-        // units.
+        // context-edit tracker on the child's loop context. The context
+        // window was already filled from the catalog for the child's own
+        // model AND validated by the spawn tool before the launch
+        // committed (`arm_child_window`, the 2026-07-05 incident guard
+        // extended to children), so the fill here is a no-op.
         crate::agent::arming::arm_auto_compaction(&mut loop_ctx, &mut child_config, &model);
         let delivered_children = loop_ctx.children_usage.clone();
         // Cheap handle to the child's durable pending store, captured

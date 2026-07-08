@@ -30,10 +30,12 @@
 //! base prompt.
 
 pub mod builder;
+pub mod child;
 pub mod environment;
 pub mod sections;
 
 pub use builder::{
     CollaborationMode, ExecutionMode, SystemPromptInputs, ToolPromptEntry, build_system_prompt,
 };
+pub use child::build_child_system_prompt;
 pub use environment::{EnvironmentConfig, format_environment_section};

@@ -13,11 +13,12 @@ use parking_lot::RwLock;
 use uuid::Uuid;
 
 use super::infra::AgentToolInfra;
-use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
+use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope, MessagingScope};
 use crate::agent::registry::AgentRegistry;
 use crate::agent::result_channel::{ChildAgentResult, ChildResultSender};
 use crate::error::ToolError;
 use crate::tool::context::ToolContext;
+use crate::tool::registry::ToolRegistry;
 
 /// Resolve the spawning agent's **own** granted [`ChildPolicy`].
 ///
@@ -112,6 +113,88 @@ pub(crate) fn auto_child_path(
     format!("{prefix}/{kind}/{}", Uuid::new_v4())
 }
 
+/// Compute the tool surface a child is actually shown: the base
+/// allowlist intersected with the child's granted [`ChildPolicy`]
+/// (brief `agent-variants` R6 — policy WINS over any allowlist, computed
+/// at assembly, never discovered at call time).
+///
+/// `base_allowlist` is the caller's resolved base — explicit `tools`
+/// argument, else the variant's tool subset, else the profile's tool
+/// list; `None` = the parent's full registry surface. The granted policy
+/// then subtracts:
+///
+/// - `signal_agent` when `granted.messaging == MessagingScope::None`
+///   (the single implementation of the strip both spawn and fork
+///   previously carried inline);
+/// - `spawn_agent` AND `fork` when
+///   `granted.delegation.remaining_depth == 0` — a leaf must not SEE
+///   delegation tools it can never use ("an `explorer` granted spawn in
+///   its allowlist at depth 0 simply doesn't see spawn").
+///
+/// When a subtraction applies to an absent allowlist, the registry's
+/// names are materialised first so the removal is explicit and the
+/// result is always a concrete list — the child's tool definitions
+/// (`collect_function_definitions`) and its
+/// [`SubAgentExecutor`](super::infra::SubAgentExecutor) gate agree by
+/// construction. With no subtraction to apply the base passes through
+/// unchanged (`None` stays "full surface"). The call-rejection paths
+/// (registry budget re-validation, `signal_agent`'s scope refusal)
+/// remain as defence-in-depth behind this assembly-level filter.
+///
+/// Allowlist names absent from the parent registry are `tracing::warn!`ed
+/// — naming the tool and the child (`child` is the child's role/variant
+/// label, or `"fork"`) — never a hard error: legitimately-absent tools
+/// exist (`web_fetch`/`web_search` skip registration when their env
+/// construction fails, and the built-in `explorer` variant lists both),
+/// so a typo silently narrowing a child and a legitimate skip cannot be
+/// told apart here. The warn makes the narrowing observable either way.
+pub(crate) fn effective_child_tools(
+    parent_registry: &ToolRegistry,
+    base_allowlist: Option<Vec<String>>,
+    granted: &ChildPolicy,
+    child: &str,
+) -> Option<Vec<String>> {
+    if let Some(names) = base_allowlist.as_ref() {
+        for name in names {
+            if parent_registry.get(name).is_none() {
+                tracing::warn!(
+                    tool = %name,
+                    child = %child,
+                    "child allowlist names a tool absent from the parent \
+                     registry; the child will not see it — check the name for \
+                     a typo (legitimately-absent tools also land here, e.g. \
+                     web_fetch/web_search when their environment construction \
+                     failed at registration)",
+                );
+            }
+        }
+    }
+    let strip_messaging = granted.messaging == MessagingScope::None;
+    let strip_delegation = granted.delegation.remaining_depth == 0;
+    if !strip_messaging && !strip_delegation {
+        return base_allowlist;
+    }
+    let names =
+        base_allowlist.unwrap_or_else(|| parent_registry.names().map(str::to_owned).collect());
+    Some(
+        names
+            .into_iter()
+            .filter(|name| {
+                if strip_messaging && name == crate::tools::agent::coord::SIGNAL_AGENT_TOOL_NAME {
+                    return false;
+                }
+                if strip_delegation
+                    && (name == super::spawn::SPAWN_TOOL_NAME
+                        || name == super::fork_tool::FORK_TOOL_NAME)
+                {
+                    return false;
+                }
+                true
+            })
+            .collect(),
+    )
+}
+
 /// Give a child that can itself delegate its own child-result channel.
 ///
 /// Created iff the child's granted `delegation.remaining_depth >= 1` — a
@@ -178,6 +261,194 @@ mod tests {
         assert!(
             leaf_ctx.get_extension::<ChildResultSender>().is_none(),
             "no sender is installed where nothing may ever send",
+        );
+    }
+
+    fn policy_with(depth: u32, messaging: MessagingScope) -> ChildPolicy {
+        ChildPolicy {
+            messaging,
+            ..policy(depth)
+        }
+    }
+
+    fn registry_with(names: &[&'static str]) -> ToolRegistry {
+        struct Named(&'static str);
+        #[async_trait::async_trait]
+        impl crate::tool::traits::Tool for Named {
+            fn name(&self) -> &'static str {
+                self.0
+            }
+            fn description(&self) -> &'static str {
+                "stub"
+            }
+            fn input_schema(&self) -> serde_json::Value {
+                serde_json::json!({})
+            }
+            fn effect(&self) -> crate::tool::scheduling::ToolEffect {
+                crate::tool::scheduling::ToolEffect::ReadOnly
+            }
+            async fn execute(
+                &self,
+                _envelope: &crate::tool::envelope::ToolEnvelope,
+                _ctx: &ToolContext,
+            ) -> Result<crate::tool::traits::ToolOutput, ToolError> {
+                Ok(crate::tool::traits::ToolOutput::success(serde_json::json!(
+                    {}
+                )))
+            }
+        }
+        let mut registry = ToolRegistry::new();
+        for name in names {
+            registry.register(Box::new(Named(name)));
+        }
+        registry
+    }
+
+    /// R6: an unrestricted grant passes the base allowlist through
+    /// untouched — `None` stays "full parent surface".
+    #[test]
+    fn effective_child_tools_unrestricted_grant_passes_base_through() {
+        let registry = registry_with(&["read", "spawn_agent", "fork", "signal_agent"]);
+        let granted = policy(1);
+        assert_eq!(
+            effective_child_tools(&registry, None, &granted, "worker"),
+            None
+        );
+        assert_eq!(
+            effective_child_tools(&registry, Some(vec!["read".to_owned()]), &granted, "worker"),
+            Some(vec!["read".to_owned()]),
+        );
+    }
+
+    /// R6: a leaf grant (`remaining_depth == 0`) strips BOTH delegation
+    /// tools — from an explicit allowlist and from a materialised full
+    /// surface alike — so the leaf never sees tools it cannot use.
+    #[test]
+    fn effective_child_tools_leaf_strips_spawn_and_fork() {
+        let registry = registry_with(&["read", "spawn_agent", "fork", "signal_agent"]);
+        let granted = policy(0);
+
+        let explicit = effective_child_tools(
+            &registry,
+            Some(vec![
+                "read".to_owned(),
+                "spawn_agent".to_owned(),
+                "fork".to_owned(),
+            ]),
+            &granted,
+            "worker",
+        )
+        .expect("a restricted grant always yields a concrete list");
+        assert_eq!(explicit, vec!["read".to_owned()]);
+
+        let materialised =
+            effective_child_tools(&registry, None, &granted, "worker").expect("materialised list");
+        assert!(materialised.contains(&"read".to_owned()));
+        assert!(materialised.contains(&"signal_agent".to_owned()));
+        assert!(!materialised.contains(&"spawn_agent".to_owned()));
+        assert!(!materialised.contains(&"fork".to_owned()));
+    }
+
+    /// R6 + the centralised messaging strip: `MessagingScope::None`
+    /// removes `signal_agent`; combined with a leaf grant all three
+    /// gated tools disappear in one pass.
+    #[test]
+    fn effective_child_tools_messaging_none_strips_signal_agent() {
+        let registry = registry_with(&["read", "spawn_agent", "fork", "signal_agent"]);
+
+        let messaging_only = effective_child_tools(
+            &registry,
+            None,
+            &policy_with(1, MessagingScope::None),
+            "worker",
+        )
+        .expect("materialised list");
+        assert!(!messaging_only.contains(&"signal_agent".to_owned()));
+        assert!(messaging_only.contains(&"spawn_agent".to_owned()));
+        assert!(messaging_only.contains(&"fork".to_owned()));
+
+        let both = effective_child_tools(
+            &registry,
+            None,
+            &policy_with(0, MessagingScope::None),
+            "worker",
+        )
+        .expect("materialised list");
+        assert_eq!(both, vec!["read".to_owned()]);
+    }
+
+    /// F7: an allowlist name absent from the parent registry emits a
+    /// `tracing::warn!` naming the tool and the child — never a hard
+    /// error — and the surviving set passes through untouched (the
+    /// absent name simply matches nothing downstream). Registered names
+    /// stay silent.
+    #[test]
+    fn effective_child_tools_warns_on_absent_allowlist_names() {
+        use std::sync::{Arc, Mutex};
+
+        #[derive(Clone, Default)]
+        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for SharedBuf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("buffer lock").write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for SharedBuf {
+            type Writer = SharedBuf;
+            fn make_writer(&'writer self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = SharedBuf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+
+        let registry = registry_with(&["read", "search"]);
+        let allowlist = vec![
+            "read".to_owned(),
+            "web_fetch".to_owned(), // legitimately absent (env-gated tool)
+            "raed".to_owned(),      // the typo case
+        ];
+        let out = tracing::subscriber::with_default(subscriber, || {
+            effective_child_tools(&registry, Some(allowlist.clone()), &policy(1), "explorer")
+        });
+
+        // No error, no silent filtering: the base list survives verbatim.
+        assert_eq!(
+            out,
+            Some(allowlist),
+            "absent names must not be dropped or fail"
+        );
+
+        let output = String::from_utf8(buf.0.lock().expect("buffer lock").clone())
+            .expect("log output is UTF-8");
+        for absent in ["web_fetch", "raed"] {
+            let line = output
+                .lines()
+                .find(|line| line.contains(&format!("tool={absent}")))
+                .unwrap_or_else(|| panic!("expected a warn for '{absent}', got: {output}"));
+            assert!(line.contains("WARN"), "must log at warn: {line}");
+            assert!(
+                line.contains("child=explorer"),
+                "the warn names the child: {line}",
+            );
+            assert!(
+                line.contains("absent from the parent registry"),
+                "the warn states the narrowing: {line}",
+            );
+        }
+        assert!(
+            !output.contains("tool=read"),
+            "registered names must not be warned about: {output}",
         );
     }
 

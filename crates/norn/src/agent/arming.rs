@@ -164,10 +164,9 @@ pub(crate) fn arm_auto_compaction(
 ///   against state.
 ///
 /// Called by `AgentBuilder::build` for the root (covering TUI, print,
-/// and driven mode through the one shared assembly funnel). Child launch
-/// paths (spawn/fork/rhai) still fill-without-validating; per-model child
-/// window validation is owned by the child-persistence/agent-variants
-/// units where child model resolution is being reworked.
+/// and driven mode through the one shared assembly funnel) and — via
+/// [`arm_child_window`] — by every child launch path (spawn, fork, rhai),
+/// so no agent at any depth ever launches with a lying window.
 pub(crate) fn validate_context_window(
     config: &AgentLoopConfig,
     model: &str,
@@ -199,6 +198,172 @@ pub(crate) fn validate_context_window(
                  one, token warnings and auto-compaction stay disabled",
             ),
         }),
+    }
+}
+
+/// Resolve and validate a child's context window (owner ruling
+/// 2026-07-07: the child's window comes from the model catalog,
+/// **overrideable** per child) — the child-path counterpart of the root
+/// builder's arm-then-validate sequence, called by every child launch
+/// site (spawn, fork, rhai) BEFORE the launch commits (before the
+/// registry reservation is confirmed), so a failure aborts the launch as
+/// a typed error instead of running a child whose token warnings and
+/// auto-compaction can never fire.
+///
+/// Resolution order:
+///
+/// 1. **Explicit override** — `child_policy.loop_config.context_window`,
+///    already resolved into `config.context_window_limit` by
+///    [`ChildLoopConfig::to_loop_config`](crate::agent::child_policy::ChildLoopConfig::to_loop_config)
+///    — wins, with the root's explicit-window semantics
+///    ([`validate_context_window`]'s ceiling branch): a value above a
+///    catalogued model's maximum is rejected (never a silent clamp), and
+///    a deliberate uncatalogued model is accepted with the override
+///    armed. The rejection is worded with the CHILD remedy, not the
+///    root-only knobs (settings `agent.context_window`, `-c` overrides,
+///    the builder window), which do not exist on the child path.
+/// 2. Else **catalog fill** for the child's own resolved model —
+///    mirroring [`arm_auto_compaction`]'s fill exactly (and idempotent
+///    with it: the later arming call finds the window set and leaves it
+///    untouched).
+/// 3. Else a typed error naming the child remedies: a catalogued model,
+///    or the explicit `child_policy.loop_config.context_window`
+///    override.
+///
+/// # Errors
+///
+/// [`ConfigError::InvalidConfig`], worded with child remedies only, per
+/// the two rejection cases above.
+pub(crate) fn arm_child_window(
+    config: &mut AgentLoopConfig,
+    model: &str,
+) -> Result<(), ConfigError> {
+    if let Some(limit) = config.context_window_limit {
+        // The explicit child override: the same ceiling rule as the
+        // root's explicit window (the fill below never exceeds the
+        // catalog, so an over-ceiling value can only be the override).
+        if let Some(max) = crate::model_catalog::largest_max_context_window_for_model(model)
+            && limit > max
+        {
+            return Err(ConfigError::InvalidConfig {
+                reason: format!(
+                    "child context window {limit} exceeds model '{model}'s maximum of \
+                     {max} (model catalog) — token warnings and auto-compaction would \
+                     sit beyond the real window and never fire. Lower or remove \
+                     child_policy.loop_config.context_window; with no override the \
+                     child's window is taken from the model catalog",
+                ),
+            });
+        }
+        return Ok(());
+    }
+    config.context_window_limit = crate::model_catalog::smallest_context_window_for_model(model);
+    if config.context_window_limit.is_none() {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!(
+                "child model '{model}' is not in the model catalog — check the model \
+                 id for a typo first. For a deliberate uncatalogued child model, use \
+                 a catalogued model instead, or set \
+                 child_policy.loop_config.context_window explicitly (owner ruling \
+                 2026-07-07: the child's window comes from the model catalog, \
+                 overrideable per child); without a window, token warnings and \
+                 auto-compaction cannot fire",
+            ),
+        });
+    }
+    Ok(())
+}
+
+/// Where a child's resolved reasoning effort came from — decides how
+/// [`arm_child_reasoning_effort`] handles a catalog-unsupported pairing.
+pub(crate) enum ChildEffortSource<'a> {
+    /// Explicitly configured for this child; the label names the exact
+    /// setting (e.g. `variants.scout.reasoning_effort`, a profile's
+    /// `reasoning_effort`) so the rejection is actionable.
+    Explicit(&'a str),
+    /// Ambient inheritance from the parent's live effort (owner ruling
+    /// 2026-07-07); `child` labels the child for the degrade warning.
+    Inherited {
+        /// The child's role/variant label (or `"fork"`).
+        child: &'a str,
+    },
+}
+
+/// Validate a child's resolved reasoning effort against the model catalog
+/// for the CHILD's resolved model — the child-path counterpart of the
+/// root's `--reasoning-effort` / `/effort` enforcement
+/// ([`reasoning_effort_supported_for_model`](crate::r#loop::commands::reasoning_effort_supported_for_model)),
+/// called by every child launch site (spawn, fork, rhai) so an
+/// unsupported pairing surfaces at launch instead of as an opaque
+/// provider rejection (or a lenient backend's silent drop) after the
+/// reservation and audit persist.
+///
+/// Root parity is exact, including uncatalogued models: the root REFUSES
+/// an explicit effort on a model the catalog cannot vouch for (the
+/// support check is catalog-membership-based), so a child does too.
+///
+/// - **Explicitly configured** effort unsupported by the child's model →
+///   typed error naming the setting and the model's catalogued efforts.
+/// - **Inherited** effort unsupported → degrade to `None` with a
+///   `tracing::warn!` naming the child, model, and dropped effort: the
+///   caller configured nothing wrong on this spawn, so failing it would
+///   punish ambient inheritance — but the drop is never silent.
+///
+/// # Errors
+///
+/// [`ConfigError::InvalidConfig`] for the explicit-unsupported case only.
+pub(crate) fn arm_child_reasoning_effort(
+    effort: Option<crate::provider::request::ReasoningEffort>,
+    source: &ChildEffortSource<'_>,
+    model: &str,
+) -> Result<Option<crate::provider::request::ReasoningEffort>, ConfigError> {
+    let Some(value) = effort else {
+        return Ok(None);
+    };
+    if crate::r#loop::commands::reasoning_effort_supported_for_model(model, value) {
+        return Ok(Some(value));
+    }
+    let label = crate::r#loop::commands::effort_label(value);
+    match source {
+        ChildEffortSource::Explicit(setting) => {
+            let catalog_detail = crate::model_catalog::find_model(
+                crate::model_catalog::DEFAULT_PROVIDER,
+                crate::model_catalog::DEFAULT_BACKEND,
+                model,
+            )
+            .map_or_else(
+                || {
+                    format!(
+                        "model '{model}' is not in the model catalog, which therefore \
+                         declares no supported efforts for it"
+                    )
+                },
+                |entry| {
+                    format!(
+                        "model '{model}' supports: {} (model catalog)",
+                        entry.supported_reasoning_efforts.join(", "),
+                    )
+                },
+            );
+            Err(ConfigError::InvalidConfig {
+                reason: format!(
+                    "reasoning effort '{label}' ({setting}) is not supported for the \
+                     child's resolved model — {catalog_detail}. Set a supported effort \
+                     there, or resolve the child onto a model that supports it",
+                ),
+            })
+        }
+        ChildEffortSource::Inherited { child } => {
+            tracing::warn!(
+                child = %child,
+                model = %model,
+                effort = %label,
+                "inherited reasoning effort is not supported by the child's resolved \
+                 model (model catalog); running the child with no reasoning effort — \
+                 set a supported effort explicitly to silence this",
+            );
+            Ok(None)
+        }
     }
 }
 
@@ -511,6 +676,273 @@ mod tests {
         };
         validate_context_window(&config, "not-in-catalog-model-xyz")
             .expect("explicit window on an uncatalogued model is valid");
+    }
+
+    /// The child-path window guard: a catalogued model fills from the
+    /// catalog and validates clean; an uncatalogued model (a child has no
+    /// explicit-window escape hatch) is rejected loudly, mirroring the
+    /// root's unknown-model rejection.
+    #[test]
+    fn arm_child_window_fills_catalog_model_and_rejects_unknown() {
+        let model = crate::model_catalog::default_selection().model;
+        let mut config = AgentLoopConfig::default();
+        arm_child_window(&mut config, model).expect("catalogued child model validates");
+        assert_eq!(
+            config.context_window_limit,
+            crate::model_catalog::smallest_context_window_for_model(model),
+            "the child's window is filled from the catalog for its own model",
+        );
+
+        let mut unknown = AgentLoopConfig::default();
+        let err = arm_child_window(&mut unknown, "not-in-catalog-model-xyz")
+            .expect_err("an uncatalogued child model must be rejected");
+        assert!(
+            err.to_string().contains("not-in-catalog-model-xyz"),
+            "the rejection names the model: {err}",
+        );
+    }
+
+    /// The child rejection prescribes CHILD remedies only: a catalogued
+    /// model or an explicit spawn-time `model` that is catalogued. The
+    /// root-only knobs (`agent.context_window` settings, the `-c`
+    /// override, the builder window) do not exist on the child path and
+    /// must not be prescribed — children have no explicit-window input.
+    #[test]
+    fn arm_child_window_rejection_prescribes_child_remedies_not_root_knobs() {
+        let mut config = AgentLoopConfig::default();
+        let err = arm_child_window(&mut config, "not-in-catalog-model-xyz")
+            .expect_err("an uncatalogued child model without an override must be rejected");
+        let reason = err.to_string();
+        assert!(
+            reason.contains("child model 'not-in-catalog-model-xyz'"),
+            "names the child's model: {reason}",
+        );
+        assert!(
+            reason.contains("typo"),
+            "leads with the typo hypothesis: {reason}"
+        );
+        assert!(
+            reason.contains("child_policy.loop_config.context_window"),
+            "names the ruled child override (owner ruling 2026-07-07): {reason}",
+        );
+        for root_only in ["agent.context_window", "-c ", "builder"] {
+            assert!(
+                !reason.contains(root_only),
+                "must not prescribe the root-only remedy '{root_only}': {reason}",
+            );
+        }
+    }
+
+    /// Owner ruling 2026-07-07: an explicit
+    /// `child_policy.loop_config.context_window` override on a deliberate
+    /// uncatalogued child model is accepted, with exactly that window
+    /// armed (mirroring the root's explicit-window semantics).
+    #[test]
+    fn arm_child_window_accepts_explicit_override_on_uncatalogued_model() {
+        let mut config = AgentLoopConfig {
+            context_window_limit: Some(32_000),
+            ..AgentLoopConfig::default()
+        };
+        arm_child_window(&mut config, "not-in-catalog-model-xyz")
+            .expect("explicit child window on an uncatalogued model is valid");
+        assert_eq!(
+            config.context_window_limit,
+            Some(32_000),
+            "the override is armed verbatim, never replaced by a catalog value",
+        );
+    }
+
+    /// Owner ruling 2026-07-07 + the 2026-07-05 incident guard on the
+    /// child path: an explicit child window above a catalogued model's
+    /// maximum is rejected loudly (never a silent clamp), naming the
+    /// model, both numbers, and the child knob — not the root's.
+    #[test]
+    fn arm_child_window_rejects_oversized_explicit_override() {
+        let mut config = AgentLoopConfig {
+            context_window_limit: Some(272_000),
+            ..AgentLoopConfig::default()
+        };
+        let err = arm_child_window(&mut config, "gpt-5.3-codex-spark")
+            .expect_err("272k on a 128k-max child model must be rejected");
+        let reason = err.to_string();
+        assert!(
+            reason.contains("gpt-5.3-codex-spark"),
+            "names the model: {reason}"
+        );
+        assert!(
+            reason.contains("272000"),
+            "names the configured value: {reason}"
+        );
+        assert!(reason.contains("128000"), "names the catalog max: {reason}");
+        assert!(
+            reason.contains("child_policy.loop_config.context_window"),
+            "names the child knob: {reason}",
+        );
+        assert!(
+            !reason.contains("agent.context_window"),
+            "must not prescribe the root-only settings knob: {reason}",
+        );
+    }
+
+    /// An explicit child window at or below a catalogued model's maximum
+    /// beats the catalog fill — explicit config always wins.
+    #[test]
+    fn arm_child_window_explicit_override_beats_catalog_fill() {
+        let mut config = AgentLoopConfig {
+            context_window_limit: Some(64_000),
+            ..AgentLoopConfig::default()
+        };
+        arm_child_window(&mut config, "gpt-5.3-codex-spark")
+            .expect("an in-range explicit child window is valid");
+        assert_eq!(config.context_window_limit, Some(64_000));
+    }
+
+    /// Re-review R2: a supported effort passes through unchanged, and no
+    /// effort at all stays none — for any source.
+    #[test]
+    fn arm_child_reasoning_effort_passes_supported_and_none_through() {
+        use crate::provider::request::ReasoningEffort;
+        let model = crate::model_catalog::default_selection().model;
+        assert_eq!(
+            arm_child_reasoning_effort(
+                Some(ReasoningEffort::High),
+                &ChildEffortSource::Explicit("variants.scout.reasoning_effort"),
+                model,
+            )
+            .expect("supported effort is accepted"),
+            Some(ReasoningEffort::High),
+        );
+        assert_eq!(
+            arm_child_reasoning_effort(
+                Some(ReasoningEffort::High),
+                &ChildEffortSource::Inherited { child: "worker" },
+                model,
+            )
+            .expect("supported inherited effort is accepted"),
+            Some(ReasoningEffort::High),
+        );
+        assert_eq!(
+            arm_child_reasoning_effort(
+                None,
+                &ChildEffortSource::Inherited { child: "worker" },
+                "not-in-catalog-model-xyz",
+            )
+            .expect("no effort is always fine"),
+            None,
+        );
+    }
+
+    /// Re-review R2: an EXPLICITLY configured effort the child's resolved
+    /// model does not support is a typed error naming the setting and the
+    /// model's catalogued efforts — root `/effort` parity, including the
+    /// uncatalogued-model case (the root refuses an explicit effort on a
+    /// model the catalog cannot vouch for; so does the child path).
+    #[test]
+    fn arm_child_reasoning_effort_explicit_unsupported_is_a_typed_error() {
+        use crate::provider::request::ReasoningEffort;
+
+        // Catalogued model, unsupported effort ("none" is declared for no
+        // catalogued model — factual catalog content, not an invention).
+        let model = crate::model_catalog::default_selection().model;
+        let err = arm_child_reasoning_effort(
+            Some(ReasoningEffort::None),
+            &ChildEffortSource::Explicit("variants.scout.reasoning_effort"),
+            model,
+        )
+        .expect_err("an unsupported explicit effort must be refused");
+        let reason = err.to_string();
+        assert!(
+            reason.contains("variants.scout.reasoning_effort"),
+            "names the setting: {reason}",
+        );
+        assert!(reason.contains(model), "names the model: {reason}");
+        assert!(
+            reason.contains("low, medium, high, xhigh"),
+            "lists the model's catalogued efforts: {reason}",
+        );
+
+        // Uncatalogued model: explicit effort refused, root parity.
+        let err = arm_child_reasoning_effort(
+            Some(ReasoningEffort::High),
+            &ChildEffortSource::Explicit("variants.scout.reasoning_effort"),
+            "not-in-catalog-model-xyz",
+        )
+        .expect_err("an explicit effort on an uncatalogued model must be refused");
+        let reason = err.to_string();
+        assert!(
+            reason.contains("not in the model catalog"),
+            "states why no effort can be vouched for: {reason}",
+        );
+        assert!(
+            reason.contains("variants.scout.reasoning_effort"),
+            "names the setting: {reason}",
+        );
+    }
+
+    /// Re-review R2: an INHERITED effort the child's resolved model does
+    /// not support degrades to `None` with a `tracing::warn!` naming the
+    /// child, the model, and the dropped effort — never an error (the
+    /// caller configured nothing wrong on this spawn), never silent.
+    #[test]
+    fn arm_child_reasoning_effort_inherited_unsupported_warns_and_degrades() {
+        use std::sync::{Arc, Mutex};
+
+        use crate::provider::request::ReasoningEffort;
+
+        #[derive(Clone, Default)]
+        struct SharedBuf(Arc<Mutex<Vec<u8>>>);
+
+        impl std::io::Write for SharedBuf {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.0.lock().expect("buffer lock").write(buf)
+            }
+            fn flush(&mut self) -> std::io::Result<()> {
+                Ok(())
+            }
+        }
+
+        impl<'writer> tracing_subscriber::fmt::MakeWriter<'writer> for SharedBuf {
+            type Writer = SharedBuf;
+            fn make_writer(&'writer self) -> Self::Writer {
+                self.clone()
+            }
+        }
+
+        let buf = SharedBuf::default();
+        let subscriber = tracing_subscriber::fmt()
+            .with_max_level(tracing::Level::WARN)
+            .with_writer(buf.clone())
+            .with_ansi(false)
+            .finish();
+
+        let degraded = tracing::subscriber::with_default(subscriber, || {
+            arm_child_reasoning_effort(
+                Some(ReasoningEffort::XHigh),
+                &ChildEffortSource::Inherited { child: "explorer" },
+                "not-in-catalog-model-xyz",
+            )
+        })
+        .expect("inherited-unsupported must not error");
+        assert_eq!(
+            degraded, None,
+            "the unsupported inherited effort is dropped"
+        );
+
+        let output = String::from_utf8(buf.0.lock().expect("buffer lock").clone())
+            .expect("log output is UTF-8");
+        assert!(output.contains("WARN"), "logs at warn: {output}");
+        assert!(
+            output.contains("child=explorer"),
+            "names the child: {output}"
+        );
+        assert!(
+            output.contains("model=not-in-catalog-model-xyz"),
+            "names the model: {output}",
+        );
+        assert!(
+            output.contains("effort=x-high") || output.contains("effort=xhigh"),
+            "names the dropped effort: {output}",
+        );
     }
 
     /// NP-001 R9: arming installs the `ProcessManager` extension (the `process`

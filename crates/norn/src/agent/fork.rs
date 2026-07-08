@@ -131,12 +131,80 @@ pub struct ForkRequirement {
     pub description: String,
 }
 
-/// Verbatim preamble prepended to the child's base system instruction.
+/// Verbatim intent paragraph opening every fork preamble.
 ///
 /// Kept as a `pub const` so tests can assert byte-for-byte that the child's
 /// [`LoopContext::base_system_instruction`](crate::agent_loop::loop_context::LoopContext::base_system_instruction)
-/// carries it (R5 acceptance).
+/// carries it (R5 acceptance). The full preamble is built by
+/// [`build_fork_preamble`], which extends this intent with the fork's
+/// structured identity (R4).
 pub const FORK_SYSTEM_PREAMBLE: &str = "You are a fork of the parent agent's session, split at this point in time. Complete the requirements in the task and return your structured output. Stay focused on the assigned task — do not pursue work outside the requirements.";
+
+/// The structured identity a fork child is told about itself (brief
+/// `agent-variants` R4): who forked it, where it sits, what it owes, and
+/// what delegation rights it holds — "a limit an agent doesn't know
+/// about is an assassination", so the child is TOLD its budget.
+pub struct ForkIdentity<'a> {
+    /// The forking agent's id.
+    pub parent_agent_id: &'a str,
+    /// The fork's own coordination path address
+    /// (`BranchedChild::path_address` from the session branch mint).
+    pub path_address: &'a str,
+    /// The requirement slugs the fork's structured output must report on
+    /// (already schema-forced; restated here so the contract is visible
+    /// in the child's own instructions).
+    pub requirement_slugs: &'a [String],
+    /// The [`ChildPolicy`](crate::agent::child_policy::ChildPolicy)
+    /// granted to this fork — its delegation and messaging budget.
+    pub granted: &'a crate::agent::child_policy::ChildPolicy,
+}
+
+/// Render the fork preamble: the verbatim [`FORK_SYSTEM_PREAMBLE`] intent
+/// followed by the fork's structured identity — parent agent id, path
+/// address, requirements contract, and delegation rights (R4).
+///
+/// Deterministic for fixed inputs (no timestamps, no randomness); the
+/// golden-file test pins the exact rendering.
+#[must_use]
+pub fn build_fork_preamble(identity: &ForkIdentity<'_>) -> String {
+    use crate::agent::child_policy::MessagingScope;
+
+    let mut out = String::from(FORK_SYSTEM_PREAMBLE);
+    out.push_str("\n\n## Fork identity\n\n");
+    let _ = writeln!(out, "- Forked by agent: {}", identity.parent_agent_id);
+    let _ = writeln!(out, "- Your address: {}", identity.path_address);
+    out.push_str("- Requirements contract (the slugs your structured output must report on):\n");
+    if identity.requirement_slugs.is_empty() {
+        out.push_str("  - (none declared — only the free-text response is required)\n");
+    } else {
+        for slug in identity.requirement_slugs {
+            let _ = writeln!(out, "  - {slug}");
+        }
+    }
+    out.push_str("\n## Delegation rights\n\n");
+    let depth = identity.granted.delegation.remaining_depth;
+    let _ = writeln!(
+        out,
+        "- Remaining delegation depth: {depth}{}",
+        if depth == 0 {
+            " — you are a leaf: you cannot spawn or fork, and those tools are not on your surface"
+        } else {
+            " (levels of descendants you may create below yourself)"
+        },
+    );
+    let _ = writeln!(
+        out,
+        "- Max concurrent children: {}",
+        identity.granted.delegation.max_concurrent_children,
+    );
+    let scope = match identity.granted.messaging {
+        MessagingScope::SiblingsAndParent => "siblings and parent",
+        MessagingScope::ParentOnly => "parent only",
+        MessagingScope::None => "none — signal_agent is not on your surface",
+    };
+    let _ = write!(out, "- Messaging scope: {scope}");
+    out
+}
 
 /// Synthetic tool-result content the fork tool injects for its own call.
 ///
@@ -147,13 +215,27 @@ pub const FORK_SYSTEM_PREAMBLE: &str = "You are a fork of the parent agent's ses
 pub const FORK_SYNTHETIC_RESULT_MESSAGE: &str = "fork created successfully";
 
 /// Optional [`ToolContext`](crate::tool::context::ToolContext) extension
-/// carrying the parent's base system instruction.
+/// carrying the **identity-free** base system instruction the fork tool
+/// composes with.
 ///
-/// Published by the orchestrator when assembling the agent loop's
-/// [`ToolContext`](crate::tool::context::ToolContext) so the fork tool can
-/// compose the child's base system
-/// instruction as `FORK_SYSTEM_PREAMBLE + parent_base` (R5). Absent
-/// extensions are not an error — the child falls back to just the preamble.
+/// Published when assembling an agent's
+/// [`ToolContext`](crate::tool::context::ToolContext) so the fork tool
+/// can compose a fork child's base as `fork preamble + parent_base` (R5).
+/// The invariant at every level is that this extension never carries a
+/// fork-identity preamble:
+///
+/// - the **root** publishes its own installed base (no preamble by
+///   construction);
+/// - a **spawned child** publishes its own base (its variant / profile /
+///   task instruction — identity-free working instructions);
+/// - a **fork** publishes the parent base it composed with — NOT its own
+///   combined base, whose leading "Fork identity" block would otherwise
+///   stack (stale) under a fork-of-fork's fresh preamble. Every fork
+///   level therefore renders fresh preamble + the original base, with
+///   exactly one identity block.
+///
+/// Absent extensions are not an error — the child falls back to just the
+/// preamble.
 #[derive(Clone, Debug)]
 pub struct ParentSystemInstruction(pub Arc<String>);
 
@@ -171,18 +253,18 @@ impl ParentSystemInstruction {
     }
 }
 
-/// Combine the verbatim fork preamble with the parent's base system
-/// instruction (R5).
+/// Combine a built fork preamble (see [`build_fork_preamble`]) with the
+/// parent's base system instruction (R5).
 ///
 /// The preamble comes first so the child's first read frames it as a forked
 /// sub-agent before encountering the parent's content. When `parent_base` is
 /// empty the result is just the preamble.
 #[must_use]
-pub fn combine_system_instruction(parent_base: &str) -> String {
+pub fn combine_system_instruction(preamble: &str, parent_base: &str) -> String {
     if parent_base.is_empty() {
-        FORK_SYSTEM_PREAMBLE.to_owned()
+        preamble.to_owned()
     } else {
-        format!("{FORK_SYSTEM_PREAMBLE}\n\n{parent_base}")
+        format!("{preamble}\n\n{parent_base}")
     }
 }
 
@@ -622,16 +704,37 @@ mod tests {
         assert!(out.iter().all(|e| !matches!(e, SessionEvent::Label { .. })));
     }
 
+    fn golden_identity_policy() -> crate::agent::child_policy::ChildPolicy {
+        use crate::agent::child_policy::{ChildPolicy, DelegationBudget, MessagingScope};
+        ChildPolicy {
+            messaging: MessagingScope::SiblingsAndParent,
+            delegation: DelegationBudget {
+                remaining_depth: 1,
+                max_concurrent_children: 4,
+            },
+            inbound_capacity: 8,
+            loop_config: None,
+        }
+    }
+
     #[test]
     fn combine_system_instruction_empty_parent_uses_preamble_only() {
-        let combined = combine_system_instruction("");
+        let combined = combine_system_instruction(FORK_SYSTEM_PREAMBLE, "");
         assert_eq!(combined, FORK_SYSTEM_PREAMBLE);
     }
 
     #[test]
     fn combine_system_instruction_prepends_preamble_to_parent_base() {
         let parent = "You are the parent agent. Be terse.";
-        let combined = combine_system_instruction(parent);
+        let slugs = vec!["check_code".to_owned()];
+        let policy = golden_identity_policy();
+        let preamble = build_fork_preamble(&ForkIdentity {
+            parent_agent_id: "5e1f0000-0000-0000-0000-000000000001",
+            path_address: "root/fork-kestrel",
+            requirement_slugs: &slugs,
+            granted: &policy,
+        });
+        let combined = combine_system_instruction(&preamble, parent);
         assert!(
             combined.starts_with(FORK_SYSTEM_PREAMBLE),
             "fork preamble must come first: {combined}",
@@ -639,6 +742,67 @@ mod tests {
         assert!(
             combined.contains(parent),
             "parent base must be retained verbatim: {combined}",
+        );
+        assert!(
+            combined.find(&preamble).expect("preamble present")
+                < combined.find(parent).expect("parent present"),
+            "the whole structured preamble precedes the parent base: {combined}",
+        );
+    }
+
+    /// R4 golden-file test: fixed inputs render byte-for-byte to the
+    /// checked-in `testdata/fork_preamble.golden.md` — contract slugs,
+    /// path address, parent id, and the delegation budget all present.
+    /// A plain file plus `assert_eq!`, no snapshot crate.
+    #[test]
+    fn fork_preamble_matches_golden_file() {
+        let slugs = vec!["check_code".to_owned(), "run_tests".to_owned()];
+        let policy = golden_identity_policy();
+        let rendered = build_fork_preamble(&ForkIdentity {
+            parent_agent_id: "5e1f0000-0000-0000-0000-000000000001",
+            path_address: "root/fork-kestrel",
+            requirement_slugs: &slugs,
+            granted: &policy,
+        });
+        assert_eq!(
+            rendered,
+            include_str!("testdata/fork_preamble.golden.md"),
+            "the fork preamble rendering is pinned by the golden file; \
+             update testdata/fork_preamble.golden.md deliberately when the \
+             preamble changes",
+        );
+    }
+
+    /// R4: a leaf fork (depth 0, messaging none) is told plainly that it
+    /// cannot delegate and cannot message — the budget is never a
+    /// surprise discovered at call-rejection time.
+    #[test]
+    fn fork_preamble_tells_a_leaf_it_is_a_leaf() {
+        use crate::agent::child_policy::{ChildPolicy, DelegationBudget, MessagingScope};
+        let policy = ChildPolicy {
+            messaging: MessagingScope::None,
+            delegation: DelegationBudget {
+                remaining_depth: 0,
+                max_concurrent_children: 0,
+            },
+            inbound_capacity: 1,
+            loop_config: None,
+        };
+        let rendered = build_fork_preamble(&ForkIdentity {
+            parent_agent_id: "parent-id",
+            path_address: "root/fork-a",
+            requirement_slugs: &[],
+            granted: &policy,
+        });
+        assert!(
+            rendered.contains("Remaining delegation depth: 0"),
+            "{rendered}"
+        );
+        assert!(rendered.contains("you are a leaf"), "{rendered}");
+        assert!(rendered.contains("Messaging scope: none"), "{rendered}");
+        assert!(
+            rendered.contains("none declared"),
+            "an empty contract is stated honestly: {rendered}",
         );
     }
 

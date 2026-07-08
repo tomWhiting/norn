@@ -199,7 +199,14 @@ pub struct DelegationBudget {
 ///   [`LingerPolicy`], letting a **mid-tree** agent wait at its would-stop
 ///   boundaries for its own children's late results (before R5 only the
 ///   root could linger, so late grandchild results orphaned at the child
-///   level).
+///   level),
+/// - [`Self::context_window`] — the child's explicit context window in
+///   tokens (owner ruling 2026-07-07: the child's window comes from the
+///   model catalog, overrideable here). Unset → filled from the catalog
+///   for the child's own model; set → wins over the catalog with the same
+///   semantics as the root's explicit window (an override above a
+///   catalogued model's ceiling is rejected at launch; an uncatalogued
+///   model accepts the explicit value).
 ///
 /// Every field is optional; an unset field defers to
 /// [`AgentLoopConfig::default()`] for that knob — exactly the
@@ -243,6 +250,15 @@ pub struct ChildLoopConfig {
     /// behavior; its children's late results are then undeliverable).
     #[serde(default)]
     pub linger_secs: Option<u64>,
+    /// Optional explicit context window for the child, in tokens (owner
+    /// ruling 2026-07-07). Unset → the window is filled from the model
+    /// catalog for the child's own resolved model. Set → this value wins,
+    /// with the root's explicit-window semantics: a value above a
+    /// catalogued model's maximum is rejected at launch (never a silent
+    /// clamp), and a deliberate uncatalogued model is accepted with this
+    /// window armed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
 }
 
 impl ChildLoopConfig {
@@ -260,6 +276,13 @@ impl ChildLoopConfig {
             config.linger = Some(LingerPolicy {
                 deadline: Duration::from_secs(secs),
             });
+        }
+        // Owner ruling 2026-07-07: the explicit child window rides into
+        // the loop config, where `arm_child_window` treats it exactly
+        // like the root's explicit window (it wins over the catalog fill
+        // and is validated against the catalogued ceiling at launch).
+        if let Some(tokens) = self.context_window {
+            config.context_window_limit = Some(tokens);
         }
         config
     }
@@ -478,6 +501,7 @@ mod tests {
         let full = ChildLoopConfig {
             step_timeout_secs: Some(300),
             linger_secs: Some(45),
+            context_window: Some(200_000),
         };
         let json = serde_json::to_value(full).expect("serializes");
         assert_eq!(
@@ -485,6 +509,7 @@ mod tests {
             serde_json::json!({
                 "step_timeout_secs": 300,
                 "linger_secs": 45,
+                "context_window": 200_000,
             }),
         );
         let back: ChildLoopConfig = serde_json::from_value(json).expect("round-trips");
@@ -499,6 +524,7 @@ mod tests {
             ChildLoopConfig {
                 step_timeout_secs: None,
                 linger_secs: None,
+                context_window: None,
             },
         );
         let partial: ChildLoopConfig =
@@ -569,6 +595,7 @@ mod tests {
         let empty = ChildLoopConfig {
             step_timeout_secs: None,
             linger_secs: None,
+            context_window: None,
         };
         assert_eq!(
             serde_json::to_value(ChildLoopConfig::resolve(Some(empty))).expect("serializes"),
@@ -584,6 +611,7 @@ mod tests {
         let resolved = ChildLoopConfig::resolve(Some(ChildLoopConfig {
             step_timeout_secs: Some(90),
             linger_secs: Some(45),
+            context_window: None,
         }));
         assert_eq!(resolved.step_timeout, Some(Duration::from_secs(90)));
         assert_eq!(
@@ -724,6 +752,7 @@ mod tests {
         let configured = ChildLoopConfig {
             step_timeout_secs: Some(60),
             linger_secs: Some(15),
+            context_window: None,
         };
         let mut spawner = policy(3);
         spawner.loop_config = Some(configured);
@@ -754,6 +783,7 @@ mod tests {
         requested.loop_config = Some(ChildLoopConfig {
             step_timeout_secs: Some(3600),
             linger_secs: Some(120),
+            context_window: None,
         });
         let grant = spawner
             .grant_for_child(Some(requested.clone()))
@@ -766,6 +796,7 @@ mod tests {
         tight.loop_config = Some(ChildLoopConfig {
             step_timeout_secs: Some(1),
             linger_secs: None,
+            context_window: None,
         });
         let unset = tight
             .grant_for_child(Some(policy(1)))

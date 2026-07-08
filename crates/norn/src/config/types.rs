@@ -84,6 +84,17 @@ pub struct NornSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<ToolSettings>,
 
+    /// Agent variant definitions keyed by variant name — named child-agent
+    /// profiles (prompt, tool subset, model, reasoning effort) honoured by
+    /// the `spawn_agent` tool. Merged wholesale by name across layers
+    /// (project overrides user, D3); built-in variants (`explorer`,
+    /// `reviewer`, `implementer`) sit BELOW the merged config and overlay
+    /// per-field at catalog build — see
+    /// [`crate::agent::variants::VariantCatalog`]. Uses [`BTreeMap`] for
+    /// deterministic serialisation order.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub variants: Option<BTreeMap<String, VariantSettings>>,
+
     /// MCP server definitions keyed by user-chosen server name.
     ///
     /// Uses [`BTreeMap`] (not [`std::collections::HashMap`]) so JSON
@@ -800,6 +811,77 @@ pub struct LengthOverrideEntry {
 }
 
 // ---------------------------------------------------------------------------
+// Agent variants
+// ---------------------------------------------------------------------------
+
+/// A single agent-variant definition — a named child-agent profile honoured
+/// by the `spawn_agent` tool (and the rhai spawn path).
+///
+/// Every field is optional so a settings layer can override a built-in
+/// variant sparsely: configured fields overlay the built-in of the same name
+/// per-FIELD at catalog build (`crate::agent::variants::VariantCatalog`).
+/// Setting only `variants.reviewer.model` therefore keeps the built-in
+/// reviewer prompt and tool subset — the ergonomics the reviewer-model
+/// ruling (2026-07-04) requires. Across settings LAYERS the section merges
+/// wholesale by name, later layer wins (D3, same as `mcp_servers`).
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VariantSettings {
+    /// Human-readable purpose line, surfaced in unknown-variant error
+    /// listings and tooling.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+
+    /// Inline prompt text installed as the child's base system-prompt block.
+    /// Mutually exclusive with [`Self::prompt_file`] (validated, NC-003).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt: Option<String>,
+
+    /// Path to a UTF-8 prompt file. Relative paths resolve against the
+    /// **agent's working directory** — the `working_dir` the builder
+    /// threads to the catalog build at assembly — not the process working
+    /// directory (the two can diverge in embedded runtimes). Whether
+    /// user-level settings should anchor somewhere else (e.g. the settings
+    /// file's own directory) is an open owner item. The file is read
+    /// eagerly at assembly so a missing/unreadable file fails loudly at
+    /// startup, never at spawn time. Mutually exclusive with
+    /// [`Self::prompt`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prompt_file: Option<String>,
+
+    /// Tool-name allowlist for children of this variant. Absent = inherit
+    /// the parent's full registry surface. The effective set is always
+    /// further intersected with the child's granted delegation policy at
+    /// assembly (policy WINS — brief R6).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tools: Option<Vec<String>>,
+
+    /// Model id for children of this variant. Absent = inherit the parent's
+    /// model — never a hardcoded fallback, never a silent downgrade — unless
+    /// [`Self::model_required`] is set, in which case absence is a typed
+    /// error at spawn time naming this key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+
+    /// When true, spawning this variant without a model (from
+    /// [`Self::model`] or an explicit spawn-time `model` argument) is a
+    /// typed error. Ships true on the built-in `reviewer` only: same-tier
+    /// review of the code that wrote it is the playbook's "broken reviewer",
+    /// and norn's catalog is provider-dependent so any hardcoded tier would
+    /// be arbitrary — the review tier is an owner-level config value
+    /// (ruling, 2026-07-04).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model_required: Option<bool>,
+
+    /// Reasoning effort for children of this variant: one of the
+    /// [`crate::provider::request::ReasoningEffort`] serde names
+    /// (`"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`). Validated at
+    /// config-validate time, parsed to the typed enum at catalog build.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
+// ---------------------------------------------------------------------------
 // MCP servers
 // ---------------------------------------------------------------------------
 
@@ -1251,6 +1333,18 @@ mod tests {
                 bash: Some(serde_json::json!({"timeout":"60s"})),
                 edit: None,
             }),
+            variants: Some(BTreeMap::from([(
+                "scout".to_owned(),
+                VariantSettings {
+                    description: Some("wide read-only exploration".to_owned()),
+                    prompt: Some("Survey the code and report.".to_owned()),
+                    prompt_file: None,
+                    tools: Some(vec!["read".to_owned(), "search".to_owned()]),
+                    model: Some("gpt-5.5".to_owned()),
+                    model_required: None,
+                    reasoning_effort: Some("low".to_owned()),
+                },
+            )])),
             mcp_servers: Some(mcp),
             skills: Some(SkillsSettings {
                 search_paths: Some(vec!["./skills".to_owned()]),
