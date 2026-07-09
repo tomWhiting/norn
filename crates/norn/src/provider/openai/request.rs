@@ -626,6 +626,37 @@ mod tests {
     }
 
     #[test]
+    fn reasoning_effort_none_serializes_as_none() {
+        let mut req = make_request();
+        req.reasoning_effort = Some(ReasoningEffort::None);
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let json = serde_json::to_value(&payload).expect("serialize");
+        assert_eq!(json["reasoning"]["effort"], "none");
+    }
+
+    #[test]
+    fn reasoning_effort_xhigh_serializes_as_xhigh() {
+        let mut req = make_request();
+        req.reasoning_effort = Some(ReasoningEffort::XHigh);
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let json = serde_json::to_value(&payload).expect("serialize");
+        assert_eq!(json["reasoning"]["effort"], "xhigh");
+    }
+
+    #[test]
+    fn reasoning_effort_max_serializes_as_max() {
+        let mut req = make_request();
+        req.model = "gpt-5.6-sol".to_owned();
+        req.reasoning_effort = Some(ReasoningEffort::Max);
+        let payload =
+            build_payload(&req, CATALOG_BACKEND_CODEX_SUBSCRIPTION).expect("build_payload");
+        let json = serde_json::to_value(&payload).expect("serialize");
+        assert_eq!(json["reasoning"]["effort"], "max");
+    }
+
+    #[test]
     fn service_tier_fast_serializes_as_openai_priority() {
         let mut req = make_request();
         req.model = "gpt-5.5".to_owned();

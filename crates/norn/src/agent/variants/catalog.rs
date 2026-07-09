@@ -68,7 +68,7 @@ pub enum VariantCatalogError {
     /// A variant's `reasoning_effort` is not a recognised effort name.
     #[error(
         "variant '{name}': unrecognised reasoning_effort '{value}' \
-         (expected one of: none, low, medium, high, xhigh)"
+         (expected one of: none, low, medium, high, xhigh, max)"
     )]
     InvalidReasoningEffort {
         /// The offending variant name.
@@ -399,6 +399,27 @@ mod tests {
             VariantCatalogError::InvalidReasoningEffort { ref name, ref value }
                 if name == "hasty" && value == "turbo"
         ));
+    }
+
+    #[test]
+    fn max_reasoning_effort_is_accepted() {
+        let mut configured = BTreeMap::new();
+        configured.insert(
+            "deep".to_owned(),
+            VariantSettings {
+                reasoning_effort: Some("MAX".to_owned()),
+                ..VariantSettings::default()
+            },
+        );
+        let catalog = VariantCatalog::build(Some(&configured), &empty_dir())
+            .expect("max effort must be accepted");
+        assert_eq!(
+            catalog
+                .get("deep")
+                .expect("configured variant")
+                .reasoning_effort,
+            Some(ReasoningEffort::Max),
+        );
     }
 
     #[test]

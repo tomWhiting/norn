@@ -95,8 +95,12 @@ overrides both.
 
 ## Model Aliases
 
-Settings can define short model aliases. A plain string alias changes only the
-model id:
+Bundled models can define short aliases in `assets/models.json`. For example,
+`norn -p -m sol "hi"` resolves `sol` to the canonical model id
+`gpt-5.6-sol` before provider selection and capability validation.
+
+Settings can also define custom model aliases. A plain string alias changes
+only the model id:
 
 ```json
 {
@@ -129,8 +133,15 @@ Object aliases can select the model and backend together:
 Then `norn -p -m local "hi"` resolves to model
 `google/gemma-4-e4b` on the `lmstudio` profile.
 
-Exact bundled model ids win over aliases with the same name. This prevents a
-user alias from accidentally shadowing a real catalog model.
+Resolution order is:
+
+1. exact bundled model id;
+2. a user-defined settings alias;
+3. a bundled catalog alias; and
+4. an unknown model id passed through unchanged.
+
+Exact bundled model ids therefore cannot be shadowed, while settings aliases
+can intentionally override a bundled short alias.
 
 ## OpenAI-Compatible Chat Completions
 

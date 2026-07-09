@@ -60,6 +60,8 @@ pub struct BackendEntry {
 pub struct ModelEntry {
     /// Model identifier.
     pub id: &'static str,
+    /// Short catalog alias resolving to [`Self::id`].
+    pub alias: &'static str,
     /// Human-readable model name.
     pub display_name: &'static str,
     /// Human-readable model description.
@@ -144,6 +146,28 @@ pub fn find_model(provider: &str, backend: &str, model: &str) -> Option<&'static
         .find(|entry| entry.id == model)
 }
 
+/// Resolve a canonical model identifier or catalog alias.
+///
+/// Canonical identifiers take precedence and resolve to themselves. Alias
+/// uniqueness is enforced by the catalog generator, so every other successful
+/// lookup resolves to exactly one canonical model identifier even when that
+/// model is available through multiple backends.
+#[must_use]
+pub fn resolve_model_alias(model: &str) -> Option<&'static str> {
+    let models = || {
+        catalog()
+            .providers
+            .iter()
+            .flat_map(|provider| provider.backends)
+            .flat_map(|backend| backend.models)
+    };
+
+    models()
+        .find(|entry| entry.id == model)
+        .or_else(|| models().find(|entry| entry.alias == model))
+        .map(|entry| entry.id)
+}
+
 /// Return the smallest catalogued context window for a model id.
 ///
 /// The same provider model id can appear under several backends with different
@@ -222,7 +246,64 @@ mod tests {
     #[test]
     fn default_selection_points_to_existing_model() {
         let default = default_selection();
+        assert_eq!(default.model, "gpt-5.6-sol");
         assert!(find_model(default.provider, default.backend, default.model).is_some());
+    }
+
+    #[test]
+    fn new_codex_models_have_expected_metadata() {
+        for (model, default_effort) in [
+            ("gpt-5.6-sol", "low"),
+            ("gpt-5.6-terra", "medium"),
+            ("gpt-5.6-luna", "medium"),
+        ] {
+            let entry = find_model("openai", "codex_subscription", model);
+            assert!(entry.is_some(), "{model} must be in the catalog");
+            if let Some(entry) = entry {
+                assert_eq!(resolve_model_alias(entry.alias), Some(model), "{model}");
+                assert_eq!(entry.context_window, 372_000, "{model}");
+                assert_eq!(entry.max_context_window, 372_000, "{model}");
+                assert_eq!(entry.default_reasoning_effort, default_effort, "{model}");
+                assert!(
+                    entry.supported_reasoning_efforts.contains(&"max"),
+                    "{model}"
+                );
+                assert!(
+                    !entry.supported_reasoning_efforts.contains(&"ultra"),
+                    "{model} must not expose ultra as a distinct effort",
+                );
+                assert_eq!(
+                    service_tier_provider_value("openai", "codex_subscription", model, "fast",),
+                    Some("priority"),
+                    "{model}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn model_aliases_resolve_to_canonical_ids() {
+        for (alias, canonical_id) in [
+            ("sol", "gpt-5.6-sol"),
+            ("terra", "gpt-5.6-terra"),
+            ("luna", "gpt-5.6-luna"),
+            ("codex-spark", "gpt-5.3-codex-spark"),
+        ] {
+            assert_eq!(resolve_model_alias(alias), Some(canonical_id), "{alias}");
+            assert_eq!(resolve_model_alias(canonical_id), Some(canonical_id));
+        }
+        assert_eq!(resolve_model_alias("not-in-catalog"), None);
+    }
+
+    #[test]
+    fn every_emitted_alias_resolves_to_its_entry_id() {
+        for provider in catalog().providers {
+            for backend in provider.backends {
+                for entry in backend.models {
+                    assert_eq!(resolve_model_alias(entry.alias), Some(entry.id));
+                }
+            }
+        }
     }
 
     #[test]

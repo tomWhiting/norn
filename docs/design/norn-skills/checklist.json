@@ -79,7 +79,7 @@
     {
       "name": "Runtime Integration",
       "items": [
-        {"id": "C51", "text": "SkillEffort maps to ReasoningEffort: low->Low, medium->Medium, high->High, xhigh->XHigh, max->XHigh.", "done": false},
+        {"id": "C51", "text": "SkillEffort maps to ReasoningEffort: low->Low, medium->Medium, high->High, xhigh->XHigh, max->Max.", "done": false},
         {"id": "C52", "text": "Skill effort overrides LoopContext.reasoning_effort for the activation turn, then restores the previous value.", "done": false},
         {"id": "C53", "text": "The allowed_tools field is parsed and stored in SkillMetadata but not enforced.", "done": false},
         {"id": "C54", "text": "The hooks frontmatter field is parsed and stored in SkillMetadata but not acted upon.", "done": false},

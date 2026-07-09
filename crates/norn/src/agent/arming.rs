@@ -940,7 +940,7 @@ mod tests {
             "names the model: {output}",
         );
         assert!(
-            output.contains("effort=x-high") || output.contains("effort=xhigh"),
+            output.contains("effort=xhigh"),
             "names the dropped effort: {output}",
         );
     }

@@ -39,7 +39,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 /// tests rely on stable serialisation order.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct NornSettings {
-    /// Default model identifier (e.g. `"gpt-5.5"`). Maps to the `--model`
+    /// Default model identifier (e.g. `"gpt-5.6-sol"`). Maps to the `--model`
     /// CLI flag and to [`crate::profile::Profile::model`] when no profile
     /// override is present.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -469,7 +469,7 @@ pub struct AgentSettings {
     pub server_compaction_threshold_tokens: Option<u64>,
 
     /// Reasoning-effort hint, stored as a raw string here (e.g. `"low"`,
-    /// `"medium"`, `"high"`). Translated to
+    /// `"medium"`, `"high"`, `"xhigh"`, `"max"`). Translated to
     /// [`crate::provider::request::ReasoningEffort`] in NC-003.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,
@@ -875,7 +875,7 @@ pub struct VariantSettings {
 
     /// Reasoning effort for children of this variant: one of the
     /// [`crate::provider::request::ReasoningEffort`] serde names
-    /// (`"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`). Validated at
+    /// (`"none"`, `"low"`, `"medium"`, `"high"`, `"xhigh"`, `"max"`). Validated at
     /// config-validate time, parsed to the typed enum at catalog build.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub reasoning_effort: Option<String>,

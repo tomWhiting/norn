@@ -10,7 +10,8 @@
 //!   The libnorn scanner prefers `.md` over `.toml` over `.json` within
 //!   each directory and first-directory wins across them.
 //! - When the caller passes [`None`], a minimal default profile is built
-//!   with model `gpt-5.5` and a default system instruction.
+//!   with the generated catalog default model (`gpt-5.6-sol`) and a default
+//!   system instruction.
 //!
 //! Errors propagate as [`BuildError`] so the entry point can map them onto
 //! the CLI argument-error exit code (`2`) per `DESIGN.md` CO5.
@@ -140,9 +141,10 @@ mod tests {
     }
 
     #[test]
-    fn default_profile_uses_gpt_5_5_model() {
+    fn default_profile_uses_gpt_5_6_sol_catalog_default() {
         let profile = default_profile();
-        assert_eq!(profile.model, "gpt-5.5");
+        assert_eq!(DEFAULT_MODEL, "gpt-5.6-sol");
+        assert_eq!(profile.model, DEFAULT_MODEL);
         assert_eq!(
             profile.system_instructions,
             vec![DEFAULT_SYSTEM_INSTRUCTION]
@@ -154,7 +156,7 @@ mod tests {
     #[test]
     fn no_profile_argument_returns_default() {
         let profile = resolve_profile(None).unwrap();
-        assert_eq!(profile.model, "gpt-5.5");
+        assert_eq!(profile.model, DEFAULT_MODEL);
     }
 
     #[test]

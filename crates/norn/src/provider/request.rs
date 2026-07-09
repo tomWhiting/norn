@@ -19,11 +19,13 @@ pub enum ReasoningEffort {
     Low,
     /// Balanced reasoning.
     Medium,
-    /// Maximum reasoning effort.
+    /// High reasoning effort.
     High,
-    /// Extended reasoning budget.
+    /// Extra-high reasoning effort.
     #[serde(rename = "xhigh")]
     XHigh,
+    /// Maximum reasoning effort.
+    Max,
 }
 
 impl ReasoningEffort {
@@ -35,7 +37,8 @@ impl ReasoningEffort {
             Self::Low => "low",
             Self::Medium => "medium",
             Self::High => "high",
-            Self::XHigh => "x-high",
+            Self::XHigh => "xhigh",
+            Self::Max => "max",
         }
     }
 }
@@ -352,6 +355,20 @@ pub struct ProviderConfig {
 )]
 mod tests {
     use super::*;
+
+    #[test]
+    fn reasoning_effort_uses_canonical_wire_names() {
+        assert_eq!(ReasoningEffort::XHigh.as_str(), "xhigh");
+        assert_eq!(ReasoningEffort::Max.as_str(), "max");
+        assert_eq!(
+            serde_json::to_value(ReasoningEffort::XHigh).expect("serialize xhigh"),
+            serde_json::json!("xhigh"),
+        );
+        assert_eq!(
+            serde_json::to_value(ReasoningEffort::Max).expect("serialize max"),
+            serde_json::json!("max"),
+        );
+    }
 
     #[test]
     fn secret_string_debug_is_redacted() {

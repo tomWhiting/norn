@@ -368,7 +368,7 @@ crates/norn-cli/
 
 | Value | Current Location | Settings Path |
 |-------|-----------------|--------------|
-| Default model `"gpt-5.5"` | `profile_loader.rs:27` | `model` |
+| Default model `"gpt-5.6-sol"` | `assets/models.json` | `model` |
 | Schema budget `3` | `loop/config.rs:92` | `agent.schema_budget` |
 | Compact keep turns `10` | `loop/config.rs:98` | `agent.compact_keep_turns` |
 | Retry max `2` | `loop/retry.rs:16` | `retry.max_retries` |

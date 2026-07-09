@@ -65,7 +65,7 @@ These flags configure the agent step. All are available in both REPL and print m
     --append-system-prompt <TEXT>  Append to system prompt (additive)
     --allowed-tools <PATTERNS>    Tool allow-list, comma-separated
     --disallowed-tools <PATTERNS> Tool deny-list, comma-separated
-    --reasoning-effort <LEVEL>    low | medium | high
+    --reasoning-effort <LEVEL>    none | low | medium | high | xhigh | max
     --max-turns <N>               Maximum provider round-trips per step
     --timeout <DURATION>          Step timeout (e.g. 2m, 30s)
 -C, --working-dir <DIR>           Working directory for tool execution

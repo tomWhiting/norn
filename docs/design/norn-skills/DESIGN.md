@@ -193,7 +193,7 @@ The `effort` frontmatter field maps to `ReasoningEffort`:
 | `medium` | `Medium` |
 | `high` | `High` |
 | `xhigh` | `XHigh` |
-| `max` | `XHigh` (ceiling — Norn has no `Max`) |
+| `max` | `Max` |
 
 When a skill with `effort` is invoked, the LoopContext's `reasoning_effort` is overridden. The override applies to the provider call that consumes the skill content (the next model turn after activation). The previous value is restored after that turn completes. For fork/subagent mode, the child's LoopContext gets the override; the parent is unaffected.
 
@@ -312,7 +312,7 @@ crates/norn-cli/
 | SlashCommandRegistry | `loop/commands.rs` | Complete |
 | SystemPromptBuilder | `system_prompt/builder.rs` | Complete |
 | LoopContext | `loop/loop_context.rs` | Complete — composable sections |
-| ReasoningEffort | `provider/request.rs` | Complete — None/Low/Medium/High/XHigh |
+| ReasoningEffort | `provider/request.rs` | Complete — None/Low/Medium/High/XHigh/Max |
 | DiagnosticCollector | `integration/diagnostics.rs` | Complete — reusable pattern |
 
 ## Constraints

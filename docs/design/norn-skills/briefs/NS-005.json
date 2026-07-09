@@ -7,18 +7,18 @@
   "checklist": ["C28", "C51", "C52", "C53", "C56"],
   "stories": ["S8", "S14", "S15", "S16", "S20"],
   "purpose": "Skills can override the agent's reasoning effort for the activation turn, store deferred fields (allowed-tools, fork mode) as metadata, and register as slash commands for user invocation. This brief combines the runtime integration features: SkillEffort-to-ReasoningEffort mapping, effort override lifecycle on LoopContext, allowed-tools as a stored hint, fork mode documentation, slash command registration from the catalog, and the invocation control matrix.",
-  "task": "Add SkillEffort-to-ReasoningEffort mapping (max maps to XHigh ceiling). Add override/restore methods on LoopContext for effort. Store allowed-tools as hint with diagnostic. Document fork mode semantics (skill body = task input). Register user_invocable skills as slash commands via SlashCommandRegistry. Implement the invocation control matrix: user_invocable controls slash command visibility, disable_model_invocation controls catalog listing visibility.",
+  "task": "Add SkillEffort-to-ReasoningEffort mapping (max maps to Max). Add override/restore methods on LoopContext for effort. Store allowed-tools as hint with diagnostic. Document fork mode semantics (skill body = task input). Register user_invocable skills as slash commands via SlashCommandRegistry. Implement the invocation control matrix: user_invocable controls slash command visibility, disable_model_invocation controls catalog listing visibility.",
   "requirements": [
     {
       "id": "R1",
       "title": "SkillEffort to ReasoningEffort mapping",
-      "spec": "skill/types.rs SHALL provide a method or From impl that maps SkillEffort to ReasoningEffort: Low->Low, Medium->Medium, High->High, XHigh->XHigh, Max->XHigh.",
+      "spec": "skill/types.rs SHALL provide a method or From impl that maps SkillEffort to ReasoningEffort: Low->Low, Medium->Medium, High->High, XHigh->XHigh, Max->Max.",
       "acceptance": [
         "SkillEffort::Low maps to ReasoningEffort::Low",
         "SkillEffort::Medium maps to ReasoningEffort::Medium",
         "SkillEffort::High maps to ReasoningEffort::High",
         "SkillEffort::XHigh maps to ReasoningEffort::XHigh",
-        "SkillEffort::Max maps to ReasoningEffort::XHigh (ceiling)"
+        "SkillEffort::Max maps to ReasoningEffort::Max"
       ],
       "files": {
         "modify": ["crates/norn/src/skill/types.rs"]

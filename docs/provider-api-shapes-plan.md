@@ -149,7 +149,7 @@ Reasoning controls should be typed, not hardcoded:
 
 ```text
 none
-openai_effort(values: none|minimal|low|medium|high|xhigh)
+openai_effort(values: none|minimal|low|medium|high|xhigh|max)
 anthropic_effort(values: provider-defined)
 anthropic_thinking_budget(tokens or auto)
 custom(name, allowed_values)
@@ -189,11 +189,10 @@ Examples:
 
 Alias resolution rules:
 
-- aliases are user configuration, not built-in model IDs;
+- aliases can come from bundled model metadata or user configuration;
 - aliases resolve before provider runtime construction;
-- aliases can point to a full backend selection, not just a model string;
-- exact model IDs win when there is an ambiguity unless the user explicitly asks
-  for alias-only resolution;
+- user aliases can point to a full backend selection, not just a model string;
+- exact model IDs win, followed by user aliases and then bundled aliases;
 - duplicate aliases across merged config files currently follow normal settings
   precedence: higher layers replace lower layers by alias name;
 - origin-aware duplicate diagnostics would be useful later, but should be added
@@ -337,6 +336,8 @@ Implemented now:
   connection fields as top-level `provider`.
 - `settings.model_aliases` supports both string aliases and object aliases that
   select `provider_profile`, `api_shape`, and `model`.
+- Bundled `assets/models.json` aliases resolve on the startup `-m` / `--model`
+  path after exact model IDs and user-defined aliases.
 - OpenAI Responses can use API-key auth when the selected provider settings set
   `api_key_env`; otherwise it keeps the Codex/ChatGPT OAuth path.
 - Shape-scoped provider options pass through under
@@ -514,8 +515,8 @@ Capability-driven surfaces:
 
 - `/model` should list models from the selected provider profile and user model
   catalog.
-- `/model` should accept user aliases and show the resolved model/backend before
-  switching.
+- `/model` should accept user and bundled aliases and show the resolved
+  model/backend before switching.
 - `/effort` should appear only when the active model/backend exposes a reasoning
   control.
 - `/fast` and `/service-tier` should appear only when the active model/backend

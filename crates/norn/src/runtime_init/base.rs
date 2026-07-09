@@ -316,7 +316,7 @@ fn parse_settings_conversation_state(raw: &str) -> Result<ConversationStateMode,
 fn parse_reasoning_effort(raw: &str) -> Result<ReasoningEffort, NornError> {
     let value = serde_json::Value::String(raw.to_lowercase());
     serde_json::from_value(value).map_err(|err| invalid_config(format!(
-        "invalid value for agent.reasoning_effort: '{raw}' ({err}); expected one of none, low, medium, high, xhigh"
+        "invalid value for agent.reasoning_effort: '{raw}' ({err}); expected one of none, low, medium, high, xhigh, max"
     )))
 }
 
@@ -492,6 +492,23 @@ mod tests {
     use super::*;
     use crate::config::types::ProviderSettings;
     use crate::rules::types::{PathOperation, RuntimeEvent};
+
+    #[test]
+    fn settings_reasoning_accepts_max_case_insensitively() {
+        let settings = NornSettings {
+            agent: Some(crate::config::types::AgentSettings {
+                reasoning_effort: Some("MAX".to_owned()),
+                ..crate::config::types::AgentSettings::default()
+            }),
+            ..NornSettings::default()
+        };
+        let mut profile = Profile::default();
+
+        apply_settings_reasoning_to_profile(&settings, &mut profile)
+            .expect("max reasoning effort must parse");
+
+        assert_eq!(profile.reasoning_effort, Some(ReasoningEffort::Max));
+    }
 
     /// Guard that swaps `NORN_HOME` for the duration of a test and
     /// restores the prior value on drop. Paired with

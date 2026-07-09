@@ -225,10 +225,13 @@ pub enum ReasoningEffort {
     Low,
     /// Balanced reasoning budget.
     Medium,
-    /// Maximum reasoning budget.
+    /// High reasoning budget.
     High,
-    /// Extended reasoning budget.
+    /// Extra-high reasoning budget.
+    #[value(name = "xhigh")]
     XHigh,
+    /// Maximum reasoning budget.
+    Max,
 }
 
 /// Service tiers accepted by `--service-tier`.
@@ -681,9 +684,17 @@ mod tests {
     }
 
     #[test]
-    fn reasoning_effort_accepts_kebab_case_values() {
+    fn reasoning_effort_accepts_canonical_values() {
         let cli = Cli::try_parse_from(["norn", "--reasoning-effort", "high"]).unwrap();
         assert_eq!(cli.reasoning_effort, Some(ReasoningEffort::High));
+
+        let cli = Cli::try_parse_from(["norn", "--reasoning-effort", "xhigh"]).unwrap();
+        assert_eq!(cli.reasoning_effort, Some(ReasoningEffort::XHigh));
+
+        let cli = Cli::try_parse_from(["norn", "--reasoning-effort", "max"]).unwrap();
+        assert_eq!(cli.reasoning_effort, Some(ReasoningEffort::Max));
+
+        assert!(Cli::try_parse_from(["norn", "--reasoning-effort", "x-high"]).is_err());
     }
 
     #[test]

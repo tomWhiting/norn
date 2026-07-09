@@ -112,9 +112,10 @@
     {
       "id": "R5",
       "title": "Reasoning effort and model selection",
-      "spec": "WHEN ProviderRequest.reasoning_effort is Some, the serialized request SHALL include a reasoning object with the effort field mapped to the OpenAI API values (low, medium, high). The model field from ProviderRequest SHALL be passed directly to the API without validation — the provider does not maintain an allowlist of models.",
+      "spec": "WHEN ProviderRequest.reasoning_effort is Some, the serialized request SHALL include a reasoning object with the effort field mapped to the OpenAI API values (none, low, medium, high, xhigh, max). The model field from ProviderRequest SHALL be passed directly to the API without validation — the provider does not maintain an allowlist of models.",
       "acceptance": [
         "ProviderRequest with reasoning_effort: Some(High) produces JSON with reasoning: { effort: \"high\" }",
+        "ProviderRequest with reasoning_effort: Some(Max) produces JSON with reasoning: { effort: \"max\" }",
         "ProviderRequest with reasoning_effort: None produces JSON with no reasoning field",
         "ProviderRequest.model is passed directly as the model field in the API request",
         "No model name validation or allowlist in the provider",

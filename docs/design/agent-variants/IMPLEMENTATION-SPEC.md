@@ -81,7 +81,7 @@ pub struct VariantSettings {
     /// config key. Ships true on the built-in `reviewer` only.
     pub model_required: Option<bool>,
     /// Reasoning effort: one of the `provider::request::ReasoningEffort`
-    /// serde names ("none","low","medium","high","xhigh"). Validated at
+    /// serde names ("none","low","medium","high","xhigh","max"). Validated at
     /// config-validate time, parsed to the typed enum at catalog build.
     pub reasoning_effort: Option<String>,
 }

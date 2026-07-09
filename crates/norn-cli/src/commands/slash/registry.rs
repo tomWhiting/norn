@@ -27,7 +27,7 @@ use norn::agent_loop::{
     service_tier_supported_for_model, unsupported_reasoning_effort_message,
     unsupported_service_tier_message,
 };
-use norn::provider::request::ServiceTier;
+use norn::provider::request::{ReasoningEffort, ServiceTier};
 
 use crate::config::parse_inline_or_file;
 use crate::session::SessionManager;
@@ -190,6 +190,7 @@ fn tools_handler(state: &SlashState) -> CustomSlashHandler {
 
 fn model_handler(state: &SlashState) -> CustomSlashHandler {
     let model = Arc::clone(&state.model);
+    let reasoning_effort = Arc::clone(&state.reasoning_effort);
     let service_tier = Arc::clone(&state.service_tier);
     Arc::new(move |arg| {
         let trimmed = arg.trim();
@@ -198,14 +199,23 @@ fn model_handler(state: &SlashState) -> CustomSlashHandler {
             eprintln!("{current}");
         } else {
             trimmed.clone_into(&mut model.lock());
+            let cleared_effort = clear_unsupported_reasoning_effort(trimmed, &reasoning_effort);
             let cleared_tier = clear_unsupported_service_tier(trimmed, &service_tier);
-            if let Some(tier) = cleared_tier {
-                eprintln!(
+            match (cleared_effort, cleared_tier) {
+                (Some(effort), Some(tier)) => eprintln!(
+                    "Switched to model: {trimmed}; cleared reasoning effort '{}' and service tier '{}' because they are unsupported",
+                    effort_label(effort),
+                    tier.as_str(),
+                ),
+                (Some(effort), None) => eprintln!(
+                    "Switched to model: {trimmed}; cleared reasoning effort '{}' because it is unsupported",
+                    effort_label(effort),
+                ),
+                (None, Some(tier)) => eprintln!(
                     "Switched to model: {trimmed}; cleared service tier '{}' because it is unsupported",
                     tier.as_str(),
-                );
-            } else {
-                eprintln!("Switched to model: {trimmed}");
+                ),
+                (None, None) => eprintln!("Switched to model: {trimmed}"),
             }
         }
         Ok(Vec::new())
@@ -243,7 +253,7 @@ fn effort_handler(state: &SlashState) -> CustomSlashHandler {
             }
             None => {
                 eprintln!(
-                    "norn: invalid reasoning effort '{trimmed}'; expected none, low, medium, high, x-high, or default"
+                    "norn: invalid reasoning effort '{trimmed}'; expected none, low, medium, high, xhigh, max, or default"
                 );
             }
         }
@@ -314,6 +324,19 @@ fn clear_unsupported_service_tier(
     }
     *guard = None;
     Some(tier)
+}
+
+fn clear_unsupported_reasoning_effort(
+    model: &str,
+    reasoning_effort: &Arc<parking_lot::Mutex<Option<ReasoningEffort>>>,
+) -> Option<ReasoningEffort> {
+    let mut guard = reasoning_effort.lock();
+    let effort = (*guard)?;
+    if reasoning_effort_supported_for_model(model, effort) {
+        return None;
+    }
+    *guard = None;
+    Some(effort)
 }
 
 // -- /schema ----------------------------------------------------------------
@@ -683,6 +706,22 @@ mod tests {
     }
 
     #[test]
+    fn model_switch_clears_unsupported_effort_but_preserves_supported_service_tier() {
+        let mut seed = empty_seed();
+        seed.model = "gpt-5.6-sol".to_owned();
+        seed.reasoning_effort = Some(ReasoningEffort::Max);
+        seed.service_tier = Some(ServiceTier::Fast);
+        let state = SlashState::new(seed);
+        let registry = build_slash_registry(&state, None);
+
+        fire(&registry, "model", "gpt-5.5");
+
+        assert_eq!(state.model_snapshot(), "gpt-5.5");
+        assert_eq!(state.reasoning_effort_snapshot(), None);
+        assert_eq!(state.service_tier_snapshot(), Some(ServiceTier::Fast));
+    }
+
+    #[test]
     fn effort_commands_update_runtime_state() {
         let mut seed = empty_seed();
         seed.model = "gpt-5.5".to_owned();
@@ -695,14 +734,37 @@ mod tests {
             Some(ReasoningEffort::High),
         );
 
-        fire(&registry, "reasoning-effort", "x-high");
+        fire(&registry, "reasoning-effort", "xhigh");
         assert_eq!(
             state.reasoning_effort_snapshot(),
             Some(ReasoningEffort::XHigh),
         );
 
+        fire(&registry, "reasoning-effort", "x-high");
+        assert_eq!(
+            state.reasoning_effort_snapshot(),
+            Some(ReasoningEffort::XHigh),
+            "legacy x-high spelling must not alter the active effort",
+        );
+        assert_eq!(parse_effort_command("x-high"), None);
+
         fire(&registry, "effort", "default");
         assert_eq!(state.reasoning_effort_snapshot(), None);
+    }
+
+    #[test]
+    fn effort_command_accepts_max_for_supported_model() {
+        let mut seed = empty_seed();
+        seed.model = "gpt-5.6-sol".to_owned();
+        let state = SlashState::new(seed);
+        let registry = build_slash_registry(&state, None);
+
+        fire(&registry, "effort", "max");
+
+        assert_eq!(
+            state.reasoning_effort_snapshot(),
+            Some(ReasoningEffort::Max),
+        );
     }
 
     #[test]

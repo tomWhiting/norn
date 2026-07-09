@@ -179,7 +179,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand {
         kind: BuiltinSlashKind::Effort,
         name: "effort",
-        usage: "/effort <none|low|medium|high|x-high|default>",
+        usage: "/effort <none|low|medium|high|xhigh|max|default>",
         help: "Show, set, or clear reasoning effort",
         autocomplete: "Set reasoning effort",
         cli_description: "Show, set, or clear the active reasoning effort",
@@ -189,7 +189,7 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
     BuiltinSlashCommand {
         kind: BuiltinSlashKind::Effort,
         name: "reasoning-effort",
-        usage: "/reasoning-effort <none|low|medium|high|x-high|default>",
+        usage: "/reasoning-effort <none|low|medium|high|xhigh|max|default>",
         help: "Alias for /effort",
         autocomplete: "Set reasoning effort",
         cli_description: "Alias for /effort",
@@ -303,7 +303,8 @@ pub fn parse_effort_command(value: &str) -> Option<EffortCommand> {
         "low" => Some(EffortCommand::Set(ReasoningEffort::Low)),
         "medium" => Some(EffortCommand::Set(ReasoningEffort::Medium)),
         "high" => Some(EffortCommand::Set(ReasoningEffort::High)),
-        "x-high" | "xhigh" => Some(EffortCommand::Set(ReasoningEffort::XHigh)),
+        "xhigh" => Some(EffortCommand::Set(ReasoningEffort::XHigh)),
+        "max" => Some(EffortCommand::Set(ReasoningEffort::Max)),
         "default" | "off" | "clear" => Some(EffortCommand::Clear),
         _ => None,
     }
@@ -354,13 +355,7 @@ pub fn reasoning_effort_supported_for_model(model: &str, effort: ReasoningEffort
         crate::model_catalog::DEFAULT_BACKEND,
         model,
     )
-    .is_some_and(|entry| {
-        let label = effort.as_str();
-        entry
-            .supported_reasoning_efforts
-            .iter()
-            .any(|supported| *supported == label || (*supported == "xhigh" && label == "x-high"))
-    })
+    .is_some_and(|entry| entry.supported_reasoning_efforts.contains(&effort.as_str()))
 }
 
 /// Standard unsupported-reasoning-effort diagnostic.
@@ -813,9 +808,33 @@ mod tests {
             ReasoningEffort::XHigh,
         ));
         assert!(!reasoning_effort_supported_for_model(
+            "gpt-5.5",
+            ReasoningEffort::Max,
+        ));
+        for model in ["gpt-5.6-sol", "gpt-5.6-terra", "gpt-5.6-luna"] {
+            assert!(
+                reasoning_effort_supported_for_model(model, ReasoningEffort::Max),
+                "{model} must support max reasoning effort",
+            );
+        }
+        assert!(!reasoning_effort_supported_for_model(
             "unknown-local-model",
             ReasoningEffort::High,
         ));
+    }
+
+    #[test]
+    fn effort_command_uses_canonical_xhigh_and_accepts_max() {
+        assert_eq!(
+            parse_effort_command("xhigh"),
+            Some(EffortCommand::Set(ReasoningEffort::XHigh)),
+        );
+        assert_eq!(
+            parse_effort_command("max"),
+            Some(EffortCommand::Set(ReasoningEffort::Max)),
+        );
+        assert_eq!(parse_effort_command("x-high"), None);
+        assert_eq!(parse_effort_command("ultra"), None);
     }
 
     #[test]

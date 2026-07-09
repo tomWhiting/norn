@@ -430,7 +430,8 @@ pub fn retry_policy_from_settings_and_overrides(
 ///
 /// Returns [`BuildError::Argument`] when `agent.reasoning_effort` or
 /// `agent.reasoning_summary` is not one of the documented enum values
-/// (`none`/`low`/`medium`/`high`/`xhigh` and `auto`/`concise`/`detailed`).
+/// (`none`/`low`/`medium`/`high`/`xhigh`/`max` and
+/// `auto`/`concise`/`detailed`).
 pub fn apply_settings_reasoning_to_profile(
     settings: &NornSettings,
     profile: &mut Profile,
@@ -530,7 +531,7 @@ fn parse_reasoning_effort(raw: &str) -> Result<ReasoningEffort, BuildError> {
     let value = serde_json::Value::String(raw.to_lowercase());
     serde_json::from_value::<ReasoningEffort>(value).map_err(|err| {
         BuildError::Argument(format!(
-            "invalid value for agent.reasoning_effort: '{raw}' ({err}); expected one of none, low, medium, high, xhigh",
+            "invalid value for agent.reasoning_effort: '{raw}' ({err}); expected one of none, low, medium, high, xhigh, max",
         ))
     })
 }
@@ -585,6 +586,7 @@ fn convert_reasoning_effort(value: CliReasoningEffort) -> ReasoningEffort {
         CliReasoningEffort::Medium => ReasoningEffort::Medium,
         CliReasoningEffort::High => ReasoningEffort::High,
         CliReasoningEffort::XHigh => ReasoningEffort::XHigh,
+        CliReasoningEffort::Max => ReasoningEffort::Max,
     }
 }
 
@@ -818,6 +820,17 @@ mod tests {
         assert_eq!(profile.reasoning_effort, Some(ReasoningEffort::Low));
         apply_cli_profile_overrides(&cli_medium, &mut profile).unwrap();
         assert_eq!(profile.reasoning_effort, Some(ReasoningEffort::Medium));
+    }
+
+    #[test]
+    fn reasoning_effort_xhigh_and_max_map_correctly() {
+        let cli_xhigh = cli_from(&["norn", "--reasoning-effort", "xhigh"]);
+        let cli_max = cli_from(&["norn", "--reasoning-effort", "max"]);
+        let mut profile = Profile::default();
+        apply_cli_profile_overrides(&cli_xhigh, &mut profile).unwrap();
+        assert_eq!(profile.reasoning_effort, Some(ReasoningEffort::XHigh));
+        apply_cli_profile_overrides(&cli_max, &mut profile).unwrap();
+        assert_eq!(profile.reasoning_effort, Some(ReasoningEffort::Max));
     }
 
     #[test]

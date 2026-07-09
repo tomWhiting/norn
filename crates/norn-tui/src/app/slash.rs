@@ -24,7 +24,7 @@ use norn::agent_loop::{
     service_tier_supported_for_model, unsupported_reasoning_effort_message,
     unsupported_service_tier_message,
 };
-use norn::provider::request::ServiceTier;
+use norn::provider::request::{ReasoningEffort, ServiceTier};
 use norn::session::context_edit::ContextEdits;
 use norn::session::{
     CreateSessionOptions, DurabilityPolicy, EventStore, SessionBinding, SessionBrancher,
@@ -397,19 +397,36 @@ fn handle_model(
     }
     runtime.model = name.to_string();
     state.fixed_panel.status_bar_mut().model_name = name.to_string();
-    let cleared_tier = clear_unsupported_service_tier(state, runtime);
-    let line = if let Some(tier) = cleared_tier {
-        format!(
+    let cleared_effort = clear_unsupported_reasoning_effort(
+        &runtime.model,
+        &mut runtime.loop_context.reasoning_effort,
+        &mut state.fixed_panel.status_bar_mut().reasoning_effort,
+    );
+    let cleared_tier = clear_unsupported_service_tier(
+        &runtime.model,
+        &mut runtime.loop_context.service_tier,
+        &mut state.fixed_panel.status_bar_mut().service_tier,
+    );
+    let line = match (cleared_effort, cleared_tier) {
+        (Some(effort), Some(tier)) => format!(
+            "Switched model to {name}; cleared reasoning effort '{}' and service tier '{}' because they are unsupported",
+            effort_label(effort),
+            tier.as_str(),
+        ),
+        (Some(effort), None) => format!(
+            "Switched model to {name}; cleared reasoning effort '{}' because it is unsupported",
+            effort_label(effort),
+        ),
+        (None, Some(tier)) => format!(
             "Switched model to {name}; cleared service tier '{}' because it is unsupported",
             tier.as_str(),
-        )
-    } else {
-        format!("Switched model to {name}")
+        ),
+        (None, None) => format!("Switched model to {name}"),
     };
     write_dim_line(&line, guard)
 }
 
-/// `/effort <none|low|medium|high|x-high|default>` — mutate the reasoning
+/// `/effort <none|low|medium|high|xhigh|max|default>` — mutate the reasoning
 /// effort read by the next `run_turn` provider request.
 fn handle_reasoning_effort(
     state: &mut AppState,
@@ -449,7 +466,7 @@ fn handle_reasoning_effort(
         }
         None => write_dim_line(
             &format!(
-                "norn: invalid reasoning effort '{value}'; expected none, low, medium, high, x-high, or default"
+                "norn: invalid reasoning effort '{value}'; expected none, low, medium, high, xhigh, max, or default"
             ),
             guard,
         ),
@@ -503,16 +520,31 @@ fn set_fast_service_tier(
     )
 }
 
-fn clear_unsupported_service_tier(
-    state: &mut AppState,
-    runtime: &mut RuntimeRefs,
-) -> Option<ServiceTier> {
-    let tier = runtime.loop_context.service_tier?;
-    if service_tier_supported_for_model(&runtime.model, tier) {
+fn clear_unsupported_reasoning_effort(
+    model: &str,
+    reasoning_effort: &mut Option<ReasoningEffort>,
+    status_effort: &mut Option<String>,
+) -> Option<ReasoningEffort> {
+    let effort = (*reasoning_effort)?;
+    if reasoning_effort_supported_for_model(model, effort) {
         return None;
     }
-    runtime.loop_context.service_tier = None;
-    state.fixed_panel.status_bar_mut().service_tier = None;
+    *reasoning_effort = None;
+    *status_effort = None;
+    Some(effort)
+}
+
+fn clear_unsupported_service_tier(
+    model: &str,
+    service_tier: &mut Option<ServiceTier>,
+    status_tier: &mut Option<String>,
+) -> Option<ServiceTier> {
+    let tier = (*service_tier)?;
+    if service_tier_supported_for_model(model, tier) {
+        return None;
+    }
+    *service_tier = None;
+    *status_tier = None;
     Some(tier)
 }
 
@@ -735,17 +767,30 @@ mod tests {
             Some(EffortCommand::Set(ReasoningEffort::High)),
         );
         assert_eq!(
-            parse_effort_command("x-high"),
+            parse_effort_command("xhigh"),
             Some(EffortCommand::Set(ReasoningEffort::XHigh)),
         );
         assert_eq!(
-            parse_effort_command("xhigh"),
-            Some(EffortCommand::Set(ReasoningEffort::XHigh)),
+            parse_effort_command("max"),
+            Some(EffortCommand::Set(ReasoningEffort::Max)),
         );
         assert_eq!(parse_effort_command("default"), Some(EffortCommand::Clear));
         assert_eq!(parse_effort_command("off"), Some(EffortCommand::Clear));
         assert_eq!(parse_effort_command("clear"), Some(EffortCommand::Clear));
+        assert_eq!(parse_effort_command("x-high"), None);
         assert_eq!(parse_effort_command("maximum"), None);
+    }
+
+    #[test]
+    fn effort_help_uses_canonical_xhigh_and_max_spellings() {
+        let spelling_checks = find_tui_builtin_command("effort").map(|effort| {
+            (
+                effort.usage.contains("xhigh"),
+                effort.usage.contains("max"),
+                effort.usage.contains("x-high"),
+            )
+        });
+        assert_eq!(spelling_checks, Some((true, true, false)));
     }
 
     #[test]
@@ -881,6 +926,29 @@ mod tests {
             unsupported_reasoning_effort_message("unknown-local-model", "high")
                 .contains("unknown-local-model"),
         );
+    }
+
+    #[test]
+    fn model_switch_clears_unsupported_max_and_preserves_supported_fast_tier() {
+        let mut reasoning_effort = Some(ReasoningEffort::Max);
+        let mut status_effort = Some("max".to_string());
+        let mut service_tier = Some(ServiceTier::Fast);
+        let mut status_tier = Some("fast".to_string());
+
+        let cleared_effort = clear_unsupported_reasoning_effort(
+            "gpt-5.5",
+            &mut reasoning_effort,
+            &mut status_effort,
+        );
+        let cleared_tier =
+            clear_unsupported_service_tier("gpt-5.5", &mut service_tier, &mut status_tier);
+
+        assert_eq!(cleared_effort, Some(ReasoningEffort::Max));
+        assert_eq!(reasoning_effort, None);
+        assert_eq!(status_effort, None);
+        assert_eq!(cleared_tier, None);
+        assert_eq!(service_tier, Some(ServiceTier::Fast));
+        assert_eq!(status_tier.as_deref(), Some("fast"));
     }
 
     fn tool_def(name: &str, description: &str) -> norn::provider::request::ToolDefinition {

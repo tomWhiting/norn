@@ -438,7 +438,7 @@ fn check_reasoning_effort(field: &str, value: &str) -> Result<(), ConfigError> {
     Err(ConfigError::InvalidConfig {
         reason: format!(
             "invalid value for {field}: '{value}' \
-             (expected one of: none, low, medium, high, xhigh)",
+             (expected one of: none, low, medium, high, xhigh, max)",
         ),
     })
 }
@@ -1369,7 +1369,7 @@ mod tests {
             "reason must name the value: {reason}"
         );
         assert!(
-            reason.contains("none, low, medium, high, xhigh"),
+            reason.contains("none, low, medium, high, xhigh, max"),
             "reason must list the accepted set: {reason}",
         );
     }
@@ -1379,7 +1379,7 @@ mod tests {
     #[test]
     fn variant_reasoning_effort_is_case_insensitive() {
         use crate::config::types::VariantSettings;
-        for effort in ["none", "LOW", "Medium", "high", "xHigh"] {
+        for effort in ["none", "LOW", "Medium", "high", "xHigh", "MAX"] {
             let s = variant_settings_map(
                 "scout",
                 VariantSettings {

@@ -67,7 +67,7 @@
 
 ## Runtime Integration
 
-- [ ] **C51** — SkillEffort maps to ReasoningEffort: low->Low, medium->Medium, high->High, xhigh->XHigh, max->XHigh.
+- [ ] **C51** — SkillEffort maps to ReasoningEffort: low->Low, medium->Medium, high->High, xhigh->XHigh, max->Max.
 - [ ] **C52** — Skill effort overrides LoopContext.reasoning_effort for the activation turn, then restores the previous value.
 - [ ] **C53** — The allowed_tools field is parsed and stored in SkillMetadata but not enforced.
 - [ ] **C54** — The hooks frontmatter field is parsed and stored in SkillMetadata but not acted upon.

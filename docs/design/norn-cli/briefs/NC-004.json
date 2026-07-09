@@ -32,7 +32,7 @@
     {
       "id": "R2",
       "title": "CLI flag overrides on profile values",
-      "spec": "WHEN --model is provided, THE SYSTEM SHALL override the profile's model field with the flag value. WHEN --system-prompt is provided, THE SYSTEM SHALL replace the profile's system_instructions with a single-element vector containing the flag value. WHEN --append-system-prompt is provided, THE SYSTEM SHALL append the flag value to the profile's system_instructions vector. WHEN --allowed-tools is provided (comma-separated), THE SYSTEM SHALL set the profile's tools field to Some(parsed_list), overriding any profile or capability tools. WHEN --disallowed-tools is provided, THE SYSTEM SHALL add the parsed patterns to a disallowed list applied after tool resolution. WHEN --reasoning-effort is provided, THE SYSTEM SHALL override the profile's reasoning_effort with the parsed ReasoningEffort variant (low, medium, high). WHEN --max-turns is provided, THE SYSTEM SHALL set AgentLoopConfig::max_iterations to Some(value). WHEN --timeout is provided, THE SYSTEM SHALL parse it as a duration string (e.g. '30s', '2m') and set AgentLoopConfig::step_timeout to Some(duration). WHEN -C / --working-dir is provided, THE SYSTEM SHALL change the process working directory to the specified path before agent execution.",
+      "spec": "WHEN --model is provided, THE SYSTEM SHALL override the profile's model field with the flag value. WHEN --system-prompt is provided, THE SYSTEM SHALL replace the profile's system_instructions with a single-element vector containing the flag value. WHEN --append-system-prompt is provided, THE SYSTEM SHALL append the flag value to the profile's system_instructions vector. WHEN --allowed-tools is provided (comma-separated), THE SYSTEM SHALL set the profile's tools field to Some(parsed_list), overriding any profile or capability tools. WHEN --disallowed-tools is provided, THE SYSTEM SHALL add the parsed patterns to a disallowed list applied after tool resolution. WHEN --reasoning-effort is provided, THE SYSTEM SHALL override the profile's reasoning_effort with the parsed ReasoningEffort variant (none, low, medium, high, xhigh, max); x-high is not a valid spelling. WHEN --max-turns is provided, THE SYSTEM SHALL set AgentLoopConfig::max_iterations to Some(value). WHEN --timeout is provided, THE SYSTEM SHALL parse it as a duration string (e.g. '30s', '2m') and set AgentLoopConfig::step_timeout to Some(duration). WHEN -C / --working-dir is provided, THE SYSTEM SHALL change the process working directory to the specified path before agent execution.",
       "acceptance": [
         "--model gpt-5.5 overrides profile.model to 'gpt-5.5'",
         "--system-prompt 'Be concise' replaces profile system_instructions with ['Be concise']",
@@ -40,6 +40,9 @@
         "--allowed-tools read,edit sets profile.tools to Some([\"read\", \"edit\"])",
         "--disallowed-tools write adds 'write' to the disallowed patterns",
         "--reasoning-effort high sets profile.reasoning_effort to Some(ReasoningEffort::High)",
+        "--reasoning-effort xhigh sets profile.reasoning_effort to Some(ReasoningEffort::XHigh)",
+        "--reasoning-effort max sets profile.reasoning_effort to Some(ReasoningEffort::Max)",
+        "--reasoning-effort x-high is rejected",
         "--max-turns 10 sets AgentLoopConfig::max_iterations to Some(10)",
         "--timeout 30s sets AgentLoopConfig::step_timeout to Some(Duration::from_secs(30))",
         "--timeout 2m sets AgentLoopConfig::step_timeout to Some(Duration::from_secs(120))",

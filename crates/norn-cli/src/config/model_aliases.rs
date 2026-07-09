@@ -1,4 +1,4 @@
-//! User model-alias resolution.
+//! User and bundled model-alias resolution.
 
 use norn::config::NornSettings;
 
@@ -15,12 +15,12 @@ pub struct ResolvedModelSelection {
     pub api_shape: Option<String>,
 }
 
-/// Resolve `model` through `settings.model_aliases` when it names a user alias.
+/// Resolve `model` through the configured and bundled model aliases.
 ///
-/// Exact built-in catalog model IDs win over aliases so a user cannot
-/// accidentally shadow a real model in the bundled catalog. Unknown model IDs
-/// pass through unchanged, which is required for local and hosted custom
-/// providers whose model IDs are not in the bundled catalog.
+/// Resolution precedence is: exact built-in catalog model ID, user-defined
+/// `settings.model_aliases`, bundled catalog alias, then unchanged passthrough.
+/// Unknown model IDs pass through unchanged, which is required for local and
+/// hosted custom providers whose model IDs are not in the bundled catalog.
 ///
 /// # Errors
 ///
@@ -39,31 +39,31 @@ pub fn resolve_model_selection(
     settings: &NornSettings,
 ) -> Result<ResolvedModelSelection, BuildError> {
     if is_catalog_model(model) {
+        return Ok(model_only_selection(model));
+    }
+
+    if let Some(target) = settings
+        .model_aliases
+        .as_ref()
+        .and_then(|aliases| aliases.get(model))
+    {
         return Ok(ResolvedModelSelection {
-            model: model.to_owned(),
-            provider_profile: None,
-            api_shape: None,
+            model: target.model().to_owned(),
+            provider_profile: target.provider_profile().map(str::to_owned),
+            api_shape: target.api_shape().map(str::to_owned),
         });
     }
-    let Some(aliases) = settings.model_aliases.as_ref() else {
-        return Ok(ResolvedModelSelection {
-            model: model.to_owned(),
-            provider_profile: None,
-            api_shape: None,
-        });
-    };
-    let Some(target) = aliases.get(model) else {
-        return Ok(ResolvedModelSelection {
-            model: model.to_owned(),
-            provider_profile: None,
-            api_shape: None,
-        });
-    };
-    Ok(ResolvedModelSelection {
-        model: target.model().to_owned(),
-        provider_profile: target.provider_profile().map(str::to_owned),
-        api_shape: target.api_shape().map(str::to_owned),
-    })
+
+    let canonical = norn::model_catalog::resolve_model_alias(model).unwrap_or(model);
+    Ok(model_only_selection(canonical))
+}
+
+fn model_only_selection(model: &str) -> ResolvedModelSelection {
+    ResolvedModelSelection {
+        model: model.to_owned(),
+        provider_profile: None,
+        api_shape: None,
+    }
 }
 
 fn is_catalog_model(model: &str) -> bool {
@@ -105,6 +105,31 @@ mod tests {
             ..NornSettings::default()
         };
         assert_eq!(resolve_model_alias("55", &settings).unwrap(), "gpt-5.5");
+    }
+
+    #[test]
+    fn bundled_catalog_alias_resolves_to_model() {
+        let selection = resolve_model_selection("sol", &NornSettings::default()).unwrap();
+        assert_eq!(selection.model, "gpt-5.6-sol");
+        assert!(selection.provider_profile.is_none());
+        assert!(selection.api_shape.is_none());
+    }
+
+    #[test]
+    fn user_alias_wins_over_bundled_catalog_alias() {
+        let mut aliases = BTreeMap::new();
+        aliases.insert(
+            "sol".to_owned(),
+            ModelAliasSettings::Model("custom-sol-model".to_owned()),
+        );
+        let settings = NornSettings {
+            model_aliases: Some(aliases),
+            ..NornSettings::default()
+        };
+        assert_eq!(
+            resolve_model_alias("sol", &settings).unwrap(),
+            "custom-sol-model",
+        );
     }
 
     #[test]

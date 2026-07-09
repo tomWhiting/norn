@@ -370,6 +370,14 @@ mod tests {
     }
 
     #[test]
+    fn max_reasoning_effort_uses_canonical_wire_value() {
+        let mut request = base_request();
+        request.reasoning_effort = Some(ReasoningEffort::Max);
+        let value = serde_json::to_value(build_payload(&request).unwrap()).unwrap();
+        assert_eq!(value["reasoning_effort"], "max");
+    }
+
+    #[test]
     fn assistant_tool_call_and_result_use_chat_replay_shape() {
         let mut request = base_request();
         request.messages.push(Message {

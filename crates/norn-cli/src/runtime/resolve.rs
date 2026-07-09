@@ -202,3 +202,65 @@ fn resolve_debug_api_dir(value: &str) -> std::path::PathBuf {
     }
     PathBuf::from(value)
 }
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used, unsafe_code)]
+mod tests {
+    use std::ffi::OsString;
+    use std::path::PathBuf;
+
+    use clap::Parser;
+    use serial_test::serial;
+
+    use super::*;
+
+    struct IsolatedResolutionEnvironment {
+        previous_dir: PathBuf,
+        previous_norn_home: Option<OsString>,
+        _norn_home: tempfile::TempDir,
+        _working_dir: tempfile::TempDir,
+    }
+
+    impl IsolatedResolutionEnvironment {
+        fn new() -> Self {
+            let previous_dir = std::env::current_dir().unwrap();
+            let previous_norn_home = std::env::var_os("NORN_HOME");
+            let norn_home = tempfile::tempdir().unwrap();
+            let working_dir = tempfile::tempdir().unwrap();
+
+            // SAFETY: this test is serialised and the prior value is restored
+            // by Drop before the temporary directory is removed.
+            unsafe { std::env::set_var("NORN_HOME", norn_home.path()) };
+            std::env::set_current_dir(working_dir.path()).unwrap();
+
+            Self {
+                previous_dir,
+                previous_norn_home,
+                _norn_home: norn_home,
+                _working_dir: working_dir,
+            }
+        }
+    }
+
+    impl Drop for IsolatedResolutionEnvironment {
+        fn drop(&mut self) {
+            std::env::set_current_dir(&self.previous_dir).unwrap();
+            match &self.previous_norn_home {
+                Some(value) => unsafe { std::env::set_var("NORN_HOME", value) },
+                None => unsafe { std::env::remove_var("NORN_HOME") },
+            }
+        }
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_invocation_canonicalizes_cli_model_catalog_alias() {
+        let _environment = IsolatedResolutionEnvironment::new();
+        let cli = Cli::try_parse_from(["norn", "--model", "sol"]).unwrap();
+        let resolved = resolve_invocation(&cli).unwrap();
+
+        assert_eq!(resolved.model, "gpt-5.6-sol");
+        assert_eq!(resolved.profile.model, "gpt-5.6-sol");
+        assert_eq!(resolved.provider_kind, ProviderKind::Openai);
+    }
+}

@@ -137,8 +137,8 @@ impl<'de> Deserialize<'de> for StringOrList {
 ///
 /// Mirrors Claude Code's `effort` field. The skill module stores the
 /// value verbatim; mapping to [`crate::provider::request::ReasoningEffort`]
-/// happens at activation time in NS-005 (`max` ceilings at `XHigh` since
-/// the provider has no `Max`).
+/// happens at activation time in NS-005, including the direct `max` to
+/// [`crate::provider::request::ReasoningEffort::Max`] mapping.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum SkillEffort {
@@ -151,24 +151,24 @@ pub enum SkillEffort {
     /// Extended reasoning effort.
     #[serde(rename = "xhigh")]
     XHigh,
-    /// Maximum effort — ceilings at the provider's highest tier.
+    /// Maximum reasoning effort.
     Max,
 }
 
 /// Map a [`SkillEffort`] tier onto the provider's [`ReasoningEffort`].
 ///
-/// `Max` ceilings at `XHigh` because the provider type has no `Max`
-/// variant. `None` is never produced — a skill that opts into an effort
-/// tier is always requesting a positive reasoning level, so callers that
-/// want to leave the loop's effort untouched should simply skip the
-/// override when the skill's `Option<SkillEffort>` is `None`.
+/// `None` is never produced — a skill that opts into an effort tier is always
+/// requesting a positive reasoning level, so callers that want to leave the
+/// loop's effort untouched should simply skip the override when the skill's
+/// `Option<SkillEffort>` is `None`.
 impl From<SkillEffort> for ReasoningEffort {
     fn from(value: SkillEffort) -> Self {
         match value {
             SkillEffort::Low => Self::Low,
             SkillEffort::Medium => Self::Medium,
             SkillEffort::High => Self::High,
-            SkillEffort::XHigh | SkillEffort::Max => Self::XHigh,
+            SkillEffort::XHigh => Self::XHigh,
+            SkillEffort::Max => Self::Max,
         }
     }
 }
@@ -446,10 +446,10 @@ allowed-tools: Read Write
     }
 
     #[test]
-    fn skill_effort_max_ceilings_at_reasoning_xhigh() {
+    fn skill_effort_max_maps_to_reasoning_max() {
         assert_eq!(
             ReasoningEffort::from(SkillEffort::Max),
-            ReasoningEffort::XHigh
+            ReasoningEffort::Max
         );
     }
 
