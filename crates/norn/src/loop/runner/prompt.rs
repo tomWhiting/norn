@@ -80,29 +80,46 @@ impl StepMachine<'_> {
             .await?;
         }
 
-        // Sync the managed dynamic-context Developer message (REVIEW H2).
-        // messages[0] (System) stays stable for prefix caching, and only
-        // the tracked slot is ever written — history Developer messages
-        // (compaction summaries) are never overwritten or deleted. An
-        // empty developer message would be confused for a prompt, so the
-        // slot is removed when there is no content.
-        self.dev_message.sync(
-            self.loop_context.dynamic_context(),
-            &mut self.messages,
-            &mut self.conversation_state,
-        );
+        // Detach the previous iteration's managed dynamic-context Developer
+        // message BEFORE the preflight (PROMPT-CACHE fix). While detached the
+        // live conversation past the System prefix maps 1:1 to persisted
+        // events, which the token estimate and the in-flight compaction walk
+        // rely on. The message is re-attached at the tail AFTER the preflight
+        // (below), so messages[0] (System) + history form one stable,
+        // fully-cacheable prefix and the volatile dynamic context is the last
+        // message the model sees — never overwriting a history Developer
+        // compaction summary, which lives in history and is left untouched.
+        self.dev_message
+            .detach(&mut self.messages, &mut self.conversation_state);
 
-        // R5: expand session-variable placeholders in the managed
-        // Developer message and tool descriptions before the request is
-        // built. The System message (messages[0]) is NOT expanded so the
-        // instructions field stays stable for caching.
+        // Build the fresh managed message content from the current dynamic
+        // context, expanding session-variable placeholders (R5). The System
+        // message (messages[0]) is NOT expanded so it stays byte-stable for
+        // caching. Empty dynamic context yields no message — an empty
+        // Developer message would read to the model as a prompt — so this
+        // iteration simply attaches nothing.
+        let dev_tail_content: Option<String> = match self.loop_context.dynamic_context() {
+            Some(content) => Some(match self.loop_context.variables.as_ref() {
+                Some(var_store) => expand_system_instruction(&content, var_store).await,
+                None => content,
+            }),
+            None => None,
+        };
+
+        // The managed message goes over the wire at the tail, after the
+        // preflight — so it is absent from `self.messages` during estimation.
+        // Feed its token cost in explicitly so the token warning and the
+        // auto-compaction trigger account for what actually ships.
+        let dev_tail_tokens = match (
+            self.loop_context.token_estimator.as_ref(),
+            dev_tail_content.as_ref(),
+        ) {
+            (Some(estimator), Some(content)) => estimator.estimate(content),
+            _ => 0,
+        };
+
+        // R5: expand tool descriptions before the request is built.
         let iteration_tools = if let Some(var_store) = self.loop_context.variables.as_ref() {
-            if let Some(idx) = self.dev_message.index()
-                && let Some(content) = self.messages[idx].content.as_ref()
-            {
-                self.messages[idx].content =
-                    Some(expand_system_instruction(content, var_store).await);
-            }
             expand_tool_descriptions(&self.all_tools, var_store).await
         } else {
             self.all_tools.clone()
@@ -118,6 +135,9 @@ impl StepMachine<'_> {
         // request message list is built *after* the preflight so the
         // current provider call already sees the compacted view and any
         // dropped response-thread anchor, not just the next step.
+        //
+        // Read into a local before the args block mutably borrows the state.
+        let layout_prefix_len = self.conversation_state.prefix_len();
         let preflight = run_context_preflight(PreflightArgs {
             store: self.store,
             provider: self.provider,
@@ -129,10 +149,11 @@ impl StepMachine<'_> {
             config: self.config,
             compaction_state: &mut self.compaction_state,
             layout: InFlightPromptLayout {
-                prefix_len: self.dev_message.prefix_len(),
+                prefix_len: layout_prefix_len,
                 prompt_event_id: self.prompt_event_id.clone(),
                 prompt_message_len: self.new_input_len,
             },
+            dev_tail_tokens,
             cancel: self.cancel.as_ref(),
             event_tx: self.event_tx,
         })
@@ -150,6 +171,17 @@ impl StepMachine<'_> {
                 input_tokens: u64::try_from(input_tokens).unwrap_or(u64::MAX),
             });
         }
+
+        // Re-attach the managed dynamic-context Developer message at the tail
+        // — after any compaction summary the preflight appended — so it is the
+        // last message before the model responds. This is a pure tail append
+        // (see `ManagedDevMessage::attach`): it shifts nothing and the message
+        // rides the threaded delta, so `conversation_state` needs no cursor
+        // adjustment here.
+        if let Some(content) = dev_tail_content {
+            self.dev_message.attach(content, &mut self.messages);
+        }
+
         let request_messages = self.conversation_state.request_messages(&self.messages);
 
         let request = ProviderRequest {

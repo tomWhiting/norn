@@ -1,140 +1,138 @@
-//! Managed dynamic-context Developer message tracking (REVIEW H2).
+//! Managed dynamic-context Developer message tracking.
 //!
 //! The agent loop maintains at most one Developer-role message that carries
 //! the current dynamic context (environment section, collaboration mode,
-//! rule-injected sections, prompt-command output). Historically the loop
-//! located this message by searching for the *first* Developer-role message
-//! in the conversation — which, after a session resume, could be a
-//! mid-history compaction summary rendered as a Developer message. The sync
-//! would then overwrite or delete that summary.
+//! rule-injected sections, prompt-command output). Its content changes every
+//! iteration — most reliably the `# Environment` `Time:` field, at second
+//! resolution — so it is re-synced fresh on every provider call.
 //!
-//! [`ManagedDevMessage`] tracks the managed slot by explicit index instead.
-//! The index is only ever `Some(1)` (immediately after the System message at
-//! index 0) or `None`; every other conversation mutation in the loop appends
-//! at the tail or removes at indices past the prefix, so the tracked index
-//! never needs rebasing.
+//! # Placement: the tail, not the prefix
+//!
+//! The message is placed at the **tail** of the live conversation — after the
+//! System message, after all persisted history, after the new user input, and
+//! after any prior-iteration tool results — so it is the last message before
+//! the model responds. Placing it ahead of history (its former home at
+//! `messages[1]`) meant its per-turn byte change invalidated the provider's
+//! prefix cache for the *entire* growing history; at the tail, the System
+//! message plus history form one stable, fully-cacheable prefix and only the
+//! small trailing message changes each turn. See
+//! `docs/PROMPT-CACHE-INVALIDATION-FIX.md`.
+//!
+//! # Lifecycle: detach before preflight, attach after
+//!
+//! [`ManagedDevMessage`] is consulted twice per iteration in
+//! [`build_request`](crate::r#loop::runner::prompt):
+//!
+//! 1. [`Self::detach`] runs *before* the context preflight. It removes the
+//!    message the previous iteration attached, restoring the invariant that
+//!    every message past the System prefix corresponds 1:1 to a persisted
+//!    prompt-producing event — the invariant the in-flight compaction walk
+//!    relies on. The compaction summary (which is event-backed and lives in
+//!    history permanently) is therefore the only Developer message present
+//!    while the walk runs, and it is never a candidate for removal here.
+//! 2. [`Self::attach`] runs *after* the preflight. It appends the freshly
+//!    built message at the current tail, so it lands after any compaction
+//!    summary the preflight appended and is the last message in the request.
+//!
+//! # Slot identity
+//!
+//! Between one iteration's `attach` and the next iteration's `detach`, every
+//! conversation mutation the loop performs (assistant turns, tool results,
+//! nudges, inbound/child injections) is a **tail append** — landing *after*
+//! the managed message — so the managed message's index never shifts and the
+//! stored index stays exactly on it. A Developer-role compaction summary sits
+//! earlier, in history, and is never at the stored index. `detach` verifies
+//! the stored index still holds a Developer message before removing it; a
+//! mismatch is a loop-invariant violation, logged loudly, and self-healed by
+//! forgetting the slot rather than clobbering whatever now occupies it.
 
 use crate::r#loop::conversation_state::ConversationRequestState;
 use crate::provider::request::{Message, MessageRole};
 
-/// Index at which the managed Developer message is inserted: immediately
-/// after the System message at index 0, ahead of all persisted history.
-const MANAGED_DEV_INDEX: usize = 1;
-
 /// Tracker for the loop-managed dynamic-context Developer message.
 ///
-/// Constructed once per step from the initial prompt layout and consulted on
-/// every iteration via [`Self::sync`]. Developer messages that arrive from
-/// persisted history (compaction summaries) are never touched because the
-/// tracker addresses its slot by index, not by role.
+/// Constructed once per step (initially absent — the first
+/// [`build_request`](crate::r#loop::runner::prompt) attaches the message) and
+/// driven through [`Self::detach`] / [`Self::attach`] every iteration.
 #[derive(Debug)]
 pub(super) struct ManagedDevMessage {
-    /// Index of the managed message in the live conversation, when present.
-    ///
-    /// Invariant: always `Some(MANAGED_DEV_INDEX)` or `None`. See module
-    /// docs for why no rebasing is required.
+    /// Index of the managed message in the live conversation while it is
+    /// attached; `None` between a `detach` and the next `attach`, and before
+    /// the first `attach` of the step.
     index: Option<usize>,
 }
 
 impl ManagedDevMessage {
-    /// Create a tracker from the initial prompt layout.
-    ///
-    /// `initial_index` is `Some(1)` when `build_initial_messages` inserted a
-    /// dynamic-context Developer message into the prefix, `None` otherwise.
-    pub(super) const fn new(initial_index: Option<usize>) -> Self {
-        Self {
-            index: initial_index,
-        }
+    /// Create a tracker for a step that has not yet placed the message.
+    pub(super) const fn new() -> Self {
+        Self { index: None }
     }
 
-    /// Current index of the managed message, if one exists.
-    pub(super) const fn index(&self) -> Option<usize> {
-        self.index
-    }
-
-    /// Number of leading non-event prefix messages in the live conversation:
-    /// the System message plus the managed Developer message when present.
-    pub(super) const fn prefix_len(&self) -> usize {
-        match self.index {
-            Some(_) => 2,
-            None => 1,
-        }
-    }
-
-    /// Reconcile the managed slot with the current dynamic context.
+    /// Remove the message placed by the previous iteration.
     ///
-    /// - content + existing slot: the slot's content is replaced in place;
-    /// - content + no slot: a Developer message is inserted at index 1 and
-    ///   `conversation_state` is told about the insertion;
-    /// - no content + existing slot: the slot is removed (an empty Developer
-    ///   message would be mistaken for a prompt) and `conversation_state` is
-    ///   told about the removal;
-    /// - no content + no slot: nothing happens.
+    /// Restores the 1:1 message-to-event mapping past the System prefix so the
+    /// preflight token estimate and in-flight compaction walk operate on a
+    /// clean history. `conversation_state` is told about the removal so its
+    /// threaded-delta cursor (`input_start`) tracks the messages that shift
+    /// down into the removed slot.
     ///
-    /// History Developer messages (compaction summaries) are never candidates
-    /// because only the tracked index is read or written.
-    pub(super) fn sync(
+    /// A no-op before the first attach. If the stored index no longer holds a
+    /// Developer message — a loop-invariant violation, since only tail appends
+    /// occur between attach and detach — the tracker logs loudly and forgets
+    /// the slot without removing anything, so the next attach places a fresh
+    /// message rather than this path clobbering an unrelated message.
+    pub(super) fn detach(
         &mut self,
-        dynamic: Option<String>,
         messages: &mut Vec<Message>,
         conversation_state: &mut ConversationRequestState,
     ) {
-        let slot = self.verified_slot(messages);
-        match (dynamic, slot) {
-            (Some(content), Some(idx)) => {
-                messages[idx].content = Some(content);
-            }
-            (Some(content), None) => {
-                messages.insert(
-                    MANAGED_DEV_INDEX,
-                    Message {
-                        role: MessageRole::Developer,
-                        content: Some(content),
-                        thinking: String::new(),
-                        reasoning: Vec::new(),
-                        tool_calls: Vec::new(),
-                        tool_call_id: None,
-                        tool_name: None,
-                        tool_call_kind: None,
-                    },
-                );
-                conversation_state.note_inserted_message(MANAGED_DEV_INDEX);
-                self.index = Some(MANAGED_DEV_INDEX);
-            }
-            (None, Some(idx)) => {
-                messages.remove(idx);
-                conversation_state.note_removed_message(idx);
-                self.index = None;
-            }
-            (None, None) => {}
-        }
-    }
-
-    /// Return the tracked index after verifying the slot still holds a
-    /// Developer message.
-    ///
-    /// The structural invariant (only this tracker mutates index 1; all
-    /// other loop mutations are tail appends or post-prefix removals) makes
-    /// a mismatch a programming error. If it ever occurs the tracker logs
-    /// loudly and resets to "absent" so the next sync re-inserts a fresh
-    /// managed message instead of clobbering whatever now occupies the slot.
-    fn verified_slot(&mut self, messages: &[Message]) -> Option<usize> {
-        let idx = self.index?;
+        let Some(idx) = self.index else {
+            return;
+        };
         if messages
             .get(idx)
             .is_some_and(|m| matches!(m.role, MessageRole::Developer))
         {
-            Some(idx)
+            messages.remove(idx);
+            conversation_state.note_removed_message(idx);
         } else {
             tracing::error!(
                 index = idx,
                 message_count = messages.len(),
                 "managed developer slot no longer holds a Developer message; \
-                 resetting tracker (this indicates a loop invariant violation)",
+                 forgetting the slot (this indicates a loop invariant violation)",
             );
-            self.index = None;
-            None
         }
+        self.index = None;
+    }
+
+    /// Append the freshly built managed message at the tail.
+    ///
+    /// Called after the preflight with the current dynamic-context `content`
+    /// (already variable-expanded). Empty dynamic context is represented by
+    /// *not* calling this at all — an empty Developer message would read to the
+    /// model as a prompt — so a call always carries real content.
+    ///
+    /// This is a pure tail append: it shifts no existing message, and the
+    /// appended message is part of the threaded delta (it must reach the
+    /// provider every turn because its content changes), so
+    /// `conversation_state` needs no cursor adjustment and is deliberately not
+    /// consulted here. Adjusting the delta cursor as if this were an interior
+    /// insertion would push the cursor *past* the message on the turn the delta
+    /// is otherwise empty, dropping it from the request.
+    pub(super) fn attach(&mut self, content: String, messages: &mut Vec<Message>) {
+        let idx = messages.len();
+        messages.push(Message {
+            role: MessageRole::Developer,
+            content: Some(content),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: Vec::new(),
+            tool_call_id: None,
+            tool_name: None,
+            tool_call_kind: None,
+        });
+        self.index = Some(idx);
     }
 }
 
@@ -169,104 +167,186 @@ mod tests {
         .expect("state")
     }
 
-    /// A history compaction summary (Developer role, mid-conversation) must
-    /// not be deleted when there is no dynamic context.
+    /// The message is appended at the tail, after the System prefix and all
+    /// history, and its index is recorded.
     #[test]
-    fn sync_without_content_never_deletes_history_developer_message() {
+    fn attach_places_message_at_the_tail() {
         let mut messages = vec![
             message(MessageRole::System, "system"),
-            message(MessageRole::Developer, "compaction summary"),
             message(MessageRole::User, "prompt"),
         ];
-        let mut cs = state(1);
-        let mut dev = ManagedDevMessage::new(None);
+        let mut dev = ManagedDevMessage::new();
 
-        dev.sync(None, &mut messages, &mut cs);
-
-        assert_eq!(messages.len(), 3, "history summary must survive");
-        assert_eq!(messages[1].content.as_deref(), Some("compaction summary"));
-        assert_eq!(dev.index(), None);
-        assert_eq!(dev.prefix_len(), 1);
-    }
-
-    /// A history compaction summary must not be overwritten when dynamic
-    /// context appears mid-step; the context gets its own message at index 1.
-    #[test]
-    fn sync_with_content_inserts_instead_of_overwriting_history_summary() {
-        let mut messages = vec![
-            message(MessageRole::System, "system"),
-            message(MessageRole::Developer, "compaction summary"),
-            message(MessageRole::User, "prompt"),
-        ];
-        let mut cs = state(1);
-        let mut dev = ManagedDevMessage::new(None);
-
-        dev.sync(Some("dynamic".to_string()), &mut messages, &mut cs);
-
-        assert_eq!(messages.len(), 4);
-        assert_eq!(messages[1].content.as_deref(), Some("dynamic"));
-        assert_eq!(
-            messages[2].content.as_deref(),
-            Some("compaction summary"),
-            "history summary must survive, shifted by one",
-        );
-        assert_eq!(dev.index(), Some(1));
-        assert_eq!(dev.prefix_len(), 2);
-    }
-
-    /// An existing managed slot is updated in place.
-    #[test]
-    fn sync_updates_managed_slot_in_place() {
-        let mut messages = vec![
-            message(MessageRole::System, "system"),
-            message(MessageRole::Developer, "old dynamic"),
-            message(MessageRole::User, "prompt"),
-        ];
-        let mut cs = state(2);
-        let mut dev = ManagedDevMessage::new(Some(1));
-
-        dev.sync(Some("new dynamic".to_string()), &mut messages, &mut cs);
+        dev.attach("dynamic".to_string(), &mut messages);
 
         assert_eq!(messages.len(), 3);
-        assert_eq!(messages[1].content.as_deref(), Some("new dynamic"));
-        assert_eq!(dev.index(), Some(1));
+        assert_eq!(dev.index, Some(2));
+        assert_eq!(messages[2].role, MessageRole::Developer);
+        assert_eq!(messages[2].content.as_deref(), Some("dynamic"));
     }
 
-    /// The managed slot is removed when dynamic context disappears.
+    /// A full iteration boundary: attach at the tail, the loop appends real
+    /// history (an assistant turn) *after* it, then the next iteration detaches
+    /// the exact slot it placed — leaving the appended history intact — and
+    /// re-attaches fresh at the new tail.
     #[test]
-    fn sync_removes_managed_slot_when_content_disappears() {
+    fn detach_then_reattach_updates_the_managed_message_in_place_at_the_tail() {
         let mut messages = vec![
             message(MessageRole::System, "system"),
-            message(MessageRole::Developer, "dynamic"),
             message(MessageRole::User, "prompt"),
         ];
-        let mut cs = state(2);
-        let mut dev = ManagedDevMessage::new(Some(1));
+        let mut cs = state(1);
+        let mut dev = ManagedDevMessage::new();
 
-        dev.sync(None, &mut messages, &mut cs);
+        // Iteration 1: attach at tail (index 2).
+        dev.attach("dynamic v1".to_string(), &mut messages);
+        assert_eq!(dev.index, Some(2));
+
+        // The loop appends an assistant turn AFTER the managed message.
+        messages.push(message(MessageRole::Assistant, "answer"));
+        assert_eq!(messages[2].content.as_deref(), Some("dynamic v1"));
+
+        // Iteration 2: detach removes exactly the managed slot (index 2),
+        // never the assistant turn now sitting after it.
+        dev.detach(&mut messages, &mut cs);
+        assert_eq!(dev.index, None);
+        assert_eq!(messages.len(), 3);
+        let contents: Vec<&str> = messages
+            .iter()
+            .filter_map(|m| m.content.as_deref())
+            .collect();
+        assert_eq!(contents, vec!["system", "prompt", "answer"]);
+
+        // Re-attach fresh content at the new tail (after the assistant turn).
+        dev.attach("dynamic v2".to_string(), &mut messages);
+        assert_eq!(dev.index, Some(3));
+        assert_eq!(messages[3].content.as_deref(), Some("dynamic v2"));
+    }
+
+    /// Detaching when no dynamic context was ever placed is a no-op.
+    #[test]
+    fn detach_without_a_slot_is_a_noop() {
+        let mut messages = vec![
+            message(MessageRole::System, "system"),
+            message(MessageRole::User, "prompt"),
+        ];
+        let mut cs = state(1);
+        let mut dev = ManagedDevMessage::new();
+
+        dev.detach(&mut messages, &mut cs);
 
         assert_eq!(messages.len(), 2);
-        assert_eq!(messages[1].role, MessageRole::User);
-        assert_eq!(dev.index(), None);
+        assert_eq!(dev.index, None);
     }
 
-    /// A corrupted slot (non-Developer message at the tracked index) is
-    /// detected and the tracker self-heals by re-inserting.
+    /// The empty-context path: an iteration attaches nothing (the caller skips
+    /// `attach` when `dynamic_context()` is `None`), so the next `detach` finds
+    /// no slot and leaves history untouched — a compaction summary that now
+    /// sits near the tail is never mistaken for the managed slot.
     #[test]
-    fn sync_self_heals_when_slot_is_not_developer() {
+    fn detach_never_touches_a_history_developer_summary() {
+        // History ends with a Developer-role compaction summary and no managed
+        // message was attached this iteration (index None).
+        let mut messages = vec![
+            message(MessageRole::System, "system"),
+            message(MessageRole::User, "prompt"),
+            message(MessageRole::Assistant, "answer"),
+            message(MessageRole::Developer, "compaction summary"),
+        ];
+        let mut cs = state(1);
+        let mut dev = ManagedDevMessage::new();
+
+        dev.detach(&mut messages, &mut cs);
+
+        assert_eq!(messages.len(), 4, "history summary must survive");
+        assert_eq!(messages[3].content.as_deref(), Some("compaction summary"));
+        assert_eq!(dev.index, None);
+    }
+
+    /// Self-heal: if the stored slot no longer holds a Developer message (a
+    /// loop-invariant violation), `detach` forgets the slot without removing
+    /// whatever now occupies that index.
+    #[test]
+    fn detach_self_heals_when_slot_is_not_developer() {
         let mut messages = vec![
             message(MessageRole::System, "system"),
             message(MessageRole::User, "prompt"),
         ];
-        let mut cs = state(2);
-        let mut dev = ManagedDevMessage::new(Some(1));
+        let mut cs = state(1);
+        let mut dev = ManagedDevMessage::new();
+        dev.attach("dynamic".to_string(), &mut messages);
+        assert_eq!(dev.index, Some(2));
 
-        dev.sync(Some("dynamic".to_string()), &mut messages, &mut cs);
+        // Corrupt the slot: replace the managed Developer message with a
+        // non-Developer message at the same index (simulating an invariant
+        // violation where something inserted/overwrote before detach).
+        messages[2] = message(MessageRole::User, "not a dev message");
 
+        dev.detach(&mut messages, &mut cs);
+
+        assert_eq!(dev.index, None, "tracker forgets the slot");
+        assert_eq!(messages.len(), 3, "nothing removed on the self-heal path");
+        assert_eq!(messages[2].content.as_deref(), Some("not a dev message"));
+    }
+
+    /// The delta cursor is corrected on detach but never on attach. Removing
+    /// the managed slot shifts the messages after it down, so `input_start`
+    /// must follow; the subsequent tail attach must leave `input_start` alone
+    /// so the fresh message stays inside the threaded delta.
+    #[test]
+    fn detach_shifts_the_delta_cursor_and_attach_leaves_it_alone() {
+        // [System, User, Assistant(managed slot was here last turn)] with the
+        // managed message at index 2 and the delta starting after the
+        // assistant turn (input_start past everything real).
+        let mut messages = vec![
+            message(MessageRole::System, "system"),
+            message(MessageRole::User, "prompt"),
+            message(MessageRole::Assistant, "answer"),
+            message(MessageRole::Developer, "dynamic v1"),
+        ];
+        // Simulate a threaded state whose cursor sits past the assistant turn
+        // (index 3) — i.e. the delta is empty and only the fresh managed
+        // message should be sent next turn.
+        let mut cs = ConversationRequestState::new(
+            &AgentLoopConfig {
+                conversation_state: crate::r#loop::config::ConversationStateMode::ProviderThreaded,
+                ..AgentLoopConfig::default()
+            },
+            ProviderCapabilities::openai_responses(),
+            1,
+            Some(
+                crate::r#loop::conversation_state::ResponseThreadAnchor::for_test(
+                    "resp_prev".to_string(),
+                    4,
+                ),
+            ),
+        )
+        .expect("state");
+        let mut dev = ManagedDevMessage::new();
+        dev.index = Some(3);
+
+        // Detach the stale managed message at index 3; input_start (4) sits
+        // after it, so it must decrement to 3.
+        dev.detach(&mut messages, &mut cs);
         assert_eq!(messages.len(), 3);
-        assert_eq!(messages[1].role, MessageRole::Developer);
-        assert_eq!(messages[1].content.as_deref(), Some("dynamic"));
-        assert_eq!(messages[2].role, MessageRole::User);
-        assert_eq!(dev.index(), Some(1));
+
+        // Re-attach at the new tail (index 3). The request delta must still
+        // contain exactly the fresh managed message — proving attach did not
+        // push the cursor past it.
+        dev.attach("dynamic v2".to_string(), &mut messages);
+        let request = cs.request_messages(&messages);
+        assert_eq!(
+            request.last().and_then(|m| m.content.as_deref()),
+            Some("dynamic v2"),
+            "the fresh managed message must be last in the request delta",
+        );
+        assert!(
+            request
+                .iter()
+                .filter(|m| matches!(m.role, MessageRole::Developer))
+                .count()
+                == 1,
+            "exactly one managed Developer message in the delta",
+        );
     }
 }

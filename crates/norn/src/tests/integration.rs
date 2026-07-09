@@ -281,6 +281,9 @@ async fn provider_threaded_second_step_uses_response_anchor() {
             .map(|management| management.compact_threshold_tokens),
         Some(200_000),
     );
+    // Tail placement (PROMPT-CACHE fix): the managed dynamic-context
+    // Developer message is now LAST, after the new user input, so the
+    // System message + history form a stable cacheable prefix.
     assert_eq!(request.messages.len(), 3);
     assert_eq!(
         request.messages[0].role,
@@ -288,9 +291,13 @@ async fn provider_threaded_second_step_uses_response_anchor() {
     );
     assert_eq!(
         request.messages[1].role,
+        crate::provider::request::MessageRole::User
+    );
+    assert_eq!(request.messages[1].content.as_deref(), Some("test prompt"));
+    assert_eq!(
+        request.messages[2].role,
         crate::provider::request::MessageRole::Developer
     );
-    assert_eq!(request.messages[2].content.as_deref(), Some("test prompt"));
 }
 
 #[tokio::test]
@@ -343,6 +350,9 @@ async fn provider_threaded_tool_continuation_sends_only_tool_result() {
         Some("resp_tool")
     );
     assert!(requests[1].store);
+    // Tail placement (PROMPT-CACHE fix): the threaded delta is the tool
+    // result followed by the managed dynamic-context Developer message,
+    // which is LAST.
     assert_eq!(requests[1].messages.len(), 3);
     assert_eq!(
         requests[1].messages[0].role,
@@ -350,15 +360,15 @@ async fn provider_threaded_tool_continuation_sends_only_tool_result() {
     );
     assert_eq!(
         requests[1].messages[1].role,
-        crate::provider::request::MessageRole::Developer,
-    );
-    assert_eq!(
-        requests[1].messages[2].role,
         crate::provider::request::MessageRole::ToolResult,
     );
     assert_eq!(
-        requests[1].messages[2].tool_call_id.as_deref(),
+        requests[1].messages[1].tool_call_id.as_deref(),
         Some("call_read"),
+    );
+    assert_eq!(
+        requests[1].messages[2].role,
+        crate::provider::request::MessageRole::Developer,
     );
 }
 
@@ -436,21 +446,24 @@ async fn provider_threaded_resume_replays_post_anchor_history() {
         .iter()
         .map(|message| message.role.clone())
         .collect();
+    // Tail placement (PROMPT-CACHE fix): the post-anchor history (tool
+    // result, then the new user prompt) is replayed, and the managed
+    // dynamic-context Developer message is LAST.
     assert_eq!(
         request_roles,
         vec![
             crate::provider::request::MessageRole::System,
-            crate::provider::request::MessageRole::Developer,
             crate::provider::request::MessageRole::ToolResult,
             crate::provider::request::MessageRole::User,
+            crate::provider::request::MessageRole::Developer,
         ],
     );
     assert_eq!(
-        requests[0].messages[2].tool_call_id.as_deref(),
+        requests[0].messages[1].tool_call_id.as_deref(),
         Some("call_read"),
     );
     assert_eq!(
-        requests[0].messages[3].content.as_deref(),
+        requests[0].messages[2].content.as_deref(),
         Some("test prompt"),
     );
 }

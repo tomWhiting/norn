@@ -13,6 +13,18 @@ pub(super) struct ResponseThreadAnchor {
     input_start: usize,
 }
 
+#[cfg(test)]
+impl ResponseThreadAnchor {
+    /// Construct an anchor directly (for tests in sibling modules that
+    /// cannot name the private fields).
+    pub(super) fn for_test(response_id: String, input_start: usize) -> Self {
+        Self {
+            response_id,
+            input_start,
+        }
+    }
+}
+
 /// Locate the newest assistant response in the prompt view.
 pub(super) fn latest_response_anchor(
     events: &[SessionEvent],
@@ -119,6 +131,15 @@ impl ConversationRequestState {
         self.threaded
     }
 
+    /// Number of leading messages always sent in full (the System prefix),
+    /// even when the rest of the request is a threaded delta. Sourced by the
+    /// in-flight compaction layout as the count of leading non-event
+    /// messages, which — with the managed dynamic-context message now placed
+    /// at the tail rather than the prefix — is exactly the System message.
+    pub(super) const fn prefix_len(&self) -> usize {
+        self.prefix_len
+    }
+
     /// Previous response ID to pass to the provider.
     pub(super) fn previous_response_id(&self) -> Option<String> {
         self.previous_response_id.clone()
@@ -186,21 +207,12 @@ impl ConversationRequestState {
         }
     }
 
-    /// Adjust the input cursor after a message is inserted before it.
-    pub(super) fn note_inserted_message(&mut self, index: usize) {
-        if index <= self.prefix_len {
-            self.prefix_len = self.prefix_len.saturating_add(1);
-        }
-        if index <= self.input_start {
-            self.input_start = self.input_start.saturating_add(1);
-        }
-    }
-
     /// Adjust the input cursor after a message is removed before it.
+    ///
+    /// Both callers (managed-message detach, in-flight compaction) only ever
+    /// remove at or past `prefix_len` — the System-only prefix is immutable —
+    /// so the prefix itself never needs adjusting.
     pub(super) fn note_removed_message(&mut self, index: usize) {
-        if index < self.prefix_len {
-            self.prefix_len = self.prefix_len.saturating_sub(1);
-        }
         if index < self.input_start {
             self.input_start = self.input_start.saturating_sub(1);
         }
@@ -320,15 +332,17 @@ mod tests {
         let state = ConversationRequestState::new(
             &config(ConversationStateMode::ProviderThreaded),
             ProviderCapabilities::openai_responses(),
-            2,
-            latest_response_anchor(&store.events(), 2, false),
+            1,
+            latest_response_anchor(&store.events(), 1, false),
         )
         .unwrap();
+        // Post-cache-fix layout: the prefix is exactly [System]; the managed
+        // dynamic-context Developer message rides the tail, after new input.
         let messages = vec![
             message(MessageRole::System, "system"),
-            message(MessageRole::Developer, "dynamic"),
-            message(MessageRole::User, "old"),
+            message(MessageRole::Assistant, "old answer"),
             message(MessageRole::User, "new"),
+            message(MessageRole::Developer, "dynamic"),
         ];
 
         let request_messages = state.request_messages(&messages);
@@ -336,8 +350,12 @@ mod tests {
         assert_eq!(state.previous_response_id().as_deref(), Some("resp_old"));
         assert_eq!(request_messages.len(), 3);
         assert_eq!(request_messages[0].role, MessageRole::System);
-        assert_eq!(request_messages[1].role, MessageRole::Developer);
-        assert_eq!(request_messages[2].content.as_deref(), Some("new"));
+        assert_eq!(request_messages[1].content.as_deref(), Some("new"));
+        assert_eq!(
+            request_messages[2].role,
+            MessageRole::Developer,
+            "the tail managed message must ride the threaded delta",
+        );
     }
 
     #[test]

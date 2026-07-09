@@ -3528,9 +3528,15 @@ mod tests {
     impl Provider for ForkTreeProvider {
         fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
             use std::sync::atomic::Ordering as AtomicOrdering;
+            // The managed dynamic-context Developer message now rides at the
+            // tail of every request (prompt-cache fix), so route on the last
+            // non-Developer message — the turn content that actually seeds
+            // this fork.
             let last = request
                 .messages
-                .last()
+                .iter()
+                .rev()
+                .find(|m| !matches!(m.role, crate::provider::request::MessageRole::Developer))
                 .and_then(|m| m.content.clone())
                 .unwrap_or_default();
             let end_turn = ProviderEvent::Done {

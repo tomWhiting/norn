@@ -16,18 +16,21 @@
 //!
 //! # Mapping invariant
 //!
-//! Every message in the live conversation past the prefix (System message
-//! plus optional managed Developer message) corresponds 1:1, in order, to a
-//! visible prompt-producing session event — with a single exception: the
-//! step's persisted user-prompt event may expand to several messages when a
-//! slash command was spliced in. [`InFlightPromptLayout`] carries that
-//! event's ID and expansion width so the walk in
-//! [`apply_compaction_in_flight`] can account for it. The invariant holds
-//! because every loop-side message push (assistant turns, tool results,
-//! nudges, inbound injections, rule injections, child-agent results, stop
-//! blocks) is paired with exactly one persisted prompt-producing event, and
-//! events that produce no message (Custom, Label, forks, …) are never
-//! pushed locally.
+//! Every message in the live conversation past the prefix (the System
+//! message) corresponds 1:1, in order, to a visible prompt-producing session
+//! event — with a single exception: the step's persisted user-prompt event
+//! may expand to several messages when a slash command was spliced in.
+//! [`InFlightPromptLayout`] carries that event's ID and expansion width so
+//! the walk in [`apply_compaction_in_flight`] can account for it. The
+//! invariant holds because every loop-side message push (assistant turns,
+//! tool results, nudges, inbound injections, rule injections, child-agent
+//! results, stop blocks) is paired with exactly one persisted
+//! prompt-producing event, and events that produce no message (Custom, Label,
+//! forks, …) are never pushed locally. The managed dynamic-context Developer
+//! message is *not* in the live conversation while this walk runs: the
+//! request builder detaches it before the preflight and re-attaches it at the
+//! tail afterwards (its token cost is fed in separately via
+//! [`PreflightArgs::dev_tail_tokens`]), so it never perturbs the mapping.
 
 use std::collections::HashSet;
 
@@ -54,8 +57,9 @@ use super::helpers::append_and_notify;
 /// Positional facts about the live conversation needed to map session
 /// events onto message indices (see module docs for the invariant).
 pub(super) struct InFlightPromptLayout {
-    /// Number of leading non-event messages: the System message plus the
-    /// managed dynamic-context Developer message when present.
+    /// Number of leading non-event messages: the System message. The managed
+    /// dynamic-context Developer message is detached before the preflight, so
+    /// it is not counted here.
     pub(super) prefix_len: usize,
     /// Event ID of this step's persisted user-prompt event.
     pub(super) prompt_event_id: EventId,
@@ -86,6 +90,13 @@ pub(super) struct PreflightArgs<'a> {
     pub(super) compaction_state: &'a mut CompactionState,
     /// Positional layout of the live conversation.
     pub(super) layout: InFlightPromptLayout,
+    /// Estimated token cost of the managed dynamic-context Developer message
+    /// that the request builder attaches at the tail *after* this preflight.
+    /// It is not present in `messages` while the estimate and compaction walk
+    /// run (see the mapping invariant), so its cost is added in explicitly:
+    /// the token warning and the auto-compaction trigger must account for the
+    /// message that actually goes over the wire.
+    pub(super) dev_tail_tokens: usize,
     /// The step's cooperative cancellation token, raced against the
     /// compaction-summarization provider call.
     pub(super) cancel: Option<&'a tokio_util::sync::CancellationToken>,
@@ -140,7 +151,8 @@ pub(super) async fn run_context_preflight(
     // Responses backends), while the last call's reported spend is a
     // truthful lower bound for a request that has only grown since.
     // `ContextEdits` clears the floor whenever the prompt view shrinks.
-    let estimated = estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools);
+    let estimated = estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools)
+        + args.dev_tail_tokens;
     let usage_floor = args
         .loop_context
         .context_edits
@@ -221,7 +233,8 @@ pub(super) async fn run_context_preflight(
             args.conversation_state,
         ) {
             request_input_estimate =
-                estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools);
+                estimate_prompt_tokens(estimator.as_ref(), args.messages, args.iteration_tools)
+                    + args.dev_tail_tokens;
         }
     } else {
         // Unreachable by construction: `maybe_auto_compact` only fires when

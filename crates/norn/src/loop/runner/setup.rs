@@ -111,10 +111,9 @@ impl<'a> StepMachine<'a> {
             initial_messages.prefix_len,
             initial_messages.response_thread_anchor,
         )?;
-        // REVIEW H2: the dynamic-context Developer message is tracked by
-        // explicit index, never located by first-role matching, so resumed
-        // histories containing Developer-role compaction summaries are safe.
-        let dev_message = ManagedDevMessage::new(initial_messages.managed_developer_index);
+        // The managed dynamic-context Developer message is attached at the
+        // tail by the first `build_request`, so the tracker starts absent.
+        let dev_message = ManagedDevMessage::new();
         let mut new_input_len = initial_messages.new_input_len;
 
         let prompt_event_id = if let Some(prompt) = user_prompt {

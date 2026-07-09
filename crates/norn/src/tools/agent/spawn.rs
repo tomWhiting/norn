@@ -4549,9 +4549,15 @@ mod tests {
             // child's branch store is seeded with its parent's context,
             // so every conversation in the tree starts with the root
             // prompt.
+            // The managed dynamic-context Developer message now rides at the
+            // tail of every request (prompt-cache fix), so route on the last
+            // non-Developer message — the turn content that actually seeds
+            // this child.
             let last = request
                 .messages
-                .last()
+                .iter()
+                .rev()
+                .find(|m| !matches!(m.role, crate::provider::request::MessageRole::Developer))
                 .and_then(|m| m.content.clone())
                 .unwrap_or_default();
             if last == "grandchild-task" {
@@ -4806,9 +4812,15 @@ mod tests {
     impl Provider for UsageTreeProvider {
         fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
             use std::sync::atomic::Ordering as AtomicOrdering;
+            // The managed dynamic-context Developer message now rides at the
+            // tail of every request (prompt-cache fix), so route on the last
+            // non-Developer message — the turn content that actually seeds
+            // this child.
             let last = request
                 .messages
-                .last()
+                .iter()
+                .rev()
+                .find(|m| !matches!(m.role, crate::provider::request::MessageRole::Developer))
                 .and_then(|m| m.content.clone())
                 .unwrap_or_default();
             if last == "usage-grandchild-task" {
@@ -5134,9 +5146,15 @@ mod tests {
     impl Provider for CascadeTreeProvider {
         fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
             use std::sync::atomic::Ordering as AtomicOrdering;
+            // The managed dynamic-context Developer message now rides at the
+            // tail of every request (prompt-cache fix), so route on the last
+            // non-Developer message — the turn content that actually seeds
+            // this child.
             let last = request
                 .messages
-                .last()
+                .iter()
+                .rev()
+                .find(|m| !matches!(m.role, crate::provider::request::MessageRole::Developer))
                 .and_then(|m| m.content.clone())
                 .unwrap_or_default();
             if last == "grandchild-task" {
@@ -5538,9 +5556,15 @@ mod tests {
     impl Provider for LingerTreeProvider {
         fn stream(&self, request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
             use std::sync::atomic::Ordering as AtomicOrdering;
+            // The managed dynamic-context Developer message now rides at the
+            // tail of every request (prompt-cache fix), so route on the last
+            // non-Developer message — the turn content that actually seeds
+            // this child.
             let last = request
                 .messages
-                .last()
+                .iter()
+                .rev()
+                .find(|m| !matches!(m.role, crate::provider::request::MessageRole::Developer))
                 .and_then(|m| m.content.clone())
                 .unwrap_or_default();
             if last == "linger-grandchild-task" {

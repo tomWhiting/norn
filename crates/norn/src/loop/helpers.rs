@@ -42,14 +42,13 @@ pub(super) use crate::r#loop::rule_wiring::{
 pub(super) struct InitialMessages {
     /// Full local prompt view used for manual replay.
     pub(super) messages: Vec<Message>,
-    /// End of the live system/developer prefix before persisted history.
+    /// End of the live System prefix before persisted history. The managed
+    /// dynamic-context Developer message is no longer part of the prefix — it
+    /// is attached at the tail on the first `build_request` — so this is
+    /// exactly the System message (`1`).
     pub(super) prefix_len: usize,
     /// Latest provider response anchor visible in the prompt history.
     pub(super) response_thread_anchor: Option<ResponseThreadAnchor>,
-    /// Index of the managed dynamic-context Developer message when one was
-    /// inserted into the prefix (always `Some(1)` in that case). Seed value
-    /// for the runner's `ManagedDevMessage` tracker (REVIEW H2).
-    pub(super) managed_developer_index: Option<usize>,
     /// Number of trailing messages the new user input occupies: 1 for a
     /// literal prompt, N for a slash-command expansion. Used by in-flight
     /// compaction to map the persisted prompt event onto its local message
@@ -103,7 +102,7 @@ pub(super) fn build_initial_messages(
         } else {
             (store.events(), false)
         };
-    let mut messages = Vec::with_capacity(2 + history_events.len() + new_msg_count);
+    let mut messages = Vec::with_capacity(1 + history_events.len() + new_msg_count);
     messages.push(Message {
         role: MessageRole::System,
         content: Some(loop_context.base_system_instruction()),
@@ -114,21 +113,11 @@ pub(super) fn build_initial_messages(
         tool_name: None,
         tool_call_kind: None,
     });
-    let mut managed_developer_index = None;
-    if let Some(dynamic) = loop_context.dynamic_context() {
-        managed_developer_index = Some(messages.len());
-        messages.push(Message {
-            role: MessageRole::Developer,
-            content: Some(dynamic),
-            thinking: String::new(),
-            reasoning: Vec::new(),
-            tool_calls: Vec::new(),
-            tool_call_id: None,
-            tool_name: None,
-            tool_call_kind: None,
-        });
-    }
 
+    // The managed dynamic-context Developer message is NOT placed here: it is
+    // attached at the tail by the first `build_request` so the System message
+    // plus history form one stable, cacheable prefix. The prefix is therefore
+    // exactly the System message.
     let prefix_len = messages.len();
     let response_thread_anchor =
         latest_response_anchor(&history_events, prefix_len, include_compactions);
@@ -162,7 +151,6 @@ pub(super) fn build_initial_messages(
         messages,
         prefix_len,
         response_thread_anchor,
-        managed_developer_index,
         new_input_len,
     })
 }
