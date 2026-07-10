@@ -274,45 +274,32 @@ impl StreamExecutor {
             }
 
             if !status.is_success() {
-                return Err(self.error_status_to_provider_error(response).await);
+                return Err(self.error_response_to_provider_error(response).await);
             }
 
             break Ok(response);
         }
     }
 
-    /// Reads the body of a non-2xx response and folds it into a
-    /// [`ProviderError::StreamError`].
+    /// Drains and discards a non-2xx response before structural classification.
     ///
-    /// The body read runs under the same stall deadline as every other
-    /// request phase: a server that returns error headers and then never
-    /// finishes the body must not hang the turn. A timed-out body read
-    /// still surfaces the HTTP status in the reason but carries an
-    /// explicit [`TransientKind::Timeout`], so it classifies as a
-    /// retryable network timeout rather than a server error. A completed
-    /// read classifies structurally by status: 5xx is a retryable
-    /// [`TransientKind::ServerError`]; every other error status (4xx) is
-    /// terminal.
-    async fn error_status_to_provider_error(&self, response: reqwest::Response) -> ProviderError {
+    /// The authority-controlled body is never buffered, logged, persisted, or
+    /// copied into an error because it may echo prompts, tool content, or
+    /// received credentials. Streaming it to the sink under the configured
+    /// deadline preserves the transport contract: a server that sends error
+    /// headers and then stalls is a retryable timeout, while a completed body
+    /// classifies by status.
+    async fn error_response_to_provider_error(&self, response: reqwest::Response) -> ProviderError {
         let status = response.status();
-        let body_text = match tokio::time::timeout(self.timeout, response.text()).await {
-            Ok(Ok(text)) => text,
-            Ok(Err(e)) => {
-                tracing::warn!(
-                    status = status.as_u16(),
-                    error = %e,
-                    backend = self.backend_label,
-                    "failed to read provider error-response body"
-                );
-                format!("<failed to read error body: {e}>")
+        let mut body = response.bytes_stream();
+        let drain = async {
+            while let Some(chunk) = body.next().await {
+                chunk?;
             }
-            Err(_elapsed) => {
-                tracing::warn!(
-                    status = status.as_u16(),
-                    timeout_s = self.timeout.as_secs_f64(),
-                    backend = self.backend_label,
-                    "provider error-response body read timed out"
-                );
+            Ok::<(), reqwest::Error>(())
+        };
+        match tokio::time::timeout(self.timeout, drain).await {
+            Err(_) => {
                 return ProviderError::StreamError {
                     reason: format!(
                         "reading HTTP {status} error body timed out after {:.1}s",
@@ -321,9 +308,22 @@ impl StreamExecutor {
                     transient: Some(TransientKind::Timeout),
                 };
             }
-        };
+            Ok(Err(error)) => {
+                tracing::warn!(
+                    status = status.as_u16(),
+                    is_timeout = error.is_timeout(),
+                    is_body = error.is_body(),
+                    backend = self.backend_label,
+                    "failed while discarding provider error-response body"
+                );
+            }
+            Ok(Ok(())) => {}
+        }
         ProviderError::StreamError {
-            reason: format!("HTTP {status}: {body_text}"),
+            reason: format!(
+                "HTTP {status} from {}; response body omitted",
+                self.backend_label
+            ),
             transient: status
                 .is_server_error()
                 .then_some(TransientKind::ServerError {

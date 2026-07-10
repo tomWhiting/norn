@@ -314,9 +314,7 @@ fn exchange_code_blocking(
     code: &str,
     timeout: Duration,
 ) -> Result<AuthDotJson, LoginError> {
-    let client = reqwest::blocking::Client::builder()
-        .timeout(timeout)
-        .build()
+    let client = crate::provider::http_client::build_blocking_bounded_client(timeout)
         .map_err(|err| LoginError::TokenExchange(err.to_string()))?;
     let response = client
         .post(TOKEN_URL)

@@ -1030,12 +1030,11 @@ mod streaming_tests {
         );
     }
 
-    /// Regression test (final-state hardening, T1 item 1): a server that
-    /// returns 5xx headers and then stalls the error body forever must
-    /// trip the configured stall deadline as a retryable network timeout
-    /// instead of hanging the turn inside `response.text()`.
+    /// A stalled authority-controlled error body is streamed only to a sink:
+    /// the configured deadline preserves timeout classification while body
+    /// content never reaches the error.
     #[tokio::test]
-    async fn stalled_5xx_error_body_times_out_as_retryable_network_timeout() {
+    async fn stalled_5xx_error_body_times_out_without_exposing_content() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
@@ -1089,19 +1088,19 @@ mod streaming_tests {
             crate::error::ErrorClass::Retryable {
                 kind: crate::error::TransientKind::Timeout
             },
-            "stalled error-body read must classify as a retryable network timeout"
+            "stalled error-body drain must remain a retryable transport timeout"
         );
+        assert!(!err.to_string().contains("overl"));
         assert!(
             RetryPolicy::default().classifies_as_retryable(&err),
-            "stalled error-body read must be retryable under the default policy"
+            "stalled error-body drain must remain retryable under the default policy"
         );
     }
 
-    /// The 4xx counterpart: a stalled error body on a client-error status
-    /// is still a transport stall, not a deterministic fault — it must
-    /// classify as a retryable network timeout too.
+    /// The 4xx counterpart is also a transport timeout rather than a
+    /// deterministic client fault; its body is discarded without disclosure.
     #[tokio::test]
-    async fn stalled_4xx_error_body_times_out_as_retryable_network_timeout() {
+    async fn stalled_4xx_error_body_times_out_without_exposing_content() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
@@ -1138,9 +1137,9 @@ mod streaming_tests {
             err.class(),
             crate::error::ErrorClass::Retryable {
                 kind: crate::error::TransientKind::Timeout
-            },
-            "stalled 4xx error-body read must classify as a retryable network timeout: {err:?}"
+            }
         );
+        assert!(!err.to_string().contains("bad"));
     }
 
     /// Regression test for REVIEW.md H4: a stream that goes silent

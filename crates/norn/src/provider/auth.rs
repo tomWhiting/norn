@@ -332,17 +332,29 @@ pub async fn logout(config: LoginConfig) -> Result<(), NornError> {
 
 fn resolve_codex_home(override_path: Option<PathBuf>) -> Result<PathBuf, ProviderError> {
     if let Some(path) = override_path {
-        return Ok(path);
+        return require_absolute_codex_home(path);
     }
     if let Ok(env_path) = std::env::var("CODEX_HOME")
         && !env_path.is_empty()
     {
-        return Ok(PathBuf::from(env_path));
+        return require_absolute_codex_home(PathBuf::from(env_path));
     }
-    let home = dirs::home_dir().ok_or_else(|| ProviderError::AuthenticationFailed {
-        reason: "could not determine home directory for codex auth storage".to_string(),
+    let home = crate::config::paths::trusted_home_dir().ok_or_else(|| {
+        ProviderError::AuthenticationFailed {
+            reason: "could not determine home directory for codex auth storage".to_string(),
+        }
     })?;
     Ok(home.join(".codex"))
+}
+
+fn require_absolute_codex_home(path: PathBuf) -> Result<PathBuf, ProviderError> {
+    if path.is_absolute() {
+        Ok(path)
+    } else {
+        Err(ProviderError::AuthenticationFailed {
+            reason: "CODEX_HOME and explicit Codex auth directories must be absolute".to_owned(),
+        })
+    }
 }
 
 /// Mock auth provider for tests.
@@ -606,6 +618,13 @@ mod tests {
         let path = std::path::PathBuf::from("/tmp/custom-codex");
         let resolved = resolve_codex_home(Some(path.clone())).expect("resolve");
         assert_eq!(resolved, path);
+    }
+
+    #[test]
+    fn resolve_codex_home_rejects_relative_override() {
+        let error = resolve_codex_home(Some(std::path::PathBuf::from(".codex")))
+            .expect_err("relative credential directory must be rejected");
+        assert!(error.to_string().contains("must be absolute"));
     }
 
     #[tokio::test]

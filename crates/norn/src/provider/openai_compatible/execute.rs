@@ -386,13 +386,10 @@ mod tests {
         }
     }
 
-    /// Regression test (final-state hardening, T1 item 1): a compatible
-    /// backend that returns 5xx headers and then stalls the error body
-    /// forever must trip the configured stall deadline as a retryable
-    /// network timeout instead of hanging the turn inside
-    /// `response.text()`.
+    /// Compatible endpoints drain error bodies only to a sink, preserving the
+    /// configured timeout without exposing authority-controlled content.
     #[tokio::test]
-    async fn stalled_error_body_times_out_as_retryable_network_timeout() {
+    async fn stalled_error_body_times_out_without_exposing_content() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let port = listener.local_addr().unwrap().port();
 
@@ -443,7 +440,8 @@ mod tests {
             ErrorClass::Retryable {
                 kind: TransientKind::Timeout
             },
-            "stalled error-body read must classify as a retryable network timeout"
+            "stalled error-body drain must remain a retryable transport timeout"
         );
+        assert!(!err.to_string().contains("upstream"));
     }
 }

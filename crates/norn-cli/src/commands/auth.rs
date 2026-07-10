@@ -86,7 +86,13 @@ fn run_logout() -> ExitCode {
 // ---------------------------------------------------------------------------
 
 fn run_status() -> ExitCode {
-    let codex_home = resolve_codex_home();
+    let codex_home = match resolve_codex_home() {
+        Ok(path) => path,
+        Err(reason) => {
+            eprintln!("norn: cannot resolve auth state: {reason}");
+            return ExitCode::AuthError;
+        }
+    };
     if !codex_home.join("auth.json").exists() {
         println!("Not logged in.");
         return ExitCode::Success;
@@ -136,16 +142,20 @@ fn print_status(auth: &AuthDotJson) {
 /// Resolve the Codex home directory: `$CODEX_HOME` if set and non-empty,
 /// otherwise `~/.codex`. Mirrors the private helper in
 /// `norn::provider::auth` since that one is not exported.
-pub(crate) fn resolve_codex_home() -> PathBuf {
+pub(crate) fn resolve_codex_home() -> Result<PathBuf, &'static str> {
     if let Ok(env_path) = std::env::var("CODEX_HOME")
         && !env_path.is_empty()
     {
-        return PathBuf::from(env_path);
+        let path = PathBuf::from(env_path);
+        return if path.is_absolute() {
+            Ok(path)
+        } else {
+            Err("CODEX_HOME must be an absolute path")
+        };
     }
-    match dirs::home_dir() {
-        Some(home) => home.join(".codex"),
-        None => PathBuf::from(".codex"),
-    }
+    norn::config::paths::trusted_home_dir()
+        .map(|home| home.join(".codex"))
+        .ok_or("could not determine an absolute home directory for Codex credentials")
 }
 
 /// Probe helper used by `norn doctor` — checks whether `auth.json`
@@ -173,7 +183,7 @@ mod tests {
     fn resolve_codex_home_honours_env() {
         // SAFETY: serial test; no concurrent reader observes the mutation.
         unsafe { std::env::set_var("CODEX_HOME", "/tmp/codex-test-home") };
-        let home = resolve_codex_home();
+        let home = resolve_codex_home().expect("absolute CODEX_HOME");
         unsafe { std::env::remove_var("CODEX_HOME") };
         assert_eq!(home, PathBuf::from("/tmp/codex-test-home"));
     }
@@ -183,11 +193,21 @@ mod tests {
     fn resolve_codex_home_empty_env_treated_as_unset() {
         // SAFETY: serial test prevents concurrent observers.
         unsafe { std::env::set_var("CODEX_HOME", "") };
-        let home = resolve_codex_home();
+        let home = resolve_codex_home().expect("absolute user home");
         unsafe { std::env::remove_var("CODEX_HOME") };
-        let expected =
-            dirs::home_dir().map_or_else(|| PathBuf::from(".codex"), |h| h.join(".codex"));
+        let expected = norn::config::paths::trusted_home_dir()
+            .map(|home| home.join(".codex"))
+            .expect("absolute user home");
         assert_eq!(home, expected);
+    }
+
+    #[test]
+    #[serial]
+    fn resolve_codex_home_rejects_relative_env() {
+        unsafe { std::env::set_var("CODEX_HOME", ".codex") };
+        let result = resolve_codex_home();
+        unsafe { std::env::remove_var("CODEX_HOME") };
+        assert_eq!(result, Err("CODEX_HOME must be an absolute path"));
     }
 
     #[test]

@@ -157,8 +157,8 @@ impl SseParser {
     /// Chat Completions `[DONE]` sentinel is exactly such a frame and
     /// marks a normal end of stream — but never silently: the sentinel is
     /// logged at debug level and anything else (a corrupt or truncated
-    /// payload) at warn, with the event type and a bounded snippet so the
-    /// wire fault is diagnosable.
+    /// payload) at warn with structural metadata only. Payload text is never
+    /// copied into ordinary logs.
     fn dispatch_frame(&mut self, events: &mut Vec<SseEvent>) {
         if !self.current_data.is_empty() {
             match serde_json::from_str::<serde_json::Value>(&self.current_data) {
@@ -173,11 +173,9 @@ impl SseParser {
                             "dropping SSE [DONE] sentinel frame"
                         );
                     } else {
-                        let snippet: String = self.current_data.chars().take(256).collect();
                         tracing::warn!(
                             event_type = self.current_event_type.as_str(),
                             data_len = self.current_data.len(),
-                            data_snippet = snippet.as_str(),
                             error = %parse_err,
                             "dropping SSE frame with unparseable JSON data"
                         );
@@ -982,12 +980,14 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     fn failed_event_mapping() {
         // #20: existing test updated to the correctly nested structure. With
         // no error code the classifier degrades to a terminal StreamError
-        // carrying the message — proving the message is read from
-        // `response.error`, not the top level.
+        // with a fixed local reason; provider text is never exposed.
         let event = failed_event(None, Some("rate limit exceeded"));
         match map_sse_event(&event) {
             Some(Err(ProviderError::StreamError { reason, transient })) => {
-                assert_eq!(reason, "rate limit exceeded");
+                assert_eq!(
+                    reason,
+                    "provider returned an unrecognized response.failed error"
+                );
                 assert_eq!(transient, None);
             }
             other => panic!("expected StreamError, got {other:?}"),
@@ -998,11 +998,11 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     fn failed_reads_code_and_message_from_nested_response() {
         // #1: both code and message are extracted from the nested location.
         // `server_is_overloaded` carries the retry-eligible structured
-        // 503 server-error kind and the provider's message verbatim.
+        // 503 server-error kind and a fixed local reason.
         let event = failed_event(Some("server_is_overloaded"), Some("overloaded; retry"));
         match map_sse_event(&event) {
             Some(Err(ProviderError::StreamError { reason, transient })) => {
-                assert_eq!(reason, "overloaded; retry");
+                assert_eq!(reason, "provider reported server_is_overloaded");
                 assert_eq!(transient, Some(TransientKind::ServerError { status: 503 }));
             }
             other => panic!("expected StreamError, got {other:?}"),
@@ -1050,7 +1050,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         let event = failed_event(Some("invalid_prompt"), Some("Your prompt was invalid."));
         match map_sse_event(&event) {
             Some(Err(ProviderError::InvalidRequest { message })) => {
-                assert_eq!(message, "Your prompt was invalid.");
+                assert_eq!(message, "provider rejected the request as invalid_prompt");
             }
             other => panic!("expected InvalidRequest, got {other:?}"),
         }
@@ -1062,7 +1062,10 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         let event = failed_event(Some("cyber_policy"), Some("Flagged for security review."));
         match map_sse_event(&event) {
             Some(Err(ProviderError::InvalidRequest { message })) => {
-                assert_eq!(message, "Flagged for security review.");
+                assert_eq!(
+                    message,
+                    "provider rejected the request under its cybersecurity policy"
+                );
             }
             other => panic!("expected InvalidRequest, got {other:?}"),
         }
@@ -1083,7 +1086,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                         kind: TransientKind::ServerError { status: 503 },
                     },
                 );
-                assert!(err.to_string().contains("busy"));
+                assert!(!err.to_string().contains("busy"));
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
@@ -1096,7 +1099,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         let event = failed_event(Some("server_is_overloaded"), None);
         match map_sse_event(&event) {
             Some(Err(ProviderError::StreamError { reason, transient })) => {
-                assert_eq!(reason, "server is overloaded");
+                assert_eq!(reason, "provider reported server_is_overloaded");
                 assert_eq!(transient, Some(TransientKind::ServerError { status: 503 }));
             }
             other => panic!("expected StreamError, got {other:?}"),
@@ -1110,7 +1113,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         let event = failed_event(Some("slow_down"), Some("rate"));
         match map_sse_event(&event) {
             Some(Err(ProviderError::StreamError { reason, transient })) => {
-                assert_eq!(reason, "rate");
+                assert_eq!(reason, "provider reported slow_down");
                 assert_eq!(transient, Some(TransientKind::ServerError { status: 503 }));
             }
             other => panic!("expected StreamError, got {other:?}"),
@@ -1122,7 +1125,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         let event = failed_event(Some("slow_down"), None);
         match map_sse_event(&event) {
             Some(Err(ProviderError::StreamError { reason, transient })) => {
-                assert_eq!(reason, "slow down");
+                assert_eq!(reason, "provider reported slow_down");
                 assert_eq!(transient, Some(TransientKind::ServerError { status: 503 }));
             }
             other => panic!("expected StreamError, got {other:?}"),
@@ -1130,13 +1133,13 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn failed_unknown_code_preserves_message_and_stays_terminal() {
+    fn failed_unknown_code_redacts_message_and_stays_terminal() {
         // #8: unknown codes never set `transient` — opting an unknown error
         // into automatic retry would silently amplify novel failure modes.
         let event = failed_event(Some("some_future_error"), Some("weird failure"));
         match map_sse_event(&event) {
             Some(Err(err @ ProviderError::StreamError { .. })) => {
-                assert!(err.to_string().contains("weird failure"));
+                assert!(!err.to_string().contains("weird failure"));
                 assert!(!err.is_retryable(), "unknown codes must stay terminal");
             }
             other => panic!("expected StreamError, got {other:?}"),
@@ -1210,7 +1213,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         // An unrecognized incomplete reason must NOT be guessed as
         // MaxTokens (dishonest) and must NOT be retryable (the stop is
         // deterministic). It surfaces as a terminal ResponseParseError
-        // carrying the verbatim reason.
+        // without copying the authority-controlled reason.
         let event = SseEvent {
             event_type: "response.incomplete".to_string(),
             data: serde_json::json!({
@@ -1221,10 +1224,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         };
         match map_sse_event(&event) {
             Some(Err(err @ ProviderError::ResponseParseError { .. })) => {
-                assert!(
-                    err.to_string().contains("some_future_reason"),
-                    "error must carry the verbatim reason: {err}"
-                );
+                assert!(!err.to_string().contains("some_future_reason"));
                 assert!(
                     !err.is_retryable(),
                     "a deterministic incomplete stop must never classify retryable"
@@ -1512,7 +1512,8 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         tracing::subscriber::with_default(subscriber, || {
             let mut parser = SseParser::new();
             let _done = parser.feed(b"data: [DONE]\n\n");
-            let _corrupt = parser.feed(b"event: broken\ndata: {\"x\": \n\n");
+            let _corrupt =
+                parser.feed(b"event: broken\ndata: {\"sentinel-private-frame-secret\": \n\n");
         });
 
         let output = String::from_utf8(buf.0.lock().expect("buffer lock").clone())
@@ -1541,6 +1542,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
             corrupt_line.contains("WARN"),
             "corrupt frames must log at warn: {corrupt_line}"
         );
+        assert!(!output.contains("sentinel-private-frame-secret"));
     }
 
     #[test]

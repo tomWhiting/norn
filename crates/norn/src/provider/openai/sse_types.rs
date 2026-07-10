@@ -132,29 +132,24 @@ pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
         "context_length_exceeded" => ProviderError::ContextWindowExceeded,
         "insufficient_quota" => ProviderError::QuotaExceeded,
         "invalid_prompt" => ProviderError::InvalidRequest {
-            message: message_or(detail.message.as_deref(), "Invalid request."),
+            message: "provider rejected the request as invalid_prompt".to_owned(),
         },
         "cyber_policy" => ProviderError::InvalidRequest {
-            message: message_or(
-                detail.message.as_deref(),
-                "This request has been flagged for possible cybersecurity risk.",
-            ),
+            message: "provider rejected the request under its cybersecurity policy".to_owned(),
         },
         // Transient server-side back-pressure: retryable with the
         // HTTP-equivalent 503 server-error kind, set structurally.
         "server_is_overloaded" => ProviderError::StreamError {
-            reason: message_or(detail.message.as_deref(), "server is overloaded"),
+            reason: "provider reported server_is_overloaded".to_owned(),
             transient: Some(TransientKind::ServerError { status: 503 }),
         },
         "slow_down" => ProviderError::StreamError {
-            reason: message_or(detail.message.as_deref(), "slow down"),
+            reason: "provider reported slow_down".to_owned(),
             transient: Some(TransientKind::ServerError { status: 503 }),
         },
-        // Any unknown code surfaces as a terminal stream error carrying the
-        // provider's message verbatim — opting an unknown error into
-        // automatic retry would silently amplify novel failure modes.
+        // Any unknown code surfaces as a structural terminal stream error.
         _ => ProviderError::StreamError {
-            reason: message_or(detail.message.as_deref(), "response.failed"),
+            reason: "provider returned an unrecognized response.failed error".to_owned(),
             transient: None,
         },
     }
@@ -177,30 +172,22 @@ pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
 /// Any other (or missing) reason is a wire contract this client does not
 /// understand. It surfaces as [`ProviderError::ResponseParseError`] —
 /// classified [`ErrorClass::Terminal`](crate::error::ErrorClass) — carrying
-/// the verbatim reason. Guessing `MaxTokens` would silently mislabel an
-/// unknown stop condition, and any retryable classification would replay a
-/// deterministic stop; a terminal error stops the run honestly instead.
+/// only a fixed local description, never the provider-supplied reason text.
+/// Guessing `MaxTokens` would silently mislabel an unknown stop condition,
+/// and any retryable classification would replay a deterministic stop; a
+/// terminal error stops the run honestly instead.
 pub(super) fn incomplete_stop_reason(reason: Option<&str>) -> Result<StopReason, ProviderError> {
     match reason {
         Some("max_output_tokens") => Ok(StopReason::MaxTokens),
         Some("content_filter") => Ok(StopReason::ContentFilter),
-        Some(other) => Err(ProviderError::ResponseParseError {
-            reason: format!(
-                "response.incomplete carried unrecognized incomplete_details.reason {other:?}"
-            ),
+        Some(_) => Err(ProviderError::ResponseParseError {
+            reason: "response.incomplete carried an unrecognized incomplete_details.reason"
+                .to_owned(),
         }),
         None => Err(ProviderError::ResponseParseError {
             reason: "response.incomplete carried no incomplete_details.reason".to_string(),
         }),
     }
-}
-
-/// Returns the trimmed `message` if non-empty, otherwise `fallback`.
-fn message_or(message: Option<&str>, fallback: &str) -> String {
-    message
-        .map(str::trim)
-        .filter(|m| !m.is_empty())
-        .map_or_else(|| fallback.to_owned(), ToOwned::to_owned)
 }
 
 /// Parses a `Retry-After` duration from a `rate_limit_exceeded` error message.
@@ -247,21 +234,6 @@ mod tests {
     }
 
     #[test]
-    fn message_or_returns_message_when_non_empty() {
-        assert_eq!(message_or(Some("hello"), "fallback"), "hello");
-    }
-
-    #[test]
-    fn message_or_returns_fallback_when_none() {
-        assert_eq!(message_or(None, "fallback"), "fallback");
-    }
-
-    #[test]
-    fn message_or_returns_fallback_when_blank() {
-        assert_eq!(message_or(Some("   "), "fallback"), "fallback");
-    }
-
-    #[test]
     fn classify_unknown_code_stays_terminal() {
         let detail = ApiErrorDetail {
             code: Some("future_error".to_string()),
@@ -269,10 +241,49 @@ mod tests {
         };
         match classify_failed_error(&detail) {
             ProviderError::StreamError { reason, transient } => {
-                assert_eq!(reason, "weird");
+                assert_eq!(
+                    reason,
+                    "provider returned an unrecognized response.failed error"
+                );
                 assert_eq!(transient, None, "unknown codes must not opt into retry");
             }
             other => panic!("expected StreamError, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn failed_error_messages_never_expose_authority_text() {
+        for code in [
+            "invalid_prompt",
+            "cyber_policy",
+            "server_is_overloaded",
+            "slow_down",
+            "unknown",
+        ] {
+            let detail = ApiErrorDetail {
+                code: Some(code.to_owned()),
+                message: Some("sentinel-private-provider-message".to_owned()),
+            };
+            let error = classify_failed_error(&detail);
+            assert!(
+                !error
+                    .to_string()
+                    .contains("sentinel-private-provider-message")
+            );
+            assert!(!format!("{error:?}").contains("sentinel-private-provider-message"));
+        }
+    }
+
+    #[test]
+    fn incomplete_error_never_exposes_unknown_reason_text() {
+        let error = incomplete_stop_reason(Some("sentinel-private-incomplete-reason"))
+            .expect_err("unknown incomplete reasons must fail closed");
+
+        assert!(
+            !error
+                .to_string()
+                .contains("sentinel-private-incomplete-reason")
+        );
+        assert!(!format!("{error:?}").contains("sentinel-private-incomplete-reason"));
     }
 }

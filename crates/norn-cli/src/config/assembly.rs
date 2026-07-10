@@ -71,7 +71,7 @@ pub fn parse_duration(input: &str) -> Result<Duration, BuildError> {
 /// is consumed by the CLI resolution pipeline (`resolve_invocation` +
 /// `builder_from_cli`) and split across `AgentLoopConfig`,
 /// [`ProviderConfigOverrides`], and `RetryPolicy`.
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct ConfigOverrides {
     // -- AgentLoopConfig fields ------------------------------------------
     /// `-c timeout=<duration>` → [`AgentLoopConfig::step_timeout`].
@@ -159,7 +159,7 @@ pub struct ConfigOverrides {
 /// because the latter requires a mandatory `auth_source` constructed by
 /// NC-003. NC-004 collects these values and hands them off; NC-003 folds
 /// them onto the constructed [`norn::provider::request::ProviderConfig`].
-#[derive(Debug, Default, Clone)]
+#[derive(Default, Clone)]
 pub struct ProviderConfigOverrides {
     /// `-c base_url=<string>`.
     pub base_url: Option<String>,
@@ -201,6 +201,35 @@ pub struct ProviderConfigOverrides {
     /// `print/provider.rs::build_provider`). Only the Claude-Runner
     /// backend reads it; there is deliberately no `-c` surface.
     pub runner_path: Option<PathBuf>,
+}
+
+impl std::fmt::Debug for ConfigOverrides {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ConfigOverrides")
+            .field(
+                "provider_authority_present",
+                &(self.base_url.is_some()
+                    || self.provider_options.is_some()
+                    || self.api_key_env.is_some()
+                    || self.debug_dump_dir.is_some()),
+            )
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for ProviderConfigOverrides {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderConfigOverrides")
+            .field("base_url_present", &self.base_url.is_some())
+            .field("provider_options_present", &self.provider_options.is_some())
+            .field("api_key_env_present", &self.api_key_env.is_some())
+            .field("debug_dump_dir_present", &self.debug_dump_dir.is_some())
+            .field("debug_dump_file_present", &self.debug_dump_file.is_some())
+            .field("runner_path_present", &self.runner_path.is_some())
+            .finish_non_exhaustive()
+    }
 }
 
 impl ConfigOverrides {

@@ -190,8 +190,17 @@ pub struct Message {
 }
 
 /// Provider-specific configuration options.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct ProviderOptions(pub serde_json::Value);
+
+impl std::fmt::Debug for ProviderOptions {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderOptions")
+            .field("present", &true)
+            .finish_non_exhaustive()
+    }
+}
 
 /// Provider-side context management controls.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -268,7 +277,7 @@ impl fmt::Display for SecretString {
 /// Construction-time configuration for a provider instance.
 ///
 /// Not part of the `Provider` trait's `stream` method signature.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct ProviderConfig {
     /// Authentication source. OAuth is the default and recommended
     /// path; the `ApiKey` variant exists for env-gated integration
@@ -326,6 +335,80 @@ pub struct ProviderConfig {
     /// saturating, so absurd values can stall requests against this
     /// provider but can never panic.
     pub retry_after_ceiling: Option<Duration>,
+}
+
+impl fmt::Debug for ProviderConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let auth_source = match &self.auth_source {
+            AuthSource::OAuth { .. } => "oauth",
+            AuthSource::ApiKey { .. } => "api_key",
+        };
+
+        f.debug_struct("ProviderConfig")
+            .field("auth_source", &auth_source)
+            .field("base_url_present", &self.base_url.is_some())
+            .field("timeout", &self.timeout)
+            .field("max_retries", &self.max_retries)
+            .field("provider_options_present", &self.provider_options.is_some())
+            .field("debug_dump_file_present", &self.debug_dump_file.is_some())
+            .field("rate_limit", &self.rate_limit)
+            .field("rate_limit_interval", &self.rate_limit_interval)
+            .field("retry_backoff", &self.retry_backoff)
+            .field("retry_after_ceiling", &self.retry_after_ceiling)
+            .finish()
+    }
+}
+
+#[cfg(test)]
+mod provider_config_security_tests {
+    use std::path::PathBuf;
+    use std::time::Duration;
+
+    use super::{AuthSource, ProviderConfig, ProviderOptions, SecretString};
+
+    #[test]
+    fn debug_output_exposes_only_structural_metadata() {
+        let config = ProviderConfig {
+            auth_source: AuthSource::ApiKey {
+                key: SecretString::new("sentinel-api-key"),
+            },
+            base_url: Some("https://sentinel-endpoint.example/private".to_owned()),
+            timeout: Duration::from_secs(30),
+            max_retries: 2,
+            provider_options: Some(serde_json::json!({
+                "sentinel-option": "sentinel-option-value"
+            })),
+            debug_dump_file: Some(PathBuf::from("/tmp/sentinel-dump-path")),
+            rate_limit: Some(10),
+            rate_limit_interval: Some(Duration::from_mins(1)),
+            retry_backoff: Some(Duration::from_secs(1)),
+            retry_after_ceiling: Some(Duration::from_mins(2)),
+        };
+
+        let debug = format!("{config:?}");
+
+        assert!(debug.contains("auth_source: \"api_key\""));
+        assert!(debug.contains("base_url_present: true"));
+        assert!(debug.contains("provider_options_present: true"));
+        assert!(debug.contains("debug_dump_file_present: true"));
+        assert!(!debug.contains("sentinel-api-key"));
+        assert!(!debug.contains("sentinel-endpoint"));
+        assert!(!debug.contains("sentinel-option"));
+        assert!(!debug.contains("sentinel-dump-path"));
+    }
+
+    #[test]
+    fn provider_options_debug_is_structural() {
+        let options = ProviderOptions(serde_json::json!({
+            "sentinel-option-key": "sentinel-option-value"
+        }));
+
+        let rendered = format!("{options:?}");
+
+        assert!(rendered.contains("ProviderOptions"));
+        assert!(!rendered.contains("sentinel-option-key"));
+        assert!(!rendered.contains("sentinel-option-value"));
+    }
 }
 
 #[cfg(test)]

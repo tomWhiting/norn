@@ -1,5 +1,6 @@
 //! Provider implementation for the `OpenAI` Responses API.
 
+mod backend;
 mod execute;
 mod provider;
 pub mod rate_limiter;

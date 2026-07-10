@@ -5,7 +5,8 @@
 //! is a self-contained JSON object tagged by `type`:
 //!
 //! - `request` — the full serialized payload sent to the provider.
-//! - `response_meta` — HTTP status code and response headers.
+//! - `response_meta` — HTTP status code and response header names; all values
+//!   are redacted because an authority can echo secrets under any name.
 //! - `sse_event` — each parsed SSE event with type and data.
 //!
 //! The dumper is provider-agnostic: any concrete provider can use it to
@@ -58,7 +59,7 @@ enum DebugPayload<'a> {
     ResponseMeta {
         /// HTTP status code.
         status: u16,
-        /// Response headers as key-value pairs.
+        /// Response header names paired with redacted values.
         headers: &'a [(String, String)],
     },
     /// A single parsed SSE event.
@@ -109,9 +110,16 @@ impl DebugDumper {
 
     /// Log HTTP response metadata (status code and headers).
     pub fn write_response_meta(&self, status: u16, headers: &[(String, String)]) {
+        let sanitized_headers = headers
+            .iter()
+            .map(|(name, _)| (name.clone(), "[REDACTED]".to_owned()))
+            .collect::<Vec<_>>();
         self.append_entry(
             "response_meta",
-            DebugPayload::ResponseMeta { status, headers },
+            DebugPayload::ResponseMeta {
+                status,
+                headers: &sanitized_headers,
+            },
         );
     }
 
@@ -160,7 +168,119 @@ impl DebugDumper {
 }
 
 fn open_append(path: &Path) -> Result<File, std::io::Error> {
-    OpenOptions::new().create(true).append(true).open(path)
+    reject_existing_non_regular_file(path)?;
+    let mut options = OpenOptions::new();
+    options.create(true).append(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt as _;
+
+        options
+            .mode(0o600)
+            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    }
+    let file = options.open(path)?;
+    if !file.metadata()?.is_file() {
+        return Err(std::io::Error::other(
+            "debug dump destination is not a regular file",
+        ));
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
+
+        if file.metadata()?.mode() & 0o777 != 0o600 {
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+    }
+    Ok(file)
+}
+
+fn reject_existing_non_regular_file(path: &Path) -> Result<(), std::io::Error> {
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(
+            std::io::Error::other("debug dump destination is not a regular file"),
+        ),
+        Ok(_) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    #[test]
+    fn response_metadata_redacts_credential_and_redirect_values()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("debug.jsonl");
+        let dumper = DebugDumper::new(&file)
+            .ok_or_else(|| std::io::Error::other("failed to create debug dumper"))?;
+
+        dumper.write_response_meta(
+            307,
+            &[
+                ("Authorization".to_owned(), "bearer-secret".to_owned()),
+                ("Set-Cookie".to_owned(), "cookie-secret".to_owned()),
+                ("chatgpt-account-id".to_owned(), "account-secret".to_owned()),
+                (
+                    "x-codex-turn-state".to_owned(),
+                    "turn-state-secret".to_owned(),
+                ),
+                (
+                    "location".to_owned(),
+                    "https://example.test/?token=location-secret".to_owned(),
+                ),
+                (
+                    "x-request-id".to_owned(),
+                    "echoed-api-key-secret".to_owned(),
+                ),
+            ],
+        );
+
+        let rendered = fs::read_to_string(file)?;
+        for secret in [
+            "bearer-secret",
+            "cookie-secret",
+            "account-secret",
+            "turn-state-secret",
+            "location-secret",
+            "echoed-api-key-secret",
+        ] {
+            assert!(!rendered.contains(secret));
+        }
+        assert!(rendered.contains("[REDACTED]"));
+        assert!(rendered.contains("x-request-id"));
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn dump_files_are_private_and_symlinks_are_rejected() -> Result<(), Box<dyn std::error::Error>>
+    {
+        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _, symlink};
+
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("debug.jsonl");
+        let opened = open_append(&file)?;
+        assert_eq!(opened.metadata()?.mode() & 0o777, 0o600);
+        drop(opened);
+
+        std::fs::set_permissions(&file, std::fs::Permissions::from_mode(0o644))?;
+        let reopened = open_append(&file)?;
+        assert_eq!(reopened.metadata()?.mode() & 0o777, 0o600);
+        drop(reopened);
+
+        let target = directory.path().join("target.jsonl");
+        std::fs::write(&target, "unchanged")?;
+        let link = directory.path().join("link.jsonl");
+        symlink(&target, &link)?;
+        assert!(open_append(&link).is_err());
+        assert_eq!(std::fs::read_to_string(target)?, "unchanged");
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -232,7 +352,7 @@ mod tests {
         assert_eq!(entries[0]["type"], "response_meta");
         assert_eq!(entries[0]["status"], 200);
         assert_eq!(entries[0]["headers"][0][0], "content-type");
-        assert_eq!(entries[0]["headers"][0][1], "text/event-stream");
+        assert_eq!(entries[0]["headers"][0][1], "[REDACTED]");
     }
 
     #[test]

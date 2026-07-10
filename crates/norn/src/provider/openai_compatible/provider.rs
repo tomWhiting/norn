@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use super::execute::SenderProvider;
 use crate::error::ProviderError;
-use crate::provider::auth::{AuthProvider, build_from_auth_source};
+use crate::provider::auth::{AuthProvider, AuthSource, build_from_auth_source};
 use crate::provider::events::ProviderEvent;
 use crate::provider::exec::{DEFAULT_RETRY_BACKOFF, StreamExecutor};
 use crate::provider::openai::rate_limiter::RateLimiter;
@@ -29,7 +29,7 @@ pub struct OpenAiCompatibleProvider {
 impl std::fmt::Debug for OpenAiCompatibleProvider {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("OpenAiCompatibleProvider")
-            .field("endpoint", &self.endpoint)
+            .field("backend", &"openai_compatible")
             .field("timeout", &self.config.timeout)
             .field("max_retries", &self.config.max_retries)
             .finish_non_exhaustive()
@@ -41,15 +41,18 @@ impl OpenAiCompatibleProvider {
     ///
     /// # Errors
     ///
-    /// Returns a [`ProviderError`] when authentication cannot be built, the
-    /// HTTP client cannot be constructed, or `base_url` is absent.
+    /// Returns [`ProviderError::InvalidRequest`] when the authentication source
+    /// and destination do not form a permitted compatible backend, or another
+    /// [`ProviderError`] when authentication or HTTP client construction fails.
     pub async fn new(config: ProviderConfig) -> Result<Self, ProviderError> {
+        validate_auth_source(&config.auth_source)?;
+        let endpoint = endpoint_from_base_url(config.base_url.as_deref())?;
         let auth_started = startup_trace::start("openai_compatible_auth_provider_build_start");
         let auth_provider = build_from_auth_source(&config.auth_source).await?;
         startup_trace::elapsed("openai_compatible_auth_provider_build_done", auth_started);
 
         let provider_started = startup_trace::start("openai_compatible_http_provider_build_start");
-        let provider = Self::with_auth_provider(config, auth_provider)?;
+        let provider = Self::from_parts(config, endpoint, auth_provider)?;
         startup_trace::elapsed(
             "openai_compatible_http_provider_build_done",
             provider_started,
@@ -57,18 +60,29 @@ impl OpenAiCompatibleProvider {
         Ok(provider)
     }
 
-    /// Constructs a provider with an injected auth provider.
+    /// Constructs a provider with an injected auth provider for this crate's
+    /// unit tests.
     ///
     /// # Errors
     ///
-    /// Returns [`ProviderError::InvalidRequest`] when `base_url` is absent or
-    /// blank, and [`ProviderError::ConnectionFailed`] when the HTTP client
-    /// cannot be built.
-    pub fn with_auth_provider(
+    /// Returns [`ProviderError::InvalidRequest`] when the authentication source
+    /// and destination do not form a permitted compatible backend, and
+    /// [`ProviderError::ConnectionFailed`] when the HTTP client cannot be built.
+    #[cfg(test)]
+    pub(crate) fn with_auth_provider(
         config: ProviderConfig,
         auth_provider: Arc<dyn AuthProvider>,
     ) -> Result<Self, ProviderError> {
+        validate_auth_source(&config.auth_source)?;
         let endpoint = endpoint_from_base_url(config.base_url.as_deref())?;
+        Self::from_parts(config, endpoint, auth_provider)
+    }
+
+    fn from_parts(
+        config: ProviderConfig,
+        endpoint: String,
+        auth_provider: Arc<dyn AuthProvider>,
+    ) -> Result<Self, ProviderError> {
         let client_started = startup_trace::start("openai_compatible_http_client_build_start");
         let client = build_http_client(config.timeout)?;
         startup_trace::elapsed("openai_compatible_http_client_build_done", client_started);
@@ -92,6 +106,16 @@ impl OpenAiCompatibleProvider {
             auth_provider,
         })
     }
+}
+
+fn validate_auth_source(auth_source: &AuthSource) -> Result<(), ProviderError> {
+    if matches!(auth_source, AuthSource::OAuth { .. }) {
+        return Err(ProviderError::InvalidRequest {
+            message: "Codex OAuth credentials cannot authenticate an OpenAI-compatible custom endpoint; use API-key authentication"
+                .to_owned(),
+        });
+    }
+    Ok(())
 }
 
 impl Provider for OpenAiCompatibleProvider {
@@ -135,25 +159,18 @@ fn endpoint_from_base_url(base_url: Option<&str>) -> Result<String, ProviderErro
                 .to_string(),
         });
     };
-    Ok(format!(
-        "{}/chat/completions",
-        base_url.trim_end_matches('/')
-    ))
+    let base_url = crate::provider::endpoint::validated_credential_base_url(base_url)?;
+    crate::provider::endpoint::reject_chatgpt_api_key_destination(&base_url)?;
+    Ok(format!("{base_url}/chat/completions"))
 }
 
 fn build_http_client(timeout: Duration) -> Result<reqwest::Client, ProviderError> {
-    reqwest::Client::builder()
-        .connect_timeout(timeout)
-        .tcp_keepalive(std::time::Duration::from_secs(30))
-        .pool_max_idle_per_host(4)
-        .http2_keep_alive_interval(std::time::Duration::from_secs(30))
-        .http2_keep_alive_timeout(std::time::Duration::from_secs(10))
-        .http2_keep_alive_while_idle(true)
-        .build()
-        .map_err(|err| ProviderError::ConnectionFailed {
+    crate::provider::http_client::build_streaming_client(timeout).map_err(|err| {
+        ProviderError::ConnectionFailed {
             reason: format!("failed to build HTTP client: {err}"),
             kind: crate::error::TransientKind::ConnectionReset,
-        })
+        }
+    })
 }
 
 const _: fn() = || {
@@ -161,3 +178,78 @@ const _: fn() = || {
     check::<OpenAiCompatibleProvider>();
     check::<Arc<OpenAiCompatibleProvider>>();
 };
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+    use crate::provider::auth::MockAuthProvider;
+
+    fn oauth_config() -> ProviderConfig {
+        ProviderConfig {
+            auth_source: AuthSource::OAuth { codex_home: None },
+            base_url: Some("https://attacker.example/v1".to_owned()),
+            timeout: Duration::from_secs(5),
+            max_retries: 0,
+            provider_options: None,
+            debug_dump_file: None,
+            rate_limit: None,
+            rate_limit_interval: None,
+            retry_backoff: None,
+            retry_after_ceiling: None,
+        }
+    }
+
+    #[test]
+    fn compatible_provider_rejects_oauth_before_auth_application() {
+        let mock = Arc::new(MockAuthProvider::single("oauth-secret"));
+        let auth_provider: Arc<dyn AuthProvider> = Arc::clone(&mock) as Arc<dyn AuthProvider>;
+        let result = OpenAiCompatibleProvider::with_auth_provider(oauth_config(), auth_provider);
+
+        assert!(matches!(result, Err(ProviderError::InvalidRequest { .. })));
+        assert_eq!(mock.apply_call_count(), 0);
+    }
+
+    #[test]
+    fn compatible_provider_debug_does_not_expose_endpoint_path() -> Result<(), ProviderError> {
+        let config = ProviderConfig {
+            auth_source: AuthSource::ApiKey {
+                key: crate::provider::request::SecretString::new("api-key-secret"),
+            },
+            base_url: Some("https://example.test/private-path-secret".to_owned()),
+            timeout: Duration::from_secs(5),
+            max_retries: 0,
+            provider_options: None,
+            debug_dump_file: None,
+            rate_limit: None,
+            rate_limit_interval: None,
+            retry_backoff: None,
+            retry_after_ceiling: None,
+        };
+        let auth_provider: Arc<dyn AuthProvider> =
+            Arc::new(MockAuthProvider::single("api-key-secret"));
+        let provider = OpenAiCompatibleProvider::with_auth_provider(config, auth_provider)?;
+
+        let rendered = format!("{provider:?}");
+        assert!(!rendered.contains("private-path-secret"));
+        assert!(!rendered.contains("api-key-secret"));
+        Ok(())
+    }
+
+    #[test]
+    fn compatible_provider_rejects_chatgpt_api_key_destinations() {
+        for base_url in [
+            "https://chatgpt.com/backend-api/codex",
+            "https://chatgpt.com./backend-api/%63odex",
+        ] {
+            let mut config = oauth_config();
+            config.auth_source = AuthSource::ApiKey {
+                key: crate::provider::request::SecretString::new("api-key-secret"),
+            };
+            config.base_url = Some(base_url.to_owned());
+            let auth_provider: Arc<dyn AuthProvider> =
+                Arc::new(MockAuthProvider::single("api-key-secret"));
+
+            assert!(OpenAiCompatibleProvider::with_auth_provider(config, auth_provider).is_err());
+        }
+    }
+}

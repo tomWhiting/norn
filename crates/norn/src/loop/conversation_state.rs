@@ -252,6 +252,45 @@ fn validate_provider_state_config(
 }
 
 #[cfg(test)]
+mod backend_security_tests {
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use super::*;
+    use crate::provider::auth::{AuthProvider, AuthSource, MockAuthProvider};
+    use crate::provider::openai::OpenAiProvider;
+    use crate::provider::request::ProviderConfig;
+    use crate::provider::traits::Provider;
+
+    #[test]
+    fn auto_state_is_stateless_for_an_explicit_canonical_codex_backend() -> Result<(), ProviderError>
+    {
+        let config = ProviderConfig {
+            auth_source: AuthSource::OAuth { codex_home: None },
+            base_url: Some("https://chatgpt.com:443/backend-api/codex/".to_owned()),
+            timeout: Duration::from_secs(5),
+            max_retries: 0,
+            provider_options: None,
+            debug_dump_file: None,
+            rate_limit: None,
+            rate_limit_interval: None,
+            retry_backoff: None,
+            retry_after_ceiling: None,
+        };
+        let auth_provider: Arc<dyn AuthProvider> =
+            Arc::new(MockAuthProvider::single("oauth-token"));
+        let provider = OpenAiProvider::with_auth_provider(config, auth_provider)?;
+        let loop_config = AgentLoopConfig::default();
+        let state = ConversationRequestState::new(&loop_config, provider.capabilities(), 1, None)?;
+
+        assert!(!state.store());
+        assert!(state.previous_response_id().is_none());
+        assert!(ConversationRequestState::context_management(&loop_config).is_none());
+        Ok(())
+    }
+}
+
+#[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
     use super::*;

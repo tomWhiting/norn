@@ -40,7 +40,6 @@ struct ErrorResponse {
 #[derive(Deserialize)]
 struct ErrorBody {
     code: Option<String>,
-    message: Option<String>,
 }
 
 /// Refreshes an auth document using its refresh token.
@@ -84,27 +83,31 @@ pub async fn refresh_auth(
         .map_err(|err| RefreshError::Transient(err.to_string()))?;
 
     if response.status() == StatusCode::UNAUTHORIZED {
-        let body = response
-            .json::<ErrorResponse>()
-            .await
-            .map_err(|err| RefreshError::Permanent(format!("401 Unauthorized ({err})")))?;
-        return Err(classify_401(body));
+        let body = response.json::<ErrorResponse>().await.map_err(|error| {
+            tracing::debug!(
+                error = %error,
+                "token authority returned a malformed 401 response"
+            );
+            RefreshError::Permanent(
+                "refresh token rejected with a malformed authority response".to_owned(),
+            )
+        })?;
+        return Err(classify_401(&body));
     }
     if !response.status().is_success() {
         let status = response.status();
-        let text = response
-            .text()
-            .await
-            .unwrap_or_else(|err| format!("<failed to read error body: {err}>"));
         return Err(RefreshError::Transient(format!(
-            "token endpoint returned {status}: {text}"
+            "token endpoint returned HTTP {status}"
         )));
     }
 
-    let refreshed = response
-        .json::<RefreshResponse>()
-        .await
-        .map_err(|err| RefreshError::Transient(err.to_string()))?;
+    let refreshed = response.json::<RefreshResponse>().await.map_err(|error| {
+        tracing::debug!(
+            error = %error,
+            "token authority returned a malformed success response"
+        );
+        RefreshError::Transient("token endpoint returned a malformed success response".to_owned())
+    })?;
     let new_tokens = ChatGptTokens {
         id_token: IdTokenInfo::from_raw_jwt(refreshed.id_token),
         access_token: refreshed.access_token,
@@ -118,19 +121,75 @@ pub async fn refresh_auth(
     Ok(updated)
 }
 
-fn classify_401(body: ErrorResponse) -> RefreshError {
+fn classify_401(body: &ErrorResponse) -> RefreshError {
     let code = body.error.code.as_deref().unwrap_or("other");
-    let message = body.error.message.unwrap_or_else(|| code.to_string());
     match code {
         "refresh_token_expired" | "expired" => {
-            RefreshError::Permanent(format!("refresh token expired: {message}"))
+            RefreshError::Permanent("refresh token expired".to_owned())
         }
         "refresh_token_exhausted" | "exhausted" => {
-            RefreshError::Permanent(format!("refresh token exhausted: {message}"))
+            RefreshError::Permanent("refresh token exhausted".to_owned())
         }
         "refresh_token_revoked" | "revoked" => {
-            RefreshError::Permanent(format!("refresh token revoked: {message}"))
+            RefreshError::Permanent("refresh token revoked".to_owned())
         }
-        _ => RefreshError::Permanent(format!("refresh token rejected: {message}")),
+        _ => RefreshError::Permanent("refresh token rejected".to_owned()),
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use std::time::Duration;
+
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    use super::*;
+
+    fn auth() -> AuthDotJson {
+        AuthDotJson::from_tokens(ChatGptTokens {
+            id_token: IdTokenInfo::from_raw_jwt("id-token".to_owned()),
+            access_token: "access-token-secret".to_owned(),
+            refresh_token: "refresh-token-secret".to_owned(),
+            account_id: Some("account-secret".to_owned()),
+        })
+    }
+
+    #[tokio::test]
+    async fn authority_error_bodies_are_not_propagated() -> Result<(), Box<dyn std::error::Error>> {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(401).set_body_json(serde_json::json!({
+                "error": {
+                    "code": "refresh_token_expired",
+                    "message": "echoed-refresh-token-secret"
+                }
+            })))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(500).set_body_string("echoed-account-secret"))
+            .with_priority(2)
+            .mount(&server)
+            .await;
+        let client = crate::provider::http_client::build_bounded_client(Duration::from_secs(5))?;
+
+        let first = refresh_auth(&auth(), &server.uri(), &client).await;
+        let Err(first_error) = first else {
+            return Err(std::io::Error::other("401 refresh unexpectedly succeeded").into());
+        };
+        let second = refresh_auth(&auth(), &server.uri(), &client).await;
+        let Err(second_error) = second else {
+            return Err(std::io::Error::other("500 refresh unexpectedly succeeded").into());
+        };
+        let rendered = format!("{first_error} {second_error}");
+
+        assert!(!rendered.contains("echoed-refresh-token-secret"));
+        assert!(!rendered.contains("echoed-account-secret"));
+        assert!(rendered.contains("refresh token expired"));
+        assert!(rendered.contains("500"));
+        Ok(())
     }
 }

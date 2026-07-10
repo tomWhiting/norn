@@ -27,7 +27,7 @@ struct ExpClaims {
 }
 
 /// Unverified claims `OpenAI` includes in the `ChatGPT` id token.
-#[derive(Clone, Debug, Default, Deserialize, serde::Serialize, PartialEq, Eq)]
+#[derive(Clone, Default, Deserialize, serde::Serialize, PartialEq, Eq)]
 pub struct IdTokenClaims {
     /// User email address, when present.
     pub email: Option<String>,
@@ -37,6 +37,18 @@ pub struct IdTokenClaims {
     pub chatgpt_user_id: Option<String>,
     /// `ChatGPT` account id, when present.
     pub chatgpt_account_id: Option<String>,
+}
+
+impl std::fmt::Debug for IdTokenClaims {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IdTokenClaims")
+            .field("email_present", &self.email.is_some())
+            .field("plan_type_present", &self.chatgpt_plan_type.is_some())
+            .field("user_id_present", &self.chatgpt_user_id.is_some())
+            .field("account_id_present", &self.chatgpt_account_id.is_some())
+            .finish()
+    }
 }
 
 /// Parses the `exp` claim from an access-token JWT without verifying the
@@ -69,4 +81,31 @@ where
     let claims_segment = jwt.split('.').nth(1).ok_or(JwtError::MissingClaims)?;
     let bytes = base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(claims_segment)?;
     Ok(serde_json::from_slice(&bytes)?)
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    #[test]
+    fn id_token_claims_debug_is_presence_only() {
+        let claims = IdTokenClaims {
+            email: Some("private@example.com".to_owned()),
+            chatgpt_plan_type: Some("private-plan".to_owned()),
+            chatgpt_user_id: Some("user-secret".to_owned()),
+            chatgpt_account_id: Some("account-secret".to_owned()),
+        };
+
+        let rendered = format!("{claims:?}");
+        for secret in [
+            "private@example.com",
+            "private-plan",
+            "user-secret",
+            "account-secret",
+        ] {
+            assert!(!rendered.contains(secret));
+        }
+        assert!(rendered.contains("email_present"));
+        assert!(rendered.contains("account_id_present"));
+    }
 }

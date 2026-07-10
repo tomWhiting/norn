@@ -59,9 +59,7 @@ async fn revoke_refresh_token(
     refresh_token: &str,
     http: OAuthHttpOptions,
 ) -> Result<(), LogoutError> {
-    let client = reqwest::Client::builder()
-        .timeout(http.request_timeout)
-        .build()
+    let client = crate::provider::http_client::build_bounded_client(http.request_timeout)
         .map_err(|err| LogoutError::Revoke(err.to_string()))?;
     let response = client
         .post(REVOKE_URL)

@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use super::jwt::{IdTokenClaims, parse_id_token_claims};
 
 /// Top-level `auth.json` shape shared with the Codex CLI.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct AuthDotJson {
     /// Authentication mode. `ChatGPT` OAuth files use `chatgpt`.
     pub auth_mode: Option<String>,
@@ -21,7 +21,7 @@ pub struct AuthDotJson {
 }
 
 /// Token bundle stored under `tokens` in `auth.json`.
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[derive(Clone, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ChatGptTokens {
     /// Raw id-token JWT string.
     #[serde(with = "id_token_serde")]
@@ -35,7 +35,7 @@ pub struct ChatGptTokens {
 }
 
 /// Parsed id-token metadata plus the original JWT for re-serialization.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub struct IdTokenInfo {
     /// Original id-token JWT string.
     pub raw_jwt: String,
@@ -85,12 +85,65 @@ impl AuthDotJson {
 }
 
 /// In-memory credential wrapper used by `AuthManager`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, PartialEq, Eq)]
 pub enum CodexAuth {
     /// `ChatGPT` OAuth credentials.
     ChatGpt(Box<AuthDotJson>),
     /// Direct API key credentials, retained for test helper compatibility.
     ApiKey(String),
+}
+
+impl std::fmt::Debug for AuthDotJson {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("AuthDotJson")
+            .field("auth_mode", &self.auth_mode)
+            .field("openai_api_key_present", &self.openai_api_key.is_some())
+            .field("tokens_present", &self.tokens.is_some())
+            .field("last_refresh", &self.last_refresh)
+            .field("agent_identity_present", &self.agent_identity.is_some())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for ChatGptTokens {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ChatGptTokens")
+            .field("id_token", &"[REDACTED]")
+            .field("access_token", &"[REDACTED]")
+            .field("refresh_token", &"[REDACTED]")
+            .field("account_id_present", &self.account_id.is_some())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for IdTokenInfo {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("IdTokenInfo")
+            .field("raw_jwt", &"[REDACTED]")
+            .field("email_present", &self.email.is_some())
+            .field("plan_type_present", &self.chatgpt_plan_type.is_some())
+            .field("user_id_present", &self.chatgpt_user_id.is_some())
+            .field("account_id_present", &self.chatgpt_account_id.is_some())
+            .finish()
+    }
+}
+
+impl std::fmt::Debug for CodexAuth {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::ChatGpt(_) => formatter
+                .debug_tuple("ChatGpt")
+                .field(&"[REDACTED]")
+                .finish(),
+            Self::ApiKey(_) => formatter
+                .debug_tuple("ApiKey")
+                .field(&"[REDACTED]")
+                .finish(),
+        }
+    }
 }
 
 impl CodexAuth {
@@ -167,5 +220,65 @@ mod id_token_serde {
     {
         let raw = String::deserialize(deserializer)?;
         Ok(IdTokenInfo::from_raw_jwt(raw))
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    fn sentinel_tokens() -> ChatGptTokens {
+        ChatGptTokens {
+            id_token: IdTokenInfo {
+                raw_jwt: "id-token-secret".to_owned(),
+                email: Some("private@example.com".to_owned()),
+                chatgpt_plan_type: Some("private-plan".to_owned()),
+                chatgpt_user_id: Some("user-secret".to_owned()),
+                chatgpt_account_id: Some("claim-account-secret".to_owned()),
+            },
+            access_token: "access-token-secret".to_owned(),
+            refresh_token: "refresh-token-secret".to_owned(),
+            account_id: Some("account-secret".to_owned()),
+        }
+    }
+
+    #[test]
+    fn credential_debug_is_structural_and_redacted() {
+        let tokens = sentinel_tokens();
+        let auth = AuthDotJson {
+            auth_mode: Some("chatgpt".to_owned()),
+            openai_api_key: Some("api-key-secret".to_owned()),
+            tokens: Some(tokens.clone()),
+            last_refresh: None,
+            agent_identity: Some(serde_json::json!({"secret": "identity-secret"})),
+        };
+        let rendered = format!(
+            "{auth:?} {tokens:?} {:?} {:?}",
+            tokens.id_token,
+            CodexAuth::ChatGpt(Box::new(auth.clone()))
+        );
+
+        for secret in [
+            "id-token-secret",
+            "private@example.com",
+            "private-plan",
+            "user-secret",
+            "claim-account-secret",
+            "access-token-secret",
+            "refresh-token-secret",
+            "account-secret",
+            "api-key-secret",
+            "identity-secret",
+        ] {
+            assert!(!rendered.contains(secret));
+        }
+        assert!(rendered.contains("[REDACTED]"));
+    }
+
+    #[test]
+    fn direct_api_key_debug_is_redacted() {
+        let rendered = format!("{:?}", CodexAuth::ApiKey("direct-key-secret".to_owned()));
+        assert!(!rendered.contains("direct-key-secret"));
+        assert!(rendered.contains("[REDACTED]"));
     }
 }

@@ -73,12 +73,11 @@ pub struct AuthManager {
 /// Builds the manager's shared HTTP client with the configured
 /// whole-request deadline.
 fn build_client(http: OAuthHttpOptions) -> Result<reqwest::Client, AuthManagerBuildError> {
-    reqwest::Client::builder()
-        .timeout(http.request_timeout)
-        .build()
-        .map_err(|err| AuthManagerBuildError {
+    crate::provider::http_client::build_bounded_client(http.request_timeout).map_err(|err| {
+        AuthManagerBuildError {
             reason: err.to_string(),
-        })
+        }
+    })
 }
 
 impl AuthManager {
@@ -106,8 +105,8 @@ impl AuthManager {
     ///
     /// Returns [`AuthManagerBuildError`] when the shared HTTP client
     /// cannot be constructed.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub async fn shared_for_tests(
+    #[cfg(test)]
+    pub(crate) async fn shared_for_tests(
         codex_home: PathBuf,
         mode: AuthCredentialsStoreMode,
         token_url: String,
@@ -175,8 +174,8 @@ impl AuthManager {
     ///
     /// Returns [`AuthManagerBuildError`] when the shared HTTP client
     /// cannot be constructed.
-    #[cfg(any(test, feature = "test-utils"))]
-    pub fn from_static_auth_with_token_url(
+    #[cfg(test)]
+    pub(crate) fn from_static_auth_with_token_url(
         auth: CodexAuth,
         token_url: String,
     ) -> Result<Arc<Self>, AuthManagerBuildError> {
@@ -281,6 +280,24 @@ fn map_refresh_error(error: RefreshError) -> RefreshTokenError {
     match error {
         RefreshError::Transient(message) => RefreshTokenError::Transient(message),
         RefreshError::Permanent(message) => RefreshTokenError::Permanent(message),
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    #[test]
+    fn manager_debug_redacts_cached_credentials() -> Result<(), AuthManagerBuildError> {
+        let manager = AuthManager::from_static_auth(
+            CodexAuth::from_api_key("manager-api-key-secret"),
+            OAuthHttpOptions::default(),
+        )?;
+
+        let rendered = format!("{manager:?}");
+        assert!(!rendered.contains("manager-api-key-secret"));
+        assert!(rendered.contains("[REDACTED]"));
+        Ok(())
     }
 }
 

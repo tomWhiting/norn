@@ -57,7 +57,13 @@ pub fn run_doctor() -> ExitCode {
 // ---------------------------------------------------------------------------
 
 fn check_auth() -> bool {
-    let codex_home = resolve_codex_home();
+    let codex_home = match resolve_codex_home() {
+        Ok(path) => path,
+        Err(reason) => {
+            eprintln!("[FAIL] OAuth credential path is unsafe: {reason}");
+            return false;
+        }
+    };
     match auth_health(&codex_home) {
         Ok(true) => {
             eprintln!("[PASS] OAuth credentials present");

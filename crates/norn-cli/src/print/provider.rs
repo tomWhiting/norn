@@ -309,7 +309,9 @@ mod tests {
             runner_path: None,
         };
         let config = ProviderConfig {
-            auth_source: AuthSource::OAuth { codex_home: None },
+            auth_source: AuthSource::ApiKey {
+                key: SecretString::new("local-test-key"),
+            },
             timeout: overrides.request_timeout.unwrap_or(DEFAULT_REQUEST_TIMEOUT),
             max_retries: overrides.max_retries.unwrap_or(DEFAULT_MAX_RETRIES),
             base_url: overrides.base_url,
