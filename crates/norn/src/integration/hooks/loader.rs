@@ -44,7 +44,7 @@ pub fn load_hooks_from_settings(settings: &NornSettings) -> HookSettings {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
 mod tests {
     use super::*;
-    use crate::config::load_settings;
+    use crate::config::loader::load_settings;
     use crate::config::types::HookEntry;
 
     #[test]
@@ -97,7 +97,8 @@ mod tests {
     /// layers before the mechanical merge can erase their provenance.
     #[test]
     #[serial_test::serial]
-    fn single_pipeline_rejects_working_directory_hooks_before_merge() {
+    fn single_pipeline_rejects_working_directory_hooks_before_merge()
+    -> Result<(), Box<dyn std::error::Error>> {
         struct NornHomeGuard {
             prior: Option<std::ffi::OsString>,
         }
@@ -141,18 +142,21 @@ mod tests {
         )
         .unwrap();
 
-        let layers = load_settings(cwd.path()).unwrap();
-        let error = crate::config::validate_working_directory_authority(
+        let layers = load_settings(cwd.path())?;
+        let validation = crate::config::validate_working_directory_authority(
             &layers.user,
             &layers.project,
             &layers.local,
-        )
-        .expect_err("working-directory hooks must fail before merge");
+        );
+        let error = validation.err().ok_or_else(|| {
+            std::io::Error::other("working-directory hooks passed authority validation")
+        })?;
         let rendered = error.to_string();
         assert!(rendered.contains("hooks"));
         assert!(!rendered.contains("project.sh"));
         assert!(!rendered.contains("local.sh"));
 
         drop(norn_home_guard);
+        Ok(())
     }
 }

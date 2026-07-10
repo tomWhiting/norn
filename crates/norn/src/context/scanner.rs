@@ -513,32 +513,33 @@ C body.";
 
     #[cfg(unix)]
     #[test]
-    fn untrusted_rule_scan_refuses_directory_and_file_symlinks() {
+    fn untrusted_rule_scan_refuses_directory_and_file_symlinks()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
-        let workspace = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
         write(&outside.path().join("sentinel.md"), RULE_BODY_A);
-        let launch_root = workspace.path().canonicalize().unwrap();
+        let launch_root = workspace.path().canonicalize()?;
         let norn_dir = launch_root.join(".norn");
-        std::fs::create_dir(&norn_dir).unwrap();
+        std::fs::create_dir(&norn_dir)?;
         let rules_dir = norn_dir.join("rules");
-        symlink(outside.path(), &rules_dir).unwrap();
+        symlink(outside.path(), &rules_dir)?;
 
         let rules =
             scan_rule_dirs_with_origins(std::slice::from_ref(&rules_dir), &launch_root, &[0]);
         assert!(rules.is_empty());
 
-        std::fs::remove_file(&rules_dir).unwrap();
-        std::fs::create_dir(&rules_dir).unwrap();
+        std::fs::remove_file(&rules_dir)?;
+        std::fs::create_dir(&rules_dir)?;
         symlink(
             outside.path().join("sentinel.md"),
             rules_dir.join("sentinel.md"),
-        )
-        .unwrap();
+        )?;
         let rules =
             scan_rule_dirs_with_origins(std::slice::from_ref(&rules_dir), &launch_root, &[0]);
         assert!(rules.is_empty());
+        Ok(())
     }
 
     #[test]
@@ -828,11 +829,12 @@ C body.";
     }
 
     #[test]
-    fn nested_scan_rejects_relative_parent_traversal_before_reading() {
-        let parent = tempfile::tempdir().unwrap();
+    fn nested_scan_rejects_relative_parent_traversal_before_reading()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let parent = tempfile::tempdir()?;
         let workspace = parent.path().join("workspace");
         let outside = parent.path().join("outside/api");
-        std::fs::create_dir_all(&workspace).unwrap();
+        std::fs::create_dir_all(&workspace)?;
         write(&outside.join("NORN.md"), "SENTINEL_OUTSIDE_TRAVERSAL");
 
         let mut scanner = NestedScanner::new(&workspace);
@@ -844,24 +846,24 @@ C body.";
             operation: PathOperation::Read,
         }));
         assert!(injections.is_empty());
+        Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn nested_scan_refuses_final_and_ancestor_symlinks() {
+    fn nested_scan_refuses_final_and_ancestor_symlinks() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
-        let workspace = tempfile::tempdir().unwrap();
-        let outside = tempfile::tempdir().unwrap();
+        let workspace = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
         write(&outside.path().join("NORN.md"), "SENTINEL_OUTSIDE_SYMLINK");
         let final_link_dir = workspace.path().join("final");
-        std::fs::create_dir(&final_link_dir).unwrap();
+        std::fs::create_dir(&final_link_dir)?;
         symlink(
             outside.path().join("NORN.md"),
             final_link_dir.join("NORN.md"),
-        )
-        .unwrap();
-        symlink(outside.path(), workspace.path().join("ancestor-link")).unwrap();
+        )?;
+        symlink(outside.path(), workspace.path().join("ancestor-link"))?;
 
         let mut scanner = NestedScanner::new(workspace.path());
         let mut engine = RuleEngine::new(vec![]);
@@ -876,6 +878,7 @@ C body.";
                 }));
             assert!(injections.is_empty());
         }
+        Ok(())
     }
 
     #[test]

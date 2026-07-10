@@ -180,25 +180,29 @@ mod tests {
 
     #[test]
     #[serial]
-    fn resolve_codex_home_honours_env() {
+    fn resolve_codex_home_honours_env() -> Result<(), Box<dyn std::error::Error>> {
         // SAFETY: serial test; no concurrent reader observes the mutation.
         unsafe { std::env::set_var("CODEX_HOME", "/tmp/codex-test-home") };
-        let home = resolve_codex_home().expect("absolute CODEX_HOME");
+        let result = resolve_codex_home();
         unsafe { std::env::remove_var("CODEX_HOME") };
+        let home = result.map_err(std::io::Error::other)?;
         assert_eq!(home, PathBuf::from("/tmp/codex-test-home"));
+        Ok(())
     }
 
     #[test]
     #[serial]
-    fn resolve_codex_home_empty_env_treated_as_unset() {
+    fn resolve_codex_home_empty_env_treated_as_unset() -> Result<(), Box<dyn std::error::Error>> {
         // SAFETY: serial test prevents concurrent observers.
         unsafe { std::env::set_var("CODEX_HOME", "") };
-        let home = resolve_codex_home().expect("absolute user home");
+        let result = resolve_codex_home();
         unsafe { std::env::remove_var("CODEX_HOME") };
+        let home = result.map_err(std::io::Error::other)?;
         let expected = norn::config::paths::trusted_home_dir()
             .map(|home| home.join(".codex"))
-            .expect("absolute user home");
+            .ok_or_else(|| std::io::Error::other("trusted home is unavailable"))?;
         assert_eq!(home, expected);
+        Ok(())
     }
 
     #[test]

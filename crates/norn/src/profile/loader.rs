@@ -1213,9 +1213,14 @@ Focus on correctness over aesthetics.
         let user = resolve_workspace_profile("trusted", cwd.path())?;
         assert_eq!(user.origin, ProfileOrigin::User);
         assert_eq!(user.profile.prompt_commands.len(), 1);
-        let error =
+        let Err(error) =
             crate::tools::agent::spawn_context::validate_model_selected_profile(&user.profile)
-                .expect_err("model-selected user profiles cannot run prompt commands");
+        else {
+            return Err(std::io::Error::other(
+                "model-selected user profile prompt commands were accepted",
+            )
+            .into());
+        };
         let rendered = error.to_string();
         assert!(rendered.contains("prompt_commands"));
         assert!(!rendered.contains("sentinel-model-selected-user-command"));

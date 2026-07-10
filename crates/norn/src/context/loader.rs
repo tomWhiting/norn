@@ -430,7 +430,7 @@ mod tests {
 
     #[test]
     #[serial_test::serial]
-    fn load_reads_only_project_when_user_absent() {
+    fn load_reads_only_project_when_user_absent() -> Result<(), Box<dyn std::error::Error>> {
         let home = tempfile::tempdir().unwrap();
         let cwd = tempfile::tempdir().unwrap();
         let _guard = NornHomeGuard::set(Some(home.path()));
@@ -440,11 +440,9 @@ mod tests {
         assert!(loader.user.is_none());
         let project = loader.project.as_ref().expect("project layer must load");
         assert_eq!(project.content, "project-conventions");
-        assert_eq!(
-            project.path,
-            cwd.path().canonicalize().unwrap().join("NORN.md")
-        );
+        assert_eq!(project.path, cwd.path().canonicalize()?.join("NORN.md"));
         assert!(project.mtime.is_some(), "mtime must be recorded on load");
+        Ok(())
     }
 
     #[test]
@@ -466,14 +464,15 @@ mod tests {
     #[cfg(unix)]
     #[test]
     #[serial_test::serial]
-    fn project_context_symlink_is_refused_without_reading_target() {
+    fn project_context_symlink_is_refused_without_reading_target()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
-        let home = tempfile::tempdir().unwrap();
-        let cwd = tempfile::tempdir().unwrap();
-        let outside = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(outside.path(), "sentinel-private-context").unwrap();
-        symlink(outside.path(), cwd.path().join(NORN_MD)).unwrap();
+        let home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let outside = tempfile::NamedTempFile::new()?;
+        std::fs::write(outside.path(), "sentinel-private-context")?;
+        symlink(outside.path(), cwd.path().join(NORN_MD))?;
         let norn_home_guard = NornHomeGuard::set(Some(home.path()));
 
         let loader = ContextLoader::load(cwd.path());
@@ -485,6 +484,7 @@ mod tests {
                 .contains("sentinel-private-context")
         );
         drop(norn_home_guard);
+        Ok(())
     }
 
     // ── formatted_context: four ordering cases ─────────────────────────
@@ -668,19 +668,20 @@ mod tests {
     #[cfg(unix)]
     #[test]
     #[serial_test::serial]
-    fn staleness_refresh_refuses_project_context_replaced_by_symlink() {
+    fn staleness_refresh_refuses_project_context_replaced_by_symlink()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
-        let home = tempfile::tempdir().unwrap();
-        let cwd = tempfile::tempdir().unwrap();
-        let outside = tempfile::NamedTempFile::new().unwrap();
-        std::fs::write(outside.path(), "sentinel-private-refresh").unwrap();
+        let home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let outside = tempfile::NamedTempFile::new()?;
+        std::fs::write(outside.path(), "sentinel-private-refresh")?;
         let project_path = cwd.path().join(NORN_MD);
-        std::fs::write(&project_path, "safe context").unwrap();
+        std::fs::write(&project_path, "safe context")?;
         let norn_home_guard = NornHomeGuard::set(Some(home.path()));
         let mut loader = ContextLoader::load(cwd.path());
-        std::fs::remove_file(&project_path).unwrap();
-        symlink(outside.path(), &project_path).unwrap();
+        std::fs::remove_file(&project_path)?;
+        symlink(outside.path(), &project_path)?;
 
         assert!(loader.check_staleness());
         assert!(loader.project.is_none());
@@ -690,6 +691,7 @@ mod tests {
                 .contains("sentinel-private-refresh")
         );
         drop(norn_home_guard);
+        Ok(())
     }
 
     #[test]

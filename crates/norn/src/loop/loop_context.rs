@@ -958,13 +958,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn nested_scanner_keeps_launch_root_after_working_directory_changes() {
-        let launch_root = tempfile::tempdir().expect("launch root");
-        let outside = tempfile::tempdir().expect("outside root");
+    async fn nested_scanner_keeps_launch_root_after_working_directory_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let launch_root = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
         let outside_api = outside.path().join("src/api");
-        std::fs::create_dir_all(&outside_api).expect("outside directory");
-        std::fs::write(outside_api.join("NORN.md"), "SENTINEL_OUTSIDE_CONTEXT")
-            .expect("outside context");
+        std::fs::create_dir_all(&outside_api)?;
+        std::fs::write(outside_api.join("NORN.md"), "SENTINEL_OUTSIDE_CONTEXT")?;
 
         let working_dir = SharedWorkingDir::new(launch_root.path().to_path_buf());
         let mut ctx = LoopContext::with_working_dir("base", working_dir.clone());
@@ -978,7 +978,7 @@ mod tests {
         let injections = ctx
             .rules
             .as_ref()
-            .expect("rules")
+            .ok_or_else(|| std::io::Error::other("rules were not attached"))?
             .process_event(&RuntimeEvent::PathChanged {
                 path: "src/api/file.rs".to_owned(),
                 operation: PathOperation::Read,
@@ -986,6 +986,7 @@ mod tests {
             .await;
 
         assert!(injections.is_empty());
+        Ok(())
     }
 
     #[test]

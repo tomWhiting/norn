@@ -832,92 +832,104 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn workspace_skill_shell_is_disabled_even_when_tool_default_is_enabled() {
-        let workspace = tempdir().unwrap();
+    async fn workspace_skill_shell_is_disabled_even_when_tool_default_is_enabled()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempdir()?;
         let skill_dir = workspace.path().join("skills/repository-skill");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir)?;
         tokio::fs::write(
             skill_dir.join("SKILL.md"),
             "---\ndescription: repository skill\n---\n!`touch repository-command-ran`",
         )
-        .await
-        .unwrap();
+        .await?;
 
-        let launch_root = workspace.path().canonicalize().unwrap();
+        let launch_root = workspace.path().canonicalize()?;
         let ctx = ToolContext::empty();
         ctx.set_working_dir(launch_root.clone());
         ctx.insert_extension(Arc::new(WorkspaceSkillRoot(launch_root.clone())));
         ctx.insert_extension(Arc::new(SkillSearchPaths(vec![launch_root.join("skills")])));
-        std::fs::create_dir(launch_root.join("subdir")).unwrap();
+        std::fs::create_dir(launch_root.join("subdir"))?;
         ctx.set_working_dir(launch_root.join("subdir"));
         let out = SkillTool::new()
             .execute(&envelope_for(json!({"name": "repository-skill"})), &ctx)
-            .await
-            .unwrap();
-        let content = out.content["content"].as_str().unwrap();
+            .await?;
+        let Some(content) = out.content["content"].as_str() else {
+            return Err(
+                std::io::Error::other("skill output did not contain string content").into(),
+            );
+        };
 
         assert!(content.contains("disabled by policy"));
         assert!(!workspace.path().join("repository-command-ran").exists());
+        Ok(())
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn workspace_skill_symlink_is_refused_before_activation() {
+    async fn workspace_skill_symlink_is_refused_before_activation()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
-        let workspace = tempdir().unwrap();
-        let outside = tempdir().unwrap();
+        let workspace = tempdir()?;
+        let outside = tempdir()?;
         let skill_dir = workspace.path().join("skills/leak");
-        std::fs::create_dir_all(&skill_dir).unwrap();
+        std::fs::create_dir_all(&skill_dir)?;
         let target = outside.path().join("SKILL.md");
         std::fs::write(
             &target,
             "---\ndescription: leak\n---\nsentinel-private-skill",
-        )
-        .unwrap();
-        symlink(&target, skill_dir.join("SKILL.md")).unwrap();
-        let launch_root = workspace.path().canonicalize().unwrap();
+        )?;
+        symlink(&target, skill_dir.join("SKILL.md"))?;
+        let launch_root = workspace.path().canonicalize()?;
         let ctx = ToolContext::empty();
         ctx.set_working_dir(launch_root.clone());
         ctx.insert_extension(Arc::new(WorkspaceSkillRoot(launch_root.clone())));
         ctx.insert_extension(Arc::new(SkillSearchPaths(vec![launch_root.join("skills")])));
 
-        let error = SkillTool::new()
+        let Err(error) = SkillTool::new()
             .execute(&envelope_for(json!({"name": "leak"})), &ctx)
             .await
-            .expect_err("workspace skill symlink must be refused");
+        else {
+            return Err(std::io::Error::other("workspace skill symlink was accepted").into());
+        };
 
         assert!(!error.to_string().contains("sentinel-private-skill"));
+        Ok(())
     }
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn missing_workspace_skill_does_not_enumerate_symlinked_external_root() {
+    async fn missing_workspace_skill_does_not_enumerate_symlinked_external_root()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
-        let workspace = tempdir().unwrap();
-        let outside = tempdir().unwrap();
+        let workspace = tempdir()?;
+        let outside = tempdir()?;
         std::fs::write(
             outside.path().join("sentinel-external-skill-name.md"),
             "---\ndescription: external\n---\nexternal",
-        )
-        .unwrap();
+        )?;
         let norn_dir = workspace.path().join(".norn");
-        std::fs::create_dir(&norn_dir).unwrap();
-        symlink(outside.path(), norn_dir.join("skills")).unwrap();
-        let launch_root = workspace.path().canonicalize().unwrap();
+        std::fs::create_dir(&norn_dir)?;
+        symlink(outside.path(), norn_dir.join("skills"))?;
+        let launch_root = workspace.path().canonicalize()?;
         let ctx = ToolContext::empty();
         ctx.insert_extension(Arc::new(WorkspaceSkillRoot(launch_root.clone())));
         ctx.insert_extension(Arc::new(SkillSearchPaths(vec![
             launch_root.join(".norn/skills"),
         ])));
 
-        let error = SkillTool::new()
+        let Err(error) = SkillTool::new()
             .execute(&envelope_for(json!({"name": "missing"})), &ctx)
             .await
-            .expect_err("missing skill must remain missing");
+        else {
+            return Err(
+                std::io::Error::other("missing workspace skill unexpectedly loaded").into(),
+            );
+        };
 
         assert!(!error.to_string().contains("sentinel-external-skill-name"));
+        Ok(())
     }
 
     #[test]

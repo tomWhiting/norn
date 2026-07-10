@@ -402,14 +402,15 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn prompt_file_inside_workspace_refuses_symlink_even_when_path_is_absolute() {
+    fn prompt_file_inside_workspace_refuses_symlink_even_when_path_is_absolute()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
 
-        let workspace = tempfile::tempdir().expect("workspace");
-        let outside = tempfile::NamedTempFile::new().expect("outside prompt");
-        std::fs::write(outside.path(), "sentinel-private-variant").expect("write outside");
+        let workspace = tempfile::tempdir()?;
+        let outside = tempfile::NamedTempFile::new()?;
+        std::fs::write(outside.path(), "sentinel-private-variant")?;
         let link = workspace.path().join("linked-prompt.md");
-        symlink(outside.path(), &link).expect("symlink");
+        symlink(outside.path(), &link)?;
         let mut configured = BTreeMap::new();
         configured.insert(
             "linked".to_owned(),
@@ -419,17 +420,20 @@ mod tests {
             },
         );
 
-        let error = VariantCatalog::build(Some(&configured), workspace.path())
-            .expect_err("workspace prompt symlink must be refused");
+        let Err(error) = VariantCatalog::build(Some(&configured), workspace.path()) else {
+            return Err(std::io::Error::other("workspace prompt symlink was accepted").into());
+        };
 
         assert!(!error.to_string().contains("sentinel-private-variant"));
+        Ok(())
     }
 
     #[test]
-    fn absolute_prompt_file_outside_workspace_remains_a_trusted_source() {
-        let workspace = tempfile::tempdir().expect("workspace");
-        let trusted = tempfile::NamedTempFile::new().expect("trusted prompt");
-        std::fs::write(trusted.path(), "trusted absolute prompt").expect("write prompt");
+    fn absolute_prompt_file_outside_workspace_remains_a_trusted_source()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let workspace = tempfile::tempdir()?;
+        let trusted = tempfile::NamedTempFile::new()?;
+        std::fs::write(trusted.path(), "trusted absolute prompt")?;
         let mut configured = BTreeMap::new();
         configured.insert(
             "trusted".to_owned(),
@@ -439,7 +443,7 @@ mod tests {
             },
         );
 
-        let catalog = VariantCatalog::build(Some(&configured), workspace.path()).expect("build");
+        let catalog = VariantCatalog::build(Some(&configured), workspace.path())?;
 
         assert_eq!(
             catalog
@@ -447,6 +451,7 @@ mod tests {
                 .and_then(|variant| variant.prompt.as_deref()),
             Some("trusted absolute prompt"),
         );
+        Ok(())
     }
 
     #[test]
