@@ -248,7 +248,7 @@ impl OutputCaptureState {
     }
 
     async fn start_redirect(&mut self, session_id: &str, call_id: &str) -> std::io::Result<()> {
-        let home = dirs::home_dir().ok_or_else(|| {
+        let home = crate::config::paths::trusted_home_dir().ok_or_else(|| {
             std::io::Error::new(std::io::ErrorKind::NotFound, "home directory not found")
         })?;
         let dir = home.join(".norn").join("outputs").join(session_id);
@@ -291,9 +291,10 @@ impl OutputCaptureState {
             .ok_or_else(|| ToolError::ExecutionFailed {
                 reason: "bash output was marked redirected without an output path".to_owned(),
             })?;
-        let home = dirs::home_dir().ok_or_else(|| ToolError::ExecutionFailed {
-            reason: "home directory not found while formatting bash output path".to_owned(),
-        })?;
+        let home =
+            crate::config::paths::trusted_home_dir().ok_or_else(|| ToolError::ExecutionFailed {
+                reason: "home directory not found while formatting bash output path".to_owned(),
+            })?;
         if let Ok(stripped) = path.strip_prefix(&home) {
             Ok(format!("~/{}", stripped.to_string_lossy()))
         } else {

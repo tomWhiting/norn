@@ -18,6 +18,8 @@ glob = { workspace = true }
 ignore = { workspace = true }
 indexmap = { version = "2", features = ["serde"] }
 libyggd = { workspace = true, optional = true }
+libc = "0.2"
+rustix = { version = "1", features = ["fs"] }
 lsp = { workspace = true }
 lsp-types = { workspace = true }
 norn-macros = { path = "../norn-macros" }

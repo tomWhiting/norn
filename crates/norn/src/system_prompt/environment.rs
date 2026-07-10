@@ -6,7 +6,12 @@
 //! top and appended as a dynamic system section.
 
 use std::fmt::Write;
+use std::io::Read;
 use std::path::{Path, PathBuf};
+
+/// Git control files are tiny. A larger value is not valid branch metadata
+/// and must never be read wholesale from a repository-selected path.
+const MAX_GIT_METADATA_BYTES: u64 = 1024;
 
 /// Stable session-level facts set once at build time. Combined with
 /// per-iteration dynamic facts (current time, git state) by
@@ -87,17 +92,42 @@ fn friendly_os(os: &str) -> &str {
 fn read_git_branch(start_dir: &Path) -> Option<String> {
     let git_dir = find_git_dir(start_dir)?;
     let head_path = git_dir.join("HEAD");
-    let content = std::fs::read_to_string(head_path).ok()?;
-    let trimmed = content.trim();
+    let content = read_small_regular_file(&head_path)?;
+    let trimmed = content.strip_suffix('\n').unwrap_or(&content);
+    let trimmed = trimmed.strip_suffix('\r').unwrap_or(trimmed);
+    if trimmed.contains(['\n', '\r']) {
+        return None;
+    }
 
-    if let Some(refname) = trimmed.strip_prefix("ref: refs/heads/") {
+    if let Some(refname) = trimmed.strip_prefix("ref: refs/heads/")
+        && valid_branch_ref(refname)
+    {
         Some(refname.to_owned())
-    } else if trimmed.len() >= 8 {
-        let short: String = trimmed.chars().take(8).collect();
-        Some(format!("detached at {short}"))
+    } else if matches!(trimmed.len(), 40 | 64)
+        && trimmed.bytes().all(|byte| byte.is_ascii_hexdigit())
+    {
+        Some(format!("detached at {}", &trimmed[..8]))
     } else {
         None
     }
+}
+
+fn valid_branch_ref(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 255
+        && !value.starts_with('/')
+        && !value.ends_with(['/', '.'])
+        && !value.contains("..")
+        && !value.contains("@{")
+        && !value.contains("//")
+        && value.split('/').all(|component| {
+            !component.is_empty()
+                && !component.starts_with('.')
+                && !component.as_bytes().ends_with(b".lock")
+                && component
+                    .bytes()
+                    .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_' | b'.'))
+        })
 }
 
 /// Walk up from `start_dir` looking for a `.git` directory or file
@@ -106,11 +136,13 @@ fn find_git_dir(start_dir: &Path) -> Option<PathBuf> {
     let mut dir = start_dir.to_path_buf();
     loop {
         let candidate = dir.join(".git");
-        if candidate.is_dir() {
-            return Some(candidate);
-        }
-        if candidate.is_file() {
-            return resolve_gitlink(&candidate);
+        match std::fs::symlink_metadata(&candidate) {
+            Ok(metadata) if metadata.file_type().is_dir() => return Some(candidate),
+            Ok(metadata) if metadata.file_type().is_file() => {
+                return resolve_gitlink(&candidate);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Ok(_) | Err(_) => return None,
         }
         if !dir.pop() {
             return None;
@@ -121,13 +153,53 @@ fn find_git_dir(start_dir: &Path) -> Option<PathBuf> {
 /// Resolve a `.git` file (worktree gitlink) to the actual git directory.
 /// The file contains `gitdir: <path>`.
 fn resolve_gitlink(gitlink: &Path) -> Option<PathBuf> {
-    let content = std::fs::read_to_string(gitlink).ok()?;
+    let content = read_small_regular_file(gitlink)?;
     let target = content.trim().strip_prefix("gitdir: ")?;
+    if target.contains(['\n', '\r']) {
+        return None;
+    }
     let path = PathBuf::from(target);
-    if path.is_absolute() {
-        Some(path)
+    let resolved = if path.is_absolute() {
+        path
     } else {
-        gitlink.parent().map(|p| p.join(&path))
+        gitlink.parent()?.join(path)
+    };
+    let canonical = resolved.canonicalize().ok()?;
+    if canonical.is_dir() {
+        Some(canonical)
+    } else {
+        None
+    }
+}
+
+fn read_small_regular_file(path: &Path) -> Option<String> {
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+
+    let mut options = std::fs::OpenOptions::new();
+    options.read(true);
+    #[cfg(unix)]
+    options.custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
+    #[cfg(not(unix))]
+    if std::fs::symlink_metadata(path)
+        .ok()?
+        .file_type()
+        .is_symlink()
+    {
+        return None;
+    }
+    let file = options.open(path).ok()?;
+    if !file.metadata().ok()?.file_type().is_file() {
+        return None;
+    }
+    let mut content = String::new();
+    file.take(MAX_GIT_METADATA_BYTES + 1)
+        .read_to_string(&mut content)
+        .ok()?;
+    if u64::try_from(content.len()).ok()? > MAX_GIT_METADATA_BYTES {
+        None
+    } else {
+        Some(content)
     }
 }
 

@@ -263,7 +263,7 @@ impl AgentBuilder {
         let mut programmatic_hooks = self.hooks.take();
         let runtime_base = if self.load_runtime_base {
             let mut profile_for_base = profile.clone();
-            let base = crate::runtime_init::load_runtime_base(
+            let base = crate::runtime_init::base::load_runtime_base_at_launch_root(
                 &working_dir,
                 &mut profile_for_base,
                 programmatic_hooks.take(),
@@ -1068,7 +1068,7 @@ mod tests {
     #[allow(clippy::unwrap_used)]
     fn confined_read_exempt_set_excludes_settings_paths_and_sessions() {
         let norn_home = tempfile::tempdir().expect("norn_home");
-        let _guard = NornHomeGuard::set(norn_home.path());
+        let norn_home_guard = NornHomeGuard::set(norn_home.path());
 
         // The convention subdirs must exist on disk — the context setter
         // canonicalizes and drops non-existent exempt roots.
@@ -1083,12 +1083,13 @@ mod tests {
         let outside_skills = outside.path().join("evil-skills");
         std::fs::create_dir(&outside_skills).expect("mk outside skills");
 
-        // Workspace with a project settings file declaring that search path.
+        // Trusted user settings declare that absolute search path. Repository
+        // settings cannot declare search paths at all; the separate invariant
+        // here is that even trusted extra paths do not become confinement
+        // exemptions writable by the model.
         let workspace = tempfile::tempdir().expect("workspace");
-        let dot_norn = workspace.path().join(".norn");
-        std::fs::create_dir(&dot_norn).expect("mk .norn");
         std::fs::write(
-            dot_norn.join("settings.json"),
+            norn_home.path().join("settings.json"),
             serde_json::json!({
                 "skills": { "search_paths": [outside_skills.to_string_lossy()] }
             })
@@ -1144,6 +1145,7 @@ mod tests {
             !roots.contains(&settings_path),
             "settings-declared search_paths must never be exempt (model-writable): {roots:?}",
         );
+        drop(norn_home_guard);
     }
 
     #[test]
@@ -1925,7 +1927,7 @@ mod tests {
         assert_eq!(info.agent_id, id);
         assert_eq!(info.model, "resolved-model", "model override wins");
         assert_eq!(info.profile_name.as_deref(), Some("reviewer"));
-        assert_eq!(info.working_dir, temp.path());
+        assert_eq!(info.working_dir, temp.path().canonicalize().unwrap());
         assert_eq!(info.output_schema.as_ref(), Some(&schema));
         assert!(!info.session_id.is_empty(), "session id always resolved");
         let mut tools = info.tool_names.clone();
@@ -3162,7 +3164,7 @@ mod tests {
         assert_eq!(entry.model, "test-model", "entry records resolved model");
         assert_eq!(
             entry.working_dir,
-            temp.path().display().to_string(),
+            temp.path().canonicalize().unwrap().display().to_string(),
             "entry records resolved working dir",
         );
         assert_eq!(entry.name.as_deref(), Some("track-h"));

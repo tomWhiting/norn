@@ -106,7 +106,7 @@ pub fn user_skills_dir() -> Option<PathBuf> {
 /// alongside other client tools and is not under Norn's tree.
 #[must_use]
 pub fn user_agents_skills_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".agents").join("skills"))
+    norn::config::paths::trusted_home_dir().map(|home| home.join(".agents").join("skills"))
 }
 
 /// Resolve `~/.claude/skills/` — Claude Code's user-level skill
@@ -117,7 +117,7 @@ pub fn user_agents_skills_dir() -> Option<PathBuf> {
 /// Code's tree, not Norn's.
 #[must_use]
 pub fn user_claude_skills_dir() -> Option<PathBuf> {
-    dirs::home_dir().map(|h| h.join(".claude").join("skills"))
+    norn::config::paths::trusted_home_dir().map(|home| home.join(".claude").join("skills"))
 }
 
 // ---------------------------------------------------------------------------

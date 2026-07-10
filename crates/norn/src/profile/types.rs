@@ -174,20 +174,30 @@ impl Profile {
         let contents = std::fs::read_to_string(path).map_err(|e| ConfigError::InvalidConfig {
             reason: format!("failed to read profile at {}: {e}", path.display()),
         })?;
+        Self::from_contents(path, &contents)
+    }
+
+    /// Parses profile contents already obtained from a trusted file reader.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same extension and deserialisation errors as
+    /// [`Self::from_file`].
+    pub(crate) fn from_contents(path: &Path, contents: &str) -> Result<Self, ConfigError> {
         let ext = path
             .extension()
             .and_then(|s| s.to_str())
             .map(str::to_ascii_lowercase);
         match ext.as_deref() {
-            Some("toml") => toml::from_str(&contents).map_err(|e| ConfigError::InvalidConfig {
+            Some("toml") => toml::from_str(contents).map_err(|e| ConfigError::InvalidConfig {
                 reason: format!("invalid TOML profile at {}: {e}", path.display()),
             }),
             Some("json") => {
-                serde_json::from_str(&contents).map_err(|e| ConfigError::InvalidConfig {
+                serde_json::from_str(contents).map_err(|e| ConfigError::InvalidConfig {
                     reason: format!("invalid JSON profile at {}: {e}", path.display()),
                 })
             }
-            Some("md") => super::loader::parse_profile(&contents, path),
+            Some("md") => super::loader::parse_profile(contents, path),
             other => Err(ConfigError::InvalidConfig {
                 reason: format!(
                     "unsupported profile extension {:?} at {}; expected .toml, .json, or .md",

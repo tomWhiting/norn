@@ -15,6 +15,9 @@
 //! context for this layer". The loader records the mtime observed at
 //! read time so the staleness check ([`ContextLoader::check_staleness`])
 //! has a snapshot to compare against.
+//! Project files are opened relative to the workspace without following
+//! symlinks and must be regular files; the trusted user layer retains normal
+//! filesystem semantics.
 //!
 //! Out of scope for this brief: nested-directory scanning (NX-004) and
 //! `build_runtime` wiring (NX-005). NX-002 adds the
@@ -26,6 +29,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::context::types::ContextFile;
+use crate::util::{read_workspace_text_file, workspace_file_mtime};
 
 /// Filename of the always-on context file at both the user-level and
 /// project-root locations.
@@ -88,8 +92,20 @@ impl ContextLoader {
     /// loader trivially testable with `tempfile::tempdir`.
     #[must_use]
     pub fn load(cwd: &Path) -> Self {
+        let cwd = cwd.canonicalize().unwrap_or_else(|error| {
+            tracing::warn!(
+                error = %error,
+                "failed to resolve context workspace root; project context will be unavailable"
+            );
+            cwd.to_path_buf()
+        });
+        Self::load_at_launch_root(&cwd)
+    }
+
+    /// Loads context from an already-canonical immutable launch root.
+    pub(crate) fn load_at_launch_root(cwd: &Path) -> Self {
         let user = user_norn_md_path().and_then(read_context_file);
-        let project = read_context_file(cwd.join(NORN_MD));
+        let project = read_workspace_context_file(cwd, Path::new(NORN_MD));
         Self {
             user,
             project,
@@ -134,8 +150,8 @@ impl ContextLoader {
             }
         };
 
-        let project_path = self.cwd.join(NORN_MD);
-        let project_changed = Self::refresh_layer(&mut self.project, &project_path);
+        let project_changed =
+            Self::refresh_workspace_layer(&mut self.project, &self.cwd, Path::new(NORN_MD));
 
         user_changed || project_changed
     }
@@ -192,6 +208,50 @@ impl ContextLoader {
                 };
                 if changed {
                     *slot = read_context_file(path.to_path_buf());
+                }
+                changed
+            }
+        }
+    }
+
+    fn refresh_workspace_layer(
+        slot: &mut Option<ContextFile>,
+        root: &Path,
+        relative: &Path,
+    ) -> bool {
+        let on_disk_mtime = match workspace_file_mtime(root, relative) {
+            Ok(mtime) => Some(mtime),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => {
+                tracing::warn!(
+                    "Refusing workspace context file {} during staleness check: {error}",
+                    root.join(relative).display(),
+                );
+                if slot.is_some() {
+                    *slot = None;
+                    return true;
+                }
+                return false;
+            }
+        };
+
+        match (slot.as_ref(), on_disk_mtime) {
+            (None, None) => false,
+            (Some(_), None) => {
+                *slot = None;
+                true
+            }
+            (None, Some(_)) => {
+                *slot = read_workspace_context_file(root, relative);
+                slot.is_some()
+            }
+            (Some(previous), Some(current)) => {
+                let changed = match (previous.mtime, current) {
+                    (Some(a), Some(b)) => a != b,
+                    _ => true,
+                };
+                if changed {
+                    *slot = read_workspace_context_file(root, relative);
                 }
                 changed
             }
@@ -258,6 +318,29 @@ fn read_context_file(path: PathBuf) -> Option<ContextFile> {
         path,
         content,
         mtime,
+    })
+}
+
+fn read_workspace_context_file(root: &Path, relative: &Path) -> Option<ContextFile> {
+    let path = root.join(relative);
+    let loaded = match read_workspace_text_file(root, relative) {
+        Ok(loaded) => loaded,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            tracing::debug!("No context file at {}", path.display());
+            return None;
+        }
+        Err(error) => {
+            tracing::warn!(
+                "Refusing workspace context file {}: {error}",
+                path.display(),
+            );
+            return None;
+        }
+    };
+    Some(ContextFile {
+        path,
+        content: loaded.content,
+        mtime: loaded.modified,
     })
 }
 
@@ -357,7 +440,10 @@ mod tests {
         assert!(loader.user.is_none());
         let project = loader.project.as_ref().expect("project layer must load");
         assert_eq!(project.content, "project-conventions");
-        assert_eq!(project.path, cwd.path().join("NORN.md"));
+        assert_eq!(
+            project.path,
+            cwd.path().canonicalize().unwrap().join("NORN.md")
+        );
         assert!(project.mtime.is_some(), "mtime must be recorded on load");
     }
 
@@ -375,6 +461,30 @@ mod tests {
         assert_eq!(loader.project.as_ref().unwrap().content, "project-body");
         assert!(loader.user.as_ref().unwrap().mtime.is_some());
         assert!(loader.project.as_ref().unwrap().mtime.is_some());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn project_context_symlink_is_refused_without_reading_target() {
+        use std::os::unix::fs::symlink;
+
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), "sentinel-private-context").unwrap();
+        symlink(outside.path(), cwd.path().join(NORN_MD)).unwrap();
+        let norn_home_guard = NornHomeGuard::set(Some(home.path()));
+
+        let loader = ContextLoader::load(cwd.path());
+
+        assert!(loader.project.is_none());
+        assert!(
+            !loader
+                .formatted_context()
+                .contains("sentinel-private-context")
+        );
+        drop(norn_home_guard);
     }
 
     // ── formatted_context: four ordering cases ─────────────────────────
@@ -553,6 +663,33 @@ mod tests {
         );
         assert_eq!(loader.project.as_ref().unwrap().content, "updated");
         assert!(loader.user.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn staleness_refresh_refuses_project_context_replaced_by_symlink() {
+        use std::os::unix::fs::symlink;
+
+        let home = tempfile::tempdir().unwrap();
+        let cwd = tempfile::tempdir().unwrap();
+        let outside = tempfile::NamedTempFile::new().unwrap();
+        std::fs::write(outside.path(), "sentinel-private-refresh").unwrap();
+        let project_path = cwd.path().join(NORN_MD);
+        std::fs::write(&project_path, "safe context").unwrap();
+        let norn_home_guard = NornHomeGuard::set(Some(home.path()));
+        let mut loader = ContextLoader::load(cwd.path());
+        std::fs::remove_file(&project_path).unwrap();
+        symlink(outside.path(), &project_path).unwrap();
+
+        assert!(loader.check_staleness());
+        assert!(loader.project.is_none());
+        assert!(
+            !loader
+                .formatted_context()
+                .contains("sentinel-private-refresh")
+        );
+        drop(norn_home_guard);
     }
 
     #[test]

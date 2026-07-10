@@ -135,7 +135,7 @@ pub(crate) fn compute_read_exempt_roots(
         // `build_skill_search_paths` resolves them: rooted at the real home
         // dir, because NORN_HOME moves only the norn root, not these
         // (agentskills.io / Claude Code) conventions.
-        if let Some(home) = dirs::home_dir() {
+        if let Some(home) = crate::config::paths::trusted_home_dir() {
             roots.push(home.join(".agents").join("skills"));
             roots.push(home.join(".claude").join("skills"));
         }

@@ -5,6 +5,7 @@
 //! 500-line production-code limit; the launch/lifecycle machinery stays
 //! in `spawn.rs` while the context-forwarding rules live here.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use uuid::Uuid;
@@ -14,9 +15,11 @@ use super::infra::{AgentCancellation, AgentToolInfra, ParentGrant};
 use super::reclaim::ReclaimOnResultDelivery;
 use crate::agent::child_policy::{ChildPolicy, CoordinationEnvelope};
 use crate::config::permissions::PermissionPolicy;
+use crate::error::ToolError;
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::HookRegistry;
 use crate::internal::extraction::SharedProvider;
+use crate::profile::Profile;
 use crate::session::SessionBinding;
 use crate::session::action_log::ActionLog;
 use crate::session::action_log_tree::ActionLogTree;
@@ -26,6 +29,31 @@ use crate::tool::context::{SharedWorkingDir, ToolContext};
 use crate::tool::scheduling::ToolEffectIndex;
 use crate::tools::diagnostics::{DiagnosticInfra, DiagnosticsPostCheck};
 use crate::tools::task::SharedTaskStore;
+
+/// Resolves profile authority independently of the mutable execution CWD.
+pub(crate) fn resolve_profile_root(
+    ctx: &ToolContext,
+    profile_requested: bool,
+) -> Result<PathBuf, ToolError> {
+    if !profile_requested {
+        return Ok(ctx.working_dir());
+    }
+    Ok(ctx
+        .require_extension::<crate::runtime_init::extensions::LaunchWorkingDir>()?
+        .0
+        .clone())
+}
+
+/// Prevents model-selected profiles from invoking ambient user commands.
+pub(crate) fn validate_model_selected_profile(profile: &Profile) -> Result<(), ToolError> {
+    if profile.prompt_commands.is_empty() {
+        return Ok(());
+    }
+    Err(ToolError::ExecutionFailed {
+        reason: "spawn_agent: selected profile declares prompt_commands; model-selected profiles cannot execute ambient commands"
+            .to_owned(),
+    })
+}
 
 /// Construct the per-child [`ToolContext`].
 ///
@@ -158,7 +186,8 @@ pub(super) fn build_child_context(
 /// set cannot drift between launch paths.
 ///
 /// Covers: the wake registry, shared task store, searchable tool catalog,
-/// skill infrastructure (search paths + catalog — the child shares the
+/// skill infrastructure (search paths + catalog + immutable workspace root —
+/// the child shares the
 /// parent's registry, so the `skill` tool is offered to it subject to its
 /// allow-list; without both extensions the tool would be offered but
 /// always fail `MissingExtension` at execute), the diagnostic collector
@@ -192,6 +221,16 @@ pub(crate) fn forward_shared_extensions(parent_ctx: &ToolContext, child_ctx: &mu
     }
     if let Some(skill_catalog) = parent_ctx.get_extension::<crate::skill::SkillCatalog>() {
         child_ctx.insert_extension(skill_catalog);
+    }
+    if let Some(workspace_root) =
+        parent_ctx.get_extension::<crate::tools::skill::WorkspaceSkillRoot>()
+    {
+        child_ctx.insert_extension(workspace_root);
+    }
+    if let Some(launch_root) =
+        parent_ctx.get_extension::<crate::runtime_init::extensions::LaunchWorkingDir>()
+    {
+        child_ctx.insert_extension(launch_root);
     }
     if let Some(diagnostics) = parent_ctx.get_extension::<DiagnosticCollector>() {
         child_ctx.insert_extension(diagnostics);
@@ -627,6 +666,31 @@ mod tests {
         .expect("a built-in variant must resolve from the child context");
         assert_eq!(resolved.role, "explorer");
         assert_eq!(resolved.variant_name.as_deref(), Some("explorer"));
+    }
+
+    #[test]
+    fn child_context_forwards_immutable_workspace_skill_root() {
+        let infra = parent_infra(Uuid::new_v4());
+        let parent_ctx = ToolContext::empty();
+        let root = Arc::new(crate::tools::skill::WorkspaceSkillRoot(
+            std::path::PathBuf::from("/workspace-authority-root"),
+        ));
+        parent_ctx.insert_extension(Arc::clone(&root));
+
+        let child_ctx = build_child_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            Arc::new(SessionBinding::ephemeral_root()),
+            test_policy(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        let forwarded = child_ctx
+            .get_extension::<crate::tools::skill::WorkspaceSkillRoot>()
+            .expect("workspace skill authority root must be forwarded");
+        assert!(Arc::ptr_eq(&forwarded, &root));
     }
 
     #[test]

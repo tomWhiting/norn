@@ -39,11 +39,14 @@
 
 use std::collections::HashSet;
 use std::ffi::OsStr;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use crate::rules::engine::RuleEngine;
 use crate::rules::parser::parse_rule_file;
 use crate::rules::types::{DeliveryMode, Rule, RuleId, TriggerCondition, TriggerTiming};
+use crate::util::{
+    WorkspaceEntryKind, read_workspace_directory, read_workspace_text_file, workspace_relative_path,
+};
 
 /// Filename of a nested `NORN.md` context file inside a subdirectory.
 ///
@@ -73,9 +76,45 @@ const NORN_MD: &str = "NORN.md";
 ///
 /// Subdirectories within each rules directory are not recursively
 /// scanned (DESIGN.md non-goal: "nested rules directories").
+///
+/// # Trust boundary
+///
+/// This low-level compatibility API uses ordinary filesystem reads and must
+/// receive caller-trusted directories only. It does not secure
+/// repository-controlled paths or retain provenance for `shell_source`.
+/// Applications loading workspace rules should use the shared runtime assembly
+/// (`AgentBuilder` / `load_runtime_base`), which uses the crate-private
+/// provenance-aware scanner and descriptor-relative no-follow reads.
 #[must_use]
 pub fn scan_rule_dirs(dirs: &[PathBuf]) -> Vec<Rule> {
-    let mut rules: Vec<Rule> = Vec::new();
+    scan_rule_dirs_impl(dirs, None)
+        .into_iter()
+        .map(|scanned| scanned.rule)
+        .collect()
+}
+
+/// A parsed rule plus the index of the directory that supplied it.
+pub(crate) struct ScannedRule {
+    /// Parsed rule content.
+    pub(crate) rule: Rule,
+    /// Index into the directory slice passed to the scanner.
+    pub(crate) directory_index: usize,
+}
+
+/// Scans rule directories while retaining source-directory provenance.
+pub(crate) fn scan_rule_dirs_with_origins(
+    dirs: &[PathBuf],
+    workspace_root: &Path,
+    untrusted_directory_indexes: &[usize],
+) -> Vec<ScannedRule> {
+    scan_rule_dirs_impl(dirs, Some((workspace_root, untrusted_directory_indexes)))
+}
+
+fn scan_rule_dirs_impl(
+    dirs: &[PathBuf],
+    workspace_policy: Option<(&Path, &[usize])>,
+) -> Vec<ScannedRule> {
+    let mut rules: Vec<ScannedRule> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     // Tracks the winning directory per rule ID for the shadow-skip
     // diagnostic. Maintained alongside `seen` rather than replacing it
@@ -84,32 +123,56 @@ pub fn scan_rule_dirs(dirs: &[PathBuf]) -> Vec<Rule> {
     let mut winning_dir: std::collections::HashMap<String, PathBuf> =
         std::collections::HashMap::new();
 
-    for dir in dirs {
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(e) => {
-                tracing::debug!("Skipping rules dir {} during scan: {e}", dir.display());
+    for (directory_index, dir) in dirs.iter().enumerate() {
+        let workspace_entries = if let Some((workspace_root, untrusted_directory_indexes)) =
+            workspace_policy
+            && untrusted_directory_indexes.contains(&directory_index)
+        {
+            let Ok(relative) = dir.strip_prefix(workspace_root) else {
+                tracing::warn!(
+                    "Refusing rules directory outside workspace root: {}",
+                    dir.display(),
+                );
                 continue;
-            }
-        };
-
-        for entry in entries {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!(
-                        "Error reading rules directory entry in {}: {e}",
-                        dir.display(),
-                    );
+            };
+            match read_workspace_directory(workspace_root, relative) {
+                Ok(entries) => Some(
+                    entries
+                        .into_iter()
+                        .map(|entry| (dir.join(entry.name), entry.kind))
+                        .collect::<Vec<_>>(),
+                ),
+                Err(error) => {
+                    tracing::debug!("Skipping untrusted rules dir {}: {error}", dir.display());
                     continue;
                 }
-            };
+            }
+        } else {
+            None
+        };
+        let entries = match workspace_entries {
+            Some(entries) => entries,
+            None => match std::fs::read_dir(dir) {
+                Ok(entries) => entries
+                    .filter_map(|entry| {
+                        let entry = entry.ok()?;
+                        let kind = match entry.file_type().ok()? {
+                            file_type if file_type.is_file() => WorkspaceEntryKind::File,
+                            file_type if file_type.is_dir() => WorkspaceEntryKind::Directory,
+                            _ => WorkspaceEntryKind::Other,
+                        };
+                        Some((entry.path(), kind))
+                    })
+                    .collect(),
+                Err(error) => {
+                    tracing::debug!("Skipping rules dir {} during scan: {error}", dir.display());
+                    continue;
+                }
+            },
+        };
 
-            let path = entry.path();
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if !file_type.is_file() {
+        for (path, kind) in entries {
+            if kind != WorkspaceEntryKind::File {
                 continue;
             }
             if path.extension().and_then(OsStr::to_str) != Some("md") {
@@ -138,7 +201,7 @@ pub fn scan_rule_dirs(dirs: &[PathBuf]) -> Vec<Rule> {
                 continue;
             }
 
-            let content = match std::fs::read_to_string(&path) {
+            let content = match read_rule_file(&path, directory_index, workspace_policy) {
                 Ok(c) => c,
                 Err(e) => {
                     tracing::warn!(
@@ -157,7 +220,10 @@ pub fn scan_rule_dirs(dirs: &[PathBuf]) -> Vec<Rule> {
             match parse_rule_file(id, &content) {
                 Ok(rule) => {
                     winning_dir.insert(stem.to_owned(), dir.clone());
-                    rules.push(rule);
+                    rules.push(ScannedRule {
+                        rule,
+                        directory_index,
+                    });
                 }
                 Err(e) => {
                     tracing::warn!(
@@ -174,6 +240,26 @@ pub fn scan_rule_dirs(dirs: &[PathBuf]) -> Vec<Rule> {
     }
 
     rules
+}
+
+fn read_rule_file(
+    path: &Path,
+    directory_index: usize,
+    workspace_policy: Option<(&Path, &[usize])>,
+) -> std::io::Result<String> {
+    let Some((workspace_root, untrusted_directory_indexes)) = workspace_policy else {
+        return std::fs::read_to_string(path);
+    };
+    if !untrusted_directory_indexes.contains(&directory_index) {
+        return std::fs::read_to_string(path);
+    }
+    let relative = path.strip_prefix(workspace_root).map_err(|error| {
+        std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!("working-directory rule path escaped its workspace root: {error}"),
+        )
+    })?;
+    read_workspace_text_file(workspace_root, relative).map(|loaded| loaded.content)
 }
 
 // ---------------------------------------------------------------------------
@@ -229,12 +315,25 @@ pub struct NestedScanner {
 impl NestedScanner {
     /// Construct a scanner bound to the supplied project root.
     ///
-    /// The constructor performs no I/O — the first scan happens lazily
-    /// on the first call to [`Self::scan_on_path_change`].
+    /// The constructor resolves the workspace spelling once; the first
+    /// context-file scan still happens lazily on the first call to
+    /// [`Self::scan_on_path_change`].
     #[must_use]
     pub fn new(cwd: &Path) -> Self {
+        let cwd = cwd.canonicalize().unwrap_or_else(|error| {
+            tracing::warn!(
+                error = %error,
+                "failed to resolve nested-context workspace root"
+            );
+            cwd.to_path_buf()
+        });
+        Self::new_at_launch_root(cwd)
+    }
+
+    /// Constructs from an already-canonical immutable launch root.
+    pub(crate) fn new_at_launch_root(cwd: PathBuf) -> Self {
         Self {
-            cwd: cwd.to_path_buf(),
+            cwd,
             scanned_dirs: HashSet::new(),
         }
     }
@@ -295,10 +394,18 @@ impl NestedScanner {
     /// walk because they would let a stray event introduce synthetic
     /// rules from elsewhere on disk.
     fn relative_to_cwd(&self, raw: &Path) -> Option<PathBuf> {
-        if raw.is_absolute() {
-            raw.strip_prefix(&self.cwd).ok().map(Path::to_path_buf)
+        let relative = if raw.is_absolute() {
+            workspace_relative_path(&self.cwd, raw)
         } else {
             Some(raw.to_path_buf())
+        }?;
+        if relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir))
+        {
+            Some(relative)
+        } else {
+            None
         }
     }
 
@@ -311,15 +418,16 @@ impl NestedScanner {
             return;
         }
 
-        let norn_path = self.cwd.join(rel_dir).join(NORN_MD);
-        let content = match std::fs::read_to_string(&norn_path) {
-            Ok(c) => c,
+        let relative_path = rel_dir.join(NORN_MD);
+        let norn_path = self.cwd.join(&relative_path);
+        let content = match read_workspace_text_file(&self.cwd, &relative_path) {
+            Ok(loaded) => loaded.content,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 tracing::debug!("NestedScanner: no NORN.md at {}", norn_path.display(),);
                 return;
             }
             Err(e) => {
-                tracing::warn!("NestedScanner: failed to read {}: {e}", norn_path.display(),);
+                tracing::warn!("NestedScanner: refused {}: {e}", norn_path.display(),);
                 return;
             }
         };
@@ -400,6 +508,36 @@ C body.";
         let dir = tempfile::tempdir().unwrap();
         let missing = dir.path().join("never-existed");
         let rules = scan_rule_dirs(&[missing]);
+        assert!(rules.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn untrusted_rule_scan_refuses_directory_and_file_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        write(&outside.path().join("sentinel.md"), RULE_BODY_A);
+        let launch_root = workspace.path().canonicalize().unwrap();
+        let norn_dir = launch_root.join(".norn");
+        std::fs::create_dir(&norn_dir).unwrap();
+        let rules_dir = norn_dir.join("rules");
+        symlink(outside.path(), &rules_dir).unwrap();
+
+        let rules =
+            scan_rule_dirs_with_origins(std::slice::from_ref(&rules_dir), &launch_root, &[0]);
+        assert!(rules.is_empty());
+
+        std::fs::remove_file(&rules_dir).unwrap();
+        std::fs::create_dir(&rules_dir).unwrap();
+        symlink(
+            outside.path().join("sentinel.md"),
+            rules_dir.join("sentinel.md"),
+        )
+        .unwrap();
+        let rules =
+            scan_rule_dirs_with_origins(std::slice::from_ref(&rules_dir), &launch_root, &[0]);
         assert!(rules.is_empty());
     }
 
@@ -687,6 +825,57 @@ C body.";
             operation: PathOperation::Read,
         }));
         assert!(injections.is_empty());
+    }
+
+    #[test]
+    fn nested_scan_rejects_relative_parent_traversal_before_reading() {
+        let parent = tempfile::tempdir().unwrap();
+        let workspace = parent.path().join("workspace");
+        let outside = parent.path().join("outside/api");
+        std::fs::create_dir_all(&workspace).unwrap();
+        write(&outside.join("NORN.md"), "SENTINEL_OUTSIDE_TRAVERSAL");
+
+        let mut scanner = NestedScanner::new(&workspace);
+        let mut engine = RuleEngine::new(vec![]);
+        scanner.scan_on_path_change("../outside/api/file.rs", &mut engine);
+
+        let injections = tokio_test_block_on(engine.process_event(&RuntimeEvent::PathChanged {
+            path: "../outside/api/file.rs".to_owned(),
+            operation: PathOperation::Read,
+        }));
+        assert!(injections.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn nested_scan_refuses_final_and_ancestor_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().unwrap();
+        let outside = tempfile::tempdir().unwrap();
+        write(&outside.path().join("NORN.md"), "SENTINEL_OUTSIDE_SYMLINK");
+        let final_link_dir = workspace.path().join("final");
+        std::fs::create_dir(&final_link_dir).unwrap();
+        symlink(
+            outside.path().join("NORN.md"),
+            final_link_dir.join("NORN.md"),
+        )
+        .unwrap();
+        symlink(outside.path(), workspace.path().join("ancestor-link")).unwrap();
+
+        let mut scanner = NestedScanner::new(workspace.path());
+        let mut engine = RuleEngine::new(vec![]);
+        scanner.scan_on_path_change("final/file.rs", &mut engine);
+        scanner.scan_on_path_change("ancestor-link/file.rs", &mut engine);
+
+        for path in ["final/file.rs", "ancestor-link/file.rs"] {
+            let injections =
+                tokio_test_block_on(engine.process_event(&RuntimeEvent::PathChanged {
+                    path: path.to_owned(),
+                    operation: PathOperation::Read,
+                }));
+            assert!(injections.is_empty());
+        }
     }
 
     #[test]

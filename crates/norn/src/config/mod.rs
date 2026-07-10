@@ -12,7 +12,11 @@
 //!   malformed JSON produces typed errors.
 //! - [`merge`] — five-layer precedence merge with field-type-specific
 //!   strategies (scalar override, deny-additive, allow-concatenate,
-//!   hook-extend, MCP-by-name, tool-deep-merge).
+//!   hook-extend, MCP-by-name, tool-deep-merge). Runtime callers validate raw
+//!   working-directory authority before invoking this mechanical merge.
+//! - [`validate_working_directory_authority`] — provenance validation for raw
+//!   user/project/local layers before repository-controlled values can grant
+//!   credential, backend, command, or eager-file-read authority.
 //! - [`validate`] — semantic validation of a merged settings value:
 //!   duration strings, permission patterns, MCP server shape.
 //! - [`permissions`] — compiled [`PermissionPolicy`] evaluating tool
@@ -23,12 +27,14 @@ pub mod loader;
 pub mod merge;
 pub mod paths;
 pub mod permissions;
+mod provider_security;
 pub mod types;
 pub mod validate;
 
 pub use loader::{LoadedSettings, load_settings, local_settings_path, project_settings_path};
 pub use merge::merge_settings;
 pub use permissions::{PermissionDecision, PermissionPolicy};
+pub use provider_security::validate_working_directory_authority;
 pub use types::{
     AgentSettings, AutoCompactReserve, ContextSettings, HookEntry, HookSettings,
     LengthOverrideEntry, McpServerSettings, ModelAliasSelection, ModelAliasSettings, NornSettings,

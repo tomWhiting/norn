@@ -103,7 +103,7 @@ impl Spool {
     /// home directory, otherwise the absolute path.
     #[must_use]
     pub fn display_path(&self) -> String {
-        if let Some(home) = dirs::home_dir()
+        if let Some(home) = crate::config::paths::trusted_home_dir()
             && let Ok(stripped) = self.path.strip_prefix(&home)
         {
             return format!("~/{}", stripped.to_string_lossy());

@@ -20,6 +20,7 @@ use serde::Deserialize;
 use super::types::{Capability, Profile};
 use crate::error::ConfigError;
 use crate::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
+use crate::util::read_workspace_text_file;
 
 /// File extensions checked by [`Scanner::resolve`], in priority order.
 ///
@@ -30,18 +31,15 @@ const PROFILE_EXTENSIONS: [&str; 3] = ["md", "toml", "json"];
 
 /// Returns `true` when `name` is safe to use as a profile filename stem.
 ///
-/// Mirrors the semantics of claude-runner's scanner: rejects empty names
-/// and names containing `..`, path separators, or null bytes. Used by
-/// [`Scanner::resolve`] and [`Scanner::list_profiles`] to short-circuit
-/// path-traversal attempts before they touch the filesystem.
+/// Bare names use a conservative visible ASCII alphabet: letters, digits,
+/// hyphens, and underscores. Used by [`Scanner::resolve`] and
+/// [`Scanner::list_profiles`] to reject path traversal and diagnostic control
+/// characters before they touch the filesystem or an error surface.
 fn is_safe_name(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-    if name.contains("..") || name.contains('/') || name.contains('\\') || name.contains('\0') {
-        return false;
-    }
-    true
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
 }
 
 /// Two-tier profile discovery: walks an ordered list of directories and
@@ -49,12 +47,21 @@ fn is_safe_name(name: &str) -> bool {
 ///
 /// Within each directory the extension search order is `.md` → `.toml` →
 /// `.json`. Across directories, the first match wins — so a workspace
-/// profile shadows a user-level profile of the same name.
+/// profile shadows a user-level profile of the same name. The higher-level
+/// [`resolve_workspace_profile`] API retains that origin and rejects automatic
+/// commands from workspace profiles.
 ///
 /// Construct via [`Scanner::new`]; the typical scan-dir list comes from
 /// [`default_scan_dirs`]. Non-existent directories are silently skipped
 /// (debug-logged, not errored) to match the claude-runner reference
 /// implementation.
+///
+/// # Trust boundary
+///
+/// `Scanner` is a low-level compatibility API for caller-trusted directories.
+/// It uses ordinary filesystem metadata and does not retain workspace origin.
+/// Use [`resolve_workspace_profile`] or `AgentBuilder` for bare names that can
+/// resolve beneath a repository.
 pub struct Scanner {
     /// Ordered list of directories to search. First match wins across this
     /// list; `.md` beats `.toml` beats `.json` within each directory.
@@ -80,14 +87,20 @@ impl Scanner {
     /// match is found anywhere.
     #[must_use]
     pub fn resolve(&self, name: &str) -> Option<PathBuf> {
+        self.resolve_with_directory_index(name)
+            .map(|resolved| resolved.0)
+    }
+
+    fn resolve_with_directory_index(&self, name: &str) -> Option<(PathBuf, usize)> {
         if !is_safe_name(name) {
             return None;
         }
-        for dir in &self.scan_dirs {
+        for (index, dir) in self.scan_dirs.iter().enumerate() {
             for ext in PROFILE_EXTENSIONS {
                 let candidate = dir.join(format!("{name}.{ext}"));
-                if candidate.is_file() {
-                    return Some(candidate);
+                match std::fs::symlink_metadata(&candidate) {
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Ok(_) | Err(_) => return Some((candidate, index)),
                 }
             }
         }
@@ -146,6 +159,24 @@ impl Scanner {
     }
 }
 
+/// Trust origin of a profile resolved through [`default_scan_dirs`].
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ProfileOrigin {
+    /// Profile file came from `.norn/profiles` or `.meridian/profiles` under
+    /// the active working directory.
+    WorkingDirectory,
+    /// Profile file came from the user profile directory.
+    User,
+}
+
+/// A workspace-aware profile resolution that retains its trust origin.
+pub struct ResolvedWorkspaceProfile {
+    /// Parsed profile with referenced capabilities resolved.
+    pub profile: Profile,
+    /// Trust origin of the profile file.
+    pub origin: ProfileOrigin,
+}
+
 /// The default profile scan order for a workspace rooted at `cwd`.
 ///
 /// Returns three candidate directories in priority order:
@@ -200,18 +231,53 @@ pub fn capability_scan_dirs(profile_scan_dirs: &[PathBuf]) -> Vec<PathBuf> {
 /// restriction surface — it must never be silently dropped), and
 /// propagates parse errors from [`parse_capability`].
 pub fn resolve_capability(name: &str, scan_dirs: &[PathBuf]) -> Result<Capability, ConfigError> {
+    resolve_capability_in_dirs(name, scan_dirs, None)
+}
+
+fn resolve_capability_in_dirs(
+    name: &str,
+    scan_dirs: &[PathBuf],
+    workspace_root: Option<&Path>,
+) -> Result<Capability, ConfigError> {
     if !is_safe_name(name) {
         return Err(ConfigError::InvalidConfig {
-            reason: format!("capability name '{name}' is not a safe file stem"),
+            reason: "capability name is not a safe file stem".to_owned(),
         });
     }
     for dir in scan_dirs {
         let candidate = dir.join(format!("{name}.md"));
+        if let Some(root) = workspace_root {
+            let relative =
+                candidate
+                    .strip_prefix(root)
+                    .map_err(|error| ConfigError::InvalidConfig {
+                        reason: format!(
+                            "working-directory capability escaped its workspace root: {error}"
+                        ),
+                    })?;
+            let contents = match read_workspace_text_file(root, relative) {
+                Ok(file) => file.content,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(ConfigError::InvalidConfig {
+                        reason: format!(
+                            "refused working-directory capability at {}: {error}",
+                            candidate.display(),
+                        ),
+                    });
+                }
+            };
+            return parse_capability(&contents, &candidate);
+        }
         if candidate.is_file() {
-            let contents =
-                std::fs::read_to_string(&candidate).map_err(|e| ConfigError::InvalidConfig {
-                    reason: format!("failed to read capability at {}: {e}", candidate.display()),
-                })?;
+            let contents = std::fs::read_to_string(&candidate).map_err(|error| {
+                ConfigError::InvalidConfig {
+                    reason: format!(
+                        "failed to read capability at {}: {error}",
+                        candidate.display(),
+                    ),
+                }
+            })?;
             return parse_capability(&contents, &candidate);
         }
     }
@@ -246,7 +312,18 @@ pub fn resolve_capability(name: &str, scan_dirs: &[PathBuf]) -> Result<Capabilit
 /// unresolvable capability is an error rather than a warning because
 /// capabilities carry `disallowedTools` restrictions that must never be
 /// silently dropped.
+///
+/// # Trust boundary
+///
+/// `scan_dirs` must be caller-trusted. This compatibility API uses the
+/// unrestricted [`Scanner`]; repository-aware callers should use
+/// [`resolve_workspace_profile`] or shared runtime assembly instead.
 pub fn resolve_profile(name: &str, scan_dirs: &[PathBuf]) -> Result<Profile, ConfigError> {
+    if !is_safe_name(name) {
+        return Err(ConfigError::InvalidConfig {
+            reason: "profile name is not a safe file stem".to_owned(),
+        });
+    }
     let scanner = Scanner::new(scan_dirs.to_vec());
     let Some(path) = scanner.resolve(name) else {
         let searched = scan_dirs
@@ -258,6 +335,122 @@ pub fn resolve_profile(name: &str, scan_dirs: &[PathBuf]) -> Result<Profile, Con
             reason: format!("profile '{name}' not found; searched: {searched}"),
         });
     };
+    load_profile(path, scan_dirs)
+}
+
+/// Resolves a bare profile name using the standard workspace/user tiers while
+/// retaining source trust and rejecting automatic commands from workspace
+/// profiles.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::InvalidConfig`] when the profile cannot be found,
+/// parsed, or resolved, or when a working-directory profile declares a prompt
+/// command. User-level profiles retain prompt-command support.
+pub fn resolve_workspace_profile(
+    name: &str,
+    cwd: &Path,
+) -> Result<ResolvedWorkspaceProfile, ConfigError> {
+    let cwd = cwd
+        .canonicalize()
+        .map_err(|error| ConfigError::InvalidConfig {
+            reason: format!("failed to resolve the profile workspace trust root: {error}"),
+        })?;
+    resolve_workspace_profile_at_launch_root(name, &cwd)
+}
+
+/// Resolves a profile from an already-canonical immutable launch root.
+pub(crate) fn resolve_workspace_profile_at_launch_root(
+    name: &str,
+    cwd: &Path,
+) -> Result<ResolvedWorkspaceProfile, ConfigError> {
+    let scan_dirs = default_scan_dirs(cwd);
+    if !is_safe_name(name) {
+        return Err(ConfigError::InvalidConfig {
+            reason: "profile name is not a safe file stem".to_owned(),
+        });
+    }
+    let mut resolved = None;
+    for (directory_index, directory) in scan_dirs.iter().enumerate() {
+        for extension in PROFILE_EXTENSIONS {
+            let path = directory.join(format!("{name}.{extension}"));
+            if directory_index < 2 {
+                let relative =
+                    path.strip_prefix(cwd)
+                        .map_err(|error| ConfigError::InvalidConfig {
+                            reason: format!(
+                                "working-directory profile escaped its workspace root: {error}"
+                            ),
+                        })?;
+                match read_workspace_text_file(cwd, relative) {
+                    Ok(file) => {
+                        resolved = Some((path, directory_index, Some(file.content)));
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(ConfigError::InvalidConfig {
+                            reason: format!(
+                                "refused working-directory profile at {}: {error}",
+                                path.display(),
+                            ),
+                        });
+                    }
+                }
+            } else if path.is_file() {
+                resolved = Some((path, directory_index, None));
+                break;
+            }
+        }
+        if resolved.is_some() {
+            break;
+        }
+    }
+    let Some((path, directory_index, workspace_contents)) = resolved else {
+        let searched = scan_dirs
+            .iter()
+            .map(|candidate| candidate.display().to_string())
+            .collect::<Vec<_>>()
+            .join(", ");
+        return Err(ConfigError::InvalidConfig {
+            reason: format!("profile '{name}' not found; searched: {searched}"),
+        });
+    };
+    let origin = if directory_index < 2 {
+        ProfileOrigin::WorkingDirectory
+    } else {
+        ProfileOrigin::User
+    };
+    let profile = if origin == ProfileOrigin::WorkingDirectory {
+        let contents = workspace_contents.ok_or_else(|| ConfigError::InvalidConfig {
+            reason: "working-directory profile lost its securely read contents".to_owned(),
+        })?;
+        Profile::from_contents(&path, &contents)?
+    } else {
+        Profile::from_file(&path)?
+    };
+    if origin == ProfileOrigin::WorkingDirectory && !profile.prompt_commands.is_empty() {
+        return Err(ConfigError::InvalidConfig {
+            reason: "working-directory profiles cannot declare prompt_commands because repository profiles cannot execute automatic commands; use a user profile or remove prompt_commands"
+                .to_owned(),
+        });
+    }
+    let mut profile = profile;
+    let capability_dirs = capability_scan_dirs(&scan_dirs);
+    match origin {
+        ProfileOrigin::WorkingDirectory => {
+            let workspace_dirs = capability_dirs.into_iter().take(2).collect::<Vec<_>>();
+            resolve_profile_capabilities_in_dirs(&mut profile, &workspace_dirs, Some(cwd))?;
+        }
+        ProfileOrigin::User => {
+            let user_dirs = capability_dirs.into_iter().skip(2).collect::<Vec<_>>();
+            resolve_profile_capabilities_in_dirs(&mut profile, &user_dirs, None)?;
+        }
+    }
+    Ok(ResolvedWorkspaceProfile { profile, origin })
+}
+
+fn load_profile(path: PathBuf, scan_dirs: &[PathBuf]) -> Result<Profile, ConfigError> {
     let mut profile = Profile::from_file(path)?;
     resolve_profile_capabilities(&mut profile, scan_dirs)?;
     Ok(profile)
@@ -279,16 +472,24 @@ pub fn resolve_profile_capabilities(
     profile: &mut Profile,
     profile_scan_dirs: &[PathBuf],
 ) -> Result<(), ConfigError> {
+    let capability_dirs = capability_scan_dirs(profile_scan_dirs);
+    resolve_profile_capabilities_in_dirs(profile, &capability_dirs, None)
+}
+
+fn resolve_profile_capabilities_in_dirs(
+    profile: &mut Profile,
+    capability_dirs: &[PathBuf],
+    workspace_root: Option<&Path>,
+) -> Result<(), ConfigError> {
     if profile.capability_names.is_empty() {
         return Ok(());
     }
-    let capability_dirs = capability_scan_dirs(profile_scan_dirs);
     let names = std::mem::take(&mut profile.capability_names);
     for name in names {
         if profile.capabilities.iter().any(|c| c.name == name) {
             continue;
         }
-        let capability = resolve_capability(&name, &capability_dirs)?;
+        let capability = resolve_capability_in_dirs(&name, capability_dirs, workspace_root)?;
         profile.capabilities.push(capability);
     }
     Ok(())
@@ -781,6 +982,12 @@ Focus on correctness over aesthetics.
         assert!(!is_safe_name("foo/bar"));
         assert!(!is_safe_name("foo\\bar"));
         assert!(!is_safe_name("foo\0bar"));
+        assert!(!is_safe_name("foo.bar"));
+        assert!(!is_safe_name("foo:bar"));
+        assert!(!is_safe_name("foo\nbar"));
+        assert!(!is_safe_name("foo\u{1b}[31m"));
+        assert!(!is_safe_name("foo\u{7}bar"));
+        assert!(!is_safe_name("föö"));
     }
 
     // ── Scanner::resolve ───────────────────────────────────────────────
@@ -938,6 +1145,206 @@ Focus on correctness over aesthetics.
         assert_eq!(dirs[0], cwd.join(".norn").join("profiles"));
         assert_eq!(dirs[1], cwd.join(".meridian").join("profiles"));
         assert_eq!(dirs[2], norn_home.path().join("profiles"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn workspace_profile_prompt_commands_are_rejected_without_execution()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let norn_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(norn_home.path());
+        let profiles = cwd.path().join(".norn").join("profiles");
+        std::fs::create_dir_all(&profiles)?;
+        std::fs::write(
+            profiles.join("hostile.json"),
+            r#"{
+                "name": "hostile",
+                "model": "gpt-5.6-sol",
+                "prompt_commands": [{
+                    "name": "private",
+                    "command": "touch profile-command-secret",
+                    "cache_ttl": null
+                }]
+            }"#,
+        )?;
+
+        let Err(error) = resolve_workspace_profile("hostile", cwd.path()) else {
+            return Err(std::io::Error::other("workspace prompt command was accepted").into());
+        };
+        let rendered = error.to_string();
+        assert!(rendered.contains("prompt_commands"));
+        assert!(!rendered.contains("profile-command-secret"));
+        assert!(!cwd.path().join("profile-command-secret").exists());
+
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn static_workspace_and_user_prompt_command_profiles_keep_their_trust_contract()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let norn_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(norn_home.path());
+        let workspace_profiles = cwd.path().join(".norn").join("profiles");
+        let user_profiles = norn_home.path().join("profiles");
+        std::fs::create_dir_all(&workspace_profiles)?;
+        std::fs::create_dir_all(&user_profiles)?;
+        write_md(&workspace_profiles.join("static.md"), "static");
+        std::fs::write(
+            user_profiles.join("trusted.json"),
+            r#"{
+                "name": "trusted",
+                "model": "gpt-5.6-sol",
+                "prompt_commands": [{
+                    "name": "trusted",
+                    "command": "touch sentinel-model-selected-user-command",
+                    "cache_ttl": null
+                }]
+            }"#,
+        )?;
+
+        let workspace = resolve_workspace_profile("static", cwd.path())?;
+        assert_eq!(workspace.origin, ProfileOrigin::WorkingDirectory);
+        assert!(workspace.profile.prompt_commands.is_empty());
+
+        let user = resolve_workspace_profile("trusted", cwd.path())?;
+        assert_eq!(user.origin, ProfileOrigin::User);
+        assert_eq!(user.profile.prompt_commands.len(), 1);
+        let error =
+            crate::tools::agent::spawn_context::validate_model_selected_profile(&user.profile)
+                .expect_err("model-selected user profiles cannot run prompt commands");
+        let rendered = error.to_string();
+        assert!(rendered.contains("prompt_commands"));
+        assert!(!rendered.contains("sentinel-model-selected-user-command"));
+        assert!(
+            !cwd.path()
+                .join("sentinel-model-selected-user-command")
+                .exists()
+        );
+
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn workspace_profile_symlink_is_refused_without_reading_target()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let norn_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let outside = tempfile::NamedTempFile::new()?;
+        std::fs::write(
+            outside.path(),
+            r#"{"name":"leak","model":"gpt-5.6-sol","system_instructions":["sentinel-private-profile"]}"#,
+        )?;
+        let profiles = cwd.path().join(".norn/profiles");
+        std::fs::create_dir_all(&profiles)?;
+        symlink(outside.path(), profiles.join("leak.json"))?;
+        let norn_home_guard = NornHomeGuard::set(norn_home.path());
+
+        let Err(error) = resolve_workspace_profile("leak", cwd.path()) else {
+            return Err(std::io::Error::other("workspace profile symlink was accepted").into());
+        };
+
+        assert!(!error.to_string().contains("sentinel-private-profile"));
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn workspace_capability_symlink_is_refused_without_reading_target()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let norn_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let profiles = cwd.path().join(".norn/profiles");
+        let capabilities = cwd.path().join(".norn/capabilities");
+        std::fs::create_dir_all(&profiles)?;
+        std::fs::create_dir_all(&capabilities)?;
+        std::fs::write(
+            profiles.join("dev.md"),
+            "---\nname: dev\nmodel: gpt-5.6-sol\ncapabilities: [leak]\n---\nDeveloper.\n",
+        )?;
+        let outside = tempfile::NamedTempFile::new()?;
+        std::fs::write(
+            outside.path(),
+            "---\nname: leak\n---\nsentinel-private-capability\n",
+        )?;
+        symlink(outside.path(), capabilities.join("leak.md"))?;
+        let norn_home_guard = NornHomeGuard::set(norn_home.path());
+
+        let Err(error) = resolve_workspace_profile("dev", cwd.path()) else {
+            return Err(std::io::Error::other("workspace capability symlink was accepted").into());
+        };
+
+        assert!(!error.to_string().contains("sentinel-private-capability"));
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn user_and_workspace_profiles_resolve_capabilities_within_their_own_trust_tier()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let norn_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let workspace_profiles = cwd.path().join(".norn/profiles");
+        let workspace_capabilities = cwd.path().join(".norn/capabilities");
+        let user_profiles = norn_home.path().join("profiles");
+        let user_capabilities = norn_home.path().join("capabilities");
+        for directory in [
+            &workspace_profiles,
+            &workspace_capabilities,
+            &user_profiles,
+            &user_capabilities,
+        ] {
+            std::fs::create_dir_all(directory)?;
+        }
+        std::fs::write(
+            user_profiles.join("trusted.md"),
+            "---\nname: trusted\nmodel: gpt-5.6-sol\ncapabilities: [shared]\n---\nTrusted.\n",
+        )?;
+        std::fs::write(
+            workspace_capabilities.join("shared.md"),
+            "---\nname: shared\n---\nWORKSPACE_CAPABILITY\n",
+        )?;
+        std::fs::write(
+            user_capabilities.join("shared.md"),
+            "---\nname: shared\n---\nUSER_CAPABILITY\n",
+        )?;
+        std::fs::write(
+            workspace_profiles.join("repository.md"),
+            "---\nname: repository\nmodel: gpt-5.6-sol\ncapabilities: [user-only]\n---\nRepository.\n",
+        )?;
+        std::fs::write(
+            user_capabilities.join("user-only.md"),
+            "---\nname: user-only\n---\nUSER_ONLY_CAPABILITY\n",
+        )?;
+        let norn_home_guard = NornHomeGuard::set(norn_home.path());
+
+        let trusted = resolve_workspace_profile("trusted", cwd.path())?;
+        assert_eq!(trusted.origin, ProfileOrigin::User);
+        assert_eq!(
+            trusted.profile.capabilities[0].system_instructions,
+            vec!["USER_CAPABILITY".to_owned()],
+        );
+
+        let Err(error) = resolve_workspace_profile("repository", cwd.path()) else {
+            return Err(std::io::Error::other("workspace profile borrowed user capability").into());
+        };
+        assert!(!error.to_string().contains("USER_ONLY_CAPABILITY"));
+
+        drop(norn_home_guard);
+        Ok(())
     }
 
     // ── capability resolution ──────────────────────────────────────────

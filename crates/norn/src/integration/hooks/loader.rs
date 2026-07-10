@@ -3,12 +3,14 @@
 //! [`load_hooks_from_settings`] projects the `hooks` section out of an
 //! already-merged [`NornSettings`] value. There is exactly ONE settings
 //! pipeline: [`crate::config::loader::load_settings`] reads the three
-//! on-disk tiers once, [`crate::config::merge::merge_settings`]
-//! concatenates each event slot in tier order (user → project → local →
-//! CLI), and [`crate::config::validate::validate_settings`] enforces the
-//! semantic rules. This function never touches the filesystem — callers
-//! hand it the merged document they already hold, so hook assembly costs
-//! no extra disk reads.
+//! on-disk tiers once,
+//! [`crate::config::validate_working_directory_authority`]
+//! rejects command authority from the project/local layers before merge,
+//! [`crate::config::merge::merge_settings`] combines the trusted layers, and
+//! [`crate::config::validate::validate_settings`] enforces the semantic rules.
+//! This function never touches the filesystem or establishes provenance —
+//! callers hand it the already-validated merged document, so hook assembly
+//! costs no extra disk reads.
 //!
 //! Validation lives at two earlier layers:
 //!
@@ -42,8 +44,8 @@ pub fn load_hooks_from_settings(settings: &NornSettings) -> HookSettings {
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic, unsafe_code)]
 mod tests {
     use super::*;
+    use crate::config::load_settings;
     use crate::config::types::HookEntry;
-    use crate::config::{load_settings, merge_settings, validate_settings};
 
     #[test]
     fn absent_hooks_section_yields_default() {
@@ -65,18 +67,18 @@ mod tests {
     }
 
     #[test]
-    fn merged_hooks_section_is_projected_verbatim() {
+    fn trusted_merged_hooks_section_is_projected_verbatim() {
         let settings = NornSettings {
             hooks: Some(HookSettings {
                 pre_tool: Some(vec![
                     HookEntry {
                         matcher: Some("Write".to_owned()),
-                        command: "user.sh".to_owned(),
+                        command: "trusted-first.sh".to_owned(),
                         timeout: 5,
                     },
                     HookEntry {
                         matcher: Some("Edit".to_owned()),
-                        command: "project.sh".to_owned(),
+                        command: "trusted-second.sh".to_owned(),
                         timeout: 10,
                     },
                 ]),
@@ -87,17 +89,15 @@ mod tests {
         let hooks = load_hooks_from_settings(&settings);
         let pre_tool = hooks.pre_tool.expect("pre_tool preserved");
         assert_eq!(pre_tool.len(), 2);
-        assert_eq!(pre_tool[0].command, "user.sh");
-        assert_eq!(pre_tool[1].command, "project.sh");
+        assert_eq!(pre_tool[0].command, "trusted-first.sh");
+        assert_eq!(pre_tool[1].command, "trusted-second.sh");
     }
 
-    /// H-class regression for the former double-load: the single pipeline
-    /// (load → merge → validate → extract) produces tier-ordered hook
-    /// entries from real settings files, with no second disk read baked
-    /// into hook extraction.
+    /// The runtime pipeline must reject command-bearing working-directory
+    /// layers before the mechanical merge can erase their provenance.
     #[test]
     #[serial_test::serial]
-    fn single_pipeline_merges_three_tiers_in_priority_order() {
+    fn single_pipeline_rejects_working_directory_hooks_before_merge() {
         struct NornHomeGuard {
             prior: Option<std::ffi::OsString>,
         }
@@ -121,7 +121,7 @@ mod tests {
 
         let user_home = tempfile::tempdir().unwrap();
         let cwd = tempfile::tempdir().unwrap();
-        let _guard = NornHomeGuard::set(user_home.path());
+        let norn_home_guard = NornHomeGuard::set(user_home.path());
 
         std::fs::write(
             user_home.path().join("settings.json"),
@@ -141,22 +141,18 @@ mod tests {
         )
         .unwrap();
 
-        let mut layers = load_settings(cwd.path()).unwrap();
-        let mut cli = NornSettings::default();
-        let merged = merge_settings(
-            &mut layers.user,
-            &mut layers.project,
-            &mut layers.local,
-            &mut cli,
-        );
-        validate_settings(&merged).unwrap();
+        let layers = load_settings(cwd.path()).unwrap();
+        let error = crate::config::validate_working_directory_authority(
+            &layers.user,
+            &layers.project,
+            &layers.local,
+        )
+        .expect_err("working-directory hooks must fail before merge");
+        let rendered = error.to_string();
+        assert!(rendered.contains("hooks"));
+        assert!(!rendered.contains("project.sh"));
+        assert!(!rendered.contains("local.sh"));
 
-        let hooks = load_hooks_from_settings(&merged);
-        let pre_tool = hooks.pre_tool.expect("merged pre_tool present");
-        assert_eq!(pre_tool.len(), 3, "user + project + local concatenated");
-        assert_eq!(pre_tool[0].command, "user.sh", "user tier first");
-        assert_eq!(pre_tool[1].command, "project.sh", "project second");
-        assert_eq!(pre_tool[2].command, "local.sh", "local last");
-        assert_eq!(pre_tool[2].timeout, 15);
+        drop(norn_home_guard);
     }
 }

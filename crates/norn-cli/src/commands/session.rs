@@ -18,7 +18,10 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
-use norn::config::{NornSettings, load_settings, merge_settings, validate_settings};
+use norn::config::{
+    LoadedSettings, NornSettings, load_settings, merge_settings, validate_settings,
+    validate_working_directory_authority,
+};
 
 use crate::cli::ExitCode;
 use crate::cli::{BuildError, Cli, Mode, Protocol, SessionCmd, SessionListFormat, detect_mode};
@@ -64,8 +67,9 @@ pub fn run_session(cli: Cli, cmd: SessionCmd, agent: AgentEntry<'_>) -> ExitCode
 /// mutates the index without going through `builder_from_cli`.
 ///
 /// Runs the same settings pipeline the agent path runs (`load_settings`
-/// → `merge_settings` → `validate_settings`, then the `-c` overrides
-/// from the shared top-level flag) and feeds it to
+/// → working-directory authority validation → `merge_settings` →
+/// `validate_settings`, then the `-c` overrides from the shared top-level
+/// flag) and feeds it to
 /// [`resolve_index_lock_deadline`], so `norn session remove` honours
 /// exactly the deadline `norn -p` would — including `-c
 /// index_lock_deadline_ms=<u64>` on the recovery command itself.
@@ -77,7 +81,16 @@ pub fn run_session(cli: Cli, cmd: SessionCmd, agent: AgentEntry<'_>) -> ExitCode
 /// rather than silently falling back to an unbounded lock wait.
 fn resolve_subcommand_lock_deadline(cli: &Cli) -> Result<Duration, BuildError> {
     let cwd = std::env::current_dir()?;
-    let mut layers = load_settings(&cwd)?;
+    let layers = load_settings(&cwd)?;
+    let settings = merge_validated_subcommand_settings(layers)?;
+    let overrides = ConfigOverrides::parse(&cli.config)?;
+    resolve_index_lock_deadline(&settings, &overrides)
+}
+
+fn merge_validated_subcommand_settings(
+    mut layers: LoadedSettings,
+) -> Result<NornSettings, BuildError> {
+    validate_working_directory_authority(&layers.user, &layers.project, &layers.local)?;
     let mut cli_layer = NornSettings::default();
     let settings = merge_settings(
         &mut layers.user,
@@ -86,8 +99,7 @@ fn resolve_subcommand_lock_deadline(cli: &Cli) -> Result<Duration, BuildError> {
         &mut cli_layer,
     );
     validate_settings(&settings)?;
-    let overrides = ConfigOverrides::parse(&cli.config)?;
-    resolve_index_lock_deadline(&settings, &overrides)
+    Ok(settings)
 }
 
 /// Callback that runs the agent path with a (possibly mutated) [`Cli`].
@@ -418,6 +430,29 @@ mod tests {
             matches: vec!["abcdefgh-1".to_owned(), "abcdefgh-2".to_owned()],
         };
         assert_eq!(report_persist_error(&err), ExitCode::AgentError);
+    }
+
+    #[test]
+    fn subcommand_settings_reject_working_directory_authority_before_merge() {
+        let project = serde_json::from_value(serde_json::json!({
+            "hooks": {
+                "session_start": [{
+                    "command": "sentinel-session-command",
+                    "timeout": 5
+                }]
+            }
+        }))
+        .unwrap();
+        let layers = LoadedSettings {
+            project,
+            ..LoadedSettings::default()
+        };
+
+        let error = merge_validated_subcommand_settings(layers)
+            .expect_err("session subcommands must reject repository command authority");
+        let rendered = error.to_string();
+        assert!(rendered.contains("hooks"));
+        assert!(!rendered.contains("sentinel-session-command"));
     }
 
     #[test]

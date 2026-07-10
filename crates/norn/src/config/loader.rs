@@ -26,6 +26,7 @@ use std::path::{Path, PathBuf};
 use crate::config::paths;
 use crate::config::types::NornSettings;
 use crate::error::ConfigError;
+use crate::util::read_workspace_text_file;
 
 /// Three independent settings layers as loaded from disk.
 ///
@@ -50,13 +51,27 @@ pub struct LoadedSettings {
 /// User layer is resolved via [`paths::settings_file`]. Project and local
 /// paths are derived directly from `cwd`. Missing files are tolerated;
 /// malformed JSON and other I/O failures produce typed
-/// [`ConfigError::InvalidConfig`].
+/// [`ConfigError::InvalidConfig`]. The layers are intentionally raw; runtime
+/// assemblers must call
+/// [`super::validate_working_directory_authority`] before merging them.
 ///
 /// # Errors
 ///
 /// - The settings file exists but is not valid JSON.
 /// - An I/O error other than `NotFound` occurs while reading any layer.
 pub fn load_settings(cwd: &Path) -> Result<LoadedSettings, ConfigError> {
+    let cwd = cwd
+        .canonicalize()
+        .map_err(|error| ConfigError::InvalidConfig {
+            reason: format!("failed to resolve the working-directory trust root: {error}"),
+        })?;
+    load_settings_at_launch_root(&cwd)
+}
+
+/// Loads settings from an already-canonical immutable launch root.
+pub(crate) fn load_settings_at_launch_root(cwd: &Path) -> Result<LoadedSettings, ConfigError> {
+    paths::validate_norn_home()?;
+    paths::validate_user_home()?;
     let user_path = paths::settings_file();
     let project_path = cwd.join(".norn").join("settings.json");
     let local_path = cwd.join(".norn").join("settings.local.json");
@@ -65,8 +80,8 @@ pub fn load_settings(cwd: &Path) -> Result<LoadedSettings, ConfigError> {
         Some(p) => load_one_layer(&p)?,
         None => NornSettings::default(),
     };
-    let project = load_one_layer(&project_path)?;
-    let local = load_one_layer(&local_path)?;
+    let project = load_workspace_layer(cwd, Path::new(".norn/settings.json"), &project_path)?;
+    let local = load_workspace_layer(cwd, Path::new(".norn/settings.local.json"), &local_path)?;
 
     Ok(LoadedSettings {
         user,
@@ -92,6 +107,28 @@ fn load_one_layer(path: &Path) -> Result<NornSettings, ConfigError> {
         }
     };
     parse_layer(path, &contents)
+}
+
+fn load_workspace_layer(
+    root: &Path,
+    relative: &Path,
+    display_path: &Path,
+) -> Result<NornSettings, ConfigError> {
+    let contents = match read_workspace_text_file(root, relative) {
+        Ok(loaded) => loaded.content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(NornSettings::default());
+        }
+        Err(error) => {
+            return Err(ConfigError::InvalidConfig {
+                reason: format!(
+                    "refused working-directory settings file {}: {error}",
+                    display_path.display(),
+                ),
+            });
+        }
+    };
+    parse_layer(display_path, &contents)
 }
 
 /// Parse a single layer's JSON string, warning on every ignored key —
@@ -176,6 +213,10 @@ mod tests {
         prior: Option<std::ffi::OsString>,
     }
 
+    struct HomeGuard {
+        prior: Option<std::ffi::OsString>,
+    }
+
     impl NornHomeGuard {
         fn set(value: Option<&std::path::Path>) -> Self {
             let prior = std::env::var_os("NORN_HOME");
@@ -196,6 +237,23 @@ mod tests {
         }
     }
 
+    impl HomeGuard {
+        fn set_relative() -> Self {
+            let prior = std::env::var_os("HOME");
+            unsafe { std::env::set_var("HOME", "repository-user-home") };
+            Self { prior }
+        }
+    }
+
+    impl Drop for HomeGuard {
+        fn drop(&mut self) {
+            match &self.prior {
+                Some(value) => unsafe { std::env::set_var("HOME", value) },
+                None => unsafe { std::env::remove_var("HOME") },
+            }
+        }
+    }
+
     #[test]
     #[serial_test::serial]
     fn missing_files_produce_default_settings() {
@@ -211,6 +269,43 @@ mod tests {
         assert!(loaded.project.agent.is_none());
         assert!(loaded.local.model.is_none());
         assert!(loaded.local.agent.is_none());
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn relative_norn_home_is_rejected_before_user_tier_loading() {
+        let cwd = tempfile::tempdir().unwrap();
+        let relative_home = cwd.path().join("repository-user-tier");
+        std::fs::create_dir(&relative_home).unwrap();
+        std::fs::write(
+            relative_home.join("settings.json"),
+            r#"{"model":"sentinel-repository-user-model"}"#,
+        )
+        .unwrap();
+        let norn_home_guard =
+            NornHomeGuard::set(Some(std::path::Path::new("repository-user-tier")));
+
+        let error = load_settings(cwd.path())
+            .expect_err("relative NORN_HOME must not define the trusted user tier")
+            .to_string();
+
+        assert!(error.contains("NORN_HOME must be an absolute path"));
+        assert!(!error.contains("sentinel-repository-user-model"));
+        drop(norn_home_guard);
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn relative_home_is_rejected_before_user_tier_loading() {
+        let cwd = tempfile::tempdir().unwrap();
+        let _norn_home = NornHomeGuard::set(None);
+        let _home = HomeGuard::set_relative();
+
+        let error = load_settings(cwd.path())
+            .expect_err("relative HOME must not define the trusted user tier")
+            .to_string();
+
+        assert!(error.contains("home directory must be absolute"));
     }
 
     #[test]
@@ -271,6 +366,43 @@ mod tests {
         assert_eq!(loaded.local.model.as_deref(), Some("local-model"));
         assert!(loaded.project.model.is_none());
         assert!(loaded.user.model.is_none());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    #[serial_test::serial]
+    fn working_directory_settings_refuse_file_and_directory_symlinks() {
+        use std::os::unix::fs::symlink;
+
+        let user_home = tempfile::tempdir().unwrap();
+        let norn_home_guard = NornHomeGuard::set(Some(user_home.path()));
+        let outside = tempfile::tempdir().unwrap();
+        std::fs::write(
+            outside.path().join("settings.json"),
+            r#"{"model":"sentinel-private-settings"}"#,
+        )
+        .unwrap();
+
+        let file_link_cwd = tempfile::tempdir().unwrap();
+        std::fs::create_dir(file_link_cwd.path().join(".norn")).unwrap();
+        symlink(
+            outside.path().join("settings.json"),
+            file_link_cwd.path().join(".norn/settings.json"),
+        )
+        .unwrap();
+        let file_error = load_settings(file_link_cwd.path())
+            .expect_err("project settings file symlink must be refused")
+            .to_string();
+        assert!(!file_error.contains("sentinel-private-settings"));
+
+        let directory_link_cwd = tempfile::tempdir().unwrap();
+        symlink(outside.path(), directory_link_cwd.path().join(".norn")).unwrap();
+        let directory_error = load_settings(directory_link_cwd.path())
+            .expect_err("project settings directory symlink must be refused")
+            .to_string();
+        assert!(!directory_error.contains("sentinel-private-settings"));
+
+        drop(norn_home_guard);
     }
 
     #[test]

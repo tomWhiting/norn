@@ -30,7 +30,7 @@ use std::path::PathBuf;
 
 use crate::integration::diagnostics::{DiagnosticSeverity, NornDiagnostic};
 use crate::r#loop::commands::{SlashCommand, SlashCommandHandler, SlashCommandRegistry};
-use crate::skill::loader::{LoadedSkill, discover_skills};
+use crate::skill::loader::{LoadedSkill, discover_skills, discover_skills_with_workspace};
 use crate::skill::types::SkillMetadata;
 
 const SOURCE_TOOL: &str = "skill";
@@ -66,13 +66,33 @@ impl SkillCatalog {
     /// Missing or unreadable directories are silently passed through —
     /// the loader logs them at `tracing::debug!` level so an absent
     /// `~/.norn/skills/` produces no diagnostic noise.
+    ///
+    /// # Trust boundary
+    ///
+    /// This compatibility constructor accepts caller-trusted directories only.
+    /// It does not apply workspace no-follow traversal. Applications loading
+    /// repository skills should use `AgentBuilder` / `load_runtime_base`, which
+    /// constructs the catalog through the provenance-aware runtime path.
     #[must_use]
     pub fn scan(dirs: &[PathBuf]) -> Self {
+        Self::scan_impl(dirs, None)
+    }
+
+    /// Scans runtime paths while securing entries beneath `workspace_root`.
+    #[must_use]
+    pub(crate) fn scan_with_workspace(dirs: &[PathBuf], workspace_root: &std::path::Path) -> Self {
+        Self::scan_impl(dirs, Some(workspace_root))
+    }
+
+    fn scan_impl(dirs: &[PathBuf], workspace_root: Option<&std::path::Path>) -> Self {
         let mut catalog = Self::default();
 
         for dir in dirs {
             let single = std::slice::from_ref(dir);
-            let result = discover_skills(single);
+            let result = workspace_root.map_or_else(
+                || discover_skills(single),
+                |root| discover_skills_with_workspace(single, root),
+            );
 
             catalog.diagnostics.extend(result.diagnostics);
 

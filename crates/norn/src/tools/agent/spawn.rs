@@ -9,7 +9,7 @@
 //! marks the registry, delivers the result on the child-result channel,
 //! and updates the status watch channel that backs reactive waits.
 
-use std::path::PathBuf;
+use std::path::Path;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -24,7 +24,9 @@ use super::handle::{AgentHandles, AgentWakeRegistry, ChildBranchMetadata};
 use super::infra::{AgentCancellation, AgentModel, SubAgentExecutor, infra_from};
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
-use super::spawn_context::build_child_context;
+use super::spawn_context::{
+    build_child_context, resolve_profile_root, validate_model_selected_profile,
+};
 use super::spawn_launch::{ChildLaunch, launch_child};
 use super::variant_resolve::{SpawnIdentityArgs, resolve_parent_model, resolve_spawn};
 use crate::agent::child_policy::{ChildLoopConfig, ChildPolicy, CoordinationEnvelope};
@@ -35,7 +37,8 @@ use crate::agent::variants::VariantCatalog;
 use crate::error::ToolError;
 use crate::integration::hooks::HookRegistry;
 use crate::r#loop::loop_context::LoopContext;
-use crate::profile::{default_scan_dirs, from_profile, resolve_profile};
+use crate::profile::from_profile;
+use crate::profile::loader::resolve_workspace_profile_at_launch_root;
 use crate::provider::agent_event::{AgentEventSender, SubagentDescriptor, SubagentKind};
 use crate::provider::request::ToolDefinition;
 use crate::session::action_log::ActionLog;
@@ -115,7 +118,8 @@ struct SpawnAgentArgs {
 /// — variants and profiles are mutually exclusive, so this branch never
 /// competes with profile resolution. Otherwise, when `profile_name` is
 /// `Some`, the named profile is resolved through the scanner over
-/// `scan_dirs`; its system instructions, reasoning config, and prompt
+/// the parent working directory's standard profile tiers; its system
+/// instructions, reasoning config, and prompt
 /// commands flow into the returned [`LoopContext`] via [`from_profile`].
 /// The gated [`ToolRegistry`] `from_profile` produces is discarded — the
 /// child shares the parent's registry — but the profile's resolved tool
@@ -131,16 +135,19 @@ fn build_child_loop_context(
     variant_prompt: Option<&str>,
     profile_name: Option<&str>,
     task: &str,
-    scan_dirs: &[PathBuf],
+    working_dir: &Path,
 ) -> Result<(LoopContext, Option<Vec<String>>), ToolError> {
     if let Some(prompt) = variant_prompt {
         let base = crate::system_prompt::build_child_system_prompt(prompt, task);
         return Ok((LoopContext::new(base), None));
     }
     if let Some(name) = profile_name {
-        let profile = resolve_profile(name, scan_dirs).map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("spawn_agent: profile '{name}' could not be resolved: {e}"),
-        })?;
+        let profile = resolve_workspace_profile_at_launch_root(name, working_dir)
+            .map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("spawn_agent: selected profile could not be resolved: {e}"),
+            })?
+            .profile;
+        validate_model_selected_profile(&profile)?;
         let resolved_tools = profile.resolved_tools();
         let (loop_ctx, _gated) = from_profile(&profile, ToolRegistry::new(), None, None);
         Ok((loop_ctx, resolved_tools))
@@ -388,16 +395,15 @@ impl Tool for SpawnAgentTool {
         })?;
 
         // Build the child's loop context and resolve the variant's or
-        // profile's tool list. The profile scanner walks the same
-        // directories the CLI uses for top-level agents, rooted at the
-        // parent agent's working directory (not the process CWD, which
-        // can diverge from the agent's working dir in embedded runtimes).
-        let scan_dirs = default_scan_dirs(&ctx.working_dir());
+        // profile's tool list. Profile authority stays rooted at the
+        // immutable launch directory even after a tool changes the live
+        // execution directory with `cd`.
+        let profile_root = resolve_profile_root(ctx, args.profile.is_some())?;
         let (mut child_loop_ctx, profile_tools) = build_child_loop_context(
             resolution.variant_prompt.as_deref(),
             args.profile.as_deref(),
             &args.task,
-            &scan_dirs,
+            &profile_root,
         )?;
         // Reasoning effort (spec §3.6 + owner rulings 2026-07-07):
         // variant → profile → the parent's ACTIVE effort from the live
@@ -771,6 +777,8 @@ impl Tool for SpawnAgentTool {
     clippy::match_wildcard_for_single_variants
 )]
 mod tests {
+    use std::path::PathBuf;
+
     use std::sync::Mutex as StdMutex;
     use std::time::Duration;
 
@@ -2438,16 +2446,21 @@ mod tests {
     #[test]
     fn build_child_loop_context_uses_profile_body() {
         let dir = tempfile::tempdir().unwrap();
-        let profile_path = dir.path().join("researcher.md");
+        let profile_path = dir
+            .path()
+            .join(".norn")
+            .join("profiles")
+            .join("researcher.md");
+        std::fs::create_dir_all(profile_path.parent().expect("profile parent")).unwrap();
         std::fs::write(
             &profile_path,
             "---\nname: researcher\nmodel: gpt-5\ntools: read, grep\n---\nYou are a focused researcher.\n",
         )
         .unwrap();
 
-        let scan_dirs = vec![dir.path().to_path_buf()];
+        let launch_root = dir.path().canonicalize().unwrap();
         let (loop_ctx, tools) =
-            build_child_loop_context(None, Some("researcher"), "find the bug", &scan_dirs)
+            build_child_loop_context(None, Some("researcher"), "find the bug", &launch_root)
                 .expect("profile resolves");
         assert!(
             loop_ctx.system_sections[0].contains("You are a focused researcher."),
@@ -2460,12 +2473,84 @@ mod tests {
         );
     }
 
+    #[test]
+    fn child_profile_resolution_stays_pinned_to_the_launch_root() {
+        let launch = tempfile::tempdir().unwrap();
+        let moved = tempfile::tempdir().unwrap();
+        for (root, body) in [
+            (launch.path(), "original launch-root profile"),
+            (moved.path(), "mutable execution-cwd profile"),
+        ] {
+            let profile_path = root.join(".norn/profiles/shared.md");
+            std::fs::create_dir_all(profile_path.parent().expect("profile parent")).unwrap();
+            std::fs::write(
+                profile_path,
+                format!("---\nname: shared\nmodel: gpt-5\n---\n{body}\n"),
+            )
+            .unwrap();
+        }
+
+        let launch_root = launch.path().canonicalize().unwrap();
+        let moved_root = moved.path().canonicalize().unwrap();
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(crate::runtime_init::extensions::LaunchWorkingDir(
+            launch_root.clone(),
+        )));
+        ctx.set_working_dir(moved_root);
+
+        let profile_root = resolve_profile_root(&ctx, true).expect("launch root is installed");
+        let (loop_ctx, _) = build_child_loop_context(None, Some("shared"), "task", &profile_root)
+            .expect("launch-root profile resolves");
+        let prompt = loop_ctx.base_system_instruction();
+
+        assert_eq!(profile_root, launch_root);
+        assert!(prompt.contains("original launch-root profile"));
+        assert!(!prompt.contains("mutable execution-cwd profile"));
+    }
+
+    #[test]
+    fn build_child_loop_context_rejects_workspace_profile_prompt_commands() {
+        let dir = tempfile::tempdir().unwrap();
+        let profile_path = dir
+            .path()
+            .join(".norn")
+            .join("profiles")
+            .join("hostile.json");
+        std::fs::create_dir_all(profile_path.parent().expect("profile parent")).unwrap();
+        std::fs::write(
+            profile_path,
+            r#"{
+                "name": "hostile",
+                "model": "gpt-5.6-sol",
+                "prompt_commands": [{
+                    "name": "private",
+                    "command": "touch child-profile-command-secret",
+                    "cache_ttl": null
+                }]
+            }"#,
+        )
+        .unwrap();
+
+        let launch_root = dir.path().canonicalize().unwrap();
+        match build_child_loop_context(None, Some("hostile"), "task", &launch_root) {
+            Err(ToolError::ExecutionFailed { reason }) => {
+                assert!(reason.contains("prompt_commands"));
+                assert!(!reason.contains("child-profile-command-secret"));
+            }
+            Err(other) => panic!("expected ExecutionFailed, got {other:?}"),
+            Ok(_) => panic!("workspace prompt command must be rejected"),
+        }
+        assert!(!dir.path().join("child-profile-command-secret").exists());
+    }
+
     /// R4: when no profile is given the child's system instruction embeds
     /// the task itself.
     #[test]
     fn build_child_loop_context_default_embeds_task() {
-        let (loop_ctx, tools) = build_child_loop_context(None, None, "summarise the report", &[])
-            .expect("default builds");
+        let dir = tempfile::tempdir().unwrap();
+        let (loop_ctx, tools) =
+            build_child_loop_context(None, None, "summarise the report", dir.path())
+                .expect("default builds");
         assert!(loop_ctx.system_sections[0].contains("summarise the report"));
         assert!(
             tools.is_none(),
@@ -2478,15 +2563,35 @@ mod tests {
     #[test]
     fn build_child_loop_context_unknown_profile_errors() {
         let dir = tempfile::tempdir().unwrap();
-        let scan_dirs = vec![dir.path().to_path_buf()];
         // `LoopContext` is not `Debug`, so the `Ok` arm cannot use
         // `expect_err`; match the result explicitly instead.
-        match build_child_loop_context(None, Some("missing"), "task", &scan_dirs) {
+        match build_child_loop_context(None, Some("missing"), "task", dir.path()) {
             Err(ToolError::ExecutionFailed { reason }) => {
                 assert!(reason.contains("missing"), "{reason}");
             }
             Err(other) => panic!("expected ExecutionFailed, got {other:?}"),
             Ok(_) => panic!("unknown profile must error"),
+        }
+    }
+
+    #[test]
+    fn child_profile_errors_do_not_echo_control_characters() {
+        let dir = tempfile::tempdir().unwrap();
+        for name in [
+            "sentinel\nnewline",
+            "sentinel\u{1b}[31m",
+            "sentinel\u{7}bell",
+        ] {
+            match build_child_loop_context(None, Some(name), "task", dir.path()) {
+                Err(error) => {
+                    let display = error.to_string();
+                    let debug = format!("{error:?}");
+                    assert!(!display.contains("sentinel"));
+                    assert!(!debug.contains("sentinel"));
+                    assert!(!display.contains(['\n', '\u{1b}', '\u{7}']));
+                }
+                Ok(_) => panic!("unsafe profile name must be rejected"),
+            }
         }
     }
 

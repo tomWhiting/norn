@@ -16,6 +16,7 @@ use std::path::Path;
 
 use crate::config::types::VariantSettings;
 use crate::provider::request::ReasoningEffort;
+use crate::util::{read_workspace_text_file, workspace_relative_path};
 
 use super::builtin::{BUILTIN_VARIANTS, BuiltinVariant};
 
@@ -98,6 +99,17 @@ impl VariantCatalog {
     /// [`VariantCatalogError`] on `prompt`/`prompt_file` conflict,
     /// unreadable prompt file, or unrecognised reasoning effort.
     pub fn build(
+        configured: Option<&BTreeMap<String, VariantSettings>>,
+        base_dir: &Path,
+    ) -> Result<Self, VariantCatalogError> {
+        let canonical_base = base_dir
+            .canonicalize()
+            .unwrap_or_else(|_| base_dir.to_path_buf());
+        Self::build_at_launch_root(configured, &canonical_base)
+    }
+
+    /// Builds from an already-canonical immutable launch root.
+    pub(crate) fn build_at_launch_root(
         configured: Option<&BTreeMap<String, VariantSettings>>,
         base_dir: &Path,
     ) -> Result<Self, VariantCatalogError> {
@@ -192,13 +204,19 @@ fn load_prompt(
         (Some(inline), None) => Ok(Some(inline.clone())),
         (None, Some(file)) => {
             let path = base_dir.join(file);
-            std::fs::read_to_string(&path).map(Some).map_err(|source| {
-                VariantCatalogError::PromptFileRead {
+            let content = match workspace_relative_path(base_dir, &path) {
+                Some(relative) => {
+                    read_workspace_text_file(base_dir, &relative).map(|loaded| loaded.content)
+                }
+                None => std::fs::read_to_string(&path),
+            };
+            content
+                .map(Some)
+                .map_err(|source| VariantCatalogError::PromptFileRead {
                     name: name.to_owned(),
                     path: path.display().to_string(),
                     source,
-                }
-            })
+                })
         }
         (None, None) => Ok(None),
     }
@@ -379,6 +397,55 @@ mod tests {
         assert_eq!(
             catalog.get("scout").expect("scout").prompt.as_deref(),
             Some("From the file."),
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn prompt_file_inside_workspace_refuses_symlink_even_when_path_is_absolute() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempfile::tempdir().expect("workspace");
+        let outside = tempfile::NamedTempFile::new().expect("outside prompt");
+        std::fs::write(outside.path(), "sentinel-private-variant").expect("write outside");
+        let link = workspace.path().join("linked-prompt.md");
+        symlink(outside.path(), &link).expect("symlink");
+        let mut configured = BTreeMap::new();
+        configured.insert(
+            "linked".to_owned(),
+            VariantSettings {
+                prompt_file: Some(link.to_string_lossy().into_owned()),
+                ..VariantSettings::default()
+            },
+        );
+
+        let error = VariantCatalog::build(Some(&configured), workspace.path())
+            .expect_err("workspace prompt symlink must be refused");
+
+        assert!(!error.to_string().contains("sentinel-private-variant"));
+    }
+
+    #[test]
+    fn absolute_prompt_file_outside_workspace_remains_a_trusted_source() {
+        let workspace = tempfile::tempdir().expect("workspace");
+        let trusted = tempfile::NamedTempFile::new().expect("trusted prompt");
+        std::fs::write(trusted.path(), "trusted absolute prompt").expect("write prompt");
+        let mut configured = BTreeMap::new();
+        configured.insert(
+            "trusted".to_owned(),
+            VariantSettings {
+                prompt_file: Some(trusted.path().to_string_lossy().into_owned()),
+                ..VariantSettings::default()
+            },
+        );
+
+        let catalog = VariantCatalog::build(Some(&configured), workspace.path()).expect("build");
+
+        assert_eq!(
+            catalog
+                .get("trusted")
+                .and_then(|variant| variant.prompt.as_deref()),
+            Some("trusted absolute prompt"),
         );
     }
 

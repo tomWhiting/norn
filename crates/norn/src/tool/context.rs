@@ -361,7 +361,7 @@ impl ToolContext {
         let p_str = p.to_string_lossy();
         if let Some(stripped) = p_str.strip_prefix('~')
             && (stripped.is_empty() || stripped.starts_with('/'))
-            && let Some(home) = dirs::home_dir()
+            && let Some(home) = crate::config::paths::trusted_home_dir()
         {
             let rest = stripped.strip_prefix('/').unwrap_or(stripped);
             return if rest.is_empty() {

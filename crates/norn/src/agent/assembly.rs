@@ -28,7 +28,8 @@ use crate::internal::extraction::SharedProvider;
 use crate::r#loop::config::AgentLoopConfig;
 use crate::r#loop::loop_context::LoopContext;
 use crate::r#loop::retry::RetryPolicy;
-use crate::profile::{Profile, default_scan_dirs, resolve_profile};
+use crate::profile::Profile;
+use crate::profile::loader::resolve_workspace_profile_at_launch_root;
 use crate::provider::request::ToolDefinition;
 use crate::provider::surface::collect_function_definitions;
 use crate::provider::traits::Provider;
@@ -45,9 +46,8 @@ use crate::tool::lifecycle::RuntimePostValidateCheck;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::traits::Tool;
 use crate::tools::agent::AgentToolInfra;
-use crate::tools::diagnostics::{
-    DiagnosticInfra, DiagnosticStopHook, DiagnosticsPostCheck, build_diagnostic_infra,
-};
+use crate::tools::diagnostics::{DiagnosticInfra, DiagnosticStopHook, DiagnosticsPostCheck};
+use crate::tools::diagnostics_infra::build_diagnostic_infra_at_launch_root;
 use crate::tools::lsp::{LspBackend, LspWorkspace};
 
 /// A deferred installer that publishes a typed extension on the agent's
@@ -56,17 +56,37 @@ use crate::tools::lsp::{LspBackend, LspWorkspace};
 /// and run during [`assemble_tool_context`].
 pub(crate) type ExtensionInstaller = Box<dyn FnOnce(&ToolContext) + Send>;
 
-/// Resolve the agent's working directory: the explicit builder value, or the
-/// process CWD when unset.
+/// Resolve and canonicalize the agent's immutable launch working directory.
+///
+/// Relative segments and launch-time symlinks are resolved once. Security
+/// consumers retain this absolute root rather than re-canonicalizing a mutable
+/// pathname on each read.
 pub(crate) fn resolve_working_dir(explicit: Option<PathBuf>) -> Result<PathBuf, NornError> {
-    match explicit {
-        Some(dir) => Ok(dir),
-        None => std::env::current_dir().map_err(|e| {
+    let requested = match explicit {
+        Some(dir) => dir,
+        None => std::env::current_dir().map_err(|error| {
             NornError::Config(ConfigError::InvalidConfig {
-                reason: format!("cannot determine working directory: {e}"),
+                reason: format!("cannot determine working directory: {error}"),
             })
-        }),
+        })?,
+    };
+    let canonical = requested.canonicalize().map_err(|error| {
+        NornError::Config(ConfigError::InvalidConfig {
+            reason: format!(
+                "cannot canonicalize working directory {}: {error}",
+                requested.display(),
+            ),
+        })
+    })?;
+    if !canonical.is_dir() {
+        return Err(NornError::Config(ConfigError::InvalidConfig {
+            reason: format!(
+                "working directory {} is not a directory",
+                requested.display()
+            ),
+        }));
     }
+    Ok(canonical)
 }
 
 /// Validate and canonicalize a workspace-confinement root.
@@ -123,7 +143,7 @@ pub(crate) fn resolve_base_profile(
     match profile {
         Some(profile) => Ok(profile),
         None => match profile_name {
-            Some(name) => Ok(resolve_profile(name, &default_scan_dirs(working_dir))?),
+            Some(name) => Ok(resolve_workspace_profile_at_launch_root(name, working_dir)?.profile),
             None => Ok(Profile::default()),
         },
     }
@@ -159,6 +179,7 @@ pub(crate) fn install_runtime_base_extensions(
         shared,
         base.skill_paths.clone(),
         Arc::clone(&base.skill_catalog),
+        working_dir.to_path_buf(),
     );
     // Report the skill catalog's load-time diagnostics (skill-shadowed,
     // skill-missing-description, skill-yaml-parse-failed, skill-io-error,
@@ -269,7 +290,7 @@ pub(crate) fn resolve_runtime_overlay(
     let diagnostic_infra = if let Some(infra) = overrides.diagnostic_infra {
         Some(infra)
     } else if runtime_base.is_some() {
-        Some(Arc::new(build_diagnostic_infra(
+        Some(Arc::new(build_diagnostic_infra_at_launch_root(
             working_dir,
             overrides.lsp_backend,
             overrides.lsp_workspace.as_deref(),
@@ -432,6 +453,10 @@ pub(crate) fn populate_loop_context(
     });
     loop_context.diagnostics = diagnostics.map(Arc::clone);
     loop_context.working_dir = shared_wd.clone();
+    loop_context.nested_scanner = loop_context
+        .rules
+        .as_ref()
+        .map(|_| crate::context::scanner::NestedScanner::new_at_launch_root(shared_wd.get()));
     let mut variables = VariableStore::with_builtins().with_working_dir(shared_wd.clone());
     if let Some(id) = session_id_override {
         variables = variables.with_session_id(id);
@@ -524,7 +549,11 @@ pub(crate) struct ToolContextParts {
 /// tool call observes it from the first dispatch), then the standard
 /// extensions, post-checks, and consumer-supplied installers.
 pub(crate) fn assemble_tool_context(parts: ToolContextParts) -> ToolContext {
+    let launch_working_dir = parts.shared_wd.get();
     let mut ctx = ToolContext::with_working_dir(parts.shared_wd);
+    ctx.insert_extension(Arc::new(crate::runtime_init::extensions::LaunchWorkingDir(
+        launch_working_dir,
+    )));
     if let Some(root) = parts.workspace_root {
         ctx.confine_to_workspace(root);
         // Read carve-out only matters under confinement; installing it here

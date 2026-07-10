@@ -4,11 +4,14 @@
 //!
 //! - A value containing `/` or `.` is treated as a filesystem path and
 //!   loaded directly via [`Profile::from_file`].
-//! - A bare name is delegated to [`norn::profile::resolve_profile`] with a
-//!   scan-dir list ordered workspace `.norn/profiles/` → workspace
-//!   `.meridian/profiles/` → [`paths::profiles_dir`] (`NORN_HOME`-aware).
+//! - A bare name is delegated to [`norn::profile::resolve_workspace_profile`]
+//!   with a
+//!   workspace-aware resolution ordered workspace `.norn/profiles/` →
+//!   workspace `.meridian/profiles/` → the `NORN_HOME`-aware user tier.
 //!   The libnorn scanner prefers `.md` over `.toml` over `.json` within
-//!   each directory and first-directory wins across them.
+//!   each directory and first-directory wins across them. Workspace profiles
+//!   may not declare automatic prompt commands; user profiles and explicit
+//!   profile paths retain that trusted capability.
 //! - When the caller passes [`None`], a minimal default profile is built
 //!   with the generated catalog default model (`gpt-5.6-sol`) and a default
 //!   system instruction.
@@ -16,12 +19,19 @@
 //! Errors propagate as [`BuildError`] so the entry point can map them onto
 //! the CLI argument-error exit code (`2`) per `DESIGN.md` CO5.
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use norn::profile::{self, Profile};
 
-use super::paths;
 use crate::cli::BuildError;
+
+/// Loaded CLI profile plus whether its file came from the working directory.
+pub struct ResolvedCliProfile {
+    /// Parsed profile.
+    pub profile: Profile,
+    /// True only for a bare name resolved from a workspace profile directory.
+    pub working_directory_controlled: bool,
+}
 
 /// Default model identifier used when no `--profile` is supplied and no
 /// `--model` override has been applied yet.
@@ -45,35 +55,37 @@ pub const DEFAULT_SYSTEM_INSTRUCTION: &str = "You are a helpful assistant.";
 /// `.md`, `.toml`, or `.json` in any of the configured scan directories, or
 /// when the underlying profile file cannot be read or parsed.
 pub fn resolve_profile(spec: Option<&str>) -> Result<Profile, BuildError> {
+    Ok(resolve_profile_with_origin(spec)?.profile)
+}
+
+/// Resolves a CLI profile while retaining whether a bare name came from the
+/// working directory.
+///
+/// # Errors
+///
+/// Returns [`BuildError::Argument`] for profile load, parse, capability, or
+/// working-directory prompt-command violations.
+pub fn resolve_profile_with_origin(spec: Option<&str>) -> Result<ResolvedCliProfile, BuildError> {
     let Some(value) = spec else {
-        return Ok(default_profile());
+        return Ok(ResolvedCliProfile {
+            profile: default_profile(),
+            working_directory_controlled: false,
+        });
     };
 
     if looks_like_path(value) {
-        return load_from_path(Path::new(value));
+        return Ok(ResolvedCliProfile {
+            profile: load_from_path(Path::new(value))?,
+            working_directory_controlled: false,
+        });
     }
 
-    let profile = profile::resolve_profile(value, &cli_scan_dirs())?;
-    Ok(profile)
-}
-
-/// Builds the scan-dir list passed to [`norn::profile::resolve_profile`].
-///
-/// Mirrors the libnorn default order (`{cwd}/.norn/profiles/` →
-/// `{cwd}/.meridian/profiles/` → `~/.norn/profiles/`) but substitutes
-/// [`paths::profiles_dir`] for the user-level entry so the `NORN_HOME`
-/// override is honoured. The libnorn helper uses [`dirs::home_dir`]
-/// directly and is unaware of `NORN_HOME`.
-fn cli_scan_dirs() -> Vec<PathBuf> {
-    let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::new());
-    let mut dirs = vec![
-        cwd.join(".norn").join("profiles"),
-        cwd.join(".meridian").join("profiles"),
-    ];
-    if let Some(user) = paths::profiles_dir() {
-        dirs.push(user);
-    }
-    dirs
+    let cwd = std::env::current_dir()?;
+    let resolved = profile::resolve_workspace_profile(value, &cwd)?;
+    Ok(ResolvedCliProfile {
+        profile: resolved.profile,
+        working_directory_controlled: resolved.origin == profile::ProfileOrigin::WorkingDirectory,
+    })
 }
 
 /// Construct a minimal default profile with a sensible model and system
@@ -175,12 +187,14 @@ mod tests {
         let path = dir.path().join("profile.toml");
         std::fs::write(
             &path,
-            "name = \"explicit\"\nmodel = \"gpt-5\"\nsystem_instructions = []\n",
+            "name = \"explicit\"\nmodel = \"gpt-5\"\nsystem_instructions = []\n\
+             [[prompt_commands]]\nname = \"trusted\"\ncommand = \"printf trusted\"\n",
         )
         .unwrap();
         let profile = resolve_profile(Some(path.to_str().unwrap())).unwrap();
         assert_eq!(profile.name, "explicit");
         assert_eq!(profile.model, "gpt-5");
+        assert_eq!(profile.prompt_commands.len(), 1);
     }
 
     #[test]

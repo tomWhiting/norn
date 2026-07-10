@@ -24,6 +24,10 @@ use crate::error::SkillError;
 use crate::integration::diagnostics::{DiagnosticSeverity, NornDiagnostic};
 use crate::skill::types::SkillMetadata;
 use crate::util::frontmatter::{FrontmatterError, split_frontmatter};
+use crate::util::{
+    WorkspaceEntryKind, read_workspace_directory, read_workspace_text_file,
+    validate_workspace_regular_file, workspace_relative_path,
+};
 
 const SOURCE_TOOL: &str = "skill";
 const MAX_NAME_LEN: usize = 64;
@@ -88,49 +92,86 @@ pub struct DiscoveryResult {
 /// so an absent `~/.norn/skills/` does not produce noise; unreadable
 /// individual entries are logged at `tracing::warn!` — never silently
 /// dropped.
+///
+/// # Trust boundary
+///
+/// This low-level compatibility API uses ordinary filesystem traversal and is
+/// only for caller-trusted directories. Runtime workspace discovery must go
+/// through `AgentBuilder` / `load_runtime_base`, which uses provenance-aware,
+/// descriptor-relative no-follow reads.
 #[must_use]
 pub fn discover_skills(dirs: &[PathBuf]) -> DiscoveryResult {
+    discover_skills_impl(dirs, None)
+}
+
+/// Discovers skills while treating paths beneath `workspace_root` as
+/// repository-controlled inputs that cannot follow symlinks.
+pub(crate) fn discover_skills_with_workspace(
+    dirs: &[PathBuf],
+    workspace_root: &Path,
+) -> DiscoveryResult {
+    discover_skills_impl(dirs, Some(workspace_root))
+}
+
+fn discover_skills_impl(dirs: &[PathBuf], workspace_root: Option<&Path>) -> DiscoveryResult {
     let mut skills: Vec<LoadedSkill> = Vec::new();
     let mut diagnostics: Vec<NornDiagnostic> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
 
     for dir in dirs {
-        let entries = match std::fs::read_dir(dir) {
-            Ok(entries) => entries,
-            Err(e) => {
-                tracing::debug!("Skipping skill dir {} during scan: {e}", dir.display());
-                continue;
-            }
+        let workspace_relative = workspace_root.and_then(|root| workspace_relative_path(root, dir));
+        let entries: Vec<(PathBuf, WorkspaceEntryKind)> = match (workspace_root, workspace_relative)
+        {
+            (Some(root), Some(relative)) => match read_workspace_directory(root, &relative) {
+                Ok(entries) => entries
+                    .into_iter()
+                    .map(|entry| (dir.join(entry.name), entry.kind))
+                    .collect(),
+                Err(error) => {
+                    diagnostics.push(skip_diagnostic(
+                        dir,
+                        "skill-workspace-root-refused",
+                        format!("refused workspace skill directory: {error}"),
+                    ));
+                    continue;
+                }
+            },
+            _ => match std::fs::read_dir(dir) {
+                Ok(entries) => entries
+                    .filter_map(|entry| {
+                        let entry = entry.ok()?;
+                        let kind = match entry.file_type().ok()? {
+                            file_type if file_type.is_dir() => WorkspaceEntryKind::Directory,
+                            file_type if file_type.is_file() => WorkspaceEntryKind::File,
+                            _ => WorkspaceEntryKind::Other,
+                        };
+                        Some((entry.path(), kind))
+                    })
+                    .collect(),
+                Err(error) => {
+                    tracing::debug!("Skipping skill dir {} during scan: {error}", dir.display());
+                    continue;
+                }
+            },
         };
 
         let mut dir_skill_paths: Vec<PathBuf> = Vec::new();
         let mut flat_skill_paths: Vec<PathBuf> = Vec::new();
 
-        for entry in entries {
-            let entry = match entry {
-                Ok(e) => e,
-                Err(e) => {
-                    tracing::warn!("Error reading directory entry in {}: {e}", dir.display());
-                    continue;
-                }
-            };
-            let path = entry.path();
-            let file_type = match entry.file_type() {
-                Ok(t) => t,
-                Err(e) => {
-                    tracing::warn!(
-                        "Skipping skill candidate {}: failed to read file type: {e}",
-                        path.display(),
-                    );
-                    continue;
-                }
-            };
-            if file_type.is_dir() {
+        for (path, kind) in entries {
+            if kind == WorkspaceEntryKind::Directory {
                 let candidate = path.join("SKILL.md");
-                if candidate.is_file() {
+                let exists = workspace_root
+                    .and_then(|root| {
+                        workspace_relative_path(root, &candidate).map(|relative| {
+                            validate_workspace_regular_file(root, &relative).is_ok()
+                        })
+                    })
+                    .unwrap_or_else(|| candidate.is_file());
+                if exists {
                     dir_skill_paths.push(candidate);
                 }
-            } else if file_type.is_file() {
+            } else if kind == WorkspaceEntryKind::File {
                 let is_md = path.extension().and_then(OsStr::to_str) == Some("md");
                 let is_skill_md = path.file_name().and_then(OsStr::to_str) == Some("SKILL.md");
                 if is_md && !is_skill_md {
@@ -148,7 +189,13 @@ pub fn discover_skills(dirs: &[PathBuf]) -> DiscoveryResult {
         // Directory-form first so that within a single directory the
         // dir form wins over a same-name flat .md file.
         for path in dir_skill_paths.into_iter().chain(flat_skill_paths) {
-            match load_skill_from_path(&path) {
+            let loaded = match workspace_root {
+                Some(root) if workspace_relative_path(root, &path).is_some() => {
+                    load_workspace_skill_from_path(root, &path)
+                }
+                Some(_) | None => load_skill_from_path(&path),
+            };
+            match loaded {
                 Ok(skill) => {
                     if seen.insert(skill.name.clone()) {
                         skills.push(skill);
@@ -196,6 +243,34 @@ pub fn load_skill_from_path(path: &Path) -> Result<LoadedSkill, Vec<NornDiagnost
         }
     };
 
+    parse_loaded_skill(path, &content)
+}
+
+/// Loads a repository-controlled skill without following symlinks.
+pub(crate) fn load_workspace_skill_from_path(
+    workspace_root: &Path,
+    path: &Path,
+) -> Result<LoadedSkill, Vec<NornDiagnostic>> {
+    let relative = workspace_relative_path(workspace_root, path).ok_or_else(|| {
+        vec![skip_diagnostic(
+            path,
+            "skill-workspace-escape",
+            "skill path escaped its workspace root".to_owned(),
+        )]
+    })?;
+    let content = read_workspace_text_file(workspace_root, &relative)
+        .map_err(|error| {
+            vec![skip_diagnostic(
+                path,
+                "skill-io-error",
+                format!("refused workspace skill file: {error}"),
+            )]
+        })?
+        .content;
+    parse_loaded_skill(path, &content)
+}
+
+fn parse_loaded_skill(path: &Path, content: &str) -> Result<LoadedSkill, Vec<NornDiagnostic>> {
     let default_name = match infer_default_name(path) {
         Ok(name) => name,
         Err(reason) => {
@@ -203,7 +278,7 @@ pub fn load_skill_from_path(path: &Path) -> Result<LoadedSkill, Vec<NornDiagnost
         }
     };
 
-    parse_skill_content(path, &default_name, &content)
+    parse_skill_content(path, &default_name, content)
 }
 
 /// Parse skill content already read from disk.

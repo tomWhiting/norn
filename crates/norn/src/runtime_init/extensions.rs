@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use super::base::{pin_skill_search_path, resolve_search_path};
 use crate::agent::variants::VariantCatalog;
 use crate::config::NornSettings;
 use crate::config::permissions::PermissionPolicy;
@@ -16,15 +17,29 @@ use crate::tool::output_budget::ToolOutputBudget;
 use crate::tool::registry::ToolRegistry;
 use crate::tools::agent::{AgentHandles, AgentWakeRegistry, ReclaimOnResultDelivery};
 use crate::tools::context_paths::ContextSearchPaths;
-use crate::tools::skill::SkillSearchPaths;
+use crate::tools::skill::{SkillSearchPaths, WorkspaceSkillRoot};
 use crate::tools::task::SharedTaskStore;
 
-use super::base::resolve_search_path;
+/// Immutable working-directory authority captured when the root agent starts.
+///
+/// Live tool working directories may change after `bash cd`; configuration
+/// provenance must continue to resolve against this launch root.
+pub(crate) struct LaunchWorkingDir(pub(crate) PathBuf);
 
 /// Publish the skill search paths and skill catalog on the tool context.
-pub fn install_skill_infra(ctx: &ToolContext, paths: Vec<PathBuf>, catalog: Arc<SkillCatalog>) {
+pub fn install_skill_infra(
+    ctx: &ToolContext,
+    paths: Vec<PathBuf>,
+    catalog: Arc<SkillCatalog>,
+    workspace_root: PathBuf,
+) {
+    let paths = paths
+        .into_iter()
+        .map(|path| pin_skill_search_path(&workspace_root, path))
+        .collect();
     ctx.insert_extension(Arc::new(SkillSearchPaths(paths)));
     ctx.insert_extension(catalog);
+    ctx.insert_extension(Arc::new(WorkspaceSkillRoot(workspace_root)));
 }
 
 /// Publish settings-declared context search paths on the tool context.
@@ -137,11 +152,12 @@ pub fn install_variant_catalog(
     settings: &NornSettings,
     cwd: &Path,
 ) -> Result<(), NornError> {
-    let catalog = VariantCatalog::build(settings.variants.as_ref(), cwd).map_err(|err| {
-        NornError::Config(ConfigError::InvalidConfig {
-            reason: err.to_string(),
-        })
-    })?;
+    let catalog =
+        VariantCatalog::build_at_launch_root(settings.variants.as_ref(), cwd).map_err(|err| {
+            NornError::Config(ConfigError::InvalidConfig {
+                reason: err.to_string(),
+            })
+        })?;
     ctx.insert_extension(Arc::new(catalog));
     Ok(())
 }

@@ -68,7 +68,6 @@ pub struct PromptCommandCacheEntry {
 /// onto the base instruction every iteration via [`Self::system_instruction`].
 /// Calling [`Self::clear_dynamic_sections`] truncates everything past the
 /// base instruction so rules re-fire fresh each iteration.
-#[derive(Default)]
 pub struct LoopContext {
     /// Optional rules engine. When present, the loop emits
     /// [`RuntimeEvent`](crate::rules::types::RuntimeEvent) values after tool
@@ -77,9 +76,10 @@ pub struct LoopContext {
     pub rules: Option<RuleEngine>,
     /// Reactive scanner that registers nested `NORN.md` files as synthetic
     /// rules on [`Self::rules`] the first time a path under their directory
-    /// is touched (NX-004). Lazily constructed on first use from
-    /// [`Self::working_dir`] so no assembly site has to thread the project
-    /// root separately; absent when no rules engine is installed.
+    /// is touched (NX-004). Assembly captures its immutable workspace root
+    /// before the live working-directory handle can change. Public
+    /// constructors retain the scanner even before a rules engine is attached,
+    /// preserving support for embedders that install rules after construction.
     pub nested_scanner: Option<crate::context::scanner::NestedScanner>,
     /// Optional hook registry. When present, the loop calls pre/post tool,
     /// pre/post LLM, and session-event hooks at their respective firing
@@ -325,6 +325,16 @@ pub struct LoopContext {
     pub working_dir: crate::tool::context::SharedWorkingDir,
 }
 
+impl Default for LoopContext {
+    fn default() -> Self {
+        let mut context = Self::new(String::new());
+        // Preserve the historical empty-section shape of `Default` while
+        // retaining the immutable launch-root scanner seeded by `new`.
+        context.system_sections.clear();
+        context
+    }
+}
+
 impl LoopContext {
     /// Construct a fresh loop context with the given base system instruction.
     ///
@@ -333,9 +343,12 @@ impl LoopContext {
     /// already holds a shared handle.
     #[must_use]
     pub fn new(base: impl Into<String>) -> Self {
+        let working_dir = crate::tool::context::SharedWorkingDir::default();
         Self {
             rules: None,
-            nested_scanner: None,
+            nested_scanner: Some(crate::context::scanner::NestedScanner::new(
+                &working_dir.get(),
+            )),
             hooks: None,
             system_sections: vec![base.into()],
             event_schemas: None,
@@ -365,7 +378,7 @@ impl LoopContext {
             child_result_rx: None,
             active_input_rx: None,
             children_usage: crate::r#loop::children_usage::ChildrenUsage::default(),
-            working_dir: crate::tool::context::SharedWorkingDir::default(),
+            working_dir,
         }
     }
 
@@ -377,6 +390,9 @@ impl LoopContext {
         working_dir: crate::tool::context::SharedWorkingDir,
     ) -> Self {
         let mut ctx = Self::new(base);
+        ctx.nested_scanner = Some(crate::context::scanner::NestedScanner::new(
+            &working_dir.get(),
+        ));
         ctx.working_dir = working_dir;
         ctx
     }
@@ -551,17 +567,12 @@ impl LoopContext {
     /// Register nested `NORN.md` synthetic rules for a batch of touched
     /// paths before the rules engine evaluates them (NX-004 / NX-005).
     ///
-    /// The [`NestedScanner`](crate::context::scanner::NestedScanner) is
-    /// lazily constructed from [`Self::working_dir`] on first use, so no
-    /// assembly site needs to thread the project root. No-op when no rules
-    /// engine is installed or no paths were touched.
+    /// The [`NestedScanner`](crate::context::scanner::NestedScanner) carries
+    /// the immutable launch root captured during assembly. No-op when no
+    /// scanner/rules engine is installed or no paths were touched.
     pub fn scan_nested_norn(&mut self, paths: &[String]) {
-        if self.rules.is_none() || paths.is_empty() {
+        if self.rules.is_none() || self.nested_scanner.is_none() || paths.is_empty() {
             return;
-        }
-        if self.nested_scanner.is_none() {
-            let cwd = self.working_dir.get();
-            self.nested_scanner = Some(crate::context::scanner::NestedScanner::new(&cwd));
         }
         if let (Some(scanner), Some(engine)) = (self.nested_scanner.as_mut(), self.rules.as_mut()) {
             for path in paths {
@@ -892,9 +903,10 @@ mod tests {
         let mut ctx =
             LoopContext::with_working_dir("base", SharedWorkingDir::new(cwd.path().to_path_buf()));
         ctx.rules = Some(RuleEngine::new(vec![]));
+        ctx.nested_scanner = Some(crate::context::scanner::NestedScanner::new(cwd.path()));
 
         // Touching a file under src/api registers the nested NORN.md rule
-        // lazily (scanner built from working_dir).
+        // lazily through the scanner's immutable launch root.
         ctx.scan_nested_norn(&["src/api/handler.rs".to_owned()]);
         // Re-touch: must not register a duplicate.
         ctx.scan_nested_norn(&["src/api/other.rs".to_owned()]);
@@ -911,6 +923,73 @@ mod tests {
         assert_eq!(injections.len(), 1, "nested NORN.md surfaces exactly once");
         assert_eq!(injections[0].rule_id.as_str(), "norn-md:src/api");
         assert_eq!(injections[0].content, "API_CONVENTIONS");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn default_context_keeps_nested_scanning_when_rules_are_attached_later() {
+        let launch_root = std::env::current_dir()
+            .expect("current directory")
+            .canonicalize()
+            .expect("canonical current directory");
+        let nested = tempfile::Builder::new()
+            .prefix(".norn-default-context-")
+            .tempdir_in(&launch_root)
+            .expect("nested tempdir");
+        std::fs::write(nested.path().join("NORN.md"), "DEFAULT_CONTEXT_RULE")
+            .expect("nested context");
+        let relative_dir = nested
+            .path()
+            .strip_prefix(&launch_root)
+            .expect("tempdir beneath launch root");
+        let touched = relative_dir.join("file.rs").to_string_lossy().into_owned();
+
+        let mut ctx = LoopContext::default();
+        ctx.rules = Some(RuleEngine::new(vec![]));
+        ctx.scan_nested_norn(std::slice::from_ref(&touched));
+        let injections = ctx
+            .rules
+            .as_ref()
+            .expect("rules")
+            .process_event(&RuntimeEvent::PathChanged {
+                path: touched,
+                operation: PathOperation::Read,
+            })
+            .await;
+
+        assert_eq!(injections.len(), 1);
+        assert_eq!(injections[0].content, "DEFAULT_CONTEXT_RULE");
+    }
+
+    #[tokio::test]
+    async fn nested_scanner_keeps_launch_root_after_working_directory_changes() {
+        let launch_root = tempfile::tempdir().expect("launch root");
+        let outside = tempfile::tempdir().expect("outside root");
+        let outside_api = outside.path().join("src/api");
+        std::fs::create_dir_all(&outside_api).expect("outside directory");
+        std::fs::write(outside_api.join("NORN.md"), "SENTINEL_OUTSIDE_CONTEXT")
+            .expect("outside context");
+
+        let working_dir = SharedWorkingDir::new(launch_root.path().to_path_buf());
+        let mut ctx = LoopContext::with_working_dir("base", working_dir.clone());
+        ctx.rules = Some(RuleEngine::new(vec![]));
+        ctx.nested_scanner = Some(crate::context::scanner::NestedScanner::new(
+            launch_root.path(),
+        ));
+        working_dir.set(outside.path().to_path_buf());
+
+        ctx.scan_nested_norn(&["src/api/file.rs".to_owned()]);
+        let injections = ctx
+            .rules
+            .as_ref()
+            .expect("rules")
+            .process_event(&RuntimeEvent::PathChanged {
+                path: "src/api/file.rs".to_owned(),
+                operation: PathOperation::Read,
+            })
+            .await;
+
+        assert!(injections.is_empty());
     }
 
     #[test]

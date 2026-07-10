@@ -19,13 +19,18 @@ use async_trait::async_trait;
 use serde::Deserialize;
 
 use crate::error::ToolError;
-use crate::skill::{SkillShell, TemplateInputs, expand, load_skill_from_path};
+use crate::skill::loader::{load_skill_from_path, load_workspace_skill_from_path};
+use crate::skill::{SkillShell, TemplateInputs, expand};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::ToolErrorKind;
 use crate::tool::lifecycle::{BlockDecision, PreValidateOutcome};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
+use crate::util::{
+    WorkspaceEntryKind, read_workspace_directory, validate_workspace_regular_file,
+    workspace_relative_path,
+};
 
 /// Maximum number of bundled-resource file names included in the tool
 /// activation result (per DESIGN.md §D13 — progressive disclosure tier 3).
@@ -35,6 +40,9 @@ const MAX_RESOURCE_ENTRIES: usize = 20;
 ///
 /// The first directory containing `<name>/SKILL.md` or `<name>.md` wins.
 pub struct SkillSearchPaths(pub Vec<PathBuf>);
+
+/// Immutable launch root used to classify repository-controlled skills.
+pub(crate) struct WorkspaceSkillRoot(pub(crate) PathBuf);
 
 /// Behaviour policy for the skill tool, wired through tool construction
 /// (the embedder's `[tool_config.skill]` settings surface).
@@ -48,11 +56,11 @@ pub struct SkillToolConfig {
 }
 
 impl Default for SkillToolConfig {
-    /// Documented default: shell execution **enabled** — skills authored
-    /// against the `agentskills.io` standard rely on `` !`command` ``
-    /// expansion, and this preserves the tool's established behaviour.
-    /// Embedders that must not execute skill-authored shell disable it
-    /// via [`SkillTool::with_config`].
+    /// Documented default for trusted user/programmatic skills: shell
+    /// execution is enabled for `agentskills.io` compatibility. Repository
+    /// skills are always activated with shell expansion disabled regardless
+    /// of this value; project command execution requires a future consent
+    /// design.
     fn default() -> Self {
         Self {
             shell_execution: true,
@@ -124,23 +132,55 @@ struct SkillArgs {
     arguments: Option<String>,
 }
 
-fn enumerate_available(dirs: &[PathBuf]) -> Vec<String> {
+fn directory_entries(
+    directory: &Path,
+    workspace_root: Option<&Path>,
+) -> Vec<(PathBuf, WorkspaceEntryKind)> {
+    if let Some(root) = workspace_root
+        && let Some(relative) = workspace_relative_path(root, directory)
+    {
+        return read_workspace_directory(root, &relative).map_or_else(
+            |_| Vec::new(),
+            |entries| {
+                entries
+                    .into_iter()
+                    .map(|entry| (directory.join(entry.name), entry.kind))
+                    .collect()
+            },
+        );
+    }
+    let Ok(entries) = std::fs::read_dir(directory) else {
+        return Vec::new();
+    };
+    entries
+        .filter_map(|entry| {
+            let entry = entry.ok()?;
+            let kind = match entry.file_type().ok()? {
+                file_type if file_type.is_file() => WorkspaceEntryKind::File,
+                file_type if file_type.is_dir() => WorkspaceEntryKind::Directory,
+                _ => WorkspaceEntryKind::Other,
+            };
+            Some((entry.path(), kind))
+        })
+        .collect()
+}
+
+fn enumerate_available(dirs: &[PathBuf], workspace_root: Option<&Path>) -> Vec<String> {
     let mut names = std::collections::BTreeSet::new();
     for dir in dirs {
-        let Ok(entries) = std::fs::read_dir(dir) else {
-            continue;
-        };
-        for entry in entries.flatten() {
-            let path = entry.path();
-            let Ok(file_type) = entry.file_type() else {
-                continue;
-            };
-            if file_type.is_dir()
-                && path.join("SKILL.md").is_file()
+        for (path, kind) in directory_entries(dir, workspace_root) {
+            if kind == WorkspaceEntryKind::Directory
+                && workspace_root
+                    .and_then(|root| {
+                        workspace_relative_path(root, &path.join("SKILL.md")).map(|relative| {
+                            validate_workspace_regular_file(root, &relative).is_ok()
+                        })
+                    })
+                    .unwrap_or_else(|| path.join("SKILL.md").is_file())
                 && let Some(name) = path.file_name().and_then(OsStr::to_str)
             {
                 names.insert(name.to_string());
-            } else if file_type.is_file()
+            } else if kind == WorkspaceEntryKind::File
                 && path.extension().and_then(OsStr::to_str) == Some("md")
                 && let Some(stem) = path.file_stem().and_then(OsStr::to_str)
             {
@@ -236,25 +276,25 @@ fn parse_shell_args(input: &str) -> Vec<String> {
 /// the loaded skill file itself (which matters for flat-form skills where
 /// `skill_dir` is the search directory and the loaded file sits alongside
 /// other skills).
-fn list_resources(skill_dir: &Path, skill_path: &Path) -> Vec<String> {
-    let Ok(entries) = std::fs::read_dir(skill_dir) else {
-        return Vec::new();
-    };
+fn list_resources(
+    skill_dir: &Path,
+    skill_path: &Path,
+    workspace_root: Option<&Path>,
+) -> Vec<String> {
     let loaded_file_name = skill_path.file_name();
 
     let mut names: Vec<String> = Vec::new();
-    for entry in entries.flatten() {
-        let Ok(file_type) = entry.file_type() else {
-            continue;
-        };
-        if !file_type.is_file() {
+    for (path, kind) in directory_entries(skill_dir, workspace_root) {
+        if kind != WorkspaceEntryKind::File {
             continue;
         }
-        let entry_name = entry.file_name();
+        let Some(entry_name) = path.file_name() else {
+            continue;
+        };
         if entry_name == OsStr::new("SKILL.md") {
             continue;
         }
-        if Some(entry_name.as_os_str()) == loaded_file_name {
+        if Some(entry_name) == loaded_file_name {
             continue;
         }
         if let Some(s) = entry_name.to_str() {
@@ -362,6 +402,7 @@ impl Tool for SkillTool {
             ));
         }
         let paths: Arc<SkillSearchPaths> = ctx.require_extension::<SkillSearchPaths>()?;
+        let workspace_root = ctx.get_extension::<WorkspaceSkillRoot>();
 
         let arguments_raw = args.arguments.unwrap_or_default();
         let positional = parse_shell_args(&arguments_raw);
@@ -375,17 +416,30 @@ impl Tool for SkillTool {
             shell_execution: self.config.shell_execution,
         };
         for dir in &paths.0 {
-            let candidate = dir.join(&args.name).join("SKILL.md");
-            if candidate.is_file() {
-                return activate(&activation, &candidate).await;
-            }
-            let candidate = dir.join(format!("{}.md", args.name));
-            if candidate.is_file() {
-                return activate(&activation, &candidate).await;
+            for candidate in [
+                dir.join(&args.name).join("SKILL.md"),
+                dir.join(format!("{}.md", args.name)),
+            ] {
+                if let Some(root) = workspace_root.as_ref()
+                    && let Some(relative) = workspace_relative_path(&root.0, &candidate)
+                {
+                    let absent = matches!(
+                        validate_workspace_regular_file(&root.0, &relative),
+                        Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                    );
+                    if !absent {
+                        return activate(&activation, &candidate, Some(&root.0)).await;
+                    }
+                } else if candidate.is_file() {
+                    return activate(&activation, &candidate, None).await;
+                }
             }
         }
 
-        let available = enumerate_available(&paths.0);
+        let available = enumerate_available(
+            &paths.0,
+            workspace_root.as_deref().map(|root| root.0.as_path()),
+        );
         Err(ToolError::ExecutionFailed {
             reason: format!(
                 "skill \"{}\" not found. Available: {:?}",
@@ -414,8 +468,13 @@ struct ActivationInputs<'a> {
 async fn activate(
     inputs: &ActivationInputs<'_>,
     skill_path: &Path,
+    workspace_root: Option<&Path>,
 ) -> Result<ToolOutput, ToolError> {
-    let loaded = load_skill_from_path(skill_path).map_err(|diags| {
+    let loaded = workspace_root.map_or_else(
+        || load_skill_from_path(skill_path),
+        |root| load_workspace_skill_from_path(root, skill_path),
+    );
+    let loaded = loaded.map_err(|diags| {
         let reason = diags.first().map_or_else(
             || format!("failed to load skill at {}", skill_path.display()),
             |d| d.message.clone(),
@@ -439,7 +498,7 @@ async fn activate(
         shell: loaded.metadata.shell.unwrap_or(SkillShell::Bash),
         cwd: inputs.working_dir,
         skill_dir,
-        disable_shell: !inputs.shell_execution,
+        disable_shell: !inputs.shell_execution || workspace_root.is_some(),
         arguments_raw: inputs.arguments_raw,
         arguments_positional: inputs.positional,
         argument_names: loaded.metadata.arguments.as_slice(),
@@ -455,7 +514,7 @@ async fn activate(
         expanded.push_str(inputs.arguments_raw);
     }
 
-    let resources = list_resources(skill_dir, skill_path);
+    let resources = list_resources(skill_dir, skill_path, workspace_root);
 
     let payload = serde_json::json!({
         "name": inputs.requested_name,
@@ -590,7 +649,7 @@ mod tests {
             std::fs::write(skill_dir.join(format!("ref-{i:02}.md")), "ref").unwrap();
         }
 
-        let names = list_resources(&skill_dir, &skill_path);
+        let names = list_resources(&skill_dir, &skill_path, None);
         assert_eq!(names.len(), 20);
         assert!(!names.iter().any(|n| n == "SKILL.md"));
         // Sorted: the first should be ref-00 with a leading zero.
@@ -605,7 +664,7 @@ mod tests {
         std::fs::write(dir.path().join("README.md"), "readme").unwrap();
         std::fs::write(dir.path().join("data.json"), "{}").unwrap();
 
-        let names = list_resources(dir.path(), &skill_path);
+        let names = list_resources(dir.path(), &skill_path, None);
         assert!(!names.iter().any(|n| n == "alias.md"));
         assert!(names.iter().any(|n| n == "README.md"));
         assert!(names.iter().any(|n| n == "data.json"));
@@ -616,6 +675,7 @@ mod tests {
         let names = list_resources(
             Path::new("/nonexistent/path"),
             Path::new("/nonexistent/SKILL.md"),
+            None,
         );
         assert!(names.is_empty());
     }
@@ -769,6 +829,95 @@ mod tests {
             .unwrap();
         let content = out.content["content"].as_str().unwrap();
         assert!(content.contains("expanded"), "{content}");
+    }
+
+    #[tokio::test]
+    async fn workspace_skill_shell_is_disabled_even_when_tool_default_is_enabled() {
+        let workspace = tempdir().unwrap();
+        let skill_dir = workspace.path().join("skills/repository-skill");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        tokio::fs::write(
+            skill_dir.join("SKILL.md"),
+            "---\ndescription: repository skill\n---\n!`touch repository-command-ran`",
+        )
+        .await
+        .unwrap();
+
+        let launch_root = workspace.path().canonicalize().unwrap();
+        let ctx = ToolContext::empty();
+        ctx.set_working_dir(launch_root.clone());
+        ctx.insert_extension(Arc::new(WorkspaceSkillRoot(launch_root.clone())));
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![launch_root.join("skills")])));
+        std::fs::create_dir(launch_root.join("subdir")).unwrap();
+        ctx.set_working_dir(launch_root.join("subdir"));
+        let out = SkillTool::new()
+            .execute(&envelope_for(json!({"name": "repository-skill"})), &ctx)
+            .await
+            .unwrap();
+        let content = out.content["content"].as_str().unwrap();
+
+        assert!(content.contains("disabled by policy"));
+        assert!(!workspace.path().join("repository-command-ran").exists());
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn workspace_skill_symlink_is_refused_before_activation() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        let skill_dir = workspace.path().join("skills/leak");
+        std::fs::create_dir_all(&skill_dir).unwrap();
+        let target = outside.path().join("SKILL.md");
+        std::fs::write(
+            &target,
+            "---\ndescription: leak\n---\nsentinel-private-skill",
+        )
+        .unwrap();
+        symlink(&target, skill_dir.join("SKILL.md")).unwrap();
+        let launch_root = workspace.path().canonicalize().unwrap();
+        let ctx = ToolContext::empty();
+        ctx.set_working_dir(launch_root.clone());
+        ctx.insert_extension(Arc::new(WorkspaceSkillRoot(launch_root.clone())));
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![launch_root.join("skills")])));
+
+        let error = SkillTool::new()
+            .execute(&envelope_for(json!({"name": "leak"})), &ctx)
+            .await
+            .expect_err("workspace skill symlink must be refused");
+
+        assert!(!error.to_string().contains("sentinel-private-skill"));
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn missing_workspace_skill_does_not_enumerate_symlinked_external_root() {
+        use std::os::unix::fs::symlink;
+
+        let workspace = tempdir().unwrap();
+        let outside = tempdir().unwrap();
+        std::fs::write(
+            outside.path().join("sentinel-external-skill-name.md"),
+            "---\ndescription: external\n---\nexternal",
+        )
+        .unwrap();
+        let norn_dir = workspace.path().join(".norn");
+        std::fs::create_dir(&norn_dir).unwrap();
+        symlink(outside.path(), norn_dir.join("skills")).unwrap();
+        let launch_root = workspace.path().canonicalize().unwrap();
+        let ctx = ToolContext::empty();
+        ctx.insert_extension(Arc::new(WorkspaceSkillRoot(launch_root.clone())));
+        ctx.insert_extension(Arc::new(SkillSearchPaths(vec![
+            launch_root.join(".norn/skills"),
+        ])));
+
+        let error = SkillTool::new()
+            .execute(&envelope_for(json!({"name": "missing"})), &ctx)
+            .await
+            .expect_err("missing skill must remain missing");
+
+        assert!(!error.to_string().contains("sentinel-external-skill-name"));
     }
 
     #[test]

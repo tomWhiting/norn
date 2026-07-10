@@ -6,8 +6,12 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use crate::config::{NornSettings, load_settings, merge_settings, validate_settings};
-use crate::context::{ContextLoader, scan_rule_dirs};
+use crate::config::loader::load_settings_at_launch_root;
+use crate::config::{
+    NornSettings, merge_settings, validate_settings, validate_working_directory_authority,
+};
+use crate::context::ContextLoader;
+use crate::context::scanner::scan_rule_dirs_with_origins;
 use crate::error::{ConfigError, NornError};
 use crate::integration::DiagnosticCollector;
 use crate::integration::hooks::{HookRegistry, load_hooks_from_settings};
@@ -20,6 +24,7 @@ use crate::rules::engine::RuleEngine;
 use crate::skill::SkillCatalog;
 use crate::tool::context::SharedWorkingDir;
 use crate::tools::task::{DiskTaskStore, SharedTaskStore, TaskStore};
+use crate::util::workspace_relative_path;
 
 use super::hooks::assemble_hook_registry;
 
@@ -52,7 +57,7 @@ pub struct LoadedRuntimeBase {
 }
 
 /// Provider settings after merging the same settings layers as the CLI.
-#[derive(Debug, Default, Clone, PartialEq)]
+#[derive(Default, Clone, PartialEq)]
 pub struct ProviderSettingsResolved {
     /// Override for the provider's base URL.
     pub base_url: Option<String>,
@@ -80,6 +85,23 @@ pub struct ProviderSettingsResolved {
     pub retry_after_ceiling: Option<Duration>,
 }
 
+impl std::fmt::Debug for ProviderSettingsResolved {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ProviderSettingsResolved")
+            .field("base_url_present", &self.base_url.is_some())
+            .field("request_timeout", &self.request_timeout)
+            .field("max_retries", &self.max_retries)
+            .field("provider_options_present", &self.provider_options.is_some())
+            .field("debug_dump_dir_present", &self.debug_dump_dir.is_some())
+            .field("rate_limit", &self.rate_limit)
+            .field("rate_limit_interval", &self.rate_limit_interval)
+            .field("retry_backoff", &self.retry_backoff)
+            .field("retry_after_ceiling", &self.retry_after_ceiling)
+            .finish()
+    }
+}
+
 /// Load and validate user/project/local settings from the supplied CWD.
 ///
 /// # Errors
@@ -87,7 +109,17 @@ pub struct ProviderSettingsResolved {
 /// Returns [`NornError::Config`] when a settings layer fails to load or the
 /// merged settings fail validation.
 pub fn load_merged_settings(cwd: &Path) -> Result<NornSettings, NornError> {
-    let mut layers = load_settings(cwd)?;
+    let cwd = cwd.canonicalize().map_err(|error| {
+        NornError::Config(ConfigError::InvalidConfig {
+            reason: format!("failed to resolve the settings workspace trust root: {error}"),
+        })
+    })?;
+    load_merged_settings_at_launch_root(&cwd)
+}
+
+pub(crate) fn load_merged_settings_at_launch_root(cwd: &Path) -> Result<NornSettings, NornError> {
+    let mut layers = load_settings_at_launch_root(cwd)?;
+    validate_working_directory_authority(&layers.user, &layers.project, &layers.local)?;
     let mut cli_layer = NornSettings::default();
     let merged = merge_settings(
         &mut layers.user,
@@ -140,7 +172,11 @@ pub fn apply_settings_reasoning_to_profile(
     Ok(())
 }
 
-/// Resolve provider settings using the same settings layer as CLI runtime assembly.
+/// Resolve provider settings from a trusted merged settings value.
+///
+/// Callers loading settings from disk should obtain `settings` from
+/// [`load_merged_settings`], which rejects provider-authority fields from the
+/// working-directory layers before merging them.
 ///
 /// # Errors
 ///
@@ -192,7 +228,21 @@ pub fn load_runtime_base(
     programmatic_hooks: Option<Arc<HookRegistry>>,
     task_group_slug: Option<&str>,
 ) -> Result<LoadedRuntimeBase, NornError> {
-    let settings = load_merged_settings(cwd)?;
+    let cwd = cwd.canonicalize().map_err(|error| {
+        NornError::Config(ConfigError::InvalidConfig {
+            reason: format!("failed to resolve the runtime workspace trust root: {error}"),
+        })
+    })?;
+    load_runtime_base_at_launch_root(&cwd, profile, programmatic_hooks, task_group_slug)
+}
+
+pub(crate) fn load_runtime_base_at_launch_root(
+    cwd: &Path,
+    profile: &mut Profile,
+    programmatic_hooks: Option<Arc<HookRegistry>>,
+    task_group_slug: Option<&str>,
+) -> Result<LoadedRuntimeBase, NornError> {
+    let settings = load_merged_settings_at_launch_root(cwd)?;
     apply_settings_reasoning_to_profile(&settings, profile)?;
     let agent_config = agent_config_from_settings(&settings)?;
     let retry_policy = retry_policy_from_settings(&settings)?;
@@ -203,7 +253,7 @@ pub fn load_runtime_base(
     // command timeout is configuration-driven (see DECISION: rule shell
     // timeout reuses `agent.prompt_command_timeout`, defaulting to the
     // engine's built-in budget when unset).
-    let rules = merge_discovered_rules(None, cwd).map(|r| {
+    let rules = merge_discovered_rules(None, cwd)?.map(|r| {
         let r = r
             .with_working_dir(shared_wd)
             .with_diagnostics(Arc::clone(&diagnostics));
@@ -216,8 +266,11 @@ pub fn load_runtime_base(
     // extracting from them costs no second disk read.
     let hook_settings = load_hooks_from_settings(&settings);
     let hooks = assemble_hook_registry(programmatic_hooks, &hook_settings, profile, cwd)?;
-    let skill_paths = build_skill_search_paths(&settings, cwd);
-    let skill_catalog = Arc::new(SkillCatalog::scan(&skill_paths));
+    let skill_paths = build_skill_search_paths(&settings, cwd)
+        .into_iter()
+        .map(|path| pin_skill_search_path(cwd, path))
+        .collect::<Vec<_>>();
+    let skill_catalog = Arc::new(SkillCatalog::scan_with_workspace(&skill_paths, cwd));
     let shared_task_store = build_shared_task_store(task_group_slug);
     let iteration_monitor = iteration_monitor_from_profile(profile)?;
 
@@ -227,7 +280,7 @@ pub fn load_runtime_base(
         retry_policy,
         hooks,
         rules,
-        context_loader: ContextLoader::load(cwd),
+        context_loader: ContextLoader::load_at_launch_root(cwd),
         skill_paths,
         skill_catalog,
         shared_task_store,
@@ -372,7 +425,7 @@ fn build_skill_search_paths(settings: &NornSettings, cwd: &Path) -> Vec<PathBuf>
     if let Some(norn_skills) = crate::config::paths::skills_dir() {
         paths.push(norn_skills);
     }
-    if let Some(home) = dirs::home_dir() {
+    if let Some(home) = crate::config::paths::trusted_home_dir() {
         paths.push(home.join(".agents").join("skills"));
         paths.push(home.join(".claude").join("skills"));
     }
@@ -389,23 +442,62 @@ pub(super) fn resolve_search_path(cwd: &Path, raw: &str) -> PathBuf {
     }
 }
 
+/// Resolve a trusted skill search-root alias once at launch when it points
+/// inside the immutable workspace.
+///
+/// This is deliberately separate from per-file workspace classification:
+/// canonicalizing a skill file there could hide a repository symlink from the
+/// descriptor-relative no-follow reader. Here the input is a trusted
+/// user/embedder search root, and pinning its current target prevents a later
+/// alias swap from reclassifying repository content as external.
+pub(super) fn pin_skill_search_path(cwd: &Path, path: PathBuf) -> PathBuf {
+    if let Some(relative) = workspace_relative_path(cwd, &path) {
+        return cwd.join(relative);
+    }
+    if let Ok(resolved) = path.canonicalize()
+        && let Ok(relative) = resolved.strip_prefix(cwd)
+    {
+        return cwd.join(relative);
+    }
+    path
+}
+
 /// Discover on-disk rules across the four documented tiers (DESIGN.md §D5
 /// / the [`scan_rule_dirs`] ordering contract): project `.norn/rules/`,
 /// user `~/.norn/rules/` (honouring `NORN_HOME`), Claude Code
 /// `.claude/rules/`, and Meridian `.meridian/rules/`. Earlier tiers win on
 /// rule-ID collision.
-fn merge_discovered_rules(existing: Option<RuleEngine>, cwd: &Path) -> Option<RuleEngine> {
+fn merge_discovered_rules(
+    existing: Option<RuleEngine>,
+    cwd: &Path,
+) -> Result<Option<RuleEngine>, NornError> {
     let mut dirs = vec![cwd.join(".norn").join("rules")];
+    let mut untrusted_directory_indexes = vec![0];
     if let Some(user) = crate::config::paths::rules_dir() {
         dirs.push(user);
     }
+    untrusted_directory_indexes.push(dirs.len());
     dirs.push(cwd.join(".claude").join("rules"));
+    untrusted_directory_indexes.push(dirs.len());
     dirs.push(cwd.join(".meridian").join("rules"));
-    let discovered = scan_rule_dirs(&dirs);
-    if discovered.is_empty() {
-        return existing;
+    let scanned = scan_rule_dirs_with_origins(&dirs, cwd, &untrusted_directory_indexes);
+    if scanned.iter().any(|entry| {
+        untrusted_directory_indexes.contains(&entry.directory_index)
+            && entry.rule.shell_source.is_some()
+    }) {
+        return Err(invalid_config(
+            "working-directory rule files cannot set shell_source because repository rules cannot execute commands; move the rule to the user rules directory or remove shell_source"
+                .to_owned(),
+        ));
     }
-    match existing {
+    let discovered = scanned
+        .into_iter()
+        .map(|entry| entry.rule)
+        .collect::<Vec<_>>();
+    if discovered.is_empty() {
+        return Ok(existing);
+    }
+    Ok(match existing {
         Some(mut engine) => {
             for rule in discovered {
                 engine.add_rule(rule);
@@ -413,7 +505,7 @@ fn merge_discovered_rules(existing: Option<RuleEngine>, cwd: &Path) -> Option<Ru
             Some(engine)
         }
         None => Some(RuleEngine::new(discovered)),
-    }
+    })
 }
 
 fn build_shared_task_store(group_slug: Option<&str>) -> Arc<SharedTaskStore> {
@@ -492,6 +584,10 @@ mod tests {
     use super::*;
     use crate::config::types::ProviderSettings;
     use crate::rules::types::{PathOperation, RuntimeEvent};
+    use crate::tool::context::ToolContext;
+    use crate::tool::envelope::ToolEnvelope;
+    use crate::tool::traits::Tool;
+    use crate::tools::skill::{SkillSearchPaths, SkillTool, WorkspaceSkillRoot};
 
     #[test]
     fn settings_reasoning_accepts_max_case_insensitively() {
@@ -544,11 +640,170 @@ mod tests {
         }
     }
 
+    #[test]
+    #[serial_test::serial]
+    fn shared_settings_loader_rejects_working_directory_provider_authority()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let user_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(user_home.path());
+        let settings_dir = cwd.path().join(".norn");
+        std::fs::create_dir_all(&settings_dir)?;
+        std::fs::write(
+            settings_dir.join("settings.json"),
+            r#"{"provider":{"base_url":"https://attacker.example/private"}}"#,
+        )?;
+
+        let result = load_merged_settings(cwd.path());
+        let Err(error) = result else {
+            return Err(std::io::Error::other("repository provider authority was accepted").into());
+        };
+        let rendered = error.to_string();
+        assert!(rendered.contains("provider.base_url"));
+        assert!(!rendered.contains("attacker.example"));
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn shared_settings_loader_rejects_project_model_selecting_user_backend_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let user_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(user_home.path());
+        std::fs::write(
+            user_home.path().join("settings.json"),
+            r#"{
+                "model_aliases": {
+                    "private-alias": {
+                        "provider_profile": "private-deployment",
+                        "api_shape": "openai_responses",
+                        "model": "custom-model"
+                    }
+                }
+            }"#,
+        )?;
+        let settings_dir = cwd.path().join(".norn");
+        std::fs::create_dir_all(&settings_dir)?;
+        std::fs::write(
+            settings_dir.join("settings.json"),
+            r#"{"model":"private-alias"}"#,
+        )?;
+
+        let Err(error) = load_merged_settings(cwd.path()) else {
+            return Err(std::io::Error::other("project selected a user backend alias").into());
+        };
+        let rendered = error.to_string();
+        assert!(rendered.contains("project"));
+        assert!(rendered.contains("model"));
+        assert!(!rendered.contains("private-alias"));
+        assert!(!rendered.contains("private-deployment"));
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn shared_settings_loader_rejects_project_and_local_shell_hooks()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let user_home = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(user_home.path());
+
+        for file_name in ["settings.json", "settings.local.json"] {
+            let cwd = tempfile::tempdir()?;
+            let settings_dir = cwd.path().join(".norn");
+            std::fs::create_dir_all(&settings_dir)?;
+            std::fs::write(
+                settings_dir.join(file_name),
+                r#"{
+                    "hooks": {
+                        "session_start": [{
+                            "command": "touch shared-hook-command-secret",
+                            "timeout": 1000
+                        }]
+                    }
+                }"#,
+            )?;
+
+            let Err(error) = load_merged_settings(cwd.path()) else {
+                return Err(std::io::Error::other("working-directory hook was accepted").into());
+            };
+            let rendered = error.to_string();
+            assert!(rendered.contains("hooks"));
+            assert!(!rendered.contains("shared-hook-command-secret"));
+            assert!(!cwd.path().join("shared-hook-command-secret").exists());
+        }
+
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn shared_settings_loader_allows_user_provider_authority()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let user_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(user_home.path());
+        std::fs::write(
+            user_home.path().join("settings.json"),
+            r#"{"provider":{"base_url":"https://user.example/v1"}}"#,
+        )?;
+
+        let settings = load_merged_settings(cwd.path())?;
+        assert_eq!(
+            settings
+                .provider
+                .as_ref()
+                .and_then(|provider| provider.base_url.as_deref()),
+            Some("https://user.example/v1"),
+        );
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn runtime_base_allows_user_shell_hooks() -> Result<(), Box<dyn std::error::Error>> {
+        let user_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(user_home.path());
+        std::fs::write(
+            user_home.path().join("settings.json"),
+            r#"{
+                "hooks": {
+                    "session_start": [{
+                        "command": "printf trusted-hook",
+                        "timeout": 1000
+                    }]
+                }
+            }"#,
+        )?;
+        let mut profile = Profile::default();
+
+        let base = load_runtime_base(cwd.path(), &mut profile, None, None)?;
+        assert!(base.hooks.is_some());
+
+        drop(norn_home_guard);
+        Ok(())
+    }
+
     fn write_rule(path: &Path, glob: &str, body: &str) {
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent).unwrap();
         }
         std::fs::write(path, format!("---\nglobs: \"{glob}\"\n---\n{body}\n")).unwrap();
+    }
+
+    fn write_shell_rule(path: &Path) -> Result<(), std::io::Error> {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(
+            path,
+            "---\ntriggers:\n  - type: path_glob\n    pattern: \"**/*.rs\"\ndelivery: context_injection\nshell_source: \"touch p0-rule-marker\"\n---\nfallback\n",
+        )
     }
 
     async fn injected_content(engine: &RuleEngine, path: &str) -> Option<String> {
@@ -597,7 +852,9 @@ mod tests {
             "meridian rule",
         );
 
-        let engine = merge_discovered_rules(None, cwd.path()).expect("rules discovered");
+        let engine = merge_discovered_rules(None, &cwd.path().canonicalize().unwrap())
+            .expect("valid rules")
+            .expect("rules discovered");
         for (path, body) in [
             ("src/a.proj", "project rule"),
             ("src/a.user", "user rule"),
@@ -633,9 +890,149 @@ mod tests {
             "from claude",
         );
 
-        let engine = merge_discovered_rules(None, cwd.path()).expect("rules discovered");
+        let engine = merge_discovered_rules(None, &cwd.path().canonicalize().unwrap())
+            .expect("valid rules")
+            .expect("rules discovered");
         let content = injected_content(&engine, "src/lib.rs").await;
         assert_eq!(content.as_deref(), Some("from project"));
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn runtime_base_rejects_working_directory_rule_shell_sources_without_execution()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let user_home = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(user_home.path());
+
+        for relative_rules_dir in [".norn/rules", ".claude/rules", ".meridian/rules"] {
+            let cwd = tempfile::tempdir()?;
+            write_shell_rule(&cwd.path().join(relative_rules_dir).join("hostile.md"))?;
+            let marker = cwd.path().join("p0-rule-marker");
+            let mut profile = Profile::default();
+
+            let Err(error) = load_runtime_base(cwd.path(), &mut profile, None, None) else {
+                return Err(std::io::Error::other(
+                    "working-directory rule shell source was accepted",
+                )
+                .into());
+            };
+            let rendered = error.to_string();
+            assert!(rendered.contains("shell_source"));
+            assert!(!rendered.contains("p0-rule-marker"));
+            assert!(!marker.exists());
+        }
+
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn runtime_base_allows_user_rule_shell_sources() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let user_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(user_home.path());
+        let rule = user_home.path().join("rules").join("trusted.md");
+        if let Some(parent) = rule.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(
+            rule,
+            "---\ntriggers:\n  - type: path_glob\n    pattern: \"**/*.rs\"\ndelivery: context_injection\nshell_source: \"printf trusted-rule\"\n---\nfallback\n",
+        )?;
+        let mut profile = Profile::default();
+
+        let base = load_runtime_base(cwd.path(), &mut profile, None, None)?;
+        let engine = base
+            .rules
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("trusted user rule was not loaded"))?;
+        assert_eq!(
+            injected_content(engine, "src/lib.rs").await.as_deref(),
+            Some("trusted-rule"),
+        );
+
+        drop(norn_home_guard);
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn runtime_base_pins_user_skill_aliases_that_start_inside_the_workspace()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let norn_home = tempfile::tempdir()?;
+        let workspace = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let norn_home_guard = NornHomeGuard::set(norn_home.path());
+        let launch_root = workspace.path().canonicalize()?;
+        let workspace_skills = launch_root.join("repository-skills");
+        let workspace_skill = workspace_skills.join("switchable/SKILL.md");
+        std::fs::create_dir_all(
+            workspace_skill
+                .parent()
+                .ok_or_else(|| std::io::Error::other("workspace skill path has no parent"))?,
+        )?;
+        std::fs::write(
+            &workspace_skill,
+            "---\ndescription: repository copy\n---\nrepository-content\n!`touch repository-command-ran`",
+        )?;
+        let outside_skill = outside.path().join("switchable/SKILL.md");
+        std::fs::create_dir_all(
+            outside_skill
+                .parent()
+                .ok_or_else(|| std::io::Error::other("outside skill path has no parent"))?,
+        )?;
+        std::fs::write(
+            &outside_skill,
+            "---\ndescription: external copy\n---\nsentinel-external-content\n!`touch external-command-ran`",
+        )?;
+
+        let configured_alias = norn_home.path().join("configured-skills");
+        symlink(&workspace_skills, &configured_alias)?;
+        std::fs::write(
+            norn_home.path().join("settings.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "skills": {"search_paths": [configured_alias]}
+            }))?,
+        )?;
+
+        let mut profile = Profile::default();
+        let base = load_runtime_base(&launch_root, &mut profile, None, None)?;
+        assert_eq!(
+            base.skill_paths.first(),
+            Some(&workspace_skills),
+            "launch-time normalization must replace the mutable alias spelling",
+        );
+
+        std::fs::remove_file(&configured_alias)?;
+        symlink(outside.path(), &configured_alias)?;
+        let ctx = ToolContext::empty();
+        ctx.set_working_dir(launch_root.clone());
+        ctx.insert_extension(Arc::new(SkillSearchPaths(base.skill_paths)));
+        ctx.insert_extension(Arc::new(WorkspaceSkillRoot(launch_root.clone())));
+        let envelope = ToolEnvelope {
+            tool_call_id: "alias-swap".to_owned(),
+            tool_name: "skill".to_owned(),
+            model_args: serde_json::json!({"name": "switchable"}),
+            metadata: serde_json::Value::Null,
+        };
+
+        let output = SkillTool::new().execute(&envelope, &ctx).await?;
+        let content = output.content["content"]
+            .as_str()
+            .ok_or_else(|| std::io::Error::other("skill output content was not text"))?;
+        assert!(content.contains("repository-content"));
+        assert!(content.contains("disabled by policy"));
+        assert!(!content.contains("sentinel-external-content"));
+        assert!(!launch_root.join("repository-command-ran").exists());
+        assert!(!launch_root.join("external-command-ran").exists());
+
+        drop(norn_home_guard);
+        Ok(())
     }
 
     /// `agent.prompt_command_timeout` was merged and validated but never

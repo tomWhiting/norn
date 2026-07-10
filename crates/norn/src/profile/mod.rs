@@ -13,8 +13,9 @@ pub mod resolve;
 pub mod types;
 
 pub use loader::{
-    Scanner, capability_scan_dirs, default_scan_dirs, parse_capability, parse_profile,
-    resolve_capability, resolve_profile, resolve_profile_capabilities,
+    ProfileOrigin, ResolvedWorkspaceProfile, Scanner, capability_scan_dirs, default_scan_dirs,
+    parse_capability, parse_profile, resolve_capability, resolve_profile,
+    resolve_profile_capabilities, resolve_workspace_profile,
 };
 pub use resolve::from_profile;
 pub use types::{Capability, Profile, PromptCommand};

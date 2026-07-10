@@ -16,6 +16,8 @@
 
 use std::path::PathBuf;
 
+use crate::error::ConfigError;
+
 /// Root directory: `~/.norn/`.
 const DOT_DIR: &str = ".norn";
 
@@ -55,9 +57,59 @@ pub fn norn_dir() -> Option<PathBuf> {
     if let Some(override_dir) = std::env::var_os(NORN_HOME)
         && !override_dir.is_empty()
     {
-        return Some(PathBuf::from(override_dir));
+        let path = PathBuf::from(override_dir);
+        if path.is_absolute() {
+            return Some(path);
+        }
+        tracing::warn!("ignoring relative NORN_HOME; the override must be absolute");
     }
-    dirs::home_dir().map(|h| h.join(DOT_DIR))
+    trusted_home_dir().map(|home| home.join(DOT_DIR))
+}
+
+/// Returns the operating-system home directory only when it is absolute.
+///
+/// A relative home would make trusted user configuration and credentials
+/// depend on the process working directory.
+#[must_use]
+pub fn trusted_home_dir() -> Option<PathBuf> {
+    let home = dirs::home_dir()?;
+    if home.is_absolute() {
+        Some(home)
+    } else {
+        tracing::warn!("ignoring relative home directory for trusted path resolution");
+        None
+    }
+}
+
+/// Rejects a non-empty relative `NORN_HOME` before trust-tier loading.
+///
+/// # Errors
+///
+/// Returns [`ConfigError::InvalidConfig`] when `NORN_HOME` is relative. The
+/// configured value is deliberately omitted from the diagnostic because it
+/// may be controlled by a launch wrapper.
+pub(crate) fn validate_norn_home() -> Result<(), ConfigError> {
+    if let Some(value) = std::env::var_os(NORN_HOME)
+        && !value.is_empty()
+        && !PathBuf::from(value).is_absolute()
+    {
+        return Err(ConfigError::InvalidConfig {
+            reason: "NORN_HOME must be an absolute path so a working directory cannot become the trusted user configuration tier"
+                .to_owned(),
+        });
+    }
+    Ok(())
+}
+
+/// Rejects a relative operating-system home before trusted-tier loading.
+pub(crate) fn validate_user_home() -> Result<(), ConfigError> {
+    if dirs::home_dir().is_some_and(|home| !home.is_absolute()) {
+        return Err(ConfigError::InvalidConfig {
+            reason: "the user home directory must be absolute so a working directory cannot become a trusted configuration tier"
+                .to_owned(),
+        });
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
