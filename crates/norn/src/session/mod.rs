@@ -15,6 +15,7 @@ pub mod events;
 pub mod manager;
 pub mod mutation_ledger;
 pub mod persistence;
+pub mod resume_repair;
 pub mod spool;
 pub mod store;
 
@@ -38,5 +39,6 @@ pub use persistence::{
     session_file_path, sum_usage_from_events, update_index_entry, update_session_index,
     write_index_atomic,
 };
+pub use resume_repair::repair_dangling_tool_calls;
 pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};
 pub use store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};
