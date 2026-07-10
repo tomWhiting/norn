@@ -166,17 +166,16 @@ impl SseParser {
                     event_type: self.current_event_type.clone(),
                     data,
                 }),
-                Err(parse_err) => {
+                Err(_) => {
                     if self.current_data == "[DONE]" {
                         tracing::debug!(
-                            event_type = self.current_event_type.as_str(),
+                            event_type_present = !self.current_event_type.is_empty(),
                             "dropping SSE [DONE] sentinel frame"
                         );
                     } else {
                         tracing::warn!(
-                            event_type = self.current_event_type.as_str(),
+                            event_type_present = !self.current_event_type.is_empty(),
                             data_len = self.current_data.len(),
-                            error = %parse_err,
                             "dropping SSE frame with unparseable JSON data"
                         );
                     }
@@ -190,7 +189,8 @@ impl SseParser {
 
 /// Maps an `SseEvent` to an optional `ProviderEvent`.
 ///
-/// Unrecognized event types are logged at debug level and produce `None`.
+/// Unrecognized event types produce `None` and a structural debug record that
+/// never copies the authority-controlled discriminator into ordinary logs.
 pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderError>> {
     match event.event_type.as_str() {
         "response.output_text.delta" => {
@@ -234,10 +234,7 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
                 .and_then(|v| v.as_str())
                 .map(str::to_owned)
             else {
-                tracing::warn!(
-                    event_type = event.event_type.as_str(),
-                    "tool call delta missing item_id/id, skipping",
-                );
+                tracing::warn!("tool call delta missing item_id/id, skipping");
                 return None;
             };
             // The SSE event type discriminates structured `function_call`
@@ -274,25 +271,26 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
                     // `ToolCallComplete` — there is no legitimate downstream
                     // value for it — so the event is dropped with a warning
                     // rather than padded with an empty string.
-                    match FunctionCallItem::deserialize(item) {
-                        Ok(FunctionCallItem {
-                            call_id,
-                            name,
-                            arguments,
-                        }) => Some(Ok(ProviderEvent::ToolCallComplete {
-                            call_id,
-                            name,
-                            arguments,
-                            kind: ToolCallKind::Function,
-                        })),
-                        Err(err) => {
-                            tracing::warn!(
-                                error = %err,
-                                "function_call output_item.done failed to deserialize, skipping",
-                            );
-                            None
-                        }
-                    }
+                    let Ok(FunctionCallItem {
+                        call_id,
+                        name,
+                        arguments,
+                    }) = FunctionCallItem::deserialize(item)
+                    else {
+                        tracing::warn!(
+                            call_id_present = item.get("call_id").is_some(),
+                            name_present = item.get("name").is_some(),
+                            arguments_present = item.get("arguments").is_some(),
+                            "function_call output_item.done failed to deserialize, skipping",
+                        );
+                        return None;
+                    };
+                    Some(Ok(ProviderEvent::ToolCallComplete {
+                        call_id,
+                        name,
+                        arguments,
+                        kind: ToolCallKind::Function,
+                    }))
                 }
                 "custom_tool_call" => {
                     // Custom tool calls carry their freeform body in an
@@ -302,25 +300,26 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
                     // `arguments` field as function calls; the `kind` marker
                     // tells the serializer to echo back with `input` + the
                     // `custom_tool_call_output` envelope.
-                    match CustomToolCallItem::deserialize(item) {
-                        Ok(CustomToolCallItem {
-                            call_id,
-                            name,
-                            input,
-                        }) => Some(Ok(ProviderEvent::ToolCallComplete {
-                            call_id,
-                            name,
-                            arguments: input,
-                            kind: ToolCallKind::Custom,
-                        })),
-                        Err(err) => {
-                            tracing::warn!(
-                                error = %err,
-                                "custom_tool_call output_item.done failed to deserialize, skipping",
-                            );
-                            None
-                        }
-                    }
+                    let Ok(CustomToolCallItem {
+                        call_id,
+                        name,
+                        input,
+                    }) = CustomToolCallItem::deserialize(item)
+                    else {
+                        tracing::warn!(
+                            call_id_present = item.get("call_id").is_some(),
+                            name_present = item.get("name").is_some(),
+                            input_present = item.get("input").is_some(),
+                            "custom_tool_call output_item.done failed to deserialize, skipping",
+                        );
+                        return None;
+                    };
+                    Some(Ok(ProviderEvent::ToolCallComplete {
+                        call_id,
+                        name,
+                        arguments: input,
+                        kind: ToolCallKind::Custom,
+                    }))
                 }
                 "reasoning" => {
                     // The full structured item — summary parts, optional
@@ -333,18 +332,18 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
                     // `reasoning_*_text.delta` events, so nothing
                     // user-visible is lost, and fabricating a partial item
                     // would corrupt replay.
-                    match ReasoningItem::deserialize(item) {
-                        Ok(reasoning_item) => Some(Ok(ProviderEvent::ReasoningItemDone {
-                            item: reasoning_item,
-                        })),
-                        Err(err) => {
-                            tracing::warn!(
-                                error = %err,
-                                "reasoning output_item.done failed to deserialize, skipping",
-                            );
-                            None
-                        }
-                    }
+                    let Ok(reasoning_item) = ReasoningItem::deserialize(item) else {
+                        tracing::warn!(
+                            summary_present = item.get("summary").is_some(),
+                            content_present = item.get("content").is_some(),
+                            encrypted_content_present = item.get("encrypted_content").is_some(),
+                            "reasoning output_item.done failed to deserialize, skipping",
+                        );
+                        return None;
+                    };
+                    Some(Ok(ProviderEvent::ReasoningItemDone {
+                        item: reasoning_item,
+                    }))
                 }
                 "compaction" | "compaction_summary" | "context_compaction" => {
                     Some(Ok(ProviderEvent::Compaction {
@@ -370,14 +369,18 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
         }
 
         "response.failed" => {
-            // The error nests under `response.error`. Deserialize and classify
-            // by error code; if the payload is malformed or the nesting is
-            // absent, fall back to a generic stream error (never an empty
-            // string).
-            let error_detail = ResponseFailedPayload::deserialize(&event.data)
-                .ok()
-                .and_then(|p| p.response)
-                .and_then(|r| r.error);
+            // The error nests under `response.error`. Reject a malformed
+            // shape with a local parse error; a structurally valid payload
+            // with no error object remains a generic terminal stream error.
+            let error_detail = match ResponseFailedPayload::deserialize(&event.data) {
+                Ok(payload) => payload.response.and_then(|response| response.error),
+                Err(_) => {
+                    return Some(Err(ProviderError::ResponseParseError {
+                        reason: "response.failed payload did not match the expected structure"
+                            .to_owned(),
+                    }));
+                }
+            };
             let err = match error_detail {
                 Some(detail) => classify_failed_error(&detail),
                 None => ProviderError::StreamError {
@@ -403,11 +406,18 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
             // reason nests under `response.incomplete_details.reason`;
             // unknown reasons surface as a terminal error (see
             // `incomplete_stop_reason`).
-            let reason = ResponseFailedPayload::deserialize(&event.data)
-                .ok()
-                .and_then(|p| p.response)
-                .and_then(|r| r.incomplete_details)
-                .and_then(|d| d.reason);
+            let reason = match ResponseFailedPayload::deserialize(&event.data) {
+                Ok(payload) => payload
+                    .response
+                    .and_then(|response| response.incomplete_details)
+                    .and_then(|details| details.reason),
+                Err(_) => {
+                    return Some(Err(ProviderError::ResponseParseError {
+                        reason: "response.incomplete payload did not match the expected structure"
+                            .to_owned(),
+                    }));
+                }
+            };
             match incomplete_stop_reason(reason.as_deref()) {
                 Ok(stop_reason) => Some(Ok(ProviderEvent::Done {
                     stop_reason,
@@ -453,8 +463,8 @@ pub fn map_sse_event(event: &SseEvent) -> Option<Result<ProviderEvent, ProviderE
         | "response.queued"
         | "response.metadata" => None,
 
-        other => {
-            tracing::debug!(event_type = other, "unrecognized SSE event type, skipping");
+        _ => {
+            tracing::debug!("unrecognized SSE event type, skipping");
             None
         }
     }
@@ -571,6 +581,7 @@ pub(crate) fn output_item_added_call_id(event: &SseEvent) -> Option<(String, Str
     clippy::match_wildcard_for_single_variants
 )]
 mod tests {
+    use std::io;
     use std::time::Duration;
 
     use super::*;
@@ -986,7 +997,7 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
             Some(Err(ProviderError::StreamError { reason, transient })) => {
                 assert_eq!(
                     reason,
-                    "provider returned an unrecognized response.failed error"
+                    "provider returned response.failed without an error code"
                 );
                 assert_eq!(transient, None);
             }
@@ -1146,6 +1157,131 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         }
     }
 
+    fn mapped_terminal_error(event: &SseEvent) -> Result<ProviderError, io::Error> {
+        match map_sse_event(event) {
+            Some(Err(error)) => Ok(error),
+            _ => Err(io::Error::other(
+                "terminal wire event did not map to a provider error",
+            )),
+        }
+    }
+
+    fn extract_opaque_tag<'a>(reason: &'a str, prefix: &str) -> Result<&'a str, io::Error> {
+        reason
+            .strip_prefix(prefix)
+            .and_then(|value| value.strip_suffix(']'))
+            .ok_or_else(|| io::Error::other("terminal diagnostic omitted its opaque tag"))
+    }
+
+    #[test]
+    fn distinct_unknown_terminal_values_survive_wire_dispatch_opaquely()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first_failed =
+            mapped_terminal_error(&failed_event(Some("private-failed-first\r\nsecret"), None))?;
+        let second_failed =
+            mapped_terminal_error(&failed_event(Some("private-failed-second\r\nsecret"), None))?;
+        let ProviderError::StreamError {
+            reason: first_failed_reason,
+            transient: None,
+        } = &first_failed
+        else {
+            return Err(io::Error::other("first failed code was not terminal").into());
+        };
+        let ProviderError::StreamError {
+            reason: second_failed_reason,
+            transient: None,
+        } = &second_failed
+        else {
+            return Err(io::Error::other("second failed code was not terminal").into());
+        };
+        let failed_prefix = "provider returned unknown response.failed code [opaque:";
+        let first_failed_tag = extract_opaque_tag(first_failed_reason, failed_prefix)?;
+        let second_failed_tag = extract_opaque_tag(second_failed_reason, failed_prefix)?;
+
+        let incomplete_event = |reason: &str| SseEvent {
+            event_type: "response.incomplete".to_owned(),
+            data: serde_json::json!({
+                "response": {"incomplete_details": {"reason": reason}}
+            }),
+        };
+        let first_incomplete =
+            mapped_terminal_error(&incomplete_event("private-incomplete-first\r\nsecret"))?;
+        let second_incomplete =
+            mapped_terminal_error(&incomplete_event("private-incomplete-second\r\nsecret"))?;
+        let ProviderError::ResponseParseError {
+            reason: first_incomplete_reason,
+        } = &first_incomplete
+        else {
+            return Err(io::Error::other("first incomplete reason was not terminal").into());
+        };
+        let ProviderError::ResponseParseError {
+            reason: second_incomplete_reason,
+        } = &second_incomplete
+        else {
+            return Err(io::Error::other("second incomplete reason was not terminal").into());
+        };
+        let incomplete_prefix = "response.incomplete carried an unknown reason [opaque:";
+        let first_incomplete_tag = extract_opaque_tag(first_incomplete_reason, incomplete_prefix)?;
+        let second_incomplete_tag =
+            extract_opaque_tag(second_incomplete_reason, incomplete_prefix)?;
+
+        for tag in [
+            first_failed_tag,
+            second_failed_tag,
+            first_incomplete_tag,
+            second_incomplete_tag,
+        ] {
+            assert_eq!(tag.len(), 64);
+            assert!(tag.chars().all(|character| character.is_ascii_hexdigit()));
+        }
+        assert_ne!(first_failed_tag, second_failed_tag);
+        assert_ne!(first_incomplete_tag, second_incomplete_tag);
+        for rendered in [
+            first_failed.to_string(),
+            second_failed.to_string(),
+            first_incomplete.to_string(),
+            second_incomplete.to_string(),
+        ] {
+            assert!(!rendered.contains("private-"));
+            assert!(!rendered.contains("secret"));
+            assert!(!rendered.contains('\r'));
+            assert!(!rendered.contains('\n'));
+        }
+        assert_eq!(first_failed.class(), crate::error::ErrorClass::Terminal);
+        assert_eq!(second_failed.class(), crate::error::ErrorClass::Terminal);
+        assert_eq!(first_incomplete.class(), crate::error::ErrorClass::Terminal);
+        assert_eq!(
+            second_incomplete.class(),
+            crate::error::ErrorClass::Terminal
+        );
+        Ok(())
+    }
+
+    #[test]
+    fn malformed_terminal_payloads_fail_with_local_non_disclosing_errors()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let failed = mapped_terminal_error(&SseEvent {
+            event_type: "response.failed".to_owned(),
+            data: serde_json::json!({"response": "sentinel-private-failed-shape\u{1b}"}),
+        })?;
+        let incomplete = mapped_terminal_error(&SseEvent {
+            event_type: "response.incomplete".to_owned(),
+            data: serde_json::json!({"response": "sentinel-private-incomplete-shape\u{1b}"}),
+        })?;
+
+        let failed_rendered = failed.to_string();
+        let incomplete_rendered = incomplete.to_string();
+        assert!(failed_rendered.contains("did not match the expected structure"));
+        assert!(incomplete_rendered.contains("did not match the expected structure"));
+        assert!(!failed_rendered.contains("sentinel-private"));
+        assert!(!incomplete_rendered.contains("sentinel-private"));
+        assert!(!failed_rendered.contains('\u{1b}'));
+        assert!(!incomplete_rendered.contains('\u{1b}'));
+        assert_eq!(failed.class(), crate::error::ErrorClass::Terminal);
+        assert_eq!(incomplete.class(), crate::error::ErrorClass::Terminal);
+        Ok(())
+    }
+
     #[test]
     fn incomplete_max_output_tokens_completes_with_typed_stop() {
         // BLOCKER regression: a `response.incomplete` event with reason
@@ -1256,13 +1392,12 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
     }
 
     #[test]
-    fn failed_malformed_payload_falls_back_without_panic() {
-        // #10: a payload that does not match the expected shape degrades to a
-        // terminal generic stream error rather than panicking or yielding an
-        // empty string. Exercise both a wrong-typed payload and a missing
-        // nesting.
+    fn failed_payload_without_error_object_has_generic_terminal_fallback()
+    -> Result<(), Box<dyn std::error::Error>> {
+        // Structurally valid payloads without an error object remain terminal
+        // and generic. Wrong-typed payloads are rejected by the separate
+        // malformed-terminal-payload regression above.
         for data in [
-            serde_json::json!("just a string"),
             serde_json::json!({"unexpected": true}),
             serde_json::json!({"response": {"error": null}}),
         ] {
@@ -1270,14 +1405,17 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
                 event_type: "response.failed".to_string(),
                 data,
             };
-            match map_sse_event(&event) {
-                Some(Err(ProviderError::StreamError { reason, transient })) => {
-                    assert_eq!(reason, "response.failed");
-                    assert_eq!(transient, None);
-                }
-                other => panic!("expected generic StreamError fallback, got {other:?}"),
-            }
+            let Some(Err(ProviderError::StreamError { reason, transient })) = map_sse_event(&event)
+            else {
+                return Err(io::Error::other(
+                    "response.failed without an error object was not a generic terminal error",
+                )
+                .into());
+            };
+            assert_eq!(reason, "response.failed");
+            assert_eq!(transient, None);
         }
+        Ok(())
     }
 
     #[test]
@@ -1512,8 +1650,35 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
         tracing::subscriber::with_default(subscriber, || {
             let mut parser = SseParser::new();
             let _done = parser.feed(b"data: [DONE]\n\n");
-            let _corrupt =
-                parser.feed(b"event: broken\ndata: {\"sentinel-private-frame-secret\": \n\n");
+            let _corrupt = parser.feed(
+                b"event: sentinel-private-event-secret\x1b[31m\ndata: {\"sentinel-private-frame-secret\": \n\n",
+            );
+            let _unknown = map_sse_event(&SseEvent {
+                event_type: "sentinel-private-unknown-event\u{1b}[31m".to_owned(),
+                data: serde_json::Value::Null,
+            });
+            let _malformed_reasoning = map_sse_event(&SseEvent {
+                event_type: "response.output_item.done".to_owned(),
+                data: serde_json::json!({
+                    "item": {
+                        "type": "reasoning",
+                        "summary": [{
+                            "type": "sentinel-private-reasoning-secret\u{1b}[31m",
+                            "text": "sentinel-private-reasoning-text"
+                        }]
+                    }
+                }),
+            });
+            let _malformed_tool = map_sse_event(&SseEvent {
+                event_type: "response.output_item.done".to_owned(),
+                data: serde_json::json!({
+                    "item": {
+                        "type": "function_call",
+                        "name": "sentinel-private-tool-name",
+                        "arguments": "{}"
+                    }
+                }),
+            });
         });
 
         let output = String::from_utf8(buf.0.lock().expect("buffer lock").clone())
@@ -1543,6 +1708,12 @@ data: {"response": {"status": "completed", "usage": {"input_tokens": 10, "output
             "corrupt frames must log at warn: {corrupt_line}"
         );
         assert!(!output.contains("sentinel-private-frame-secret"));
+        assert!(!output.contains("sentinel-private-event-secret"));
+        assert!(!output.contains("sentinel-private-unknown-event"));
+        assert!(!output.contains("sentinel-private-reasoning-secret"));
+        assert!(!output.contains("sentinel-private-reasoning-text"));
+        assert!(!output.contains("sentinel-private-tool-name"));
+        assert!(!output.contains('\u{1b}'));
     }
 
     #[test]

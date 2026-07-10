@@ -2,6 +2,7 @@
 
 mod backend;
 mod execute;
+mod opaque_discriminator;
 mod provider;
 pub mod rate_limiter;
 pub mod request;

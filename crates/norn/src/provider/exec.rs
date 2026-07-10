@@ -281,16 +281,24 @@ impl StreamExecutor {
         }
     }
 
-    /// Drains and discards a non-2xx response before structural classification.
+    /// Discards a non-2xx response before structural classification.
     ///
     /// The authority-controlled body is never buffered, logged, persisted, or
     /// copied into an error because it may echo prompts, tool content, or
-    /// received credentials. Streaming it to the sink under the configured
-    /// deadline preserves the transport contract: a server that sends error
-    /// headers and then stalls is a retryable timeout, while a completed body
-    /// classifies by status.
+    /// received credentials. Redirects are classified immediately and the
+    /// response is dropped, because redirect policy is established entirely by
+    /// the status and a stalled body must not disguise that refusal. Other error
+    /// bodies stream to a sink under the configured deadline: a server that sends
+    /// error headers and then stalls is a retryable timeout, while a completed
+    /// body classifies by status.
     async fn error_response_to_provider_error(&self, response: reqwest::Response) -> ProviderError {
         let status = response.status();
+        if status.is_redirection() {
+            return ProviderError::RedirectPolicyRefused {
+                status: status.as_u16(),
+                backend: self.backend_label,
+            };
+        }
         let mut body = response.bytes_stream();
         let drain = async {
             while let Some(chunk) = body.next().await {
@@ -450,6 +458,10 @@ impl StreamExecutor {
         );
     }
 }
+
+#[cfg(test)]
+#[path = "exec_tests.rs"]
+mod tests;
 
 /// Dumps and maps one SSE frame, forwarding the mapped events.
 ///

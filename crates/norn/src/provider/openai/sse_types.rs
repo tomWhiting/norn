@@ -34,6 +34,8 @@ use serde::Deserialize;
 use crate::error::{ProviderError, TransientKind};
 use crate::provider::events::StopReason;
 
+use super::opaque_discriminator::{TerminalDiscriminator, opaque_tag};
+
 /// Typed deserialization target for the `item` payload of a
 /// `response.output_item.done` event when `item.type == "function_call"`.
 ///
@@ -125,32 +127,44 @@ pub(super) struct IncompleteDetail {
 /// [`ProviderError::StreamError`] (`transient: None`) — unknown failure
 /// modes do not opt in to automatic retry.
 pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
-    match detail.code.as_deref().unwrap_or_default() {
-        "rate_limit_exceeded" => ProviderError::RateLimited {
+    match detail.code.as_deref() {
+        Some("rate_limit_exceeded") => ProviderError::RateLimited {
             retry_after: detail.message.as_deref().and_then(parse_retry_after),
         },
-        "context_length_exceeded" => ProviderError::ContextWindowExceeded,
-        "insufficient_quota" => ProviderError::QuotaExceeded,
-        "invalid_prompt" => ProviderError::InvalidRequest {
+        Some("context_length_exceeded") => ProviderError::ContextWindowExceeded,
+        Some("insufficient_quota") => ProviderError::QuotaExceeded,
+        Some("invalid_prompt") => ProviderError::InvalidRequest {
             message: "provider rejected the request as invalid_prompt".to_owned(),
         },
-        "cyber_policy" => ProviderError::InvalidRequest {
+        Some("cyber_policy") => ProviderError::InvalidRequest {
             message: "provider rejected the request under its cybersecurity policy".to_owned(),
         },
         // Transient server-side back-pressure: retryable with the
         // HTTP-equivalent 503 server-error kind, set structurally.
-        "server_is_overloaded" => ProviderError::StreamError {
+        Some("server_is_overloaded") => ProviderError::StreamError {
             reason: "provider reported server_is_overloaded".to_owned(),
             transient: Some(TransientKind::ServerError { status: 503 }),
         },
-        "slow_down" => ProviderError::StreamError {
+        Some("slow_down") => ProviderError::StreamError {
             reason: "provider reported slow_down".to_owned(),
             transient: Some(TransientKind::ServerError { status: 503 }),
         },
-        // Any unknown code surfaces as a structural terminal stream error.
-        _ => ProviderError::StreamError {
-            reason: "provider returned an unrecognized response.failed error".to_owned(),
+        Some(unknown) => unknown_failed_error(unknown),
+        None => ProviderError::StreamError {
+            reason: "provider returned response.failed without an error code".to_owned(),
             transient: None,
+        },
+    }
+}
+
+fn unknown_failed_error(raw_code: &str) -> ProviderError {
+    match opaque_tag(TerminalDiscriminator::FailedCode, raw_code) {
+        Ok(tag) => ProviderError::StreamError {
+            reason: format!("provider returned unknown response.failed code [opaque:{tag}]"),
+            transient: None,
+        },
+        Err(_) => ProviderError::ResponseParseError {
+            reason: "could not initialize the non-disclosing failed-code diagnostic".to_owned(),
         },
     }
 }
@@ -172,22 +186,31 @@ pub(super) fn classify_failed_error(detail: &ApiErrorDetail) -> ProviderError {
 /// Any other (or missing) reason is a wire contract this client does not
 /// understand. It surfaces as [`ProviderError::ResponseParseError`] —
 /// classified [`ErrorClass::Terminal`](crate::error::ErrorClass) — carrying
-/// only a fixed local description, never the provider-supplied reason text.
-/// Guessing `MaxTokens` would silently mislabel an unknown stop condition,
-/// and any retryable classification would replay a deterministic stop; a
-/// terminal error stops the run honestly instead.
+/// only a locally generated process-scoped opaque tag, never the
+/// provider-supplied reason text. Guessing `MaxTokens` would silently mislabel
+/// an unknown stop condition, and any retryable classification would replay a
+/// deterministic stop; a terminal error stops the run honestly instead.
 pub(super) fn incomplete_stop_reason(reason: Option<&str>) -> Result<StopReason, ProviderError> {
     match reason {
         Some("max_output_tokens") => Ok(StopReason::MaxTokens),
         Some("content_filter") => Ok(StopReason::ContentFilter),
-        Some(_) => Err(ProviderError::ResponseParseError {
-            reason: "response.incomplete carried an unrecognized incomplete_details.reason"
-                .to_owned(),
-        }),
+        Some(unknown) => unknown_incomplete_reason(unknown),
         None => Err(ProviderError::ResponseParseError {
             reason: "response.incomplete carried no incomplete_details.reason".to_string(),
         }),
     }
+}
+
+fn unknown_incomplete_reason(raw_reason: &str) -> Result<StopReason, ProviderError> {
+    let Ok(tag) = opaque_tag(TerminalDiscriminator::IncompleteReason, raw_reason) else {
+        return Err(ProviderError::ResponseParseError {
+            reason: "could not initialize the non-disclosing incomplete-reason diagnostic"
+                .to_owned(),
+        });
+    };
+    Err(ProviderError::ResponseParseError {
+        reason: format!("response.incomplete carried an unknown reason [opaque:{tag}]"),
+    })
 }
 
 /// Parses a `Retry-After` duration from a `rate_limit_exceeded` error message.
@@ -212,20 +235,29 @@ fn parse_retry_after(message: &str) -> Option<Duration> {
 }
 
 #[cfg(test)]
-#[allow(clippy::expect_used, clippy::panic, clippy::unwrap_used)]
 mod tests {
+    use std::io;
+
     use super::*;
 
+    type TestResult = Result<(), Box<dyn std::error::Error>>;
+
     #[test]
-    fn parse_retry_after_seconds() {
-        let d = parse_retry_after("Please try again in 11.054s.").expect("parses");
+    fn parse_retry_after_seconds() -> TestResult {
+        let Some(d) = parse_retry_after("Please try again in 11.054s.") else {
+            return Err(io::Error::other("seconds duration did not parse").into());
+        };
         assert!((d.as_secs_f64() - 11.054).abs() < 1e-6);
+        Ok(())
     }
 
     #[test]
-    fn parse_retry_after_milliseconds() {
-        let d = parse_retry_after("Try again in 500ms").expect("parses");
+    fn parse_retry_after_milliseconds() -> TestResult {
+        let Some(d) = parse_retry_after("Try again in 500ms") else {
+            return Err(io::Error::other("millisecond duration did not parse").into());
+        };
         assert_eq!(d, Duration::from_millis(500));
+        Ok(())
     }
 
     #[test]
@@ -234,21 +266,54 @@ mod tests {
     }
 
     #[test]
-    fn classify_unknown_code_stays_terminal() {
+    fn classify_unknown_code_stays_terminal_and_opaque() -> TestResult {
         let detail = ApiErrorDetail {
             code: Some("future_error".to_string()),
             message: Some("weird".to_string()),
         };
-        match classify_failed_error(&detail) {
-            ProviderError::StreamError { reason, transient } => {
-                assert_eq!(
-                    reason,
-                    "provider returned an unrecognized response.failed error"
-                );
-                assert_eq!(transient, None, "unknown codes must not opt into retry");
-            }
-            other => panic!("expected StreamError, got {other:?}"),
-        }
+        let ProviderError::StreamError { reason, transient } = classify_failed_error(&detail)
+        else {
+            return Err(io::Error::other("unknown code did not produce StreamError").into());
+        };
+        assert!(reason.starts_with("provider returned unknown response.failed code [opaque:"));
+        assert!(!reason.contains("future_error"));
+        assert_eq!(transient, None, "unknown codes must not opt into retry");
+        Ok(())
+    }
+
+    #[test]
+    fn distinct_unknown_failed_codes_have_distinct_opaque_tags() -> TestResult {
+        let first = classify_failed_error(&ApiErrorDetail {
+            code: Some("private-first\r\ncode".to_owned()),
+            message: None,
+        });
+        let second = classify_failed_error(&ApiErrorDetail {
+            code: Some("private-second\r\ncode".to_owned()),
+            message: None,
+        });
+        let ProviderError::StreamError {
+            reason: first_reason,
+            transient: None,
+        } = first
+        else {
+            return Err(io::Error::other("first unknown code was not terminal").into());
+        };
+        let ProviderError::StreamError {
+            reason: second_reason,
+            transient: None,
+        } = second
+        else {
+            return Err(io::Error::other("second unknown code was not terminal").into());
+        };
+
+        assert_ne!(first_reason, second_reason);
+        assert!(!first_reason.contains("private-first"));
+        assert!(!second_reason.contains("private-second"));
+        assert!(!first_reason.contains('\r'));
+        assert!(!first_reason.contains('\n'));
+        assert!(!second_reason.contains('\r'));
+        assert!(!second_reason.contains('\n'));
+        Ok(())
     }
 
     #[test]
@@ -275,9 +340,10 @@ mod tests {
     }
 
     #[test]
-    fn incomplete_error_never_exposes_unknown_reason_text() {
-        let error = incomplete_stop_reason(Some("sentinel-private-incomplete-reason"))
-            .expect_err("unknown incomplete reasons must fail closed");
+    fn incomplete_error_never_exposes_unknown_reason_text() -> TestResult {
+        let Err(error) = incomplete_stop_reason(Some("sentinel-private-incomplete-reason")) else {
+            return Err(io::Error::other("unknown incomplete reason was accepted").into());
+        };
 
         assert!(
             !error
@@ -285,5 +351,21 @@ mod tests {
                 .contains("sentinel-private-incomplete-reason")
         );
         assert!(!format!("{error:?}").contains("sentinel-private-incomplete-reason"));
+        Ok(())
+    }
+
+    #[test]
+    fn distinct_unknown_incomplete_reasons_have_distinct_opaque_tags() -> TestResult {
+        let Err(first) = incomplete_stop_reason(Some("private-incomplete-first")) else {
+            return Err(io::Error::other("first unknown incomplete reason was accepted").into());
+        };
+        let Err(second) = incomplete_stop_reason(Some("private-incomplete-second")) else {
+            return Err(io::Error::other("second unknown incomplete reason was accepted").into());
+        };
+
+        assert_ne!(first.to_string(), second.to_string());
+        assert!(!first.to_string().contains("private-incomplete-first"));
+        assert!(!second.to_string().contains("private-incomplete-second"));
+        Ok(())
     }
 }

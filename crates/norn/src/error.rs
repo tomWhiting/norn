@@ -236,6 +236,24 @@ pub enum ProviderError {
         reason: String,
     },
 
+    /// A credential-bearing request received a redirect response.
+    ///
+    /// Redirects are disabled so credentials, account headers, and request
+    /// bodies cannot be replayed to another destination. The response's
+    /// `Location` and body are deliberately absent from this error.
+    ///
+    /// Classification: [`ErrorClass::Terminal`] — retrying the same request
+    /// cannot override the local redirect policy.
+    #[error(
+        "credential-bearing {backend} request received HTTP {status}; redirects are not followed by policy"
+    )]
+    RedirectPolicyRefused {
+        /// HTTP redirect status returned by the original destination.
+        status: u16,
+        /// Locally authored backend label.
+        backend: &'static str,
+    },
+
     /// The provider returned a rate limit response.
     ///
     /// Classification: [`ErrorClass::RateLimited`], carrying `retry_after`
@@ -377,6 +395,7 @@ impl ProviderError {
             Self::ResponseParseError { .. }
             | Self::RequestSerializationFailed { .. }
             | Self::UnsupportedFeature { .. }
+            | Self::RedirectPolicyRefused { .. }
             | Self::ContextWindowExceeded
             | Self::QuotaExceeded
             | Self::InvalidRequest { .. } => ErrorClass::Terminal,
@@ -781,6 +800,17 @@ mod tests {
         };
         assert_eq!(err.class(), ErrorClass::Auth);
         assert!(!err.is_retryable());
+    }
+
+    #[test]
+    fn redirect_policy_refusal_classifies_terminal() {
+        let err = ProviderError::RedirectPolicyRefused {
+            status: 307,
+            backend: "responses",
+        };
+        assert_eq!(err.class(), ErrorClass::Terminal);
+        assert!(!err.is_retryable());
+        assert!(!err.to_string().contains("Location"));
     }
 
     #[test]
