@@ -2,7 +2,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use tokio::fs::File;
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStderr, ChildStdout};
 use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
@@ -11,6 +11,7 @@ use crate::error::ToolError;
 use crate::process::{Spool, StreamTag};
 use crate::tool::context::{SessionId, ToolContext};
 use crate::tool::envelope::ToolEnvelope;
+use crate::util::{PrivateRoot, validate_private_component};
 
 use super::tool::INLINE_OUTPUT_THRESHOLD_CHARS;
 
@@ -60,6 +61,8 @@ struct OutputCaptureState {
     log_file: Option<File>,
     output_chars: usize,
     output_path: Option<PathBuf>,
+    output_root: Option<Arc<PrivateRoot>>,
+    output_relative: Option<PathBuf>,
     redirected: bool,
     /// Once a command migrates to the background (R4), the capture switches to
     /// teeing every subsequent line into the process manager's spool, tagged
@@ -124,19 +127,33 @@ impl OutputCapture {
                 .map_err(|e| ToolError::ExecutionFailed {
                     reason: format!("failed to flush redirected bash output before migration: {e}"),
                 })?;
-            let output_path =
+            let output_root =
                 state
-                    .output_path
-                    .clone()
+                    .output_root
+                    .as_ref()
                     .ok_or_else(|| ToolError::ExecutionFailed {
-                        reason: "bash output was redirected without an output path".to_owned(),
+                        reason: "bash output was redirected without a private root".to_owned(),
                     })?;
-            let bytes =
-                tokio::fs::read(&output_path)
-                    .await
-                    .map_err(|e| ToolError::ExecutionFailed {
-                        reason: format!("failed to read pre-migration bash output: {e}"),
+            let output_relative =
+                state
+                    .output_relative
+                    .as_ref()
+                    .ok_or_else(|| ToolError::ExecutionFailed {
+                        reason: "bash output was redirected without a relative path".to_owned(),
                     })?;
+            let mut redirected =
+                File::from_std(output_root.open_read(output_relative).map_err(|e| {
+                    ToolError::ExecutionFailed {
+                        reason: format!("failed to open pre-migration bash output: {e}"),
+                    }
+                })?);
+            let mut bytes = Vec::new();
+            redirected
+                .read_to_end(&mut bytes)
+                .await
+                .map_err(|e| ToolError::ExecutionFailed {
+                    reason: format!("failed to read pre-migration bash output: {e}"),
+                })?;
             spool
                 .append_raw(&bytes)
                 .await
@@ -248,14 +265,23 @@ impl OutputCaptureState {
     }
 
     async fn start_redirect(&mut self, session_id: &str, call_id: &str) -> std::io::Result<()> {
-        let home = crate::config::paths::trusted_home_dir().ok_or_else(|| {
-            std::io::Error::new(std::io::ErrorKind::NotFound, "home directory not found")
+        validate_private_component(session_id, "bash output session id")?;
+        validate_private_component(call_id, "bash output tool-call id")?;
+        let norn_home = crate::config::paths::norn_dir().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "bash output requires an absolute NORN_HOME or user home directory",
+            )
         })?;
-        let dir = home.join(".norn").join("outputs").join(session_id);
-        tokio::fs::create_dir_all(&dir).await?;
-
-        let output_path = dir.join(format!("{call_id}.log"));
-        let mut log_file = File::create(&output_path).await?;
+        let root = Arc::new(PrivateRoot::create(&norn_home)?);
+        let output_relative = PathBuf::from("outputs")
+            .join(session_id)
+            .join(format!("{call_id}.log"));
+        if let Some(parent) = output_relative.parent() {
+            root.create_dir_all(parent)?;
+        }
+        let output_path = root.display_path(&output_relative);
+        let mut log_file = File::from_std(root.create_new(&output_relative)?);
         if !self.stdout_inline.is_empty() {
             log_file.write_all(self.stdout_inline.as_bytes()).await?;
         }
@@ -266,6 +292,8 @@ impl OutputCaptureState {
         self.stderr_inline.clear();
         self.log_file = Some(log_file);
         self.output_path = Some(output_path);
+        self.output_root = Some(root);
+        self.output_relative = Some(output_relative);
         self.redirected = true;
         Ok(())
     }
@@ -291,15 +319,32 @@ impl OutputCaptureState {
             .ok_or_else(|| ToolError::ExecutionFailed {
                 reason: "bash output was marked redirected without an output path".to_owned(),
             })?;
-        let home =
-            crate::config::paths::trusted_home_dir().ok_or_else(|| ToolError::ExecutionFailed {
-                reason: "home directory not found while formatting bash output path".to_owned(),
-            })?;
-        if let Ok(stripped) = path.strip_prefix(&home) {
-            Ok(format!("~/{}", stripped.to_string_lossy()))
-        } else {
-            Ok(path.to_string_lossy().into_owned())
+        if let Some(home) = crate::config::paths::trusted_home_dir()
+            && let Ok(stripped) = path.strip_prefix(&home)
+        {
+            return Ok(format!("~/{}", stripped.to_string_lossy()));
         }
+        Ok(path.to_string_lossy().into_owned())
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn provider_tool_call_id_cannot_escape_private_output_root()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let mut state = OutputCaptureState::default();
+        let error = state
+            .start_redirect("session", "../outside")
+            .await
+            .err()
+            .ok_or_else(|| std::io::Error::other("hostile tool-call id unexpectedly accepted"))?;
+
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        assert!(state.output_path.is_none());
+        Ok(())
     }
 }
 
@@ -343,9 +388,12 @@ mod tests {
     /// correct (it matches on this error and kills the adoptee), and this test
     /// pins the failure carrier attach produces.
     #[tokio::test]
-    async fn attach_spool_surfaces_a_named_error_on_unreadable_redirect() {
-        let dir = tempfile::tempdir().unwrap();
-        let missing = dir.path().join("does-not-exist.log");
+    async fn attach_spool_surfaces_a_named_error_on_unreadable_redirect()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let dir = tempfile::tempdir()?;
+        let output_root = Arc::new(PrivateRoot::open(dir.path())?);
+        let missing_relative = PathBuf::from("does-not-exist.log");
+        let missing = output_root.display_path(&missing_relative);
         // A capture in the redirected state whose backing file is absent: the
         // pre-migration read must fail with a named error.
         let capture = OutputCapture {
@@ -354,24 +402,24 @@ mod tests {
             inner: AsyncMutex::new(OutputCaptureState {
                 redirected: true,
                 output_path: Some(missing),
+                output_root: Some(output_root),
+                output_relative: Some(missing_relative),
                 output_chars: 123,
                 ..OutputCaptureState::default()
             }),
         };
-        let spool = Arc::new(Spool::create(dir.path().join("p1.log")).await.unwrap());
+        let spool = Arc::new(Spool::create(dir.path().join("p1.log")).await?);
 
-        let err = capture
-            .attach_spool(spool)
-            .await
-            .expect_err("an unreadable redirect file must fail attach");
-        match err {
-            ToolError::ExecutionFailed { reason } => {
-                assert!(
-                    reason.contains("pre-migration"),
-                    "the error names the failed pre-migration read: {reason}",
-                );
-            }
-            other => panic!("expected ExecutionFailed, got {other:?}"),
-        }
+        let Err(ToolError::ExecutionFailed { reason }) = capture.attach_spool(spool).await else {
+            return Err(std::io::Error::other(
+                "an unreadable redirect file did not return ExecutionFailed",
+            )
+            .into());
+        };
+        assert!(
+            reason.contains("pre-migration"),
+            "the error names the failed pre-migration read: {reason}",
+        );
+        Ok(())
     }
 }

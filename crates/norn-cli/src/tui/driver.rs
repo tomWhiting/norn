@@ -102,6 +102,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             .as_deref()
             .or(cli.session_name.as_deref())
             .unwrap_or("unnamed");
+        norn::util::validate_private_component(hint, "debug dump session name")?;
         provider_overrides.debug_dump_file = Some(dir.join(format!("{hint}.jsonl")));
     }
 
@@ -161,7 +162,8 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let persist_data_dir = parts
         .session_entry
         .as_ref()
-        .map(|_| crate::config::session_data_dir());
+        .map(|_| crate::config::session_data_dir())
+        .transpose()?;
     startup_trace.mark_session(
         "session_opened",
         &session_id,

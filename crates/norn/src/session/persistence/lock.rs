@@ -31,8 +31,8 @@ use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use super::permissions::{create_private_dir_all, open_private_lock};
 use super::types::SessionPersistError;
+use crate::util::PrivateRoot;
 
 /// File name of the index lock inside the session data directory.
 const INDEX_LOCK_FILE: &str = "index.lock";
@@ -59,6 +59,14 @@ const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(5);
 #[derive(Debug)]
 pub(crate) struct IndexLock {
     file: File,
+    root: PrivateRoot,
+}
+
+impl IndexLock {
+    /// The root descriptor pinned before the lock file was opened.
+    pub(crate) fn root(&self) -> &PrivateRoot {
+        &self.root
+    }
 }
 
 impl Drop for IndexLock {
@@ -85,15 +93,15 @@ pub(crate) fn lock_index(
     data_dir: &Path,
     deadline: Option<Duration>,
 ) -> Result<IndexLock, SessionPersistError> {
-    create_private_dir_all(data_dir)?;
     let path = data_dir.join(INDEX_LOCK_FILE);
-    let file = open_private_lock(&path)?;
+    let root = PrivateRoot::create(data_dir)?;
+    let file = root.open_lock(Path::new(INDEX_LOCK_FILE))?;
     match deadline {
         None => {
             file.lock()?;
-            Ok(IndexLock { file })
+            Ok(IndexLock { file, root })
         }
-        Some(deadline) => lock_with_deadline(file, path, deadline),
+        Some(deadline) => lock_with_deadline(file, root, path, deadline),
     }
 }
 
@@ -108,13 +116,14 @@ pub(crate) fn lock_index(
 /// holder accumulates nothing.
 fn lock_with_deadline(
     file: File,
+    root: PrivateRoot,
     path: PathBuf,
     deadline: Duration,
 ) -> Result<IndexLock, SessionPersistError> {
     let started = Instant::now();
     loop {
         match file.try_lock() {
-            Ok(()) => return Ok(IndexLock { file }),
+            Ok(()) => return Ok(IndexLock { file, root }),
             Err(TryLockError::WouldBlock) => {
                 let elapsed = started.elapsed();
                 let Some(remaining) = deadline.checked_sub(elapsed) else {

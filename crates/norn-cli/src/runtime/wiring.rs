@@ -234,7 +234,7 @@ pub fn build_slash_state_from_bundle(
     store: Arc<EventStore>,
     session_id: Option<String>,
     index_lock_deadline: std::time::Duration,
-) -> (SlashState, SlashCommandRegistry) {
+) -> Result<(SlashState, SlashCommandRegistry), BuildError> {
     build_slash_state_inner(cli, inputs, store, session_id, index_lock_deadline, None)
 }
 
@@ -248,7 +248,7 @@ pub fn build_slash_state_with_schema(
     session_id: Option<String>,
     index_lock_deadline: std::time::Duration,
     output_schema: Option<Value>,
-) -> (SlashState, SlashCommandRegistry) {
+) -> Result<(SlashState, SlashCommandRegistry), BuildError> {
     build_slash_state_inner(
         cli,
         inputs,
@@ -266,7 +266,7 @@ fn build_slash_state_inner(
     session_id: Option<String>,
     index_lock_deadline: std::time::Duration,
     output_schema_override: Option<Value>,
-) -> (SlashState, SlashCommandRegistry) {
+) -> Result<(SlashState, SlashCommandRegistry), BuildError> {
     let tools: Vec<(String, String)> = inputs
         .registry
         .names()
@@ -289,7 +289,7 @@ fn build_slash_state_inner(
         output_schema,
         session_name: cli.session_name.clone(),
         session_id,
-        data_dir: session_data_dir(),
+        data_dir: session_data_dir()?,
         no_session: cli.no_session,
         index_lock_deadline,
         variable_pairs,
@@ -298,7 +298,7 @@ fn build_slash_state_inner(
     };
     let state = SlashState::new(seed);
     let registry = build_slash_registry(&state, None);
-    (state, registry)
+    Ok((state, registry))
 }
 
 fn parse_variable_pairs(raw: &[String]) -> Vec<(String, String)> {

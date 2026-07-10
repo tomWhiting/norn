@@ -3,8 +3,8 @@
 //! Path resolution lives in libnorn so consumers inside the runtime crate
 //! (profile loader, session manager, task store) can resolve `~/.norn/`
 //! paths without depending on the CLI. This module keeps a small wrapper
-//! API for CLI ergonomics — chiefly to preserve the `PathBuf` return
-//! shape of [`session_data_dir`], which several CLI consumers expect.
+//! API for CLI ergonomics while preserving typed failure when a private
+//! storage root cannot be resolved.
 //!
 //! It also exposes the seven-tier skill discovery roots from
 //! `norn-skills` DESIGN.md §D1. The project-tier helpers
@@ -49,17 +49,14 @@ pub fn project_rules_dir(cwd: &Path) -> PathBuf {
 
 /// Resolve the session-data directory: `~/.norn/sessions/`.
 ///
-/// Delegates to [`norn::config::paths::session_data_dir`], falling back
-/// to a relative `./.norn/sessions/` path when neither the environment
-/// override nor the home directory resolves. The fallback mirrors the
-/// pattern used by the runtime builder at `runtime/builder.rs:153` and
-/// `:326`, where `norn_dir()` falls back to `PathBuf::from(".norn")` so
-/// the CLI keeps working in unusual environments (chroots, CI runners
-/// without a HOME).
-#[must_use]
-pub fn session_data_dir() -> PathBuf {
-    norn::config::paths::session_data_dir()
-        .unwrap_or_else(|| PathBuf::from(".norn").join("sessions"))
+/// Delegates to [`norn::config::paths::session_data_dir`]. A missing trusted
+/// root is a typed error; sensitive session data is never made relative to
+/// the repository.
+pub fn session_data_dir() -> Result<PathBuf, norn::error::ConfigError> {
+    norn::config::paths::session_data_dir().ok_or_else(|| norn::error::ConfigError::InvalidConfig {
+        reason: "session persistence requires an absolute NORN_HOME or user home directory"
+            .to_owned(),
+    })
 }
 
 // ---------------------------------------------------------------------------
@@ -131,8 +128,8 @@ mod tests {
 
     #[test]
     fn norn_dir_returns_some_path() {
-        // libnorn's `norn::config::paths::tests` exercises the fallback
-        // shape and the environment-override branch directly. Here we
+        // libnorn's `norn::config::paths::tests` exercises the unavailable-home
+        // and environment-override branches directly. Here we
         // only confirm the wrapper produces a directory path when one is
         // resolvable in the current environment.
         if let Some(dir) = norn_dir() {
@@ -149,9 +146,11 @@ mod tests {
     }
 
     #[test]
-    fn session_data_dir_always_returns_path() {
-        let path = session_data_dir();
-        assert!(path.ends_with("sessions"));
+    fn session_data_dir_returns_private_path_or_typed_error() {
+        match session_data_dir() {
+            Ok(path) => assert!(path.ends_with("sessions")),
+            Err(error) => assert!(error.to_string().contains("absolute NORN_HOME")),
+        }
     }
 
     #[test]

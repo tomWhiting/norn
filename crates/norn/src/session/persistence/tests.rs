@@ -169,126 +169,156 @@ fn index_only_entry(dir: &Path) -> SessionIndexEntry {
 }
 
 #[cfg(unix)]
-fn unix_mode(path: &Path) -> u32 {
+fn unix_mode(path: &Path) -> std::io::Result<u32> {
     use std::os::unix::fs::PermissionsExt as _;
 
-    fs::metadata(path).unwrap().permissions().mode() & 0o777
+    Ok(fs::metadata(path)?.permissions().mode() & 0o777)
 }
 
 #[cfg(unix)]
 #[test]
-fn new_session_files_and_directories_are_private() {
-    let tmp = tempfile::tempdir().unwrap();
+fn new_session_files_and_directories_are_private() -> Result<(), Box<dyn std::error::Error>> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tmp = tempfile::tempdir()?;
     let data_dir = tmp.path().join("sessions");
     let entry = fresh_session(&data_dir);
 
-    assert_eq!(unix_mode(&data_dir), 0o700);
-    assert_eq!(unix_mode(&index_file_path(&data_dir)), 0o600);
-    assert_eq!(unix_mode(&data_dir.join("index.lock")), 0o600);
-    assert_eq!(unix_mode(&session_file_path(&data_dir, &entry.id)), 0o600);
+    assert_eq!(unix_mode(&data_dir)?, 0o700);
+    assert_eq!(unix_mode(&index_file_path(&data_dir))?, 0o600);
+    assert_eq!(unix_mode(&data_dir.join("index.lock"))?, 0o600);
+    assert_eq!(unix_mode(&session_file_path(&data_dir, &entry.id))?, 0o600);
 
-    update_index_entry(&data_dir, &entry.id, None, |_| {}).unwrap();
+    update_index_entry(&data_dir, &entry.id, None, |_| {})?;
     assert_eq!(
-        unix_mode(&index_file_path(&data_dir)),
+        unix_mode(&index_file_path(&data_dir))?,
         0o600,
         "atomic index replacement must publish a private temp inode",
     );
 
     let nested = data_dir.join("root/children/child.jsonl");
-    drop(io::open_session_append(&nested).unwrap());
-    assert_eq!(unix_mode(&data_dir.join("root")), 0o700);
-    assert_eq!(unix_mode(&data_dir.join("root/children")), 0o700);
-    assert_eq!(unix_mode(&nested), 0o600);
+    drop(io::open_session_append(&nested)?);
+    assert_eq!(unix_mode(&data_dir.join("root"))?, 0o700);
+    assert_eq!(unix_mode(&data_dir.join("root/children"))?, 0o700);
+    assert_eq!(unix_mode(&nested)?, 0o600);
+
+    fs::set_permissions(data_dir.join("root"), fs::Permissions::from_mode(0o755))?;
+    fs::set_permissions(
+        data_dir.join("root/children"),
+        fs::Permissions::from_mode(0o755),
+    )?;
+    fs::set_permissions(&nested, fs::Permissions::from_mode(0o644))?;
+    let mut child_entry = entry;
+    child_entry.id = "child".to_owned();
+    child_entry.rel_path = Some("root/children/child.jsonl".to_owned());
+    assert!(
+        read_session_events_for_entry(&data_dir, &child_entry)?
+            .events
+            .is_empty()
+    );
+    assert_eq!(unix_mode(&data_dir.join("root"))?, 0o700);
+    assert_eq!(unix_mode(&data_dir.join("root/children"))?, 0o700);
+    assert_eq!(unix_mode(&nested)?, 0o600);
+    Ok(())
 }
 
 #[cfg(unix)]
 #[test]
-fn legacy_session_index_and_lock_modes_are_hardened_on_open() {
+fn legacy_session_index_and_lock_modes_are_hardened_on_open()
+-> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::PermissionsExt as _;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir()?;
     let data_dir = tmp.path().join("sessions");
-    fs::create_dir(&data_dir).unwrap();
+    fs::create_dir(&data_dir)?;
     let session_path = session_file_path(&data_dir, "legacy");
     fs::write(
         &session_path,
-        format!("{}\n", serde_json::to_string(&user_msg("old")).unwrap()),
-    )
-    .unwrap();
+        format!("{}\n", serde_json::to_string(&user_msg("old"))?),
+    )?;
     let index_path = index_file_path(&data_dir);
-    fs::write(&index_path, b"").unwrap();
+    fs::write(&index_path, b"")?;
     let lock_path = data_dir.join("index.lock");
-    fs::write(&lock_path, b"").unwrap();
+    fs::write(&lock_path, b"")?;
 
-    fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o755)).unwrap();
-    fs::set_permissions(&session_path, fs::Permissions::from_mode(0o644)).unwrap();
-    fs::set_permissions(&index_path, fs::Permissions::from_mode(0o755)).unwrap();
-    fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o755))?;
+    fs::set_permissions(&session_path, fs::Permissions::from_mode(0o644))?;
+    fs::set_permissions(&index_path, fs::Permissions::from_mode(0o755))?;
+    fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o644))?;
 
-    assert_eq!(
-        read_session_events(&data_dir, "legacy")
-            .unwrap()
-            .events
-            .len(),
-        1
-    );
-    assert!(read_index(&data_dir).unwrap().is_empty());
-    drop(super::lock::lock_index(&data_dir, None).unwrap());
-    assert_eq!(unix_mode(&session_path), 0o600);
-    assert_eq!(unix_mode(&index_path), 0o600);
-    assert_eq!(unix_mode(&lock_path), 0o600);
-    assert_eq!(unix_mode(&data_dir), 0o700);
+    assert_eq!(read_session_events(&data_dir, "legacy")?.events.len(), 1);
+    assert!(read_index(&data_dir)?.is_empty());
+    drop(super::lock::lock_index(&data_dir, None)?);
+    assert_eq!(unix_mode(&session_path)?, 0o600);
+    assert_eq!(unix_mode(&index_path)?, 0o600);
+    assert_eq!(unix_mode(&lock_path)?, 0o600);
+    assert_eq!(unix_mode(&data_dir)?, 0o700);
 
-    fs::set_permissions(&session_path, fs::Permissions::from_mode(0o755)).unwrap();
-    drop(io::open_session_append(&session_path).unwrap());
-    assert_eq!(unix_mode(&session_path), 0o600);
+    fs::set_permissions(&session_path, fs::Permissions::from_mode(0o755))?;
+    drop(io::open_session_append(&session_path)?);
+    assert_eq!(unix_mode(&session_path)?, 0o600);
+    Ok(())
 }
 
 #[cfg(unix)]
 #[test]
-fn session_index_and_lock_opens_refuse_symlinks_and_non_regular_files() {
+fn session_index_and_lock_opens_refuse_symlinks_and_non_regular_files()
+-> Result<(), Box<dyn std::error::Error>> {
     use std::os::unix::fs::symlink;
 
-    let tmp = tempfile::tempdir().unwrap();
+    let tmp = tempfile::tempdir()?;
     let data_dir = tmp.path().join("sessions");
-    fs::create_dir(&data_dir).unwrap();
+    fs::create_dir(&data_dir)?;
     let target = tmp.path().join("outside.jsonl");
-    fs::write(&target, b"outside\n").unwrap();
-    symlink(&target, session_file_path(&data_dir, "linked")).unwrap();
+    fs::write(&target, b"outside\n")?;
+    symlink(&target, session_file_path(&data_dir, "linked"))?;
 
-    let error = read_session_events(&data_dir, "linked").unwrap_err();
+    let error = read_session_events(&data_dir, "linked")
+        .err()
+        .ok_or_else(|| std::io::Error::other("linked session unexpectedly opened"))?;
     assert!(matches!(error, SessionPersistError::Io(_)));
-    assert_eq!(fs::read(&target).unwrap(), b"outside\n");
+    assert_eq!(fs::read(&target)?, b"outside\n");
 
     let directory = session_file_path(&data_dir, "directory");
-    fs::create_dir(&directory).unwrap();
-    let error = read_session_events(&data_dir, "directory").unwrap_err();
+    fs::create_dir(&directory)?;
+    let error = read_session_events(&data_dir, "directory")
+        .err()
+        .ok_or_else(|| std::io::Error::other("session directory unexpectedly opened"))?;
     assert!(matches!(error, SessionPersistError::Io(_)));
 
     let index_target = tmp.path().join("outside-index.jsonl");
-    fs::write(&index_target, b"").unwrap();
+    fs::write(&index_target, b"")?;
     let index_path = index_file_path(&data_dir);
-    symlink(&index_target, &index_path).unwrap();
-    let error = read_index(&data_dir).unwrap_err();
+    symlink(&index_target, &index_path)?;
+    let error = read_index(&data_dir)
+        .err()
+        .ok_or_else(|| std::io::Error::other("linked index unexpectedly opened"))?;
     assert!(matches!(error, SessionPersistError::Io(_)));
 
-    fs::remove_file(&index_path).unwrap();
-    fs::create_dir(&index_path).unwrap();
-    let error = read_index(&data_dir).unwrap_err();
+    fs::remove_file(&index_path)?;
+    fs::create_dir(&index_path)?;
+    let error = read_index(&data_dir)
+        .err()
+        .ok_or_else(|| std::io::Error::other("index directory unexpectedly opened"))?;
     assert!(matches!(error, SessionPersistError::Io(_)));
 
     let lock_target = tmp.path().join("outside.lock");
-    fs::write(&lock_target, b"outside").unwrap();
+    fs::write(&lock_target, b"outside")?;
     let lock_path = data_dir.join("index.lock");
-    symlink(&lock_target, &lock_path).unwrap();
-    let error = super::lock::lock_index(&data_dir, None).unwrap_err();
+    symlink(&lock_target, &lock_path)?;
+    let error = super::lock::lock_index(&data_dir, None)
+        .err()
+        .ok_or_else(|| std::io::Error::other("linked lock unexpectedly opened"))?;
     assert!(matches!(error, SessionPersistError::Io(_)));
-    assert_eq!(fs::read(&lock_target).unwrap(), b"outside");
+    assert_eq!(fs::read(&lock_target)?, b"outside");
 
-    fs::remove_file(&lock_path).unwrap();
-    fs::create_dir(&lock_path).unwrap();
-    let error = super::lock::lock_index(&data_dir, None).unwrap_err();
+    fs::remove_file(&lock_path)?;
+    fs::create_dir(&lock_path)?;
+    let error = super::lock::lock_index(&data_dir, None)
+        .err()
+        .ok_or_else(|| std::io::Error::other("lock directory unexpectedly opened"))?;
     assert!(matches!(error, SessionPersistError::Io(_)));
+    Ok(())
 }
 
 // ----- R2: JSONL serialization -----

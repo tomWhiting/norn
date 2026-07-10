@@ -35,9 +35,11 @@
 //! event history rather than polluting the index with one session per
 //! attempt.
 
-use std::fs;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+
+#[cfg(test)]
+use std::fs;
 
 use chrono::Utc;
 use uuid::Uuid;
@@ -47,15 +49,14 @@ use crate::session::branch::ROOT_PATH_ADDRESS;
 use crate::session::events::{ChildBranchKind, EventBase, SessionEvent};
 use crate::session::spool::SpoolWriter;
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
+use crate::util::PrivateRoot;
 
 use super::persistence::index::{
     append_index_entry, insert_index_entry_for_new_session, insert_index_entry_if_absent,
     read_index, remove_index_entry, resolve_latest_session_in_working_dir, resolve_session,
     update_index_entry,
 };
-use super::persistence::io::{
-    append_events, read_session_events_for_entry, resolved_session_file_path,
-};
+use super::persistence::io::{append_events, read_session_events_for_entry, session_file_relative};
 use super::persistence::replay::ReplayArtifacts;
 use super::persistence::types::{
     SESSION_FORMAT_VERSION, SessionIndexEntry, SessionPersistError, SessionStatus,
@@ -572,13 +573,17 @@ impl SessionManager {
     /// lingers), and index-rewrite failures.
     pub fn delete(&self, id_or_name: &str) -> Result<SessionIndexEntry, SessionPersistError> {
         let entry = resolve_session(&self.data_dir, id_or_name)?;
-        let path = resolved_session_file_path(&self.data_dir, &entry);
-        if let Err(error) = fs::remove_file(&path)
+        let root = PrivateRoot::open(&self.data_dir)?;
+        let relative = session_file_relative(&entry)?;
+        if let Err(error) = root.remove_file(&relative)
             && error.kind() != std::io::ErrorKind::NotFound
         {
             return Err(SessionPersistError::Io(std::io::Error::new(
                 error.kind(),
-                format!("failed to delete session file {}: {error}", path.display()),
+                format!(
+                    "failed to delete session file {}: {error}",
+                    root.display_path(&relative).display(),
+                ),
             )));
         }
         // Root sessions may own a `{id}/` directory of child timelines
@@ -589,17 +594,17 @@ impl SessionManager {
         // attempt leaves phantom child rows over deleted files, and the
         // re-run must still clear them (F3).
         if entry.rel_path.is_none() {
-            let children_dir = self.data_dir.join(&entry.id);
-            if children_dir.is_dir() {
-                fs::remove_dir_all(&children_dir).map_err(|error| {
-                    SessionPersistError::Io(std::io::Error::new(
-                        error.kind(),
-                        format!(
-                            "failed to delete child-session directory {}: {error}",
-                            children_dir.display(),
-                        ),
-                    ))
-                })?;
+            let children_dir = Path::new(&entry.id);
+            if let Err(error) = root.remove_dir_all(children_dir)
+                && error.kind() != std::io::ErrorKind::NotFound
+            {
+                return Err(SessionPersistError::Io(std::io::Error::new(
+                    error.kind(),
+                    format!(
+                        "failed to delete child-session directory {}: {error}",
+                        root.display_path(children_dir).display(),
+                    ),
+                )));
             }
             let prefix = format!("{}/", entry.id);
             for child in read_index(&self.data_dir)? {
@@ -714,25 +719,7 @@ fn new_index_entry(id: String, options: CreateSessionOptions) -> SessionIndexEnt
 /// name `index.jsonl`, the session index itself; see
 /// [`super::persistence::io::is_reserved_session_id`]).
 fn validate_explicit_session_id(id: &str) -> Result<(), SessionPersistError> {
-    let invalid = |reason: &str| SessionPersistError::InvalidSessionId {
-        id: id.to_owned(),
-        reason: reason.to_owned(),
-    };
-    let Some(first) = id.chars().next() else {
-        return Err(invalid("must not be empty"));
-    };
-    if !first.is_ascii_alphanumeric() {
-        return Err(invalid("must start with an ASCII letter or digit"));
-    }
-    if !id
-        .chars()
-        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-    {
-        return Err(invalid(
-            "may contain only ASCII letters, digits, '-', '_', and '.'",
-        ));
-    }
-    super::persistence::io::ensure_session_id_not_reserved(id)
+    super::persistence::io::ensure_session_id_path_safe(id)
 }
 
 /// Compare `entry`'s `event_count` and usage totals against the count
@@ -1366,8 +1353,8 @@ mod tests {
 
     /// Defense in depth: a reserved ID can only enter the index through a
     /// hand-edited file (every programmatic insertion path rejects it).
-    /// Even then, resolution must refuse to route session I/O onto the
-    /// persistence layer's own files.
+    /// Even then, the tolerant index reader must discard the unsafe row so
+    /// resolution cannot route session I/O onto persistence-owned files.
     #[test]
     fn reserved_id_smuggled_into_index_is_unreachable() {
         use std::io::Write as _;
@@ -1400,8 +1387,8 @@ mod tests {
             ("read_events", manager.read_events("index").unwrap_err()),
         ] {
             assert!(
-                matches!(err, SessionPersistError::InvalidSessionId { .. }),
-                "{what}(\"index\") must reject the smuggled reserved id, got {err:?}",
+                matches!(err, SessionPersistError::NotFound { .. }),
+                "{what}(\"index\") must ignore the unsafe index row, got {err:?}",
             );
         }
         assert!(

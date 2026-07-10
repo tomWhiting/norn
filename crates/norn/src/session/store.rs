@@ -14,7 +14,7 @@ use crate::provider::usage::Usage;
 use crate::session::events::{EventId, SessionEvent};
 use crate::session::persistence::SessionPersistError;
 use crate::session::persistence::index::{sum_usage_from_events, update_session_index};
-use crate::session::persistence::io::open_session_append;
+use crate::session::persistence::io::{open_session_append, open_session_append_for_entry};
 use crate::session::spool::SpoolWriter;
 
 /// Append-only, in-memory event store.
@@ -267,8 +267,13 @@ impl JsonlSink {
         index_lock_deadline: Option<Duration>,
     ) -> Result<Self, SessionPersistError> {
         crate::session::persistence::io::ensure_session_id_not_reserved(&entry.id)?;
-        let path = crate::session::persistence::io::resolved_session_file_path(data_dir, entry);
-        let mut sink = Self::open_with(&path, durability)?;
+        let mut sink = Self {
+            file: open_session_append_for_entry(data_dir, entry)?,
+            durability,
+            needs_newline: false,
+            events_since_sync: 0,
+            index: None,
+        };
         sink.index = Some(IndexRegistration {
             data_dir: data_dir.to_path_buf(),
             session_id: entry.id.clone(),

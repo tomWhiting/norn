@@ -58,6 +58,7 @@
 //! an INVARIANT, not an optimization target** (review §6).
 
 use std::collections::HashSet;
+use std::path::Path;
 use std::sync::Arc;
 
 use parking_lot::Mutex;
@@ -71,6 +72,7 @@ use crate::session::persistence::types::{
 };
 use crate::session::spool::SpoolWriter;
 use crate::session::store::{DurabilityPolicy, EventStore, JsonlSink};
+use crate::util::PrivateRoot;
 
 /// The canonical path address of a primary line (a root session). Child
 /// addresses nest under it: `root/fork-1a2b3c4d/spawn-9e8f7a6b`.
@@ -393,6 +395,7 @@ impl SessionBinding {
         parent_store: &EventStore,
         request: &ChildBranchRequest,
     ) -> Result<BranchedChild, SessionPersistError> {
+        super::persistence::io::ensure_session_id_path_safe(&request.child_session_id)?;
         // ONE lock across check + append + insert + create (review §8).
         let mut used = self.used_names.lock();
 
@@ -423,7 +426,8 @@ impl SessionBinding {
         // is orphan residue and a hard typed refusal.
         if let Some((brancher, _)) = &persistent {
             let rel_path = brancher.child_rel_path(&path_address);
-            if brancher.manager.data_dir().join(&rel_path).exists() {
+            let root = PrivateRoot::create(brancher.manager.data_dir())?;
+            if root.regular_file_exists(Path::new(&rel_path))? {
                 return Err(SessionPersistError::ChildPathOccupied { rel_path });
             }
         }
@@ -517,8 +521,8 @@ fn materialize_child(
     // still race file creation, but no check can close a TOCTOU window
     // against arbitrary external writers — the locked row claim is the
     // authoritative gate.
-    let absolute = brancher.manager.data_dir().join(&rel_path);
-    if absolute.exists() {
+    let root = PrivateRoot::create(brancher.manager.data_dir())?;
+    if root.regular_file_exists(Path::new(&rel_path))? {
         return Err(SessionPersistError::ChildPathOccupied { rel_path });
     }
     // Index row BEFORE the file: a crash here leaves a row without a

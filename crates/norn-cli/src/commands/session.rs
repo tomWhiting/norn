@@ -18,10 +18,7 @@ use std::io::IsTerminal;
 use std::path::Path;
 use std::time::Duration;
 
-use norn::config::{
-    LoadedSettings, NornSettings, load_settings, merge_settings, validate_settings,
-    validate_working_directory_authority,
-};
+use norn::runtime_init::load_merged_settings;
 
 use crate::cli::ExitCode;
 use crate::cli::{BuildError, Cli, Mode, Protocol, SessionCmd, SessionListFormat, detect_mode};
@@ -43,7 +40,14 @@ use super::session_export;
 /// mutates the index directly, so it — and only it — resolves the
 /// settings-backed index-lock deadline here before touching the lock.
 pub fn run_session(cli: Cli, cmd: SessionCmd, agent: AgentEntry<'_>) -> ExitCode {
-    let data_dir = session_data_dir();
+    let data_dir = match session_data_dir() {
+        Ok(path) => path,
+        Err(error) => {
+            let error = BuildError::from(error);
+            eprintln!("norn: {error}");
+            return error.exit_code();
+        }
+    };
     match cmd {
         SessionCmd::List { all, limit, format } => run_list(&data_dir, all, limit, format),
         SessionCmd::Show { id } => run_show(&data_dir, &id),
@@ -66,10 +70,8 @@ pub fn run_session(cli: Cli, cmd: SessionCmd, agent: AgentEntry<'_>) -> ExitCode
 /// Resolve the index-lock deadline for a session subcommand that
 /// mutates the index without going through `builder_from_cli`.
 ///
-/// Runs the same settings pipeline the agent path runs (`load_settings`
-/// → working-directory authority validation → `merge_settings` →
-/// `validate_settings`, then the `-c` overrides from the shared top-level
-/// flag) and feeds it to
+/// Runs the same sealed settings transaction as the agent path, then applies
+/// the `-c` overrides from the shared top-level flag, and feeds the result to
 /// [`resolve_index_lock_deadline`], so `norn session remove` honours
 /// exactly the deadline `norn -p` would — including `-c
 /// index_lock_deadline_ms=<u64>` on the recovery command itself.
@@ -81,25 +83,10 @@ pub fn run_session(cli: Cli, cmd: SessionCmd, agent: AgentEntry<'_>) -> ExitCode
 /// rather than silently falling back to an unbounded lock wait.
 fn resolve_subcommand_lock_deadline(cli: &Cli) -> Result<Duration, BuildError> {
     let cwd = std::env::current_dir()?;
-    let layers = load_settings(&cwd)?;
-    let settings = merge_validated_subcommand_settings(layers)?;
+    let settings =
+        load_merged_settings(&cwd).map_err(|error| BuildError::Argument(error.to_string()))?;
     let overrides = ConfigOverrides::parse(&cli.config)?;
     resolve_index_lock_deadline(&settings, &overrides)
-}
-
-fn merge_validated_subcommand_settings(
-    mut layers: LoadedSettings,
-) -> Result<NornSettings, BuildError> {
-    validate_working_directory_authority(&layers.user, &layers.project, &layers.local)?;
-    let mut cli_layer = NornSettings::default();
-    let settings = merge_settings(
-        &mut layers.user,
-        &mut layers.project,
-        &mut layers.local,
-        &mut cli_layer,
-    );
-    validate_settings(&settings)?;
-    Ok(settings)
 }
 
 /// Callback that runs the agent path with a (possibly mutated) [`Cli`].
@@ -433,26 +420,28 @@ mod tests {
     }
 
     #[test]
-    fn subcommand_settings_reject_working_directory_authority_before_merge() {
-        let project = serde_json::from_value(serde_json::json!({
-            "hooks": {
-                "session_start": [{
-                    "command": "sentinel-session-command",
-                    "timeout": 5
-                }]
-            }
-        }))
-        .unwrap();
-        let layers = LoadedSettings {
-            project,
-            ..LoadedSettings::default()
-        };
+    #[serial_test::serial]
+    fn subcommand_settings_reject_working_directory_authority_before_merge()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let norn_home = tempfile::tempdir()?;
+        let cwd = tempfile::tempdir()?;
+        let settings_dir = cwd.path().join(".norn");
+        std::fs::create_dir_all(&settings_dir)?;
+        std::fs::write(
+            settings_dir.join("settings.json"),
+            r#"{"hooks":{"session_start":[{"command":"sentinel-session-command","timeout":5}]}}"#,
+        )?;
 
-        let error = merge_validated_subcommand_settings(layers)
-            .expect_err("session subcommands must reject repository command authority");
+        let result = temp_env::with_var("NORN_HOME", Some(norn_home.path().as_os_str()), || {
+            load_merged_settings(cwd.path())
+        });
+        let Err(error) = result else {
+            return Err("session subcommands accepted repository command authority".into());
+        };
         let rendered = error.to_string();
         assert!(rendered.contains("hooks"));
         assert!(!rendered.contains("sentinel-session-command"));
+        Ok(())
     }
 
     #[test]

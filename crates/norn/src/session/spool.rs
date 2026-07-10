@@ -45,10 +45,9 @@ use serde_json::Value;
 
 use crate::session::events::EventId;
 use crate::session::persistence::SessionPersistError;
-use crate::session::persistence::permissions::{
-    create_private_dir_all, create_private_spool, open_private_read,
-};
+use crate::session::persistence::io::ensure_session_id_path_safe;
 use crate::session::store::DurabilityPolicy;
+use crate::util::PrivateRoot;
 
 /// Name of the spool subdirectory inside a session's sibling directory.
 const SPOOL_DIR_NAME: &str = "spool";
@@ -120,13 +119,14 @@ impl SpoolWriter {
     /// append must not proceed with a spool claim.
     pub fn write(&self, event_id: &EventId, output: &Value) -> Result<String, SessionPersistError> {
         let bytes = serde_json::to_vec(output)?;
-        let dir = self.spool_dir();
-        create_private_dir_all(&self.data_dir)?;
-        create_private_dir_all(&self.data_dir.join(&self.session_id))?;
-        create_private_dir_all(&dir)?;
+        ensure_session_id_path_safe(&self.session_id)?;
+        let root = PrivateRoot::create(&self.data_dir)?;
+        let session_dir = PathBuf::from(&self.session_id);
+        let dir = session_dir.join(SPOOL_DIR_NAME);
+        root.create_dir_all(&dir)?;
         let file_name = format!("{event_id}.{SPOOL_FILE_EXTENSION}");
         let path = dir.join(&file_name);
-        let mut file = create_private_spool(&path)?;
+        let mut file = root.create_new(&path)?;
         file.write_all(&bytes)?;
         if self.fsync {
             file.sync_all()?;
@@ -137,19 +137,12 @@ impl SpoolWriter {
             // no-dangling-reference guarantee true across power loss. The
             // cost is three directory fsyncs, paid only on over-budget
             // outputs.
-            sync_dir(&dir)?;
-            sync_dir(&self.data_dir.join(&self.session_id))?;
-            sync_dir(&self.data_dir)?;
+            root.sync_dir(&dir)?;
+            root.sync_dir(&session_dir)?;
+            root.sync_dir(Path::new(""))?;
         }
         Ok(format!("{}/{SPOOL_DIR_NAME}/{file_name}", self.session_id))
     }
-}
-
-/// Fsync a directory so entries created beneath it survive a power
-/// loss. Directories are opened read-only for the sync; on every Unix
-/// target this is the standard dirent-durability idiom.
-fn sync_dir(dir: &Path) -> std::io::Result<()> {
-    std::fs::File::open(dir)?.sync_all()
 }
 
 /// Resolve a persisted spool reference to the full tool output it names.
@@ -170,8 +163,9 @@ fn sync_dir(dir: &Path) -> std::io::Result<()> {
 /// cannot be read; [`SessionPersistError::Serde`] when its bytes do not
 /// parse back into a JSON value.
 pub fn read_spooled_output(data_dir: &Path, spool_ref: &str) -> Result<Value, SessionPersistError> {
-    let path = resolve_spool_ref(data_dir, spool_ref)?;
-    let mut file = open_private_read(&path)?;
+    let relative = validate_spool_ref(spool_ref)?;
+    let root = PrivateRoot::open(data_dir)?;
+    let mut file = root.open_read(&relative)?;
     let mut bytes = Vec::new();
     std::io::Read::read_to_end(&mut file, &mut bytes)?;
     Ok(serde_json::from_slice(&bytes)?)
@@ -186,6 +180,10 @@ pub fn read_spooled_output(data_dir: &Path, spool_ref: &str) -> Result<Value, Se
 /// the exact `<session-id>/spool/<file>.bin` form with path-safe
 /// components.
 pub fn resolve_spool_ref(data_dir: &Path, spool_ref: &str) -> Result<PathBuf, SessionPersistError> {
+    Ok(data_dir.join(validate_spool_ref(spool_ref)?))
+}
+
+fn validate_spool_ref(spool_ref: &str) -> Result<PathBuf, SessionPersistError> {
     let invalid = |reason: &str| SessionPersistError::InvalidSpoolRef {
         spool_ref: spool_ref.to_owned(),
         reason: reason.to_owned(),
@@ -220,8 +218,7 @@ pub fn resolve_spool_ref(data_dir: &Path, spool_ref: &str) -> Result<PathBuf, Se
     if stem.is_empty() {
         return Err(invalid("file component must have a non-empty stem"));
     }
-    Ok(data_dir
-        .join(session_id)
+    Ok(PathBuf::from(session_id)
         .join(SPOOL_DIR_NAME)
         .join(file_name))
 }
@@ -332,77 +329,93 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    fn spool_directories_and_payloads_are_private_and_legacy_files_harden() {
+    fn spool_directories_and_payloads_are_private_and_legacy_files_harden()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::fs;
         use std::os::unix::fs::PermissionsExt as _;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir()?;
         let data_dir = tmp.path().join("sessions");
         let writer = SpoolWriter::for_session(&data_dir, "sess", DurabilityPolicy::Flush);
         let event_id = EventId::new();
-        let spool_ref = writer
-            .write(&event_id, &serde_json::json!({ "secret": true }))
-            .unwrap();
-        let payload = resolve_spool_ref(&data_dir, &spool_ref).unwrap();
-        let mode = |path: &Path| fs::metadata(path).unwrap().permissions().mode() & 0o777;
+        let spool_ref = writer.write(&event_id, &serde_json::json!({ "secret": true }))?;
+        let payload = resolve_spool_ref(&data_dir, &spool_ref)?;
+        let mode = |path: &Path| -> std::io::Result<u32> {
+            Ok(fs::metadata(path)?.permissions().mode() & 0o777)
+        };
 
-        assert_eq!(mode(&data_dir), 0o700);
-        assert_eq!(mode(&data_dir.join("sess")), 0o700);
-        assert_eq!(mode(&data_dir.join("sess/spool")), 0o700);
-        assert_eq!(mode(&payload), 0o600);
+        assert_eq!(mode(&data_dir)?, 0o700);
+        assert_eq!(mode(&data_dir.join("sess"))?, 0o700);
+        assert_eq!(mode(&data_dir.join("sess/spool"))?, 0o700);
+        assert_eq!(mode(&payload)?, 0o600);
 
-        fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o755)).unwrap();
-        fs::set_permissions(data_dir.join("sess"), fs::Permissions::from_mode(0o755)).unwrap();
+        fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o755))?;
+        fs::set_permissions(data_dir.join("sess"), fs::Permissions::from_mode(0o755))?;
         fs::set_permissions(
             data_dir.join("sess/spool"),
             fs::Permissions::from_mode(0o755),
-        )
-        .unwrap();
-        fs::set_permissions(&payload, fs::Permissions::from_mode(0o644)).unwrap();
-        writer
-            .write(&event_id, &serde_json::json!({ "secret": false }))
-            .unwrap();
+        )?;
+        fs::set_permissions(&payload, fs::Permissions::from_mode(0o644))?;
         assert_eq!(
-            read_spooled_output(&data_dir, &spool_ref).unwrap(),
+            read_spooled_output(&data_dir, &spool_ref)?,
+            serde_json::json!({ "secret": true })
+        );
+        assert_eq!(mode(&data_dir)?, 0o700);
+        assert_eq!(mode(&data_dir.join("sess"))?, 0o700);
+        assert_eq!(mode(&data_dir.join("sess/spool"))?, 0o700);
+        assert_eq!(mode(&payload)?, 0o600);
+
+        let second_id = EventId::new();
+        let second_ref = writer.write(&second_id, &serde_json::json!({ "secret": false }))?;
+        assert_eq!(
+            read_spooled_output(&data_dir, &second_ref)?,
             serde_json::json!({ "secret": false }),
         );
-        assert_eq!(mode(&data_dir), 0o700);
-        assert_eq!(mode(&data_dir.join("sess")), 0o700);
-        assert_eq!(mode(&data_dir.join("sess/spool")), 0o700);
-        assert_eq!(mode(&payload), 0o600);
+        assert_eq!(mode(&data_dir)?, 0o700);
+        assert_eq!(mode(&data_dir.join("sess"))?, 0o700);
+        assert_eq!(mode(&data_dir.join("sess/spool"))?, 0o700);
+        assert_eq!(mode(&payload)?, 0o600);
+        Ok(())
     }
 
     #[cfg(unix)]
     #[test]
-    fn spool_reads_and_writes_refuse_symlinks_and_non_regular_files() {
+    fn spool_reads_and_writes_refuse_symlinks_and_non_regular_files()
+    -> Result<(), Box<dyn std::error::Error>> {
         use std::fs;
         use std::os::unix::fs::symlink;
 
-        let tmp = tempfile::tempdir().unwrap();
+        let tmp = tempfile::tempdir()?;
         let spool_dir = tmp.path().join("sess/spool");
-        fs::create_dir_all(&spool_dir).unwrap();
+        fs::create_dir_all(&spool_dir)?;
         let target = tmp.path().join("outside.bin");
-        fs::write(&target, br#"{"outside":true}"#).unwrap();
+        fs::write(&target, br#"{"outside":true}"#)?;
         let linked = spool_dir.join("linked.bin");
-        symlink(&target, &linked).unwrap();
+        symlink(&target, &linked)?;
 
-        let error = read_spooled_output(tmp.path(), "sess/spool/linked.bin").unwrap_err();
+        let error = read_spooled_output(tmp.path(), "sess/spool/linked.bin")
+            .err()
+            .ok_or_else(|| std::io::Error::other("linked spool unexpectedly opened"))?;
         assert!(matches!(error, SessionPersistError::Io(_)));
-        assert_eq!(fs::read(&target).unwrap(), br#"{"outside":true}"#);
+        assert_eq!(fs::read(&target)?, br#"{"outside":true}"#);
 
         let writer = SpoolWriter::for_session(tmp.path(), "sess", DurabilityPolicy::Flush);
         let event_id = EventId::new();
         let occupied = spool_dir.join(format!("{event_id}.bin"));
-        symlink(&target, &occupied).unwrap();
+        symlink(&target, &occupied)?;
         let error = writer
             .write(&event_id, &serde_json::json!({ "replacement": true }))
-            .unwrap_err();
+            .err()
+            .ok_or_else(|| std::io::Error::other("linked spool was overwritten"))?;
         assert!(matches!(error, SessionPersistError::Io(_)));
-        assert_eq!(fs::read(&target).unwrap(), br#"{"outside":true}"#);
+        assert_eq!(fs::read(&target)?, br#"{"outside":true}"#);
 
         let directory = spool_dir.join("directory.bin");
-        fs::create_dir(&directory).unwrap();
-        let error = read_spooled_output(tmp.path(), "sess/spool/directory.bin").unwrap_err();
+        fs::create_dir(&directory)?;
+        let error = read_spooled_output(tmp.path(), "sess/spool/directory.bin")
+            .err()
+            .ok_or_else(|| std::io::Error::other("spool directory unexpectedly opened"))?;
         assert!(matches!(error, SessionPersistError::Io(_)));
+        Ok(())
     }
 }

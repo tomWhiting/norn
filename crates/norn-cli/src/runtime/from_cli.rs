@@ -186,7 +186,7 @@ pub fn builder_from_cli(
     if cli.no_session {
         builder = builder.session(std::sync::Arc::new(EventStore::new()));
     } else if let Some(spec) = session_spec_from_cli(cli, &cwd) {
-        let manager = SessionManager::new(session_data_dir())
+        let manager = SessionManager::new(session_data_dir()?)
             .with_index_lock_deadline(Some(index_lock_deadline));
         builder = builder.open_session(&manager, spec, DurabilityPolicy::Flush);
     }

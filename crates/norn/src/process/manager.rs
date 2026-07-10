@@ -39,6 +39,7 @@ use uuid::Uuid;
 
 use crate::config::paths::norn_dir;
 use crate::tool::context::ProcessEnv;
+use crate::util::{PrivateRoot, validate_private_component};
 
 use super::handle::{ProcessCompletion, ProcessHandle, ProcessShared, ProcessStatus};
 use super::spool::{Spool, StreamTag};
@@ -80,8 +81,12 @@ pub struct ProcessManager {
     /// per-run UUID generated once at construction and reused for every spool.
     base_token: String,
     /// A fresh UUID generated once per manager instance. Spools live one level
-    /// below the session token under this run id (see [`Self::spool_path`]).
+    /// below the session token under this run id (see [`Self::spool_location`]).
     run_id: String,
+    /// Descriptor-pinned Norn root captured at manager construction.
+    spool_root: Option<Arc<PrivateRoot>>,
+    /// Construction-time root failure surfaced by every spool attempt.
+    spool_root_error: Option<String>,
     /// Monotonic id counter — `p1`, `p2`, … There is no ceiling.
     next_id: AtomicU64,
     /// The process registry, ordered by numeric id. No cap on size.
@@ -104,6 +109,7 @@ impl std::fmt::Debug for ProcessManager {
         f.debug_struct("ProcessManager")
             .field("base_token", &self.base_token)
             .field("run_id", &self.run_id)
+            .field("spool_root_available", &self.spool_root.is_some())
             .field("next_id", &self.next_id)
             .field("has_notifier", &self.notifier.is_some())
             .field("shutting_down", &self.shutting_down)
@@ -119,9 +125,21 @@ impl ProcessManager {
     #[must_use]
     pub fn new(session_id: Option<String>, notifier: Option<Arc<dyn ProcessNotifier>>) -> Self {
         let base_token = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
+        let (spool_root, spool_root_error) = match norn_dir() {
+            Some(path) => match PrivateRoot::create(&path) {
+                Ok(root) => (Some(Arc::new(root)), None),
+                Err(error) => (None, Some(error.to_string())),
+            },
+            None => (
+                None,
+                Some("cannot resolve an absolute NORN_HOME or user home directory".to_owned()),
+            ),
+        };
         Self {
             base_token,
             run_id: Uuid::new_v4().to_string(),
+            spool_root,
+            spool_root_error,
             next_id: AtomicU64::new(1),
             registry: Mutex::new(BTreeMap::new()),
             model_cursors: Mutex::new(HashMap::new()),
@@ -142,19 +160,21 @@ impl ProcessManager {
     /// persistence. The fresh `run_id` per manager instance isolates every
     /// run's spools so no run can overwrite another's, while keeping them all
     /// discoverable under the one session directory.
-    fn spool_path(&self, id: u64) -> std::io::Result<PathBuf> {
-        let root = norn_dir().ok_or_else(|| {
-            std::io::Error::other(
-                "cannot resolve the norn home directory (no $NORN_HOME and no home dir); \
-                 a background process cannot be spooled",
-            )
-        })?;
-        Ok(root
-            .join("outputs")
+    fn spool_location(&self, id: u64) -> std::io::Result<(PathBuf, PathBuf)> {
+        let root =
+            self.spool_root.as_ref().ok_or_else(|| {
+                std::io::Error::other(self.spool_root_error.as_deref().unwrap_or(
+                    "private process spool root was unavailable at manager construction",
+                ))
+            })?;
+        validate_private_component(&self.base_token, "process spool session id")?;
+        validate_private_component(&self.run_id, "process spool run id")?;
+        let relative = PathBuf::from("outputs")
             .join(&self.base_token)
             .join("processes")
             .join(&self.run_id)
-            .join(format!("p{id}.log")))
+            .join(format!("p{id}.log"));
+        Ok((root.path().to_path_buf(), relative))
     }
 
     /// Spawn `command` via `sh -c`, detached from any tool call, in its own
@@ -172,7 +192,12 @@ impl ProcessManager {
         process_env: Option<&ProcessEnv>,
     ) -> std::io::Result<ProcessHandle> {
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
-        let spool = Arc::new(Spool::create(self.spool_path(id)?).await?);
+        let (_, spool_relative) = self.spool_location(id)?;
+        let spool_root = self
+            .spool_root
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("private process spool root unavailable"))?;
+        let spool = Arc::new(Spool::create_under(Arc::clone(spool_root), &spool_relative).await?);
 
         let mut cmd = build_bg_command(command, cwd, process_env);
         let mut child = cmd.spawn()?;
@@ -219,7 +244,12 @@ impl ProcessManager {
         stderr_task: JoinHandle<std::io::Result<()>>,
     ) -> std::io::Result<ProcessHandle> {
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
-        let spool = Arc::new(Spool::create(self.spool_path(id)?).await?);
+        let (_, spool_relative) = self.spool_location(id)?;
+        let spool_root = self
+            .spool_root
+            .as_ref()
+            .ok_or_else(|| std::io::Error::other("private process spool root unavailable"))?;
+        let spool = Arc::new(Spool::create_under(Arc::clone(spool_root), &spool_relative).await?);
         let pid = child.id();
         let drains = vec![stdout_task, stderr_task];
         Ok(self.install(id, command.to_owned(), pid, spool, child, drains))
@@ -661,6 +691,27 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(10)).await;
         }
         panic!("spool never contained {needle:?}");
+    }
+
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn manager_pins_spool_root_before_environment_changes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let first = tempfile::tempdir()?;
+        let second = tempfile::tempdir()?;
+        let _home = HomeGuard::set(first.path());
+        let manager = manager(Some("pinned-session"));
+        // SAFETY: this serial test is the only environment mutator while the
+        // guard restores the pre-test value on drop.
+        unsafe { std::env::set_var("NORN_HOME", second.path()) };
+
+        let cwd = std::env::current_dir()?;
+        let handle = manager.spawn("printf pinned", &cwd, None).await?;
+        wait_terminal(&handle).await;
+
+        assert!(handle.spool().path().starts_with(first.path()));
+        assert!(!handle.spool().path().starts_with(second.path()));
+        Ok(())
     }
 
     #[tokio::test]

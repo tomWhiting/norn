@@ -18,33 +18,42 @@ use std::time::Duration;
 
 use crate::provider::usage::Usage;
 use crate::session::events::SessionEvent;
+use crate::util::PrivateRoot;
 use chrono::Utc;
 use serde::Serialize;
 use uuid::Uuid;
 
-use super::io::ensure_session_id_not_reserved;
+use super::io::{ensure_session_id_path_safe, session_file_relative};
 use super::lock::lock_index;
-use super::permissions::{
-    create_private_dir_all, create_private_new, open_private_append_create, open_private_read,
-};
 use super::types::{SessionIndexEntry, SessionPersistError};
+
+const INDEX_FILE_NAME: &str = "index.jsonl";
 
 /// Return the session index file path under `data_dir`.
 #[must_use]
 pub fn index_file_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("index.jsonl")
+    data_dir.join(INDEX_FILE_NAME)
 }
 
 /// Read every [`SessionIndexEntry`] from `{data_dir}/index.jsonl`.
 ///
 /// Returns an empty vector when the file does not exist. Empty lines are
-/// skipped. A non-empty line that fails to parse (e.g. torn by a crash
-/// mid-append) is skipped with a `tracing::warn!` carrying its 1-based
-/// line number — one corrupt entry must never make every other session
-/// unlistable. The call fails only if the file itself is unreadable.
+/// skipped. A non-empty line that fails to parse or whose entry is unsafe
+/// (e.g. torn by a crash or carrying a persistence-reserved ID) is skipped
+/// with a `tracing::warn!` carrying its 1-based line number — one corrupt or
+/// hostile entry must never make every other session unlistable. The call
+/// fails only if the file itself is unreadable.
 pub fn read_index(data_dir: &Path) -> Result<Vec<SessionIndexEntry>, SessionPersistError> {
-    let path = index_file_path(data_dir);
-    let file = match open_private_read(&path) {
+    let root = match PrivateRoot::open(data_dir) {
+        Ok(root) => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(SessionPersistError::Io(error)),
+    };
+    read_index_in(&root)
+}
+
+fn read_index_in(root: &PrivateRoot) -> Result<Vec<SessionIndexEntry>, SessionPersistError> {
+    let file = match root.open_read(Path::new(INDEX_FILE_NAME)) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(SessionPersistError::Io(error)),
@@ -57,7 +66,16 @@ pub fn read_index(data_dir: &Path) -> Result<Vec<SessionIndexEntry>, SessionPers
             continue;
         }
         match serde_json::from_str::<SessionIndexEntry>(&line) {
-            Ok(entry) => out.push(entry),
+            Ok(entry) => match validate_index_entry(&entry) {
+                Ok(()) => out.push(entry),
+                Err(error) => {
+                    tracing::warn!(
+                        line = idx + 1,
+                        %error,
+                        "skipping unsafe session index line",
+                    );
+                }
+            },
             Err(error) => {
                 tracing::warn!(
                     line = idx + 1,
@@ -87,16 +105,27 @@ pub fn write_index_atomic(
     data_dir: &Path,
     entries: &[SessionIndexEntry],
 ) -> Result<(), SessionPersistError> {
-    create_private_dir_all(data_dir)?;
-    let final_path = index_file_path(data_dir);
-    let tmp_path = data_dir.join(format!("index.jsonl.tmp.{}", Uuid::new_v4()));
+    let root = PrivateRoot::create(data_dir)?;
+    write_index_atomic_in(&root, entries)
+}
 
-    if let Err(err) = write_jsonl_atomic(&tmp_path, entries) {
-        remove_tmp_after_failure(&tmp_path);
+fn write_index_atomic_in(
+    root: &PrivateRoot,
+    entries: &[SessionIndexEntry],
+) -> Result<(), SessionPersistError> {
+    for entry in entries {
+        validate_index_entry(entry)?;
+    }
+    let final_path = Path::new(INDEX_FILE_NAME);
+    let tmp_name = format!("index.jsonl.tmp.{}", Uuid::new_v4());
+    let tmp_path = Path::new(&tmp_name);
+
+    if let Err(err) = write_jsonl_atomic(root, tmp_path, entries) {
+        remove_tmp_after_failure(root, tmp_path);
         return Err(err);
     }
-    if let Err(err) = fs::rename(&tmp_path, &final_path) {
-        remove_tmp_after_failure(&tmp_path);
+    if let Err(err) = root.rename(tmp_path, final_path) {
+        remove_tmp_after_failure(root, tmp_path);
         return Err(SessionPersistError::Io(err));
     }
     Ok(())
@@ -106,12 +135,12 @@ pub fn write_index_atomic(
 /// write or rename. A cleanup failure is logged with the path so a
 /// lingering `.tmp` is never silent; `NotFound` is fine (the failure
 /// may have happened before the tmp file was created).
-fn remove_tmp_after_failure(tmp_path: &Path) {
-    if let Err(cleanup_error) = fs::remove_file(tmp_path)
+fn remove_tmp_after_failure(root: &PrivateRoot, tmp_path: &Path) {
+    if let Err(cleanup_error) = root.remove_file(tmp_path)
         && cleanup_error.kind() != std::io::ErrorKind::NotFound
     {
         tracing::warn!(
-            tmp_path = %tmp_path.display(),
+            tmp_path = %root.display_path(tmp_path).display(),
             %cleanup_error,
             "failed to remove temporary session index file after a \
              failed atomic rewrite; remove it manually if it lingers",
@@ -120,10 +149,11 @@ fn remove_tmp_after_failure(tmp_path: &Path) {
 }
 
 fn write_jsonl_atomic<T: Serialize>(
+    root: &PrivateRoot,
     tmp_path: &Path,
     rows: &[T],
 ) -> Result<(), SessionPersistError> {
-    let file = create_private_new(tmp_path)?;
+    let file = root.create_new(tmp_path)?;
     let mut writer = BufWriter::new(file);
     for row in rows {
         serde_json::to_writer(&mut writer, row)?;
@@ -149,8 +179,8 @@ pub fn append_index_entry(
     entry: &SessionIndexEntry,
     lock_deadline: Option<Duration>,
 ) -> Result<(), SessionPersistError> {
-    let _lock = lock_index(data_dir, lock_deadline)?;
-    append_entry_assuming_locked(data_dir, entry)
+    let lock = lock_index(data_dir, lock_deadline)?;
+    append_entry_assuming_locked(lock.root(), entry)
 }
 
 /// Insert `entry` into the session index unless an entry with the same
@@ -169,11 +199,14 @@ pub fn insert_index_entry_if_absent(
     entry: &SessionIndexEntry,
     lock_deadline: Option<Duration>,
 ) -> Result<Option<SessionIndexEntry>, SessionPersistError> {
-    let _lock = lock_index(data_dir, lock_deadline)?;
-    if let Some(existing) = read_index(data_dir)?.into_iter().find(|e| e.id == entry.id) {
+    let lock = lock_index(data_dir, lock_deadline)?;
+    if let Some(existing) = read_index_in(lock.root())?
+        .into_iter()
+        .find(|e| e.id == entry.id)
+    {
         return Ok(Some(existing));
     }
-    append_entry_assuming_locked(data_dir, entry)?;
+    append_entry_assuming_locked(lock.root(), entry)?;
     Ok(None)
 }
 
@@ -197,15 +230,17 @@ pub fn insert_index_entry_for_new_session(
     entry: &SessionIndexEntry,
     lock_deadline: Option<Duration>,
 ) -> Result<(), SessionPersistError> {
-    let _lock = lock_index(data_dir, lock_deadline)?;
-    if read_index(data_dir)?.iter().any(|e| e.id == entry.id)
-        || super::io::session_file_path(data_dir, &entry.id).exists()
+    let lock = lock_index(data_dir, lock_deadline)?;
+    if read_index_in(lock.root())?.iter().any(|e| e.id == entry.id)
+        || lock
+            .root()
+            .regular_file_exists(Path::new(&format!("{}.jsonl", entry.id)))?
     {
         return Err(SessionPersistError::IdExists {
             id: entry.id.clone(),
         });
     }
-    append_entry_assuming_locked(data_dir, entry)
+    append_entry_assuming_locked(lock.root(), entry)
 }
 
 /// Insert the index row for a freshly minted **child** session, refusing
@@ -228,8 +263,8 @@ pub fn insert_child_index_entry(
     entry: &SessionIndexEntry,
     lock_deadline: Option<Duration>,
 ) -> Result<(), SessionPersistError> {
-    let _lock = lock_index(data_dir, lock_deadline)?;
-    let existing = read_index(data_dir)?;
+    let lock = lock_index(data_dir, lock_deadline)?;
+    let existing = read_index_in(lock.root())?;
     if existing.iter().any(|e| e.id == entry.id) {
         return Err(SessionPersistError::IdExists {
             id: entry.id.clone(),
@@ -244,7 +279,7 @@ pub fn insert_child_index_entry(
             rel_path: rel_path.to_owned(),
         });
     }
-    append_entry_assuming_locked(data_dir, entry)
+    append_entry_assuming_locked(lock.root(), entry)
 }
 
 /// The raw `O_APPEND` index-entry write shared by [`append_index_entry`]
@@ -259,12 +294,11 @@ pub fn insert_child_index_entry(
 /// `delete("index")` removing the index itself), so it must never enter
 /// the index through any insertion path.
 fn append_entry_assuming_locked(
-    data_dir: &Path,
+    root: &PrivateRoot,
     entry: &SessionIndexEntry,
 ) -> Result<(), SessionPersistError> {
-    ensure_session_id_not_reserved(&entry.id)?;
-    let path = index_file_path(data_dir);
-    let file = open_private_append_create(&path)?;
+    validate_index_entry(entry)?;
+    let file = root.open_append_create(Path::new(INDEX_FILE_NAME))?;
     let mut writer = BufWriter::new(file);
     serde_json::to_writer(&mut writer, entry)?;
     writer.write_all(b"\n")?;
@@ -273,6 +307,15 @@ fn append_entry_assuming_locked(
         .into_inner()
         .map_err(std::io::IntoInnerError::into_error)?;
     file.sync_all()?;
+    Ok(())
+}
+
+fn validate_index_entry(entry: &SessionIndexEntry) -> Result<(), SessionPersistError> {
+    ensure_session_id_path_safe(&entry.id)?;
+    session_file_relative(entry)?;
+    if let Some(parent_id) = entry.parent_id.as_deref() {
+        ensure_session_id_path_safe(parent_id)?;
+    }
     Ok(())
 }
 
@@ -291,8 +334,8 @@ pub fn update_index_entry(
     lock_deadline: Option<Duration>,
     mutator: impl FnOnce(&mut SessionIndexEntry),
 ) -> Result<(), SessionPersistError> {
-    let _lock = lock_index(data_dir, lock_deadline)?;
-    let mut entries = read_index(data_dir)?;
+    let lock = lock_index(data_dir, lock_deadline)?;
+    let mut entries = read_index_in(lock.root())?;
     let pos = entries
         .iter()
         .position(|e| e.id == session_id)
@@ -300,7 +343,7 @@ pub fn update_index_entry(
             input: session_id.to_owned(),
         })?;
     mutator(&mut entries[pos]);
-    write_index_atomic(data_dir, &entries)
+    write_index_atomic_in(lock.root(), &entries)
 }
 
 /// Update the session index entry for `session_id` to reflect newly
@@ -382,18 +425,17 @@ pub fn sum_usage_from_events(events: &[SessionEvent]) -> Usage {
 /// Resolve a user-supplied identifier (empty = latest, full ID, name, or
 /// >=8-character ID prefix) against the index.
 ///
-/// Resolving to an entry whose `id` is reserved by the persistence layer
-/// fails with [`SessionPersistError::InvalidSessionId`]: such an entry
-/// can only exist through a hand-edited index (every insertion path
-/// rejects reserved ids), and handing it to a caller would route session
-/// I/O onto a persistence-owned file (e.g. `delete` removing the index
-/// itself).
+/// An entry whose `id` is reserved by the persistence layer can only exist
+/// through a hand-edited index (every insertion path rejects reserved IDs).
+/// [`read_index`] discards that unsafe row, so resolving it returns
+/// [`SessionPersistError::NotFound`] rather than handing it to a caller that
+/// could route session I/O onto a persistence-owned file.
 pub fn resolve_session(
     data_dir: &Path,
     input: &str,
 ) -> Result<SessionIndexEntry, SessionPersistError> {
     let entry = resolve_in_entries(read_index(data_dir)?, input)?;
-    ensure_session_id_not_reserved(&entry.id)?;
+    ensure_session_id_path_safe(&entry.id)?;
     Ok(entry)
 }
 
@@ -411,7 +453,7 @@ pub fn resolve_latest_session_in_working_dir(
 ) -> Result<SessionIndexEntry, SessionPersistError> {
     let entries = read_index(data_dir)?;
     let entry = resolve_latest_in_working_dir_entries(entries, working_dir)?;
-    ensure_session_id_not_reserved(&entry.id)?;
+    ensure_session_id_path_safe(&entry.id)?;
     Ok(entry)
 }
 
@@ -513,8 +555,8 @@ pub fn remove_index_entry(
     session_id: &str,
     lock_deadline: Option<Duration>,
 ) -> Result<(), SessionPersistError> {
-    let _lock = lock_index(data_dir, lock_deadline)?;
-    let mut entries = read_index(data_dir)?;
+    let lock = lock_index(data_dir, lock_deadline)?;
+    let mut entries = read_index_in(lock.root())?;
     let pos = entries
         .iter()
         .position(|e| e.id == session_id)
@@ -522,5 +564,9 @@ pub fn remove_index_entry(
             input: session_id.to_owned(),
         })?;
     entries.remove(pos);
-    write_index_atomic(data_dir, &entries)
+    write_index_atomic_in(lock.root(), &entries)
 }
+
+#[cfg(test)]
+#[path = "index_security_tests.rs"]
+mod security_tests;

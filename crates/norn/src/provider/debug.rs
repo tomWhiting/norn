@@ -16,12 +16,17 @@
 //! debug dumps are an infrequent diagnostic tool; callers should not
 //! enable this in high-throughput production paths.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs::File;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+#[cfg(test)]
+use std::fs;
+
 use chrono::Utc;
 use serde::Serialize;
+
+use crate::util::PrivateRoot;
 
 /// Appends structured JSONL entries to a single debug dump file.
 ///
@@ -78,13 +83,11 @@ impl DebugDumper {
     /// `None` if the directory cannot be created, logging a warning.
     #[must_use]
     pub fn new(file_path: &Path) -> Option<Self> {
-        if let Some(parent) = file_path.parent()
-            && let Err(e) = fs::create_dir_all(parent)
-        {
+        if let Err(e) = validate_debug_path(file_path) {
             tracing::warn!(
-                path = %parent.display(),
+                path = %file_path.display(),
                 error = %e,
-                "cannot create debug dump directory; API dumps disabled",
+                "cannot prepare private debug dump path; API dumps disabled",
             );
             return None;
         }
@@ -168,43 +171,29 @@ impl DebugDumper {
 }
 
 fn open_append(path: &Path) -> Result<File, std::io::Error> {
-    reject_existing_non_regular_file(path)?;
-    let mut options = OpenOptions::new();
-    options.create(true).append(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt as _;
-
-        options
-            .mode(0o600)
-            .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK);
-    }
-    let file = options.open(path)?;
-    if !file.metadata()?.is_file() {
-        return Err(std::io::Error::other(
-            "debug dump destination is not a regular file",
-        ));
-    }
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::{MetadataExt as _, PermissionsExt as _};
-
-        if file.metadata()?.mode() & 0o777 != 0o600 {
-            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
-        }
-    }
-    Ok(file)
+    let (root, relative) = debug_root_and_relative(path)?;
+    root.open_append_create(&relative)
 }
 
-fn reject_existing_non_regular_file(path: &Path) -> Result<(), std::io::Error> {
-    match std::fs::symlink_metadata(path) {
-        Ok(metadata) if metadata.file_type().is_symlink() || !metadata.is_file() => Err(
-            std::io::Error::other("debug dump destination is not a regular file"),
-        ),
-        Ok(_) => Ok(()),
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(error) => Err(error),
-    }
+fn validate_debug_path(path: &Path) -> Result<(), std::io::Error> {
+    debug_root_and_relative(path).map(drop)
+}
+
+fn debug_root_and_relative(path: &Path) -> Result<(PrivateRoot, PathBuf), std::io::Error> {
+    let parent = path.parent().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "debug dump requires an absolute parent directory",
+        )
+    })?;
+    let file_name = path.file_name().ok_or_else(|| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "debug dump path has no final component",
+        )
+    })?;
+    let root = PrivateRoot::create(parent)?;
+    Ok((root, PathBuf::from(file_name)))
 }
 
 #[cfg(test)]
@@ -279,6 +268,33 @@ mod security_tests {
         symlink(&target, &link)?;
         assert!(open_append(&link).is_err());
         assert_eq!(std::fs::read_to_string(target)?, "unchanged");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn append_rejects_an_ancestor_repoint_without_touching_outside_file()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let container = tempfile::tempdir()?;
+        let outside = tempfile::tempdir()?;
+        let dumps = container.path().join("dumps");
+        let parked = container.path().join("parked");
+        let file = dumps.join("debug.jsonl");
+        let dumper = DebugDumper::new(&file)
+            .ok_or_else(|| std::io::Error::other("failed to prepare debug dumper"))?;
+        std::fs::write(outside.path().join("debug.jsonl"), "outside-sentinel")?;
+        std::fs::rename(&dumps, &parked)?;
+        symlink(outside.path(), &dumps)?;
+
+        dumper.write_request("https://example.test", r#"{"secret":true}"#);
+
+        assert_eq!(
+            std::fs::read_to_string(outside.path().join("debug.jsonl"))?,
+            "outside-sentinel",
+        );
+        assert!(!parked.join("debug.jsonl").exists());
         Ok(())
     }
 }

@@ -1,4 +1,5 @@
-//! Race-resistant reads of repository-controlled regular files.
+//! Race-resistant reads of repository-controlled regular files on supported
+//! descriptor-capable Unix targets. Other targets fail closed.
 
 use std::ffi::OsStr;
 use std::ffi::OsString;
@@ -7,7 +8,7 @@ use std::io::{self, Read};
 use std::path::{Component, Path};
 use std::time::SystemTime;
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 use std::os::fd::OwnedFd;
 
 /// Text and metadata obtained from the same securely opened file.
@@ -33,12 +34,12 @@ pub(crate) struct WorkspaceDirectoryEntry {
 
 /// Reads a UTF-8 regular file beneath `root` without following symlinks.
 ///
-/// `relative` must contain only normal path components. On Unix, every
-/// component, including every component of `root`, is opened relative to the
-/// previously opened directory with `O_NOFOLLOW`; the final descriptor is
-/// verified as a regular file before it is read. Platforms without equivalent
-/// descriptor-relative no-follow traversal reject every present workspace
-/// input with [`io::ErrorKind::Unsupported`].
+/// `relative` must contain only normal path components. On supported
+/// descriptor-capable Unix targets, every component, including every component
+/// of `root`, is opened relative to the previously opened directory with
+/// `O_NOFOLLOW`; the final descriptor is verified as a regular file before it
+/// is read. Other targets reject every present workspace input with
+/// [`io::ErrorKind::Unsupported`].
 ///
 /// # Errors
 ///
@@ -142,6 +143,7 @@ fn normal_components(relative: &Path) -> io::Result<Vec<&OsStr>> {
     Ok(components)
 }
 
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 fn non_regular_error() -> io::Error {
     io::Error::new(
         io::ErrorKind::PermissionDenied,
@@ -149,7 +151,7 @@ fn non_regular_error() -> io::Error {
     )
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 fn read_workspace_directory_impl(
     root: &Path,
     relative: &Path,
@@ -182,7 +184,7 @@ fn read_workspace_directory_impl(
     Ok(entries)
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 fn classify_workspace_entry(
     file_type: rustix::fs::FileType,
     resolve_unknown: impl FnOnce() -> io::Result<rustix::fs::FileType>,
@@ -201,16 +203,16 @@ fn classify_workspace_entry(
     })
 }
 
-#[cfg(not(unix))]
+#[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
 fn read_workspace_directory_impl(
     root: &Path,
     relative: &Path,
 ) -> io::Result<Vec<WorkspaceDirectoryEntry>> {
-    fail_closed_without_nofollow(root, relative)?;
+    fail_closed_without_nofollow(root, relative, true)?;
     Err(no_nofollow_error())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 fn open_workspace_regular_file(root: &Path, relative: &Path) -> io::Result<File> {
     use rustix::fs::{Mode, OFlags, openat};
 
@@ -235,13 +237,13 @@ fn open_workspace_regular_file(root: &Path, relative: &Path) -> io::Result<File>
     Ok(file)
 }
 
-#[cfg(not(unix))]
+#[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
 fn open_workspace_regular_file(root: &Path, relative: &Path) -> io::Result<File> {
-    fail_closed_without_nofollow(root, relative)?;
+    fail_closed_without_nofollow(root, relative, false)?;
     Err(no_nofollow_error())
 }
 
-#[cfg(unix)]
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 fn open_workspace_directory(root: &Path, relative: &Path) -> io::Result<OwnedFd> {
     use rustix::fs::{Mode, OFlags, open, openat};
 
@@ -274,7 +276,6 @@ fn open_workspace_directory(root: &Path, relative: &Path) -> io::Result<OwnedFd>
     Ok(directory)
 }
 
-#[cfg(unix)]
 fn normal_components_allow_empty(relative: &Path) -> io::Result<Vec<&OsStr>> {
     if relative.as_os_str().is_empty() {
         return Ok(Vec::new());
@@ -282,9 +283,13 @@ fn normal_components_allow_empty(relative: &Path) -> io::Result<Vec<&OsStr>> {
     normal_components(relative)
 }
 
-#[cfg(not(unix))]
-fn fail_closed_without_nofollow(root: &Path, relative: &Path) -> io::Result<()> {
-    let components = normal_components(relative)?;
+#[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
+fn fail_closed_without_nofollow(root: &Path, relative: &Path, allow_empty: bool) -> io::Result<()> {
+    let components = if allow_empty {
+        normal_components_allow_empty(relative)?
+    } else {
+        normal_components(relative)?
+    };
     let candidate = components
         .iter()
         .fold(root.to_path_buf(), |mut path, part| {
@@ -297,11 +302,11 @@ fn fail_closed_without_nofollow(root: &Path, relative: &Path) -> io::Result<()> 
     }
 }
 
-#[cfg(not(unix))]
+#[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
 fn no_nofollow_error() -> io::Error {
     io::Error::new(
         io::ErrorKind::Unsupported,
-        "secure workspace reads require Unix no-follow descriptor traversal",
+        "secure workspace reads require a supported descriptor-capable Unix target",
     )
 }
 
@@ -312,7 +317,7 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(unix)]
+    #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
     fn reads_regular_file_and_metadata() -> Result<(), Box<dyn std::error::Error>> {
         let root = tempfile::tempdir()?;
         std::fs::create_dir(root.path().join("nested"))?;
@@ -329,7 +334,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
     #[test]
     fn enumerates_a_pinned_directory_without_following_entries()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -350,7 +355,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
     #[test]
     fn resolves_unknown_directory_entry_types() -> Result<(), Box<dyn std::error::Error>> {
         use rustix::fs::FileType;
@@ -382,11 +387,14 @@ mod tests {
         else {
             return Err("directory input was accepted".into());
         };
+        #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
         assert_eq!(directory_error.kind(), io::ErrorKind::PermissionDenied);
+        #[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
+        assert_eq!(directory_error.kind(), io::ErrorKind::Unsupported);
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
     #[test]
     fn rejects_final_and_intermediate_symlinks() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
@@ -408,7 +416,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
     #[test]
     fn alternate_root_spelling_preserves_workspace_symlinks_in_the_suffix()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -438,7 +446,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
     #[test]
     fn refuses_launch_root_path_replaced_by_symlink() -> Result<(), Box<dyn std::error::Error>> {
         use std::os::unix::fs::symlink;
@@ -461,7 +469,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(unix)]
+    #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
     #[test]
     fn refuses_launch_root_with_replaced_symlink_ancestor() -> Result<(), Box<dyn std::error::Error>>
     {
@@ -484,7 +492,7 @@ mod tests {
         Ok(())
     }
 
-    #[cfg(not(unix))]
+    #[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
     #[test]
     fn present_workspace_inputs_fail_closed_without_nofollow_support()
     -> Result<(), Box<dyn std::error::Error>> {
@@ -495,6 +503,10 @@ mod tests {
             return Err("workspace input unexpectedly opened".into());
         };
         assert_eq!(error.kind(), io::ErrorKind::Unsupported);
+        let Err(directory_error) = read_workspace_directory(root.path(), Path::new("")) else {
+            return Err("workspace directory unexpectedly opened".into());
+        };
+        assert_eq!(directory_error.kind(), io::ErrorKind::Unsupported);
         Ok(())
     }
 }

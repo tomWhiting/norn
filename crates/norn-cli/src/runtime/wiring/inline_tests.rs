@@ -211,12 +211,13 @@ mod tests {
     }
 
     #[test]
-    fn slash_state_builder_snapshots_tools_and_registers_all_builtins() {
+    fn slash_state_builder_snapshots_tools_and_registers_all_builtins()
+    -> Result<(), Box<dyn std::error::Error>> {
         use clap::Parser;
 
         use crate::cli::Cli;
         use crate::commands::slash::cli_builtin_names;
-        let cli = Cli::try_parse_from(["norn"]).unwrap();
+        let cli = Cli::try_parse_from(["norn"])?;
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
         let (state, registry) = build_slash_state_from_bundle(
@@ -225,20 +226,21 @@ mod tests {
             Arc::clone(&store),
             None,
             TEST_LOCK_DEADLINE,
-        );
+        )?;
         assert_eq!(state.model_snapshot(), parts.model);
         for name in cli_builtin_names() {
             assert!(registry.get(name).is_some(), "missing /{name}");
         }
         assert!(Arc::ptr_eq(&store, &state.current_store()));
+        Ok(())
     }
 
     #[test]
-    fn slash_state_builder_carries_variable_pairs() {
+    fn slash_state_builder_carries_variable_pairs() -> Result<(), Box<dyn std::error::Error>> {
         use clap::Parser;
 
         use crate::cli::Cli;
-        let cli = Cli::try_parse_from(["norn", "--variables", "project=yggdrasil"]).unwrap();
+        let cli = Cli::try_parse_from(["norn", "--variables", "project=yggdrasil"])?;
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
         let (state, _registry) = build_slash_state_from_bundle(
@@ -247,19 +249,20 @@ mod tests {
             store,
             None,
             TEST_LOCK_DEADLINE,
-        );
+        )?;
         assert_eq!(
             state.variable_pairs,
             vec![("project".to_owned(), "yggdrasil".to_owned())],
         );
+        Ok(())
     }
 
     #[test]
-    fn slash_state_builder_parses_inline_output_schema() {
+    fn slash_state_builder_parses_inline_output_schema() -> Result<(), Box<dyn std::error::Error>> {
         use clap::Parser;
 
         use crate::cli::Cli;
-        let cli = Cli::try_parse_from(["norn", "-s", r#"{"type":"object"}"#]).unwrap();
+        let cli = Cli::try_parse_from(["norn", "-s", r#"{"type":"object"}"#])?;
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
         let (state, _registry) = build_slash_state_from_bundle(
@@ -268,11 +271,12 @@ mod tests {
             store,
             None,
             TEST_LOCK_DEADLINE,
-        );
+        )?;
         assert_eq!(
             state.output_schema_snapshot(),
             Some(serde_json::json!({"type": "object"})),
         );
+        Ok(())
     }
 
     /// F4 regression: the unmatched-tool-flag check reports only names
@@ -318,11 +322,11 @@ mod tests {
     }
 
     #[test]
-    fn slash_state_builder_threads_session_id() {
+    fn slash_state_builder_threads_session_id() -> Result<(), Box<dyn std::error::Error>> {
         use clap::Parser;
 
         use crate::cli::Cli;
-        let cli = Cli::try_parse_from(["norn"]).unwrap();
+        let cli = Cli::try_parse_from(["norn"])?;
         let parts = built_parts();
         let store = Arc::new(EventStore::new());
         let (state, _registry) = build_slash_state_from_bundle(
@@ -331,7 +335,8 @@ mod tests {
             store,
             Some("abc-123".to_owned()),
             TEST_LOCK_DEADLINE,
-        );
+        )?;
         assert_eq!(state.current_session_id().as_deref(), Some("abc-123"));
+        Ok(())
     }
 }

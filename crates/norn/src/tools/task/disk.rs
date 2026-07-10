@@ -17,9 +17,11 @@
 //! cross-session handoffs all read and write the same files.
 
 use std::collections::HashSet;
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{Read as _, Write as _};
 use std::path::{Path, PathBuf};
+
+#[cfg(test)]
+use std::fs::{self, OpenOptions};
 
 use chrono::Utc;
 use serde_json::Value;
@@ -27,6 +29,7 @@ use uuid::Uuid;
 
 use super::types::{TaskEntry, TaskStatus, TaskStore};
 use crate::error::ToolError;
+use crate::util::{PrivateEntryKind, PrivateRoot, validate_private_component};
 
 /// Disk-backed implementation of [`TaskStore`].
 ///
@@ -58,42 +61,96 @@ impl DiskTaskStore {
     ///
     /// Validation happens here (not in `new`) so the constructor stays
     /// infallible and tests can spin up a store cheaply.
-    fn group_dir(&self) -> Result<PathBuf, ToolError> {
+    fn group_relative(&self) -> Result<PathBuf, ToolError> {
         let slug = validate_slug(&self.group_slug)?;
-        Ok(self.root_dir.join(slug))
+        Ok(PathBuf::from(slug))
     }
 
-    fn task_path(&self, task_id: &str) -> Result<PathBuf, ToolError> {
-        Ok(self.group_dir()?.join(format!("{task_id}.json")))
+    fn task_relative(&self, task_id: &str) -> Result<PathBuf, ToolError> {
+        validate_task_id(task_id)?;
+        Ok(self.group_relative()?.join(format!("{task_id}.json")))
     }
 
-    fn lock_path(&self, task_id: &str) -> Result<PathBuf, ToolError> {
-        Ok(self.group_dir()?.join(format!("{task_id}.lock")))
+    fn lock_relative(&self, task_id: &str) -> Result<PathBuf, ToolError> {
+        validate_task_id(task_id)?;
+        Ok(self.group_relative()?.join(format!("{task_id}.lock")))
+    }
+
+    fn create_root(&self) -> Result<PrivateRoot, ToolError> {
+        PrivateRoot::create(&self.root_dir)
+            .map_err(|error| private_io_error(&self.root_dir, &error))
+    }
+
+    fn open_root(&self) -> Result<PrivateRoot, ToolError> {
+        PrivateRoot::open(&self.root_dir).map_err(|error| private_io_error(&self.root_dir, &error))
+    }
+
+    fn entry_exists(&self, task_id: &str) -> Result<bool, ToolError> {
+        let root = match PrivateRoot::open(&self.root_dir) {
+            Ok(root) => root,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => return Err(private_io_error(&self.root_dir, &error)),
+        };
+        self.entry_exists_in(&root, task_id)
+    }
+
+    fn entry_exists_in(&self, root: &PrivateRoot, task_id: &str) -> Result<bool, ToolError> {
+        let relative = self.task_relative(task_id)?;
+        root.regular_file_exists(&relative)
+            .map_err(|error| private_io_error(&root.display_path(&relative), &error))
     }
 
     fn read_entry(&self, task_id: &str) -> Result<TaskEntry, ToolError> {
-        let path = self.task_path(task_id)?;
-        let bytes = fs::read(&path).map_err(|err| ToolError::ExecutionFailed {
-            reason: format!("failed to read task '{task_id}': {err}"),
-        })?;
+        let root = self.open_root()?;
+        self.read_entry_in(&root, task_id)
+    }
+
+    fn read_entry_in(&self, root: &PrivateRoot, task_id: &str) -> Result<TaskEntry, ToolError> {
+        let relative = self.task_relative(task_id)?;
+        let mut file = root
+            .open_read(&relative)
+            .map_err(|error| ToolError::ExecutionFailed {
+                reason: format!("failed to read task '{task_id}': {error}"),
+            })?;
+        let mut bytes = Vec::new();
+        file.read_to_end(&mut bytes)
+            .map_err(|error| ToolError::ExecutionFailed {
+                reason: format!("failed to read task '{task_id}': {error}"),
+            })?;
         serde_json::from_slice(&bytes).map_err(|err| ToolError::ExecutionFailed {
             reason: format!("failed to deserialise task '{task_id}': {err}"),
         })
     }
 
-    fn write_entry_atomic(&self, entry: &TaskEntry) -> Result<(), ToolError> {
-        let dir = self.group_dir()?;
-        fs::create_dir_all(&dir).map_err(|err| ToolError::ExecutionFailed {
-            reason: format!(
-                "failed to create task group directory '{}': {err}",
-                dir.display()
-            ),
-        })?;
-        let final_path = dir.join(format!("{}.json", entry.id));
-        let tmp_path = dir.join(format!("{}.tmp.{}", entry.id, Uuid::new_v4()));
+    fn write_entry_atomic(&self, entry: &TaskEntry, replace: bool) -> Result<(), ToolError> {
+        validate_task_id(&entry.id)?;
+        let root = self.create_root()?;
+        self.write_entry_atomic_in(&root, entry, replace)
+    }
 
-        if let Err(err) = write_json_atomic(&tmp_path, &final_path, entry) {
-            let _ = fs::remove_file(&tmp_path);
+    fn write_entry_atomic_in(
+        &self,
+        root: &PrivateRoot,
+        entry: &TaskEntry,
+        replace: bool,
+    ) -> Result<(), ToolError> {
+        validate_task_id(&entry.id)?;
+        let group = self.group_relative()?;
+        root.create_dir_all(&group)
+            .map_err(|error| private_io_error(&root.display_path(&group), &error))?;
+        let final_path = group.join(format!("{}.json", entry.id));
+        let tmp_path = group.join(format!("{}.tmp.{}", entry.id, Uuid::new_v4()));
+
+        if let Err(err) = write_json_atomic(root, &tmp_path, &final_path, entry, replace) {
+            if let Err(cleanup_error) = root.remove_file(&tmp_path)
+                && cleanup_error.kind() != std::io::ErrorKind::NotFound
+            {
+                tracing::warn!(
+                    path = %root.display_path(&tmp_path).display(),
+                    error = %cleanup_error,
+                    "failed to clean up task atomic-write temp file",
+                );
+            }
             return Err(err);
         }
         Ok(())
@@ -105,49 +162,76 @@ impl DiskTaskStore {
     /// claim guards do not show up in [`TaskStore::list`] /
     /// [`TaskStore::children`].
     fn entries_in_group(&self) -> Result<Vec<TaskEntry>, ToolError> {
-        let dir = self.group_dir()?;
-        if !dir.exists() {
-            return Ok(Vec::new());
-        }
-        let read_dir = fs::read_dir(&dir).map_err(|err| ToolError::ExecutionFailed {
-            reason: format!(
-                "failed to read task group directory '{}': {err}",
-                dir.display()
-            ),
-        })?;
+        let group = self.group_relative()?;
+        let root = match PrivateRoot::open(&self.root_dir) {
+            Ok(root) => root,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(private_io_error(&self.root_dir, &error)),
+        };
+        let read_dir = match root.read_dir(&group) {
+            Ok(entries) => entries,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+            Err(error) => return Err(private_io_error(&root.display_path(&group), &error)),
+        };
         let mut out = Vec::new();
         for entry in read_dir {
-            let entry = entry.map_err(|err| ToolError::ExecutionFailed {
-                reason: format!("failed to read task directory entry: {err}"),
-            })?;
-            let path = entry.path();
-            if !is_task_file(&path) {
+            let Some(name) = entry.name.to_str() else {
+                return Err(ToolError::ExecutionFailed {
+                    reason: "task directory contains a non-UTF-8 entry".to_owned(),
+                });
+            };
+            if !is_task_file_name(name) {
                 continue;
             }
-            let bytes = fs::read(&path).map_err(|err| ToolError::ExecutionFailed {
-                reason: format!("failed to read task file '{}': {err}", path.display()),
-            })?;
+            let relative = group.join(name);
+            if entry.kind != PrivateEntryKind::File {
+                return Err(ToolError::ExecutionFailed {
+                    reason: format!(
+                        "task entry '{}' is not a private regular file",
+                        root.display_path(&relative).display(),
+                    ),
+                });
+            }
+            let mut file = root
+                .open_read(&relative)
+                .map_err(|error| private_io_error(&root.display_path(&relative), &error))?;
+            let mut bytes = Vec::new();
+            file.read_to_end(&mut bytes)
+                .map_err(|error| private_io_error(&root.display_path(&relative), &error))?;
             let parsed: TaskEntry =
                 serde_json::from_slice(&bytes).map_err(|err| ToolError::ExecutionFailed {
                     reason: format!(
                         "failed to deserialise task file '{}': {err}",
-                        path.display()
+                        root.display_path(&relative).display(),
                     ),
                 })?;
+            validate_task_id(&parsed.id)?;
             out.push(parsed);
         }
         Ok(out)
     }
 }
 
-fn is_task_file(path: &Path) -> bool {
-    if !path.is_file() {
-        return false;
+fn is_task_file_name(name: &str) -> bool {
+    Path::new(name)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        .is_some_and(|extension| extension.eq_ignore_ascii_case("json"))
+}
+
+fn validate_task_id(task_id: &str) -> Result<&str, ToolError> {
+    validate_private_component(task_id, "task id").map_err(|error| ToolError::ExecutionFailed {
+        reason: error.to_string(),
+    })
+}
+
+fn private_io_error(path: &Path, error: &std::io::Error) -> ToolError {
+    ToolError::ExecutionFailed {
+        reason: format!(
+            "private task storage failed at '{}': {error}",
+            path.display()
+        ),
     }
-    matches!(
-        path.extension().and_then(|s| s.to_str()),
-        Some(ext) if ext.eq_ignore_ascii_case("json")
-    )
 }
 
 /// Validate a task-group slug.
@@ -179,18 +263,18 @@ pub fn validate_slug(slug: &str) -> Result<&str, ToolError> {
 }
 
 fn write_json_atomic(
+    root: &PrivateRoot,
     tmp_path: &Path,
     final_path: &Path,
     entry: &TaskEntry,
+    replace: bool,
 ) -> Result<(), ToolError> {
-    let mut file = OpenOptions::new()
-        .write(true)
-        .create_new(true)
-        .open(tmp_path)
+    let mut file = root
+        .create_new(tmp_path)
         .map_err(|err| ToolError::ExecutionFailed {
             reason: format!(
                 "failed to open task tmp file '{}': {err}",
-                tmp_path.display()
+                root.display_path(tmp_path).display(),
             ),
         })?;
     let bytes = serde_json::to_vec_pretty(entry).map_err(|err| ToolError::ExecutionFailed {
@@ -200,27 +284,32 @@ fn write_json_atomic(
         .map_err(|err| ToolError::ExecutionFailed {
             reason: format!(
                 "failed to write task tmp file '{}': {err}",
-                tmp_path.display()
+                root.display_path(tmp_path).display(),
             ),
         })?;
     file.flush().map_err(|err| ToolError::ExecutionFailed {
         reason: format!(
             "failed to flush task tmp file '{}': {err}",
-            tmp_path.display()
+            root.display_path(tmp_path).display(),
         ),
     })?;
     file.sync_all().map_err(|err| ToolError::ExecutionFailed {
         reason: format!(
             "failed to fsync task tmp file '{}': {err}",
-            tmp_path.display()
+            root.display_path(tmp_path).display(),
         ),
     })?;
     drop(file);
-    fs::rename(tmp_path, final_path).map_err(|err| ToolError::ExecutionFailed {
+    let publish = if replace {
+        root.rename(tmp_path, final_path)
+    } else {
+        root.publish_new(tmp_path, final_path)
+    };
+    publish.map_err(|err| ToolError::ExecutionFailed {
         reason: format!(
-            "failed to rename '{}' over '{}': {err}",
-            tmp_path.display(),
-            final_path.display()
+            "failed to publish '{}' as '{}': {err}",
+            root.display_path(tmp_path).display(),
+            root.display_path(final_path).display(),
         ),
     })?;
     Ok(())
@@ -233,78 +322,82 @@ fn write_json_atomic(
 /// after a successful claim; on any error path the implicit `Drop`
 /// still cleans up.
 struct LockGuard {
-    path: PathBuf,
+    root: PrivateRoot,
+    relative: PathBuf,
     released: bool,
 }
 
 impl LockGuard {
-    fn acquire(path: PathBuf) -> Result<Self, ToolError> {
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
+    fn acquire(root: PrivateRoot, relative: PathBuf) -> Result<Self, ToolError> {
+        match root.create_new(&relative) {
             Ok(_file) => Ok(Self {
-                path,
+                root,
+                relative,
                 released: false,
             }),
             Err(err) if err.kind() == std::io::ErrorKind::AlreadyExists => {
                 Err(ToolError::ExecutionFailed {
                     reason: format!(
                         "task claim contended: lock file '{}' already exists",
-                        path.display()
+                        root.display_path(&relative).display(),
                     ),
                 })
             }
             Err(err) => Err(ToolError::ExecutionFailed {
-                reason: format!("failed to acquire claim lock '{}': {err}", path.display()),
+                reason: format!(
+                    "failed to acquire claim lock '{}': {err}",
+                    root.display_path(&relative).display(),
+                ),
             }),
         }
     }
 
-    fn release(mut self) {
-        let _ = fs::remove_file(&self.path);
+    fn release(mut self) -> Result<(), ToolError> {
+        self.root
+            .remove_file(&self.relative)
+            .map_err(|error| private_io_error(&self.root.display_path(&self.relative), &error))?;
         self.released = true;
+        Ok(())
+    }
+
+    fn root(&self) -> &PrivateRoot {
+        &self.root
     }
 }
 
 impl Drop for LockGuard {
     fn drop(&mut self) {
-        if !self.released {
-            let _ = fs::remove_file(&self.path);
+        if !self.released
+            && let Err(error) = self.root.remove_file(&self.relative)
+            && error.kind() != std::io::ErrorKind::NotFound
+        {
+            tracing::warn!(
+                path = %self.root.display_path(&self.relative).display(),
+                %error,
+                "failed to release task claim lock",
+            );
         }
     }
 }
 
 impl TaskStore for DiskTaskStore {
     fn create(&self, entry: TaskEntry) -> Result<(), ToolError> {
-        let final_path = self.task_path(&entry.id)?;
-        if final_path.exists() {
-            return Err(ToolError::ExecutionFailed {
-                reason: format!("task '{}' already exists", entry.id),
-            });
-        }
-        self.write_entry_atomic(&entry)
+        self.write_entry_atomic(&entry, false)
     }
 
     fn get(&self, id: &str) -> Option<TaskEntry> {
-        let path = match self.task_path(id) {
-            Ok(p) => p,
+        match self.entry_exists(id) {
+            Ok(false) => return None,
+            Ok(true) => {}
             Err(err) => {
-                tracing::warn!(task_id = %id, error = ?err, "DiskTaskStore::get resolve path failed");
+                tracing::warn!(task_id = %id, error = ?err, "DiskTaskStore::get path check failed");
                 return None;
             }
-        };
-        if !path.exists() {
-            return None;
         }
-        let bytes = match fs::read(&path) {
-            Ok(b) => b,
-            Err(err) => {
-                tracing::warn!(task_id = %id, error = ?err, "DiskTaskStore::get read failed");
-                return None;
-            }
-        };
-        match serde_json::from_slice(&bytes) {
+        match self.read_entry(id) {
             Ok(entry) => Some(entry),
             Err(err) => {
-                tracing::warn!(task_id = %id, error = ?err, "DiskTaskStore::get deserialise failed");
+                tracing::warn!(task_id = %id, error = ?err, "DiskTaskStore::get read failed");
                 None
             }
         }
@@ -337,8 +430,7 @@ impl TaskStore for DiskTaskStore {
         depends_on: Option<Vec<String>>,
         metadata: Option<Value>,
     ) -> Result<TaskEntry, ToolError> {
-        let path = self.task_path(id)?;
-        if !path.exists() {
+        if !self.entry_exists(id)? {
             return Err(ToolError::ExecutionFailed {
                 reason: format!("task '{id}' not found"),
             });
@@ -357,7 +449,7 @@ impl TaskStore for DiskTaskStore {
             entry.metadata = meta;
         }
         entry.updated_at = Utc::now();
-        self.write_entry_atomic(&entry)?;
+        self.write_entry_atomic(&entry, true)?;
         Ok(entry)
     }
 
@@ -366,20 +458,13 @@ impl TaskStore for DiskTaskStore {
     }
 
     fn create_subtask(&self, parent_id: &str, mut entry: TaskEntry) -> Result<(), ToolError> {
-        let parent_path = self.task_path(parent_id)?;
-        if !parent_path.exists() {
+        if !self.entry_exists(parent_id)? {
             return Err(ToolError::ExecutionFailed {
                 reason: format!("parent task '{parent_id}' not found"),
             });
         }
-        let child_path = self.task_path(&entry.id)?;
-        if child_path.exists() {
-            return Err(ToolError::ExecutionFailed {
-                reason: format!("task '{}' already exists", entry.id),
-            });
-        }
         entry.parent_task_id = Some(parent_id.to_string());
-        self.write_entry_atomic(&entry)
+        self.write_entry_atomic(&entry, false)
     }
 
     fn children(&self, parent_id: &str) -> Vec<TaskEntry> {
@@ -410,8 +495,7 @@ impl TaskStore for DiskTaskStore {
                     reason: "cycle detected in task hierarchy".to_string(),
                 });
             }
-            let path = self.task_path(&current)?;
-            if !path.exists() {
+            if !self.entry_exists(&current)? {
                 break;
             }
             let entry = self.read_entry(&current)?;
@@ -423,17 +507,19 @@ impl TaskStore for DiskTaskStore {
     }
 
     fn claim(&self, task_id: &str, agent_path: &str) -> Result<TaskEntry, ToolError> {
-        let lock_path = self.lock_path(task_id)?;
-        let task_path = self.task_path(task_id)?;
-        let guard = LockGuard::acquire(lock_path)?;
+        let lock_relative = self.lock_relative(task_id)?;
+        let root = self.create_root()?;
+        root.create_dir_all(&self.group_relative()?)
+            .map_err(|error| private_io_error(root.path(), &error))?;
+        let guard = LockGuard::acquire(root, lock_relative)?;
 
-        if !task_path.exists() {
+        if !self.entry_exists_in(guard.root(), task_id)? {
             drop(guard);
             return Err(ToolError::ExecutionFailed {
                 reason: format!("task '{task_id}' not found"),
             });
         }
-        let mut entry = match self.read_entry(task_id) {
+        let mut entry = match self.read_entry_in(guard.root(), task_id) {
             Ok(entry) => entry,
             Err(err) => {
                 drop(guard);
@@ -447,29 +533,24 @@ impl TaskStore for DiskTaskStore {
         }
         entry.assigned_agent = Some(agent_path.to_string());
         entry.updated_at = Utc::now();
-        if let Err(err) = self.write_entry_atomic(&entry) {
+        if let Err(err) = self.write_entry_atomic_in(guard.root(), &entry, true) {
             drop(guard);
             return Err(err);
         }
-        guard.release();
+        guard.release()?;
         Ok(entry)
     }
 
     fn create_group(&self, slug: &str) -> Result<(), ToolError> {
         let validated = validate_slug(slug)?;
-        let dir = self.root_dir.join(validated);
-        fs::create_dir_all(&dir).map_err(|err| ToolError::ExecutionFailed {
-            reason: format!(
-                "failed to create task group directory '{}': {err}",
-                dir.display()
-            ),
-        })?;
-        Ok(())
+        let root = self.create_root()?;
+        root.create_dir_all(Path::new(validated))
+            .map_err(|error| private_io_error(&root.display_path(Path::new(validated)), &error))
     }
 
     fn list_groups(&self) -> Vec<String> {
-        let read_dir = match fs::read_dir(&self.root_dir) {
-            Ok(rd) => rd,
+        let root = match PrivateRoot::open(&self.root_dir) {
+            Ok(root) => root,
             Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Vec::new(),
             Err(err) => {
                 tracing::warn!(
@@ -480,14 +561,161 @@ impl TaskStore for DiskTaskStore {
                 return Vec::new();
             }
         };
-        let mut out: Vec<String> = read_dir
-            .filter_map(Result::ok)
-            .filter(|entry| entry.file_type().is_ok_and(|t| t.is_dir()))
-            .filter_map(|entry| entry.file_name().into_string().ok())
-            .filter(|name| validate_slug(name).is_ok())
-            .collect();
+        let read_dir = match root.read_dir(Path::new("")) {
+            Ok(entries) => entries,
+            Err(err) => {
+                tracing::warn!(
+                    root = %self.root_dir.display(),
+                    error = ?err,
+                    "DiskTaskStore::list_groups failed to read root directory",
+                );
+                return Vec::new();
+            }
+        };
+        let mut out = Vec::new();
+        for entry in read_dir {
+            let Ok(name) = entry.name.into_string() else {
+                tracing::warn!("ignoring non-UTF-8 task group entry");
+                continue;
+            };
+            if validate_slug(&name).is_err() {
+                continue;
+            }
+            if entry.kind == PrivateEntryKind::Directory {
+                out.push(name);
+            } else {
+                tracing::warn!(group = %name, "ignoring non-directory task group entry");
+            }
+        }
         out.sort();
         out
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    fn entry(id: &str) -> TaskEntry {
+        let now = Utc::now();
+        TaskEntry {
+            id: id.to_owned(),
+            description: "private task".to_owned(),
+            status: TaskStatus::Pending,
+            depends_on: Vec::new(),
+            metadata: Value::Null,
+            created_at: now,
+            updated_at: now,
+            parent_task_id: None,
+            assigned_agent: None,
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn task_files_are_private_and_hostile_ids_cannot_escape()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let container = tempfile::tempdir()?;
+        let root_path = container.path().join("tasks");
+        let store = DiskTaskStore::new(root_path.clone(), "group".to_owned());
+        store.create(entry("_legal-task"))?;
+
+        let mode = |path: &Path| -> std::io::Result<u32> {
+            Ok(std::fs::metadata(path)?.permissions().mode() & 0o777)
+        };
+        assert_eq!(mode(&root_path)?, 0o700);
+        assert_eq!(mode(&root_path.join("group"))?, 0o700);
+        assert_eq!(mode(&root_path.join("group/_legal-task.json"))?, 0o600);
+
+        std::fs::set_permissions(&root_path, std::fs::Permissions::from_mode(0o755))?;
+        std::fs::set_permissions(
+            root_path.join("group"),
+            std::fs::Permissions::from_mode(0o755),
+        )?;
+        std::fs::set_permissions(
+            root_path.join("group/_legal-task.json"),
+            std::fs::Permissions::from_mode(0o644),
+        )?;
+        assert_eq!(
+            store
+                .get("_legal-task")
+                .ok_or("task disappeared during read-only reopen")?
+                .id,
+            "_legal-task",
+        );
+        assert_eq!(mode(&root_path)?, 0o700);
+        assert_eq!(mode(&root_path.join("group"))?, 0o700);
+        assert_eq!(mode(&root_path.join("group/_legal-task.json"))?, 0o600);
+
+        assert!(store.create(entry("../outside")).is_err());
+        assert!(!container.path().join("outside.json").exists());
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn task_reads_and_rewrites_reject_links_without_touching_target()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::symlink;
+
+        let container = tempfile::tempdir()?;
+        let root_path = container.path().join("tasks");
+        let group = root_path.join("group");
+        std::fs::create_dir_all(&group)?;
+        let target = container.path().join("outside.json");
+        std::fs::write(&target, serde_json::to_vec(&entry("outside"))?)?;
+        symlink(&target, group.join("linked.json"))?;
+        let store = DiskTaskStore::new(root_path, "group".to_owned());
+
+        assert!(
+            store
+                .update("linked", None, Some("changed".to_owned()), None, None)
+                .is_err()
+        );
+        let persisted: TaskEntry = serde_json::from_slice(&std::fs::read(target)?)?;
+        assert_eq!(persisted.id, "outside");
+        assert_eq!(persisted.description, "private task");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn claim_transaction_remains_on_locked_root_after_root_replacement()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let container = tempfile::tempdir()?;
+        let root_path = container.path().join("tasks");
+        let parked = container.path().join("parked");
+        let store = DiskTaskStore::new(root_path.clone(), "group".to_owned());
+        store.create(entry("task"))?;
+
+        let root = store.create_root()?;
+        root.create_dir_all(&store.group_relative()?)?;
+        let guard = LockGuard::acquire(root, store.lock_relative("task")?)?;
+        std::fs::rename(&root_path, &parked)?;
+
+        let replacement = DiskTaskStore::new(root_path.clone(), "group".to_owned());
+        let mut replacement_entry = entry("task");
+        replacement_entry.description = "replacement".to_owned();
+        replacement.create(replacement_entry)?;
+
+        let mut claimed = store.read_entry_in(guard.root(), "task")?;
+        claimed.assigned_agent = Some("agent/pinned".to_owned());
+        store.write_entry_atomic_in(guard.root(), &claimed, true)?;
+        guard.release()?;
+
+        let parked_entry: TaskEntry =
+            serde_json::from_slice(&std::fs::read(parked.join("group/task.json"))?)?;
+        let replacement_entry = replacement
+            .get("task")
+            .ok_or("replacement task unexpectedly missing")?;
+        assert_eq!(parked_entry.assigned_agent.as_deref(), Some("agent/pinned"));
+        assert_eq!(replacement_entry.description, "replacement");
+        assert_eq!(replacement_entry.assigned_agent, None);
+        assert!(!root_path.join("group/task.lock").exists());
+        assert!(!parked.join("group/task.lock").exists());
+        Ok(())
     }
 }
 

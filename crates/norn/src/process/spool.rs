@@ -19,12 +19,15 @@
 //! watch attach seam NP-002's watches consume — this brief only exposes it.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use tokio::fs::File;
 use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::watch;
+
+use crate::util::PrivateRoot;
 
 /// Which standard stream a spooled line originated from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -58,6 +61,8 @@ impl StreamTag {
 pub struct Spool {
     /// Absolute path of the backing file.
     path: PathBuf,
+    root: Arc<PrivateRoot>,
+    relative: PathBuf,
     /// The write side: the open file, serialised across the two drains.
     file: AsyncMutex<File>,
     /// Bytes durably appended and flushed so far. Monotonic, unbounded.
@@ -73,13 +78,53 @@ impl Spool {
     ///
     /// Returns any I/O error from creating the directory tree or the file.
     pub async fn create(path: PathBuf) -> std::io::Result<Self> {
-        if let Some(parent) = path.parent() {
-            tokio::fs::create_dir_all(parent).await?;
+        let parent = path.parent().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "process spool must have an absolute parent directory",
+            )
+        })?;
+        let file_name = path.file_name().ok_or_else(|| {
+            std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                "process spool path has no final component",
+            )
+        })?;
+        Self::create_in(parent, Path::new(file_name)).await
+    }
+
+    /// Create a spool under an absolute private root and relative file name.
+    pub(crate) async fn create_in(root_path: &Path, relative: &Path) -> std::io::Result<Self> {
+        let root_path = root_path.to_path_buf();
+        let relative = relative.to_path_buf();
+        tokio::task::spawn_blocking(move || {
+            let root = Arc::new(PrivateRoot::create(&root_path)?);
+            Self::create_under_sync(root, &relative)
+        })
+        .await
+        .map_err(std::io::Error::other)?
+    }
+
+    pub(crate) async fn create_under(
+        root: Arc<PrivateRoot>,
+        relative: &Path,
+    ) -> std::io::Result<Self> {
+        let relative = relative.to_path_buf();
+        tokio::task::spawn_blocking(move || Self::create_under_sync(root, &relative))
+            .await
+            .map_err(std::io::Error::other)?
+    }
+
+    fn create_under_sync(root: Arc<PrivateRoot>, relative: &Path) -> std::io::Result<Self> {
+        if let Some(parent) = relative.parent() {
+            root.create_dir_all(parent)?;
         }
-        let file = File::create(&path).await?;
+        let file = File::from_std(root.create_new(relative)?);
         let (len_tx, _len_rx) = watch::channel(0);
         Ok(Self {
-            path,
+            path: root.display_path(relative),
+            root,
+            relative: relative.to_path_buf(),
             file: AsyncMutex::new(file),
             committed: AtomicU64::new(0),
             len_tx,
@@ -204,7 +249,7 @@ impl Spool {
             return Ok(Vec::new());
         }
         let to_read = end - start;
-        let mut file = File::open(&self.path).await?;
+        let mut file = File::from_std(self.root.open_read(&self.relative)?);
         file.seek(std::io::SeekFrom::Start(start)).await?;
         let mut buf = vec![
             0_u8;
@@ -259,6 +304,44 @@ impl SpoolReader {
         let (bytes, new_cursor) = self.spool.read_from(self.cursor).await?;
         self.cursor = new_cursor;
         Ok(bytes)
+    }
+}
+
+#[cfg(test)]
+mod security_tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn process_spool_is_private_and_refuses_final_links()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::fs::{PermissionsExt as _, symlink};
+
+        let container = tempfile::tempdir()?;
+        let root = container.path().join("spools");
+        let path = root.join("run/p1.log");
+        let spool = Spool::create(path.clone()).await?;
+        spool.append_raw(b"private").await?;
+        assert_eq!(
+            std::fs::metadata(&root)?.permissions().mode() & 0o777,
+            0o700
+        );
+        assert_eq!(
+            std::fs::metadata(root.join("run"))?.permissions().mode() & 0o777,
+            0o700,
+        );
+        assert_eq!(
+            std::fs::metadata(&path)?.permissions().mode() & 0o777,
+            0o600
+        );
+
+        let target = container.path().join("outside.log");
+        std::fs::write(&target, "outside")?;
+        let linked = root.join("run/p2.log");
+        symlink(&target, &linked)?;
+        assert!(Spool::create(linked).await.is_err());
+        assert_eq!(std::fs::read_to_string(target)?, "outside");
+        Ok(())
     }
 }
 

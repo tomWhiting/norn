@@ -4,16 +4,14 @@
 //! Index maintenance lives in [`super::index`].
 
 use std::collections::HashSet;
-use std::fs::{self, File};
+use std::fs::File;
 use std::io::{BufRead, BufReader, Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::session::events::{EventId, SessionEvent};
+use crate::util::{PrivateRoot, validate_private_component};
 
 use super::index::{read_index, sum_usage_from_events, update_session_index};
-use super::permissions::{
-    create_private_dir_all, create_private_new, open_private_read, open_private_read_append,
-};
 use super::replay::ReplayArtifacts;
 use super::types::{
     SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,
@@ -100,19 +98,78 @@ pub(crate) fn ensure_session_id_not_reserved(id: &str) -> Result<(), SessionPers
     Ok(())
 }
 
+/// Reject session identifiers that cannot be one private path component.
+pub(crate) fn ensure_session_id_path_safe(id: &str) -> Result<(), SessionPersistError> {
+    ensure_session_id_not_reserved(id)?;
+    let invalid = |reason: &str| SessionPersistError::InvalidSessionId {
+        id: id.to_owned(),
+        reason: reason.to_owned(),
+    };
+    validate_private_component(id, "session id").map_err(|error| invalid(&error.to_string()))?;
+    let Some(first) = id.chars().next() else {
+        return Err(invalid("must not be empty"));
+    };
+    if !first.is_ascii_alphanumeric() {
+        return Err(invalid("must start with an ASCII letter or digit"));
+    }
+    if !id
+        .chars()
+        .all(|character| character.is_ascii_alphanumeric() || matches!(character, '-' | '_' | '.'))
+    {
+        return Err(invalid(
+            "may contain only ASCII letters, digits, '-', '_', and '.'",
+        ));
+    }
+    Ok(())
+}
+
+pub(crate) fn session_file_relative(
+    entry: &SessionIndexEntry,
+) -> Result<PathBuf, SessionPersistError> {
+    ensure_session_id_path_safe(&entry.id)?;
+    let Some(relative) = entry.rel_path.as_deref() else {
+        return Ok(PathBuf::from(format!("{}.jsonl", entry.id)));
+    };
+    let components = Path::new(relative).components().collect::<Vec<_>>();
+    let valid = matches!(components.as_slice(), [
+        std::path::Component::Normal(root),
+        std::path::Component::Normal(children),
+        std::path::Component::Normal(file),
+    ] if children == &std::ffi::OsStr::new("children")
+        && path_component_is_safe(root)
+        && path_component_is_safe(file)
+        && Path::new(file).extension().is_some_and(|extension| extension == "jsonl"));
+    if !valid {
+        return Err(SessionPersistError::InvalidSessionId {
+            id: entry.id.clone(),
+            reason: "indexed rel_path must have the safe '<root>/children/<file>.jsonl' shape"
+                .to_owned(),
+        });
+    }
+    Ok(PathBuf::from(relative))
+}
+
+fn path_component_is_safe(component: &std::ffi::OsStr) -> bool {
+    component
+        .to_str()
+        .is_some_and(|value| validate_private_component(value, "session path component").is_ok())
+}
+
 /// Open (or create) the session JSONL file at `path` in append mode,
 /// creating parent directories as needed.
 ///
 /// Creation stamps the [`SessionFileHeader`] (carrying
 /// [`SESSION_FORMAT_VERSION`]) **atomically with the file's appearance**:
 /// the header is written and `fsync`-ed to a same-directory temp file,
-/// then [`std::fs::hard_link`]-ed into place at `path`. Because the link
-/// is the first moment `path` exists, the file is never observable
+/// then published with a descriptor-relative no-replace primitive at
+/// `path` (`linkat` on supported POSIX-style Unix; unsupported targets fail
+/// closed). Because publication is
+/// the first moment `path` exists, the file is never observable
 /// without its header — closing the residual race where a create winner
 /// (exclusive `create_new` + a separate header `write_all`) could be
 /// preempted between the two steps, letting a racing loser append its
 /// first event ahead of the header and leaving it as a permanently
-/// skipped corrupt line at line 2. Exactly one opener wins the link; the
+/// skipped corrupt line at line 2. Exactly one opener wins publication; the
 /// loser gets `AlreadyExists` and takes the reopen path, so two processes
 /// racing the first open can never both stamp a header. A pre-existing
 /// **empty** file (creator crashed between creation and the header write,
@@ -128,8 +185,28 @@ pub(crate) fn ensure_session_id_not_reserved(id: &str) -> Result<(), SessionPers
 /// through this handle starts on a fresh line instead of concatenating
 /// onto the torn bytes (H19, reopen half).
 pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistError> {
-    if let Some(parent) = path.parent() {
-        create_private_dir_all(parent)?;
+    let parent = path.parent().ok_or_else(|| {
+        SessionPersistError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "session file must have an absolute parent directory",
+        ))
+    })?;
+    let file_name = path.file_name().ok_or_else(|| {
+        SessionPersistError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "session file path has no final component",
+        ))
+    })?;
+    let root = PrivateRoot::create(parent)?;
+    open_session_append_under(&root, Path::new(file_name))
+}
+
+fn open_session_append_under(
+    root: &PrivateRoot,
+    relative: &Path,
+) -> Result<File, SessionPersistError> {
+    if let Some(parent) = relative.parent() {
+        root.create_dir_all(parent)?;
     }
     // Fast path: securely attempt the reopen and heal directly. This skips
     // the temp-file stamp (which needs directory write permission the append
@@ -138,34 +215,46 @@ pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistErr
     // read-only. A racing first-create that lands after the `NotFound` result
     // still resolves correctly: the stamp's `AlreadyExists` arm falls through
     // to the same reopen path, and the winner's header is always present
-    // because the file only becomes visible via the atomic link.
-    match reopen_and_heal(path) {
+    // because the file only becomes visible via atomic no-replace publication.
+    match reopen_and_heal(root, relative) {
         Ok(file) => return Ok(file),
         Err(SessionPersistError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
         Err(error) => return Err(error),
     }
-    match stamp_header_atomically(path) {
+    match stamp_header_atomically(root, relative) {
         // We created the file; it already contains its header. Return a
-        // fresh append handle onto the linked inode.
-        Ok(()) => Ok(open_private_read_append(path)?),
+        // fresh append handle onto the published inode.
+        Ok(()) => Ok(root.open_read_append(relative)?),
         // Another opener already created the file (or it pre-existed):
         // reopen and heal any torn final line, never retro-stamping.
-        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => reopen_and_heal(path),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            reopen_and_heal(root, relative)
+        }
         Err(error) => Err(SessionPersistError::Io(error)),
     }
+}
+
+pub(crate) fn open_session_append_for_entry(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+) -> Result<File, SessionPersistError> {
+    let relative = session_file_relative(entry)?;
+    let root = PrivateRoot::create(data_dir)?;
+    open_session_append_under(&root, &relative)
 }
 
 /// Stamp the versioned header into `path` atomically with the file
 /// becoming visible.
 ///
 /// Writes the header to a uniquely-named temp file in the same directory,
-/// `fsync`s it, then hard-links it to `path`. Success means this caller
+/// `fsync`s it, then publishes it using the platform's descriptor-relative
+/// no-replace primitive. Success means this caller
 /// created `path` with its header already durable; an `AlreadyExists`
-/// error means another opener won the link (or the file pre-existed). The
-/// temp file is always removed, whether the link wins, loses, or errors,
+/// error means another opener won publication (or the file pre-existed).
+/// The temp file is always removed, whether publication wins, loses, or errors,
 /// so a leftover temp never accumulates.
-fn stamp_header_atomically(path: &Path) -> std::io::Result<()> {
-    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+fn stamp_header_atomically(root: &PrivateRoot, path: &Path) -> std::io::Result<()> {
+    let parent = path.parent().unwrap_or_else(|| Path::new(""));
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -175,7 +264,7 @@ fn stamp_header_atomically(path: &Path) -> std::io::Result<()> {
                 "session file path has no valid final component",
             )
         })?;
-    // Same directory as `path` (a hard link requires it), uniquely named
+    // Same directory as `path` (POSIX publication uses a hard link), uniquely named
     // so concurrent creators never collide on the temp itself. The
     // `.jsonl.tmp.*` shape stays inside the reserved family the reader and
     // listing already ignore.
@@ -188,23 +277,23 @@ fn stamp_header_atomically(path: &Path) -> std::io::Result<()> {
     header.push(b'\n');
 
     let write_result = (|| -> std::io::Result<()> {
-        let mut tmp = create_private_new(&tmp_path)?;
+        let mut tmp = root.create_new(&tmp_path)?;
         tmp.write_all(&header)?;
-        // Durably land the header bytes before the link makes the inode
+        // Durably land the header bytes before publication makes the inode
         // reachable at `path`.
         tmp.sync_all()
     })();
-    let link_result = write_result.and_then(|()| fs::hard_link(&tmp_path, path));
+    let link_result = write_result.and_then(|()| root.publish_new(&tmp_path, path));
 
     // Best-effort cleanup on every outcome. A failure to remove the temp
     // never corrupts the session and never fails the open — the orphan is
     // an inert `.jsonl.tmp.*` file the reader and listing ignore — but it
     // must never pass silently.
-    if let Err(error) = fs::remove_file(&tmp_path)
+    if let Err(error) = root.remove_file(&tmp_path)
         && error.kind() != std::io::ErrorKind::NotFound
     {
         tracing::warn!(
-            path = %tmp_path.display(),
+            path = %root.display_path(&tmp_path).display(),
             %error,
             "failed to remove session header temp file after stamping; \
              the orphan is inert and ignored by readers",
@@ -216,8 +305,8 @@ fn stamp_header_atomically(path: &Path) -> std::io::Result<()> {
 
 /// Reopen an existing session file in append mode and heal a torn final
 /// line (H19, reopen half). Never retro-stamps a header.
-fn reopen_and_heal(path: &Path) -> Result<File, SessionPersistError> {
-    let mut file = open_private_read_append(path)?;
+fn reopen_and_heal(root: &PrivateRoot, path: &Path) -> Result<File, SessionPersistError> {
+    let mut file = root.open_read_append(path)?;
     let len = file.metadata()?.len();
     if len > 0 {
         file.seek(SeekFrom::Start(len - 1))?;
@@ -227,7 +316,7 @@ fn reopen_and_heal(path: &Path) -> Result<File, SessionPersistError> {
             // O_APPEND ignores the read cursor: this lands at EOF.
             file.write_all(b"\n")?;
             tracing::warn!(
-                path = %path.display(),
+                path = %root.display_path(path).display(),
                 "healed torn final line in session file on reopen; \
                  the tolerant reader will skip the corrupt line",
             );
@@ -270,8 +359,9 @@ pub fn read_session_events(
     session_id: &str,
 ) -> Result<ReplayArtifacts, SessionPersistError> {
     ensure_session_id_not_reserved(session_id)?;
-    let path = session_file_path(data_dir, session_id);
-    read_session_events_at(&path, session_id)
+    ensure_session_id_path_safe(session_id)?;
+    let relative = PathBuf::from(format!("{session_id}.jsonl"));
+    read_session_events_at(data_dir, &relative, session_id)
 }
 
 /// [`read_session_events`], resolving the file through the index entry's
@@ -283,17 +373,25 @@ pub fn read_session_events_for_entry(
     entry: &SessionIndexEntry,
 ) -> Result<ReplayArtifacts, SessionPersistError> {
     ensure_session_id_not_reserved(&entry.id)?;
-    let path = resolved_session_file_path(data_dir, entry);
-    read_session_events_at(&path, &entry.id)
+    let relative = session_file_relative(entry)?;
+    read_session_events_at(data_dir, &relative, &entry.id)
 }
 
 /// The shared open-and-read step behind both read fronts: an absent file
 /// is an empty (never-appended) session, not an error.
 fn read_session_events_at(
-    path: &Path,
+    data_dir: &Path,
+    relative: &Path,
     session_id: &str,
 ) -> Result<ReplayArtifacts, SessionPersistError> {
-    let file = match open_private_read(path) {
+    let root = match PrivateRoot::open(data_dir) {
+        Ok(root) => root,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ReplayArtifacts::default());
+        }
+        Err(error) => return Err(SessionPersistError::Io(error)),
+    };
+    let file = match root.open_read(relative) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(ReplayArtifacts::default());
@@ -418,8 +516,9 @@ pub fn append_events(
             input: session_id.to_owned(),
         });
     };
-    let path = resolved_session_file_path(data_dir, &entry);
-    let mut file = open_session_append(&path)?;
+    let relative = session_file_relative(&entry)?;
+    let root = PrivateRoot::create(data_dir)?;
+    let mut file = open_session_append_under(&root, &relative)?;
     let mut buf = Vec::new();
     for event in events {
         serde_json::to_writer(&mut buf, event)?;

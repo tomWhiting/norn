@@ -143,9 +143,9 @@ pub fn rules_dir() -> Option<PathBuf> {
 
 /// Resolve the session-data directory: `~/.norn/sessions/`.
 ///
-/// Returns [`None`] when neither `$NORN_HOME` nor [`dirs::home_dir`]
-/// resolves — callers in the CLI typically fall back to a relative
-/// `.norn/sessions/` path under the current working directory.
+/// Returns [`None`] when neither `$NORN_HOME` nor [`dirs::home_dir`] resolves.
+/// Sensitive session callers must surface that absence as a typed error; they
+/// must never fall back to repository-relative storage.
 #[must_use]
 pub fn session_data_dir() -> Option<PathBuf> {
     norn_dir().map(|d| d.join(SESSIONS_SUBDIR))

@@ -304,6 +304,8 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
             .as_deref()
             .or(cli.session_name.as_deref())
             .unwrap_or("unnamed");
+        norn::util::validate_private_component(hint, "debug dump session name")
+            .map_err(|error| PrintError::Argument(error.to_string()))?;
         provider_overrides.debug_dump_file = Some(dir.join(format!("{hint}.jsonl")));
     }
 
@@ -468,7 +470,8 @@ async fn orchestrate_run(
         output_session_id.clone(),
         index_lock_deadline,
         output_schema,
-    );
+    )
+    .map_err(|error| PrintError::Argument(error.to_string()))?;
     parts.loop_context.slash_commands = Some(slash_registry.clone());
 
     let outcome = match dispatch_input(&prompt, &slash_registry) {
