@@ -248,7 +248,7 @@ crates/norn-cli/
 | Rule, RuleId, TriggerCondition | `rules/types.rs` | Complete |
 | parse_rule_file() | `rules/parser.rs` | Complete — needs Claude Code compat extension |
 | evaluate_triggers() | `rules/triggers.rs` | Complete — PathGlob, BashCommand, ToolInvocation |
-| RuleEngine | `rules/engine.rs` | Complete — presence tracking, shell_source, diagnostics |
+| RuleEngine | `rules/engine.rs` | Complete — presence tracking, shell_source, diagnostics; runtime provenance rejects shell_source from working-directory rules |
 | RulePresenceSet | `rules/lifecycle.rs` | Complete |
 | DeliveryMode implementations | `rules/delivery.rs` | Stub — needs delivery logic |
 
@@ -281,3 +281,39 @@ crates/norn-cli/
 - CO7: Claude Code rule format detection by frontmatter key presence (`triggers:` vs `globs:`).
 - CO8: Nested NORN.md files are synthetic rules — they use the rules engine, not a parallel system.
 - CO9: Context layering is additive — no override mechanism.
+
+## Security and role addendum (2026-07-11)
+
+Runtime assembly canonicalizes the working directory once at launch and carries
+that immutable root through root, spawn, and fork contexts. Root/nested
+`NORN.md`, rule directories/files, profiles, capabilities, skills/resources,
+variant inputs, settings, and `CONVENTIONS.toml` must not independently
+canonicalize a mutable process CWD.
+
+On Unix, automatic workspace reads walk each component relative to a pinned
+descriptor with no-follow semantics, require a regular final file, and enumerate
+directories through the opened descriptor. Repository symlinks are rejected at
+any component even when they point inside the repository. Platform aliases such
+as macOS `/var` and `/private/var` may be recognized when classifying a physical
+path, but the final candidate is never canonicalized into a trusted target.
+Search-path aliases physically inside the workspace are normalized once at
+launch so later repointing cannot change source tier. On non-Unix targets,
+workspace input currently fails closed; there is no link-following fallback.
+
+The scoped `.git` branch/commit reader is the only exception: it validates and
+reads bounded Git metadata for display. It does not expose a general context-file
+escape hatch.
+
+`ContextLoader::load_at_launch_root` and `NestedScanner::new_at_launch_root` are
+the runtime paths. The public `Scanner` and raw rule-directory scan convenience
+APIs remain trusted-input-only for embedders; they are not safe entrypoints for a
+repository-controlled root. Workspace text remains unbounded, pending an
+owner-approved streaming/size design rather than an arbitrary limit.
+
+The role contract remains open under `ROLE-01`. Root project `NORN.md` currently
+reaches top-level System instructions, while nested context and rules reach the
+managed Developer tail and workspace profiles can become a child base prompt.
+P0 closes command authority but does not silently change this static guidance.
+P5 must ratify one source-to-wire-role matrix so moving repository prose between
+files cannot raise its authority; product System policy, trusted operator policy,
+repository context, and user input must remain distinct.

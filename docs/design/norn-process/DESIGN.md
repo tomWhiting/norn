@@ -47,3 +47,22 @@ This cluster adds the primitive:
 - `stories.json` — S1..S8 (the owner's own use cases: long test runs, dev
   servers, watching CI-style logs, background hygiene).
 - Briefs under `briefs/` — NP-001, NP-002 (NP-002 depends on NP-001).
+
+## Private spool boundary (2026-07-11)
+
+Background-process spools retain arbitrary stdout/stderr and can therefore hold
+credentials, private source, provider responses, or terminal control bytes. They
+share the same confidentiality class as session JSONL and the uncapped
+full-output session spool; a display-friendly `~/...` path is not evidence of
+safe permissions.
+
+The P0 policy requires private Unix directory/file modes (`0700`/`0600`), a
+regular final target opened without following symlinks, and failure on a link or
+non-regular target. The same rules apply on initial create and every reopen or
+resume path, including parents created under a permissive umask. Session index,
+lock, atomic-temporary, and full-output spool artifacts follow the same private
+artifact policy in the session persistence subsystem.
+
+The owner-ratified absence of process-count/spool-size caps remains unchanged.
+Confidentiality hardening must not invent a size cap or timeout; resource policy
+is a separate owner decision.

@@ -142,6 +142,9 @@ reasoning_effort: Option<ReasoningEffort> }`
 the unknown-variant error listing). Built once at assembly:
 `VariantCatalog::build(settings.variants.as_ref(), cwd) -> Result<Self, VariantCatalogError>`
 — reads `prompt_file`s eagerly (fail loud at startup, not at spawn time).
+The settings trust boundary rejects `prompt_file` in both working-directory
+settings layers before this build step; inline repository prompts remain
+supported, while eager prompt-file reads require trusted user configuration.
 
 **Install:** `install_variant_catalog(ctx, &settings, cwd)` in
 `runtime_init/extensions.rs` (PermissionPolicy pattern) publishing
@@ -323,3 +326,20 @@ observability-only there; do NOT silently pretend variant.tools applies).
 `tools/agent/variant_resolve.rs` (owns steps §3.1–3.4) rather than growing
 spawn.rs. Preamble builder lives in `agent/fork.rs` (check budget; split
 `agent/fork_preamble.rs` if it would cross 500).
+
+## 11. P0 authority addendum (2026-07-11)
+
+Variant merge precedence does not grant file-read authority. Both project and
+local settings layers are rejected if a variant declares `prompt_file`; inline
+repository prompts remain supported. Trusted user prompt files must use an
+absolute path and, when physically beneath the workspace, are normalized against
+the immutable launch root and read through the Unix no-follow workspace API.
+Eager reads must never follow a repository symlink or re-resolve a mutable CWD.
+
+Variant/profile resolution must also keep model-selected authority separate from
+operator selection. A profile selected through a model-facing spawn request is
+rejected when it carries `prompt_commands`, including a trusted user profile.
+This is an intentional confused-deputy closure, not a same-name fallback. Static
+profile/variant prompt text remains available subject to the open `ROLE-01`
+source-to-wire-role decision; P0 does not promote repository text merely because
+it is attached to a variant.

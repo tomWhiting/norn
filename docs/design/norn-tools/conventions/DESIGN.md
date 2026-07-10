@@ -241,3 +241,25 @@ CO5. Glob matching uses the same glob crate as the search tool. Path matching is
 CO6. bypass_detection defaults to true for languages with known silencing constructs (Rust, TypeScript, Gleam). For other languages, it defaults to false.
 
 CO7. Custom adapters from `adapters_dir` are sandboxed to subprocess execution only. They cannot load arbitrary code into the norn process.
+
+## P0 security override (2026-07-11)
+
+The repository-root `CONVENTIONS.toml` is untrusted workspace input. It is read
+relative to the immutable launch root through the Unix no-follow regular-file
+API. The runtime removes each language's `lsp`, `diagnostics`, `remediation`, and
+`reports` definitions before compiling conventions, then verifies that no
+reachable rule refers to an LSP or process tool. LOC and declarative pattern
+checks remain available.
+
+This intentionally overrides D4, D5, D7, CO2, and CO7 for a workspace-supplied
+file. "Sandboxed to subprocess execution" is still process authority: it inherits
+Norn's environment and can inspect credentials. A newly cloned repository cannot
+opt itself into clippy, shell, LSP, remediation, report, or custom-adapter
+execution merely by adding `CONVENTIONS.toml`. Restoring process-backed
+conventions requires a separate provenance-preserving consent design and owner
+decision; merge precedence and an advisory handling mode are not consent.
+
+P1 still owns one syntax-aware, hard-failing repository policy checker for the
+campaign's strict Clippy/no-bypass/<500-LOC gates. The non-process runtime
+convention subset is not evidence that those protected gates ran, and advisory
+post-mutation output cannot close a phase checkbox.

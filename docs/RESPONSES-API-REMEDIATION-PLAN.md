@@ -1,9 +1,10 @@
 # Responses API remediation plan
 
-- **Status:** Draft for owner and team approval
+- **Status:** Active; P0 implementation candidate under verification
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
-- **Scope:** OpenAI Responses, ChatGPT/Codex OAuth, prompt caching, streaming,
-  conversation state, transport, schema, and usage behavior
+- **Scope:** OpenAI Responses, ChatGPT/Codex OAuth, working-directory authority,
+  prompt caching, streaming, conversation state, transport, schema, and usage
+  behavior
 - **Source review:**
 [`reviews/2026-07-10-responses-api-implementation-review.md`](reviews/2026-07-10-responses-api-implementation-review.md)
 
@@ -23,12 +24,22 @@ complete. A required live test that does not run leaves its phase blocked.
 
 On completion:
 
-- Codex OAuth credentials can reach only an explicitly trusted ChatGPT/Codex
-  authority that repository-controlled configuration cannot expand.
+- Codex OAuth credentials can reach only the compiled ChatGPT/Codex authority,
+  and working-directory configuration cannot select the source or destination
+  of any ambient credential, raw-debug sink, or provider executable. It also
+  cannot install an automatic shell hook, rule command, skill-shell expansion,
+  convention process, or model-selected profile command that bypasses that
+  boundary.
+- Every automatic repository read uses one immutable launch root and a
+  provenance-preserving, no-follow filesystem policy. Repository symlinks cannot
+  escape or raise trust, and session/debug/spool artifacts are private.
 - Norn stores and replays the ordered Responses item transcript rather than a
   lossy Chat-Completions-like reconstruction.
 - Refusals, phases, hosted search, annotations, compaction, unknown items,
-  `end_turn`, and turn-scoped Codex state have explicit semantics.
+  `end_turn`, malformed/duplicate completion, tool-call identity, and
+  turn-scoped Codex state have explicit semantics.
+- Repository context/rules/profiles and compatible Developer messages follow an
+  owner-approved source-to-wire-role authority matrix.
 - Local conversation state and provider-side state cannot silently disagree.
 - Cancellation owns the network producer, and HTTP and streamed failures use
   one retry/accounting model.
@@ -200,7 +211,7 @@ Every phase must satisfy all four gates below.
 
 | Phase | Status | Primary outcome |
 |---|---|---|
-| P0. Credential destination containment | [ ] | Repository config cannot redirect Codex OAuth credentials. |
+| P0. Credential and workspace authority containment | [ ] | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] | Login, refresh, storage, and logout fail safely and explicitly. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
@@ -215,13 +226,13 @@ Every phase must satisfy all four gates below.
 
 | Finding IDs | Closure owner | Foundation/dependency |
 |---|---|---|
-| `SEC-01`, `BACKEND-01` | P0 | Existing request/auth path |
-| `AUTH-01`, `AUTH-02`, `AUTH-03`, `AUTH-04`, `AUTH-05` | P2 | P0-P1 |
+| `SEC-01` through `SEC-15`, `BACKEND-01` | P0 | Existing request/auth, workspace filesystem, provider-config, hook, rule, profile, variant, skill, convention, and session-artifact paths |
+| `AUTH-01`, `AUTH-02`, `AUTH-03`, `AUTH-04`, `AUTH-05`, `CONFIG-01` | P2 | P0-P1 |
 | `STATE-01` | P4 | P3 canonical transcript |
-| `EVT-01`, `EVT-02`, `EVT-03`, `EVT-04`, `EVT-05` | P4 | P3 canonical transcript |
-| `STATE-02`, `CODEX-01`, `CODEX-02`, `TRANS-01` | P5 | P3-P4 |
+| `EVT-01` through `EVT-07` | P4 | P3 canonical transcript |
+| `STATE-02`, `STATE-03`, `ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01` | P5 | P3-P4 |
 | `TRANS-02`, `USAGE-01` | P6 | P5 turn-owned transport |
-| `MODEL-01`, `SCHEMA-01`, `STRUCT-01` | P7 | P0, P3-P4, P6 |
+| `MODEL-01`, `ROLE-02`, `TOOL-01`, `REQ-01`, `SCHEMA-01`, `STRUCT-01` | P7 | P0, P3-P4, P6 |
 | `CACHE-01`, `CACHE-02`, `CACHE-03`, `CACHE-04`, `CACHE-05` | P8 | P4, P6 accounting, P7 request/tool stability |
 | Integrated closure and the two retained transport regressions | P9 | P0-P8 |
 
@@ -232,41 +243,82 @@ The relevant phase cannot pass Gate A while its decision is open.
 | ID | Required decision | Due | Status / record |
 |---|---|---|---|
 | D0 | CI/merge-gate platform and required-check wiring. P1 remains blocked until a checked-in clean-checkout gate is protected. | P1 | [ ] Open |
-| D1 | Exact compiled OAuth authority/path allowlist and redirect policy. Custom trusted-proxy support is out of P0 scope and requires a later provenance-preserving security design. | P0 | [ ] Open |
+| D1 | Exact compiled OAuth authority/path allowlist, redirect, workspace filesystem/command, and private-artifact policy. Custom trusted-proxy and repository-command consent are out of P0 scope. | P0 | [x] Decided 2026-07-10 and refined by the P0 threat model: accept no override or normalized `https://chatgpt.com[:443]/backend-api/codex[/]`, discard accepted input in favor of the compiled URL, and follow no redirects on credential-bearing clients. Both CWD layers are untrusted even when gitignored. Direct/raw provider authority, backend-selecting aliases, command-bearing hooks/rules, workspace skill shell, convention process categories, and model-selected profile prompt commands are rejected before use. One immutable Unix launch root uses no-follow workspace reads/enumeration; repository symlinks are unsupported and non-Unix workspace input fails closed. Debug, session, and full-output session-spool artifacts are private; background-process spool hardening remains an open `SEC-15` implementation item. Custom API-key endpoints require HTTPS except loopback HTTP. No trusted proxy or implicit project-command consent is admitted. Recorded in `DECISIONS-2026-07.md` section 6. |
 | D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open |
-| D3 | Replaceable Developer-context policy for threaded Responses: reset the anchor, use a genuinely replaceable surface, or disable threading. | P5 | [ ] Open |
+| D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
-| D5 | Native `text.format` versus synthetic tool policy by API shape, including the intentional control-flow cases for the latter. | P7 | [ ] Open |
-| D6 | Pre-register the cache experiment: ratify or replace the proposed 20-iteration design; approve models, spending, warm-up, key isolation/reuse, request rate, concurrency, retention/cooldown, service tier, output/effort controls, randomization, primary measures, and statistical treatment. | P8 | [ ] Open |
+| D5 | Native `text.format` versus synthetic tool policy by API shape, catalog-selected apply-patch/search envelopes, and local-dispatch versus user-request semantics for tool-backed slash commands. | P7 | [ ] Open |
+| D6 | Pre-register the cache experiment: ratify or replace the proposed 20-iteration design; approve public/private backends, models, spending, warm-up, key isolation/reuse, an approximately 15 requests/minute per-key ceiling rechecked against current guidance, concurrency, retention/cooldown, service tier, output/effort controls, randomization, primary measures, and statistical treatment. | P8 | [ ] Open |
 | D7 | Approve credentials, spending, redaction, and retention for final live Codex and public Responses conformance. Without approval P9 is blocked, not passed by a skipped test. | P9 | [ ] Open |
+| D8 | Ratify the source-to-wire-role matrix for product System policy, trusted operator Developer policy, repository `NORN.md`/rules/profiles, user input, and compatible backends that cannot preserve Developer. | P5 | [ ] Open |
 
 ## Immediate operator mitigation
 
 Until P0 ships, do not use Codex OAuth from a repository that has not been
-audited for `.norn/settings.json`, provider overrides, and `base_url`. Do not use
-Codex OAuth with any custom Responses endpoint. Use an explicit API-key or
-unauthenticated compatible-provider profile for custom endpoints. This reduces
-exposure but does not close `SEC-01`.
+audited for `.norn/settings.json`, `.norn/settings.local.json`, provider
+profiles, model aliases, hooks, variants, skill shell policy, `.norn/rules`,
+`.claude/rules`, `.meridian/rules`, `.norn/profiles`, `.meridian/profiles`,
+`.norn/skills`, `.agents/skills`, `.claude/skills`, `CONVENTIONS.toml`, workspace
+symlinks, `provider.options`, `api_shape`, `base_url`, `api_key_env`,
+`debug_dump_dir`, and `runner_path`. Treat model-selected user profiles carrying
+`prompt_commands` as command authority. Do not use Codex
+OAuth with any custom Responses endpoint. For a custom endpoint, use an
+explicit user-level or CLI API-key configuration with a dedicated environment
+variable and HTTPS, except for a loopback-only local service. Do not rely on the
+currently ignored `provider.auth` field to pin the auth mode (`CONFIG-01`). Use a
+private umask for session/process artifacts. This reduces exposure but does not
+close the P0 findings.
 
-## P0. Credential destination containment
+## P0. Credential and workspace authority containment
 
-**Status:** [ ] Not started; **findings closed:** `SEC-01`, `BACKEND-01`;
-**dependencies:** D1 only.
+**Status:** [ ] Implementation and internal verification in progress; external
+phase review pending; **findings addressed by candidate:** `SEC-01`, `SEC-02`,
+`SEC-03`, `SEC-04`, `SEC-05`, `SEC-06`, `SEC-07`, `SEC-08`, `SEC-09`,
+`SEC-10`, `SEC-11`, `SEC-12`, `SEC-13`, `SEC-14`, `BACKEND-01`;
+**partially addressed but still blocking:** `SEC-15`; **dependencies:** D1
+resolved.
 
 ### What this phase fixes
 
 Project-controlled `.norn/settings.json` can currently supply `base_url` while
 the provider still selects OAuth, causing bearer and account headers to be sent
-to that origin. Backend identity is also inferred from the absence of a URL
-override, so spelling the canonical ChatGPT URL changes state semantics.
+to that origin. The same working-directory layers can select both
+`api_key_env` and `base_url`, causing Norn to read an arbitrary named ambient
+secret and send it to a repository-selected endpoint. Backend identity is also
+inferred from the absence of a URL override, so spelling the canonical ChatGPT
+URL changes state semantics. The same untrusted layers can silently enable raw
+API dumps or choose a Claude Runner executable. Public `test-utils` OAuth seams,
+derived credential `Debug`, response metadata, and raw authority error bodies
+provide additional token or identity disclosure paths. Adversarial P0 review
+also found indirect backend selection, automatic shell commands in hooks,
+rules, and workspace profiles, eager arbitrary-file reads from variant prompt
+files, and a project override that can re-enable skill shell expansion. The
+follow-up threat model found symlink/root-alias races across every automatic
+workspace file family, workspace skill and convention subprocess paths,
+model-selected trusted profile commands, raw provider options/API-shape/name
+collisions, provider-controlled diagnostic text, and non-private session/spool
+artifacts.
 
 ### Difference after the phase
 
 Credential authority, deployment/backend identity, and endpoint selection are
 separate typed concepts. Codex OAuth headers are attached only to the compiled,
 normalized HTTPS authority/path approved in D1. A cloned repository cannot
-extend that trust boundary. An explicitly selected canonical endpoint retains
-Codex backend semantics rather than silently becoming public Responses.
+extend that trust boundary or select an API-key environment variable. An
+explicitly selected canonical endpoint retains Codex backend semantics rather
+than silently becoming public Responses. Trusted user-level and explicit CLI
+API-key custom endpoints remain available after HTTPS-or-loopback authority
+validation. Untrusted layers cannot enable raw dumps, select executables or
+backend-bearing aliases, install automatic hook/rule/profile commands, select a
+variant prompt file, or relax a user skill-shell restriction. Trusted dumps use
+private regular files and reject symlinks. One immutable launch root governs
+secure workspace reads and descriptor-relative enumeration; repository symlinks
+are rejected. Workspace skill shell, convention process categories, and prompt
+commands on model-selected profiles are disabled as intentional confused-deputy
+closures. Session, lock, temporary, full-output, and process-spool artifacts are
+private. Static workspace profiles/rules, non-process LOC/pattern conventions,
+and inline variant prompts remain available; user and explicit CLI authority
+surfaces retain their intended behavior where they are operator-selected.
 
 ### Work checklist
 
@@ -275,36 +327,165 @@ Codex backend semantics rather than silently becoming public Responses.
 - [ ] Normalize and validate scheme, authority, port, path, and userinfo before
   any credential-bearing request is constructed.
 - [ ] Disable automatic redirects on credential-bearing clients. Do not forward
-  OAuth headers to any redirect target.
+  credentials, account headers, or request bodies to any redirect target.
 - [ ] Reject OAuth plus an untrusted endpoint before opening a connection.
-- [ ] Ensure repository and CLI provider overrides cannot grant OAuth trust.
-- [ ] Keep arbitrary compatible endpoints on an explicit non-OAuth path. A
-  trusted-proxy feature is separate future security work, not P0 closure scope.
-- [ ] Ensure debug output and errors never reveal bearer tokens or account IDs.
+- [ ] Reject `base_url`, `api_key_env`, `auth`, `debug_dump_dir`, and
+  `runner_path` from both working-directory settings layers, including provider
+  profiles, before merge, env lookup, file creation, or process execution.
+- [ ] Reject working-directory model aliases that select `provider_profile` or
+  `api_shape`, and prevent a CWD default model or workspace profile model from
+  activating a backend-bearing user alias without an explicit trusted CLI
+  selection.
+- [ ] Reject every non-empty project/local hook slot before merge. Preserve
+  rule/profile source provenance and reject working-directory rule
+  `shell_source` and bare-name workspace profile `prompt_commands` before loop
+  construction, including child-agent profile resolution.
+- [ ] Reject working-directory `variants.<variant>.prompt_file` before eager
+  file loading. Permit an untrusted layer to disable skill shell expansion but
+  never to enable it over a trusted restriction.
+- [ ] Canonicalize the launch working directory once, publish it as immutable
+  root/child/fork context, and route every automatic workspace settings,
+  context, nested context, rule, profile, capability, skill/resource, variant,
+  and convention read through one provenance-preserving API.
+- [ ] On Unix, walk workspace paths and enumerate directories relative to pinned
+  descriptors without following any symlink; require regular final files and
+  recognize physical path aliases without canonicalizing the final candidate.
+  Reject repository symlinks even when they point inside the repository.
+- [ ] Fail closed when workspace input is present on non-Unix targets until an
+  equivalent no-follow implementation exists. Record this release limitation
+  and intentional compatibility break rather than using a weaker fallback.
+- [ ] Normalize configured search paths that physically resolve beneath the
+  launch root once, require absolute trusted home/explicit paths, and prevent a
+  symlink alias from changing trust tier after classification.
+- [ ] Disable shell expansion for every physically workspace-sourced skill,
+  regardless of global user policy. Strip all process-bearing LSP, diagnostic,
+  remediation, and report categories from workspace `CONVENTIONS.toml`, retaining
+  only non-process LOC/pattern checks.
+- [ ] Reject `prompt_commands` from every model-selected profile, including a
+  trusted user profile. Preserve them only for a trusted operator/programmatic
+  selection; do not fall through to a same-name alternative.
+- [ ] Reject CWD `provider.options`, provider-profile `api_shape`, backend-bearing
+  alias/profile collisions, and all typed-field collisions in raw request
+  options before backend resolution or network I/O.
+- [ ] Enforce that provenance rule in both CLI and shared library runtime
+  loaders; reject raw forbidden-field presence even if a later CLI value wins.
+- [ ] Ensure user and CLI endpoint overrides cannot grant OAuth trust beyond the
+  compiled canonical destination.
+- [ ] Keep custom compatible endpoints on an explicit non-OAuth path using
+  HTTPS, with plaintext HTTP permitted only for loopback. A trusted-proxy or
+  remote-plaintext feature is separate future security work, not P0 scope.
+- [ ] Remove arbitrary OAuth-authority and injected-auth seams from production
+  and `test-utils` feature builds; retain them only in crate unit tests.
+- [ ] Ensure credential-bearing runtime/auth/request `Debug` formatting and
+  rejected-destination errors never reveal bearer, refresh, ID, API-key, PKCE,
+  or account secrets; redact credential-like response metadata including
+  reusable turn state, cookies, and redirect locations, and never propagate raw
+  OAuth/provider error bodies or provider-controlled terminal text. This claim
+  does not include the legacy raw provider-settings container.
+- [ ] Stream and discard non-2xx response bodies within the existing request
+  timeout. Preserve the established stalled-response timeout/retry semantics;
+  do not replace them with an unreviewed broad status-only behavior change.
+- [ ] Require debug-dump targets to be regular non-symlink files and mode `0600`
+  on Unix.
+- [ ] Require session data, index, lock, atomic temporary, full-output spool, and
+  process-spool directories/files to be private (`0700` directories, `0600`
+  regular files on Unix), no-follow on final opens, and fail closed on links or
+  non-regular targets across create, reopen, rewrite, and resume.
 - [ ] Put new security logic in cohesive modules below 500 production LOC. If a
   changed legacy file is over the limit, bring it below the limit in this phase.
 
 ### Phase-specific evidence
 
 - [ ] A hostile local endpoint receives no request when selected from project
-  configuration, and a hostile redirect target receives no redirected request.
+  configuration; a repository-selected environment variable is rejected before
+  lookup; and a hostile redirect target receives no redirected request.
+- [ ] Real CLI and shared-library settings entrypoints reject forbidden project,
+  local, and profile fields while positive user-level and CLI authority cases
+  retain their intended behavior.
+- [ ] All thirteen hook slots are rejected from both CWD settings layers;
+  project/local shared-loader and CLI regressions prove command text is not
+  executed or echoed, while user/programmatic hooks remain available.
+- [ ] Single-scan rule provenance rejects `shell_source` from `.norn`, `.claude`,
+  and `.meridian` workspace rules without execution while user rule commands
+  remain available.
+- [ ] Root and child workspace profiles reject prompt commands without
+  executing or echoing them; static workspace profiles, user prompt-command
+  profiles, and explicit profile paths retain their intended behavior.
+- [ ] Cross-layer tests reject CWD settings/profile activation of a user backend
+  alias before environment lookup, while explicit CLI selection remains
+  supported. Variant prompt-file and skill-shell widening sentinels fail before
+  file or process side effects.
+- [ ] Every workspace file family rejects final and ancestor symlinks, `..`,
+  non-regular files, launch-root replacement, and user-path alias repointing.
+  Root, child, spawn, fork, session-remove, and direct shared-library entrypoints
+  use the same immutable launch root.
+- [ ] Workspace skill activation proves shell text is never executed or echoed,
+  including after a search-path alias is repointed. Mixed conventions retain LOC
+  and pattern checks while LSP/diagnostic/remediation/report commands cannot run.
+- [ ] Model-selected workspace and user profiles with prompt commands are
+  rejected without execution or command echo; the same user profile remains
+  usable when selected through the trusted operator path.
+- [ ] Project/local provider-options, profile API-shape, same-name collision, and
+  dormant-MCP provenance fixtures prove no untrusted value reaches backend,
+  environment, process, or network consumers.
 - [ ] URL tests cover HTTP, userinfo, case, trailing dots, default/non-default
   ports, lookalike hosts, path variants, redirects, and canonical URLs.
 - [ ] Capability/payload snapshots prove explicit and implicit canonical Codex
   selection have identical backend semantics.
-- [ ] API-key and unauthenticated compatible endpoints retain their intended,
-  explicitly tested behavior.
+- [ ] Trusted API-key custom and compatible endpoints retain their intended,
+  explicitly tested behavior; remote HTTP is rejected and loopback HTTP remains
+  supported.
+- [ ] Debug-dump permission/symlink tests, OAuth feature-surface inspection, and
+  sentinel diagnostic tests prove raw tokens, claims, headers, and authority
+  error bodies do not escape.
+- [ ] Malformed SSE, `response.failed`, and non-2xx sentinels prove provider text
+  and control bytes never enter logs/errors; stalled non-2xx fixtures retain the
+  existing typed timeout behavior while the body is streamed and discarded.
+- [ ] Session/index/lock/temp/full-output/process-spool tests prove private modes,
+  link/non-regular refusal, restrictive reopen/rewrite behavior, and no
+  permission regression under a permissive umask.
+
+### Residuals requiring Gate D disposition
+
+These are not claimed fixed by a broad P0 statement. The external reviewer must
+either identify a reachable defect that P0 fixes before `READY`, or record an
+owner-approved scope/phase disposition with evidence:
+
+- Workspace text reads remain unbounded. The remediation must be a designed
+  streaming/size policy with an owner-approved value or provider fact, not an
+  arbitrary byte cap invented to close review.
+- The raw legacy provider-settings container still derives `Debug`. P0's
+  structural-redaction claim covers credential-bearing runtime/auth/request
+  types and free-form request options, not every raw settings value. No reachable
+  logging call has been identified, but the type remains misuse-prone.
+- Public `Scanner`, `scan_rule_dirs`, and `discover_skills` convenience APIs are
+  trusted-input-only. Secure runtime assembly uses launch-root-aware paths; an
+  embedder must not pass repository-controlled roots through the legacy APIs.
+- `mcp_servers` and its environment map are merged but currently dormant. They
+  require source provenance and explicit consent before any future runtime wiring;
+  merge precedence is not authorization.
+- Non-Unix workspace input deliberately fails closed. This protects the trust
+  boundary but is a release compatibility limitation until equivalent no-follow
+  filesystem primitives are implemented and reviewed.
 
 ### Review and exit gate
 
-- [ ] A security reviewer threat-models every credential destination and redirect.
+**Current gate state:** pending. Internal security/protocol reviewers provide
+fix-round input but do not satisfy Gate D. The fresh external/Fable review has
+not run: sandbox policy correctly prevented sending the uncommitted private diff
+to the local Codex/ChatGPT endpoint. That review must be arranged against an
+approved artifact after the P0 candidate is committed; this is not a skipped or
+implicitly passed gate.
+
+- [ ] A security reviewer threat-models every credential destination, redirect,
+  automatic working-directory command, and eager working-directory file read.
 - [ ] A provider/config reviewer verifies trust cannot originate in project data.
 - [ ] A Fable adversarial reviewer returns `READY` before this phase ships
   independently of later protocol work.
 - [ ] Existing fmt, strict Clippy, workspace tests, doc tests, diff check, and a
   reviewer-verified syntax-aware LOC/bypass inspection pass. P0 does not wait for
   the broader P1 policy infrastructure.
-- [ ] Universal Gates A-D pass and `SEC-01`/`BACKEND-01` have closure evidence.
+- [ ] Universal Gates A-D pass and all P0-owned findings have closure evidence.
 
 ## P1. Contract and enforcement baseline
 
@@ -336,8 +517,9 @@ violate campaign rules. No provider behavior changes in this phase.
   source commit used as the conformance contract.
 - [ ] Build sanitized fixtures for text, multiple assistant phases, encrypted
   reasoning, function/custom calls, refusal, hosted search and annotations,
-  compaction, unknown items, `end_turn`, turn-state headers/metadata, failures,
-  rate limits, incomplete streams, and cache usage.
+  compaction, unknown reasoning parts/items, interleaved and duplicate call
+  completion, malformed terminal data, `end_turn`, turn-state headers/metadata,
+  failures, rate limits, incomplete streams, and cache usage.
 - [ ] Add a traceability record mapping each confirmed defect to a regression
   and each unproven/design finding to its baseline and pre-registered contract.
 - [ ] Add one syntax-aware policy implementation used by both post-mutation
@@ -455,8 +637,9 @@ not change their order or invent missing semantics.
   cohesive named modules before adding behavior.
 - [ ] Introduce a canonical item union with typed core variants and an opaque raw
   variant for unknown items.
-- [ ] Preserve replayable item order, message phase, call IDs, encrypted
-  reasoning, refusal, annotations, hosted search, and compaction data.
+- [ ] Preserve replayable item order, message phase, call/item IDs, encrypted
+  reasoning and opaque unknown reasoning parts, refusal, annotations, hosted
+  search, and compaction data.
 - [ ] Store stream provenance such as item ID, output index, and content index
   separately from replayable provider item JSON. Envelope coordinates must never
   leak into the next request unless the provider item schema owns that field.
@@ -494,14 +677,15 @@ not change their order or invent missing semantics.
 ## P4. Streaming and replay conformance
 
 **Status:** [ ] Not started; **findings closed:** `STATE-01`, `EVT-01` through
-`EVT-05`; **dependencies:** P3.
+`EVT-07`; **dependencies:** P3.
 
 ### What this phase fixes
 
 The SSE mapper drops item identity and phase, ignores refusal and hosted-search
 provenance, cannot repair missing deltas from authoritative completion data, and
-silently skips unknown output items. A refusal can therefore become an
-ordinary empty success.
+silently skips unknown output items. Completion is not reconciled by stable item
+identity; delta-only calls and malformed terminal data can become executable or
+ordinary empty/zero-usage success.
 
 ### Difference after the phase
 
@@ -509,7 +693,8 @@ Completed output items drive the canonical transcript. Deltas drive responsive
 UI keyed by item/content identity and reconcile against authoritative completed
 content. Refusal is a non-retryable model outcome distinct from transport error,
 hosted search survives replay, and an unknown output item cannot be reported as
-ordinary success.
+ordinary success. Call completion is identity-safe and idempotent, and only an
+authoritative completed item can become executable.
 
 ### Work checklist
 
@@ -521,6 +706,9 @@ ordinary success.
   events/items/headers. Each name is handled, allowlisted lifecycle-only, or
   typed unsupported, and a taxonomy change fails the manifest check.
 - [ ] Key deltas by item ID, output index, and content index.
+- [ ] Preserve item ID and call ID on added/delta/done/completed events. Reconcile
+  interleaved and duplicate frames idempotently; reject conflicting identity and
+  remove every order-based completion fallback.
 - [ ] Reconcile deltas with `.done` and completed item data; repair or emit a
   typed mismatch instead of silently truncating.
 - [ ] Preserve refusal, message phase, annotations/citations, hosted-search
@@ -533,6 +721,9 @@ ordinary success.
   event not on the pinned lifecycle allowlist.
 - [ ] Make parser/mapper terminal delivery exactly once and reject/ignore later
   frames deterministically. P6 separately owns stopping the network producer.
+- [ ] Replace empty-string, zero-usage, absent-response-ID, default-EndTurn, and
+  delta-only-call fallbacks with typed required/optional fields. Unknown reasoning
+  parts survive opaquely; malformed required completion data is a protocol error.
 
 ### Phase-specific evidence
 
@@ -543,6 +734,9 @@ ordinary success.
   continuation and a persisted resume.
 - [ ] Missing/malformed delta fixtures are repaired by authoritative completion
   data or fail with a typed diagnostic.
+- [ ] Interleaved calls prove call two cannot complete call one. Exact duplicate
+  frames are idempotent; conflicting duplicates, delta-only calls, and missing
+  authoritative completion cannot execute.
 - [ ] Tests cover arbitrary SSE chunk boundaries, CRLF, multiline data,
   duplicate/out-of-order frames, incomplete EOF, and post-terminal input.
 - [ ] Public and Codex manifest tests fail when a variant is added, removed, or
@@ -556,19 +750,23 @@ ordinary success.
 - [ ] The streaming/item review-domain owner confirms every immediate capability
   is preserved end to end.
 - [ ] A Fable adversarial reviewer returns `READY` on raw-wire fixtures.
-- [ ] Universal Gates A-D pass and `STATE-01`/`EVT-01` through `EVT-05` close.
+- [ ] Universal Gates A-D pass and `STATE-01`/`EVT-01` through `EVT-07` close.
 
 ## P5. Conversation and Codex turn semantics
 
-**Status:** [ ] Not started; **findings closed:** `STATE-02`, `CODEX-01`,
-`CODEX-02`, `TRANS-01`; **dependencies:** P3-P4 and D3.
+**Status:** [ ] Not started; **findings closed:** `STATE-02`, `STATE-03`,
+`ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:** P3-P4 and
+D3/D8.
 
 ### What this phase fixes
 
 Local removal of managed Developer context does not remove it from a
 `previous_response_id` chain. Norn also ignores the backend's explicit
 `end_turn` decision and `x-codex-turn-state`, so continuation and sticky-routing
-semantics are inferred or omitted.
+semantics are inferred or omitted. A stored thread does not return replayable
+encrypted reasoning, so resetting its anchor after local compaction can silently
+lose reasoning continuity. Repository `NORN.md`, rules, and profile bodies also
+receive inconsistent System/Developer authority based on discovery path.
 
 ### Difference after the phase
 
@@ -577,12 +775,16 @@ accumulate invisibly in a provider thread. Top-level instructions are resent
 where required. `end_turn` controls continuation explicitly, and Codex turn
 state is reused only inside its owning user turn, never across turns, agents, or
 sessions. Dropping/cancelling the turn also owns and terminates its HTTP producer,
-so sticky state cannot outlive the turn through an orphaned task.
+so sticky state cannot outlive the turn through an orphaned task. Every valid
+anchor transition preserves reasoning or starts a semantically fresh thread, and
+repository sources follow the D8 role-authority matrix.
 
 ### Work checklist
 
 - [ ] Implement D3 consistently across loop state, provider capabilities,
   compaction, persistence, resume, and request construction.
+- [ ] Implement D8 across root/nested `NORN.md`, rules, workspace/user profiles,
+  dynamic harness context, product instructions, and child/fork prompt assembly.
 - [ ] Keep ChatGPT/Codex `store:false` replay distinct from public Responses
   threading and prove both wire shapes.
 - [ ] Resend top-level instructions with a response anchor while ensuring
@@ -595,6 +797,9 @@ so sticky state cannot outlive the turn through an orphaned task.
   header, body, and SSE waits on receiver drop, user cancellation, or timeout.
 - [ ] Reset or invalidate anchors whenever local compaction/state replacement
   makes provider history semantically incompatible.
+- [ ] Preserve replayable reasoning for every supported anchor reset, or reject
+  local replay and use server compaction/a semantically fresh thread. Never claim
+  continuity after reconstructing a stored thread without its reasoning state.
 
 ### Phase-specific evidence
 
@@ -602,6 +807,8 @@ so sticky state cannot outlive the turn through an orphaned task.
   request's replaced environment, rules, mode, timestamp, or prompt-command data.
 - [ ] Stateless and threaded tests prove their intended effective context and
   top-level instruction behavior.
+- [ ] Root and nested repository context, rule/profile bodies, user input, and
+  trusted operator policy produce the exact D8 roles for root, spawn, and fork.
 - [ ] `end_turn:Some(false)`, `Some(true)`, and `None` each have explicit tested
   loop semantics.
 - [ ] Concurrent-agent and resume tests prove turn state never crosses user-turn,
@@ -612,12 +819,14 @@ so sticky state cannot outlive the turn through an orphaned task.
   receiver drop, cancellation, and timeout, with no surviving task.
 - [ ] Compaction and anchor-reset tests show local and provider-visible history
   remain semantically aligned.
+- [ ] Stored-thread compaction tests prove reasoning continuity survives every
+  allowed reset, while a backend without replay material fails before mutation.
 
 ### Review and exit gate
 
 - [ ] Prompt/state and Codex-backend reviewers approve authority and lifetime rules.
 - [ ] A Fable state-machine reviewer returns `READY` after multi-turn adversarial tests.
-- [ ] Universal Gates A-D pass and all four findings close.
+- [ ] Universal Gates A-D pass and all six findings close.
 
 ## P6. Transport, retry, and usage
 
@@ -677,14 +886,19 @@ remain explicitly unknown rather than being called billed or estimated silently.
 
 ## P7. Request, schema, and model controls
 
-**Status:** [ ] Not started; **findings closed:** `MODEL-01`, `SCHEMA-01`,
-`STRUCT-01`; **dependencies:** P0-P1, P4, P6, and D5. P2 is independent.
+**Status:** [ ] Not started; **findings closed:** `MODEL-01`, `ROLE-02`,
+`TOOL-01`, `REQ-01`, `SCHEMA-01`, `STRUCT-01`; **dependencies:** P0-P1, P4,
+P6, and D5. P2 is independent.
 
 ### What this phase fixes
 
 Request construction overrides catalog reasoning-summary defaults, advertises
 parallel capability while forcing serial calls, can lower schemas into dangling
-`$ref` values, and implements structured output only through a synthetic tool.
+`$ref` values, unconditionally emits a reasoning shape for unknown/non-reasoning
+models, ignores catalog-selected apply-patch/search envelopes, silently collapses
+compatible Developer into System, and implements structured output only through
+a synthetic tool. Tool-backed slash commands can also forge an assistant call
+without local dispatch or a matching result.
 More generally, advertised capability is not consistently tied to complete
 request/stream/persistence/replay support.
 
@@ -694,20 +908,33 @@ One immutable request profile is resolved from backend, API shape, and model
 before serialization. Unsupported combinations fail locally. Schema lowering is
 validated and never emits dangling references. Parallel calls are enabled only
 after ID-based correlation is proven. Structured output follows D5 by API shape
-rather than an accidental universal workaround.
+rather than an accidental universal workaround. Catalog tool types control the
+whole wire/dispatch/replay path, compatible role downgrade is explicit, and slash
+commands cannot invent provider history.
 
 ### Work checklist
 
 - [ ] Use the P1 baseline to decompose any touched over-limit
   builder/config/request file before adding behavior.
 - [ ] Resolve backend/model defaults and capabilities once before payload assembly.
-- [ ] Honor catalog reasoning-summary defaults and represent Norn-disabled
-  parallelism separately from provider capability.
+- [ ] Honor catalog reasoning effort/summary defaults, supported effort values,
+  summary/encrypted-replay support, and newer typed reasoning controls. Do not
+  send reasoning fields to an unknown/non-reasoning model without explicit
+  trusted capability configuration. Represent Norn-disabled parallelism
+  separately from provider capability.
 - [ ] Correlate all call completion by stable item/call identity before enabling
   parallel tool calls for a capable model.
 - [ ] Preserve or inline required `$defs` during schema lowering and validate the
   result locally; reject unlowerable schemas with a typed diagnostic.
 - [ ] Implement D5 for native `text.format` and intentionally synthetic-tool cases.
+- [ ] Resolve `apply_patch_tool_type` and `web_search_tool_type` from the same
+  immutable request profile and carry the selected envelope through parsing,
+  dispatch, output echo, persistence, and replay.
+- [ ] Preserve Developer on compatible backends that support it. For backends
+  that cannot, apply the D8-approved explicit downgrade/rejection rather than
+  silently serializing Developer as System.
+- [ ] Replace `SlashCommandHandler::Tool` transcript fabrication with normal
+  authorized local dispatch/persistence/result echo or a user-role model request.
 - [ ] Reject raw provider-option collisions with Norn-owned typed fields.
 - [ ] Advertise a hosted/native capability only when its request, stream,
   persistence, replay, and user-surface path is complete.
@@ -716,11 +943,16 @@ rather than an accidental universal workaround.
 
 - [ ] Payload snapshots cover Codex subscription, public Responses, trusted
   configured backends, reasoning/non-reasoning models, service tiers, and tools.
+- [ ] Unknown models and every catalog reasoning effort/summary/tool-envelope
+  combination either serialize the approved shape or fail locally before I/O.
 - [ ] `$defs`, nested `$ref`, union, unsupported, and adversarial schemas either
   produce valid deterministic output or a typed local rejection.
 - [ ] Randomized/interleaved parallel calls correlate every output by ID.
 - [ ] Native and synthetic structured-output cases have explicit, tested selection
   and equivalent schema/error guarantees where both are supported.
+- [ ] Compatible role snapshots prove Developer is preserved or follows the
+  explicit downgrade contract. Slash-command tests cover dispatch success,
+  rejection, cancellation, persistence, and resume without an orphan call.
 - [ ] Unsupported capability and raw-option collision tests fail before network I/O.
 
 ### Review and exit gate
@@ -728,7 +960,7 @@ rather than an accidental universal workaround.
 - [ ] Provider/catalog, JSON Schema, and tool-protocol reviewers approve.
 - [ ] A Fable API-shape reviewer compares payloads with pinned official schemas
   and returns `READY`.
-- [ ] Universal Gates A-D pass and all three findings close.
+- [ ] Universal Gates A-D pass and all six findings close.
 
 ## P8. Prompt-cache measurement and policy
 
@@ -779,6 +1011,10 @@ than inference.
 - [ ] Counterbalance/randomize the approved runs and hold warm-up, key isolation,
   request rate, concurrency, retention/cooldown, service tier, output limit,
   reasoning effort, and tool workload to the D6 protocol.
+- [ ] Compare private ChatGPT/Codex and public Responses separately. Record actual
+  timestamps and throttle each key to the current guide's approximately 15
+  requests/minute per-key guidance (reverified at execution); do not burst a
+  20-call loop and call the resulting routing/cache behavior representative.
 
 ### Phase-specific evidence
 

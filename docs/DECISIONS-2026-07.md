@@ -590,3 +590,136 @@ Each decision below is recorded for owner sign-off; silence = ship.
   projection would need the label folded into the edge key — left as-is (secondary tool; the live
   event and the persisted audit both carry the exact source). The edge's `last_seq` stays `0` for
   an unsequenced-only edge; this is an honest sentinel, since router-minted seqs start at `1`.
+
+## 6. Responses API remediation decisions (2026-07-10)
+
+### P0 D1 — credential, workspace-authority, and private-artifact boundary
+
+- **Codex OAuth has one compiled destination.** No `base_url` override, or a
+  normalized spelling of `https://chatgpt.com:443/backend-api/codex/` with the
+  default port and trailing slash omitted or present, selects the Codex
+  subscription backend. Accepted input is discarded and the request uses the
+  compiled `https://chatgpt.com/backend-api/codex` value. Every other OAuth
+  destination is rejected before auth initialization or network I/O.
+- **No trusted proxy exists in P0.** Repository settings, user settings, and CLI
+  overrides cannot extend the OAuth allowlist. Proxy support requires a later
+  provenance-preserving security design and a separate owner decision.
+- **Working-directory settings cannot grant runtime authority or sensitive side
+  effects.** `<cwd>/.norn/settings.json` and
+  `<cwd>/.norn/settings.local.json` remain untrusted even when gitignored. Raw
+  presence is rejected before merge even when a later CLI value would replace
+  it, and the same validation runs in CLI and shared-library loaders. In both
+  layers:
+  - top-level providers and provider profiles may not set `base_url`,
+    `api_key_env`, `auth`, `debug_dump_dir`, `runner_path`, free-form
+    `provider.options`, or profile `api_shape`;
+  - model aliases may not select `provider_profile` or `api_shape`, and a
+    working-directory default model or bare-name workspace-profile model may
+    not activate a backend-selecting alias from a trusted layer; same-name
+    alias/profile collisions cannot borrow a trusted backend bundle, and an
+    explicit CLI model remains trusted;
+  - no non-empty shell-hook slot is accepted;
+  - `variants.<variant>.prompt_file` is rejected before eager file loading,
+    while inline prompts remain supported; and
+  - `tools.skill.shell_execution = true` is rejected, while an untrusted layer
+    may narrow authority by setting it to `false`.
+- **Source-bearing automation retains provenance.** A single rule scan records
+  whether a rule came from user configuration or the working directory.
+  `shell_source` is rejected from `.norn/rules`, `.claude/rules`, and
+  `.meridian/rules`; static working-directory rules remain supported. Bare-name
+  workspace profiles may be static but may not declare `prompt_commands`, and
+  a rejected workspace profile does not fall through to a same-name user
+  profile. The root loop and spawned-agent paths enforce the same rule.
+  User-level rules and profiles, programmatic hooks, explicit profile paths,
+  and explicit `--rules` files remain trusted surfaces.
+- **The workspace root is immutable after launch.** The builder canonicalizes
+  the working directory once and forwards that root through root, spawn, and
+  fork assembly. Automatic settings, root/nested `NORN.md`, rule, profile,
+  capability, skill/resource, variant, and `CONVENTIONS.toml` reads are resolved
+  against it rather than a mutable process CWD. User-configured paths that
+  physically resolve beneath the workspace are normalized at launch so a
+  re-pointed alias cannot change trust tier.
+- **Unix workspace reads are descriptor-relative and no-follow.** Every path
+  component is opened without following links, final inputs must be regular
+  files, and directory enumeration stays pinned to the opened directory.
+  Repository symlinks are rejected even when they point elsewhere inside the
+  same repository. Alternate physical spellings such as macOS `/var` and
+  `/private/var` are recognized without canonicalizing/following the final
+  candidate. The sole scoped exception is validated `.git` metadata needed for
+  branch/commit display; it does not grant a general read path.
+- **Non-Unix workspace input currently fails closed.** There is no weaker
+  compatibility fallback to ordinary link-following reads. This is an
+  intentional release limitation until equivalent platform primitives are
+  implemented and reviewed.
+- **Trusted roots are absolute.** Relative `HOME`, `NORN_HOME`, `CODEX_HOME`,
+  user prompt files, and user search paths cannot become credential/config
+  authority relative to a repository-controlled current directory.
+- **Repository-to-process confused deputies are disabled.** Workspace-sourced
+  skills never execute shell expansion, regardless of a user-global enable bit.
+  Workspace `CONVENTIONS.toml` retains non-process LOC and pattern checks but
+  loses `lsp`, `diagnostics`, `remediation`, and `reports` process categories.
+  Any profile selected by the model is rejected if it carries
+  `prompt_commands`, including a trusted user profile. These are intentional
+  compatibility breaks; restoring them requires a provenance-preserving
+  consent design and an owner decision.
+- **There is no implicit repository-command consent.** Re-enabling hooks,
+  `shell_source`, or profile prompt commands from a working directory requires
+  a later provenance-preserving consent design and a separate owner decision;
+  ordinary merge precedence is not consent.
+- **Trusted custom API-key endpoints remain supported.** They must parse as an
+  HTTPS URL with a non-empty authority and no userinfo, query, or fragment.
+  Plaintext HTTP is allowed only for exact loopback hosts (`localhost`, loopback
+  IPv4, or loopback IPv6). API-key authentication cannot select the private
+  compiled Codex endpoint. Remote plaintext support requires a later explicit
+  insecure-transport design and owner decision.
+- **Credential-bearing clients do not follow redirects.** Responses, compatible
+  Chat Completions, OAuth refresh, revoke, and authorization-code exchange
+  clients all return the original 3xx response without replaying credentials,
+  account headers, or request bodies to the redirect target.
+- **Injected-auth provider constructors are unit-test-only.** The previously
+  public constructors could pair an OAuth credential provider with an API-key
+  configuration and custom destination, bypassing the auth/backend matrix. They
+  are now crate-private and compiled only for unit tests; this is an intentional
+  API break rather than a compatibility wrapper.
+- **Arbitrary OAuth token-authority constructors are unit-test-only.** Enabling
+  the public `test-utils` Cargo feature cannot expose constructors that load or
+  hold OAuth credentials while selecting a custom refresh-token destination.
+- **Raw API dumps are trusted opt-in artifacts.** Only user-level settings or an
+  explicit CLI option may enable them. On Unix, the final target must be a
+  non-symlink regular file opened without following symlinks and forced to mode
+  `0600`; non-regular targets fail closed.
+- **Session persistence artifacts are private.** Session data/index/lock/
+  atomic-temporary files and full-output session spools can contain prompts,
+  reasoning, and tool arguments/results. On Unix their directories are `0700`,
+  files are regular `0600` targets opened without following the final link, and
+  links/non-regular targets fail closed across create, reopen, rewrite, and
+  resume.
+- **Background-process spools remain an open P0 blocker.** They retain arbitrary
+  stdout/stderr and share the same confidentiality policy, but the current
+  candidate still uses ordinary create/open paths in `process/spool.rs`.
+  `SEC-15` cannot close until that path and the session helper's ancestor-link
+  behavior receive adversarial tests and review.
+- **Credential diagnostics are structural within the credential-bearing
+  runtime/request boundary.** OAuth tokens, PKCE material, user/account claims,
+  free-form request options, and sensitive runtime provider state are absent
+  from their `Debug`; every response-header value is redacted; OAuth and
+  provider errors retain locally authored structural classification, never raw
+  authority/provider text. Non-2xx bodies are streamed and discarded under the
+  existing request timeout, preserving stalled 4xx/5xx timeout/retry semantics.
+  The legacy raw provider-settings container still derives `Debug`; no reachable
+  logging call was found, but P0 does not claim that type is safe to log.
+- **Dormant authority is not pre-approved authority.** `mcp_servers` and its
+  environment map remain merged but have no production runtime consumer. Any
+  future wiring must add source provenance and explicit consent first.
+- **Known filesystem residuals stay explicit.** Workspace text reads remain
+  unbounded pending an owner-approved streaming/size policy. Public `Scanner`,
+  `scan_rule_dirs`, and `discover_skills` convenience APIs are trusted-input-only;
+  secure runtime assembly does not route repository-controlled roots through
+  them.
+
+The owner approved execution of the staged remediation plan on 2026-07-10; this
+section records the P0 policy and the implemented candidate boundaries, including
+the explicitly incomplete process-spool portion above.
+Acceptance remains pending: machine gates and residual disposition are still in
+progress, and the external/Fable Gate D review could not receive an uncommitted
+private diff under sandbox policy. Internal reviews do not satisfy that gate.

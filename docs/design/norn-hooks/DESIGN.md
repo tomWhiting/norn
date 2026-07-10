@@ -108,13 +108,19 @@ A hook group contains:
 
 #### D8: Settings loading with 3-tier merge
 
-Settings are loaded from three locations in ascending priority:
+Settings are parsed from three locations in ascending priority:
 
 1. `~/.norn/settings.json` — user-global settings
 2. `.norn/settings.json` — project settings (intended for version control)
 3. `.norn/settings.local.json` — local project overrides (not version controlled)
 
-Merge semantics: for each event type, hook groups from all scopes are concatenated in priority order (user-global first, local-project last). Within an event type, later scopes append to earlier scopes — they do not replace. This means a project can add hooks on top of user-global hooks but cannot remove user-global hooks. Registration order in the `HookRegistry` reflects this concatenation order.
+The typed merge operation concatenates hook groups in priority order, but the
+runtime trust boundary rejects every non-empty hook slot from both project
+layers before merge or registration. Only user-global settings and
+programmatic construction currently grant shell-hook execution authority.
+Supporting repository hooks requires a separate provenance-preserving consent
+design; a cloned settings file and ordinary precedence do not constitute
+consent.
 
 Settings are captured at startup. Runtime modifications to settings files have no effect until the next session.
 
@@ -239,13 +245,14 @@ Regex compilation happens at settings load time (startup). Invalid regex pattern
 2. Pre-tool hooks can modify tool arguments via `HookOutcome::Modify`, with the modified args flowing through pre_validate, execute, and post_validate.
 3. All existing trait-based hook tests pass unchanged after module promotion.
 4. Regex-based matchers filter hook execution by tool name, model name, or event variant.
-5. Settings loaded from three tiers (`~/.norn/settings.json`, `.norn/settings.json`, `.norn/settings.local.json`) with correct merge precedence.
+5. Settings loaded from three tiers with correct merge precedence, while
+   project/local hook commands fail closed before registration.
 6. Sequential dispatch with first-Block-wins is preserved for all pre-hooks.
 7. Session event shell hooks are fire-and-forget and do not block the agent loop.
 
 ## Non-Goals
 
-- **Permission system.** Claude Code has `PermissionRequest` hooks. Norn has no permission dialog system. Not in scope.
+- **Permission system.** Claude Code has `PermissionRequest` hooks. Norn has no permission dialog system. Project/local shell hooks therefore remain rejected; implicit repository consent is not in scope.
 - **Prompt-based hooks.** Claude Code supports `"type": "prompt"` for LLM-evaluated decisions. Expensive and complex. The config schema reserves the `type` field so it can be added later, but implementation is deferred.
 - **Notification hooks.** Norn has no notification system. Deferred until one exists.
 - **Setup hooks.** CLI-specific lifecycle (`--init`, `--maintenance`). If needed, handled in norn-cli, not libnorn.

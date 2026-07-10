@@ -97,9 +97,11 @@ chain — they control runtime behaviour and auth, not settings.
   at project level what user level denies. Deny is additive and absolute.
 - **Permission allow arrays**: concatenate across layers, deduplicate.
   Project can add to user's allow list.
-- **Hooks**: merge by event type. Project hooks extend user hooks within
-  the same event, they do not replace. This allows a project to add hooks
-  without removing the user's hooks.
+- **Hooks**: the typed merge operation concatenates hook groups by event type,
+  but runtime loading rejects every non-empty project/local hook slot before
+  merge. Only user settings and programmatic construction currently grant hook
+  execution authority. Repository hooks require a future explicit-consent
+  design; precedence alone is not consent.
 - **MCP servers**: merge by name. Project servers add to user servers.
   Same-name project server overrides user server definition.
 - **Tool config**: deep merge. Project `tools.write.max_code_lines`
@@ -391,3 +393,39 @@ crates/norn-cli/
 - CO7: No auto-creation of directories on read operations.
 - CO8: `NORN_HOME` honoured by all path resolution, including REPL history.
 - CO9: Settings types defined in norn crate. CLI wiring stays in norn-cli.
+
+## Security boundary addendum (2026-07-11)
+
+The original merge rules describe value precedence, not authority. P0 adds a
+source-aware validation step before project/local values merge:
+
+- `<cwd>/.norn/settings.json` and `settings.local.json` are untrusted even when
+  gitignored. They cannot set provider `base_url`, `api_key_env`, `auth`,
+  `debug_dump_dir`, `runner_path`, free-form `options`, or provider-profile
+  `api_shape`.
+- Project model aliases cannot select `provider_profile`/`api_shape`, collide
+  with and activate a trusted backend-bearing alias/profile, or make a CWD
+  default/workspace-profile model activate a trusted backend bundle. Explicit
+  CLI selection remains trusted.
+- Every non-empty project/local hook slot is rejected. Project variants cannot
+  set `prompt_file`. Project skill policy may narrow shell execution to `false`
+  but cannot enable it.
+- A profile selected by model output cannot contain `prompt_commands`, even when
+  the profile came from trusted user configuration. Operator/programmatic
+  selection and model selection are different authority paths.
+- `HOME`, `NORN_HOME`, and `CODEX_HOME` must be absolute before they can anchor
+  trusted config/credentials. Relative user prompt/search paths are rejected
+  rather than interpreted against a repository CWD.
+
+These are intentional confused-deputy closures and compatibility breaks.
+Ordinary layer precedence is never repository consent.
+
+`mcp_servers` (including its `env` map) is currently merged but dormant in the
+production runtime. This design does not authorize a future consumer to launch
+it. Runtime wiring must first add source provenance, explicit consent, collision
+rules, and credential/redaction tests.
+
+Credential-bearing resolved/runtime/request config uses structural redacted
+`Debug`, including free-form request options. The raw legacy provider-settings
+container still derives `Debug`; callers must treat it as sensitive and must not
+log it. Removing that misuse-prone residual remains a separate reviewed change.

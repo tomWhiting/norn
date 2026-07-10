@@ -329,3 +329,26 @@ crates/norn-cli/
 - CO10: Shell execution respects `disableSkillShellExecution` setting. Stdout capped at 32KB.
 - CO11: SkillTool not registered when catalog is empty.
 - CO12: Skills with missing description are skipped, not loaded with empty description.
+
+## Workspace trust addendum (2026-07-11)
+
+Skill provenance is a security property, not only search precedence. Catalog
+construction, resource listing, SKILL.md loading, and activation revalidation
+use the immutable launch root and Unix descriptor-relative no-follow reads for
+physically workspace-sourced skills. Directory enumeration is pinned, symlinked
+final/ancestor components are rejected, and a user-configured alias that resolves
+under the workspace is normalized once so it cannot be repointed after the
+catalog classified its tier.
+
+Workspace-sourced skills never execute backtick-bang/body shell expansion,
+regardless of `tools.skill.shell_execution` in user settings. A project layer may
+set that policy to `false` but cannot set it to `true`. This intentionally breaks
+the original CO10/global-toggle behavior: a global user enable bit is not consent
+for arbitrary command text in every newly cloned repository. Re-enabling
+workspace skill shell requires an explicit provenance-preserving consent design.
+
+The public `discover_skills` convenience API remains trusted-input-only. Runtime
+assembly and `SkillTool` must use the launch-root-aware catalog/loader path for
+repository-controlled locations. Skill text/resource reads remain unbounded; a
+future size/streaming policy needs an owner decision and may not invent an
+arbitrary cap merely to satisfy a gate.
