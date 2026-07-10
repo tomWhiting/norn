@@ -31,6 +31,7 @@ jsonschema = "0.28"
 serde_ignored = "0.1"
 serde_json = { workspace = true }
 sha2 = { workspace = true }
+hmac = { workspace = true }
 serde_yaml = "0.9"
 thiserror = { workspace = true }
 tokio = { workspace = true, features = ["io-std"] }
@@ -67,6 +68,7 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 serial_test.workspace = true
+temp-env.workspace = true
 tempfile = { workspace = true }
 tokio = { workspace = true, features = ["macros", "rt-multi-thread", "test-util"] }
 tracing-subscriber = { workspace = true }
