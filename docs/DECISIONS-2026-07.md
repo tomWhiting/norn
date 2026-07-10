@@ -628,7 +628,8 @@ Each decision below is recorded for owner sign-off; silence = ship.
   Mechanical raw-layer access and merge become crate-internal; advanced
   embedders receive only a sealed validation witness with private fields.
   Documentation telling callers to remember validation is not a security
-  boundary. The current candidate has not yet completed this refinement.
+  boundary. The current candidate implements this refinement; phase acceptance
+  remains gated on whole-phase Gate D.
 - **Source-bearing automation retains provenance.** A single rule scan records
   whether a rule came from user configuration or the working directory.
   `shell_source` is rejected from `.norn/rules`, `.claude/rules`, and
@@ -645,17 +646,18 @@ Each decision below is recorded for owner sign-off; silence = ship.
   against it rather than a mutable process CWD. User-configured paths that
   physically resolve beneath the workspace are normalized at launch so a
   re-pointed alias cannot change trust tier.
-- **Unix workspace reads are descriptor-relative and no-follow.** Every path
-  component is opened without following links, final inputs must be regular
-  files, and directory enumeration stays pinned to the opened directory.
+- **Workspace reads on supported descriptor-capable Unix targets are
+  descriptor-relative and no-follow.** Every path component is opened without
+  following links, final inputs must be regular files, and directory enumeration
+  stays pinned to the opened directory.
   Repository symlinks are rejected even when they point elsewhere inside the
   same repository. Alternate physical spellings such as macOS `/var` and
   `/private/var` are recognized without canonicalizing/following the final
   candidate. The sole scoped exception is validated `.git` metadata needed for
   branch/commit display; it does not grant a general read path.
-- **Non-Unix workspace input currently fails closed.** There is no weaker
-  compatibility fallback to ordinary link-following reads. This is an
-  intentional release limitation until equivalent platform primitives are
+- **Redox, ESP-IDF, and non-Unix workspace input currently fail closed.** There
+  is no weaker compatibility fallback to ordinary link-following reads. This is
+  an intentional release limitation until equivalent platform primitives are
   implemented and reviewed.
 - **Trusted roots are absolute.** Relative `HOME`, `NORN_HOME`, `CODEX_HOME`,
   user prompt files, and user search paths cannot become credential/config
@@ -690,31 +692,34 @@ Each decision below is recorded for owner sign-off; silence = ship.
   identity and the compiled ChatGPT destination. It accepts neither an arbitrary
   `AuthProvider` trait object nor caller-selected token/request authority. Until
   P2 defines acknowledged credential-owner sinks, the P0 static path cannot
-  refresh or rotate; a 401 returns a typed owner-refresh requirement. This
-  constrained replacement is not implemented yet; until it is, Meridian's
-  sealed dispatch credential path is a downstream compile regression.
+  refresh or rotate; a 401 returns a typed owner-refresh requirement. The
+  constrained replacement is implemented and covered by an in-repository
+  public-API fixture; Meridian migration remains separate downstream evidence.
 - **Children inherit provider authority; model text is not authority.** Spawned
   and forked children reuse the parent provider instance. Profile, variant, or
   model-selected strings may select request model behavior but cannot reconstruct
   a provider, resolve a backend-bearing alias, read a credential environment
-  variable, or change endpoint/auth mode. Final regression evidence remains
-  pending.
+  variable, or change endpoint/auth mode. A real-entry regression covers
+  variant, workspace-profile, and fork paths against a hostile backend alias.
 - **Arbitrary OAuth token-authority constructors are unit-test-only.** Enabling
   the public `test-utils` Cargo feature cannot expose constructors that load or
   hold OAuth credentials while selecting a custom refresh-token destination.
 - **Raw API dumps are trusted opt-in artifacts.** Only user-level settings or an
-  explicit CLI option may enable them. On Unix, the final target must be a
-  non-symlink regular file opened without following symlinks and forced to mode
-  `0600`; non-regular targets fail closed.
+  explicit CLI option may enable them. On supported descriptor-capable Unix
+  targets, the final target must be a non-symlink regular file opened without
+  following symlinks and forced to mode `0600`; non-regular targets fail closed.
+  Unsupported targets fail before artifact I/O.
 - **Sensitive persistence artifacts share one private policy.** Session
   data/index/lock/atomic-temporary files, full-output session spools, foreground
   threshold-output logs, background-process spools, and persistent task records
   can contain prompts, reasoning, tool arguments/results, or process output. On
-  Unix their directories are `0700`, files are regular `0600` targets, and every
-  ancestor and final component is traversed descriptor-relatively without
-  following links. Links/non-regular targets fail closed across create, reopen,
-  rewrite, and resume. Sensitive persistence has no relative `.norn` fallback;
-  missing absolute configured/trusted roots are typed failures.
+  supported descriptor-capable Unix targets their directories are `0700`, files
+  are regular `0600` targets, and every ancestor and final component is traversed
+  descriptor-relatively without following links. Redox, ESP-IDF, and non-Unix
+  targets return `Unsupported` before artifact I/O. Links/non-regular targets
+  fail closed across create, reopen, rewrite, and resume. Sensitive persistence
+  has no relative `.norn` fallback; missing absolute configured/trusted roots are
+  typed failures.
 - **Concurrent same-UID replacement has a portable confinement boundary.** A
   link or non-regular entry present when an operation begins is rejected. If a
   same-UID process replaces the final name between validation and a POSIX
@@ -724,20 +729,24 @@ Each decision below is recorded for owner sign-off; silence = ship.
   Portable POSIX APIs cannot promise strict rejection or serializable updates
   against that actor; tests therefore assert outside-sentinel preservation and
   in-root confinement rather than an impossible no-race claim.
-- **Artifact hardening remains an open P0 blocker.** The current candidate still
-  uses ordinary create/open paths in `process/spool.rs`, foreground output and
-  task paths are not uniformly covered, recursive directory creation may follow
-  ancestor links, and relative fallbacks remain. `SEC-15` cannot close until the
-  complete artifact family receives adversarial tests and review.
+- **Artifact hardening is implemented but not yet accepted.** The current
+  candidate routes the P0 artifact family through one descriptor-pinned,
+  no-follow private-root primitive and removes relative fallbacks. Targeted
+  adversarial tests are green, and the independent private-artifact closure
+  review reports `READY` on its owned surface. Whole-phase Gate D remains
+  required before `SEC-15` can close.
 - **Credential diagnostics are structural within the credential-bearing
   runtime/request boundary.** OAuth tokens, PKCE material, user/account claims,
   free-form request options, and sensitive runtime provider state are absent
   from their `Debug`; every response-header value is redacted; OAuth and
   provider errors retain locally authored structural classification, never raw
-  authority/provider text. Non-2xx bodies are streamed and discarded under the
-  existing request timeout, preserving stalled 4xx/5xx timeout/retry semantics.
-  The legacy raw provider-settings container still derives `Debug`; no reachable
-  logging call was found, but P0 does not claim that type is safe to log.
+  authority/provider text. On the generic error-status path, non-redirect bodies
+  are streamed and discarded under the existing request timeout, preserving
+  stalled-body timeout/retry semantics. Specialized 401 refresh and 429 backoff
+  paths drop their bodies without draining; redirects are classified and dropped
+  immediately. The legacy raw provider-settings container still derives
+  `Debug`; no reachable logging call was found, but P0 does not claim that type
+  is safe to log.
 - **Unknown provider terminal discriminators remain distinguishable without raw
   provider text.** Known values use typed mappings. An unknown exact byte
   sequence is represented only by its terminal category and a domain-separated
@@ -766,12 +775,15 @@ Each decision below is recorded for owner sign-off; silence = ship.
 
 The owner approved execution of the staged remediation plan on 2026-07-10; this
 section records the P0 policy and candidate boundaries. Three provisional
-reports later reviewed frozen snapshot `7d121c9`. Workspace trust returned a
-scoped `READY`; credential and transport reports returned blockers, and none
-included a complete machine-gate rerun. The current HEAD and resulting fixes
-remain unreviewed, the separately reported exchange-review artifact is absent,
-and `QUAL-01` currently counts 177 campaign-added unwrap, expect, or panic calls
-hidden by older test allowances. P0 acceptance remains pending.
+reports reviewed frozen snapshot `7d121c9` and drove the closure round. Targeted
+credential/config, transport/streaming, and private-artifact re-reviews now
+report `READY` on their owned surfaces. The candidate is committed through
+`ebb82c8`; the complete machine-gate suite and manual policy audits are green
+and recorded in `reviews/2026-07-11-p0-gate-c-handoff.md`. The added-line audit
+reports zero campaign-added unwrap, unwrap_err, expect, expect_err, or panic
+calls and no new/widened lint suppression. The separately reported
+exchange-review artifact remains absent, and whole-phase Gate D has not
+occurred. P0 acceptance remains pending.
 
 ## 8. OAuth multi-account direction (2026-07-11)
 

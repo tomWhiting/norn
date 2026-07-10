@@ -1,8 +1,12 @@
 # Responses API remediation plan
 
-- **Status:** Active; P0 closure work in progress. Provisional reviews of
-  frozen snapshot `7d121c9` have been received, but no phase gate has passed.
-  Final Gate C and Gate D remain pending.
+- **Status:** Active; the P0 implementation candidate is committed through
+  `ebb82c8`. Targeted credential/config, transport/streaming, and
+  private-artifact closure reviews report `READY` on their owned surfaces.
+  Gate C is green and recorded in the
+  [`P0 Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md). Whole-phase
+  Gate D remains pending. P0 is not accepted, so its phase and evidence-ledger
+  checkboxes remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -12,10 +16,13 @@
 - **P0 follow-up reviews:** credential/endpoint, transport/streaming, and
   workspace-trust reports under
   [`reviews/2026-07-11-remediation-review/`](reviews/2026-07-11-remediation-review/),
-  all reviewing snapshot `7d121c9`. The candidate has advanced beyond that
-  snapshot; final fix-round review remains pending. A separately reported
-  `reviews/2026-07-11-exchange-changeset-review.md` artifact has not been
-  received and is not evidence.
+  all reviewing snapshot `7d121c9`. Subsequent targeted closure re-reviews of
+  credential/config, transport/streaming, and private artifacts report `READY`
+  on their respective surfaces; none is a whole-phase Gate D verdict. The
+  final code range and machine/policy evidence are recorded in the
+  [`P0 Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md). A separately
+  reported `reviews/2026-07-11-exchange-changeset-review.md` artifact has not
+  been received and is not evidence.
 
 ## Purpose
 
@@ -288,7 +295,7 @@ The relevant phase cannot pass Gate A while its decision is open.
 | ID | Required decision | Due | Status / record |
 |---|---|---|---|
 | D0 | CI/merge-gate platform and required-check wiring. P1 remains blocked until a checked-in clean-checkout gate is protected. | P1 | [ ] Open |
-| D1 | Exact compiled OAuth authority/path allowlist, redirect, workspace filesystem/command, and private-artifact policy. Custom trusted-proxy and repository-command consent are out of P0 scope. | P0 | [x] Decided 2026-07-10 and refined by the P0 threat model and provisional review round: accept no override or normalized `https://chatgpt.com[:443]/backend-api/codex[/]`, discard accepted input in favor of the compiled URL, and follow no redirects on credential-bearing clients. Both CWD layers are untrusted even when gitignored. Direct/raw provider authority, backend-selecting aliases, command-bearing hooks/rules, workspace skill shell, convention process categories, and model-selected profile prompt commands are rejected before use. One immutable Unix launch root uses no-follow workspace reads/enumeration; repository symlinks are unsupported and non-Unix workspace input fails closed. Debug-dump hardening is implemented, while private-artifact work remains incomplete across ancestor traversal, foreground output, process spools, task storage, and relative fallbacks under `SEC-15`. Pre-existing private-artifact links/non-regular entries are rejected. Under a concurrent same-UID final-name replacement, the portable invariant is descriptor confinement: the replacement is never followed, no outside target is read/written/deleted, and the operation either fails or affects only the raced entry inside the pinned private root; POSIX does not provide portable strict rejection/serializability against that actor. Response headers remain fully redacted under D1, and redirect refusal follows the structural policy in `DECISIONS-2026-07.md` section 7. Custom API-key endpoints require HTTPS except loopback HTTP. No trusted proxy or implicit project-command consent is admitted. |
+| D1 | Exact compiled OAuth authority/path allowlist, redirect, workspace filesystem/command, and private-artifact policy. Custom trusted-proxy and repository-command consent are out of P0 scope. | P0 | [x] Decided 2026-07-10 and refined by the P0 threat model and provisional review round: accept no override or normalized `https://chatgpt.com[:443]/backend-api/codex[/]`, discard accepted input in favor of the compiled URL, and follow no redirects on credential-bearing clients. Both CWD layers are untrusted even when gitignored. Direct/raw provider authority, backend-selecting aliases, command-bearing hooks/rules, workspace skill shell, convention process categories, and model-selected profile prompt commands are rejected before use. One immutable launch root uses no-follow workspace reads/enumeration on supported descriptor-capable Unix targets; repository symlinks are unsupported, and Redox, ESP-IDF, and non-Unix workspace input fail closed. Debug-dump and private-artifact hardening are implemented in the candidate on the same supported target class, including descriptor-pinned ancestor traversal, foreground and process spools, task storage, and removal of relative sensitive-data fallbacks; unsupported targets fail before artifact I/O, and final review and phase gates remain required before acceptance. Pre-existing private-artifact links/non-regular entries are rejected, and read-only reopen hardens traversed legacy directories and regular files. Under a concurrent same-UID final-name replacement, the portable invariant is descriptor confinement: the replacement is never followed, no outside target is read/written/deleted, and the operation either fails or affects only the raced entry inside the pinned private root; POSIX does not provide portable strict rejection/serializability against that actor. Response headers remain fully redacted under D1, and redirect refusal follows the structural policy in `DECISIONS-2026-07.md` section 7. Custom API-key endpoints require HTTPS except loopback HTTP. No trusted proxy or implicit project-command consent is admitted. |
 | D1A | Non-disclosing representation for unknown provider terminal discriminators: equality semantics, keying, identifier lifetime, output size, and deterministic test control. | P0 | [x] Decided 2026-07-11: known values retain typed mappings; an unknown exact byte sequence is represented only by its terminal category and a domain-separated full HMAC-SHA-256 tag under an OS-random process-lifetime key. The key and raw value are never persisted or logged. A deterministic key seam is crate-private and compiled only under `cfg(test)`; production exposes no public, configuration, or environment override. OS-random initialization failure is a typed fail-closed diagnostic error, never a fixed-key fallback. Tags support equality only within one process and are not cross-run fingerprints. Raw value and byte length are not exposed. |
 | D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
@@ -319,11 +326,13 @@ close the P0 findings.
 
 ## P0. Credential and workspace authority containment
 
-**Status:** [ ] Closure work in progress; **findings addressed by candidate:**
-`SEC-01` through `SEC-14`, `BACKEND-01`; **still blocking:** `SEC-15`,
-`SEC-16`, `BACKEND-02`, `NF-1`, `NF-2`, `QUAL-01`; **evidence seam pending:**
-`SEC-08A`; **gates pending:** final Gate C and Gate D; **dependencies:** D1
-and D1A resolved and refined by the provisional review round.
+**Status:** [ ] Implementation candidate assembled; **findings addressed by
+candidate:** `SEC-01` through `SEC-16`, `BACKEND-01`, `BACKEND-02`, `SEC-08A`,
+`NF-1`, `NF-2`, `NF-4`, and `QUAL-01`; **current evidence:** all three targeted
+closure re-reviews report `READY` on their owned surfaces, the candidate is
+committed through `ebb82c8`, and Gate C is green; **still blocking acceptance:**
+whole-phase Gate D; **dependencies:** D1 and D1A resolved and refined by the
+provisional review round.
 
 ### What this phase fixes
 
@@ -346,16 +355,16 @@ model-selected trusted profile commands, raw provider options/API-shape/name
 collisions, provider-controlled diagnostic text, and non-private session/spool
 artifacts.
 
-The provisional review round found that the public raw `load_settings` and
-`merge_settings` APIs still let an embedder skip provenance validation. It also
-found that removing generic auth-provider injection correctly closed an
-authority bypass but stranded Meridian's legitimate sealed static-Codex path.
-Private persistence remains incomplete across process spools, foreground
-threshold-output logs, task storage, ancestor links, and relative `.norn`
-fallbacks. P0 redaction also removed every discriminator for unknown terminal
-codes, while redirect refusal is reported as an ordinary stream failure. The
-campaign diff currently adds 177 unwrap, expect, or panic calls hidden by older
-blanket test allowances.
+The provisional review round found that public raw settings APIs could skip
+provenance validation, generic auth-provider injection lacked a legitimate
+sealed static-Codex replacement, private persistence was incomplete, unknown
+terminal discriminators lost all correlation, redirects were ordinary stream
+failures, and campaign-added panic-style test helpers hid under older blanket
+allowances. The current candidate contains targeted fixes for those findings,
+including one descriptor-pinned private-artifact primitive and a real-entry
+`SEC-08A` authority regression. Targeted closure reviewers report `READY` on
+credential/config, transport/streaming, and private-artifact surfaces. Those
+fixes are not accepted until whole-phase Gate D passes.
 
 ### Difference after the phase
 
@@ -411,13 +420,15 @@ retain their intended behavior where they are operator-selected.
   root/child/fork context, and route every automatic workspace settings,
   context, nested context, rule, profile, capability, skill/resource, variant,
   and convention read through one provenance-preserving API.
-- [ ] On Unix, walk workspace paths and enumerate directories relative to pinned
-  descriptors without following any symlink; require regular final files and
-  recognize physical path aliases without canonicalizing the final candidate.
-  Reject repository symlinks even when they point inside the repository.
-- [ ] Fail closed when workspace input is present on non-Unix targets until an
-  equivalent no-follow implementation exists. Record this release limitation
-  and intentional compatibility break rather than using a weaker fallback.
+- [ ] On supported descriptor-capable Unix targets, walk workspace paths and
+  enumerate directories relative to pinned descriptors without following any
+  symlink; require regular final files and recognize physical path aliases
+  without canonicalizing the final candidate. Reject repository symlinks even
+  when they point inside the repository.
+- [ ] Fail closed when workspace input is present on Redox, ESP-IDF, or non-Unix
+  targets until an equivalent no-follow implementation exists. Record this
+  release limitation and intentional compatibility break rather than using a
+  weaker fallback.
 - [ ] Normalize configured search paths that physically resolve beneath the
   launch root once, require absolute trusted home/explicit paths, and prevent a
   symlink alias from changing trust tier after classification.
@@ -463,9 +474,12 @@ retain their intended behavior where they are operator-selected.
   reusable turn state, cookies, and redirect locations, and never propagate raw
   OAuth/provider error bodies or provider-controlled terminal text. This claim
   does not include the legacy raw provider-settings container.
-- [ ] Stream and discard non-2xx response bodies within the existing request
-  timeout. Preserve the established stalled-response timeout/retry semantics;
-  do not replace them with an unreviewed broad status-only behavior change.
+- [ ] On the generic error-status path, stream and discard non-redirect bodies
+  within the existing request timeout. Preserve the specialized 401 refresh and
+  429 backoff paths, which drop their response bodies without draining, and
+  classify redirects immediately without reading their bodies. Preserve the
+  established stalled generic-error timeout/retry semantics; do not replace it
+  with an unreviewed broad status-only behavior change.
 - [ ] Preserve distinct unknown `response.failed` codes and incomplete reasons
   without propagating provider-controlled text. Known values retain typed
   mappings; unknown values expose only the D1A process-local keyed opaque tag.
@@ -477,13 +491,15 @@ retain their intended behavior where they are operator-selected.
   redirects are not followed. Do not expose or follow `Location`, and do not
   describe the result as an ordinary stream/body error.
 - [ ] Require debug-dump targets to be regular non-symlink files and mode `0600`
-  on Unix.
+  on supported descriptor-capable Unix targets; fail closed before artifact I/O
+  on unsupported targets.
 - [ ] Require session data, index, lock, atomic temporary, full-output spool,
   foreground threshold-output, process-spool, and persistent-task
   directories/files to be private (`0700` directories, `0600` regular files on
-  Unix), descriptor-relative no-follow on every ancestor and final component,
-  and fail closed on links or non-regular targets across create, reopen,
-  rewrite, and resume.
+  supported descriptor-capable Unix targets), descriptor-relative no-follow on
+  every ancestor and final component, and fail closed on links or non-regular
+  targets across create, reopen, rewrite, and resume. Redox, ESP-IDF, and
+  non-Unix targets return typed `Unsupported` before private-artifact I/O.
 - [ ] Reject pre-existing private-artifact links and non-regular entries. Race
   tests against a concurrent same-UID final-name replacement prove the portable
   D1 boundary: descriptor confinement, no link following, no outside-target
@@ -493,8 +509,8 @@ retain their intended behavior where they are operator-selected.
   storage, and debug output. When neither an absolute configured root nor a
   trusted home exists, return a typed error rather than writing beneath mutable
   CWD.
-- [ ] Replace all 177 campaign-added unwrap, expect, and panic calls currently
-  hidden by pre-existing test allowances. Add or widen no lint suppression.
+- [ ] Remove all 177 campaign-added unwrap, expect, and panic calls identified
+  at frozen snapshot `7d121c9`. Add or widen no lint suppression.
 - [ ] Put new security logic in cohesive modules below 500 production LOC. If a
   changed legacy file is over the limit, bring it below the limit in this phase.
 
@@ -553,9 +569,11 @@ retain their intended behavior where they are operator-selected.
 - [ ] Response-header dump fixtures prove the D1/NF-4 correlation decision is
   exact: every response-header value remains redacted and no credential, cookie,
   redirect target, turn state, or account metadata is exposed.
-- [ ] Malformed SSE, `response.failed`, and non-2xx sentinels prove provider text
-  and control bytes never enter logs/errors; stalled non-2xx fixtures retain the
-  existing typed timeout behavior while the body is streamed and discarded.
+- [ ] Malformed SSE, `response.failed`, and error-status sentinels prove provider
+  text and control bytes never enter logs/errors; stalled generic error-status
+  fixtures retain the existing typed timeout behavior while the body is
+  streamed and discarded. Specialized 401/429 and redirect fixtures prove their
+  status-only paths do not inspect or disclose response bodies.
 - [ ] Distinct unknown failed/incomplete discriminators remain distinguishable
   while raw values, control characters, and secret sentinels never appear.
 - [ ] HTTP 301/302/303/307/308 fixtures produce explicit redirect-policy
@@ -587,20 +605,24 @@ then becomes a P0 blocker:
 - `mcp_servers` and its environment map are merged but currently dormant. They
   require source provenance and explicit consent before any future runtime wiring;
   merge precedence is not authorization.
-- Non-Unix workspace input deliberately fails closed. This protects the trust
-  boundary but is a release compatibility limitation until equivalent no-follow
-  filesystem primitives are implemented and reviewed.
+- Redox, ESP-IDF, and non-Unix workspace input deliberately fail closed. This
+  protects the trust boundary but is a release compatibility limitation until
+  equivalent no-follow filesystem primitives are implemented and reviewed.
 
 ### Review and exit gate
 
-**Current gate state:** pending. Three provisional reports review frozen
-snapshot `7d121c9`; they are archived review input, not Gate D evidence for the
-final P0 candidate. They do not cover the final committed range, do not contain
-a complete Gate C rerun, and identify unresolved P0 work. The workspace-trust
-report's scoped `READY` is not a phase verdict. P0 must complete its fix round,
-pass Gate C, and receive final review against the resulting commit range. The
-separately reported exchange-changeset artifact has not been received and cannot
-count as evidence unless recovered exactly or replaced by a fresh review.
+**Current gate state:** Gate C complete; pre-Gate-D. Three provisional reports
+review frozen snapshot `7d121c9`; they are archived review input, not Gate D
+evidence for the final P0 candidate. Subsequent targeted credential/config,
+transport/streaming, and private-artifact closure reviewers each report `READY`
+on their owned final surfaces. The final code range is committed through
+`ebb82c8`; the complete machine suite and manual policy audits are green and
+recorded in the
+[`P0 Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md). A fresh reviewer
+must now assess the complete P0 range and evidence bundle. No scoped `READY` is
+a whole-phase verdict. The separately reported exchange-changeset artifact has
+not been received and cannot count as evidence unless recovered exactly or
+replaced by a fresh review.
 
 - [ ] A security reviewer threat-models every credential destination, redirect,
   automatic working-directory command, and eager working-directory file read.
