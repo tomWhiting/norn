@@ -72,6 +72,28 @@ pub(super) fn open_root_session(
              session history is incomplete",
         );
     }
+    // Heal a transcript killed mid-turn before the first provider request is
+    // ever assembled from it: a persisted assistant turn whose tool result
+    // never landed (hard kill in the window between the assistant turn and
+    // its ToolResult) would otherwise replay as a `function_call` with no
+    // `function_call_output`, which the Responses API rejects with HTTP 400
+    // on every retry. Runs on every open; it is a no-op on a freshly created
+    // (empty) session and on any already-well-formed log, so a healthy
+    // session file is left untouched. The synthetic results persist through
+    // the store's write-through sink, so the reopened session is well-formed
+    // on disk, not just in memory.
+    let repaired =
+        crate::session::repair_dangling_tool_calls(&opened.store).map_err(NornError::Session)?;
+    if !repaired.is_empty() {
+        tracing::warn!(
+            session_id = %opened.entry.id,
+            repaired_tool_calls = repaired.len(),
+            call_ids = ?repaired,
+            "resume repair: synthesized interrupted-tool-call results for a \
+             transcript killed mid-turn; the reopened session is now \
+             well-formed",
+        );
+    }
     let root_for_children = opened
         .entry
         .rel_path
