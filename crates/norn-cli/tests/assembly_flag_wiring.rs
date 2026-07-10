@@ -39,24 +39,16 @@ fn mock_provider() -> Arc<dyn Provider> {
 /// The merged settings the assembly path consults, loaded exactly as the
 /// CLI drivers do before `builder_from_cli` — from the current working
 /// directory and the isolated `NORN_HOME` / `HOME`.
-fn merged_settings() -> NornSettings {
-    let cwd = std::env::current_dir().expect("cwd");
-    let mut layers = norn::config::load_settings(&cwd).expect("load settings");
-    let mut cli_layer = NornSettings::default();
-    let merged = norn::config::merge_settings(
-        &mut layers.user,
-        &mut layers.project,
-        &mut layers.local,
-        &mut cli_layer,
-    );
-    norn::config::validate_settings(&merged).expect("validate settings");
-    merged
+fn merged_settings() -> Result<NornSettings, BuildError> {
+    let cwd = std::env::current_dir()?;
+    norn::runtime_init::load_merged_settings(&cwd)
+        .map_err(|error| BuildError::Argument(error.to_string()))
 }
 
 /// Resolve the profile pipeline and return the un-built builder (or the
 /// `builder_from_cli` argument error, e.g. an empty `--extension` URI).
 fn resolve_builder(cli: &Cli) -> Result<AgentBuilder, BuildError> {
-    let settings = merged_settings();
+    let settings = merged_settings()?;
     let mut profile = resolve_profile(cli.profile.as_deref()).expect("resolve profile");
     apply_settings_reasoning_to_profile(&settings, &mut profile).expect("settings reasoning");
     let applied = apply_cli_profile_overrides(cli, &mut profile).expect("cli overrides");
@@ -641,7 +633,8 @@ fn auto_compact_reserve_tokens_integer_via_settings_arms() {
 /// naming the key and the accepted forms — never a silent fallback.
 #[test]
 #[serial_test::serial]
-fn auto_compact_reserve_tokens_invalid_settings_string_errors() {
+fn auto_compact_reserve_tokens_invalid_settings_string_errors()
+-> Result<(), Box<dyn std::error::Error>> {
     let home = tempfile::tempdir().expect("home tempdir");
     let workdir = tempfile::tempdir().expect("work tempdir");
     let home_path = home.path().to_path_buf();
@@ -658,11 +651,13 @@ fn auto_compact_reserve_tokens_invalid_settings_string_errors() {
             ("NORN_HOME", Some(home_path.as_os_str())),
             ("HOME", Some(home_path.as_os_str())),
         ],
-        || {
-            std::env::set_current_dir(workdir.path()).expect("chdir");
-            let cwd = std::env::current_dir().expect("cwd");
-            let err =
-                norn::config::load_settings(&cwd).expect_err("an invalid reserve must not load");
+        || -> Result<(), Box<dyn std::error::Error>> {
+            std::env::set_current_dir(workdir.path())?;
+            let cwd = std::env::current_dir()?;
+            let result = norn::runtime_init::load_merged_settings(&cwd);
+            let err = result.err().ok_or_else(|| {
+                std::io::Error::other("an invalid reserve was accepted by settings loading")
+            })?;
             let rendered = err.to_string();
             assert!(
                 rendered.contains("auto_compact_reserve_tokens"),
@@ -672,8 +667,10 @@ fn auto_compact_reserve_tokens_invalid_settings_string_errors() {
                 rendered.contains("off"),
                 "the load error must state the accepted forms (\"off\"): {rendered}",
             );
+            Ok(())
         },
-    );
+    )?;
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------

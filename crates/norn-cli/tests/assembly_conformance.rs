@@ -50,43 +50,30 @@ fn mock_provider() -> Arc<dyn Provider> {
 /// The merged settings the assembly path consults, loaded exactly as the
 /// caller does before `builder_from_cli`. Using the same merged settings
 /// keeps the assertions relative to the hermetic environment.
-fn merged_settings() -> NornSettings {
-    let cwd = std::env::current_dir().expect("cwd");
-    let mut layers = norn::config::load_settings(&cwd).expect("load settings");
-    let mut cli_layer = NornSettings::default();
-    let merged = norn::config::merge_settings(
-        &mut layers.user,
-        &mut layers.project,
-        &mut layers.local,
-        &mut cli_layer,
-    );
-    norn::config::validate_settings(&merged).expect("validate settings");
-    merged
+fn merged_settings() -> Result<NornSettings, norn_cli::cli::BuildError> {
+    let cwd = std::env::current_dir()?;
+    norn::runtime_init::load_merged_settings(&cwd)
+        .map_err(|error| norn_cli::cli::BuildError::Argument(error.to_string()))
 }
 
 /// The unified library assembler's builder, resolving the profile through
 /// the same helper pipeline the CLI drivers run before `builder_from_cli`.
 /// Returned un-built so a caller can chain the driver-specific coordination
 /// envelope before `build()`.
-fn builder_for(cli: &Cli) -> AgentBuilder {
-    let settings = merged_settings();
-    let mut profile = resolve_profile(cli.profile.as_deref()).expect("resolve profile");
-    apply_settings_reasoning_to_profile(&settings, &mut profile).expect("settings reasoning");
-    let applied = apply_cli_profile_overrides(cli, &mut profile).expect("cli overrides");
-    let model_selection =
-        resolve_model_selection(&profile.model, &settings).expect("model selection");
+fn builder_for(cli: &Cli) -> Result<AgentBuilder, norn_cli::cli::BuildError> {
+    let settings = merged_settings()?;
+    let mut profile = resolve_profile(cli.profile.as_deref())?;
+    apply_settings_reasoning_to_profile(&settings, &mut profile)?;
+    let applied = apply_cli_profile_overrides(cli, &mut profile)?;
+    let model_selection = resolve_model_selection(&profile.model, &settings)?;
     profile.model = model_selection.model;
 
     builder_from_cli(cli, mock_provider(), profile, &settings, &applied)
-        .expect("builder_from_cli succeeds")
 }
 
 /// The unified library assembler's parts for a fixed CLI invocation.
-fn build_parts(cli: &Cli) -> AgentParts {
-    builder_for(cli)
-        .build()
-        .expect("build succeeds")
-        .into_parts()
+fn build_parts(cli: &Cli) -> Result<AgentParts, Box<dyn std::error::Error>> {
+    Ok(builder_for(cli)?.build()?.into_parts())
 }
 
 /// Sorted registry tool names.
@@ -120,7 +107,7 @@ fn assert_core_extensions(parts: &AgentParts, label: &str) {
 }
 
 #[test]
-fn builder_from_cli_golden_snapshot() {
+fn builder_from_cli_golden_snapshot() -> Result<(), Box<dyn std::error::Error>> {
     let home = tempfile::tempdir().expect("home tempdir");
     let workdir = tempfile::tempdir().expect("work tempdir");
     // Full hermetic isolation: an empty `HOME` / `NORN_HOME` means no user
@@ -133,18 +120,18 @@ fn builder_from_cli_golden_snapshot() {
             ("NORN_HOME", Some(home_path.as_os_str())),
             ("HOME", Some(home_path.as_os_str())),
         ],
-        || {
-            std::env::set_current_dir(workdir.path()).expect("chdir into isolated workdir");
-            run_snapshot();
+        || -> Result<(), Box<dyn std::error::Error>> {
+            std::env::set_current_dir(workdir.path())?;
+            run_snapshot()
         },
-    );
+    )
 }
 
-fn run_snapshot() {
+fn run_snapshot() -> Result<(), Box<dyn std::error::Error>> {
     // Base invocation: model + no session. The full standard tool set is
     // present, and the core extensions are published.
     let base = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
-    let base_parts = build_parts(&base);
+    let base_parts = build_parts(&base)?;
     assert_core_extensions(&base_parts, "base");
     let base_tools = sorted_tool_names(&base_parts.registry);
     for expected in ["read", "write", "bash", "search"] {
@@ -199,7 +186,7 @@ fn run_snapshot() {
     // guard that the tier is wired, not merely defaulted to None).
     let fast = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session", "--fast"]);
     assert_eq!(
-        build_parts(&fast).loop_context.service_tier,
+        build_parts(&fast)?.loop_context.service_tier,
         Some(ServiceTier::Fast),
         "--fast resolves the service tier onto the loop context",
     );
@@ -215,7 +202,7 @@ fn run_snapshot() {
         "--allowed-tools",
         "read,search",
     ]);
-    let allowed_tools = sorted_tool_names(&build_parts(&allowed).registry);
+    let allowed_tools = sorted_tool_names(&build_parts(&allowed)?.registry);
     assert!(
         allowed_tools.iter().any(|name| name == "read"),
         "--allowed-tools: `read` stays available (got {allowed_tools:?})",
@@ -239,7 +226,7 @@ fn run_snapshot() {
         "--disallowed-tools",
         "bash",
     ]);
-    let disallowed_tools = sorted_tool_names(&build_parts(&disallowed).registry);
+    let disallowed_tools = sorted_tool_names(&build_parts(&disallowed)?.registry);
     assert!(
         !disallowed_tools.iter().any(|name| name == "bash"),
         "--disallowed-tools: `bash` is denied (got {disallowed_tools:?})",
@@ -251,7 +238,7 @@ fn run_snapshot() {
 
     // -c max_turns=7 overlays the agent-loop config.
     let max_turns = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session", "-c", "max_turns=7"]);
-    let max_turns_config = build_parts(&max_turns).config;
+    let max_turns_config = build_parts(&max_turns)?.config;
     let config_json = serde_json::to_value(&max_turns_config).expect("serialize config");
     assert_eq!(
         config_json.get("max_iterations"),
@@ -269,7 +256,7 @@ fn run_snapshot() {
         "high",
     ]);
     assert_eq!(
-        build_parts(&reasoning).loop_context.reasoning_effort,
+        build_parts(&reasoning)?.loop_context.reasoning_effort,
         Some(ReasoningEffort::High),
         "--reasoning-effort high resolves onto the loop context",
     );
@@ -284,7 +271,7 @@ fn run_snapshot() {
         "--variables",
         "foo=bar",
     ]);
-    assert_core_extensions(&build_parts(&variables), "--variables");
+    assert_core_extensions(&build_parts(&variables)?, "--variables");
 
     // --session-name assembles (the task-group slug derives from it); the
     // core extensions still publish.
@@ -296,7 +283,7 @@ fn run_snapshot() {
         "--session-name",
         "my-work",
     ]);
-    assert_core_extensions(&build_parts(&session_name), "--session-name");
+    assert_core_extensions(&build_parts(&session_name)?, "--session-name");
 
     // --event-schema installs the schema set on the loop context.
     let event_schema = Cli::parse_from([
@@ -308,7 +295,7 @@ fn run_snapshot() {
         "text={\"type\":\"string\"}",
     ]);
     assert!(
-        build_parts(&event_schema)
+        build_parts(&event_schema)?
             .loop_context
             .event_schemas
             .is_some(),
@@ -322,7 +309,7 @@ fn run_snapshot() {
     // the prompt cache on the resolved session id.
     let coord_cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--session-name", "conf-coord"]);
     let envelope = cli_coordination_envelope(DEFAULT_DELEGATION_DEPTH);
-    let coord_parts = builder_for(&coord_cli)
+    let coord_parts = builder_for(&coord_cli)?
         .agent_registry(AgentRegistry::shared())
         .child_policy(envelope.child_policy.clone())
         .child_result_capacity(envelope.child_result_capacity)
@@ -357,4 +344,5 @@ fn run_snapshot() {
         Some(session_id.as_str()),
         "coord: open_session wires the resolved session id as the prompt cache_key",
     );
+    Ok(())
 }

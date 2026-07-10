@@ -145,19 +145,14 @@ impl AuthManager {
         }))
     }
 
-    /// Creates a shared manager seeded with an in-memory credential.
-    ///
-    /// Production constructor for embedders that inject credentials
-    /// directly (for example, VM-provisioned tokens handed to the agent
-    /// at startup) instead of loading them from `$CODEX_HOME/auth.json`.
-    /// The manager has no backing store: refreshed tokens are kept in
-    /// memory only and nothing is persisted to disk.
+    /// Creates a shared manager seeded with an in-memory test credential.
     ///
     /// # Errors
     ///
     /// Returns [`AuthManagerBuildError`] when the shared HTTP client
     /// cannot be constructed.
-    pub fn from_static_auth(
+    #[cfg(test)]
+    pub(crate) fn from_static_auth(
         auth: CodexAuth,
         http: OAuthHttpOptions,
     ) -> Result<Arc<Self>, AuthManagerBuildError> {
@@ -182,6 +177,7 @@ impl AuthManager {
         Self::static_auth_with_token_url(auth, token_url, OAuthHttpOptions::default())
     }
 
+    #[cfg(test)]
     fn static_auth_with_token_url(
         auth: CodexAuth,
         token_url: String,

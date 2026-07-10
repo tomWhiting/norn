@@ -24,17 +24,17 @@
 //!   dispatch as the runtime consent boundary.
 
 pub mod loader;
-pub mod merge;
+pub(crate) mod merge;
 pub mod paths;
 pub mod permissions;
 mod provider_security;
 pub mod types;
 pub mod validate;
 
-pub use loader::{LoadedSettings, load_settings, local_settings_path, project_settings_path};
-pub use merge::merge_settings;
+pub use loader::{local_settings_path, project_settings_path};
+pub(crate) use merge::merge_settings;
 pub use permissions::{PermissionDecision, PermissionPolicy};
-pub use provider_security::validate_working_directory_authority;
+pub(crate) use provider_security::validate_working_directory_authority;
 pub use types::{
     AgentSettings, AutoCompactReserve, ContextSettings, HookEntry, HookSettings,
     LengthOverrideEntry, McpServerSettings, ModelAliasSelection, ModelAliasSettings, NornSettings,

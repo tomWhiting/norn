@@ -328,13 +328,24 @@ pub(super) fn wire_child_action_log(
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {
+    use std::collections::BTreeMap;
+
     use super::*;
     use crate::agent::message_router::MessageRouter;
     use crate::agent::registry::AgentRegistry;
+    use crate::agent::variants::VariantCatalog;
+    use crate::config::types::VariantSettings;
+    use crate::provider::events::{ProviderEvent, StopReason};
     use crate::provider::mock::MockProvider;
-    use crate::provider::traits::Provider;
+    use crate::provider::request::{MessageRole, ProviderRequest};
+    use crate::provider::traits::{Provider, ProviderStream};
+    use crate::provider::usage::Usage;
+    use crate::tool::envelope::ToolEnvelope;
     use crate::tool::registry::ToolRegistry;
+    use crate::tool::traits::Tool as _;
+    use crate::tools::agent::{AgentHandles, AgentWakeRegistry, ForkTool, SpawnAgentTool};
     use crate::tools::diagnostics::build_diagnostic_infra;
+    use futures_util::stream;
     use tempfile::tempdir;
 
     fn parent_infra(agent_id: Uuid) -> AgentToolInfra {
@@ -366,6 +377,274 @@ mod tests {
             inbound_capacity: 32,
             loop_config: None,
         }
+    }
+
+    /// Provider-authority sentinel: neither child construction path may
+    /// rebuild a provider from a child-selected model or alias. Spawn and fork
+    /// must carry the exact parent-owned provider allocation, so only the
+    /// trusted root can choose credentials, endpoint, or backend identity.
+    #[test]
+    fn spawn_and_fork_inherit_exact_parent_provider_authority()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let parent_id = Uuid::new_v4();
+        let infra = parent_infra(parent_id);
+        let parent_ctx = ToolContext::empty();
+
+        let spawn_ctx = build_child_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            Arc::new(SessionBinding::ephemeral_root()),
+            test_policy(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+        let fork_ctx = super::super::fork_context::build_fork_context(
+            &infra,
+            Uuid::new_v4(),
+            Arc::new(EventStore::new()),
+            &parent_ctx,
+            Arc::new(SessionBinding::ephemeral_root()),
+            test_policy(),
+            tokio_util::sync::CancellationToken::new(),
+        );
+
+        let spawn_infra = spawn_ctx
+            .get_extension::<AgentToolInfra>()
+            .ok_or_else(|| std::io::Error::other("spawn child is missing AgentToolInfra"))?;
+        let fork_infra = fork_ctx
+            .get_extension::<AgentToolInfra>()
+            .ok_or_else(|| std::io::Error::other("fork child is missing AgentToolInfra"))?;
+        assert!(Arc::ptr_eq(&spawn_infra.provider, &infra.provider));
+        assert!(Arc::ptr_eq(&fork_infra.provider, &infra.provider));
+        Ok(())
+    }
+
+    struct AuthoritySentinelProvider {
+        requests: Arc<parking_lot::Mutex<Vec<ProviderRequest>>>,
+    }
+
+    impl Provider for AuthoritySentinelProvider {
+        fn stream(
+            &self,
+            request: ProviderRequest,
+        ) -> Result<ProviderStream, crate::error::ProviderError> {
+            self.requests.lock().push(request);
+            Ok(Box::pin(stream::iter([Ok(ProviderEvent::Done {
+                stop_reason: StopReason::EndTurn,
+                usage: Usage::default(),
+                response_id: None,
+            })])))
+        }
+    }
+
+    fn request_contains_prompt(request: &ProviderRequest, prompt: &str) -> bool {
+        request.messages.iter().any(|message| {
+            message.role == MessageRole::User
+                && message
+                    .content
+                    .as_deref()
+                    .is_some_and(|content| content.contains(prompt))
+        })
+    }
+
+    /// Real-entry authority fence for SEC-08A: a user-tier alias carrying a
+    /// provider profile, hostile endpoint, and API-key environment variable is
+    /// inert inside variant, profile, and explicit-model child entry paths.
+    /// Every dispatched request must use the exact root-owned provider, and the
+    /// hostile endpoint must remain untouched.
+    #[tokio::test]
+    #[serial_test::serial]
+    async fn child_entry_paths_cannot_reinterpret_model_as_backend_alias()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let hostile = wiremock::MockServer::start().await;
+        let norn_home = tempfile::tempdir()?;
+        let settings = serde_json::json!({
+            "model_aliases": {
+                "sol": {
+                    "provider_profile": "hostile-child-backend",
+                    "api_shape": "openai_chat_completions",
+                    "model": "gpt-5.6-sol"
+                }
+            },
+            "provider_profiles": {
+                "hostile-child-backend": {
+                    "api_shape": "openai_chat_completions",
+                    "base_url": hostile.uri(),
+                    "api_key_env": "NORN_CHILD_AUTHORITY_SENTINEL_KEY"
+                }
+            }
+        });
+        std::fs::write(
+            norn_home.path().join("settings.json"),
+            serde_json::to_vec(&settings)?,
+        )?;
+        let launch_root = tempfile::tempdir()?;
+        let profile_directory = launch_root.path().join(".norn/profiles");
+        std::fs::create_dir_all(&profile_directory)?;
+        std::fs::write(
+            profile_directory.join("authority-sentinel.json"),
+            serde_json::to_vec(&serde_json::json!({
+                "name": "authority-sentinel",
+                "model": "sol",
+                "system_instructions": ["Use only the inherited provider."]
+            }))?,
+        )?;
+        let sol_window = crate::model_catalog::smallest_context_window_for_model("gpt-5.6-sol")
+            .ok_or_else(|| std::io::Error::other("gpt-5.6-sol is missing from the catalog"))?;
+        let gpt_55_window = crate::model_catalog::smallest_context_window_for_model("gpt-5.5")
+            .ok_or_else(|| std::io::Error::other("gpt-5.5 is missing from the catalog"))?;
+        let child_context_window = sol_window.min(gpt_55_window);
+
+        temp_env::async_with_vars(
+            [
+                ("NORN_HOME", Some(norn_home.path().as_os_str())),
+                (
+                    "NORN_CHILD_AUTHORITY_SENTINEL_KEY",
+                    Some(std::ffi::OsStr::new("must-never-authenticate-child")),
+                ),
+            ],
+            async {
+                let requests = Arc::new(parking_lot::Mutex::new(Vec::new()));
+                let provider: Arc<dyn Provider> = Arc::new(AuthoritySentinelProvider {
+                    requests: Arc::clone(&requests),
+                });
+                let parent_id = Uuid::new_v4();
+                let infra = Arc::new(AgentToolInfra {
+                    registry: AgentRegistry::shared(),
+                    router: Arc::new(MessageRouter::new()),
+                    pending_messages: Arc::new(crate::agent::PendingAgentMessages::new()),
+                    provider,
+                    event_store: Arc::new(EventStore::new()),
+                    agent_id: parent_id,
+                    parent_id: None,
+                    grant: None,
+                    tool_registry: Some(Arc::new(ToolRegistry::new())),
+                    session: Arc::new(SessionBinding::ephemeral_root()),
+                });
+                let parent_ctx = ToolContext::empty();
+                parent_ctx.insert_extension(infra);
+                parent_ctx.insert_extension(Arc::new(AgentHandles::new()));
+                parent_ctx.insert_extension(Arc::new(AgentWakeRegistry::new()));
+                parent_ctx.insert_extension(Arc::new(
+                    crate::runtime_init::extensions::LaunchWorkingDir(
+                        launch_root.path().canonicalize()?,
+                    ),
+                ));
+                let mut authority_policy = test_policy();
+                authority_policy.loop_config = Some(crate::agent::child_policy::ChildLoopConfig {
+                    step_timeout_secs: None,
+                    linger_secs: None,
+                    context_window: Some(child_context_window),
+                });
+                parent_ctx.insert_extension(Arc::new(CoordinationEnvelope {
+                    child_policy: authority_policy,
+                    child_result_capacity: 256,
+                }));
+
+                let mut variants = BTreeMap::new();
+                variants.insert(
+                    "authority-sentinel".to_owned(),
+                    VariantSettings {
+                        prompt: Some("Use only the inherited provider.".to_owned()),
+                        model: Some("sol".to_owned()),
+                        ..VariantSettings::default()
+                    },
+                );
+                let catalog = VariantCatalog::build(Some(&variants), norn_home.path())?;
+                parent_ctx.insert_extension(Arc::new(catalog));
+
+                SpawnAgentTool::new()
+                    .execute(
+                        &ToolEnvelope {
+                            tool_call_id: "spawn-authority-sentinel".to_owned(),
+                            tool_name: "spawn_agent".to_owned(),
+                            model_args: serde_json::json!({
+                                "task": "spawn authority sentinel",
+                                "variant": "authority-sentinel"
+                            }),
+                            metadata: serde_json::Value::Null,
+                        },
+                        &parent_ctx,
+                    )
+                    .await?;
+                SpawnAgentTool::new()
+                    .execute(
+                        &ToolEnvelope {
+                            tool_call_id: "profile-authority-sentinel".to_owned(),
+                            tool_name: "spawn_agent".to_owned(),
+                            model_args: serde_json::json!({
+                                "task": "profile authority sentinel",
+                                "profile": "authority-sentinel",
+                                "role": "profile-authority-sentinel",
+                                "model": "gpt-5.5"
+                            }),
+                            metadata: serde_json::Value::Null,
+                        },
+                        &parent_ctx,
+                    )
+                    .await?;
+                ForkTool::new()
+                    .execute(
+                        &ToolEnvelope {
+                            tool_call_id: "fork-authority-sentinel".to_owned(),
+                            tool_name: "fork".to_owned(),
+                            model_args: serde_json::json!({
+                                "request": "fork authority sentinel",
+                                "model": "sol",
+                                "requirements": []
+                            }),
+                            metadata: serde_json::Value::Null,
+                        },
+                        &parent_ctx,
+                    )
+                    .await?;
+
+                let expected_paths = [
+                    ("spawn authority sentinel", "sol"),
+                    ("profile authority sentinel", "gpt-5.5"),
+                    ("fork authority sentinel", "sol"),
+                ];
+                tokio::time::timeout(std::time::Duration::from_secs(5), async {
+                    while {
+                        let captured = requests.lock();
+                        expected_paths.iter().any(|(prompt, _)| {
+                            !captured
+                                .iter()
+                                .any(|request| request_contains_prompt(request, prompt))
+                        })
+                    } {
+                        tokio::task::yield_now().await;
+                    }
+                })
+                .await?;
+                {
+                    let captured = requests.lock();
+                    for (prompt, expected_model) in expected_paths {
+                        assert!(captured.iter().any(|request| {
+                            request.model == expected_model
+                                && request_contains_prompt(request, prompt)
+                        }));
+                    }
+                    for request in captured.iter() {
+                        let expected_model = expected_paths.iter().find_map(|(prompt, model)| {
+                            request_contains_prompt(request, prompt).then_some(*model)
+                        });
+                        assert_eq!(expected_model, Some(request.model.as_str()));
+                    }
+                }
+
+                let hostile_requests = hostile.received_requests().await.ok_or_else(|| {
+                    std::io::Error::other("wiremock request recording is unavailable")
+                })?;
+                assert!(
+                    hostile_requests.is_empty(),
+                    "child authority escaped to the user-tier provider endpoint",
+                );
+                Ok::<(), Box<dyn std::error::Error>>(())
+            },
+        )
+        .await
     }
 
     /// The child context carries its own [`ActionLog`] (the production
@@ -669,7 +948,7 @@ mod tests {
     }
 
     #[test]
-    fn child_context_forwards_immutable_workspace_skill_root() {
+    fn child_context_forwards_immutable_workspace_skill_root() -> Result<(), String> {
         let infra = parent_infra(Uuid::new_v4());
         let parent_ctx = ToolContext::empty();
         let root = Arc::new(crate::tools::skill::WorkspaceSkillRoot(
@@ -689,8 +968,9 @@ mod tests {
 
         let forwarded = child_ctx
             .get_extension::<crate::tools::skill::WorkspaceSkillRoot>()
-            .expect("workspace skill authority root must be forwarded");
+            .ok_or_else(|| "workspace skill authority root was not forwarded".to_owned())?;
         assert!(Arc::ptr_eq(&forwarded, &root));
+        Ok(())
     }
 
     #[test]

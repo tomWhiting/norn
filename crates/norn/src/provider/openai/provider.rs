@@ -7,7 +7,10 @@ use super::backend::OpenAiBackend;
 use super::execute::SenderProvider;
 use super::rate_limiter::RateLimiter;
 use crate::error::ProviderError;
-use crate::provider::auth::{AuthProvider, build_from_auth_source};
+use crate::provider::auth::{
+    AuthProvider, AuthSource, StaticCodexAuthProvider, StaticCodexCredential,
+    build_from_auth_source,
+};
 use crate::provider::events::ProviderEvent;
 use crate::provider::exec::{DEFAULT_RETRY_BACKOFF, StreamExecutor};
 use crate::provider::request::{ProviderConfig, ProviderOptions, ProviderRequest};
@@ -69,6 +72,50 @@ impl OpenAiProvider {
         let provider = Self::from_parts(config, backend, auth_provider)?;
         startup_trace::elapsed("openai_http_provider_build_done", provider_started);
         Ok(provider)
+    }
+
+    /// Constructs a Codex subscription provider from a validated in-memory
+    /// credential without reading or writing the shared Codex credential
+    /// store.
+    ///
+    /// This path is deliberately non-refreshing. A `401 Unauthorized`
+    /// response is surfaced as an authentication error so the credential
+    /// owner can replace the dispatch-scoped credential; Norn never spends or
+    /// persists the credential's refresh token. The provider configuration
+    /// must select OAuth with no Codex-home path, and backend resolution pins
+    /// the request destination to the compiled `ChatGPT` Codex endpoint.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ProviderError::InvalidRequest`] when `config` selects an API
+    /// key, a Codex-home path, or a non-canonical destination. Returns
+    /// [`ProviderError::ConnectionFailed`] when the HTTP client cannot be
+    /// built.
+    pub fn with_static_codex_credential(
+        config: ProviderConfig,
+        credential: StaticCodexCredential,
+    ) -> Result<Self, ProviderError> {
+        match &config.auth_source {
+            AuthSource::OAuth { codex_home: None } => {}
+            AuthSource::OAuth {
+                codex_home: Some(_),
+            } => {
+                return Err(ProviderError::InvalidRequest {
+                    message: "static Codex credentials cannot be combined with a Codex-home path"
+                        .to_owned(),
+                });
+            }
+            AuthSource::ApiKey { .. } => {
+                return Err(ProviderError::InvalidRequest {
+                    message: "static Codex credentials require the OAuth Codex backend".to_owned(),
+                });
+            }
+        }
+
+        let backend = OpenAiBackend::resolve(&config.auth_source, config.base_url.as_deref())?;
+        let auth_provider: Arc<dyn AuthProvider> =
+            Arc::new(StaticCodexAuthProvider::new(credential));
+        Self::from_parts(config, backend, auth_provider)
     }
 
     /// Constructs a provider directly from a pre-built [`AuthProvider`]. Used
@@ -200,8 +247,11 @@ const _: fn() = || {
 #[cfg(test)]
 mod security_tests {
     use super::*;
-    use crate::provider::auth::{AuthSource, MockAuthProvider};
+    use crate::provider::auth::{
+        AuthSource, MockAuthProvider, StaticCodexAuthProvider, StaticCodexCredential,
+    };
     use crate::provider::request::{Message, MessageRole, SecretString, ServiceTier};
+    use futures_util::StreamExt;
 
     fn oauth_config(base_url: Option<&str>) -> ProviderConfig {
         ProviderConfig {
@@ -216,6 +266,188 @@ mod security_tests {
             retry_backoff: None,
             retry_after_ceiling: None,
         }
+    }
+
+    fn static_credential(
+        access_token: &str,
+        account_id: Option<&str>,
+    ) -> Result<StaticCodexCredential, ProviderError> {
+        StaticCodexCredential::new(
+            SecretString::new(access_token),
+            account_id.map(SecretString::new),
+        )
+    }
+
+    #[tokio::test]
+    async fn static_codex_credential_pins_endpoint_and_request_headers()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let credential = static_credential("dispatch-access-token", Some("dispatch-account"))?;
+        let provider =
+            OpenAiProvider::with_static_codex_credential(oauth_config(None), credential)?;
+
+        let request = provider
+            .auth_provider
+            .apply_auth(reqwest::Client::new().post(provider.endpoint()))
+            .await?
+            .build()?;
+        assert_eq!(
+            request.url().as_str(),
+            "https://chatgpt.com/backend-api/codex/responses",
+        );
+        let authorization = request
+            .headers()
+            .get(reqwest::header::AUTHORIZATION)
+            .ok_or_else(|| std::io::Error::other("Authorization header is missing"))?
+            .to_str()?;
+        let account_id = request
+            .headers()
+            .get("chatgpt-account-id")
+            .ok_or_else(|| std::io::Error::other("chatgpt-account-id header is missing"))?
+            .to_str()?;
+        assert_eq!(authorization, "Bearer dispatch-access-token");
+        assert_eq!(account_id, "dispatch-account");
+        let unauthorized = provider.auth_provider.on_unauthorized().await;
+        let unauthorized_error = unauthorized.err().ok_or_else(|| {
+            std::io::Error::other("dispatch-scoped credential attempted an internal refresh")
+        })?;
+        let unauthorized_rendered = unauthorized_error.to_string();
+        assert!(unauthorized_rendered.contains("credential owner must replace or refresh"));
+        assert!(!unauthorized_rendered.contains("dispatch-access-token"));
+        Ok(())
+    }
+
+    #[tokio::test]
+    async fn static_codex_401_request_path_requires_owner_credential_replacement()
+    -> Result<(), Box<dyn std::error::Error>> {
+        use wiremock::matchers::{header, method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .and(path("/responses"))
+            .and(header("Authorization", "Bearer rejected-dispatch-token"))
+            .and(header("chatgpt-account-id", "dispatch-account"))
+            .respond_with(
+                ResponseTemplate::new(401).set_body_string("hostile-authority-body-secret"),
+            )
+            .mount(&server)
+            .await;
+
+        let credential = static_credential("rejected-dispatch-token", Some("dispatch-account"))?;
+        let auth_provider: Arc<dyn AuthProvider> =
+            Arc::new(StaticCodexAuthProvider::new(credential));
+        // The public constructor's compiled-endpoint binding is asserted
+        // separately above. This private test-only assembly substitutes only
+        // the transport destination so a real 401 can exercise the complete
+        // Provider::stream -> StreamExecutor -> owner-handoff path.
+        let provider = OpenAiProvider::from_parts(
+            oauth_config(None),
+            super::super::backend::OpenAiBackend::ResponsesApi {
+                base_url: server.uri(),
+            },
+            auth_provider,
+        )?;
+        let request = ProviderRequest {
+            messages: vec![message(MessageRole::User, "exercise static auth")],
+            tools: Vec::new(),
+            model: "gpt-5.6-sol".to_owned(),
+            reasoning_effort: None,
+            reasoning_summary: None,
+            service_tier: None,
+            config: None,
+            cache_key: None,
+            previous_response_id: None,
+            store: false,
+            context_management: None,
+        };
+
+        let mut stream = provider.stream(request)?;
+        let reason = loop {
+            match stream.next().await {
+                Some(Err(ProviderError::AuthenticationFailed { reason })) => break reason,
+                Some(Err(other)) => {
+                    return Err(std::io::Error::other(format!(
+                        "unexpected provider error after static credential 401: {other}",
+                    ))
+                    .into());
+                }
+                Some(Ok(_)) => {}
+                None => {
+                    return Err(std::io::Error::other(
+                        "static credential 401 produced no authentication error",
+                    )
+                    .into());
+                }
+            }
+        };
+        assert!(reason.contains("credential owner must replace or refresh"));
+        assert!(!reason.contains("rejected-dispatch-token"));
+        assert!(!reason.contains("hostile-authority-body-secret"));
+
+        let requests = server
+            .received_requests()
+            .await
+            .ok_or_else(|| std::io::Error::other("wiremock request recording is unavailable"))?;
+        assert_eq!(requests.len(), 1, "401 must not trigger an internal retry");
+        Ok(())
+    }
+
+    #[test]
+    fn static_codex_credential_rejects_empty_and_malformed_header_values()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let empty_result = StaticCodexCredential::new(SecretString::new(""), None);
+        let empty_error = empty_result
+            .err()
+            .ok_or_else(|| std::io::Error::other("empty static access token was accepted"))?;
+        assert!(empty_error.to_string().contains("empty"));
+
+        let malformed_result = StaticCodexCredential::new(
+            SecretString::new("line\nbreak-secret"),
+            Some(SecretString::new("account-secret")),
+        );
+        let malformed_error = malformed_result
+            .err()
+            .ok_or_else(|| std::io::Error::other("non-header-safe access token was accepted"))?;
+        let malformed_rendered = malformed_error.to_string();
+        assert!(malformed_rendered.contains("valid HTTP header value"));
+        assert!(!malformed_rendered.contains("line"));
+        assert!(!malformed_rendered.contains("account-secret"));
+
+        let malformed_account_result = StaticCodexCredential::new(
+            SecretString::new("valid-access-secret"),
+            Some(SecretString::new("account\nbreak-secret")),
+        );
+        let malformed_account_error = malformed_account_result
+            .err()
+            .ok_or_else(|| std::io::Error::other("non-header-safe account id was accepted"))?;
+        let malformed_account_rendered = malformed_account_error.to_string();
+        assert!(malformed_account_rendered.contains("valid HTTP header value"));
+        assert!(!malformed_account_rendered.contains("valid-access-secret"));
+        assert!(!malformed_account_rendered.contains("break-secret"));
+        Ok(())
+    }
+
+    #[test]
+    fn static_codex_constructor_rejects_non_codex_config_without_secret_disclosure()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let credential = static_credential("dispatch-secret", None)?;
+        let config = ProviderConfig {
+            auth_source: AuthSource::ApiKey {
+                key: SecretString::new("config-secret"),
+            },
+            base_url: Some("https://attacker.example/v1".to_owned()),
+            ..oauth_config(None)
+        };
+        let result = OpenAiProvider::with_static_codex_credential(config, credential);
+        let error = result.err().ok_or_else(|| {
+            std::io::Error::other("static Codex auth accepted an API-key backend")
+        })?;
+        let rendered = error.to_string();
+        assert!(rendered.contains("OAuth Codex backend"));
+        assert!(!rendered.contains("config-secret"));
+        assert!(!rendered.contains("dispatch-secret"));
+        assert!(!rendered.contains("attacker.example"));
+        Ok(())
     }
 
     #[test]

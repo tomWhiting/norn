@@ -44,7 +44,7 @@ mod primitives;
 mod scalar_sections;
 mod settings;
 
-pub use settings::merge_settings;
+pub(crate) use settings::merge_settings;
 
 #[cfg(test)]
 mod tests;

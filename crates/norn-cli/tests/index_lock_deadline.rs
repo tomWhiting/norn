@@ -21,6 +21,7 @@
 
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
+use std::path::Path;
 use std::time::Duration;
 
 use norn::config::{AgentSettings, NornSettings, validate_settings};
@@ -41,6 +42,16 @@ fn settings_with_deadline_ms(ms: u64) -> NornSettings {
         }),
         ..NornSettings::default()
     }
+}
+
+fn write_deadline_settings(path: &Path, ms: u64) -> Result<(), std::io::Error> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(
+        path,
+        format!(r#"{{"agent":{{"index_lock_deadline_ms":{ms}}}}}"#),
+    )
 }
 
 /// The settings key deserialises from JSON, passes semantic validation,
@@ -65,24 +76,27 @@ fn c_override_outranks_settings() {
     assert_eq!(deadline, Duration::from_millis(75));
 }
 
-/// Review A3 (2026-07-06): the merge layer carries
+/// Review A3 (2026-07-06): the sealed settings transaction carries
 /// `agent.index_lock_deadline_ms` across settings tiers — local beats
 /// project beats user — and the merged winner is what
 /// [`resolve_index_lock_deadline`] applies. Deleting the field's
 /// `pick_scalar` arm in `merge_agent` fails this fence.
 #[test]
-fn merged_tiers_local_beats_project_beats_user_through_resolution() {
-    use norn::config::merge_settings;
+#[serial_test::serial]
+fn merged_tiers_local_beats_project_beats_user_through_resolution()
+-> Result<(), Box<dyn std::error::Error>> {
+    let norn_home = tempfile::tempdir()?;
+    let cwd = tempfile::tempdir()?;
+    write_deadline_settings(&norn_home.path().join("settings.json"), 1_000)?;
+    write_deadline_settings(&cwd.path().join(".norn/settings.json"), 2_000)?;
+    write_deadline_settings(&cwd.path().join(".norn/settings.local.json"), 3_000)?;
+    let merged = temp_env::with_var("NORN_HOME", Some(norn_home.path().as_os_str()), || {
+        norn::runtime_init::load_merged_settings(cwd.path())
+    })?;
 
-    let mut user = settings_with_deadline_ms(1_000);
-    let mut project = settings_with_deadline_ms(2_000);
-    let mut local = settings_with_deadline_ms(3_000);
-    let mut cli_layer = NornSettings::default();
-    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli_layer);
-    validate_settings(&merged).unwrap();
-
-    let deadline = resolve_index_lock_deadline(&merged, &ConfigOverrides::default()).unwrap();
+    let deadline = resolve_index_lock_deadline(&merged, &ConfigOverrides::default())?;
     assert_eq!(deadline, Duration::from_secs(3), "local tier wins");
+    Ok(())
 }
 
 /// Review A3 (2026-07-06): a value set only in the user tier survives
@@ -90,15 +104,15 @@ fn merged_tiers_local_beats_project_beats_user_through_resolution() {
 /// resolve to the user's value, never fall through to the compiled
 /// default as if the setting had been dropped.
 #[test]
-fn user_tier_only_deadline_survives_merge_through_resolution() {
-    use norn::config::merge_settings;
-
-    let mut user = settings_with_deadline_ms(1_234);
-    let mut project = NornSettings::default();
-    let mut local = NornSettings::default();
-    let mut cli_layer = NornSettings::default();
-    let merged = merge_settings(&mut user, &mut project, &mut local, &mut cli_layer);
-    validate_settings(&merged).unwrap();
+#[serial_test::serial]
+fn user_tier_only_deadline_survives_merge_through_resolution()
+-> Result<(), Box<dyn std::error::Error>> {
+    let norn_home = tempfile::tempdir()?;
+    let cwd = tempfile::tempdir()?;
+    write_deadline_settings(&norn_home.path().join("settings.json"), 1_234)?;
+    let merged = temp_env::with_var("NORN_HOME", Some(norn_home.path().as_os_str()), || {
+        norn::runtime_init::load_merged_settings(cwd.path())
+    })?;
     assert_eq!(
         merged
             .agent
@@ -108,13 +122,14 @@ fn user_tier_only_deadline_survives_merge_through_resolution() {
         "the merge must not drop a user-tier-only value",
     );
 
-    let deadline = resolve_index_lock_deadline(&merged, &ConfigOverrides::default()).unwrap();
+    let deadline = resolve_index_lock_deadline(&merged, &ConfigOverrides::default())?;
     assert_eq!(deadline, Duration::from_millis(1_234));
     assert_ne!(
         deadline,
         Duration::from_millis(DEFAULT_INDEX_LOCK_DEADLINE_MS),
         "the user-tier value must win over the compiled default",
     );
+    Ok(())
 }
 
 /// With no settings and no `-c` override the owner-ruled compiled default

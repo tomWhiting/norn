@@ -104,6 +104,18 @@ impl std::fmt::Debug for ProviderSettingsResolved {
 
 /// Load and validate user/project/local settings from the supplied CWD.
 ///
+/// Raw loading and mechanical merging are intentionally not public API. An
+/// external embedder cannot obtain unvalidated working-directory layers or
+/// merge them while erasing their provenance:
+///
+/// ```compile_fail
+/// use norn::config::loader::load_settings;
+/// ```
+///
+/// ```compile_fail
+/// use norn::config::merge_settings;
+/// ```
+///
 /// # Errors
 ///
 /// Returns [`NornError::Config`] when a settings layer fails to load or the
@@ -271,7 +283,7 @@ pub(crate) fn load_runtime_base_at_launch_root(
         .map(|path| pin_skill_search_path(cwd, path))
         .collect::<Vec<_>>();
     let skill_catalog = Arc::new(SkillCatalog::scan_with_workspace(&skill_paths, cwd));
-    let shared_task_store = build_shared_task_store(task_group_slug);
+    let shared_task_store = build_shared_task_store(task_group_slug)?;
     let iteration_monitor = iteration_monitor_from_profile(profile)?;
 
     Ok(LoadedRuntimeBase {
@@ -508,14 +520,19 @@ fn merge_discovered_rules(
     })
 }
 
-fn build_shared_task_store(group_slug: Option<&str>) -> Arc<SharedTaskStore> {
+fn build_shared_task_store(group_slug: Option<&str>) -> Result<Arc<SharedTaskStore>, NornError> {
     let root = crate::config::paths::norn_dir()
-        .unwrap_or_else(|| PathBuf::from(".norn"))
+        .ok_or_else(|| {
+            invalid_config(
+                "persistent task storage requires an absolute NORN_HOME or user home directory"
+                    .to_owned(),
+            )
+        })?
         .join("tasks");
     let slug = group_slug.map_or_else(|| "default".to_string(), sanitise_slug);
     let disk = DiskTaskStore::new(root, slug);
     let store: Arc<dyn TaskStore> = Arc::new(disk);
-    Arc::new(SharedTaskStore(store))
+    Ok(Arc::new(SharedTaskStore(store)))
 }
 
 fn sanitise_slug(raw: &str) -> String {
@@ -826,7 +843,8 @@ mod tests {
     /// `.meridian` rules.
     #[tokio::test]
     #[serial_test::serial]
-    async fn merge_discovered_rules_scans_all_four_tiers() {
+    async fn merge_discovered_rules_scans_all_four_tiers() -> Result<(), Box<dyn std::error::Error>>
+    {
         let user_home = tempfile::tempdir().unwrap();
         let cwd = tempfile::tempdir().unwrap();
         let _guard = NornHomeGuard::set(user_home.path());
@@ -852,9 +870,9 @@ mod tests {
             "meridian rule",
         );
 
-        let engine = merge_discovered_rules(None, &cwd.path().canonicalize().unwrap())
-            .expect("valid rules")
-            .expect("rules discovered");
+        let launch_root = cwd.path().canonicalize()?;
+        let engine = merge_discovered_rules(None, &launch_root)?
+            .ok_or_else(|| std::io::Error::other("no rules were discovered"))?;
         for (path, body) in [
             ("src/a.proj", "project rule"),
             ("src/a.user", "user rule"),
@@ -868,13 +886,15 @@ mod tests {
                 "tier rule for {path} must fire"
             );
         }
+        Ok(())
     }
 
     /// Earlier tiers shadow later ones on rule-ID collision: a project
     /// `.norn/rules` rule wins over a same-named `.claude/rules` rule.
     #[tokio::test]
     #[serial_test::serial]
-    async fn merge_discovered_rules_project_tier_shadows_claude_tier() {
+    async fn merge_discovered_rules_project_tier_shadows_claude_tier()
+    -> Result<(), Box<dyn std::error::Error>> {
         let user_home = tempfile::tempdir().unwrap();
         let cwd = tempfile::tempdir().unwrap();
         let _guard = NornHomeGuard::set(user_home.path());
@@ -890,11 +910,12 @@ mod tests {
             "from claude",
         );
 
-        let engine = merge_discovered_rules(None, &cwd.path().canonicalize().unwrap())
-            .expect("valid rules")
-            .expect("rules discovered");
+        let launch_root = cwd.path().canonicalize()?;
+        let engine = merge_discovered_rules(None, &launch_root)?
+            .ok_or_else(|| std::io::Error::other("no rules were discovered"))?;
         let content = injected_content(&engine, "src/lib.rs").await;
         assert_eq!(content.as_deref(), Some("from project"));
+        Ok(())
     }
 
     #[test]

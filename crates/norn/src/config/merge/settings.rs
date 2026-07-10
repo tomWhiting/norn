@@ -22,7 +22,7 @@ use super::scalar_sections::{
 ///
 /// See [module documentation](super) for per-field merge semantics.
 #[must_use]
-pub fn merge_settings(
+pub(crate) fn merge_settings(
     usr: &mut NornSettings,
     prj: &mut NornSettings,
     lcl: &mut NornSettings,

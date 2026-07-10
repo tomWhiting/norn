@@ -17,7 +17,7 @@ use std::path::Path;
 ///
 /// Returns [`ConfigError::InvalidConfig`] naming the forbidden field without
 /// echoing its configured value or a repository-controlled profile name.
-pub fn validate_working_directory_authority(
+pub(crate) fn validate_working_directory_authority(
     user: &NornSettings,
     project: &NornSettings,
     local: &NornSettings,

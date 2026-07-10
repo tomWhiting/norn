@@ -36,37 +36,30 @@ use norn_cli::config::{
 };
 use norn_cli::runtime::builder_from_cli;
 
-fn merged_settings() -> NornSettings {
-    let cwd = std::env::current_dir().expect("cwd");
-    let mut layers = norn::config::load_settings(&cwd).expect("load settings");
-    let mut cli_layer = NornSettings::default();
-    let merged = norn::config::merge_settings(
-        &mut layers.user,
-        &mut layers.project,
-        &mut layers.local,
-        &mut cli_layer,
-    );
-    norn::config::validate_settings(&merged).expect("validate settings");
-    merged
+fn merged_settings() -> Result<NornSettings, Box<dyn std::error::Error>> {
+    let cwd = std::env::current_dir()?;
+    Ok(norn::runtime_init::load_merged_settings(&cwd)?)
 }
 
 /// Assemble through the unified path with a caller-chosen provider (so a
 /// test can bind a hosted-search provider), resolving the profile through
 /// the same helper pipeline the print driver runs before `builder_from_cli`.
-fn build_parts_with(cli: &Cli, provider: Arc<dyn Provider>) -> AgentParts {
-    let settings = merged_settings();
-    let mut profile = resolve_profile(cli.profile.as_deref()).expect("resolve profile");
-    apply_settings_reasoning_to_profile(&settings, &mut profile).expect("settings reasoning");
-    let applied = apply_cli_profile_overrides(cli, &mut profile).expect("cli overrides");
-    let model_selection =
-        resolve_model_selection(&profile.model, &settings).expect("model selection");
+fn build_parts_with(
+    cli: &Cli,
+    provider: Arc<dyn Provider>,
+) -> Result<AgentParts, Box<dyn std::error::Error>> {
+    let settings = merged_settings()?;
+    let mut profile = resolve_profile(cli.profile.as_deref())?;
+    apply_settings_reasoning_to_profile(&settings, &mut profile)?;
+    let applied = apply_cli_profile_overrides(cli, &mut profile)?;
+    let model_selection = resolve_model_selection(&profile.model, &settings)?;
     profile.model = model_selection.model;
 
-    builder_from_cli(cli, provider, profile, &settings, &applied)
-        .expect("builder_from_cli succeeds")
-        .build()
-        .expect("build succeeds")
-        .into_parts()
+    Ok(
+        builder_from_cli(cli, provider, profile, &settings, &applied)?
+            .build()?
+            .into_parts(),
+    )
 }
 
 fn write_skill(cwd: &Path, name: &str) {
@@ -79,7 +72,7 @@ fn write_skill(cwd: &Path, name: &str) {
     .expect("write SKILL.md");
 }
 
-fn with_isolated_env(f: impl FnOnce()) {
+fn with_isolated_env<T>(f: impl FnOnce() -> T) -> T {
     let home = tempfile::tempdir().expect("home tempdir");
     let workdir = tempfile::tempdir().expect("work tempdir");
     let home_path = home.path().to_path_buf();
@@ -90,25 +83,26 @@ fn with_isolated_env(f: impl FnOnce()) {
         ],
         || {
             std::env::set_current_dir(workdir.path()).expect("chdir into isolated workdir");
-            f();
+            f()
         },
-    );
+    )
 }
 
 #[test]
-fn print_agent_has_skill_tool_when_catalog_present() {
+fn print_agent_has_skill_tool_when_catalog_present() -> Result<(), Box<dyn std::error::Error>> {
     with_isolated_env(|| {
         let cwd = std::env::current_dir().expect("cwd");
         write_skill(&cwd, "demo");
         let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
         let cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
-        let parts = build_parts_with(&cli, provider);
+        let parts = build_parts_with(&cli, provider)?;
         assert!(
             parts.registry.get("skill").is_some(),
             "a present skills catalog must put the `skill` tool in the \
              assembled print agent's registry",
         );
-    });
+        Ok(())
+    })
 }
 
 /// The provider-native reframing phrase that only appears when the bound
@@ -116,7 +110,7 @@ fn print_agent_has_skill_tool_when_catalog_present() {
 const HOSTED_PHRASE: &str = "not a callable function tool";
 
 #[test]
-fn print_prompt_is_provider_aware() {
+fn print_prompt_is_provider_aware() -> Result<(), Box<dyn std::error::Error>> {
     with_isolated_env(|| {
         let cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session"]);
 
@@ -125,12 +119,12 @@ fn print_prompt_is_provider_aware() {
             Vec::new(),
             ProviderCapabilities::openai_responses(),
         ));
-        let hosted_prompt = build_parts_with(&cli, hosted)
+        let hosted_prompt = build_parts_with(&cli, hosted)?
             .loop_context
             .system_sections
             .first()
             .cloned()
-            .expect("base system prompt section assembled");
+            .ok_or_else(|| std::io::Error::other("base system prompt section is missing"))?;
         assert!(
             hosted_prompt.contains(HOSTED_PHRASE),
             "hosted-search provider must reframe web_search as provider-native \
@@ -144,15 +138,16 @@ fn print_prompt_is_provider_aware() {
             Vec::new(),
             ProviderCapabilities::default(),
         ));
-        let plain_prompt = build_parts_with(&cli, plain)
+        let plain_prompt = build_parts_with(&cli, plain)?
             .loop_context
             .system_sections
             .first()
             .cloned()
-            .expect("base system prompt section assembled");
+            .ok_or_else(|| std::io::Error::other("base system prompt section is missing"))?;
         assert!(
             !plain_prompt.contains(HOSTED_PHRASE),
             "a non-hosted provider must not reframe web_search as hosted",
         );
-    });
+        Ok(())
+    })
 }

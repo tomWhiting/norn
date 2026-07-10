@@ -16,11 +16,9 @@ use std::time::Duration;
 use norn::agent_loop::{
     effort_label, reasoning_effort_supported_for_model, unsupported_reasoning_effort_message,
 };
-use norn::config::{
-    NornSettings, load_settings, merge_settings, validate_settings,
-    validate_working_directory_authority,
-};
+use norn::config::NornSettings;
 use norn::profile::Profile;
+use norn::runtime_init::load_merged_settings;
 
 use crate::cli::{BuildError, Cli, ProviderKind};
 use crate::config::{
@@ -95,16 +93,8 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
     apply_working_dir(cli)?;
 
     let cwd = std::env::current_dir()?;
-    let mut layers = load_settings(&cwd)?;
-    validate_working_directory_authority(&layers.user, &layers.project, &layers.local)?;
-    let mut cli_layer = NornSettings::default();
-    let settings = merge_settings(
-        &mut layers.user,
-        &mut layers.project,
-        &mut layers.local,
-        &mut cli_layer,
-    );
-    validate_settings(&settings)?;
+    let settings =
+        load_merged_settings(&cwd).map_err(|error| BuildError::Argument(error.to_string()))?;
 
     let resolved_profile = resolve_profile_with_origin(cli.profile.as_deref())?;
     let profile_is_working_directory_controlled = resolved_profile.working_directory_controlled;
@@ -132,7 +122,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
 
     let mut config_overrides = ConfigOverrides::parse(&cli.config)?;
     if let Some(debug_api) = &cli.debug_api {
-        config_overrides.debug_dump_dir = Some(resolve_debug_api_dir(debug_api));
+        config_overrides.debug_dump_dir = Some(resolve_debug_api_dir(debug_api)?);
     }
 
     let provider_selection = resolve_provider_selection(cli, &settings, &model_selection)?;
@@ -154,6 +144,16 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         )?;
     }
     overlay_cli_provider_overrides(&mut provider_overrides, &config_overrides);
+    if provider_overrides
+        .debug_dump_dir
+        .as_ref()
+        .is_some_and(|path| !path.is_absolute())
+    {
+        return Err(BuildError::Argument(
+            "debug dump directories must be absolute because dumps contain provider payloads"
+                .to_owned(),
+        ));
+    }
 
     // Root delegation depth: `-c delegation_depth` wins over the `[agent]
     // delegation_depth` setting, which wins over the owner-ruled default
@@ -206,16 +206,26 @@ fn validate_reasoning_effort_for_model(profile: &Profile) -> Result<(), BuildErr
 
 /// Resolve the `--debug-api` value into the JSONL dump directory: an
 /// explicit path is used verbatim, an empty value defaults to
-/// `~/.norn/debug` (falling back to `.norn/debug` when the home dir
-/// cannot be resolved).
-fn resolve_debug_api_dir(value: &str) -> std::path::PathBuf {
+/// `~/.norn/debug`. Relative paths and an unavailable trusted home are
+/// rejected instead of resolving sensitive dumps against the repository.
+fn resolve_debug_api_dir(value: &str) -> Result<std::path::PathBuf, BuildError> {
     use std::path::PathBuf;
     if value.is_empty() {
         return crate::config::paths::norn_dir()
-            .unwrap_or_else(|| PathBuf::from(".norn"))
-            .join("debug");
+            .map(|root| root.join("debug"))
+            .ok_or_else(|| {
+                BuildError::Argument(
+                    "--debug-api requires an absolute NORN_HOME or user home directory".to_owned(),
+                )
+            });
     }
-    PathBuf::from(value)
+    let path = PathBuf::from(value);
+    if !path.is_absolute() {
+        return Err(BuildError::Argument(
+            "--debug-api paths must be absolute because dumps contain provider payloads".to_owned(),
+        ));
+    }
+    Ok(path)
 }
 
 #[cfg(test)]

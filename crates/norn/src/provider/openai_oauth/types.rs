@@ -149,13 +149,15 @@ impl std::fmt::Debug for CodexAuth {
 impl CodexAuth {
     /// Creates API-key credentials for tests.
     #[must_use]
-    pub fn from_api_key(api_key: &str) -> Self {
+    #[cfg(test)]
+    pub(crate) fn from_api_key(api_key: &str) -> Self {
         Self::ApiKey(api_key.to_string())
     }
 
     /// Creates deterministic `ChatGPT` credentials for tests.
     #[must_use]
-    pub fn create_dummy_chatgpt_auth_for_testing() -> Self {
+    #[cfg(test)]
+    pub(crate) fn create_dummy_chatgpt_auth_for_testing() -> Self {
         let tokens = ChatGptTokens {
             id_token: IdTokenInfo::from_raw_jwt("Id Token".to_string()),
             access_token: "Access Token".to_string(),
