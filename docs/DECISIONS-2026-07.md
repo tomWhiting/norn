@@ -715,6 +715,15 @@ Each decision below is recorded for owner sign-off; silence = ship.
   following links. Links/non-regular targets fail closed across create, reopen,
   rewrite, and resume. Sensitive persistence has no relative `.norn` fallback;
   missing absolute configured/trusted roots are typed failures.
+- **Concurrent same-UID replacement has a portable confinement boundary.** A
+  link or non-regular entry present when an operation begins is rejected. If a
+  same-UID process replaces the final name between validation and a POSIX
+  `*at` mutation, the operation remains pinned to the opened parent descriptor,
+  never follows the replacement, never reads/writes/deletes its outside target,
+  and either fails or affects only the raced entry inside the private root.
+  Portable POSIX APIs cannot promise strict rejection or serializable updates
+  against that actor; tests therefore assert outside-sentinel preservation and
+  in-root confinement rather than an impossible no-race claim.
 - **Artifact hardening remains an open P0 blocker.** The current candidate still
   uses ordinary create/open paths in `process/spool.rs`, foreground output and
   task paths are not uniformly covered, recursive directory creation may follow
