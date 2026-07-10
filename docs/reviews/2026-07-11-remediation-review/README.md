@@ -14,7 +14,8 @@ the whole-phase Gate D reviewer returns `READY` on the final range.
 The final code range, completed targeted closure reviews, and Gate C evidence
 are recorded in
 [`../2026-07-11-p0-gate-c-handoff.md`](../2026-07-11-p0-gate-c-handoff.md).
-Whole-phase Gate D remains pending.
+The handoff also records seven open progress items discovered during final
+checkbox reconciliation. Whole-phase Gate D remains pending.
 
 | Artifact | Snapshot | Current disposition |
 |---|---|---|

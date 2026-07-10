@@ -3,9 +3,12 @@
 - **Status:** Active; the P0 implementation candidate is committed through
   `ebb82c8`. Targeted credential/config, transport/streaming, and
   private-artifact closure reviews report `READY` on their owned surfaces.
-  Gate C is green and recorded in the
-  [`P0 Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md). Whole-phase
-  Gate D remains pending. P0 is not accepted, so its phase and evidence-ledger
+  The Gate C machine suite and policy audits are green and recorded in the
+  [`P0 Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md). The checklist
+  now distinguishes 71 completed progress items from seven open records: two
+  retrospective Gate A requirements, two Gate B evidence records, two missing
+  Norn fixtures, and separate downstream Meridian evidence. Whole-phase Gate D
+  remains pending. P0 is not accepted, so its phase and evidence-ledger
   checkboxes remain open.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
@@ -31,12 +34,15 @@ second findings document. It turns those findings into ordered work, defines the
 observable difference expected after every phase, and prevents a phase from
 being called complete without reproducible evidence and independent review.
 
-The checkboxes in this file are acceptance records. An implementation being
-written, compiling, or having tests added is not enough to check a box. A phase
-is complete only when its exit gate, evidence bundle, and review gate are all
-complete. A required live test that does not run leaves its phase blocked unless
-a Gate A owner decision removes the unverified capability and its advertised
-surface before implementation.
+Checkboxes have two roles. Phase work items, phase-specific evidence, and Gates
+A-C are progress records and may be checked once objective evidence is complete
+for the active candidate; checking them does not accept a phase or close a
+finding. Phase status and roadmap entries, finding closure, Gate D, review/exit
+acceptance, evidence-ledger status, and program completion are acceptance
+records. They remain open until the final phase reviewer returns `READY`. A
+required live test that does not run leaves its phase blocked unless a Gate A
+owner decision removes the unverified capability and its advertised surface
+before implementation.
 
 ## Target state
 
@@ -109,8 +115,9 @@ On completion:
    rechecked in the current phase. An item may be classified as a non-defect or
    intentional limitation only through an evidence-backed owner decision. The
    final phase reviewer returns `READY` or `NOT READY` after the fix rounds.
-7. Only after the final reviewer returns `READY` may the phase checkbox and its
-   finding statuses be changed to complete.
+7. Work, evidence, and Gates A-C are checked as their evidence becomes complete.
+   Only after the final reviewer returns `READY` may phase acceptance, finding
+   status, Gate D, the evidence ledger, and roadmap status change to complete.
 
 ## Non-negotiable delivery invariants
 
@@ -199,10 +206,15 @@ never acceptance evidence for this program.
 
 Every phase must satisfy all four gates below.
 
+Gates A-C are the active-phase dashboard. The marks below apply to P0 at code
+head `ebb82c8`. After P0 receives Gate D `READY` and its final evidence is
+entered in the ledger, this dashboard resets for P1; the ledger preserves P0's
+accepted gate record. Gate D remains open until the whole-phase verdict.
+
 ### Gate A: entry and design
 
-- [ ] All dependency phases are complete.
-- [ ] The exact phase-base commit is recorded before implementation so every
+- [x] All dependency phases are complete.
+- [x] The exact phase-base commit is recorded before implementation so every
   diff, LOC, lint, and added-line audit has one reproducible comparison range.
   P0's campaign base is `41ea210`; each later phase records its own accepted
   predecessor commit in the evidence ledger.
@@ -210,35 +222,52 @@ Every phase must satisfy all four gates below.
 - [ ] Its finding IDs, invariants, production touch points, and defect-regression
   or measurement/design evidence method are agreed by the implementer and
   domain reviewer.
-- [ ] Any live credential use, external call, or billable experiment has
+- [x] Any live credential use, external call, or billable experiment has
   separate owner approval before it runs.
+
+P0 retrospective note: the base plan at `41ea210` still recorded D1 as open,
+and no durable artifact proves that the implementer and domain reviewer agreed
+the expanded evidence method before implementation. Those two timing claims
+remain open rather than being inferred from later decisions and scoped reviews.
+They cannot be made historically true by Gate D. Under the current
+non-negotiable gate text, P0 cannot receive `READY` unless the owner records an
+explicit P0-only retrospective process exception; the two boxes remain open
+even if such an exception is accepted. For P0 only, an accepted exception
+substitutes for those two historical requirements when evaluating Gate A and
+the universal exit gate; it does not make the historical claims true. P1 and
+later phases must satisfy both requirements prospectively.
 
 ### Gate B: implementation
 
 - [ ] Confirmed-defect regressions fail for the documented reason on the reviewed
   baseline; measurement/design work has its pre-registered baseline and contract.
-- [ ] The production fix is complete across request, stream, persistence,
+- [x] The production fix is complete across request, stream, persistence,
   replay, loop behavior, and user surface wherever the capability crosses them.
-- [ ] Replaced paths and temporary scaffolding are deleted in the same phase.
-- [ ] Changed production files satisfy the file-size and module-structure rules.
+- [x] Replaced paths and temporary scaffolding are deleted in the same phase.
+- [x] Changed production files satisfy the file-size and module-structure rules.
 - [ ] The finding-to-test traceability table is updated.
+
+P0 evidence note: the candidate regressions pass, but there is no durable matrix
+showing each confirmed regression failing for the documented reason on
+`41ea210`, and no finding-to-specific-test traceability table has yet been
+recorded. Passing candidate tests do not retroactively prove either claim.
 
 ### Gate C: machine verification
 
-- [ ] Phase-specific tests pass.
-- [ ] `cargo fmt --all --check` passes.
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes.
-- [ ] `cargo test --workspace --all-targets` passes.
-- [ ] `cargo test --workspace --doc` passes.
-- [ ] `git diff --check <phase-base>...HEAD` passes. Running bare
+- [x] Phase-specific tests pass.
+- [x] `cargo fmt --all --check` passes.
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` passes.
+- [x] `cargo test --workspace --all-targets` passes.
+- [x] `cargo test --workspace --doc` passes.
+- [x] `git diff --check <phase-base>...HEAD` passes. Running bare
   `git diff --check` on the required clean checkout is not evidence.
-- [ ] For P0, reviewer-verified production LOC and bypass inspection covers every
+- [x] For P0, reviewer-verified production LOC and bypass inspection covers every
   changed Rust item. From P1 onward, the syntax-aware repository policy command
   passes as a hard failure in the protected merge check.
-- [ ] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
+- [x] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
   zero campaign-added unwrap, expect, panic, suppression, ignored-test, or
   unresolved-marker uses. Later phases use their recorded phase base.
-- [ ] For P0, security reviewers manually inspect all fixtures/evidence for
+- [x] For P0, security reviewers manually inspect all fixtures/evidence for
   secrets. From P1 onward, the checked-in evidence-redaction validator passes;
   no credential, real account identifier, private prompt content, reusable turn
   state, or raw cache key is present.
@@ -326,13 +355,15 @@ close the P0 findings.
 
 ## P0. Credential and workspace authority containment
 
-**Status:** [ ] Implementation candidate assembled; **findings addressed by
-candidate:** `SEC-01` through `SEC-16`, `BACKEND-01`, `BACKEND-02`, `SEC-08A`,
-`NF-1`, `NF-2`, `NF-4`, and `QUAL-01`; **current evidence:** all three targeted
-closure re-reviews report `READY` on their owned surfaces, the candidate is
-committed through `ebb82c8`, and Gate C is green; **still blocking acceptance:**
-whole-phase Gate D; **dependencies:** D1 and D1A resolved and refined by the
-provisional review round.
+**Acceptance:** [ ] Pending whole-phase Gate D; **implementation status:**
+candidate assembled, all 33 work items implemented, and the Gate C machine
+suite is green; **findings addressed by candidate:** `SEC-01` through `SEC-16`,
+`BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and `QUAL-01`;
+**current evidence:** 23 phase-specific evidence items are complete, two Norn
+fixtures and separate downstream Meridian evidence remain open, all three
+targeted closure re-reviews report `READY` on their owned surfaces, and the
+candidate is committed through `ebb82c8`; **dependencies:** D1 and D1A resolved
+and refined by the provisional review round.
 
 ### What this phase fixes
 
@@ -395,68 +426,68 @@ retain their intended behavior where they are operator-selected.
 
 ### Work checklist
 
-- [ ] Introduce an explicit deployment/backend identity used by capability,
+- [x] Introduce an explicit deployment/backend identity used by capability,
   service-tier, state, auth, and endpoint resolution.
-- [ ] Normalize and validate scheme, authority, port, path, and userinfo before
+- [x] Normalize and validate scheme, authority, port, path, and userinfo before
   any credential-bearing request is constructed.
-- [ ] Disable automatic redirects on credential-bearing clients. Do not forward
+- [x] Disable automatic redirects on credential-bearing clients. Do not forward
   credentials, account headers, or request bodies to any redirect target.
-- [ ] Reject OAuth plus an untrusted endpoint before opening a connection.
-- [ ] Reject `base_url`, `api_key_env`, `auth`, `debug_dump_dir`, and
+- [x] Reject OAuth plus an untrusted endpoint before opening a connection.
+- [x] Reject `base_url`, `api_key_env`, `auth`, `debug_dump_dir`, and
   `runner_path` from both working-directory settings layers, including provider
   profiles, before merge, env lookup, file creation, or process execution.
-- [ ] Reject working-directory model aliases that select `provider_profile` or
+- [x] Reject working-directory model aliases that select `provider_profile` or
   `api_shape`, and prevent a CWD default model or workspace profile model from
   activating a backend-bearing user alias without an explicit trusted CLI
   selection.
-- [ ] Reject every non-empty project/local hook slot before merge. Preserve
+- [x] Reject every non-empty project/local hook slot before merge. Preserve
   rule/profile source provenance and reject working-directory rule
   `shell_source` and bare-name workspace profile `prompt_commands` before loop
   construction, including child-agent profile resolution.
-- [ ] Reject working-directory `variants.<variant>.prompt_file` before eager
+- [x] Reject working-directory `variants.<variant>.prompt_file` before eager
   file loading. Permit an untrusted layer to disable skill shell expansion but
   never to enable it over a trusted restriction.
-- [ ] Canonicalize the launch working directory once, publish it as immutable
+- [x] Canonicalize the launch working directory once, publish it as immutable
   root/child/fork context, and route every automatic workspace settings,
   context, nested context, rule, profile, capability, skill/resource, variant,
   and convention read through one provenance-preserving API.
-- [ ] On supported descriptor-capable Unix targets, walk workspace paths and
+- [x] On supported descriptor-capable Unix targets, walk workspace paths and
   enumerate directories relative to pinned descriptors without following any
   symlink; require regular final files and recognize physical path aliases
   without canonicalizing the final candidate. Reject repository symlinks even
   when they point inside the repository.
-- [ ] Fail closed when workspace input is present on Redox, ESP-IDF, or non-Unix
+- [x] Fail closed when workspace input is present on Redox, ESP-IDF, or non-Unix
   targets until an equivalent no-follow implementation exists. Record this
   release limitation and intentional compatibility break rather than using a
   weaker fallback.
-- [ ] Normalize configured search paths that physically resolve beneath the
+- [x] Normalize configured search paths that physically resolve beneath the
   launch root once, require absolute trusted home/explicit paths, and prevent a
   symlink alias from changing trust tier after classification.
-- [ ] Disable shell expansion for every physically workspace-sourced skill,
+- [x] Disable shell expansion for every physically workspace-sourced skill,
   regardless of global user policy. Strip all process-bearing LSP, diagnostic,
   remediation, and report categories from workspace `CONVENTIONS.toml`, retaining
   only non-process LOC/pattern checks.
-- [ ] Reject `prompt_commands` from every model-selected profile, including a
+- [x] Reject `prompt_commands` from every model-selected profile, including a
   trusted user profile. Preserve them only for a trusted operator/programmatic
   selection; do not fall through to a same-name alternative.
-- [ ] Reject CWD `provider.options`, provider-profile `api_shape`, backend-bearing
+- [x] Reject CWD `provider.options`, provider-profile `api_shape`, backend-bearing
   alias/profile collisions, and all typed-field collisions in raw request
   options before backend resolution or network I/O.
-- [ ] Enforce that provenance rule in both CLI and shared library runtime
+- [x] Enforce that provenance rule in both CLI and shared library runtime
   loaders; reject raw forbidden-field presence even if a later CLI value wins.
-- [ ] Ensure user and CLI endpoint overrides cannot grant OAuth trust beyond the
+- [x] Ensure user and CLI endpoint overrides cannot grant OAuth trust beyond the
   compiled canonical destination.
-- [ ] Keep custom compatible endpoints on an explicit non-OAuth path using
+- [x] Keep custom compatible endpoints on an explicit non-OAuth path using
   HTTPS, with plaintext HTTP permitted only for loopback. A trusted-proxy or
   remote-plaintext feature is separate future security work, not P0 scope.
-- [ ] Remove arbitrary OAuth-authority and injected-auth seams from production
+- [x] Remove arbitrary OAuth-authority and injected-auth seams from production
   and `test-utils` feature builds; retain them only in crate unit tests.
-- [ ] Make raw settings loading and mechanical merging crate-internal. Expose a
+- [x] Make raw settings loading and mechanical merging crate-internal. Expose a
   public load-validate-merge path, or a sealed `ValidatedSettingsLayers` witness
   with private fields whose merge method accepts trusted CLI/programmatic
   overrides. No public caller can obtain project/local layers and merge them
   without authority validation.
-- [ ] Keep arbitrary `Arc<dyn AuthProvider>` injection unit-test-only. Add a
+- [x] Keep arbitrary `Arc<dyn AuthProvider>` injection unit-test-only. Add a
   production constructor accepting only a validated sealed static Codex
   credential, require OAuth/Codex backend identity, and bind it to the compiled
   ChatGPT/Codex endpoint. Until P2 defines an acknowledged owner sink, this P0
@@ -465,124 +496,132 @@ retain their intended behavior where they are operator-selected.
   caller-selected token/request authority. Preserve this contract in an in-repo
   public-API compile fixture; updating Meridian itself is separate downstream
   integration evidence, not part of Norn's clean-checkout gate.
-- [ ] Prove every spawned/forked child reuses the parent provider instance and
+- [x] Prove every spawned/forked child reuses the parent provider instance and
   that profile, variant, and model text cannot trigger backend-alias resolution,
   environment lookup, credential construction, or endpoint replacement.
-- [ ] Ensure credential-bearing runtime/auth/request `Debug` formatting and
+- [x] Ensure credential-bearing runtime/auth/request `Debug` formatting and
   rejected-destination errors never reveal bearer, refresh, ID, API-key, PKCE,
   or account secrets; redact credential-like response metadata including
   reusable turn state, cookies, and redirect locations, and never propagate raw
   OAuth/provider error bodies or provider-controlled terminal text. This claim
   does not include the legacy raw provider-settings container.
-- [ ] On the generic error-status path, stream and discard non-redirect bodies
+- [x] On the generic error-status path, stream and discard non-redirect bodies
   within the existing request timeout. Preserve the specialized 401 refresh and
   429 backoff paths, which drop their response bodies without draining, and
   classify redirects immediately without reading their bodies. Preserve the
   established stalled generic-error timeout/retry semantics; do not replace it
   with an unreviewed broad status-only behavior change.
-- [ ] Preserve distinct unknown `response.failed` codes and incomplete reasons
+- [x] Preserve distinct unknown `response.failed` codes and incomplete reasons
   without propagating provider-controlled text. Known values retain typed
   mappings; unknown values expose only the D1A process-local keyed opaque tag.
-- [ ] Preserve D1's `NF-4` disposition: every response-header value remains
+- [x] Preserve D1's `NF-4` disposition: every response-header value remains
   redacted. The loss of upstream request correlation is an accepted diagnostic
   limitation unless a later owner decision approves a narrow structural field.
-- [ ] Classify every 3xx response as a terminal redirect-policy refusal whose
+- [x] Classify every 3xx response as a terminal redirect-policy refusal whose
   locally authored error names the status and states that credential-bearing
   redirects are not followed. Do not expose or follow `Location`, and do not
   describe the result as an ordinary stream/body error.
-- [ ] Require debug-dump targets to be regular non-symlink files and mode `0600`
+- [x] Require debug-dump targets to be regular non-symlink files and mode `0600`
   on supported descriptor-capable Unix targets; fail closed before artifact I/O
   on unsupported targets.
-- [ ] Require session data, index, lock, atomic temporary, full-output spool,
+- [x] Require session data, index, lock, atomic temporary, full-output spool,
   foreground threshold-output, process-spool, and persistent-task
   directories/files to be private (`0700` directories, `0600` regular files on
   supported descriptor-capable Unix targets), descriptor-relative no-follow on
   every ancestor and final component, and fail closed on links or non-regular
   targets across create, reopen, rewrite, and resume. Redox, ESP-IDF, and
   non-Unix targets return typed `Unsupported` before private-artifact I/O.
-- [ ] Reject pre-existing private-artifact links and non-regular entries. Race
+- [x] Reject pre-existing private-artifact links and non-regular entries. Race
   tests against a concurrent same-UID final-name replacement prove the portable
   D1 boundary: descriptor confinement, no link following, no outside-target
   mutation/disclosure, and only failure or a confined in-root entry effect. Do
   not claim portable serializability against a same-UID process.
-- [ ] Remove repository-relative `.norn` fallbacks for session data, shared task
+- [x] Remove repository-relative `.norn` fallbacks for session data, shared task
   storage, and debug output. When neither an absolute configured root nor a
   trusted home exists, return a typed error rather than writing beneath mutable
   CWD.
-- [ ] Remove all 177 campaign-added unwrap, expect, and panic calls identified
+- [x] Remove all 177 campaign-added unwrap, expect, and panic calls identified
   at frozen snapshot `7d121c9`. Add or widen no lint suppression.
-- [ ] Put new security logic in cohesive modules below 500 production LOC. If a
+- [x] Put new security logic in cohesive modules below 500 production LOC. If a
   changed legacy file is over the limit, bring it below the limit in this phase.
 
 ### Phase-specific evidence
 
-- [ ] A hostile local endpoint receives no request when selected from project
+- [x] A hostile local endpoint receives no request when selected from project
   configuration; a repository-selected environment variable is rejected before
   lookup; and a hostile redirect target receives no redirected request.
-- [ ] Real CLI and shared-library settings entrypoints reject forbidden project,
+- [x] Real CLI and shared-library settings entrypoints reject forbidden project,
   local, and profile fields while positive user-level and CLI authority cases
   retain their intended behavior.
-- [ ] Public API compile-contract evidence proves raw loaded project/local
+- [x] Public API compile-contract evidence proves raw loaded project/local
   layers cannot be mechanically merged without authority validation.
-- [ ] An in-repo public-API compile-contract fixture and request assertion prove
+- [x] An in-repo public-API compile-contract fixture and request assertion prove
   a sealed static Codex credential uses the compiled Codex destination without
-  exposing generic auth-provider injection. A real Meridian dependency upgrade,
-  build, and request assertion are recorded separately as downstream evidence.
-- [ ] All thirteen hook slots are rejected from both CWD settings layers;
+  exposing generic auth-provider injection.
+- [ ] A real Meridian dependency upgrade, build, and request assertion are
+  recorded separately as downstream evidence.
+- [x] All thirteen hook slots are rejected from both CWD settings layers;
   project/local shared-loader and CLI regressions prove command text is not
   executed or echoed, while user/programmatic hooks remain available.
-- [ ] Single-scan rule provenance rejects `shell_source` from `.norn`, `.claude`,
+- [x] Single-scan rule provenance rejects `shell_source` from `.norn`, `.claude`,
   and `.meridian` workspace rules without execution while user rule commands
   remain available.
-- [ ] Root and child workspace profiles reject prompt commands without
+- [x] Root and child workspace profiles reject prompt commands without
   executing or echoing them; static workspace profiles, user prompt-command
   profiles, and explicit profile paths retain their intended behavior.
-- [ ] Cross-layer tests reject CWD settings/profile activation of a user backend
+- [x] Cross-layer tests reject CWD settings/profile activation of a user backend
   alias before environment lookup, while explicit CLI selection remains
   supported. Variant prompt-file and skill-shell widening sentinels fail before
   file or process side effects.
-- [ ] A child profile containing a backend-bearing alias sentinel proves no
+- [x] A child profile containing a backend-bearing alias sentinel proves no
   child provider reconstruction, environment lookup, or endpoint change occurs.
-- [ ] Every workspace file family rejects final and ancestor symlinks, `..`,
+- [x] Every workspace file family rejects final and ancestor symlinks, `..`,
   non-regular files, launch-root replacement, and user-path alias repointing.
   Root, child, spawn, fork, session-remove, and direct shared-library entrypoints
   use the same immutable launch root.
-- [ ] Workspace skill activation proves shell text is never executed or echoed,
+- [x] Workspace skill activation proves shell text is never executed or echoed,
   including after a search-path alias is repointed. Mixed conventions retain LOC
   and pattern checks while LSP/diagnostic/remediation/report commands cannot run.
-- [ ] Model-selected workspace and user profiles with prompt commands are
+- [x] Model-selected workspace and user profiles with prompt commands are
   rejected without execution or command echo; the same user profile remains
   usable when selected through the trusted operator path.
-- [ ] Project/local provider-options, profile API-shape, same-name collision, and
-  dormant-MCP provenance fixtures prove no untrusted value reaches backend,
-  environment, process, or network consumers.
-- [ ] URL tests cover HTTP, userinfo, case, trailing dots, default/non-default
+- [x] Project/local provider-options, profile API-shape, and same-name collision
+  fixtures prove no untrusted value reaches backend, environment, process, or
+  network consumers.
+- [ ] A dormant-MCP provenance fixture proves merged `mcp_servers` values cannot
+  gain runtime authority before a provenance-aware, consent-gated consumer is
+  implemented.
+- [x] URL tests cover HTTP, userinfo, case, trailing dots, default/non-default
   ports, lookalike hosts, path variants, redirects, and canonical URLs.
-- [ ] Capability/payload snapshots prove explicit and implicit canonical Codex
+- [x] Capability/payload snapshots prove explicit and implicit canonical Codex
   selection have identical backend semantics.
-- [ ] Trusted API-key custom and compatible endpoints retain their intended,
+- [x] Trusted API-key custom and compatible endpoints retain their intended,
   explicitly tested behavior; remote HTTP is rejected and loopback HTTP remains
   supported.
-- [ ] Debug-dump permission/symlink tests, OAuth feature-surface inspection, and
+- [x] Debug-dump permission/symlink tests, OAuth feature-surface inspection, and
   sentinel diagnostic tests prove raw tokens, claims, headers, and authority
   error bodies do not escape.
-- [ ] Response-header dump fixtures prove the D1/NF-4 correlation decision is
+- [x] Response-header dump fixtures prove the D1/NF-4 correlation decision is
   exact: every response-header value remains redacted and no credential, cookie,
   redirect target, turn state, or account metadata is exposed.
-- [ ] Malformed SSE, `response.failed`, and error-status sentinels prove provider
+- [x] Malformed SSE, `response.failed`, and error-status sentinels prove provider
   text and control bytes never enter logs/errors; stalled generic error-status
   fixtures retain the existing typed timeout behavior while the body is
-  streamed and discarded. Specialized 401/429 and redirect fixtures prove their
-  status-only paths do not inspect or disclose response bodies.
-- [ ] Distinct unknown failed/incomplete discriminators remain distinguishable
+  streamed and discarded. Specialized 401 and redirect fixtures prove their
+  response bodies are not disclosed; code-path inspection confirms those
+  responses are dropped without draining.
+- [ ] A stalled 429 response body or explicit read-observer fixture proves the
+  specialized 429 path does not read or wait for its body, while a sentinel
+  proves the body is not disclosed.
+- [x] Distinct unknown failed/incomplete discriminators remain distinguishable
   while raw values, control characters, and secret sentinels never appear.
-- [ ] HTTP 301/302/303/307/308 fixtures produce explicit redirect-policy
+- [x] HTTP 301/302/303/307/308 fixtures produce explicit redirect-policy
   refusal, omit `Location`, and send no second request.
-- [ ] Session/index/lock/temp/full-output/foreground-output/process-spool/task
+- [x] Session/index/lock/temp/full-output/foreground-output/process-spool/task
   tests cover ancestor and final symlinks, non-regular targets, permissive umask,
   legacy modes, reopen, absent trusted homes, and replacement races that prove
   outside sentinels remain unchanged under the exact D1 confinement contract.
-- [ ] A no-external-diff audit reports zero campaign-added unwrap, expect, panic,
+- [x] A no-external-diff audit reports zero campaign-added unwrap, expect, panic,
   suppression, ignored-test, or unresolved-marker uses.
 
 ### Residuals requiring Gate D disposition
@@ -611,18 +650,19 @@ then becomes a P0 blocker:
 
 ### Review and exit gate
 
-**Current gate state:** Gate C complete; pre-Gate-D. Three provisional reports
-review frozen snapshot `7d121c9`; they are archived review input, not Gate D
-evidence for the final P0 candidate. Subsequent targeted credential/config,
-transport/streaming, and private-artifact closure reviewers each report `READY`
-on their owned final surfaces. The final code range is committed through
-`ebb82c8`; the complete machine suite and manual policy audits are green and
-recorded in the
+**Current gate state:** Gate C machine verification complete; pre-Gate-D
+evidence reconciliation. Three provisional reports review frozen snapshot
+`7d121c9`; they are archived review input, not Gate D evidence for the final P0
+candidate. Subsequent targeted credential/config, transport/streaming, and
+private-artifact closure reviewers each report `READY` on their owned final
+surfaces. The final code range is committed through `ebb82c8`; the complete
+machine suite and manual policy audits are green and recorded in the
 [`P0 Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md). A fresh reviewer
-must now assess the complete P0 range and evidence bundle. No scoped `READY` is
-a whole-phase verdict. The separately reported exchange-changeset artifact has
-not been received and cannot count as evidence unless recovered exactly or
-replaced by a fresh review.
+must assess the complete P0 range and evidence bundle, including the explicitly
+open Gate A, Gate B, dormant-MCP, 429-body, and downstream Meridian records. No
+scoped `READY` is a whole-phase verdict. The separately reported
+exchange-changeset artifact has not been received and cannot count as evidence
+unless recovered exactly or replaced by a fresh review.
 
 - [ ] A security reviewer threat-models every credential destination, redirect,
   automatic working-directory command, and eager working-directory file read.
@@ -633,6 +673,8 @@ replaced by a fresh review.
   reviewer-verified syntax-aware LOC/bypass inspection pass. P0 does not wait for
   the broader P1 policy infrastructure.
 - [ ] Universal Gates A-D pass and all P0-owned findings have closure evidence.
+  For P0 only, the explicit owner-approved retrospective exception described in
+  Gate A may substitute for its two unsatisfied historical timing requirements.
 
 ## P1. Contract and enforcement baseline
 

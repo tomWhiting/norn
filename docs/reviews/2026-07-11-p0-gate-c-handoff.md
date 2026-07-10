@@ -4,7 +4,7 @@
 
 **Phase:** P0 - credential and workspace authority containment
 
-**Handoff status:** Ready for whole-phase Gate D review
+**Handoff status:** Review package assembled; known progress-record gaps remain
 
 **Phase status:** Not accepted; the P0 roadmap and evidence-ledger entries
 remain open
@@ -16,6 +16,34 @@ remain open
 - Code range: `41ea210...ebb82c8`
 - Documentation range: review `41ea210...HEAD` after checking out the commit that
   contains this handoff.
+
+## Tracker state
+
+The remediation plan now separates objective progress from phase acceptance.
+Seventy-one P0 progress items are checked: all 33 implementation items, 23
+phase-specific evidence items, three Gate A items, three Gate B items, and all
+nine Gate C machine/policy items. Gate D and every phase-acceptance record remain
+open.
+
+Seven progress records remain open before a whole-phase `READY` verdict:
+
+- The committed history does not prove that D1/D1A and the expanded evidence
+  method were agreed before implementation.
+- There is no durable per-finding baseline-failure matrix or
+  finding-to-specific-test traceability table.
+- A real Meridian upgrade/build/request assertion remains separate downstream
+  evidence and is not part of Norn's clean-checkout Gate C.
+- There is no dedicated dormant-MCP provenance fixture.
+- The specialized 429 path lacks a stalled-body or explicit read-observer
+  fixture plus a non-disclosure sentinel.
+
+The two Gate A timing claims cannot be repaired by later review. Under the
+current non-negotiable gate text, they require an explicit owner-approved
+P0-only retrospective process exception before `READY`; the historical boxes
+remain unchecked even if that exception is granted. Gate D may verify the other
+records but cannot silently waive them. If granted, the exception substitutes
+only for those two requirements when evaluating P0 Gate A and the universal
+exit gate; it is not precedent for later phases.
 
 The phase was assembled as the following logical commits, in order:
 
@@ -48,13 +76,15 @@ packaging. No code in an owned surface changed between its verdict and code head
 `ebb82c8`; work in a different slice may have continued until that slice's own
 review. After all three verdicts, the only subsequent operations were whole-file
 staging, the logical commits listed above, Gate C reruns, and documentation.
-This handoff is the durable record for the three scoped verdicts:
+This handoff is the durable record for the scoped verdicts and the independent
+whole-range policy fact-check:
 
 | Evidence label | Reviewer | Date | Reviewed content | Verdict |
 |---|---|---|---|---|
 | `P0-CRED-CONFIG-R2` | Independent credential/config closure reviewer | 2026-07-11 | Credential/config and child-authority surface byte-equivalent to `ebb82c8` | `READY` |
 | `P0-TRANSPORT-R2` | Independent task `/root/p0_transport_final_review` | 2026-07-11 | Transport/streaming surface byte-equivalent to `ebb82c8` | `READY` |
 | `P0-ARTIFACT-R2` | Independent task `/root/p0_artifact_final_review` | 2026-07-11 | Private-artifact surface byte-equivalent to `ebb82c8` | `READY` |
+| `P0-POLICY-R2` | Independent task `/root/tracker_audit/handoff_fact_check` | 2026-07-11 | All 91 changed Rust files, the 62/2/27 LOC classification, forbidden-call and suppression audits, marker disposition, and seven changed `mod.rs` files | `READY` |
 
 ## Gate C results
 
@@ -155,6 +185,9 @@ names only, not values. The only added high-entropy literal is the published
   and source race confinement, complete artifact-family coverage, removal of
   relative sensitive-data fallback, and deletion of obsolete path-based
   permission scaffolding.
+- `P0-POLICY-R2`: `READY`. The reviewer independently matched the 91-file
+  changed-Rust inventory, LOC classification, bypass and marker results, and
+  module-shape claims to `41ea210...ebb82c8`.
 
 The scoped reviewers also recorded evidence limits for Gate D to assess. The
 redirect regression exercises the real bounded client and `StreamExecutor`, but
@@ -200,9 +233,12 @@ reachable defects in P0's claimed outcome:
    module-shape, and secret-fixture claims.
 4. Threat-model the integrated credential destination, workspace command/read,
    static-Codex, terminal-diagnostic, and private-artifact boundaries.
-5. Return `READY` only if the complete P0 outcome has no unresolved phase-owned,
-   phase-introduced, or newly unowned defect at any severity. Otherwise return
-   `NOT READY` with reproducible findings.
+5. Verify every open progress record listed above. Gate D may recommend, but
+   cannot grant, the P0-only owner exception required by the two Gate A timing
+   records.
+6. Return `READY` only if the complete P0 outcome has no unresolved phase-owned,
+   phase-introduced, newly unowned, or required-evidence item at any severity.
+   Otherwise return `NOT READY` with reproducible findings.
 
 P1 must not begin until this whole-phase Gate D review returns `READY` and the
 P0 evidence-ledger row is updated.

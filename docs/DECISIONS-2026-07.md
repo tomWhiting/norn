@@ -782,8 +782,13 @@ report `READY` on their owned surfaces. The candidate is committed through
 and recorded in `reviews/2026-07-11-p0-gate-c-handoff.md`. The added-line audit
 reports zero campaign-added unwrap, unwrap_err, expect, expect_err, or panic
 calls and no new/widened lint suppression. The separately reported
-exchange-review artifact remains absent, and whole-phase Gate D has not
-occurred. P0 acceptance remains pending.
+exchange-review artifact remains absent. The plan now exposes seven open
+progress records: two retrospective Gate A claims, two Gate B traceability
+records, two missing Norn fixtures, and separate downstream Meridian evidence.
+The two Gate A timing claims cannot be repaired retroactively; P0 cannot receive
+`READY` under the current non-negotiable gate text unless the owner records an
+explicit P0-only process exception. Whole-phase Gate D has not occurred, and P0
+acceptance remains pending.
 
 ## 8. OAuth multi-account direction (2026-07-11)
 
