@@ -927,30 +927,25 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn default_context_keeps_nested_scanning_when_rules_are_attached_later() {
-        let launch_root = std::env::current_dir()
-            .expect("current directory")
-            .canonicalize()
-            .expect("canonical current directory");
+    async fn default_context_keeps_nested_scanning_when_rules_are_attached_later()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let launch_root = std::env::current_dir()?.canonicalize()?;
         let nested = tempfile::Builder::new()
             .prefix(".norn-default-context-")
-            .tempdir_in(&launch_root)
-            .expect("nested tempdir");
-        std::fs::write(nested.path().join("NORN.md"), "DEFAULT_CONTEXT_RULE")
-            .expect("nested context");
-        let relative_dir = nested
-            .path()
-            .strip_prefix(&launch_root)
-            .expect("tempdir beneath launch root");
+            .tempdir_in(&launch_root)?;
+        std::fs::write(nested.path().join("NORN.md"), "DEFAULT_CONTEXT_RULE")?;
+        let relative_dir = nested.path().strip_prefix(&launch_root)?;
         let touched = relative_dir.join("file.rs").to_string_lossy().into_owned();
 
-        let mut ctx = LoopContext::default();
-        ctx.rules = Some(RuleEngine::new(vec![]));
+        let mut ctx = LoopContext {
+            rules: Some(RuleEngine::new(vec![])),
+            ..LoopContext::default()
+        };
         ctx.scan_nested_norn(std::slice::from_ref(&touched));
         let injections = ctx
             .rules
             .as_ref()
-            .expect("rules")
+            .ok_or_else(|| std::io::Error::other("rules were not attached"))?
             .process_event(&RuntimeEvent::PathChanged {
                 path: touched,
                 operation: PathOperation::Read,
@@ -959,6 +954,7 @@ mod tests {
 
         assert_eq!(injections.len(), 1);
         assert_eq!(injections[0].content, "DEFAULT_CONTEXT_RULE");
+        Ok(())
     }
 
     #[tokio::test]

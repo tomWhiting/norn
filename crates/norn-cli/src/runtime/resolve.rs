@@ -289,29 +289,32 @@ mod tests {
 
     #[test]
     #[serial]
-    fn resolve_invocation_rejects_relative_norn_home_after_working_dir_change() {
+    fn resolve_invocation_rejects_relative_norn_home_after_working_dir_change()
+    -> Result<(), Box<dyn std::error::Error>> {
         let environment = IsolatedResolutionEnvironment::new();
         let repository_user_tier = environment.working_dir().join("repository-user-tier");
-        std::fs::create_dir(&repository_user_tier).unwrap();
+        std::fs::create_dir(&repository_user_tier)?;
         std::fs::write(
             repository_user_tier.join("settings.json"),
             r#"{"hooks":{"session_start":[{"command":"sentinel-relative-home-command","timeout":5}]}}"#,
-        )
-        .unwrap();
+        )?;
         // SAFETY: this test is serialised and the environment guard restores
         // the original value on drop.
         unsafe { std::env::set_var("NORN_HOME", "repository-user-tier") };
         let working_dir = environment.working_dir().to_string_lossy().into_owned();
-        let cli =
-            Cli::try_parse_from(["norn", "--working-dir", &working_dir, "--model", "sol"]).unwrap();
+        let cli = Cli::try_parse_from(["norn", "--working-dir", &working_dir, "--model", "sol"])?;
 
         let Err(error) = resolve_invocation(&cli) else {
-            panic!("relative NORN_HOME must not become user authority");
+            return Err(std::io::Error::other(
+                "relative NORN_HOME unexpectedly became user authority",
+            )
+            .into());
         };
         let error = error.to_string();
 
         assert!(error.contains("NORN_HOME must be an absolute path"));
         assert!(!error.contains("sentinel-relative-home-command"));
+        Ok(())
     }
 
     #[test]

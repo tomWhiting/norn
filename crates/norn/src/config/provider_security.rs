@@ -450,11 +450,18 @@ mod tests {
             }
         }))?;
 
-        let error = validate_working_directory_authority(&user, &project, &NornSettings::default())
-            .expect_err("repository profile API shape must be rejected");
+        let Err(error) =
+            validate_working_directory_authority(&user, &project, &NornSettings::default())
+        else {
+            return Err(std::io::Error::other(
+                "repository provider profile API shape was accepted",
+            )
+            .into());
+        };
+        let error = error.to_string();
 
-        assert!(error.to_string().contains("api_shape"));
-        assert!(!error.to_string().contains("missing"));
+        assert!(error.contains("api_shape"));
+        assert!(!error.contains("missing"));
         Ok(())
     }
 
@@ -508,15 +515,19 @@ mod tests {
                 }
             }))?,
         ] {
-            let error = validate_working_directory_authority(
+            let Err(error) = validate_working_directory_authority(
                 &NornSettings::default(),
                 &project,
                 &NornSettings::default(),
-            )
-            .expect_err("repository provider options must be rejected");
-            assert!(error.to_string().contains("options"));
-            assert!(!error.to_string().contains("repo-thread"));
-            assert!(!error.to_string().contains("24h"));
+            ) else {
+                return Err(
+                    std::io::Error::other("repository provider options were accepted").into(),
+                );
+            };
+            let error = error.to_string();
+            assert!(error.contains("options"));
+            assert!(!error.contains("repo-thread"));
+            assert!(!error.contains("24h"));
         }
         Ok(())
     }
@@ -735,13 +746,17 @@ mod tests {
                 "provider_profiles": {"trusted": {"debug_dump_dir": "relative-profile-dumps"}}
             }))?,
         ] {
-            let error = validate_working_directory_authority(
+            let Err(error) = validate_working_directory_authority(
                 &user,
                 &NornSettings::default(),
                 &NornSettings::default(),
-            )
-            .expect_err("relative trusted provider path must be rejected");
-            assert!(error.to_string().contains("must be absolute"));
+            ) else {
+                return Err(
+                    std::io::Error::other("relative trusted provider path was accepted").into(),
+                );
+            };
+            let error = error.to_string();
+            assert!(error.contains("must be absolute"));
         }
 
         let user = settings(serde_json::json!({
@@ -778,12 +793,18 @@ mod tests {
                 "provider_profiles": {"paid": {"timeout": "30s"}}
             }))?,
         ] {
-            let error =
+            let Err(error) =
                 validate_working_directory_authority(&user, &project, &NornSettings::default())
-                    .expect_err("trusted backend bundle collision must be rejected");
-            assert!(error.to_string().contains("collision"));
-            assert!(!error.to_string().contains("private"));
-            assert!(!error.to_string().contains("paid"));
+            else {
+                return Err(std::io::Error::other(
+                    "repository backend-bundle collision was accepted",
+                )
+                .into());
+            };
+            let error = error.to_string();
+            assert!(error.contains("collision"));
+            assert!(!error.contains("private"));
+            assert!(!error.contains("paid"));
         }
         Ok(())
     }

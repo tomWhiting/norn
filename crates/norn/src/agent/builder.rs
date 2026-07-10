@@ -1904,9 +1904,9 @@ mod tests {
     }
 
     #[test]
-    fn handle_exposes_resolved_introspection() {
+    fn handle_exposes_resolved_introspection() -> Result<(), Box<dyn std::error::Error>> {
         let schema = serde_json::json!({"type": "object", "required": ["answer"]});
-        let temp = tempfile::tempdir().expect("tempdir");
+        let temp = tempfile::tempdir()?;
         let id = Uuid::new_v4();
         let agent = AgentBuilder::new(provider_with(vec![]))
             .profile(Profile {
@@ -1920,26 +1920,26 @@ mod tests {
             .agent_id(id)
             .allowed_tools(&["read", "search"])
             .output_schema(schema.clone())
-            .build()
-            .expect("build succeeds");
+            .build()?;
 
         let info = agent.handle().info().clone();
         assert_eq!(info.agent_id, id);
         assert_eq!(info.model, "resolved-model", "model override wins");
         assert_eq!(info.profile_name.as_deref(), Some("reviewer"));
-        assert_eq!(info.working_dir, temp.path().canonicalize().unwrap());
+        assert_eq!(info.working_dir, temp.path().canonicalize()?);
         assert_eq!(info.output_schema.as_ref(), Some(&schema));
         assert!(!info.session_id.is_empty(), "session id always resolved");
         let mut tools = info.tool_names.clone();
         tools.sort();
         assert_eq!(tools, vec!["read".to_owned(), "search".to_owned()]);
         // The snapshot is serializable for activity records / telemetry.
-        let json = serde_json::to_value(&info).expect("info serializes");
+        let json = serde_json::to_value(&info)?;
         assert_eq!(json["model"], "resolved-model");
         assert_eq!(json["output_schema"], schema);
         // Agent-side accessors agree with the handle.
         assert_eq!(agent.info().model, info.model);
         assert_eq!(agent.agent_id(), id);
+        Ok(())
     }
 
     #[test]
@@ -3138,9 +3138,10 @@ mod tests {
     /// entry id becomes the cache key, the environment session id, and
     /// the introspected session id, and a run's events persist to disk.
     #[tokio::test]
-    async fn open_session_create_wires_store_cache_key_and_session_id() {
-        let temp = tempfile::tempdir().expect("tempdir");
-        let sessions = tempfile::tempdir().expect("session dir");
+    async fn open_session_create_wires_store_cache_key_and_session_id()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let temp = tempfile::tempdir()?;
+        let sessions = tempfile::tempdir()?;
         let manager = manager_in(sessions.path());
 
         let agent = AgentBuilder::new(provider_with(text_completion("persisted")))
@@ -3154,17 +3155,16 @@ mod tests {
                 },
                 DurabilityPolicy::Flush,
             )
-            .build()
-            .expect("build succeeds");
+            .build()?;
 
         let entry = agent
             .session_entry()
-            .expect("opened session entry surfaced")
+            .ok_or_else(|| std::io::Error::other("opened session entry was not surfaced"))?
             .clone();
         assert_eq!(entry.model, "test-model", "entry records resolved model");
         assert_eq!(
             entry.working_dir,
-            temp.path().canonicalize().unwrap().display().to_string(),
+            temp.path().canonicalize()?.display().to_string(),
             "entry records resolved working dir",
         );
         assert_eq!(entry.name.as_deref(), Some("track-h"));
@@ -3185,15 +3185,16 @@ mod tests {
             "a fresh create replays nothing",
         );
 
-        let outcome = agent.run("persist me").await.expect("run succeeds");
+        let outcome = agent.run("persist me").await?;
         assert!(outcome.is_completed());
 
         // The run's events landed in the managed session on disk.
-        let (_, read) = manager.read_events(&entry.id).expect("session readable");
+        let (_, read) = manager.read_events(&entry.id)?;
         assert!(
             !read.events.is_empty(),
             "run events must persist through the managed sink",
         );
+        Ok(())
     }
 
     /// Child-persistence V2: `open_session` arms the root's persistent
