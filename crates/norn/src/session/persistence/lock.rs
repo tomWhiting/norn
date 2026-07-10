@@ -27,10 +27,11 @@
 //! nothing behind — no waiter thread and no open file descriptor blocked
 //! in `flock` until the contending holder happens to release.
 
-use std::fs::{self, File, OpenOptions, TryLockError};
+use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
+use super::permissions::{create_private_dir_all, open_private_lock};
 use super::types::SessionPersistError;
 
 /// File name of the index lock inside the session data directory.
@@ -84,13 +85,9 @@ pub(crate) fn lock_index(
     data_dir: &Path,
     deadline: Option<Duration>,
 ) -> Result<IndexLock, SessionPersistError> {
-    fs::create_dir_all(data_dir)?;
+    create_private_dir_all(data_dir)?;
     let path = data_dir.join(INDEX_LOCK_FILE);
-    let file = OpenOptions::new()
-        .create(true)
-        .truncate(false)
-        .write(true)
-        .open(&path)?;
+    let file = open_private_lock(&path)?;
     match deadline {
         None => {
             file.lock()?;

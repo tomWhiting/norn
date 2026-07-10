@@ -11,7 +11,7 @@
 //! `Some(d)` fails with [`SessionPersistError::IndexLockTimeout`] when
 //! the lock cannot be acquired within `d`, leaving the index untouched.
 
-use std::fs::{self, File, OpenOptions};
+use std::fs;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -24,6 +24,9 @@ use uuid::Uuid;
 
 use super::io::ensure_session_id_not_reserved;
 use super::lock::lock_index;
+use super::permissions::{
+    create_private_dir_all, create_private_new, open_private_append_create, open_private_read,
+};
 use super::types::{SessionIndexEntry, SessionPersistError};
 
 /// Return the session index file path under `data_dir`.
@@ -41,10 +44,11 @@ pub fn index_file_path(data_dir: &Path) -> PathBuf {
 /// unlistable. The call fails only if the file itself is unreadable.
 pub fn read_index(data_dir: &Path) -> Result<Vec<SessionIndexEntry>, SessionPersistError> {
     let path = index_file_path(data_dir);
-    if !path.exists() {
-        return Ok(Vec::new());
-    }
-    let file = File::open(&path)?;
+    let file = match open_private_read(&path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => return Err(SessionPersistError::Io(error)),
+    };
     let reader = BufReader::new(file);
     let mut out = Vec::new();
     for (idx, line) in reader.lines().enumerate() {
@@ -83,7 +87,7 @@ pub fn write_index_atomic(
     data_dir: &Path,
     entries: &[SessionIndexEntry],
 ) -> Result<(), SessionPersistError> {
-    fs::create_dir_all(data_dir)?;
+    create_private_dir_all(data_dir)?;
     let final_path = index_file_path(data_dir);
     let tmp_path = data_dir.join(format!("index.jsonl.tmp.{}", Uuid::new_v4()));
 
@@ -119,11 +123,7 @@ fn write_jsonl_atomic<T: Serialize>(
     tmp_path: &Path,
     rows: &[T],
 ) -> Result<(), SessionPersistError> {
-    let file = OpenOptions::new()
-        .write(true)
-        .create(true)
-        .truncate(true)
-        .open(tmp_path)?;
+    let file = create_private_new(tmp_path)?;
     let mut writer = BufWriter::new(file);
     for row in rows {
         serde_json::to_writer(&mut writer, row)?;
@@ -264,7 +264,7 @@ fn append_entry_assuming_locked(
 ) -> Result<(), SessionPersistError> {
     ensure_session_id_not_reserved(&entry.id)?;
     let path = index_file_path(data_dir);
-    let file = OpenOptions::new().create(true).append(true).open(&path)?;
+    let file = open_private_append_create(&path)?;
     let mut writer = BufWriter::new(file);
     serde_json::to_writer(&mut writer, entry)?;
     writer.write_all(b"\n")?;

@@ -29,6 +29,7 @@
 pub mod index;
 pub mod io;
 mod lock;
+pub(crate) mod permissions;
 pub mod replay;
 pub mod types;
 

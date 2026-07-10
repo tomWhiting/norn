@@ -168,6 +168,129 @@ fn index_only_entry(dir: &Path) -> SessionIndexEntry {
     entry
 }
 
+#[cfg(unix)]
+fn unix_mode(path: &Path) -> u32 {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    fs::metadata(path).unwrap().permissions().mode() & 0o777
+}
+
+#[cfg(unix)]
+#[test]
+fn new_session_files_and_directories_are_private() {
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path().join("sessions");
+    let entry = fresh_session(&data_dir);
+
+    assert_eq!(unix_mode(&data_dir), 0o700);
+    assert_eq!(unix_mode(&index_file_path(&data_dir)), 0o600);
+    assert_eq!(unix_mode(&data_dir.join("index.lock")), 0o600);
+    assert_eq!(unix_mode(&session_file_path(&data_dir, &entry.id)), 0o600);
+
+    update_index_entry(&data_dir, &entry.id, None, |_| {}).unwrap();
+    assert_eq!(
+        unix_mode(&index_file_path(&data_dir)),
+        0o600,
+        "atomic index replacement must publish a private temp inode",
+    );
+
+    let nested = data_dir.join("root/children/child.jsonl");
+    drop(io::open_session_append(&nested).unwrap());
+    assert_eq!(unix_mode(&data_dir.join("root")), 0o700);
+    assert_eq!(unix_mode(&data_dir.join("root/children")), 0o700);
+    assert_eq!(unix_mode(&nested), 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn legacy_session_index_and_lock_modes_are_hardened_on_open() {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path().join("sessions");
+    fs::create_dir(&data_dir).unwrap();
+    let session_path = session_file_path(&data_dir, "legacy");
+    fs::write(
+        &session_path,
+        format!("{}\n", serde_json::to_string(&user_msg("old")).unwrap()),
+    )
+    .unwrap();
+    let index_path = index_file_path(&data_dir);
+    fs::write(&index_path, b"").unwrap();
+    let lock_path = data_dir.join("index.lock");
+    fs::write(&lock_path, b"").unwrap();
+
+    fs::set_permissions(&data_dir, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&session_path, fs::Permissions::from_mode(0o644)).unwrap();
+    fs::set_permissions(&index_path, fs::Permissions::from_mode(0o755)).unwrap();
+    fs::set_permissions(&lock_path, fs::Permissions::from_mode(0o644)).unwrap();
+
+    assert_eq!(
+        read_session_events(&data_dir, "legacy")
+            .unwrap()
+            .events
+            .len(),
+        1
+    );
+    assert!(read_index(&data_dir).unwrap().is_empty());
+    drop(super::lock::lock_index(&data_dir, None).unwrap());
+    assert_eq!(unix_mode(&session_path), 0o600);
+    assert_eq!(unix_mode(&index_path), 0o600);
+    assert_eq!(unix_mode(&lock_path), 0o600);
+    assert_eq!(unix_mode(&data_dir), 0o700);
+
+    fs::set_permissions(&session_path, fs::Permissions::from_mode(0o755)).unwrap();
+    drop(io::open_session_append(&session_path).unwrap());
+    assert_eq!(unix_mode(&session_path), 0o600);
+}
+
+#[cfg(unix)]
+#[test]
+fn session_index_and_lock_opens_refuse_symlinks_and_non_regular_files() {
+    use std::os::unix::fs::symlink;
+
+    let tmp = tempfile::tempdir().unwrap();
+    let data_dir = tmp.path().join("sessions");
+    fs::create_dir(&data_dir).unwrap();
+    let target = tmp.path().join("outside.jsonl");
+    fs::write(&target, b"outside\n").unwrap();
+    symlink(&target, session_file_path(&data_dir, "linked")).unwrap();
+
+    let error = read_session_events(&data_dir, "linked").unwrap_err();
+    assert!(matches!(error, SessionPersistError::Io(_)));
+    assert_eq!(fs::read(&target).unwrap(), b"outside\n");
+
+    let directory = session_file_path(&data_dir, "directory");
+    fs::create_dir(&directory).unwrap();
+    let error = read_session_events(&data_dir, "directory").unwrap_err();
+    assert!(matches!(error, SessionPersistError::Io(_)));
+
+    let index_target = tmp.path().join("outside-index.jsonl");
+    fs::write(&index_target, b"").unwrap();
+    let index_path = index_file_path(&data_dir);
+    symlink(&index_target, &index_path).unwrap();
+    let error = read_index(&data_dir).unwrap_err();
+    assert!(matches!(error, SessionPersistError::Io(_)));
+
+    fs::remove_file(&index_path).unwrap();
+    fs::create_dir(&index_path).unwrap();
+    let error = read_index(&data_dir).unwrap_err();
+    assert!(matches!(error, SessionPersistError::Io(_)));
+
+    let lock_target = tmp.path().join("outside.lock");
+    fs::write(&lock_target, b"outside").unwrap();
+    let lock_path = data_dir.join("index.lock");
+    symlink(&lock_target, &lock_path).unwrap();
+    let error = super::lock::lock_index(&data_dir, None).unwrap_err();
+    assert!(matches!(error, SessionPersistError::Io(_)));
+    assert_eq!(fs::read(&lock_target).unwrap(), b"outside");
+
+    fs::remove_file(&lock_path).unwrap();
+    fs::create_dir(&lock_path).unwrap();
+    let error = super::lock::lock_index(&data_dir, None).unwrap_err();
+    assert!(matches!(error, SessionPersistError::Io(_)));
+}
+
 // ----- R2: JSONL serialization -----
 
 #[test]

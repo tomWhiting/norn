@@ -4,13 +4,16 @@
 //! Index maintenance lives in [`super::index`].
 
 use std::collections::HashSet;
-use std::fs::{self, File, OpenOptions};
+use std::fs::{self, File};
 use std::io::{BufRead, BufReader, Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
 use crate::session::events::{EventId, SessionEvent};
 
 use super::index::{read_index, sum_usage_from_events, update_session_index};
+use super::permissions::{
+    create_private_dir_all, create_private_new, open_private_read, open_private_read_append,
+};
 use super::replay::ReplayArtifacts;
 use super::types::{
     SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,
@@ -126,24 +129,25 @@ pub(crate) fn ensure_session_id_not_reserved(id: &str) -> Result<(), SessionPers
 /// onto the torn bytes (H19, reopen half).
 pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistError> {
     if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+        create_private_dir_all(parent)?;
     }
-    // Fast path: the file already exists → reopen and heal directly. This
-    // skips the temp-file stamp (which needs directory write permission the
-    // append itself does not), preserving the contract that a subsequent
-    // append to an existing session stays durable even when the data dir
-    // has been made read-only. A racing first-create that lands between
-    // this check and the stamp below still resolves correctly: the stamp's
-    // `AlreadyExists` arm falls through to the same reopen path, and the
-    // winner's header is always present because the file only becomes
-    // visible via the atomic link.
-    if path.exists() {
-        return reopen_and_heal(path);
+    // Fast path: securely attempt the reopen and heal directly. This skips
+    // the temp-file stamp (which needs directory write permission the append
+    // itself does not), preserving the contract that a subsequent append to
+    // an existing session stays durable even when the data dir has been made
+    // read-only. A racing first-create that lands after the `NotFound` result
+    // still resolves correctly: the stamp's `AlreadyExists` arm falls through
+    // to the same reopen path, and the winner's header is always present
+    // because the file only becomes visible via the atomic link.
+    match reopen_and_heal(path) {
+        Ok(file) => return Ok(file),
+        Err(SessionPersistError::Io(error)) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => return Err(error),
     }
     match stamp_header_atomically(path) {
         // We created the file; it already contains its header. Return a
         // fresh append handle onto the linked inode.
-        Ok(()) => Ok(OpenOptions::new().read(true).append(true).open(path)?),
+        Ok(()) => Ok(open_private_read_append(path)?),
         // Another opener already created the file (or it pre-existed):
         // reopen and heal any torn final line, never retro-stamping.
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => reopen_and_heal(path),
@@ -184,10 +188,7 @@ fn stamp_header_atomically(path: &Path) -> std::io::Result<()> {
     header.push(b'\n');
 
     let write_result = (|| -> std::io::Result<()> {
-        let mut tmp = OpenOptions::new()
-            .create_new(true)
-            .write(true)
-            .open(&tmp_path)?;
+        let mut tmp = create_private_new(&tmp_path)?;
         tmp.write_all(&header)?;
         // Durably land the header bytes before the link makes the inode
         // reachable at `path`.
@@ -216,7 +217,7 @@ fn stamp_header_atomically(path: &Path) -> std::io::Result<()> {
 /// Reopen an existing session file in append mode and heal a torn final
 /// line (H19, reopen half). Never retro-stamps a header.
 fn reopen_and_heal(path: &Path) -> Result<File, SessionPersistError> {
-    let mut file = OpenOptions::new().read(true).append(true).open(path)?;
+    let mut file = open_private_read_append(path)?;
     let len = file.metadata()?.len();
     if len > 0 {
         file.seek(SeekFrom::Start(len - 1))?;
@@ -292,10 +293,13 @@ fn read_session_events_at(
     path: &Path,
     session_id: &str,
 ) -> Result<ReplayArtifacts, SessionPersistError> {
-    if !path.exists() {
-        return Ok(ReplayArtifacts::default());
-    }
-    let file = File::open(path)?;
+    let file = match open_private_read(path) {
+        Ok(file) => file,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(ReplayArtifacts::default());
+        }
+        Err(error) => return Err(SessionPersistError::Io(error)),
+    };
     read_session_events_from(BufReader::new(file), session_id)
 }
 
