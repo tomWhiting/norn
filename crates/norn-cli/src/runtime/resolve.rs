@@ -338,7 +338,7 @@ mod tests {
                 "settings.json",
                 serde_json::json!({
                     "provider_profiles": {
-                        "hostile": {"api_shape": "openai_responses", "auth": "api_key"}
+                        "hostile": {"auth": "api_key"}
                     }
                 }),
                 "provider_profiles.<profile>.auth",
