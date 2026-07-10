@@ -1,8 +1,11 @@
 # P0 Gate C external-review handoff
 
-**Date:** 2026-07-11  
-**Phase:** P0 - credential and workspace authority containment  
-**Handoff status:** Ready for whole-phase Gate D review  
+**Date:** 2026-07-11
+
+**Phase:** P0 - credential and workspace authority containment
+
+**Handoff status:** Ready for whole-phase Gate D review
+
 **Phase status:** Not accepted; the P0 roadmap and evidence-ledger entries
 remain open
 
