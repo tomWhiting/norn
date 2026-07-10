@@ -591,7 +591,7 @@ Each decision below is recorded for owner sign-off; silence = ship.
   event and the persisted audit both carry the exact source). The edge's `last_seq` stays `0` for
   an unsequenced-only edge; this is an honest sentinel, since router-minted seqs start at `1`.
 
-## 6. Responses API remediation decisions (2026-07-10)
+## 7. Responses API remediation decisions (2026-07-10)
 
 ### P0 D1 — credential, workspace-authority, and private-artifact boundary
 
@@ -623,6 +623,12 @@ Each decision below is recorded for owner sign-off; silence = ship.
     while inline prompts remain supported; and
   - `tools.skill.shell_execution = true` is rejected, while an untrusted layer
     may narrow authority by setting it to `false`.
+- **Raw settings layers are not a public authority surface.** Loading,
+  provenance validation, and merge form one compiler-enforced transaction.
+  Mechanical raw-layer access and merge become crate-internal; advanced
+  embedders receive only a sealed validation witness with private fields.
+  Documentation telling callers to remember validation is not a security
+  boundary. The current candidate has not yet completed this refinement.
 - **Source-bearing automation retains provenance.** A single rule scan records
   whether a rule came from user configuration or the working directory.
   `shell_source` is rejected from `.norn/rules`, `.claude/rules`, and
@@ -676,11 +682,23 @@ Each decision below is recorded for owner sign-off; silence = ship.
   Chat Completions, OAuth refresh, revoke, and authorization-code exchange
   clients all return the original 3xx response without replaying credentials,
   account headers, or request bodies to the redirect target.
-- **Injected-auth provider constructors are unit-test-only.** The previously
-  public constructors could pair an OAuth credential provider with an API-key
-  configuration and custom destination, bypassing the auth/backend matrix. They
-  are now crate-private and compiled only for unit tests; this is an intentional
-  API break rather than a compatibility wrapper.
+- **Generic injected-auth provider construction remains unit-test-only.** The
+  previously public constructors could pair an OAuth credential provider with
+  an API-key configuration and custom destination, bypassing the auth/backend
+  matrix. Production embedders may instead supply only a validated sealed
+  static Codex credential through a constructor requiring OAuth/Codex backend
+  identity and the compiled ChatGPT destination. It accepts neither an arbitrary
+  `AuthProvider` trait object nor caller-selected token/request authority. Until
+  P2 defines acknowledged credential-owner sinks, the P0 static path cannot
+  refresh or rotate; a 401 returns a typed owner-refresh requirement. This
+  constrained replacement is not implemented yet; until it is, Meridian's
+  sealed dispatch credential path is a downstream compile regression.
+- **Children inherit provider authority; model text is not authority.** Spawned
+  and forked children reuse the parent provider instance. Profile, variant, or
+  model-selected strings may select request model behavior but cannot reconstruct
+  a provider, resolve a backend-bearing alias, read a credential environment
+  variable, or change endpoint/auth mode. Final regression evidence remains
+  pending.
 - **Arbitrary OAuth token-authority constructors are unit-test-only.** Enabling
   the public `test-utils` Cargo feature cannot expose constructors that load or
   hold OAuth credentials while selecting a custom refresh-token destination.
@@ -688,17 +706,20 @@ Each decision below is recorded for owner sign-off; silence = ship.
   explicit CLI option may enable them. On Unix, the final target must be a
   non-symlink regular file opened without following symlinks and forced to mode
   `0600`; non-regular targets fail closed.
-- **Session persistence artifacts are private.** Session data/index/lock/
-  atomic-temporary files and full-output session spools can contain prompts,
-  reasoning, and tool arguments/results. On Unix their directories are `0700`,
-  files are regular `0600` targets opened without following the final link, and
-  links/non-regular targets fail closed across create, reopen, rewrite, and
-  resume.
-- **Background-process spools remain an open P0 blocker.** They retain arbitrary
-  stdout/stderr and share the same confidentiality policy, but the current
-  candidate still uses ordinary create/open paths in `process/spool.rs`.
-  `SEC-15` cannot close until that path and the session helper's ancestor-link
-  behavior receive adversarial tests and review.
+- **Sensitive persistence artifacts share one private policy.** Session
+  data/index/lock/atomic-temporary files, full-output session spools, foreground
+  threshold-output logs, background-process spools, and persistent task records
+  can contain prompts, reasoning, tool arguments/results, or process output. On
+  Unix their directories are `0700`, files are regular `0600` targets, and every
+  ancestor and final component is traversed descriptor-relatively without
+  following links. Links/non-regular targets fail closed across create, reopen,
+  rewrite, and resume. Sensitive persistence has no relative `.norn` fallback;
+  missing absolute configured/trusted roots are typed failures.
+- **Artifact hardening remains an open P0 blocker.** The current candidate still
+  uses ordinary create/open paths in `process/spool.rs`, foreground output and
+  task paths are not uniformly covered, recursive directory creation may follow
+  ancestor links, and relative fallbacks remain. `SEC-15` cannot close until the
+  complete artifact family receives adversarial tests and review.
 - **Credential diagnostics are structural within the credential-bearing
   runtime/request boundary.** OAuth tokens, PKCE material, user/account claims,
   free-form request options, and sensitive runtime provider state are absent
@@ -708,6 +729,23 @@ Each decision below is recorded for owner sign-off; silence = ship.
   existing request timeout, preserving stalled 4xx/5xx timeout/retry semantics.
   The legacy raw provider-settings container still derives `Debug`; no reachable
   logging call was found, but P0 does not claim that type is safe to log.
+- **Unknown provider terminal discriminators remain distinguishable without raw
+  provider text.** Known values use typed mappings. An unknown exact byte
+  sequence is represented only by its terminal category and a domain-separated
+  full HMAC-SHA-256 tag under an OS-random process-lifetime key. The key and raw
+  value are never persisted or logged. The deterministic-key test seam is
+  crate-private and compiled only under `cfg(test)`; production exposes no
+  public, configuration, or environment override. OS-random initialization
+  failure is a typed fail-closed diagnostic error, never a fixed-key fallback.
+  Tags support equality only within one process and are not durable cross-run
+  fingerprints. Raw value and byte length are not exposed. This is D1A.
+- **Response-header correlation remains deliberately redacted.** D1 applies to
+  every response-header value, including upstream request IDs. `NF-4` is an
+  accepted diagnostic limitation, not permission to expose one header without a
+  later owner decision and a separate non-disclosure design.
+- **Redirect refusal is explicit.** A 3xx from a credential-bearing request is a
+  terminal policy refusal naming the status and no-follow rule, never an
+  ordinary stream error. `Location` and response bodies remain undisclosed.
 - **Dormant authority is not pre-approved authority.** `mcp_servers` and its
   environment map remain merged but have no production runtime consumer. Any
   future wiring must add source provenance and explicit consent first.
@@ -718,8 +756,73 @@ Each decision below is recorded for owner sign-off; silence = ship.
   them.
 
 The owner approved execution of the staged remediation plan on 2026-07-10; this
-section records the P0 policy and the implemented candidate boundaries, including
-the explicitly incomplete process-spool portion above.
-Acceptance remains pending: machine gates and residual disposition are still in
-progress, and the external/Fable Gate D review could not receive an uncommitted
-private diff under sandbox policy. Internal reviews do not satisfy that gate.
+section records the P0 policy and candidate boundaries. Three provisional
+reports later reviewed frozen snapshot `7d121c9`. Workspace trust returned a
+scoped `READY`; credential and transport reports returned blockers, and none
+included a complete machine-gate rerun. The current HEAD and resulting fixes
+remain unreviewed, the separately reported exchange-review artifact is absent,
+and `QUAL-01` currently counts 177 campaign-added unwrap, expect, or panic calls
+hidden by older test allowances. P0 acceptance remains pending.
+
+## 8. OAuth multi-account direction (2026-07-11)
+
+- **Explicit named accounts are a conditional P2 objective.** The owner wants to
+  sign in to multiple ChatGPT/Codex accounts and select one without overwriting
+  another. D9 Gate A selects one branch. The supported branch requires an
+  owner-approved live validity experiment before implementation. If independently
+  stored credentials remain valid, P2 designs Norn-owned named storage plus
+  explicit login, list, use, status, and logout. Invalidation returns D9 to Gate
+  A for the unsupported-branch decision. If live approval/evidence is unavailable,
+  the owner may select the unsupported branch directly: Norn removes the named
+  surface and returns a typed documented unsupported outcome without claiming
+  that the provider technically invalidates isolated credentials. The existing
+  `--codex-home`/`CODEX_HOME` mechanism is only a low-level isolated-path
+  primitive, not the final account model.
+- **Simultaneous token validity is evidence, not an assumption.** The current
+  Norn/Codex shared-file integration represents one cached login, and the owner
+  reports that logging into another account can invalidate prior tokens. An
+  opt-in, redacted
+  two-account live experiment must establish whether independently stored
+  credentials remain refreshable before Norn claims concurrent named-account
+  support or rotation.
+- **Account selection is trusted authority.** It changes billing identity,
+  entitlements, workspace policy, retention, and potentially data residency.
+  Only explicit CLI, a Norn-owned active selection, or trusted user
+  configuration may select it. Repository configuration, model-selected
+  profiles, prompts, tools, and model output cannot choose or broaden accounts.
+- **Providers pin one credential identity.** `auth use` affects newly
+  constructed providers only. An in-flight provider, turn, agent, or resumed
+  session cannot silently switch identity. Until P5 binds an opaque identity to
+  persisted session state, every resume requires an explicit trusted account
+  choice and may not consume an active-account default.
+- **The Codex-shared source is specifically file-backed.** P2's foreign-writer
+  contract applies to `$CODEX_HOME/auth.json`. Current Codex can alternatively
+  [store credentials in the OS credential store](https://learn.chatgpt.com/docs/auth#credential-storage);
+  D9 must select a safe library interface before Norn claims keyring support,
+  otherwise it remains out of P2 scope. Norn never scrapes or shells out to
+  recover keyring secrets.
+- **Local status does not claim remote usability.** The side-effect-free state
+  model is missing, malformed, access-expired, refresh-candidate, locally-valid,
+  or unknown. Refresh conflict and undurable persistence are typed operation
+  outcomes unless D9 separately approves a durable recovery journal. Doctor may
+  perform a separately authorized active probe, reported separately from local
+  classification.
+- **Automatic rotation is not a P2 feature.** It remains `ROUTE-01`, owned by
+  P6 after the P3 transcript and P5 turn-state decisions. The current
+  [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/) prohibit
+  circumventing rate limits or restrictions, so exhaustion-triggered rotation
+  remains unsupported unless an authoritative product/contract determination
+  says this behavior is permitted. Even then, a switch may occur only before
+  dispatch or after a typed provider outcome guaranteeing no execution or state
+  mutation; absence of observed output is insufficient. It also requires a
+  trusted allowlist, clean account-scoped state, cache isolation, and explicit
+  resume rules.
+- **D9 remains open.** Storage layout, alias-to-opaque-ID mapping, migration of
+  the file-backed foreign Codex source, keyring scope, unknown-expiry policy,
+  static/embedder refresh ownership, accepted `provider.auth` spellings and
+  companion fields, and the live-validity branch require Gate A decisions and
+  evidence before implementation.
+- **D10 remains open.** Automatic rotation requires both authoritative permission
+  under the governing product/contract terms and a pre-dispatch or guaranteed
+  non-execution state-machine proof. If either is absent, `ROUTE-01` closes as an
+  explicitly unsupported capability rather than an implicit retry behavior.

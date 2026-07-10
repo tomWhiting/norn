@@ -1,12 +1,21 @@
 # Responses API remediation plan
 
-- **Status:** Active; P0 implementation candidate under verification
+- **Status:** Active; P0 closure work in progress. Provisional reviews of
+  frozen snapshot `7d121c9` have been received, but no phase gate has passed.
+  Final Gate C and Gate D remain pending.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
-- **Scope:** OpenAI Responses, ChatGPT/Codex OAuth, working-directory authority,
-  prompt caching, streaming, conversation state, transport, schema, and usage
-  behavior
+- **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
+  working-directory authority, prompt caching, streaming, conversation state,
+  transport, schema, and usage behavior
 - **Source review:**
 [`reviews/2026-07-10-responses-api-implementation-review.md`](reviews/2026-07-10-responses-api-implementation-review.md)
+- **P0 follow-up reviews:** credential/endpoint, transport/streaming, and
+  workspace-trust reports under
+  [`reviews/2026-07-11-remediation-review/`](reviews/2026-07-11-remediation-review/),
+  all reviewing snapshot `7d121c9`. The candidate has advanced beyond that
+  snapshot; final fix-round review remains pending. A separately reported
+  `reviews/2026-07-11-exchange-changeset-review.md` artifact has not been
+  received and is not evidence.
 
 ## Purpose
 
@@ -18,7 +27,9 @@ being called complete without reproducible evidence and independent review.
 The checkboxes in this file are acceptance records. An implementation being
 written, compiling, or having tests added is not enough to check a box. A phase
 is complete only when its exit gate, evidence bundle, and review gate are all
-complete. A required live test that does not run leaves its phase blocked.
+complete. A required live test that does not run leaves its phase blocked unless
+a Gate A owner decision removes the unverified capability and its advertised
+surface before implementation.
 
 ## Target state
 
@@ -30,9 +41,21 @@ On completion:
   cannot install an automatic shell hook, rule command, skill-shell expansion,
   convention process, or model-selected profile command that bypasses that
   boundary.
+- Raw settings layers cannot be merged through a public API without a
+  compiler-enforced validation witness. A production embedder can supply a
+  sealed static Codex credential only through a constrained constructor bound
+  to the compiled Codex backend and endpoint.
+- If live provider evidence proves independently stored credentials remain
+  valid, Norn can manage and explicitly select isolated named OAuth accounts
+  without repository-controlled account choice or silent identity changes. If
+  not, the limitation is explicit. Automatic rotation is advertised only if
+  current governing terms/product guidance permits it and later turn/retry
+  evidence proves it safe before execution.
 - Every automatic repository read uses one immutable launch root and a
   provenance-preserving, no-follow filesystem policy. Repository symlinks cannot
-  escape or raise trust, and session/debug/spool artifacts are private.
+  escape or raise trust, and session, task, foreground-output, debug,
+  full-output, and background-process artifacts are private without a
+  repository-relative fallback.
 - Norn stores and replays the ordered Responses item transcript rather than a
   lossy Chat-Completions-like reconstruction.
 - Refusals, phases, hosted search, annotations, compaction, unknown items,
@@ -54,7 +77,8 @@ On completion:
 
 1. P0 ships first because it closes the critical credential-exfiltration path.
    After P1 establishes the campaign gates, the dependency declarations on each
-   phase control ordering; P2 and P3 may proceed independently.
+   phase control ordering. This campaign completes and reviews P2, then stops for
+   the owner transcript decision before P3 implementation begins.
 2. Every finding is owned by one phase in the traceability table. A finding may
    be supported by earlier foundation work, but it closes only in its owning
    phase.
@@ -71,9 +95,13 @@ On completion:
    rigorous Fable-model reviewer who did not implement it. That reviewer stays
    with the phase through its fix rounds, then a different reviewer handles the
    next phase.
-6. A reviewer returns `READY` or `NOT READY`. Every review finding is fixed in
-   the same phase and rechecked by the same reviewer. Nothing is accepted as a
-   deferred follow-up.
+6. Intermediate reviews may record evidence about a finding already assigned
+   to a later phase without expanding the current phase. A regression introduced
+   by the current phase, a defect in its stated outcome, or a newly discovered
+   unowned defect may not be deferred to obtain `READY`; it must be fixed and
+   rechecked in the current phase. An item may be classified as a non-defect or
+   intentional limitation only through an evidence-backed owner decision. The
+   final phase reviewer returns `READY` or `NOT READY` after the fix rounds.
 7. Only after the final reviewer returns `READY` may the phase checkbox and its
    finding statuses be changed to complete.
 
@@ -115,6 +143,11 @@ These are phase exit criteria, not recommendations.
 - [ ] Existing suppressions elsewhere in the repository are not precedent. No
   diff may add, widen, or move one. No changed production item may sit under a
   production suppression; existing test-module suppressions may not be widened.
+- [ ] The campaign diff adds no `.unwrap()`, `.unwrap_err()`, `.expect()`,
+  `.expect_err()`, or `panic!`, including inside tests covered by pre-existing
+  blanket lint allowances. Result-returning tests and explicit pattern
+  assertions replace these calls; an existing allowance is not permission to
+  add hidden debt.
 - [ ] Tests that require an external service use an explicit runtime gate and
   report that they did not run. They are never marked `#[ignore]`.
 - [ ] `TODO`, `FIXME`, `HACK`, `todo!`, and `unimplemented!` markers are absent
@@ -162,6 +195,10 @@ Every phase must satisfy all four gates below.
 ### Gate A: entry and design
 
 - [ ] All dependency phases are complete.
+- [ ] The exact phase-base commit is recorded before implementation so every
+  diff, LOC, lint, and added-line audit has one reproducible comparison range.
+  P0's campaign base is `41ea210`; each later phase records its own accepted
+  predecessor commit in the evidence ledger.
 - [ ] The phase's owner decisions are recorded before implementation.
 - [ ] Its finding IDs, invariants, production touch points, and defect-regression
   or measurement/design evidence method are agreed by the implementer and
@@ -186,10 +223,14 @@ Every phase must satisfy all four gates below.
 - [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes.
 - [ ] `cargo test --workspace --all-targets` passes.
 - [ ] `cargo test --workspace --doc` passes.
-- [ ] `git diff --check` passes.
+- [ ] `git diff --check <phase-base>...HEAD` passes. Running bare
+  `git diff --check` on the required clean checkout is not evidence.
 - [ ] For P0, reviewer-verified production LOC and bypass inspection covers every
   changed Rust item. From P1 onward, the syntax-aware repository policy command
   passes as a hard failure in the protected merge check.
+- [ ] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
+  zero campaign-added unwrap, expect, panic, suppression, ignored-test, or
+  unresolved-marker uses. Later phases use their recorded phase base.
 - [ ] For P0, security reviewers manually inspect all fixtures/evidence for
   secrets. From P1 onward, the checked-in evidence-redaction validator passes;
   no credential, real account identifier, private prompt content, reusable turn
@@ -202,8 +243,11 @@ Every phase must satisfy all four gates below.
   the diff, relevant official-source revision, and evidence bundle.
 - [ ] Reviewers rerun the relevant tests and policy gates rather than trusting
   pasted output.
-- [ ] All review findings are fixed and the same reviewer verifies the fix round.
-- [ ] Final verdict is `READY`, with no unresolved item at any severity.
+- [ ] All phase-owned findings, regressions introduced by the phase, and
+  defects in the phase's claimed outcome are fixed and rechecked by the same
+  reviewer.
+- [ ] Final verdict is `READY` for the complete phase outcome, with no
+  unresolved phase-owned or newly unowned item at any severity.
 - [ ] Commit, commands, test counts, policy report, reviewer, date, and verdict
   are entered in the evidence ledger.
 
@@ -213,7 +257,7 @@ Every phase must satisfy all four gates below.
 |---|---|---|
 | P0. Credential and workspace authority containment | [ ] | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] | The program has executable contracts and protected quality gates. |
-| P2. OAuth lifecycle correctness | [ ] | Login, refresh, storage, and logout fail safely and explicitly. |
+| P2. OAuth lifecycle correctness | [ ] | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
 | P4. Streaming and replay conformance | [ ] | Supported events/items are complete, reconciled, and fail closed. |
 | P5. Conversation and Codex turn semantics | [ ] | Local/provider history and turn-scoped state have explicit lifetimes. |
@@ -227,11 +271,12 @@ Every phase must satisfy all four gates below.
 | Finding IDs | Closure owner | Foundation/dependency |
 |---|---|---|
 | `SEC-01` through `SEC-15`, `BACKEND-01` | P0 | Existing request/auth, workspace filesystem, provider-config, hook, rule, profile, variant, skill, convention, and session-artifact paths |
-| `AUTH-01`, `AUTH-02`, `AUTH-03`, `AUTH-04`, `AUTH-05`, `CONFIG-01` | P2 | P0-P1 |
+| `SEC-16`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, `QUAL-01` | P0 | P0 containment candidate and 2026-07-11 provisional review reports |
+| `AUTH-01` through `AUTH-07`, `CONFIG-01`, `CONFIG-02` | P2 | P0-P1 |
 | `STATE-01` | P4 | P3 canonical transcript |
 | `EVT-01` through `EVT-07` | P4 | P3 canonical transcript |
 | `STATE-02`, `STATE-03`, `ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01` | P5 | P3-P4 |
-| `TRANS-02`, `USAGE-01` | P6 | P5 turn-owned transport |
+| `TRANS-02`, `USAGE-01`, `NF-3`, `NF-5`, `ROUTE-01` | P6 | P5 turn-owned transport and account affinity |
 | `MODEL-01`, `ROLE-02`, `TOOL-01`, `REQ-01`, `SCHEMA-01`, `STRUCT-01` | P7 | P0, P3-P4, P6 |
 | `CACHE-01`, `CACHE-02`, `CACHE-03`, `CACHE-04`, `CACHE-05` | P8 | P4, P6 accounting, P7 request/tool stability |
 | Integrated closure and the two retained transport regressions | P9 | P0-P8 |
@@ -243,7 +288,8 @@ The relevant phase cannot pass Gate A while its decision is open.
 | ID | Required decision | Due | Status / record |
 |---|---|---|---|
 | D0 | CI/merge-gate platform and required-check wiring. P1 remains blocked until a checked-in clean-checkout gate is protected. | P1 | [ ] Open |
-| D1 | Exact compiled OAuth authority/path allowlist, redirect, workspace filesystem/command, and private-artifact policy. Custom trusted-proxy and repository-command consent are out of P0 scope. | P0 | [x] Decided 2026-07-10 and refined by the P0 threat model: accept no override or normalized `https://chatgpt.com[:443]/backend-api/codex[/]`, discard accepted input in favor of the compiled URL, and follow no redirects on credential-bearing clients. Both CWD layers are untrusted even when gitignored. Direct/raw provider authority, backend-selecting aliases, command-bearing hooks/rules, workspace skill shell, convention process categories, and model-selected profile prompt commands are rejected before use. One immutable Unix launch root uses no-follow workspace reads/enumeration; repository symlinks are unsupported and non-Unix workspace input fails closed. Debug, session, and full-output session-spool artifacts are private; background-process spool hardening remains an open `SEC-15` implementation item. Custom API-key endpoints require HTTPS except loopback HTTP. No trusted proxy or implicit project-command consent is admitted. Recorded in `DECISIONS-2026-07.md` section 6. |
+| D1 | Exact compiled OAuth authority/path allowlist, redirect, workspace filesystem/command, and private-artifact policy. Custom trusted-proxy and repository-command consent are out of P0 scope. | P0 | [x] Decided 2026-07-10 and refined by the P0 threat model and provisional review round: accept no override or normalized `https://chatgpt.com[:443]/backend-api/codex[/]`, discard accepted input in favor of the compiled URL, and follow no redirects on credential-bearing clients. Both CWD layers are untrusted even when gitignored. Direct/raw provider authority, backend-selecting aliases, command-bearing hooks/rules, workspace skill shell, convention process categories, and model-selected profile prompt commands are rejected before use. One immutable Unix launch root uses no-follow workspace reads/enumeration; repository symlinks are unsupported and non-Unix workspace input fails closed. Debug-dump hardening is implemented, while private-artifact work remains incomplete across ancestor traversal, foreground output, process spools, task storage, and relative fallbacks under `SEC-15`. Response headers remain fully redacted under D1, and redirect refusal follows the structural policy in `DECISIONS-2026-07.md` section 7. Custom API-key endpoints require HTTPS except loopback HTTP. No trusted proxy or implicit project-command consent is admitted. |
+| D1A | Non-disclosing representation for unknown provider terminal discriminators: equality semantics, keying, identifier lifetime, output size, and deterministic test control. | P0 | [x] Decided 2026-07-11: known values retain typed mappings; an unknown exact byte sequence is represented only by its terminal category and a domain-separated full HMAC-SHA-256 tag under an OS-random process-lifetime key. The key and raw value are never persisted or logged. A deterministic key seam is crate-private and compiled only under `cfg(test)`; production exposes no public, configuration, or environment override. OS-random initialization failure is a typed fail-closed diagnostic error, never a fixed-key fallback. Tags support equality only within one process and are not cross-run fingerprints. Raw value and byte length are not exposed. |
 | D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
@@ -251,6 +297,8 @@ The relevant phase cannot pass Gate A while its decision is open.
 | D6 | Pre-register the cache experiment: ratify or replace the proposed 20-iteration design; approve public/private backends, models, spending, warm-up, key isolation/reuse, an approximately 15 requests/minute per-key ceiling rechecked against current guidance, concurrency, retention/cooldown, service tier, output/effort controls, randomization, primary measures, and statistical treatment. | P8 | [ ] Open |
 | D7 | Approve credentials, spending, redaction, and retention for final live Codex and public Responses conformance. Without approval P9 is blocked, not passed by a skipped test. | P9 | [ ] Open |
 | D8 | Ratify the source-to-wire-role matrix for product System policy, trusted operator Developer policy, repository `NORN.md`/rules/profiles, user input, and compatible backends that cannot preserve Developer. | P5 | [ ] Open |
+| D9 | OAuth credential ownership and explicit named-account policy: Norn-managed stores; file-backed foreign `$CODEX_HOME/auth.json`; OS-keyring scope; static/embedder ownership; trusted selection; unknown expiry; accepted `provider.auth` spellings and required/forbidden companion fields; and isolated-account validity. | P2 | [ ] Open. Gate A chooses one branch. The supported branch requires an owner-approved live validity experiment before named-account implementation; success permits explicit named login/list/use/status/logout, while invalidation returns D9 to Gate A for an owner decision on the unsupported branch. If live approval/evidence is unavailable, the owner may instead select the unsupported branch at Gate A, remove the named capability and advertised surface, and return a typed/documented unsupported result without claiming technical incompatibility. A provider pins one credential identity for its lifetime, and repository or model input cannot select an account. |
+| D10 | Automatic account rotation policy: applicable product/contract permission, eligible exhaustion signals, trusted candidate allowlist, pre-request rejection proof, turn/session affinity, state reset, cache-isolation handoff, and resume authorization. | P6 | [ ] Open until authoritative current terms/product guidance permits the behavior and P3/P5 establish transcript replay, account-scoped state, and turn affinity. The current [OpenAI Terms of Use](https://openai.com/policies/terms-of-use/) prohibit circumventing rate limits or restrictions, so exhaustion-triggered rotation is unsupported unless OpenAI or the governing contract explicitly establishes that this use is permitted. Even then, switching occurs only before dispatch or after a typed provider outcome proving no execution or state mutation; absence of observed output is insufficient. P6 otherwise keeps `ROUTE-01` unsupported. |
 
 ## Immediate operator mitigation
 
@@ -271,12 +319,11 @@ close the P0 findings.
 
 ## P0. Credential and workspace authority containment
 
-**Status:** [ ] Implementation and internal verification in progress; external
-phase review pending; **findings addressed by candidate:** `SEC-01`, `SEC-02`,
-`SEC-03`, `SEC-04`, `SEC-05`, `SEC-06`, `SEC-07`, `SEC-08`, `SEC-09`,
-`SEC-10`, `SEC-11`, `SEC-12`, `SEC-13`, `SEC-14`, `BACKEND-01`;
-**partially addressed but still blocking:** `SEC-15`; **dependencies:** D1
-resolved.
+**Status:** [ ] Closure work in progress; **findings addressed by candidate:**
+`SEC-01` through `SEC-14`, `BACKEND-01`; **still blocking:** `SEC-15`,
+`SEC-16`, `BACKEND-02`, `NF-1`, `NF-2`, `QUAL-01`; **evidence seam pending:**
+`SEC-08A`; **gates pending:** final Gate C and Gate D; **dependencies:** D1
+and D1A resolved and refined by the provisional review round.
 
 ### What this phase fixes
 
@@ -299,6 +346,17 @@ model-selected trusted profile commands, raw provider options/API-shape/name
 collisions, provider-controlled diagnostic text, and non-private session/spool
 artifacts.
 
+The provisional review round found that the public raw `load_settings` and
+`merge_settings` APIs still let an embedder skip provenance validation. It also
+found that removing generic auth-provider injection correctly closed an
+authority bypass but stranded Meridian's legitimate sealed static-Codex path.
+Private persistence remains incomplete across process spools, foreground
+threshold-output logs, task storage, ancestor links, and relative `.norn`
+fallbacks. P0 redaction also removed every discriminator for unknown terminal
+codes, while redirect refusal is reported as an ordinary stream failure. The
+campaign diff currently adds 177 unwrap, expect, or panic calls hidden by older
+blanket test allowances.
+
 ### Difference after the phase
 
 Credential authority, deployment/backend identity, and endpoint selection are
@@ -316,9 +374,15 @@ secure workspace reads and descriptor-relative enumeration; repository symlinks
 are rejected. Workspace skill shell, convention process categories, and prompt
 commands on model-selected profiles are disabled as intentional confused-deputy
 closures. Session, lock, temporary, full-output, and process-spool artifacts are
-private. Static workspace profiles/rules, non-process LOC/pattern conventions,
-and inline variant prompts remain available; user and explicit CLI authority
-surfaces retain their intended behavior where they are operator-selected.
+private, including task and foreground threshold-output artifacts, with
+descriptor-relative ancestor traversal and no repository-relative fallback.
+Raw settings cannot be merged without a validation witness. Production static
+Codex credentials use a constrained constructor that cannot change backend or
+endpoint authority. Unknown terminal discriminators remain structurally
+distinguishable without raw provider text, and redirect refusal is explicit.
+Static workspace profiles/rules, non-process LOC/pattern conventions, and inline
+variant prompts remain available; user and explicit CLI authority surfaces
+retain their intended behavior where they are operator-selected.
 
 ### Work checklist
 
@@ -376,6 +440,23 @@ surfaces retain their intended behavior where they are operator-selected.
   remote-plaintext feature is separate future security work, not P0 scope.
 - [ ] Remove arbitrary OAuth-authority and injected-auth seams from production
   and `test-utils` feature builds; retain them only in crate unit tests.
+- [ ] Make raw settings loading and mechanical merging crate-internal. Expose a
+  public load-validate-merge path, or a sealed `ValidatedSettingsLayers` witness
+  with private fields whose merge method accepts trusted CLI/programmatic
+  overrides. No public caller can obtain project/local layers and merge them
+  without authority validation.
+- [ ] Keep arbitrary `Arc<dyn AuthProvider>` injection unit-test-only. Add a
+  production constructor accepting only a validated sealed static Codex
+  credential, require OAuth/Codex backend identity, and bind it to the compiled
+  ChatGPT/Codex endpoint. Until P2 defines an acknowledged owner sink, this P0
+  path does not refresh or rotate the static credential; a 401 returns a typed
+  owner-refresh requirement. It must not accept a custom auth implementation or
+  caller-selected token/request authority. Preserve this contract in an in-repo
+  public-API compile fixture; updating Meridian itself is separate downstream
+  integration evidence, not part of Norn's clean-checkout gate.
+- [ ] Prove every spawned/forked child reuses the parent provider instance and
+  that profile, variant, and model text cannot trigger backend-alias resolution,
+  environment lookup, credential construction, or endpoint replacement.
 - [ ] Ensure credential-bearing runtime/auth/request `Debug` formatting and
   rejected-destination errors never reveal bearer, refresh, ID, API-key, PKCE,
   or account secrets; redact credential-like response metadata including
@@ -385,12 +466,30 @@ surfaces retain their intended behavior where they are operator-selected.
 - [ ] Stream and discard non-2xx response bodies within the existing request
   timeout. Preserve the established stalled-response timeout/retry semantics;
   do not replace them with an unreviewed broad status-only behavior change.
+- [ ] Preserve distinct unknown `response.failed` codes and incomplete reasons
+  without propagating provider-controlled text. Known values retain typed
+  mappings; unknown values expose only the D1A process-local keyed opaque tag.
+- [ ] Preserve D1's `NF-4` disposition: every response-header value remains
+  redacted. The loss of upstream request correlation is an accepted diagnostic
+  limitation unless a later owner decision approves a narrow structural field.
+- [ ] Classify every 3xx response as a terminal redirect-policy refusal whose
+  locally authored error names the status and states that credential-bearing
+  redirects are not followed. Do not expose or follow `Location`, and do not
+  describe the result as an ordinary stream/body error.
 - [ ] Require debug-dump targets to be regular non-symlink files and mode `0600`
   on Unix.
-- [ ] Require session data, index, lock, atomic temporary, full-output spool, and
-  process-spool directories/files to be private (`0700` directories, `0600`
-  regular files on Unix), no-follow on final opens, and fail closed on links or
-  non-regular targets across create, reopen, rewrite, and resume.
+- [ ] Require session data, index, lock, atomic temporary, full-output spool,
+  foreground threshold-output, process-spool, and persistent-task
+  directories/files to be private (`0700` directories, `0600` regular files on
+  Unix), descriptor-relative no-follow on every ancestor and final component,
+  and fail closed on links or non-regular targets across create, reopen,
+  rewrite, and resume.
+- [ ] Remove repository-relative `.norn` fallbacks for session data, shared task
+  storage, and debug output. When neither an absolute configured root nor a
+  trusted home exists, return a typed error rather than writing beneath mutable
+  CWD.
+- [ ] Replace all 177 campaign-added unwrap, expect, and panic calls currently
+  hidden by pre-existing test allowances. Add or widen no lint suppression.
 - [ ] Put new security logic in cohesive modules below 500 production LOC. If a
   changed legacy file is over the limit, bring it below the limit in this phase.
 
@@ -402,6 +501,12 @@ surfaces retain their intended behavior where they are operator-selected.
 - [ ] Real CLI and shared-library settings entrypoints reject forbidden project,
   local, and profile fields while positive user-level and CLI authority cases
   retain their intended behavior.
+- [ ] Public API compile-contract evidence proves raw loaded project/local
+  layers cannot be mechanically merged without authority validation.
+- [ ] An in-repo public-API compile-contract fixture and request assertion prove
+  a sealed static Codex credential uses the compiled Codex destination without
+  exposing generic auth-provider injection. A real Meridian dependency upgrade,
+  build, and request assertion are recorded separately as downstream evidence.
 - [ ] All thirteen hook slots are rejected from both CWD settings layers;
   project/local shared-loader and CLI regressions prove command text is not
   executed or echoed, while user/programmatic hooks remain available.
@@ -415,6 +520,8 @@ surfaces retain their intended behavior where they are operator-selected.
   alias before environment lookup, while explicit CLI selection remains
   supported. Variant prompt-file and skill-shell widening sentinels fail before
   file or process side effects.
+- [ ] A child profile containing a backend-bearing alias sentinel proves no
+  child provider reconstruction, environment lookup, or endpoint change occurs.
 - [ ] Every workspace file family rejects final and ancestor symlinks, `..`,
   non-regular files, launch-root replacement, and user-path alias repointing.
   Root, child, spawn, fork, session-remove, and direct shared-library entrypoints
@@ -438,18 +545,28 @@ surfaces retain their intended behavior where they are operator-selected.
 - [ ] Debug-dump permission/symlink tests, OAuth feature-surface inspection, and
   sentinel diagnostic tests prove raw tokens, claims, headers, and authority
   error bodies do not escape.
+- [ ] Response-header dump fixtures prove the D1/NF-4 correlation decision is
+  exact: every response-header value remains redacted and no credential, cookie,
+  redirect target, turn state, or account metadata is exposed.
 - [ ] Malformed SSE, `response.failed`, and non-2xx sentinels prove provider text
   and control bytes never enter logs/errors; stalled non-2xx fixtures retain the
   existing typed timeout behavior while the body is streamed and discarded.
-- [ ] Session/index/lock/temp/full-output/process-spool tests prove private modes,
-  link/non-regular refusal, restrictive reopen/rewrite behavior, and no
-  permission regression under a permissive umask.
+- [ ] Distinct unknown failed/incomplete discriminators remain distinguishable
+  while raw values, control characters, and secret sentinels never appear.
+- [ ] HTTP 301/302/303/307/308 fixtures produce explicit redirect-policy
+  refusal, omit `Location`, and send no second request.
+- [ ] Session/index/lock/temp/full-output/foreground-output/process-spool/task
+  tests cover ancestor and final symlinks, non-regular targets, permissive umask,
+  legacy modes, reopen, replacement races, and absent trusted homes.
+- [ ] A no-external-diff audit reports zero campaign-added unwrap, expect, panic,
+  suppression, ignored-test, or unresolved-marker uses.
 
 ### Residuals requiring Gate D disposition
 
-These are not claimed fixed by a broad P0 statement. The external reviewer must
-either identify a reachable defect that P0 fixes before `READY`, or record an
-owner-approved scope/phase disposition with evidence:
+These are not claimed fixed by a broad P0 statement and are not presumed to be
+phase-owned defects. The external reviewer must verify the evidence-backed
+classification or identify a reachable defect in P0's claimed outcome, which
+then becomes a P0 blocker:
 
 - Workspace text reads remain unbounded. The remediation must be a designed
   streaming/size policy with an owner-approved value or provider fact, not an
@@ -470,12 +587,14 @@ owner-approved scope/phase disposition with evidence:
 
 ### Review and exit gate
 
-**Current gate state:** pending. Internal security/protocol reviewers provide
-fix-round input but do not satisfy Gate D. The fresh external/Fable review has
-not run: sandbox policy correctly prevented sending the uncommitted private diff
-to the local Codex/ChatGPT endpoint. That review must be arranged against an
-approved artifact after the P0 candidate is committed; this is not a skipped or
-implicitly passed gate.
+**Current gate state:** pending. Three provisional reports review frozen
+snapshot `7d121c9`; they are archived review input, not Gate D evidence for the
+final P0 candidate. They do not cover the final committed range, do not contain
+a complete Gate C rerun, and identify unresolved P0 work. The workspace-trust
+report's scoped `READY` is not a phase verdict. P0 must complete its fix round,
+pass Gate C, and receive final review against the resulting commit range. The
+separately reported exchange-changeset artifact has not been received and cannot
+count as evidence unless recovered exactly or replaced by a fresh review.
 
 - [ ] A security reviewer threat-models every credential destination, redirect,
   automatic working-directory command, and eager working-directory file read.
@@ -564,57 +683,157 @@ violate campaign rules. No provider behavior changes in this phase.
 
 ## P2. OAuth lifecycle correctness
 
-**Status:** [ ] Not started; **findings closed:** `AUTH-01` through `AUTH-05`;
-**dependencies:** P1.
+**Status:** [ ] Not started; **findings closed:** `AUTH-01` through `AUTH-07`,
+`CONFIG-01`, `CONFIG-02`; **dependencies:** P1 and D9. Gate A selects either the
+named-account branch, whose prerequisite live-validity experiment must succeed,
+or an owner-approved unsupported branch that removes the named surface without
+making a technical-validity claim. Automatic account rotation is not in P2.
 
 ### What this phase fixes
 
-Norn's login fallback reads the account ID from the wrong JWT shape, refresh is
-single-flight only inside one process, credential load and proactive refresh
-errors are hidden, browser success precedes durable save, and revoke failure
-prevents local deletion.
+Norn's login fallback reads the account ID from the wrong JWT shape. Refresh is
+single-flight only among callers sharing one `AuthManager`; separately
+constructed providers in one process, other Norn processes, and the Codex CLI
+can still race. A successful refresh can be reported after persistence failed,
+and a static/embedder credential can rotate without returning the new lineage to
+its owner. Credential load and proactive refresh errors are hidden, browser
+success precedes durable save, revoke failure prevents local deletion, and
+status/doctor do not distinguish local credential states or remote verification.
+The file-backed `$CODEX_HOME/auth.json` model also has no trusted named-account
+selection contract; Codex OS-keyring storage is a distinct integration surface.
 
 ### Difference after the phase
 
 Norn-created and imported Codex credentials produce the required account
-metadata. Multiple processes converge on one rotating credential transaction.
-Corrupt storage and refresh failures remain typed and visible. Browser success
-means the credential is saved, and logout always removes the local credential
-while reporting remote revoke separately.
+metadata. One coordinator owns each credential identity inside a process;
+cooperating Norn processes serialize refresh, and a non-cooperating foreign
+write is detected rather than knowingly overwritten. Corruption and unknown
+expiry are distinct local states; refresh conflict and successful-but-undurable
+refresh are distinct operation outcomes. Static credentials cannot rotate without an acknowledged owner
+sink. If the Gate A validity evidence permits, a named account can be logged in,
+listed, explicitly selected, inspected, and removed without overwriting another
+named account or the Codex CLI's current credential. Otherwise Norn reports that
+simultaneous named credentials are unsupported rather than presenting an
+unusable selector. The selected identity is pinned when a provider
+starts; selection changes affect new providers only. Until P5 persists account
+affinity, resume requires an explicit trusted account choice and never consumes
+the active-account default. Browser success means the
+credential and its directory entry are durable, and logout always removes the
+local credential while reporting remote revoke separately. P2 makes no
+automatic-rotation claim.
 
 ### Work checklist
 
 - [ ] Parse the namespaced Codex auth claim and retain only provider-shape
-  compatibility that is justified by sanitized fixtures.
-- [ ] Implement an interprocess reload-lock-refresh-save transaction with
-  atomic durable storage and explicit lock failure behavior.
+  compatibility justified by sanitized fixtures; reject conflicting account
+  identifiers.
+- [ ] Remove unused serialization authority from `IdTokenClaims` and stop
+  silently converting claim-parse failures into empty metadata.
+- [ ] Resolve the existing eight-day unknown-expiry fallback under D9 using a
+  pinned provider/source fact or a typed replacement policy. Do not retain or
+  replace it through an unlabeled constant.
+- [ ] Centralize absolute trusted Codex/Norn auth-root resolution in one
+  library-owned typed resolver used by CLI and library callers.
+- [ ] Introduce typed credential ownership for a Norn-managed store, the
+  file-backed foreign `$CODEX_HOME/auth.json`, and static/embedder-owned
+  credentials. D9 explicitly decides whether Codex OS-keyring integration is
+  supported; it is out of scope unless a safe library interface is selected.
+- [ ] Share one coordinator per credential storage identity inside a process.
+  Use reclaimable registry entries rather than a permanent global cache.
+- [ ] Implement a bounded per-credential reload-lock-refresh-save transaction
+  for cooperating Norn processes with atomic durable storage and explicit lock
+  failure behavior.
+- [ ] Detect a foreign writer changing a shared credential during refresh and
+  return a typed conflict without knowingly overwriting it. Do not claim a Norn
+  lock coordinates the Codex CLI.
+- [ ] Never report refresh success when a rotated credential was not durably
+  accepted by its owner. Static credentials require an acknowledged persistence
+  sink or have refresh disabled.
 - [ ] Preserve typed load, parse, refresh, persistence, and permission errors.
 - [ ] Define and test any stale-token use explicitly; do not silently fall back.
-- [ ] Delay browser completion until exchange and durable save succeed.
+- [ ] Use private no-follow regular-file credential storage with atomic
+  replacement, file fsync, parent-directory fsync, and durable deletion.
+- [ ] On the D9 supported branch, add a versioned named-account index whose user
+  alias maps to an opaque storage identifier; aliases are never filesystem paths.
+- [ ] On the supported branch, add explicit `auth login --name`, `auth list`,
+  `auth use`, `auth status [name]`, and `auth logout [name]` surfaces with
+  deliberate all-account behavior. On the unsupported branch, do not create an
+  index or selection surface; return and document a typed unsupported outcome.
+- [ ] Preserve `$CODEX_HOME/auth.json` as an explicitly identified foreign
+  source. Never duplicate its rotating refresh token into a named store.
+- [ ] Pin the selected identity for a provider/run. Before P5 adds persisted
+  affinity, every resume requires explicit trusted account selection and rejects
+  the Norn active-account default; it never silently chooses a replacement.
+- [ ] Make account selection trusted-only: explicit CLI, Norn-owned active
+  selection, or trusted user configuration. Project/local settings, model
+  aliases/profiles, prompts, and tools cannot select or rotate accounts.
+- [ ] Close `CONFIG-01` and `CONFIG-02` with the D9-approved typed
+  auth/source/account matrix, including whether `oauth`, `env`, and `api_key` are
+  distinct or aliases and which companion fields each requires or forbids. Do
+  not invent compatibility semantics during implementation. Validate before
+  environment lookup, credential loading, provider construction, or network I/O.
+- [ ] Replace CLI status and doctor booleans with one library-owned credential
+  state evaluator distinguishing missing, malformed, access-expired,
+  refresh-candidate, locally-valid, and unknown states. Refresh conflict and
+  undurable persistence remain typed operation outcomes unless D9 separately
+  approves a durable recovery journal. List/status remain local,
+  side-effect-free, remotely unverified, and free of token or identity
+  disclosure. Doctor may add an explicit optional active probe without changing
+  the local classification contract.
+- [ ] Delay browser completion until exchange, durable credential save, and any
+  named-account index update succeed. Own and join the worker outcome so
+  cancellation cannot leave a surprise credential write.
 - [ ] Always clear local credentials during logout and report remote revocation
-  as an independent result.
+  as an independent result; make the local deletion durable.
 
 ### Phase-specific evidence
 
 - [ ] Redacted real-shape JWT fixtures cover namespaced and supported fallback
-  claim sources without storing a usable token.
-- [ ] Two independent processes sharing a rotating refresh token perform one
-  effective authority exchange and converge on the same stored credential.
-- [ ] Corrupt, unreadable, partially written, and permission-denied storage
-  cases surface the correct typed error.
-- [ ] Browser exchange/save failures cannot render a final success page.
+  claim sources through login, import, refresh, and final header application
+  without storing a usable token.
+- [ ] Two separately constructed providers in one process share a coordinator
+  and cannot refresh the same lineage twice.
+- [ ] Two real OS child processes targeting one Norn-managed identity perform
+  one effective refresh exchange and converge on identical durable state.
+- [ ] A scripted lock-ignoring foreign writer replacing file-backed
+  `$CODEX_HOME/auth.json` during exchange is detected; Norn does not knowingly
+  overwrite it.
+- [ ] Successful exchange followed by save, rename, fsync, permission, or owner
+  sink failure is not returned as ordinary success.
+- [ ] Static credentials cannot strand a rotated refresh token: refresh is
+  rejected without an owner sink, and sink failure remains visible.
+- [ ] Corrupt, unreadable, partial, permission-denied, symlink, non-regular,
+  rename, fsync, and delete cases surface the correct typed state.
+- [ ] Browser exchange/save/cancellation failures cannot render a final success
+  page or perform an unowned later write.
 - [ ] Revoke network/authority failure still deletes the local credential.
+- [ ] On the supported branch and before named-account implementation, the
+  owner-approved experiment verifies whether logging in and refreshing account B
+  leaves account A authenticated and independently refreshable, not merely
+  unchanged on disk. Its redacted result selects supported implementation or
+  returns D9 to Gate A for an unsupported-branch decision.
+- [ ] On the supported branch, two named accounts coexist; switching affects
+  only new providers; logout of one leaves the other unchanged; aliases and
+  duplicate identities fail safely. On the unsupported branch, tests prove no
+  named registry/selector is exposed and the typed result explains the limit.
+- [ ] Status and doctor produce the same local classification for every fixture;
+  any doctor active-probe result is reported as separate remote evidence.
+- [ ] Resume tests prove no pre-P5 session consumes an implicit active-account
+  default after account selection changes.
+- [ ] The typed auth/source/account matrix rejects every invalid combination
+  before reading an environment variable or credential.
 
 ### Review and exit gate
 
 - [ ] Security/auth and concurrency/persistence reviewers independently approve.
 - [ ] A Fable adversarial reviewer returns `READY` after attacking failure paths.
-- [ ] Universal Gates A-D pass and `AUTH-01` through `AUTH-05` are closed.
+- [ ] Universal Gates A-D pass and `AUTH-01` through `AUTH-07`, `CONFIG-01`,
+  and `CONFIG-02` are closed.
 
 ## P3. Canonical ordered transcript
 
 **Status:** [ ] Not started; **foundation for:** `STATE-01`, `EVT-02`;
-**dependencies:** P0-P1 and D2. P2 may proceed independently.
+**dependencies:** P0-P2 and D2.
 
 ### What this phase fixes
 
@@ -755,8 +974,8 @@ authoritative completed item can become executable.
 ## P5. Conversation and Codex turn semantics
 
 **Status:** [ ] Not started; **findings closed:** `STATE-02`, `STATE-03`,
-`ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:** P3-P4 and
-D3/D8.
+`ROLE-01`, `CODEX-01`, `CODEX-02`, `TRANS-01`; **dependencies:** P2-P4 and
+D3/D8/D9.
 
 ### What this phase fixes
 
@@ -767,6 +986,9 @@ semantics are inferred or omitted. A stored thread does not return replayable
 encrypted reasoning, so resetting its anchor after local compaction can silently
 lose reasoning continuity. Repository `NORN.md`, rules, and profile bodies also
 receive inconsistent System/Developer authority based on discovery path.
+Account identity is also not represented in turn affinity, so later account
+routing cannot prove that provider anchors and Codex turn state stay with their
+owning credential.
 
 ### Difference after the phase
 
@@ -778,6 +1000,8 @@ sessions. Dropping/cancelling the turn also owns and terminates its HTTP produce
 so sticky state cannot outlive the turn through an orphaned task. Every valid
 anchor transition preserves reasoning or starts a semantically fresh thread, and
 repository sources follow the D8 role-authority matrix.
+Provider anchors and Codex turn state are additionally bound to one opaque
+credential identity and cannot cross an account switch.
 
 ### Work checklist
 
@@ -793,6 +1017,9 @@ repository sources follow the D8 role-authority matrix.
   and define its interaction with calls, refusals, and no-output continuation.
 - [ ] Capture `x-codex-turn-state` from headers/metadata, replay it within the
   same turn, and clear it at the turn boundary.
+- [ ] Bind response anchors and Codex turn state to the opaque P2 credential
+  identity. A mismatch fails before request construction rather than carrying
+  account-scoped state into another account.
 - [ ] Make the returned stream/turn session own the HTTP producer and cancel all
   header, body, and SSE waits on receiver drop, user cancellation, or timeout.
 - [ ] Reset or invalidate anchors whenever local compaction/state replacement
@@ -813,6 +1040,8 @@ repository sources follow the D8 role-authority matrix.
   loop semantics.
 - [ ] Concurrent-agent and resume tests prove turn state never crosses user-turn,
   agent, session, cancellation, or error boundaries.
+- [ ] Account-affinity tests prove anchors and turn state never cross credential
+  identities, including explicit account selection and resumed sessions.
 - [ ] A conflicting second turn-state value follows a documented tested rule
   rather than silently replacing or leaking the first value.
 - [ ] A controllable local server promptly observes producer/socket termination on
@@ -830,8 +1059,9 @@ repository sources follow the D8 role-authority matrix.
 
 ## P6. Transport, retry, and usage
 
-**Status:** [ ] Not started; **findings closed:** `TRANS-02`, `USAGE-01`;
-**foundation for:** `CACHE-02`; **dependencies:** P5 and D4.
+**Status:** [ ] Not started; **findings closed:** `TRANS-02`, `USAGE-01`,
+`NF-3`, `NF-5`, `ROUTE-01`; **foundation for:** `CACHE-02`; **dependencies:**
+P5, D4, and D10.
 
 ### What this phase fixes
 
@@ -839,6 +1069,12 @@ HTTP and in-stream rate limits have different retry paths, mapped errors do not
 immediately stop the producer, and failed/missing/cache-write usage is discarded
 or collapsed to zero. P5 has already made cancellation own the producer; this
 phase makes retry, terminal network shutdown, and attempt accounting consistent.
+It also records whether applicable current product terms and an authoritative
+product/contract interpretation permit account switching in response to
+exhaustion. Only if permission and technical safety are both established can an
+explicitly allowed account be selected without crossing turn, execution,
+workspace-policy, or account-state boundaries. Arbitrary failures are never
+rotation signals.
 
 ### Difference after the phase
 
@@ -847,6 +1083,12 @@ failure arrives as an HTTP status or SSE event. Every attempt has one terminal
 outcome. Observed provider usage distinguishes absent, zero, successful, failed,
 cancelled, cache-read, and cache-write values; attempts without terminal usage
 remain explicitly unknown rather than being called billed or estimated silently.
+If D10, applicable terms/product guidance, and live validity evidence permit
+automatic account selection, it occurs only before request dispatch or after a
+typed provider result that guarantees rejection before execution and state
+mutation. Absence of observed output is not such proof. It uses an explicit
+trusted allowlist and starts with clean account-scoped turn state. Otherwise
+automatic rotation remains unsupported while P2 manual selection remains.
 
 ### Work checklist
 
@@ -860,6 +1102,18 @@ remain explicitly unknown rather than being called billed or estimated silently.
   separate concepts; call usage billed only when provider/billing evidence says so.
 - [ ] Parse cache-read and cache-write field presence and values without defaulting
   absent fields to zero.
+- [ ] Resolve `ROUTE-01` under D10. Recheck the governing terms at implementation
+  time and obtain an authoritative product/contract determination before
+  implementing exhaustion-triggered switching. Account identity is pinned for a
+  dispatched request and turn. Only pre-dispatch selection, or a typed
+  account-specific outcome guaranteeing no execution or state mutation, may
+  trigger a candidate change; arbitrary 401/429/timeout/5xx input and absence of
+  observed output are insufficient.
+- [ ] Restrict any candidate account set to a trusted user allowlist. Repository
+  or model input cannot broaden it. Changing account clears Codex turn state,
+  clears or disables prior cache affinity until P8 supplies the final
+  account-isolated cache policy, and requires explicit authorization when
+  resuming a session owned by another account.
 - [ ] Retain regression coverage for retryable overload/slow-down and clean EOF
   without a terminal event.
 
@@ -876,6 +1130,12 @@ remain explicitly unknown rather than being called billed or estimated silently.
   include cache writes and reported failures, and unreported attempts remain in
   a separate unknown count. Billing reconciliation is evidence only when
   authority data is available.
+- [ ] Account-routing fixtures prove no second dispatch unless the first was
+  prevented or authoritatively rejected before execution/state mutation, no
+  failover on generic transport/auth failures, correct turn-state clearing,
+  cache-affinity disabling, trusted allowlist enforcement, and explicit resume
+  authorization. If rotation is unsupported, the capability is absent and the
+  typed exhaustion result tells the operator to select another account.
 
 ### Review and exit gate
 
@@ -887,8 +1147,8 @@ remain explicitly unknown rather than being called billed or estimated silently.
 ## P7. Request, schema, and model controls
 
 **Status:** [ ] Not started; **findings closed:** `MODEL-01`, `ROLE-02`,
-`TOOL-01`, `REQ-01`, `SCHEMA-01`, `STRUCT-01`; **dependencies:** P0-P1, P4,
-P6, and D5. P2 is independent.
+`TOOL-01`, `REQ-01`, `SCHEMA-01`, `STRUCT-01`; **dependencies:** P0-P2, P4,
+P6, and D5.
 
 ### What this phase fixes
 
@@ -965,7 +1225,7 @@ commands cannot invent provider history.
 ## P8. Prompt-cache measurement and policy
 
 **Status:** [ ] Not started; **findings closed:** `CACHE-01` through `CACHE-05`;
-**dependencies:** P4, P6, P7, and D6.
+**dependencies:** P4, P6, P7, D6, and D10.
 
 ### What this phase fixes
 
@@ -990,6 +1250,9 @@ than inference.
   `--no-session`, spawned, and forked agent paths.
 - [ ] Define key namespace, root/child/fork uniqueness and inheritance, lifetime,
   collision resistance, rotation, and provider per-key traffic behavior.
+- [ ] Namespace cache identity by the opaque selected credential without
+  exposing or fingerprinting account IDs, emails, tokens, or other reusable
+  identity data. Account switches never reuse local cache affinity accidentally.
 - [ ] Resolve session-stable tool definitions once or explicitly classify and
   diagnose variables that are permitted to change them.
 - [ ] Record domain-separated keyed MACs for instructions, serialized tool
@@ -1023,9 +1286,13 @@ than inference.
 - [ ] Persistent, ephemeral, spawned, and forked executions prove intended
   uniqueness, inheritance, collision resistance, and lifetime without leaking a
   raw key or a durable low-entropy hash.
+- [ ] Two account identities prove cache affinity is isolated across explicit
+  selection and any D10-approved rotation without exposing an account identifier
+  in keys, telemetry, or evidence.
 - [ ] The live experiment records backend/model, request number, keyed
   pseudonyms, ordered item types, input/output tokens, cached reads, cache-write
-  presence/value, first-event latency, completion latency, and request ID.
+  presence/value, first-event latency, completion latency, and a locally
+  generated experiment-row ID. It does not record an upstream request header.
 - [ ] Pre-registered primary measures include cached-prefix growth, cache
   read/write ratio, cost-relevant observed tokens, unknown-attempt count, first-
   event/completion latency distributions, and request success/failure.
@@ -1109,20 +1376,21 @@ depend on implementer assertion or terminal history.
 
 ## Evidence ledger
 
-Update one row only after the phase's final fix-round review.
+Populate only the `Phase base` cell at Gate A. Update the remaining cells only
+after the phase's final fix-round review.
 
-| Phase | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
-|---|---|---|---|---|---|---|
-| P0 | | | | | | [ ] |
-| P1 | | | | | | [ ] |
-| P2 | | | | | | [ ] |
-| P3 | | | | | | [ ] |
-| P4 | | | | | | [ ] |
-| P5 | | | | | | [ ] |
-| P6 | | | | | | [ ] |
-| P7 | | | | | | [ ] |
-| P8 | | | | | | [ ] |
-| P9 | | | | | | [ ] |
+| Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
+|---|---|---|---|---|---|---|---|
+| P0 | `41ea210` | | | | | | [ ] |
+| P1 | | | | | | | [ ] |
+| P2 | | | | | | | [ ] |
+| P3 | | | | | | | [ ] |
+| P4 | | | | | | | [ ] |
+| P5 | | | | | | | [ ] |
+| P6 | | | | | | | [ ] |
+| P7 | | | | | | | [ ] |
+| P8 | | | | | | | [ ] |
+| P9 | | | | | | | [ ] |
 
 ## Program completion checklist
 

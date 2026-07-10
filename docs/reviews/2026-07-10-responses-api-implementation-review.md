@@ -1,10 +1,10 @@
 # Responses API implementation review (2026-07-10)
 
-**Status:** Review complete for the snapshot below, including the P0 follow-up
-threat-model and Responses event-matrix passes completed on 2026-07-11. The P0
-findings now have an implementation candidate tracked in the remediation plan;
-closure awaits machine verification, residual-risk disposition, the P0 phase
-gate, and owner-arranged independent review.
+**Status:** Review complete for the baseline snapshot below, including the P0
+follow-up threat-model and Responses event-matrix passes completed on
+2026-07-11. Provisional external reports against remediation snapshot `7d121c9`
+added the findings recorded below. The P0 candidate remains in a fix round;
+closure awaits machine verification, final-range review, and the P0 phase gate.
 
 **Reviewed snapshot:** `main` at `263cc4f`.
 
@@ -78,7 +78,8 @@ not only an endpoint allowlist.
 | `SEC-09` | High | P0 candidate; review pending | Working-directory variant `prompt_file` can eagerly read an arbitrary file outside the workspace. |
 | `SEC-11` | High | P0 candidate; review pending | Automatically discovered workspace files can escape or change trust roots through symlinks, aliases, and repeated path resolution. |
 | `SEC-14` | High | P0 candidate; review pending | Project `provider.options`, profile `api_shape`, and cross-layer name collisions can select request/backend authority indirectly. |
-| `SEC-15` | High | Partially addressed; P0 blocker | Session logs, full-output spools, process spools, locks, and temporary artifacts are not uniformly private against permissive umasks or hostile links. |
+| `SEC-15` | High | Partially addressed; P0 blocker | Session, task, foreground/full-output, process-spool, lock, and temporary artifacts are not uniformly private against permissive umasks, hostile ancestor links, or repository-relative fallback. |
+| `SEC-16` | Medium | Open; P0 blocker | Public raw settings loading and merging let an embedder bypass working-directory authority validation. |
 | `STATE-01` | High | Open | Stateless ChatGPT replay is lossy and changes the provider's ordered output-item transcript. |
 | `STATE-02` | High | Open | Replaceable Developer context accumulates server-side under `previous_response_id`. |
 | `STATE-03` | High | Open | A stored Responses thread can lose its reasoning state when local compaction resets the anchor and replays history. |
@@ -104,17 +105,29 @@ not only an endpoint allowlist.
 | `ROLE-02` | Medium | Open | The compatible Chat Completions serializer silently collapses Developer messages into System messages. |
 | `TOOL-01` | Medium | Open | Catalog `apply_patch_tool_type` and `web_search_tool_type` values do not control the tool envelopes sent on the wire. |
 | `BACKEND-01` | Medium | P0 candidate; review pending | An explicit ChatGPT URL is classified as the direct API rather than the Codex backend. |
+| `BACKEND-02` | Medium | Open; P0 blocker | Removing generic auth injection left no constrained production constructor for sealed static Codex credentials and breaks Meridian on upgrade. |
 | `CONFIG-01` | Medium | Open | `provider.auth` is declared and merged but ignored when runtime authentication is selected. |
 | `SEC-06` | Medium | P0 candidate; review pending | Credential claims, response metadata, and OAuth authority error bodies can leak through diagnostics. |
 | `SEC-08` | Medium | P0 candidate; review pending | A working-directory model or alias can activate a backend-selecting alias and trusted credential bundle. |
+| `SEC-08A` | Medium | Evidence pending; P0 blocker | Child provider inheritance has no final regression proving model/profile text cannot reconstruct backend or credential authority. |
 | `SEC-10` | Medium | P0 candidate; review pending | A working-directory setting can re-enable skill shell expansion over a trusted user restriction. |
 | `SCHEMA-01` | Medium | Open | Schema downleveling can drop root `$defs` while retaining dangling `$ref` values. |
 | `USAGE-01` | Medium | Open | Usage from failed attempts is discarded; missing usage silently becomes zero. |
 | `AUTH-01` | Medium | Open | Norn's own login reads a flat account claim instead of the namespaced Codex claim. |
-| `AUTH-02` | Medium | Partially fixed | Refresh is single-flight in-process but still races across Norn/Codex processes. |
+| `AUTH-02` | Medium | Partially fixed | Refresh is single-flight only within one `AuthManager`; separate providers and Norn/Codex processes can still race. |
 | `AUTH-03` | Medium | Open | Credential-load and proactive-refresh failures are hidden as absence or stale-token fallback. |
 | `AUTH-04` | Low/Medium | Open | The browser reports login complete before token exchange and durable storage. |
 | `AUTH-05` | Low/Medium | Open | A remote revoke failure prevents local credential deletion. |
+| `AUTH-06` | High | Open | Refresh ownership is manager-local; persistence failure can be reported as success, and static refresh can strand a rotated credential outside its owner. |
+| `AUTH-07` | Enhancement/security-sensitive | Planned P2 | Norn has no named multi-account store or trusted explicit account-selection contract. |
+| `CONFIG-02` | Medium | Open | Credential ownership and account selection have no typed provenance-enforced configuration surface. |
+| `NF-1` | Medium | Open; P0 blocker | P0 redaction drops every discriminator for unknown failed/incomplete terminal values. |
+| `NF-2` | Medium | Open; P0 blocker | A refused credential-bearing redirect is reported as an ordinary stream/body error with no policy guidance. |
+| `NF-3` | Low | Open; P6 | In-band `retry_after` is not governed by the configured ceiling. |
+| `NF-4` | Low | Intentional limitation under D1 | Blanket response-header redaction removes the upstream request correlation identifier; the owner retained full header-value redaction. |
+| `NF-5` | Informational | Open; P6 | A mapped terminal stream error can be followed by a second `StreamInterrupted` signal. |
+| `QUAL-01` | Medium/gate | Open; P0 blocker | The campaign adds 177 unwrap, expect, or panic calls hidden by pre-existing blanket test allowances. |
+| `ROUTE-01` | Design | Deferred to P6 | Automatic account rotation lacks governing product/contract permission, pre-execution proof, turn affinity, state-clearing, and trusted-routing semantics. |
 | `STRUCT-01` | Medium | Design tradeoff | Native Responses structured output is replaced with a synthetic function tool. |
 
 Two previously suspected transport issues are in better shape at this snapshot:
@@ -435,18 +448,23 @@ future MCP wiring consumes those merged project values.
 
 Session JSONL and its index can contain prompts, reasoning summaries, tool
 arguments, and outputs. The full-output session spool deliberately stores the
-uncapped original tool result, and background-process spools retain stdout and
-stderr. Lock and temporary files share the same directory tree. Relying on the
-caller's umask, following an existing link, or creating a world-searchable
-directory can disclose materially more than ordinary diagnostic output.
+uncapped original tool result, foreground threshold redirects and
+background-process spools retain output, and persistent task records can hold
+agent inputs/results. Lock and temporary files share the same directory trees.
+Relying on the caller's umask, following a final or ancestor link, recursively
+creating through an alias, falling back to repository-relative `.norn`, or
+creating a world-searchable directory can disclose materially more than
+ordinary diagnostic output.
 
 P0 therefore treats the session data root, session/index files, lock files,
-atomic-write temporaries, full-output spool directories/files, and process spool
-directories/files as private artifacts. The required Unix policy is private
-directories (`0700`), private regular files (`0600`), no-follow final opens, and
-failure on non-regular or link targets. The independent reviewer must verify the
-complete creation, reopen, rewrite, resume, and cleanup matrix before this
-finding is closed; the source-review status does not claim that gate has passed.
+atomic-write temporaries, full-output and foreground-output directories/files,
+process spools, and persistent task storage as private artifacts. The required
+Unix policy is private directories (`0700`), private regular files (`0600`),
+descriptor-relative no-follow traversal for every component, no relative
+fallback, and failure on non-regular or link targets. The independent reviewer
+must verify the complete creation, reopen, rewrite, resume, and cleanup matrix
+before this finding is closed; the source-review status does not claim that gate
+has passed.
 
 ### BACKEND-01: backend identity is inferred from the absence of an override
 
@@ -483,9 +501,11 @@ that field under the `https://api.openai.com/auth` object. The token endpoint's
 top-level `account_id`, or an existing Codex `tokens.account_id`, masks the bug;
 Norn's fallback path does not (`login_server.rs:339-350`).
 
-In-process refresh is now correctly single-flight through a mutex and epoch
-(`openai_oauth/manager.rs:215-250`). Cross-process instances still load separate
-snapshots and can rotate the same refresh token concurrently. Atomic rename in
+Refresh is single-flight only for callers sharing one manager through its mutex
+and epoch (`openai_oauth/manager.rs:215-250`). Each separately constructed
+provider owns another manager, so multiple providers in one process can still
+load separate snapshots and rotate the same refresh token concurrently. Other
+Norn processes and the Codex CLI add further writers. Atomic rename in
 `storage.rs` protects file integrity, not refresh-token ownership.
 
 Credential-load errors are discarded by `.ok().flatten()`
@@ -503,6 +523,50 @@ or authority failure leaves the local credential installed.
 interprocess reload-lock-refresh-save transaction; preserve typed storage and
 refresh errors; show browser success only after durable save; and always clear
 local credentials while separately reporting remote revocation status.
+
+### 2026-07-11 provisional review additions
+
+The provisional credential review found that `load_settings` and
+`merge_settings` remain independently public. In-repository callers validate
+correctly, but an embedder can follow the obvious raw load-then-merge path and
+skip the security boundary. `SEC-16` requires a compiler-enforced transaction or
+sealed validation witness, not a documentation warning.
+
+P0 correctly made generic `Arc<dyn AuthProvider>` construction unit-test-only,
+but Meridian uses that production surface to apply a sealed dispatch credential.
+The next dependency update would fail to compile. `BACKEND-02` requires a
+constrained production constructor that accepts only a validated sealed static
+Codex credential, cannot refresh until P2 defines an acknowledged owner sink,
+and remains bound to the compiled Codex backend and endpoint. An in-repo
+public-API compile/request fixture is the reproducible Norn gate; a real Meridian
+upgrade is separate downstream evidence. Restoring generic manager or provider
+injection would reopen the original bypass.
+
+The workspace review found a child-spawn coverage seam. Current child assembly
+appears to share parent provider authority, but final evidence must prove that a
+profile, variant, or model string cannot reconstruct a provider, resolve a
+backend-bearing alias, read a credential environment variable, or change an
+endpoint (`SEC-08A`).
+
+The transport review found two P0-introduced diagnostic regressions. Unknown
+`response.failed` codes and incomplete reasons now collapse into one generic
+message (`NF-1`), while a deliberately refused 3xx is described as an ordinary
+stream/body error rather than a credential redirect-policy refusal (`NF-2`).
+Both belong to the P0 fix round because they were introduced by P0 containment.
+
+The same review recorded `NF-3` and `NF-5` for P6. D1 retains full
+response-header redaction, so `NF-4` is an intentional diagnostic limitation
+verified in P0 rather than an open blocker. The strict campaign audit separately
+found 177 added unwrap, expect, or panic calls across 17 Rust files. Older
+blanket test allowances hide them from Clippy, but they violate the explicit
+campaign rule and remain the P0 gate blocker `QUAL-01`.
+
+P2 also needs an explicit ownership model beyond `AUTH-02`: manager-local
+coordination, successful-but-undurable refresh, and static credentials whose
+rotated lineage cannot be returned to their owner are tracked as `AUTH-06`.
+Named explicit account selection is tracked as `AUTH-07`/`CONFIG-02`. Automatic
+rotation is separate `ROUTE-01` work only after governing terms/product guidance
+permits it and transcript, turn, retry, and account-state semantics exist.
 
 ---
 
@@ -783,8 +847,9 @@ tools to remain identical for a cache hit, so this invalidates the prompt before
 message placement matters.
 
 Resolve session-stable tool definitions once, or explicitly classify variables
-allowed in tool descriptions as stable. Fingerprint the serialized tool surface
-per request and include that fingerprint in cache diagnostics.
+allowed in tool descriptions as stable. Record only an experiment-scoped keyed
+pseudonym of the serialized tool surface in cache diagnostics; do not emit a
+durable raw hash of private tool text.
 
 ### CACHE-05: typed cache controls lag the current API
 
@@ -1126,8 +1191,10 @@ gates live in `docs/RESPONSES-API-REMEDIATION-PLAN.md`.
    convention categories, and reject prompt commands on model-selected profiles.
 10. Reject project/local raw provider options, profile API-shape selection, and
     cross-layer backend-name collisions.
-11. Make session, index, lock, temporary, full-output spool, and process-spool
-    directories/files private and non-link-following.
+11. Make session, index, lock, temporary, full-output, foreground threshold-output,
+    process-spool, and persistent-task directories/files private. Traverse every
+    Unix ancestor and final component without following links, and remove every
+    repository-relative sensitive-data fallback.
 
 This phase should ship independently and first. The account-claim,
 cross-process locking, and typed auth-load findings remain in the separate OAuth
@@ -1137,8 +1204,9 @@ lifecycle phase tracked by the remediation plan.
 
 1. Introduce a provider Responses item type with typed core variants and an
    opaque unknown variant.
-2. Persist ordered output items on the session event, with a versioned migration
-   or backward-compatible optional field.
+2. Persist ordered output items on the session event through the D2-approved
+   explicit version rejection or offline one-shot migration; do not retain a
+   dual-format runtime reader.
 3. Derive display text, reasoning summaries, local tool calls, and stop behavior
    from the item transcript.
 4. Replay original items in original order for `store: false`, removing only
@@ -1163,16 +1231,7 @@ expansion.
 6. Preserve reasoning across every valid anchor-reset/compaction transition or
    forbid the transition that cannot be replayed losslessly.
 
-### Phase 3: cache instrumentation and policy
-
-1. Parse cache-write usage before changing request policy.
-2. Assign stable keys to ephemeral roots, children, and forks.
-3. Hash instructions, tools, and ordered input items in debug telemetry.
-4. Run the GPT-5.5/GPT-5.6 A/B matrix described above.
-5. Add explicit breakpoints only for model/backend pairs proven to accept and
-   benefit from them.
-
-### Phase 4: transport and model controls
+### Phase 3: transport and model controls
 
 1. Make stream cancellation own the HTTP producer.
 2. Unify HTTP and in-band retry policy.
@@ -1184,6 +1243,18 @@ expansion.
 8. Replace orphan slash-command assistant calls with real local dispatch or a
    user-role request.
 
+### Phase 4: cache instrumentation and policy
+
+1. Parse cache-write usage before changing request policy.
+2. Assign stable keys to ephemeral roots, children, and forks after account and
+   turn affinity exist.
+3. Record experiment-scoped keyed pseudonyms for instructions, tools, and ordered
+   input items; do not emit durable raw hashes of private content.
+4. Run the GPT-5.5/GPT-5.6 A/B matrix described above after transport accounting
+   and request/model controls are stable.
+5. Add explicit breakpoints only for model/backend pairs proven to accept and
+   benefit from them.
+
 ---
 
 ## 8. Required conformance tests
@@ -1194,11 +1265,12 @@ expansion.
 | Ambient-secret containment | Working-directory config cannot select an environment variable or cause its value to be transmitted. |
 | Provider side-effect provenance | Working-directory config cannot enable raw dumps or select a provider executable; trusted user settings and supported CLI options retain explicit control. |
 | OAuth authority feature surface | A production build, including `test-utils`, exposes no arbitrary token-authority constructor. |
+| Constrained static Codex embedder | An in-repo public-API compile fixture and request assertion accept only a sealed non-refreshing static Codex credential and always use the compiled destination; downstream Meridian evidence is recorded separately. |
 | Diagnostic redaction | Tokens, account claims, response-header values, and authority error text do not appear in diagnostics; dump files are private regular files. |
 | Immutable workspace root | Every automatic workspace read/enumeration refuses final and ancestor symlinks, survives root-path replacement without escaping the launch root, and recognizes platform path aliases without following the candidate. |
 | Repository command containment | Workspace skills and conventions cannot launch processes; model-selected profiles cannot carry prompt commands; trusted operator-selected command surfaces remain explicit. |
 | Provider authority provenance | CWD provider options/API shape and cross-layer alias/profile collisions fail before backend selection, environment lookup, or network I/O. |
-| Private session artifacts | Session/index/lock/temp/full-output/process-spool paths are private regular files under private directories and reject symlink/non-regular targets on create and reopen. |
+| Private session artifacts | Session/index/lock/temp/full-output/foreground-output/process-spool/task paths are private regular files under private directories, reject ancestor/final symlink and non-regular targets on create/reopen/rewrite/resume, and have no repository-relative fallback. |
 | Ordered stateless replay | Every prior output item is replayed in original order with phase and encrypted reasoning intact. |
 | Multi-message phase | Commentary and final-answer messages remain distinct across a tool iteration. |
 | Refusal | Refusal text becomes a typed non-success outcome, never empty success. |

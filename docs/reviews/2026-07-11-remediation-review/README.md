@@ -12,7 +12,7 @@ reviewer checks the final range.
 
 | Artifact | Snapshot | Current disposition |
 |---|---|---|
-| `01-credential-endpoint-security.md` | `7d121c9` | Provisional code-trace input. Public raw config authority (`R1`) blocks P0; OAuth lifecycle findings remain owned by P2. |
+| `01-credential-endpoint-security.md` | `7d121c9` | Provisional code-trace input. Public raw config authority (`R1`, tracked as `SEC-16`) blocks P0; OAuth lifecycle findings remain owned by P2. |
 | `02-transport-streaming.md` | `7d121c9` | Provisional code-trace input. Lost structural diagnostics (`NF-1`) and misleading redirect refusal (`NF-2`) block P0. |
 | `03-workspace-trust.md` | `7d121c9` | Scoped snapshot `READY` only. `OBS-2`, `SEC-15`, and child-spawn backend selection still require final disposition. |
 | `../2026-07-11-exchange-changeset-review.md` | Missing | Not evidence. The reported artifact was not present in the Norn or adjacent Ablative worktrees and must be recovered exactly or replaced by a fresh review. |
