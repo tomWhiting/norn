@@ -173,7 +173,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
 
     let root_id = parts.id;
     let history = match default_history_path() {
-        Some(path) => InputHistory::load_from(path),
+        Some(path) => InputHistory::load_from(&path),
         None => InputHistory::in_memory(),
     };
     startup_trace.mark_count("input_history_loaded", "entries", history.len());

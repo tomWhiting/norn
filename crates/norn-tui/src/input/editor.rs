@@ -12,6 +12,7 @@
 //! the entry before returning it, so the persisted history always stays
 //! in step with what the user has sent.
 
+use std::fmt;
 use std::io;
 
 use super::autocomplete::Acceptance;
@@ -24,7 +25,6 @@ use super::keybindings::InputAction;
 /// indexes `lines`; `cursor_col` is a *character* offset within the
 /// cursor's line — never a byte offset — so the cursor can never land in
 /// the middle of a multi-byte codepoint.
-#[derive(Debug)]
 pub struct InputEditor {
     /// Buffer lines; invariant: never empty.
     pub(super) lines: Vec<String>,
@@ -37,6 +37,19 @@ pub struct InputEditor {
     pub(super) history: InputHistory,
     /// Top visual row of the visible viewport (internal scroll offset).
     pub(super) viewport_top: u16,
+}
+
+impl fmt::Debug for InputEditor {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InputEditor")
+            .field("line_count", &self.lines.len())
+            .field("cursor_row", &self.cursor_row)
+            .field("cursor_col", &self.cursor_col)
+            .field("history", &self.history)
+            .field("viewport_top", &self.viewport_top)
+            .finish()
+    }
 }
 
 impl InputEditor {
@@ -626,5 +639,18 @@ mod tests {
         assert_eq!(byte_to_row_col(&lines, 5), (1, 2));
         // Out-of-range — saturates to end of last line.
         assert_eq!(byte_to_row_col(&lines, 100), (1, 2));
+    }
+
+    #[test]
+    fn debug_omits_live_editor_text() {
+        let mut editor = editor();
+        for character in "current-prompt-secret".chars() {
+            editor.insert_char(character);
+        }
+
+        let debug = format!("{editor:?}");
+
+        assert!(!debug.contains("current-prompt-secret"));
+        assert!(debug.contains("line_count"));
     }
 }

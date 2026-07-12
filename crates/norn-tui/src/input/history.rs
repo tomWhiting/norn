@@ -3,16 +3,18 @@
 //! [`InputHistory`] holds the chronological list of previous submissions
 //! and the transient navigation state used while the user cycles through
 //! them with the Up/Down arrows. When file-backed, entries persist to
-//! `~/.norn/history.txt` — one entry per line, with newlines and
+//! `$NORN_HOME/history.txt` (normally `~/.norn/history.txt`) — one entry per line, with newlines and
 //! backslashes escaped so multi-line submissions round-trip losslessly.
 //!
 //! A history with no resolvable path (the home directory could not be
 //! found, or the in-memory constructor was used) still functions fully
 //! for the session; it simply never touches disk.
 
-use std::fs::{self, OpenOptions};
-use std::io::{self, Write as _};
-use std::path::PathBuf;
+use std::fmt;
+use std::io;
+use std::path::{Path, PathBuf};
+
+use norn::resource::PrivateLineLog;
 
 /// Resolve the default history file path: `~/.norn/history.txt`.
 ///
@@ -22,7 +24,7 @@ use std::path::PathBuf;
 /// `.unwrap()`/`.expect()` in library code).
 #[must_use]
 pub fn default_history_path() -> Option<PathBuf> {
-    dirs::home_dir().map(|home| home.join(".norn").join("history.txt"))
+    norn::config::paths::norn_dir().map(|root| root.join("history.txt"))
 }
 
 /// Escape a submission for single-line on-disk storage.
@@ -68,7 +70,7 @@ fn decode(line: &str) -> String {
 }
 
 /// Chronological input history with optional file backing.
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct InputHistory {
     /// Submitted entries, oldest first.
     entries: Vec<String>,
@@ -78,8 +80,20 @@ pub struct InputHistory {
     /// The editor draft saved before the first navigation step, restored
     /// when the user navigates forward past the newest entry.
     draft: Option<String>,
-    /// Backing file path; `None` for in-memory-only history.
-    path: Option<PathBuf>,
+    /// Private backing log; `None` for in-memory-only history.
+    log: Option<PrivateLineLog>,
+}
+
+impl fmt::Debug for InputHistory {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("InputHistory")
+            .field("entry_count", &self.entries.len())
+            .field("navigating", &self.nav.is_some())
+            .field("draft_present", &self.draft.is_some())
+            .field("backing_path", &self.log.as_ref().map(PrivateLineLog::path))
+            .finish()
+    }
 }
 
 impl InputHistory {
@@ -97,8 +111,19 @@ impl InputHistory {
     /// read failure on startup is never fatal (CO5: surface or log,
     /// never silently swallow).
     #[must_use]
-    pub fn load_from(path: PathBuf) -> Self {
-        let entries = match fs::read_to_string(&path) {
+    pub fn load_from(path: &Path) -> Self {
+        let log = match PrivateLineLog::new(path) {
+            Ok(log) => log,
+            Err(err) => {
+                tracing::warn!(
+                    path = %path.display(),
+                    error = %err,
+                    "input history path is not safe; using in-memory history"
+                );
+                return Self::in_memory();
+            }
+        };
+        let entries = match log.read_to_string() {
             Ok(contents) => contents
                 .lines()
                 .filter(|line| !line.is_empty())
@@ -109,16 +134,16 @@ impl InputHistory {
                 tracing::warn!(
                     path = %path.display(),
                     error = %err,
-                    "failed to read input history; starting with empty history"
+                    "failed to read input history; disabling disk backing"
                 );
-                Vec::new()
+                return Self::in_memory();
             }
         };
         Self {
             entries,
             nav: None,
             draft: None,
-            path: Some(path),
+            log: Some(log),
         }
     }
 
@@ -145,12 +170,8 @@ impl InputHistory {
         if entry.is_empty() {
             return Ok(());
         }
-        if let Some(path) = &self.path {
-            if let Some(parent) = path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            let mut file = OpenOptions::new().create(true).append(true).open(path)?;
-            writeln!(file, "{}", encode(entry))?;
+        if let Some(log) = &self.log {
+            log.append_line(&encode(entry))?;
         }
         self.entries.push(entry.to_owned());
         Ok(())
@@ -207,7 +228,6 @@ impl InputHistory {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used)]
 mod tests {
     use super::*;
 
@@ -220,14 +240,15 @@ mod tests {
     }
 
     #[test]
-    fn prev_returns_newest_first_then_walks_back() {
+    fn prev_returns_newest_first_then_walks_back() -> io::Result<()> {
         let mut history = InputHistory::in_memory();
-        history.append("a").unwrap();
-        history.append("b").unwrap();
+        history.append("a")?;
+        history.append("b")?;
         assert_eq!(history.prev(""), Some("b".to_string()));
         assert_eq!(history.prev(""), Some("a".to_string()));
         // Saturates at the oldest entry.
         assert_eq!(history.prev(""), Some("a".to_string()));
+        Ok(())
     }
 
     #[test]
@@ -237,75 +258,81 @@ mod tests {
     }
 
     #[test]
-    fn next_past_newest_restores_draft() {
+    fn next_past_newest_restores_draft() -> io::Result<()> {
         let mut history = InputHistory::in_memory();
-        history.append("a").unwrap();
-        history.append("b").unwrap();
+        history.append("a")?;
+        history.append("b")?;
         // One step back, then forward past the newest entry.
         assert_eq!(history.prev("my draft"), Some("b".to_string()));
         assert_eq!(history.advance(), Some("my draft".to_string()));
+        Ok(())
     }
 
     #[test]
-    fn next_walks_forward_then_restores_draft() {
+    fn next_walks_forward_then_restores_draft() -> io::Result<()> {
         let mut history = InputHistory::in_memory();
-        history.append("a").unwrap();
-        history.append("b").unwrap();
+        history.append("a")?;
+        history.append("b")?;
         assert_eq!(history.prev("draft"), Some("b".to_string()));
         assert_eq!(history.prev("draft"), Some("a".to_string()));
         assert_eq!(history.advance(), Some("b".to_string()));
         assert_eq!(history.advance(), Some("draft".to_string()));
         // Draft was drained — no further forward movement.
         assert_eq!(history.advance(), None);
+        Ok(())
     }
 
     #[test]
-    fn next_without_navigation_is_a_noop() {
+    fn next_without_navigation_is_a_noop() -> io::Result<()> {
         let mut history = InputHistory::in_memory();
-        history.append("a").unwrap();
+        history.append("a")?;
         assert_eq!(history.advance(), None);
+        Ok(())
     }
 
     #[test]
-    fn cancel_navigation_lets_prev_recapture_the_draft() {
+    fn cancel_navigation_lets_prev_recapture_the_draft() -> io::Result<()> {
         let mut history = InputHistory::in_memory();
-        history.append("a").unwrap();
+        history.append("a")?;
         assert_eq!(history.prev("first draft"), Some("a".to_string()));
         history.cancel_navigation();
         assert_eq!(history.prev("second draft"), Some("a".to_string()));
         assert_eq!(history.advance(), Some("second draft".to_string()));
+        Ok(())
     }
 
     #[test]
-    fn append_ignores_empty_entries() {
+    fn append_ignores_empty_entries() -> io::Result<()> {
         let mut history = InputHistory::in_memory();
-        history.append("").unwrap();
+        history.append("")?;
         assert!(history.is_empty());
+        Ok(())
     }
 
     #[test]
-    fn load_from_missing_file_is_empty_and_path_backed() {
-        let dir = tempfile::tempdir().unwrap();
+    fn load_from_missing_file_is_empty_and_path_backed() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("history.txt");
-        let mut history = InputHistory::load_from(path.clone());
+        let mut history = InputHistory::load_from(&path);
         assert!(history.is_empty());
         // Path-backed: the first append creates the file.
-        history.append("created").unwrap();
+        history.append("created")?;
         assert!(path.exists());
+        Ok(())
     }
 
     #[test]
-    fn round_trip_persists_entries_in_chronological_order() {
-        let dir = tempfile::tempdir().unwrap();
+    fn round_trip_persists_entries_in_chronological_order() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("history.txt");
 
-        let mut history = InputHistory::load_from(path.clone());
-        history.append("first").unwrap();
-        history.append("second\nwith newline").unwrap();
-        history.append("third").unwrap();
+        let mut history = InputHistory::load_from(&path);
+        history.append("first")?;
+        history.append("second\nwith newline")?;
+        history.append("third")?;
         drop(history);
 
-        let reloaded = InputHistory::load_from(path);
+        let reloaded = InputHistory::load_from(&path);
         assert_eq!(
             reloaded.entries,
             vec![
@@ -314,14 +341,45 @@ mod tests {
                 "third".to_string(),
             ]
         );
+        Ok(())
     }
 
     #[test]
-    fn append_creates_parent_directory() {
-        let dir = tempfile::tempdir().unwrap();
+    fn append_creates_parent_directory() -> io::Result<()> {
+        let dir = tempfile::tempdir()?;
         let path = dir.path().join("nested").join("dir").join("history.txt");
-        let mut history = InputHistory::load_from(path.clone());
-        history.append("entry").unwrap();
+        let mut history = InputHistory::load_from(&path);
+        history.append("entry")?;
         assert!(path.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn corrupt_utf8_disables_disk_backing() -> io::Result<()> {
+        use std::fs;
+
+        let dir = tempfile::tempdir()?;
+        let path = dir.path().join("history.txt");
+        fs::write(&path, [0xff, b'\n'])?;
+
+        let mut history = InputHistory::load_from(&path);
+        assert!(history.log.is_none());
+        history.append("memory only")?;
+        assert_eq!(fs::read(&path)?, [0xff, b'\n']);
+        Ok(())
+    }
+
+    #[test]
+    fn debug_omits_entries_and_draft() -> io::Result<()> {
+        let mut history = InputHistory::in_memory();
+        history.append("history-secret")?;
+        let _ = history.prev("draft-secret");
+
+        let debug = format!("{history:?}");
+
+        assert!(!debug.contains("history-secret"));
+        assert!(!debug.contains("draft-secret"));
+        assert!(debug.contains("entry_count"));
+        Ok(())
     }
 }
