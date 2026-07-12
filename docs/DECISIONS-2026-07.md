@@ -876,6 +876,16 @@ acceptance remains pending.
   `RLIMIT_CORE` to zero would also disable traditional core dumps for commands
   spawned by Norn. It is not implied by the NOFILE ruling and remains open until
   that inherited behavior is explicitly accepted.
+- **Raising `RLIMIT_NOFILE` is no longer sufficient closure.** On 2026-07-13
+  the owner rejected residual Norn-owned descriptor growth as an acceptable
+  risk. Idle retained objects must converge to zero descriptors where secure
+  identity-verified reopen is possible; local lock contenders must wait before
+  opening; descriptor-heavy active work must share one weighted process-wide
+  admission authority and release capacity on every terminal path. Evidence
+  must run in re-executed low-limit children so the parallel test runner's
+  process limit is never mutated. The guarantee is scoped to Norn-owned
+  descriptors: unrelated embedder code and system-wide `ENFILE` remain outside
+  Norn's control and must still surface typed diagnostics.
 - **Gate evidence is distributional and enumerable.** Concurrency-sensitive
   claims require a checked-in repeatability command or script and the complete
   pass/fail distribution. The macOS convergence correction requires 50 recorded

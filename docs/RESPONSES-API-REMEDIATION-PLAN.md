@@ -337,6 +337,7 @@ The relevant phase cannot pass Gate A while its decision is open.
 | D1A | Non-disclosing representation for unknown provider terminal discriminators: equality semantics, keying, identifier lifetime, output size, and deterministic test control. | P0 | [x] Decided 2026-07-11: known values retain typed mappings; an unknown exact byte sequence is represented only by its terminal category and a domain-separated full HMAC-SHA-256 tag under an OS-random process-lifetime key. The key and raw value are never persisted or logged. A deterministic key seam is crate-private and compiled only under `cfg(test)`; production exposes no public, configuration, or environment override. OS-random initialization failure is a typed fail-closed diagnostic error, never a fixed-key fallback. Tags support equality only within one process and are not cross-run fingerprints. Raw value and byte length are not exposed. |
 | D1B | Location and access policy for fetched and other session-derived artifacts. | P0 | [x] Decided 2026-07-11: fetched documents are private session-owned artifacts beneath the trusted user-level Norn session store, never workspace files. P0 establishes a typed active-session artifact scope and migrates new fetch writes without pre-empting P3 transcript-format, historical-reference, fork-copy, or broad storage-migration decisions. Generic model file access may read/search only the active artifact subtree; it does not gain authority over credentials, indexes, raw child transcripts, or other sessions. |
 | D1C | File-descriptor exhaustion mitigation introduced by descriptor-pinned private storage and persistent agent sinks. | P0 | [x] Mandatory per the 2026-07-11 post-review owner ruling: the official CLI raises its soft `RLIMIT_NOFILE` only to a finite OS-provided ceiling, reports inherited/effective limits and a labelled descriptor snapshot through `doctor`, and preserves typed `EMFILE` versus `ENFILE` diagnostics across the P0 private/session/process boundary. Library embedders do not receive an implicit process-global mutation. Structural descriptor sharing or lazy reopen remains an explicitly owned follow-up rather than being misrepresented as solved by a higher limit. `RLIMIT_CORE=0` remains a separate open decision because it also affects spawned user commands. |
+| D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [ ] In progress 2026-07-13: retained session sinks, session artifact stores, completed-process spools, manager roots, and finalized foreground-output roots are being converted to identity-verified operation-scoped reopen; local index-lock waiters are admitted before opening descriptors; cleanup process-group signalling no longer spawns `kill`. Low-limit re-exec tests cover retained sinks, spools, and 200 completed processes. Remaining before closure: one process-wide weighted admission authority for active process pipes, watches/hooks, persistent stdio transports, and network activity; repeated low-limit release-path evidence; inventory reconciliation and independent review. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
 | D1D | Remove the dormant `NornSettings.mcp_servers` configuration surface, or retain it behind provenance-aware containment and a real no-authority fixture. Active explicit MCP commands and library types are not this decision. | P0 | [ ] Open |
 | D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
@@ -370,7 +371,8 @@ close the P0 findings.
 **Acceptance:** [ ] Gate D `NOT READY`; corrective round active;
 **implementation status:** original 33 work items plus F1, D1B, D1C, legacy
 path-helper removal, missing transport/loop sentinels, SEC-05 compile contracts,
-and the TUI-history artifact correction are implemented; D1D, historical
+and the TUI-history artifact correction are implemented; D1E structural
+descriptor closure is active; D1D, historical
 baseline evidence disposition, final Gate C, and whole-phase Gate D remain open;
 **findings addressed by candidate:** `SEC-01` through `SEC-13`, `SEC-15`,
 `SEC-16`, `BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and
@@ -379,7 +381,7 @@ baseline evidence disposition, final Gate C, and whole-phase Gate D remain open;
 surfaces; corrective code is committed through `37c806a` and the provisional
 writer/LOC/bypass/traceability snapshot through `0e0680f`. The final workspace
 gate cannot be claimed from the interrupted low-disk run; **dependencies:** D1,
-D1A, D1B, and D1C resolved; D1D and the P0-only retrospective Gate A exception
+D1A, D1B, and D1C resolved; D1E, D1D, and the P0-only retrospective Gate A exception
 remain open.
 
 ### What this phase fixes
@@ -589,6 +591,24 @@ retain their intended behavior where they are operator-selected.
   and do not claim coverage beyond the inventory. Implementation, retained
   descriptor inventory, focused tests, and the non-goals are recorded in the
   [`D1C correction record`](reviews/2026-07-12-p0-nofile-correction.md).
+- [ ] Complete D1E structural descriptor closure under the stricter 2026-07-13
+  owner ruling.
+  - [x] Remove descriptor retention from idle session sinks, session artifact
+    stores, completed-process spools/managers, and finalized foreground output;
+    verify lazy reopens against their originally bound inode before mutation.
+  - [x] Admit in-process index-lock contenders before opening the private root
+    and lock file; preserve the caller's total lock deadline across both local
+    admission and cross-process locking.
+  - [x] Replace production cleanup `kill` subprocesses with direct
+    process-group signalling that needs no new descriptor under pressure.
+  - [x] Re-exec low-`RLIMIT_NOFILE` regressions for 128 retained session sinks,
+    128 retained spools, and a registry of 200 completed real processes.
+  - [ ] Govern active descriptor-heavy work through one process-wide weighted
+    authority, including foreground/background processes, watch filters, shell
+    hooks, persistent stdio MCP/extensions, and active/idle HTTP sockets.
+  - [ ] Prove permit transfer and release on success, spawn failure, timeout,
+    cancellation, foreground-to-background adoption, transport drop, and
+    shutdown under repeated low-limit runs; reconcile the complete inventory.
 - [ ] Resolve D1D. Remove the consumerless settings surface or retain it only
   with explicit provenance-aware containment, redacted secret-bearing fields,
   and a hostile real-entrypoint no-authority regression.

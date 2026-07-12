@@ -1,0 +1,6 @@
+{
+  "command": "cargo test -p norn --lib descriptor_retention -- --nocapture",
+  "iterations": 20,
+  "passed": 20,
+  "failed": 0
+}
