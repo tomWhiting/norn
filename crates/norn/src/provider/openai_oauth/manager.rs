@@ -38,6 +38,19 @@ pub struct AuthManagerBuildError {
 }
 
 /// Small credential manager compatible with norn's OAuth auth-provider use.
+///
+/// Mock token-authority constructors are not part of the production API, even
+/// when the legacy `test-utils` feature is enabled:
+///
+/// ```compile_fail
+/// use norn::provider::openai_oauth::AuthManager;
+/// let _ = AuthManager::shared_for_tests;
+/// ```
+///
+/// ```compile_fail
+/// use norn::provider::openai_oauth::AuthManager;
+/// let _ = AuthManager::from_static_auth_with_token_url;
+/// ```
 #[derive(Debug)]
 pub struct AuthManager {
     codex_home: Option<PathBuf>,
