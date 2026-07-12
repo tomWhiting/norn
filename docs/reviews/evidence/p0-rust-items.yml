@@ -1,0 +1,21 @@
+id: p0-rust-items
+language: Rust
+rule:
+  any:
+    - kind: const_item
+    - kind: enum_item
+    - kind: enum_variant
+    - kind: extern_crate_declaration
+    - kind: field_declaration
+    - kind: foreign_mod_item
+    - kind: function_item
+    - kind: function_signature_item
+    - kind: impl_item
+    - kind: let_declaration
+    - kind: mod_item
+    - kind: static_item
+    - kind: struct_item
+    - kind: trait_item
+    - kind: type_item
+    - kind: union_item
+    - kind: use_declaration

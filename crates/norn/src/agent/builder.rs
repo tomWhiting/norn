@@ -3315,8 +3315,7 @@ mod tests {
             ephemeral
                 .registry
                 .shared_context()
-                .expect("shared tool context")
-                .get_extension::<crate::session::SessionArtifactStore>()
+                .and_then(|ctx| ctx.get_extension::<crate::session::SessionArtifactStore>())
                 .is_none(),
             "an ephemeral run must not invent a durable artifact owner",
         );

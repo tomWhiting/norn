@@ -5399,14 +5399,17 @@ struct SendThenStallProvider {
 
 impl Provider for SendThenStallProvider {
     fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
-        self.tx
-            .try_send(make_channel_message(
-                "timeout-sender",
-                self.content,
-                crate::r#loop::inbound::MessageKind::Update,
-                0,
-            ))
-            .expect("test channel has capacity");
+        if let Err(error) = self.tx.try_send(make_channel_message(
+            "timeout-sender",
+            self.content,
+            crate::r#loop::inbound::MessageKind::Update,
+            0,
+        )) {
+            return Err(ProviderError::StreamError {
+                reason: format!("timeout fixture could not enqueue its message: {error}"),
+                transient: None,
+            });
+        }
         Ok(Box::pin(stream::pending()))
     }
 
@@ -5501,7 +5504,8 @@ async fn exit_sweeps_undrained_channel_messages_into_pending_store() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn timeout_arm_sweeps_undrained_channel_messages_into_pending_store() {
+async fn timeout_arm_sweeps_undrained_channel_messages_into_pending_store() -> Result<(), NornError>
+{
     let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(1);
     let provider = SendThenStallProvider {
         tx,
@@ -5530,14 +5534,15 @@ async fn timeout_arm_sweeps_undrained_channel_messages_into_pending_store() {
         loop_context: &mut loop_ctx,
         cancel: None,
     })
-    .await
-    .expect("a timed-out step returns Ok(TimedOut)");
+    .await?;
     assert!(matches!(result, AgentStepResult::TimedOut { .. }));
     assert_update_requeued(&pending, agent_id, &store, "accepted before timeout");
+    Ok(())
 }
 
 #[tokio::test]
-async fn full_try_send_hands_retained_message_to_awaited_send_losslessly() {
+async fn full_try_send_hands_retained_message_to_awaited_send_losslessly()
+-> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     use crate::r#loop::inbound::InboundTrySendError;
 
     let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(1);
@@ -5553,8 +5558,7 @@ async fn full_try_send_hands_retained_message_to_awaited_send_losslessly() {
         crate::r#loop::inbound::MessageKind::Update,
         0,
     );
-    tx.try_send(first)
-        .expect("first message fills capacity one");
+    tx.try_send(first)?;
     assert_eq!(
         tx.try_send(second.clone()),
         Err(InboundTrySendError::Full),
@@ -5588,8 +5592,8 @@ async fn full_try_send_hands_retained_message_to_awaited_send_losslessly() {
     });
     let handoff = tx.send(second);
     let (result, delivery) = tokio::join!(run, handoff);
-    delivery.expect("awaited handoff sends after the loop frees capacity");
-    result.expect("step completes after draining both updates");
+    delivery?;
+    result?;
 
     let user_text = store
         .events()
@@ -5602,6 +5606,7 @@ async fn full_try_send_hands_retained_message_to_awaited_send_losslessly() {
         .join("\n");
     assert!(user_text.contains("first buffered update"));
     assert!(user_text.contains("second awaited update"));
+    Ok(())
 }
 
 /// A step that ends through a stop boundary has already flushed its

@@ -440,9 +440,13 @@ async fn save_fetched_content(
     clippy::match_wildcard_for_single_variants
 )]
 mod tests {
+    use std::io;
+
     use super::*;
     use crate::tool::context::ToolContext;
     use crate::tool::envelope::ToolEnvelope;
+
+    type TestResult = Result<(), Box<dyn std::error::Error + Send + Sync>>;
 
     fn envelope(args: Value) -> ToolEnvelope {
         ToolEnvelope {
@@ -533,7 +537,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn execute_requires_artifact_authority_before_network_request() {
+    async fn execute_requires_artifact_authority_before_network_request() -> TestResult {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -543,30 +547,31 @@ mod tests {
             .respond_with(ResponseTemplate::new(200).set_body_string("must not be requested"))
             .mount(&server)
             .await;
-        let tool = WebFetchTool::new()
-            .expect("client builds")
-            .allow_private_hosts(true);
-        let err = tool
+        let tool = WebFetchTool::new()?.allow_private_hosts(true);
+        let result = tool
             .execute(
                 &envelope(json!({ "url": format!("{}/page", server.uri()) })),
                 &ToolContext::empty(),
             )
-            .await
-            .expect_err("an unowned fetch must fail");
+            .await;
+        let Err(err) = result else {
+            return Err(io::Error::other("an unowned fetch unexpectedly succeeded").into());
+        };
 
         assert!(matches!(err, ToolError::MissingExtension { .. }));
+        let requests = server
+            .received_requests()
+            .await
+            .ok_or_else(|| io::Error::other("request recording is disabled"))?;
         assert!(
-            server
-                .received_requests()
-                .await
-                .expect("received requests")
-                .is_empty(),
+            requests.is_empty(),
             "storage authority must be checked before network I/O",
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn execute_with_questions_requires_shared_provider() {
+    async fn execute_with_questions_requires_shared_provider() -> TestResult {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -584,23 +589,22 @@ mod tests {
         // The mock server is loopback, so the SSRF opt-out is required to
         // reach it; the fetch then succeeds and the missing SharedProvider
         // is what fails.
-        let tool = WebFetchTool::new()
-            .expect("client builds")
-            .allow_private_hosts(true);
+        let tool = WebFetchTool::new()?.allow_private_hosts(true);
         let env = envelope(json!({
             "url": format!("{}/page", server.uri()),
             "questions": ["What is the answer?"],
         }));
-        let dir = tempfile::tempdir().expect("tempdir");
-        let ctx = ctx_with_artifacts(dir.path());
-        let err = tool
-            .execute(&env, &ctx)
-            .await
-            .expect_err("questions require SharedProvider");
+        let dir = tempfile::tempdir()?;
+        let ctx = ctx_with_artifacts(dir.path())?;
+        let result = tool.execute(&env, &ctx).await;
+        let Err(err) = result else {
+            return Err(io::Error::other("questions succeeded without SharedProvider").into());
+        };
         assert!(
             err.to_string().contains("SharedProvider"),
             "fetch must have succeeded and failed on the provider: {err}"
         );
+        Ok(())
     }
 
     // --- Artifact placement and truncation surfacing -------------------------
@@ -613,27 +617,30 @@ mod tests {
     use crate::provider::usage::Usage;
     use crate::tool::context::SharedWorkingDir;
 
-    fn artifact_store(dir: &Path) -> Arc<crate::session::SessionArtifactStore> {
-        Arc::new(
-            crate::session::SessionArtifactStore::for_session(
-                dir,
-                "root-session",
-                crate::session::DurabilityPolicy::Flush,
-            )
-            .expect("artifact store"),
+    fn artifact_store(
+        dir: &Path,
+    ) -> Result<Arc<crate::session::SessionArtifactStore>, crate::session::SessionPersistError>
+    {
+        crate::session::SessionArtifactStore::for_session(
+            dir,
+            "root-session",
+            crate::session::DurabilityPolicy::Flush,
         )
+        .map(Arc::new)
     }
 
-    fn ctx_with_artifacts(dir: &Path) -> ToolContext {
+    fn ctx_with_artifacts(dir: &Path) -> Result<ToolContext, crate::session::SessionPersistError> {
         let ctx = ToolContext::with_working_dir(SharedWorkingDir::new(dir.to_path_buf()));
-        ctx.insert_extension(artifact_store(dir));
-        ctx
+        ctx.insert_extension(artifact_store(dir)?);
+        Ok(ctx)
     }
 
     /// A context with private session artifacts and a mock extraction agent
     /// returning one fixed answer set.
-    fn ctx_with_extraction_provider(dir: &Path) -> ToolContext {
-        let ctx = ctx_with_artifacts(dir);
+    fn ctx_with_extraction_provider(
+        dir: &Path,
+    ) -> Result<ToolContext, crate::session::SessionPersistError> {
+        let ctx = ctx_with_artifacts(dir)?;
         let provider: Arc<dyn crate::provider::traits::Provider> =
             Arc::new(MockProvider::new(vec![vec![
                 crate::provider::events::ProviderEvent::TextDelta {
@@ -646,13 +653,13 @@ mod tests {
                 },
             ]]));
         ctx.insert_extension(Arc::new(SharedProvider(provider)));
-        ctx
+        Ok(ctx)
     }
 
     /// Fetched content belongs to the persisted root session, outside the
     /// workspace, and an untruncated fetch says so explicitly.
     #[tokio::test]
-    async fn fetch_artifact_saves_under_private_session_tree() {
+    async fn fetch_artifact_saves_under_private_session_tree() -> TestResult {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -667,20 +674,19 @@ mod tests {
             .mount(&server)
             .await;
 
-        let dir = tempfile::tempdir().expect("tempdir");
-        let ctx = ctx_with_extraction_provider(dir.path());
-        let tool = WebFetchTool::new()
-            .expect("client builds")
-            .allow_private_hosts(true);
+        let dir = tempfile::tempdir()?;
+        let ctx = ctx_with_extraction_provider(dir.path())?;
+        let tool = WebFetchTool::new()?.allow_private_hosts(true);
         let out = tool
             .execute(
                 &envelope(json!({ "url": format!("{}/page", server.uri()) })),
                 &ctx,
             )
-            .await
-            .expect("fetch succeeds");
+            .await?;
 
-        let saved = out.content["saved_to"].as_str().expect("saved_to string");
+        let saved = out.content["saved_to"]
+            .as_str()
+            .ok_or_else(|| io::Error::other("saved_to was not a string"))?;
         let saved_path = Path::new(saved);
         assert!(
             saved_path.starts_with(dir.path().join("root-session/artifacts/fetched")),
@@ -697,6 +703,7 @@ mod tests {
             out.content.get("truncation_note").is_none(),
             "no truncation note for an untruncated body",
         );
+        Ok(())
     }
 
     /// Track B finding 6 regression: a body that exceeds the size cap must
@@ -708,7 +715,7 @@ mod tests {
     /// *without* a `Content-Length` header (connection-close delimited) to
     /// exercise the incremental cap genuinely.
     #[tokio::test]
-    async fn truncated_body_is_flagged_in_result() {
+    async fn truncated_body_is_flagged_in_result() -> TestResult {
         use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
@@ -740,7 +747,7 @@ mod tests {
         });
 
         let dir = tempfile::tempdir().expect("tempdir");
-        let ctx = ctx_with_extraction_provider(dir.path());
+        let ctx = ctx_with_extraction_provider(dir.path())?;
         let tool = WebFetchTool::new()
             .expect("client builds")
             .allow_private_hosts(true);
@@ -763,39 +770,29 @@ mod tests {
             .as_str()
             .expect("truncation note present for a truncated body");
         assert!(note.contains("truncated"), "{note}");
+        Ok(())
     }
 
     /// Re-fetching a URL creates a distinct immutable invocation artifact.
     #[tokio::test]
-    async fn repeated_fetches_do_not_overwrite_prior_artifacts() {
-        let dir = tempfile::tempdir().expect("tempdir");
-        let artifacts = artifact_store(dir.path());
+    async fn repeated_fetches_do_not_overwrite_prior_artifacts() -> TestResult {
+        let dir = tempfile::tempdir()?;
+        let artifacts = artifact_store(dir.path())?;
         let url = "https://example.com/some/page?q=1";
 
-        let first = save_fetched_content(Arc::clone(&artifacts), url, "converted body")
-            .await
-            .expect("save succeeds");
-        let second = save_fetched_content(artifacts, url, "converted body again")
-            .await
-            .expect("save succeeds");
+        let first = save_fetched_content(Arc::clone(&artifacts), url, "converted body").await?;
+        let second = save_fetched_content(artifacts, url, "converted body again").await?;
         assert_ne!(first, second);
-        assert!(
-            std::fs::read_to_string(first)
-                .expect("first artifact")
-                .contains("converted body")
-        );
-        assert!(
-            std::fs::read_to_string(second)
-                .expect("second artifact")
-                .contains("converted body again")
-        );
+        assert!(std::fs::read_to_string(first)?.contains("converted body"));
+        assert!(std::fs::read_to_string(second)?.contains("converted body again"));
+        Ok(())
     }
 
     /// Extraction failure must not discard the archived page: the result
     /// is a typed failure that still carries `saved_to` (and the archive
     /// file exists) so the model can read the page or retry.
     #[tokio::test]
-    async fn extraction_failure_preserves_archived_page() {
+    async fn extraction_failure_preserves_archived_page() -> TestResult {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -814,7 +811,7 @@ mod tests {
         // Provider whose response is not the JSON array the extraction
         // agent requires — extract() fails after the page was archived.
         let ctx = ToolContext::with_working_dir(SharedWorkingDir::new(dir.path().to_path_buf()));
-        ctx.insert_extension(artifact_store(dir.path()));
+        ctx.insert_extension(artifact_store(dir.path())?);
         let provider: Arc<dyn crate::provider::traits::Provider> =
             Arc::new(MockProvider::new(vec![vec![
                 crate::provider::events::ProviderEvent::TextDelta {
@@ -849,6 +846,7 @@ mod tests {
             error_message.contains("archived"),
             "error must tell the model the page was preserved: {error_message}",
         );
+        Ok(())
     }
 
     /// DNS-pinning wiring: a client pinned to validated addresses
@@ -881,7 +879,7 @@ mod tests {
     // --- SSRF guard ---------------------------------------------------------
 
     #[tokio::test]
-    async fn execute_refuses_loopback_by_default() {
+    async fn execute_refuses_loopback_by_default() -> TestResult {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -892,21 +890,22 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = WebFetchTool::new().expect("client builds");
+        let tool = WebFetchTool::new()?;
         let env = envelope(json!({ "url": format!("{}/secret", server.uri()) }));
-        let dir = tempfile::tempdir().expect("tempdir");
-        let ctx = ctx_with_artifacts(dir.path());
-        let err = tool
-            .execute(&env, &ctx)
-            .await
-            .expect_err("loopback must be denied by default");
+        let dir = tempfile::tempdir()?;
+        let ctx = ctx_with_artifacts(dir.path())?;
+        let result = tool.execute(&env, &ctx).await;
+        let Err(err) = result else {
+            return Err(io::Error::other("loopback was not refused").into());
+        };
         let msg = err.to_string();
         assert!(msg.contains("SSRF"), "{msg}");
         assert!(msg.contains("loopback"), "{msg}");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn redirect_hops_are_validated_for_scheme() {
+    async fn redirect_hops_are_validated_for_scheme() -> TestResult {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -919,21 +918,20 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = WebFetchTool::new()
-            .expect("client builds")
-            .allow_private_hosts(true);
+        let tool = WebFetchTool::new()?.allow_private_hosts(true);
         let env = envelope(json!({ "url": format!("{}/jump", server.uri()) }));
-        let dir = tempfile::tempdir().expect("tempdir");
-        let ctx = ctx_with_artifacts(dir.path());
-        let err = tool
-            .execute(&env, &ctx)
-            .await
-            .expect_err("non-http(s) redirect must be refused");
+        let dir = tempfile::tempdir()?;
+        let ctx = ctx_with_artifacts(dir.path())?;
+        let result = tool.execute(&env, &ctx).await;
+        let Err(err) = result else {
+            return Err(io::Error::other("non-http(s) redirect was not refused").into());
+        };
         assert!(err.to_string().contains("non-http(s)"), "{err}");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn redirect_loop_is_bounded() {
+    async fn redirect_loop_is_bounded() -> TestResult {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -945,17 +943,16 @@ mod tests {
             .mount(&server)
             .await;
 
-        let tool = WebFetchTool::new()
-            .expect("client builds")
-            .allow_private_hosts(true);
+        let tool = WebFetchTool::new()?.allow_private_hosts(true);
         let env = envelope(json!({ "url": loop_url }));
-        let dir = tempfile::tempdir().expect("tempdir");
-        let ctx = ctx_with_artifacts(dir.path());
-        let err = tool
-            .execute(&env, &ctx)
-            .await
-            .expect_err("redirect loop must terminate");
+        let dir = tempfile::tempdir()?;
+        let ctx = ctx_with_artifacts(dir.path())?;
+        let result = tool.execute(&env, &ctx).await;
+        let Err(err) = result else {
+            return Err(io::Error::other("redirect loop did not terminate").into());
+        };
         assert!(err.to_string().contains("too many redirects"), "{err}");
+        Ok(())
     }
 
     #[test]
