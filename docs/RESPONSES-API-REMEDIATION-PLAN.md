@@ -578,22 +578,32 @@ retain their intended behavior where they are operator-selected.
   Repeated fetches of one URL must not rewrite bytes referenced by an older
   transcript event. Implementation and reproducible scoped evidence are in the
   [`D1B correction record`](reviews/2026-07-12-p0-fetch-artifact-correction.md);
-  independent acceptance remains pending and whole-phase Gate D stays open.
-- [ ] Implement D1C for the official CLI, `doctor`, and typed P0
+  the external reviewer accepted the slice in the
+  [`D1B review`](reviews/2026-07-12-p0-fetch-artifact-review.md). Its two
+  non-blocking code findings were corrected in `9f35cfd`; whole-phase Gate D
+  stays open.
+- [x] Implement D1C for the official CLI, `doctor`, and typed P0
   private/session/process error paths. Record descriptor-allocation boundaries
-  and do not claim coverage beyond the inventory.
+  and do not claim coverage beyond the inventory. Implementation, retained
+  descriptor inventory, focused tests, and the non-goals are recorded in the
+  [`D1C correction record`](reviews/2026-07-12-p0-nofile-correction.md).
 - [ ] Resolve D1D. Remove the consumerless settings surface or retain it only
   with explicit provenance-aware containment, redacted secret-bearing fields,
   and a hostile real-entrypoint no-authority regression.
-- [ ] Delete or demote `session_file_path` and
+- [x] Delete or demote `session_file_path` and
   `resolved_session_file_path`; no production-compatible raw path derivation may
-  remain beside the validated replacement.
-- [ ] Make `PrivateRoot` ancestor-creation behavior, identifier names, and
+  remain beside the validated replacement. Both helpers are now `cfg(test)` and
+  crate-private, with no production re-export.
+- [x] Make `PrivateRoot` ancestor-creation behavior, identifier names, and
   documentation agree. Do not silently relabel behavior whose missing-mount
-  semantics require a policy decision.
-- [ ] Add body-never-read/non-disclosure sentinels for specialized 401 and 429
+  semantics require a policy decision. The identifier/doc correction and
+  retained policy boundary were independently accepted in the
+  [`openat correction review`](reviews/2026-07-12-p0-openat-correction-review.md).
+- [x] Add body-never-read/non-disclosure sentinels for specialized 401 and 429
   responses, plus loop-level timeout and lossless `try_send` to awaited `send`
-  handoff regressions.
+  handoff regressions. Raw stalled-body fixtures prove the specialized statuses
+  return from headers without waiting for or rendering the body; loop tests pin
+  timeout-exit sweeping and the capacity-one retained-message handoff.
 - [ ] Regenerate production LOC with one syntax-aware method that excludes
   test-only items wherever they occur. Rebuild the bypass and artifact-writer
   inventories with exact commands and inputs.
@@ -665,7 +675,7 @@ retain their intended behavior where they are operator-selected.
   streamed and discarded. Specialized 401 and redirect fixtures prove their
   response bodies are not disclosed; code-path inspection confirms those
   responses are dropped without draining.
-- [ ] A stalled 429 response body or explicit read-observer fixture proves the
+- [x] A stalled 429 response body or explicit read-observer fixture proves the
   specialized 429 path does not read or wait for its body, while a sentinel
   proves the body is not disclosed.
 - [x] Distinct unknown failed/incomplete discriminators remain distinguishable
