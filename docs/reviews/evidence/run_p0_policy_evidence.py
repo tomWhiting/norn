@@ -26,6 +26,15 @@ FORBIDDEN = {
     "lint_cli_suppression": re.compile(r"(?:^|\s)-A(?:\s|clippy::|warnings)"),
     "marker": re.compile(r"\b(?:TODO|FIXME|HACK)\b"),
 }
+ARTIFACT_WRITER = re.compile(
+    r"(?:PrivateRoot::(?:create|open)|"
+    r"\.(?:create_new|open_append_create|open_lock|rename|publish_new|"
+    r"create_dir_all|remove_file|remove_dir_all|set_len)\s*\(|"
+    r"(?:std::|tokio::)?fs::(?:write|rename|remove_file|remove_dir_all|"
+    r"create_dir|create_dir_all|copy|hard_link|symlink)\s*\(|"
+    r"(?:(?:std|tokio)::fs::)?File::create\s*\(|"
+    r"(?:(?:std|tokio)::fs::)?OpenOptions::new\s*\()"
+)
 
 
 def command(*args: str, cwd: Path) -> str:
@@ -263,7 +272,20 @@ def discover_test_only_files(repo: Path, rule: Path) -> set[Path]:
     for source in sorted(repo.glob("crates/**/*.rs")):
         _ranges, modules = test_only_ranges(repo, rule, source)
         discovered.update(modules)
-    return discovered
+    return {
+        path
+        for path in discovered
+        if not is_crate_build_target(repo, path)
+    }
+
+
+def is_crate_build_target(repo: Path, path: Path) -> bool:
+    relative = path.resolve().relative_to(repo.resolve())
+    return (
+        len(relative.parts) == 3
+        and relative.parts[0] == "crates"
+        and relative.parts[2] == "build.rs"
+    )
 
 
 def tokei_counts(root: Path, repo: Path) -> dict[str, int]:
@@ -311,6 +333,40 @@ def added_line_evidence(repo: Path, base: str, head: str) -> dict[str, list[dict
         elif line.startswith(" "):
             new_line += 1
     return matches
+
+
+def artifact_writer_candidates(
+    repo: Path,
+    rule: Path,
+    test_only_files: set[Path],
+) -> list[dict]:
+    candidates: list[dict] = []
+    for source in sorted(repo.glob("crates/**/*.rs")):
+        relative = source.relative_to(repo)
+        path_parts = relative.parts
+        integration_test = (
+            len(path_parts) >= 3
+            and path_parts[0] == "crates"
+            and "tests" in path_parts[2:]
+        )
+        if source.resolve() in test_only_files or integration_test:
+            continue
+        ranges, _modules = test_only_ranges(repo, rule, source)
+        data = source.read_bytes()
+        offset = 0
+        for line_number, raw_line in enumerate(data.splitlines(keepends=True), start=1):
+            in_test_item = any(start <= offset < end for start, end in ranges)
+            line = raw_line.decode("utf-8")
+            if not in_test_item and ARTIFACT_WRITER.search(line):
+                candidates.append(
+                    {
+                        "file": str(relative),
+                        "line": line_number,
+                        "text": line.strip(),
+                    }
+                )
+            offset += len(raw_line)
+    return candidates
 
 
 def main() -> None:
@@ -367,6 +423,12 @@ def main() -> None:
             "counter": command("tokei", "--version", cwd=repo).strip(),
             "rule": str(rule.relative_to(repo)),
             "cfg_policy": "remove AST items whose cfg cannot be true with test=false",
+            "artifact_candidates": (
+                "repository-wide production/build-script lexical sweep for filesystem "
+                "roots, opens, creates, mutations, publication, and removal; the retained "
+                "candidate list is intentionally conservative and requires the adjacent "
+                "manual ownership/lifetime classification"
+            ),
         },
         "changed_rust_file_count": len(records),
         "test_only_file_count": sum(record["production_code_lines"] == 0 for record in records),
@@ -374,6 +436,11 @@ def main() -> None:
         "thin_entrypoint_violations": thin_entrypoint_violations,
         "files": records,
         "added_line_policy_matches": added_line_evidence(repo, args.base, args.head),
+        "artifact_writer_candidates": artifact_writer_candidates(
+            repo,
+            rule,
+            test_only_files,
+        ),
     }
     rendered = json.dumps(evidence, indent=2, sort_keys=True) + "\n"
     if args.output:
