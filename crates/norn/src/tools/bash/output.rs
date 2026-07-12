@@ -8,6 +8,7 @@ use tokio::sync::Mutex as AsyncMutex;
 use uuid::Uuid;
 
 use crate::error::ToolError;
+use crate::process::spool::SpoolAppender;
 use crate::process::{Spool, StreamTag};
 use crate::tool::context::{SessionId, ToolContext};
 use crate::tool::envelope::ToolEnvelope;
@@ -67,7 +68,7 @@ struct OutputCaptureState {
     /// Once a command migrates to the background (R4), the capture switches to
     /// teeing every subsequent line into the process manager's spool, tagged
     /// with its stream. Set by [`OutputCapture::attach_spool`].
-    spool: Option<Arc<Spool>>,
+    spool: Option<SpoolAppender>,
 }
 
 impl OutputCapture {
@@ -186,7 +187,12 @@ impl OutputCapture {
             CapturedOutput::Inline { .. } => spool.committed_len(),
             CapturedOutput::Redirected { .. } => 0,
         };
-        state.spool = Some(spool);
+        let appender = spool.appender().await.map_err(|error| {
+            output_io_error(&error, "opening the migrated process-spool writer", None)
+        })?;
+        state.output_root = None;
+        state.output_relative = None;
+        state.spool = Some(appender);
         Ok(MigrationSnapshot {
             output: snapshot,
             model_cursor_seed,
@@ -212,6 +218,8 @@ impl OutputCapture {
 
         let output_chars = state.output_chars;
         let output_path = state.tilde_output_path()?;
+        state.output_root = None;
+        state.output_relative = None;
         Ok(CapturedOutput::Redirected {
             output_path,
             output_chars,

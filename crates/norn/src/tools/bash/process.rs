@@ -171,7 +171,7 @@ pub(super) async fn run_shell(
                         stderr_task,
                     }));
                 }
-                kill_process_tree(&mut child).await;
+                kill_process_tree(&mut child);
                 let status = child.wait().await.map_err(|e| ToolError::ExecutionFailed {
                     reason: format!("failed to wait on killed child: {e}"),
                 })?;
@@ -234,35 +234,22 @@ fn build_shell_command(command: &str, cwd: &Path, ctx: &ToolContext) -> Command 
 
 /// Kills a timed-out shell and (on Unix) its entire process group.
 ///
-/// The group is signalled with SIGKILL via the external `kill` utility
-/// (`kill -9 -- -<pgid>`), which keeps this crate free of `unsafe` libc
-/// calls; the direct child is additionally killed through the tokio
-/// handle as a fallback. Descendants that moved themselves into a new
+/// The group is signalled directly with SIGKILL without spawning another
+/// process; the direct child is additionally killed through the tokio handle
+/// as a fallback. Descendants that moved themselves into a new
 /// process group (`setsid`) escape the sweep — an accepted limitation.
 ///
 /// On non-Unix targets only the direct child is killed.
-async fn kill_process_tree(child: &mut Child) {
+fn kill_process_tree(child: &mut Child) {
     #[cfg(unix)]
-    if let Some(pid) = child.id() {
-        let group_kill = Command::new("kill")
-            .arg("-9")
-            .arg("--")
-            .arg(format!("-{pid}"))
-            .status()
-            .await;
-        match group_kill {
-            Ok(status) if status.success() => {}
-            Ok(status) => tracing::warn!(
-                pid,
-                code = ?status.code(),
-                "kill -9 on timed-out bash process group returned non-zero",
-            ),
-            Err(e) => tracing::warn!(
-                pid,
-                error = %e,
-                "failed to run `kill` for timed-out bash process group",
-            ),
-        }
+    if let Some(pid) = child.id()
+        && let Err(error) = crate::util::kill_process_group(pid)
+    {
+        tracing::warn!(
+            pid,
+            %error,
+            "failed to signal timed-out bash process group",
+        );
     }
     // Fallback / non-Unix path: kill the direct child through tokio.
     if let Err(e) = child.start_kill() {

@@ -26,6 +26,7 @@
 //! session ID at every boundary — see
 //! [`io::RESERVED_SESSION_ID_STEMS`] / [`io::is_reserved_session_id`].
 
+mod event_reader;
 pub mod index;
 pub mod io;
 mod lock;

@@ -5,4 +5,6 @@
 //! They use [`MockProvider`] for scripted provider responses and real
 //! filesystem operations via `tempfile`.
 
+#[cfg(unix)]
+mod descriptor_retention;
 pub mod integration;

@@ -15,6 +15,10 @@
 //! threads of this process, because each acquisition opens its own file
 //! description.
 //!
+//! A process-local gate is acquired before opening either the private root or
+//! lock file. Consequently, any number of local waiters retain no descriptors;
+//! only the admitted local operation can contend with another process.
+//!
 //! Acquisition waits indefinitely by default (the OS lock primitive has
 //! no timeout). Callers that must bound the wait — e.g. an embedder
 //! that would rather fail a step than stall behind a wedged process —
@@ -27,8 +31,10 @@
 //! nothing behind — no waiter thread and no open file descriptor blocked
 //! in `flock` until the contending holder happens to release.
 
+use std::collections::HashSet;
 use std::fs::{File, TryLockError};
 use std::path::{Path, PathBuf};
+use std::sync::{Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use super::types::SessionPersistError;
@@ -51,6 +57,27 @@ const INDEX_LOCK_FILE: &str = "index.lock";
 /// negligible, and only while the lock is actually contended.
 const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(5);
 
+/// Active index paths admitted before any descriptors are open.
+static PROCESS_INDEX_GATES: LazyLock<Mutex<HashSet<PathBuf>>> =
+    LazyLock::new(|| Mutex::new(HashSet::new()));
+static PROCESS_INDEX_GATE_CHANGED: Condvar = Condvar::new();
+
+#[derive(Debug)]
+struct ProcessIndexGuard {
+    path: PathBuf,
+}
+
+impl Drop for ProcessIndexGuard {
+    fn drop(&mut self) {
+        let mut active = match PROCESS_INDEX_GATES.lock() {
+            Ok(active) => active,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        active.remove(&self.path);
+        PROCESS_INDEX_GATE_CHANGED.notify_all();
+    }
+}
+
 /// An exclusive advisory lock over the session index.
 ///
 /// Held for the duration of one index mutation (append or
@@ -60,6 +87,7 @@ const LOCK_POLL_INTERVAL: Duration = Duration::from_millis(5);
 pub(crate) struct IndexLock {
     file: File,
     root: PrivateRoot,
+    _process_guard: ProcessIndexGuard,
 }
 
 impl IndexLock {
@@ -94,14 +122,73 @@ pub(crate) fn lock_index(
     deadline: Option<Duration>,
 ) -> Result<IndexLock, SessionPersistError> {
     let path = data_dir.join(INDEX_LOCK_FILE);
+    let started = Instant::now();
+    let process_guard = lock_process_gate(&path, deadline, started)?;
+    let remaining = match deadline {
+        Some(limit) => Some(limit.checked_sub(started.elapsed()).ok_or_else(|| {
+            SessionPersistError::IndexLockTimeout {
+                path: path.clone(),
+                waited: limit,
+            }
+        })?),
+        None => None,
+    };
     let root = PrivateRoot::create(data_dir)?;
     let file = root.open_lock(Path::new(INDEX_LOCK_FILE))?;
-    match deadline {
+    match remaining {
         None => {
             file.lock()?;
-            Ok(IndexLock { file, root })
+            Ok(IndexLock {
+                file,
+                root,
+                _process_guard: process_guard,
+            })
         }
-        Some(deadline) => lock_with_deadline(file, root, path, deadline),
+        Some(deadline) => lock_with_deadline(file, root, process_guard, path, deadline),
+    }
+}
+
+fn lock_process_gate(
+    path: &Path,
+    deadline: Option<Duration>,
+    started: Instant,
+) -> Result<ProcessIndexGuard, SessionPersistError> {
+    let mut active = match PROCESS_INDEX_GATES.lock() {
+        Ok(active) => active,
+        Err(poisoned) => poisoned.into_inner(),
+    };
+    loop {
+        if !active.contains(path) {
+            active.insert(path.to_path_buf());
+            return Ok(ProcessIndexGuard {
+                path: path.to_path_buf(),
+            });
+        }
+        let Some(deadline) = deadline else {
+            active = match PROCESS_INDEX_GATE_CHANGED.wait(active) {
+                Ok(active) => active,
+                Err(poisoned) => poisoned.into_inner(),
+            };
+            continue;
+        };
+        let elapsed = started.elapsed();
+        let Some(remaining) = deadline.checked_sub(elapsed) else {
+            return Err(SessionPersistError::IndexLockTimeout {
+                path: path.to_path_buf(),
+                waited: deadline,
+            });
+        };
+        let (next, timeout) = match PROCESS_INDEX_GATE_CHANGED.wait_timeout(active, remaining) {
+            Ok(result) => result,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        active = next;
+        if timeout.timed_out() && active.contains(path) {
+            return Err(SessionPersistError::IndexLockTimeout {
+                path: path.to_path_buf(),
+                waited: deadline,
+            });
+        }
     }
 }
 
@@ -117,13 +204,20 @@ pub(crate) fn lock_index(
 fn lock_with_deadline(
     file: File,
     root: PrivateRoot,
+    process_guard: ProcessIndexGuard,
     path: PathBuf,
     deadline: Duration,
 ) -> Result<IndexLock, SessionPersistError> {
     let started = Instant::now();
     loop {
         match file.try_lock() {
-            Ok(()) => return Ok(IndexLock { file, root }),
+            Ok(()) => {
+                return Ok(IndexLock {
+                    file,
+                    root,
+                    _process_guard: process_guard,
+                });
+            }
             Err(TryLockError::WouldBlock) => {
                 let elapsed = started.elapsed();
                 let Some(remaining) = deadline.checked_sub(elapsed) else {

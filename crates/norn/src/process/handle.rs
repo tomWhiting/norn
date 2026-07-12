@@ -241,7 +241,7 @@ impl ProcessHandle {
     /// Kill the process group and mark the process `Killed`. Idempotent on an
     /// already-terminal process (returns its terminal status without
     /// re-killing). Mirrors the bash timeout kill: on Unix the whole group is
-    /// signalled with SIGKILL via the external `kill` utility, so a
+    /// signalled directly with SIGKILL, so a
     /// `server &`-style grandchild sharing the group dies too.
     pub async fn kill(&self) -> ProcessStatus {
         if self.shared.status.lock().is_terminal() {
@@ -259,25 +259,23 @@ impl ProcessHandle {
     pub(super) async fn signal_group(&self) {
         #[cfg(unix)]
         if let Some(pid) = self.shared.pid {
-            let result = tokio::process::Command::new("kill")
-                .arg("-9")
-                .arg("--")
-                .arg(format!("-{pid}"))
-                .status()
-                .await;
+            let result =
+                tokio::task::spawn_blocking(move || crate::util::kill_process_group(pid)).await;
             match result {
-                Ok(status) if status.success() => {}
-                Ok(status) => tracing::warn!(
-                    pid,
-                    code = ?status.code(),
-                    process = %self.shared.label,
-                    "kill -9 on managed process group returned non-zero",
-                ),
+                Ok(Ok(())) => {}
+                Ok(Err(error)) => {
+                    tracing::warn!(
+                        pid,
+                        %error,
+                        process = %self.shared.label,
+                        "failed to signal managed process group",
+                    );
+                }
                 Err(error) => tracing::warn!(
                     pid,
                     %error,
                     process = %self.shared.label,
-                    "failed to run `kill` for managed process group",
+                    "managed process-group signal task failed",
                 ),
             }
         }
@@ -297,20 +295,15 @@ impl ProcessHandle {
             return;
         }
         #[cfg(unix)]
-        if let Some(pid) = self.shared.pid {
-            let result = std::process::Command::new("kill")
-                .arg("-9")
-                .arg("--")
-                .arg(format!("-{pid}"))
-                .status();
-            if let Err(error) = result {
-                tracing::warn!(
-                    pid,
-                    %error,
-                    process = %self.shared.label,
-                    "failed to run blocking `kill` for managed process group at shutdown",
-                );
-            }
+        if let Some(pid) = self.shared.pid
+            && let Err(error) = crate::util::kill_process_group(pid)
+        {
+            tracing::warn!(
+                pid,
+                %error,
+                process = %self.shared.label,
+                "failed to signal managed process group at shutdown",
+            );
         }
         #[cfg(not(unix))]
         tracing::warn!(

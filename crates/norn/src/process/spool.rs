@@ -18,16 +18,15 @@
 //! far, so a subscriber learns of new output without polling. This is the
 //! watch attach seam NP-002's watches consume — this brief only exposes it.
 
+use std::io::{Read as _, Seek as _, Write as _};
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use tokio::fs::File;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
+use tokio::io::AsyncWriteExt as _;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::watch;
 
-use crate::util::PrivateRoot;
+use crate::util::{PrivateFileIdentity, PrivateRoot};
 
 /// Which standard stream a spooled line originated from.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -53,22 +52,36 @@ impl StreamTag {
 /// managed process.
 ///
 /// Writes from the stdout and stderr drains are serialised through an async
-/// mutex over the file handle, so interleaved lines land in strict arrival
-/// order. After every write the file is flushed and the committed-length
-/// counter advanced, so any reader that reads up to the committed length only
-/// ever sees fully-flushed bytes.
+/// gate, so interleaved lines land in strict arrival order. Each operation
+/// reopens the original inode through the private root, writes and flushes,
+/// then closes it before advancing the committed-length counter. Retaining a
+/// completed process therefore retains no file descriptor.
 #[derive(Debug)]
 pub struct Spool {
     /// Absolute path of the backing file.
     path: PathBuf,
-    root: Arc<PrivateRoot>,
+    root_path: PathBuf,
     relative: PathBuf,
-    /// The write side: the open file, serialised across the two drains.
-    file: AsyncMutex<File>,
+    identity: PrivateFileIdentity,
+    /// Serialises lazy open/truncate/append/close across the two drains.
+    write_gate: AsyncMutex<()>,
     /// Bytes durably appended and flushed so far. Monotonic, unbounded.
     committed: AtomicU64,
     /// Committed-length publisher — the watch attach seam (R2/R8).
     len_tx: watch::Sender<u64>,
+}
+
+/// Active-only shared writer. Dropping the last clone closes the spool file.
+#[derive(Clone, Debug)]
+pub(crate) struct SpoolAppender {
+    spool: std::sync::Arc<Spool>,
+    file: std::sync::Arc<AsyncMutex<ActiveFile>>,
+}
+
+#[derive(Debug)]
+struct ActiveFile {
+    file: tokio::fs::File,
+    needs_repair: bool,
 }
 
 impl Spool {
@@ -97,35 +110,25 @@ impl Spool {
     pub(crate) async fn create_in(root_path: &Path, relative: &Path) -> std::io::Result<Self> {
         let root_path = root_path.to_path_buf();
         let relative = relative.to_path_buf();
-        tokio::task::spawn_blocking(move || {
-            let root = Arc::new(PrivateRoot::create(&root_path)?);
-            Self::create_under_sync(root, &relative)
-        })
-        .await
-        .map_err(std::io::Error::other)?
-    }
-
-    pub(crate) async fn create_under(
-        root: Arc<PrivateRoot>,
-        relative: &Path,
-    ) -> std::io::Result<Self> {
-        let relative = relative.to_path_buf();
-        tokio::task::spawn_blocking(move || Self::create_under_sync(root, &relative))
+        tokio::task::spawn_blocking(move || Self::create_under_sync(&root_path, &relative))
             .await
             .map_err(std::io::Error::other)?
     }
 
-    fn create_under_sync(root: Arc<PrivateRoot>, relative: &Path) -> std::io::Result<Self> {
+    fn create_under_sync(root_path: &Path, relative: &Path) -> std::io::Result<Self> {
+        let root = PrivateRoot::create(root_path)?;
         if let Some(parent) = relative.parent() {
             root.create_dir_all(parent)?;
         }
-        let file = File::from_std(root.create_new(relative)?);
+        let file = root.create_new(relative)?;
+        let identity = PrivateFileIdentity::capture(&file)?;
         let (len_tx, _len_rx) = watch::channel(0);
         Ok(Self {
             path: root.display_path(relative),
-            root,
+            root_path: root_path.to_path_buf(),
             relative: relative.to_path_buf(),
-            file: AsyncMutex::new(file),
+            identity,
+            write_gate: AsyncMutex::new(()),
             committed: AtomicU64::new(0),
             len_tx,
         })
@@ -156,6 +159,31 @@ impl Spool {
         self.path.to_string_lossy().into_owned()
     }
 
+    /// Open one writer shared by active drains; the [`Spool`] retains none.
+    pub(crate) async fn appender(self: &std::sync::Arc<Self>) -> std::io::Result<SpoolAppender> {
+        let _guard = self.write_gate.lock().await;
+        let committed = self.committed.load(Ordering::Acquire);
+        let root_path = self.root_path.clone();
+        let relative = self.relative.clone();
+        let identity = self.identity;
+        let file = tokio::task::spawn_blocking(move || {
+            let root = PrivateRoot::open(&root_path)?;
+            let file = root.open_read_append(&relative)?;
+            identity.verify(&file)?;
+            file.set_len(committed)?;
+            Ok::<_, std::io::Error>(file)
+        })
+        .await
+        .map_err(std::io::Error::other)??;
+        Ok(SpoolAppender {
+            spool: std::sync::Arc::clone(self),
+            file: std::sync::Arc::new(AsyncMutex::new(ActiveFile {
+                file: tokio::fs::File::from_std(file),
+                needs_repair: false,
+            })),
+        })
+    }
+
     /// Append one already-tagged, newline-terminated content chunk under
     /// `tag`. Exactly one trailing newline is guaranteed.
     ///
@@ -165,16 +193,32 @@ impl Spool {
     pub async fn append_tagged(&self, tag: StreamTag, content: &str) -> std::io::Result<()> {
         let trimmed = content.strip_suffix('\n').unwrap_or(content);
         let line = format!("{} {trimmed}\n", tag.as_str());
-        let bytes = line.into_bytes();
-        let mut file = self.file.lock().await;
-        file.write_all(&bytes).await?;
-        file.flush().await?;
-        // Advance and publish under the file lock so the committed length and
+        self.append_bytes(line.into_bytes()).await
+    }
+
+    async fn append_bytes(&self, bytes: Vec<u8>) -> std::io::Result<()> {
+        let _guard = self.write_gate.lock().await;
+        let committed = self.committed.load(Ordering::Acquire);
+        let root_path = self.root_path.clone();
+        let relative = self.relative.clone();
+        let identity = self.identity;
+        let written = u64::try_from(bytes.len()).map_err(std::io::Error::other)?;
+        tokio::task::spawn_blocking(move || {
+            let root = PrivateRoot::open(&root_path)?;
+            let mut file = root.open_read_append(&relative)?;
+            identity.verify(&file)?;
+            // A failed prior write may have reached disk without becoming
+            // committed. Restore the published boundary before appending.
+            file.set_len(committed)?;
+            file.write_all(&bytes)?;
+            file.flush()
+        })
+        .await
+        .map_err(std::io::Error::other)??;
+        // Advance and publish under the write gate so the committed length and
         // the on-disk bytes never disagree for a reader racing the watch.
-        let new_len = self
-            .committed
-            .fetch_add(bytes.len() as u64, Ordering::AcqRel)
-            .saturating_add(bytes.len() as u64);
+        let new_len = committed.saturating_add(written);
+        self.committed.store(new_len, Ordering::Release);
         // `send_replace`, not `send`: a tokio watch `send` fails and stores
         // nothing when every receiver has been dropped, so a subscriber that
         // attaches later (e.g. after this process has already exited) would
@@ -197,17 +241,7 @@ impl Spool {
         if bytes.is_empty() {
             return Ok(());
         }
-        let mut file = self.file.lock().await;
-        file.write_all(bytes).await?;
-        file.flush().await?;
-        let new_len = self
-            .committed
-            .fetch_add(bytes.len() as u64, Ordering::AcqRel)
-            .saturating_add(bytes.len() as u64);
-        // `send_replace` for the same reason as `append_tagged`: store the
-        // committed length unconditionally so a late subscriber sees it.
-        self.len_tx.send_replace(new_len);
-        Ok(())
+        self.append_bytes(bytes.to_vec()).await
     }
 
     /// Read every byte appended since `cursor`, up to the current committed
@@ -244,21 +278,29 @@ impl Spool {
     ///
     /// Returns any I/O error from opening, seeking, or reading the file.
     pub async fn read_range(&self, start: u64, end: u64) -> std::io::Result<Vec<u8>> {
-        use tokio::io::AsyncReadExt;
         if end <= start {
             return Ok(Vec::new());
         }
         let to_read = end - start;
-        let mut file = File::from_std(self.root.open_read(&self.relative)?);
-        file.seek(std::io::SeekFrom::Start(start)).await?;
-        let mut buf = vec![
-            0_u8;
-            usize::try_from(to_read).map_err(|e| std::io::Error::other(format!(
-                "spool region ({to_read} bytes) exceeds addressable memory: {e}"
-            )))?
-        ];
-        file.read_exact(&mut buf).await?;
-        Ok(buf)
+        let root_path = self.root_path.clone();
+        let relative = self.relative.clone();
+        let identity = self.identity;
+        tokio::task::spawn_blocking(move || {
+            let root = PrivateRoot::open(&root_path)?;
+            let mut file = root.open_read(&relative)?;
+            identity.verify(&file)?;
+            file.seek(std::io::SeekFrom::Start(start))?;
+            let mut buf = vec![
+                0_u8;
+                usize::try_from(to_read).map_err(|e| std::io::Error::other(
+                    format!("spool region ({to_read} bytes) exceeds addressable memory: {e}")
+                ))?
+            ];
+            file.read_exact(&mut buf)?;
+            Ok(buf)
+        })
+        .await
+        .map_err(std::io::Error::other)?
     }
 
     /// Subscribe to the committed-length watch: a receiver that observes each
@@ -267,6 +309,34 @@ impl Spool {
     #[must_use]
     pub fn subscribe_len(&self) -> watch::Receiver<u64> {
         self.len_tx.subscribe()
+    }
+}
+
+impl SpoolAppender {
+    /// Append one stream-tagged line through the active shared descriptor.
+    pub(crate) async fn append_tagged(&self, tag: StreamTag, content: &str) -> std::io::Result<()> {
+        let trimmed = content.strip_suffix('\n').unwrap_or(content);
+        let bytes = format!("{} {trimmed}\n", tag.as_str()).into_bytes();
+        let written = u64::try_from(bytes.len()).map_err(std::io::Error::other)?;
+        let _guard = self.spool.write_gate.lock().await;
+        let committed = self.spool.committed.load(Ordering::Acquire);
+        let mut active = self.file.lock().await;
+        if active.needs_repair {
+            active.file.set_len(committed).await?;
+            active.needs_repair = false;
+        }
+        if let Err(error) = active.file.write_all(&bytes).await {
+            active.needs_repair = true;
+            return Err(error);
+        }
+        if let Err(error) = active.file.flush().await {
+            active.needs_repair = true;
+            return Err(error);
+        }
+        let new_len = committed.saturating_add(written);
+        self.spool.committed.store(new_len, Ordering::Release);
+        self.spool.len_tx.send_replace(new_len);
+        Ok(())
     }
 }
 

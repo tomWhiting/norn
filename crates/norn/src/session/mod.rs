@@ -13,6 +13,7 @@ pub mod branch;
 pub mod context_edit;
 pub mod conversion;
 pub mod events;
+mod jsonl_sink;
 pub mod manager;
 pub mod mutation_ledger;
 pub mod persistence;

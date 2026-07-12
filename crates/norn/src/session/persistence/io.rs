@@ -3,19 +3,21 @@
 //!
 //! Index maintenance lives in [`super::index`].
 
-use std::collections::HashSet;
 use std::fs::File;
-use std::io::{BufRead, BufReader, Read as _, Seek, SeekFrom, Write};
+use std::io::{Read as _, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
 
-use crate::session::events::{EventId, SessionEvent};
-use crate::util::{PrivateRoot, validate_private_component};
+use crate::session::events::SessionEvent;
+use crate::util::{PrivateFileIdentity, PrivateRoot, validate_private_component};
 
 use super::index::{read_index, sum_usage_from_events, update_session_index};
-use super::replay::ReplayArtifacts;
 use super::types::{
     SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,
 };
+
+#[cfg(test)]
+pub(crate) use super::event_reader::read_session_events_from;
+pub use super::event_reader::{read_session_events, read_session_events_for_entry};
 
 /// Return the flat JSONL file path for `session_id` under `data_dir`.
 ///
@@ -236,6 +238,38 @@ pub(crate) fn open_session_append_for_entry(
     open_session_append_under(&root, &relative)
 }
 
+/// Reopen an already-bound session path, verify its inode, then heal its tail.
+pub(crate) fn open_session_append_bound(
+    path: &Path,
+    identity: PrivateFileIdentity,
+) -> Result<File, SessionPersistError> {
+    let parent = path.parent().ok_or_else(|| {
+        SessionPersistError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "session file must have an absolute parent directory",
+        ))
+    })?;
+    let file_name = path.file_name().ok_or_else(|| {
+        SessionPersistError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "session file path has no final component",
+        ))
+    })?;
+    let root = PrivateRoot::open(parent)?;
+    reopen_bound_and_heal(&root, Path::new(file_name), identity)
+}
+
+/// Registered-entry counterpart of [`open_session_append_bound`].
+pub(crate) fn open_session_append_for_entry_bound(
+    data_dir: &Path,
+    entry: &SessionIndexEntry,
+    identity: PrivateFileIdentity,
+) -> Result<File, SessionPersistError> {
+    let relative = session_file_relative(entry)?;
+    let root = PrivateRoot::open(data_dir)?;
+    reopen_bound_and_heal(&root, &relative, identity)
+}
+
 /// Stamp the versioned header into `path` atomically with the file
 /// becoming visible.
 ///
@@ -300,6 +334,22 @@ fn stamp_header_atomically(root: &PrivateRoot, path: &Path) -> std::io::Result<(
 /// line (H19, reopen half). Never retro-stamps a header.
 fn reopen_and_heal(root: &PrivateRoot, path: &Path) -> Result<File, SessionPersistError> {
     let mut file = root.open_read_append(path)?;
+    heal_torn_tail(&mut file, &root.display_path(path))?;
+    Ok(file)
+}
+
+fn reopen_bound_and_heal(
+    root: &PrivateRoot,
+    path: &Path,
+    identity: PrivateFileIdentity,
+) -> Result<File, SessionPersistError> {
+    let mut file = root.open_read_append(path)?;
+    identity.verify(&file)?;
+    heal_torn_tail(&mut file, &root.display_path(path))?;
+    Ok(file)
+}
+
+fn heal_torn_tail(file: &mut File, display_path: &Path) -> Result<(), SessionPersistError> {
     let len = file.metadata()?.len();
     if len > 0 {
         file.seek(SeekFrom::Start(len - 1))?;
@@ -309,159 +359,13 @@ fn reopen_and_heal(root: &PrivateRoot, path: &Path) -> Result<File, SessionPersi
             // O_APPEND ignores the read cursor: this lands at EOF.
             file.write_all(b"\n")?;
             tracing::warn!(
-                path = %root.display_path(path).display(),
+                path = %display_path.display(),
                 "healed torn final line in session file on reopen; \
                  the tolerant reader will skip the corrupt line",
             );
         }
     }
-    Ok(file)
-}
-
-/// Tolerantly read `{data_dir}/{session_id}.jsonl` in a single pass,
-/// producing every resume artifact at once (H19 / R4).
-///
-/// Returns empty [`ReplayArtifacts`] when the file does not exist. Each
-/// recovered event is folded into the artifact accumulators (usage
-/// rollup, compaction supersession marks) as it is parsed, so opening a
-/// session never re-walks the history per consumer. Line handling:
-///
-/// * an optional [`SessionFileHeader`] first line populates
-///   [`ReplayArtifacts::format_version`] (absent on pre-versioning
-///   files — they still load);
-/// * empty / whitespace-only lines are skipped silently;
-/// * a non-empty line that is not valid JSON (e.g. a torn final line
-///   from `ENOSPC` or `kill -9` mid-write) or is valid JSON that does
-///   not match the [`SessionEvent`] schema (e.g. an unknown variant from
-///   a newer writer) is skipped with a `tracing::warn!` and counted in
-///   [`ReplayArtifacts::skipped_lines`];
-/// * a line whose [`EventId`] was already seen earlier in the file (a
-///   crash-retry artifact: the first attempt persisted but reported
-///   failure, so the documented-safe retry wrote the event again) keeps
-///   its first occurrence and skips the duplicate with a
-///   `tracing::warn!`, also counted in
-///   [`ReplayArtifacts::skipped_lines`].
-///
-/// The call fails when `session_id` is reserved by the persistence layer
-/// ([`SessionPersistError::InvalidSessionId`] — the id would select a
-/// persistence-owned file such as the session index, never session data)
-/// or when the file as a whole is unreadable (open or stream-level I/O
-/// error) — a torn final line never prevents resume.
-pub fn read_session_events(
-    data_dir: &Path,
-    session_id: &str,
-) -> Result<ReplayArtifacts, SessionPersistError> {
-    ensure_session_id_not_reserved(session_id)?;
-    ensure_session_id_path_safe(session_id)?;
-    let relative = PathBuf::from(format!("{session_id}.jsonl"));
-    read_session_events_at(data_dir, &relative, session_id)
-}
-
-/// [`read_session_events`], resolving the file through the index entry's
-/// [`rel_path`](SessionIndexEntry::rel_path) when present — the read path
-/// for callers that hold an entry (resume, export, reconcile), which is
-/// the only way a nested child session's file is found.
-pub fn read_session_events_for_entry(
-    data_dir: &Path,
-    entry: &SessionIndexEntry,
-) -> Result<ReplayArtifacts, SessionPersistError> {
-    ensure_session_id_not_reserved(&entry.id)?;
-    let relative = session_file_relative(entry)?;
-    read_session_events_at(data_dir, &relative, &entry.id)
-}
-
-/// The shared open-and-read step behind both read fronts: an absent file
-/// is an empty (never-appended) session, not an error.
-fn read_session_events_at(
-    data_dir: &Path,
-    relative: &Path,
-    session_id: &str,
-) -> Result<ReplayArtifacts, SessionPersistError> {
-    let root = match PrivateRoot::open(data_dir) {
-        Ok(root) => root,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ReplayArtifacts::default());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    let file = match root.open_read(relative) {
-        Ok(file) => file,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(ReplayArtifacts::default());
-        }
-        Err(error) => return Err(error.into()),
-    };
-    read_session_events_from(BufReader::new(file), session_id)
-}
-
-/// The single-pass tolerant reader behind [`read_session_events`],
-/// generic over the byte source so tests can instrument the reader and
-/// prove the history is traversed exactly once.
-pub(crate) fn read_session_events_from<R: BufRead>(
-    reader: R,
-    session_id: &str,
-) -> Result<ReplayArtifacts, SessionPersistError> {
-    let mut artifacts = ReplayArtifacts::default();
-    let mut seen_first_content_line = false;
-    let mut seen_ids: HashSet<EventId> = HashSet::new();
-    for (idx, raw) in reader.split(b'\n').enumerate() {
-        let raw = raw?;
-        if raw.iter().all(u8::is_ascii_whitespace) {
-            continue;
-        }
-        if !seen_first_content_line {
-            seen_first_content_line = true;
-            if let Ok(header) = serde_json::from_slice::<SessionFileHeader>(&raw) {
-                artifacts.format_version = Some(header.version);
-                if header.version > SESSION_FORMAT_VERSION {
-                    tracing::warn!(
-                        session_id,
-                        file_version = header.version,
-                        reader_version = SESSION_FORMAT_VERSION,
-                        "session file written by a newer norn; \
-                         unknown event variants will be skipped",
-                    );
-                }
-                continue;
-            }
-        }
-        match serde_json::from_slice::<SessionEvent>(&raw) {
-            Ok(event) => {
-                let id = event.base().id.clone();
-                if seen_ids.insert(id.clone()) {
-                    artifacts.push(event);
-                } else {
-                    artifacts.skipped_lines = artifacts.skipped_lines.saturating_add(1);
-                    tracing::warn!(
-                        session_id,
-                        line = idx + 1,
-                        event_id = %id,
-                        "skipping duplicate session event line \
-                         (crash-retry artifact); first occurrence kept",
-                    );
-                }
-            }
-            Err(error) => {
-                artifacts.skipped_lines = artifacts.skipped_lines.saturating_add(1);
-                tracing::warn!(
-                    session_id,
-                    line = idx + 1,
-                    %error,
-                    "skipping corrupt or unknown session event line",
-                );
-            }
-        }
-    }
-    if artifacts.skipped_lines > 0 {
-        tracing::warn!(
-            session_id,
-            skipped = artifacts.skipped_lines,
-            recovered = artifacts.events.len(),
-            "session file contained unparseable or duplicate lines; \
-             recovered events were loaded, the rest were skipped",
-        );
-    }
-    Ok(artifacts)
+    Ok(())
 }
 
 /// Append `events` to `{data_dir}/{session_id}.jsonl` and update the

@@ -85,8 +85,8 @@ pub struct ProcessManager {
     /// A fresh UUID generated once per manager instance. Spools live one level
     /// below the session token under this run id (see [`Self::spool_location`]).
     run_id: String,
-    /// Descriptor-pinned Norn root captured at manager construction.
-    spool_root: Option<Arc<PrivateRoot>>,
+    /// Trusted absolute Norn root captured and validated at construction.
+    spool_root: Option<PathBuf>,
     /// Construction-time root failure surfaced by every spool attempt.
     spool_root_error: Option<ProcessError>,
     /// Monotonic id counter — `p1`, `p2`, … There is no ceiling.
@@ -129,7 +129,10 @@ impl ProcessManager {
         let base_token = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let (spool_root, spool_root_error) = match norn_dir() {
             Some(path) => match PrivateRoot::create(&path) {
-                Ok(root) => (Some(Arc::new(root)), None),
+                Ok(root) => {
+                    drop(root);
+                    (Some(path), None)
+                }
                 Err(error) => (
                     None,
                     Some(ProcessError::from_io(
@@ -935,13 +938,9 @@ mod tests {
             .unwrap();
         // Tee the adopted child's output into the entry's own spool, exactly as
         // a migrated command's attached capture does.
-        let spool = Arc::clone(handle.spool());
-        tokio::spawn(drain_to_spool(
-            stdout,
-            Arc::clone(&spool),
-            StreamTag::Stdout,
-        ));
-        tokio::spawn(drain_to_spool(stderr, spool, StreamTag::Stderr));
+        let appender = handle.spool().appender().await.unwrap();
+        tokio::spawn(drain_to_spool(stdout, appender.clone(), StreamTag::Stdout));
+        tokio::spawn(drain_to_spool(stderr, appender, StreamTag::Stderr));
 
         // Indistinguishable from a spawned sleeper: same id, Running status,
         // present in the list.

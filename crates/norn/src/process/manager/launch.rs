@@ -18,7 +18,7 @@ use crate::util::validate_private_component;
 use super::{ProcessManager, RegistryEntry, SIGNAL_EXIT_CODE};
 use crate::process::ProcessError;
 use crate::process::handle::{ProcessHandle, ProcessShared, ProcessStatus};
-use crate::process::spool::{Spool, StreamTag};
+use crate::process::spool::{Spool, SpoolAppender, StreamTag};
 
 impl ProcessManager {
     /// Resolve the spool path for a numeric id under this manager's token.
@@ -40,7 +40,7 @@ impl ProcessManager {
             .join("processes")
             .join(&self.run_id)
             .join(format!("p{id}.log"));
-        Ok((root.path().to_path_buf(), relative))
+        Ok((root.clone(), relative))
     }
 
     /// Spawn a manager-owned shell process and capture both output pipes.
@@ -55,18 +55,14 @@ impl ProcessManager {
         process_env: Option<&ProcessEnv>,
     ) -> Result<ProcessHandle, ProcessError> {
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
-        let (_, spool_relative) = self.spool_location(id)?;
-        let spool_root = self.spool_root.as_ref().ok_or_else(|| ProcessError::Io {
-            operation: "opening the private process-spool root".to_owned(),
-            reason: "root became unavailable after path resolution".to_owned(),
-        })?;
+        let (spool_root, spool_relative) = self.spool_location(id)?;
         let spool = Arc::new(
-            Spool::create_under(Arc::clone(spool_root), &spool_relative)
+            Spool::create_in(&spool_root, &spool_relative)
                 .await
                 .map_err(|error| {
                     ProcessError::from_io(
                         "creating a background-process spool",
-                        Some(&spool_root.display_path(&spool_relative)),
+                        Some(&spool_root.join(&spool_relative)),
                         &error,
                     )
                 })?,
@@ -86,17 +82,12 @@ impl ProcessManager {
             operation: "capturing managed-process stderr".to_owned(),
             reason: "child stderr pipe was not captured".to_owned(),
         })?;
+        let appender = spool.appender().await.map_err(|error| {
+            ProcessError::from_io("opening the active process-spool writer", None, &error)
+        })?;
         let drains = vec![
-            tokio::spawn(drain_to_spool(
-                stdout,
-                Arc::clone(&spool),
-                StreamTag::Stdout,
-            )),
-            tokio::spawn(drain_to_spool(
-                stderr,
-                Arc::clone(&spool),
-                StreamTag::Stderr,
-            )),
+            tokio::spawn(drain_to_spool(stdout, appender.clone(), StreamTag::Stdout)),
+            tokio::spawn(drain_to_spool(stderr, appender, StreamTag::Stderr)),
         ];
         Ok(self.install(id, command.to_owned(), pid, spool, child, drains))
     }
@@ -114,18 +105,14 @@ impl ProcessManager {
         stderr_task: JoinHandle<std::io::Result<()>>,
     ) -> Result<ProcessHandle, ProcessError> {
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
-        let (_, spool_relative) = self.spool_location(id)?;
-        let spool_root = self.spool_root.as_ref().ok_or_else(|| ProcessError::Io {
-            operation: "opening the private process-spool root".to_owned(),
-            reason: "root became unavailable after path resolution".to_owned(),
-        })?;
+        let (spool_root, spool_relative) = self.spool_location(id)?;
         let spool = Arc::new(
-            Spool::create_under(Arc::clone(spool_root), &spool_relative)
+            Spool::create_in(&spool_root, &spool_relative)
                 .await
                 .map_err(|error| {
                     ProcessError::from_io(
                         "creating an adopted-process spool",
-                        Some(&spool_root.display_path(&spool_relative)),
+                        Some(&spool_root.join(&spool_relative)),
                         &error,
                     )
                 })?,
@@ -196,7 +183,7 @@ pub(super) fn build_bg_command(
 /// Drain one child stream to the persistent spool.
 pub(super) async fn drain_to_spool<R>(
     reader: R,
-    spool: Arc<Spool>,
+    appender: SpoolAppender,
     tag: StreamTag,
 ) -> std::io::Result<()>
 where
@@ -204,7 +191,7 @@ where
 {
     let mut lines = BufReader::new(reader).lines();
     while let Some(line) = lines.next_line().await? {
-        spool.append_tagged(tag, &line).await?;
+        appender.append_tagged(tag, &line).await?;
     }
     Ok(())
 }
