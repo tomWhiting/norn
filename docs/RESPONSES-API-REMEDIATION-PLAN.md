@@ -368,8 +368,9 @@ close the P0 findings.
 ## P0. Credential and workspace authority containment
 
 **Acceptance:** [ ] Gate D `NOT READY`; corrective round active;
-**implementation status:** original 33 work items implemented, with Gate D
-corrections still open and the prior Gate C test claim invalidated;
+**implementation status:** original 33 work items implemented; Gate D F1 and
+D1B corrective implementations are complete, with the remaining corrections
+still open and the prior Gate C test claim invalidated;
 **findings addressed by candidate:** `SEC-01` through `SEC-16`,
 `BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and `QUAL-01`;
 **current evidence:** the scoped closure reviews remain valid for their exact
@@ -572,10 +573,12 @@ retain their intended behavior where they are operator-selected.
   and 14,400 higher-contention reproducer attempts with no second-order
   `ENOENT`; see the
   [`correction review`](reviews/2026-07-12-p0-openat-correction-review.md).
-- [ ] Introduce one typed active-session artifact scope and migrate fetched
+- [x] Introduce one typed active-session artifact scope and migrate fetched
   documents out of the workspace into immutable private session artifacts.
   Repeated fetches of one URL must not rewrite bytes referenced by an older
-  transcript event.
+  transcript event. Implementation and reproducible scoped evidence are in the
+  [`D1B correction record`](reviews/2026-07-12-p0-fetch-artifact-correction.md);
+  independent acceptance remains pending and whole-phase Gate D stays open.
 - [ ] Implement D1C for the official CLI, `doctor`, and typed P0
   private/session/process error paths. Record descriptor-allocation boundaries
   and do not claim coverage beyond the inventory.
