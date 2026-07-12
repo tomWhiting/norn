@@ -8,6 +8,7 @@ pub(super) mod action_log_mutations;
 pub mod action_log_scope;
 pub(super) mod action_log_summary;
 pub mod action_log_tree;
+pub mod artifacts;
 pub mod branch;
 pub mod context_edit;
 pub mod conversion;
@@ -22,6 +23,7 @@ pub mod store;
 pub use action_log::{ActionLog, ActionLogContext, ActionLogDetail, ActionLogEntry, Outcome};
 pub use action_log_scope::{ActionLogFilter, LabeledEntry, ScopedLog};
 pub use action_log_tree::ActionLogTree;
+pub use artifacts::SessionArtifactStore;
 pub use branch::{
     BranchedChild, ChildBranchRequest, ChildDurability, ROOT_PATH_ADDRESS, SessionBinding,
     SessionBrancher, child_path_slug, slugify_name_stem,
@@ -42,3 +44,6 @@ pub use persistence::{
 pub use resume_repair::repair_dangling_tool_calls;
 pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};
 pub use store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};
+
+#[cfg(test)]
+mod artifacts_tests;

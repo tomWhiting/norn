@@ -539,6 +539,8 @@ pub(crate) struct ToolContextParts {
     pub(crate) action_log: Arc<ActionLog>,
     /// Effective context window used to derive model-facing tool-output caps.
     pub(crate) context_window_limit: Option<u64>,
+    /// Private artifact authority for a managed persisted session.
+    pub(crate) artifact_store: Option<Arc<crate::session::SessionArtifactStore>>,
     /// Consumer-supplied extension installers, run last so embedding
     /// runtimes can contribute tool-catalog extras before publication.
     pub(crate) extensions: Vec<ExtensionInstaller>,
@@ -551,6 +553,11 @@ pub(crate) struct ToolContextParts {
 pub(crate) fn assemble_tool_context(parts: ToolContextParts) -> ToolContext {
     let launch_working_dir = parts.shared_wd.get();
     let mut ctx = ToolContext::with_working_dir(parts.shared_wd);
+    let artifact_store = parts.artifact_store;
+    let mut read_exempt_roots = parts.read_exempt_roots;
+    if let Some(store) = artifact_store.as_ref() {
+        read_exempt_roots.push(store.readable_root());
+    }
     ctx.insert_extension(Arc::new(crate::runtime_init::extensions::LaunchWorkingDir(
         launch_working_dir,
     )));
@@ -560,8 +567,8 @@ pub(crate) fn assemble_tool_context(parts: ToolContextParts) -> ToolContext {
         // (after the root, before any dispatch) keeps the exemption
         // effective from the first tool call. Canonicalization happens
         // inside the setter.
-        if !parts.read_exempt_roots.is_empty() {
-            ctx.set_read_exempt_roots(parts.read_exempt_roots);
+        if !read_exempt_roots.is_empty() {
+            ctx.set_read_exempt_roots(read_exempt_roots);
         }
     }
     ctx.insert_extension(Arc::new(SessionId(parts.session_id)));
@@ -577,6 +584,9 @@ pub(crate) fn assemble_tool_context(parts: ToolContextParts) -> ToolContext {
     }
     ctx.post_checks.extend(parts.post_checks);
     crate::runtime_init::install_tool_output_budget(&ctx, parts.context_window_limit);
+    if let Some(store) = artifact_store {
+        ctx.insert_extension(store);
+    }
     ctx.insert_extension(Arc::new(SharedProvider(parts.provider)));
     ctx.insert_extension(parts.action_log);
     for install in parts.extensions {

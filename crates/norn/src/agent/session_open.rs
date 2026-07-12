@@ -13,7 +13,7 @@ use crate::agent::session_spec::SessionRequest;
 use crate::error::{NornError, SessionError};
 use crate::session::manager::ReplaySummary;
 use crate::session::store::EventStore;
-use crate::session::{SessionBinding, SessionBrancher, SessionIndexEntry};
+use crate::session::{SessionArtifactStore, SessionBinding, SessionBrancher, SessionIndexEntry};
 
 /// The opened persisted root session: its index entry and replay summary
 /// (surfaced on the built agent), the replayed store, and the root's
@@ -31,6 +31,8 @@ pub(super) struct OpenedRootSession {
     /// the single allocation authority every spawn/fork/rhai child mint
     /// under this agent routes through.
     pub(super) binding: Arc<SessionBinding>,
+    /// Private artifact authority shared by this root and its descendants.
+    pub(super) artifacts: Arc<SessionArtifactStore>,
 }
 
 /// Open the managed persisted session once the model and working
@@ -100,6 +102,14 @@ pub(super) fn open_root_session(
         .as_deref()
         .and_then(|rel| rel.split('/').next())
         .map_or_else(|| opened.entry.id.clone(), str::to_owned);
+    let artifacts = Arc::new(
+        SessionArtifactStore::for_session(manager.data_dir(), &root_for_children, durability)
+            .map_err(|e| {
+                NornError::Session(SessionError::StorageError {
+                    reason: format!("open_session artifact storage failed: {e}"),
+                })
+            })?,
+    );
     let brancher = Arc::new(SessionBrancher::new(manager, root_for_children, durability));
     let binding = Arc::new(SessionBinding::persistent_root(
         brancher,
@@ -111,5 +121,6 @@ pub(super) fn open_root_session(
         replay: opened.replay,
         store: Arc::new(opened.store),
         binding,
+        artifacts,
     })
 }

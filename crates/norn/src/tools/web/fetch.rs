@@ -6,9 +6,9 @@
 //! arbitrarily large responses; a body cut off at the cap is surfaced to
 //! the model via the `truncated` flag and a `truncation_note` in the tool
 //! result. HTML responses are converted to markdown using a parser-backed
-//! HTML-to-Markdown converter. The converted page is archived under
-//! `.norn/fetched/` resolved against the session's working directory
-//! (through the tool context), never the process CWD.
+//! HTML-to-Markdown converter. The converted page is archived as an
+//! immutable private artifact under the owning root session, never in the
+//! workspace or process CWD.
 //!
 //! Every request passes the `super::ssrf` guard: private/internal
 //! destinations (loopback, link-local/metadata, RFC 1918, IPv6 ULA) are
@@ -24,6 +24,7 @@
 
 use std::fmt::Write as _;
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -283,6 +284,10 @@ impl Tool for WebFetchTool {
         let format = parse_format(args.format.as_deref())?;
         let timeout_secs = args.timeout.unwrap_or(DEFAULT_TIMEOUT).min(MAX_TIMEOUT);
         let extraction_detail = parse_detail(args.detail.as_deref())?;
+        // Resolve storage authority before making the request. A run without
+        // a persisted artifact owner must not perform a fetch it cannot
+        // archive safely.
+        let artifacts = ctx.require_extension::<crate::session::SessionArtifactStore>()?;
 
         let response = self
             .fetch_following_redirects(parsed_url, Duration::from_secs(timeout_secs))
@@ -314,7 +319,7 @@ impl Tool for WebFetchTool {
         let body = String::from_utf8_lossy(&body_bytes).into_owned();
         let converted = convert(&body, format, &content_type);
 
-        let saved_path = save_fetched_content(ctx, &args.url, &converted).await?;
+        let saved_path = save_fetched_content(artifacts, &args.url, &converted).await?;
 
         let questions = args.questions;
 
@@ -499,52 +504,23 @@ fn convert_html(html: &str, format: html_to_markdown_rs::OutputFormat, label: &s
     }
 }
 
-/// Archive the converted page under `.norn/fetched/` resolved against the
-/// session's working directory via [`ToolContext::resolve_path`] — never the
-/// process CWD — using async filesystem calls so the executor is not blocked.
+/// Archive the converted page through the session's narrow private-artifact
+/// capability. The descriptor-relative write runs off the async executor.
 async fn save_fetched_content(
-    ctx: &ToolContext,
+    artifacts: Arc<crate::session::SessionArtifactStore>,
     url: &str,
     content: &str,
 ) -> Result<PathBuf, ToolError> {
-    let dir = ctx.resolve_path(PathBuf::from(".norn").join("fetched"));
-    tokio::fs::create_dir_all(&dir)
+    let url = url.to_owned();
+    let content = content.to_owned();
+    tokio::task::spawn_blocking(move || artifacts.write_fetched(&url, &content))
         .await
         .map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("failed to create {}: {e}", dir.display()),
-        })?;
-    // SHA-256 of the URL: stable across processes and Rust releases, so
-    // re-fetching a page always lands on the same archive file
-    // (`DefaultHasher` guarantees neither).
-    let hash = {
-        use sha2::{Digest as _, Sha256};
-        format!("{:x}", Sha256::digest(url.as_bytes()))
-    };
-    let filename = format!("{hash}.md");
-    let path = dir.join(&filename);
-    let body = strip_frontmatter(content);
-    let with_frontmatter = format!(
-        "---\nurl: {url}\nfetched: {}\n---\n\n{body}",
-        chrono::Utc::now().to_rfc3339()
-    );
-    tokio::fs::write(&path, &with_frontmatter)
-        .await
+            reason: format!("fetched-artifact writer task failed: {e}"),
+        })?
         .map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("failed to write fetched content to {}: {e}", path.display()),
-        })?;
-    Ok(path)
-}
-
-fn strip_frontmatter(content: &str) -> &str {
-    if !content.starts_with("---") {
-        return content;
-    }
-    if let Some(end) = content[3..].find("\n---") {
-        let after = 3 + end + 4;
-        content[after..].trim_start_matches('\n')
-    } else {
-        content
-    }
+            reason: format!("failed to write private fetched artifact: {e}"),
+        })
 }
 
 fn prepend_line_numbers(content: &str) -> String {
@@ -674,6 +650,39 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn execute_requires_artifact_authority_before_network_request() {
+        use wiremock::matchers::{method, path};
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/page"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("must not be requested"))
+            .mount(&server)
+            .await;
+        let tool = WebFetchTool::new()
+            .expect("client builds")
+            .allow_private_hosts(true);
+        let err = tool
+            .execute(
+                &envelope(json!({ "url": format!("{}/page", server.uri()) })),
+                &ToolContext::empty(),
+            )
+            .await
+            .expect_err("an unowned fetch must fail");
+
+        assert!(matches!(err, ToolError::MissingExtension { .. }));
+        assert!(
+            server
+                .received_requests()
+                .await
+                .expect("received requests")
+                .is_empty(),
+            "storage authority must be checked before network I/O",
+        );
+    }
+
+    #[tokio::test]
     async fn execute_with_questions_requires_shared_provider() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -699,8 +708,10 @@ mod tests {
             "url": format!("{}/page", server.uri()),
             "questions": ["What is the answer?"],
         }));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ctx = ctx_with_artifacts(dir.path());
         let err = tool
-            .execute(&env, &ToolContext::empty())
+            .execute(&env, &ctx)
             .await
             .expect_err("questions require SharedProvider");
         assert!(
@@ -719,10 +730,27 @@ mod tests {
     use crate::provider::usage::Usage;
     use crate::tool::context::SharedWorkingDir;
 
-    /// A context whose working dir is `dir` and whose `SharedProvider` is a
-    /// mock extraction agent returning one fixed answer set.
-    fn ctx_with_extraction_provider(dir: &Path) -> ToolContext {
+    fn artifact_store(dir: &Path) -> Arc<crate::session::SessionArtifactStore> {
+        Arc::new(
+            crate::session::SessionArtifactStore::for_session(
+                dir,
+                "root-session",
+                crate::session::DurabilityPolicy::Flush,
+            )
+            .expect("artifact store"),
+        )
+    }
+
+    fn ctx_with_artifacts(dir: &Path) -> ToolContext {
         let ctx = ToolContext::with_working_dir(SharedWorkingDir::new(dir.to_path_buf()));
+        ctx.insert_extension(artifact_store(dir));
+        ctx
+    }
+
+    /// A context with private session artifacts and a mock extraction agent
+    /// returning one fixed answer set.
+    fn ctx_with_extraction_provider(dir: &Path) -> ToolContext {
+        let ctx = ctx_with_artifacts(dir);
         let provider: Arc<dyn crate::provider::traits::Provider> =
             Arc::new(MockProvider::new(vec![vec![
                 crate::provider::events::ProviderEvent::TextDelta {
@@ -738,12 +766,10 @@ mod tests {
         ctx
     }
 
-    /// Track B finding 6 regression: the `.norn/fetched` artifact must land
-    /// under the session's working directory (resolved through the tool
-    /// context), not wherever the process happened to start, and an
-    /// untruncated fetch must say so explicitly.
+    /// Fetched content belongs to the persisted root session, outside the
+    /// workspace, and an untruncated fetch says so explicitly.
     #[tokio::test]
-    async fn fetch_artifact_saves_under_context_working_dir() {
+    async fn fetch_artifact_saves_under_private_session_tree() {
         use wiremock::matchers::{method, path};
         use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -774,9 +800,10 @@ mod tests {
         let saved = out.content["saved_to"].as_str().expect("saved_to string");
         let saved_path = Path::new(saved);
         assert!(
-            saved_path.starts_with(dir.path()),
-            "artifact must land under the context working dir; saved_to = {saved}",
+            saved_path.starts_with(dir.path().join("root-session/artifacts/fetched")),
+            "artifact must land under the owning session; saved_to = {saved}",
         );
+        assert!(!dir.path().join(".norn/fetched").exists());
         assert!(saved_path.exists(), "artifact file must exist at {saved}");
         assert_eq!(
             out.content["truncated"],
@@ -855,29 +882,29 @@ mod tests {
         assert!(note.contains("truncated"), "{note}");
     }
 
-    /// Archive filenames must be the SHA-256 of the URL: stable across
-    /// processes and Rust releases (`DefaultHasher` is neither), so the
-    /// same page always maps to the same archive file.
+    /// Re-fetching a URL creates a distinct immutable invocation artifact.
     #[tokio::test]
-    async fn archive_filename_is_stable_sha256_of_url() {
-        use sha2::{Digest as _, Sha256};
-
+    async fn repeated_fetches_do_not_overwrite_prior_artifacts() {
         let dir = tempfile::tempdir().expect("tempdir");
-        let ctx = ToolContext::with_working_dir(SharedWorkingDir::new(dir.path().to_path_buf()));
+        let artifacts = artifact_store(dir.path());
         let url = "https://example.com/some/page?q=1";
 
-        let first = save_fetched_content(&ctx, url, "converted body")
+        let first = save_fetched_content(Arc::clone(&artifacts), url, "converted body")
             .await
             .expect("save succeeds");
-        let second = save_fetched_content(&ctx, url, "converted body again")
+        let second = save_fetched_content(artifacts, url, "converted body again")
             .await
             .expect("save succeeds");
-        assert_eq!(first, second, "same URL must map to the same archive file");
-
-        let expected = format!("{:x}.md", Sha256::digest(url.as_bytes()));
-        assert_eq!(
-            first.file_name().and_then(|n| n.to_str()),
-            Some(expected.as_str()),
+        assert_ne!(first, second);
+        assert!(
+            std::fs::read_to_string(first)
+                .expect("first artifact")
+                .contains("converted body")
+        );
+        assert!(
+            std::fs::read_to_string(second)
+                .expect("second artifact")
+                .contains("converted body again")
         );
     }
 
@@ -904,6 +931,7 @@ mod tests {
         // Provider whose response is not the JSON array the extraction
         // agent requires — extract() fails after the page was archived.
         let ctx = ToolContext::with_working_dir(SharedWorkingDir::new(dir.path().to_path_buf()));
+        ctx.insert_extension(artifact_store(dir.path()));
         let provider: Arc<dyn crate::provider::traits::Provider> =
             Arc::new(MockProvider::new(vec![vec![
                 crate::provider::events::ProviderEvent::TextDelta {
@@ -983,8 +1011,10 @@ mod tests {
 
         let tool = WebFetchTool::new().expect("client builds");
         let env = envelope(json!({ "url": format!("{}/secret", server.uri()) }));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ctx = ctx_with_artifacts(dir.path());
         let err = tool
-            .execute(&env, &ToolContext::empty())
+            .execute(&env, &ctx)
             .await
             .expect_err("loopback must be denied by default");
         let msg = err.to_string();
@@ -1010,8 +1040,10 @@ mod tests {
             .expect("client builds")
             .allow_private_hosts(true);
         let env = envelope(json!({ "url": format!("{}/jump", server.uri()) }));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ctx = ctx_with_artifacts(dir.path());
         let err = tool
-            .execute(&env, &ToolContext::empty())
+            .execute(&env, &ctx)
             .await
             .expect_err("non-http(s) redirect must be refused");
         assert!(err.to_string().contains("non-http(s)"), "{err}");
@@ -1034,8 +1066,10 @@ mod tests {
             .expect("client builds")
             .allow_private_hosts(true);
         let env = envelope(json!({ "url": loop_url }));
+        let dir = tempfile::tempdir().expect("tempdir");
+        let ctx = ctx_with_artifacts(dir.path());
         let err = tool
-            .execute(&env, &ToolContext::empty())
+            .execute(&env, &ctx)
             .await
             .expect_err("redirect loop must terminate");
         assert!(err.to_string().contains("too many redirects"), "{err}");

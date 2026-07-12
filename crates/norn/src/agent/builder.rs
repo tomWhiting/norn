@@ -309,6 +309,7 @@ impl AgentBuilder {
         // `session: None` branch event on the parent timeline).
         let mut opened_session: Option<(crate::session::SessionIndexEntry, ReplaySummary)> = None;
         let mut session_binding = Arc::new(crate::session::SessionBinding::ephemeral_root());
+        let mut artifact_store = None;
         if let Some(request) = self.session_request.take() {
             let opened = crate::agent::session_open::open_root_session(
                 request,
@@ -316,6 +317,7 @@ impl AgentBuilder {
                 &working_dir.display().to_string(),
             )?;
             session_binding = opened.binding;
+            artifact_store = Some(opened.artifacts);
             self.session = Some(opened.store);
             opened_session = Some((opened.entry, opened.replay));
         }
@@ -556,6 +558,7 @@ impl AgentBuilder {
             provider: Arc::clone(&self.provider),
             action_log: Arc::clone(&action_log),
             context_window_limit: tool_output_context_window,
+            artifact_store,
             extensions: self.extensions,
         });
         registry.set_context(Arc::new(ctx));
@@ -3148,6 +3151,7 @@ mod tests {
             .model("test-model")
             .context_window_limit(TEST_CONTEXT_WINDOW)
             .working_dir(temp.path())
+            .workspace_root(temp.path())
             .open_session(
                 &manager,
                 SessionSpec::Create {
@@ -3170,6 +3174,52 @@ mod tests {
         assert_eq!(entry.name.as_deref(), Some("track-h"));
         assert_eq!(agent.config.cache_key.as_deref(), Some(entry.id.as_str()));
         assert_eq!(agent.info().session_id, entry.id);
+        let ctx = agent
+            .registry
+            .shared_context()
+            .ok_or_else(|| std::io::Error::other("shared tool context missing"))?;
+        let artifacts = ctx
+            .get_extension::<crate::session::SessionArtifactStore>()
+            .ok_or_else(|| std::io::Error::other("session artifact authority missing"))?;
+        let expected_artifact_root = sessions
+            .path()
+            .join(&entry.id)
+            .join("artifacts")
+            .canonicalize()?;
+        let session_data_root = sessions.path().canonicalize()?;
+        assert_eq!(
+            artifacts.readable_root().canonicalize()?,
+            expected_artifact_root
+        );
+        assert!(ctx.read_exempt_roots().contains(&expected_artifact_root));
+        assert!(
+            !ctx.read_exempt_roots()
+                .iter()
+                .any(|root| root == &session_data_root),
+            "the session data root itself must never become model-readable",
+        );
+
+        let artifact = artifacts.write_fetched("https://example.test", "artifact body")?;
+        let transcript = sessions.path().join(format!("{}.jsonl", entry.id));
+        let read = agent
+            .registry
+            .get("read")
+            .ok_or_else(|| std::io::Error::other("read tool missing from the default registry"))?;
+        let read_envelope = |path: &std::path::Path| crate::tool::envelope::ToolEnvelope {
+            tool_call_id: "tc-session-artifact".to_owned(),
+            tool_name: "read".to_owned(),
+            model_args: serde_json::json!({ "path": path.display().to_string() }),
+            metadata: Value::Null,
+        };
+        let allowed = read
+            .execute(&read_envelope(&artifact), ctx.as_ref())
+            .await?;
+        assert!(!allowed.is_error(), "the session artifact must be readable");
+        let denied = read
+            .execute(&read_envelope(&transcript), ctx.as_ref())
+            .await?;
+        assert!(denied.is_error(), "the sibling transcript must stay denied");
+        assert_eq!(denied.content["error"]["kind"], "permission_denied");
         assert_eq!(
             agent
                 .loop_context
@@ -3260,6 +3310,15 @@ mod tests {
         assert!(
             !infra.session.is_persistent(),
             "without a persisted session the binding is honestly ephemeral",
+        );
+        assert!(
+            ephemeral
+                .registry
+                .shared_context()
+                .expect("shared tool context")
+                .get_extension::<crate::session::SessionArtifactStore>()
+                .is_none(),
+            "an ephemeral run must not invent a durable artifact owner",
         );
     }
 

@@ -192,7 +192,8 @@ pub(super) fn build_child_context(
 /// allow-list; without both extensions the tool would be offered but
 /// always fail `MissingExtension` at execute), the diagnostic collector
 /// and convention-diagnostics infra (+ post-check), the shared extraction
-/// provider, the consent-boundary [`PermissionPolicy`], the scheduling
+/// provider, the private root-session artifact authority, the consent-boundary
+/// [`PermissionPolicy`], the scheduling
 /// [`ToolEffectIndex`], the operator [`HookRegistry`], the shared
 /// agent-event channel, the [`CoordinationEnvelope`], the
 /// [`ReclaimOnResultDelivery`] marker, and the agent-variants catalog
@@ -238,6 +239,9 @@ pub(crate) fn forward_shared_extensions(parent_ctx: &ToolContext, child_ctx: &mu
     forward_diagnostic_infra(parent_ctx, child_ctx);
     if let Some(sp) = parent_ctx.get_extension::<SharedProvider>() {
         child_ctx.insert_extension(sp);
+    }
+    if let Some(artifacts) = parent_ctx.get_extension::<crate::session::SessionArtifactStore>() {
+        child_ctx.insert_extension(artifacts);
     }
     if let Some(policy) = parent_ctx.get_extension::<PermissionPolicy>() {
         child_ctx.insert_extension(policy);
@@ -389,6 +393,13 @@ mod tests {
         let parent_id = Uuid::new_v4();
         let infra = parent_infra(parent_id);
         let parent_ctx = ToolContext::empty();
+        let artifact_dir = tempdir()?;
+        let artifacts = Arc::new(crate::session::SessionArtifactStore::for_session(
+            artifact_dir.path(),
+            "root-session",
+            crate::session::DurabilityPolicy::Flush,
+        )?);
+        parent_ctx.insert_extension(Arc::clone(&artifacts));
 
         let spawn_ctx = build_child_context(
             &infra,
@@ -417,6 +428,14 @@ mod tests {
             .ok_or_else(|| std::io::Error::other("fork child is missing AgentToolInfra"))?;
         assert!(Arc::ptr_eq(&spawn_infra.provider, &infra.provider));
         assert!(Arc::ptr_eq(&fork_infra.provider, &infra.provider));
+        let spawn_artifacts = spawn_ctx
+            .get_extension::<crate::session::SessionArtifactStore>()
+            .ok_or_else(|| std::io::Error::other("spawn child artifact authority missing"))?;
+        let fork_artifacts = fork_ctx
+            .get_extension::<crate::session::SessionArtifactStore>()
+            .ok_or_else(|| std::io::Error::other("fork child artifact authority missing"))?;
+        assert!(Arc::ptr_eq(&spawn_artifacts, &artifacts));
+        assert!(Arc::ptr_eq(&fork_artifacts, &artifacts));
         Ok(())
     }
 
