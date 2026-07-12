@@ -368,17 +368,19 @@ close the P0 findings.
 ## P0. Credential and workspace authority containment
 
 **Acceptance:** [ ] Gate D `NOT READY`; corrective round active;
-**implementation status:** original 33 work items implemented; Gate D F1 and
-D1B corrective implementations are complete, with the remaining corrections
-still open and the prior Gate C test claim invalidated;
-**findings addressed by candidate:** `SEC-01` through `SEC-16`,
-`BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and `QUAL-01`;
+**implementation status:** original 33 work items plus F1, D1B, D1C, legacy
+path-helper removal, missing transport/loop sentinels, SEC-05 compile contracts,
+and the TUI-history artifact correction are implemented; D1D, historical
+baseline evidence disposition, final Gate C, and whole-phase Gate D remain open;
+**findings addressed by candidate:** `SEC-01` through `SEC-13`, `SEC-15`,
+`SEC-16`, `BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and
+`QUAL-01`; the complete `SEC-14` claim remains open specifically at D1D;
 **current evidence:** the scoped closure reviews remain valid for their exact
-surfaces, but the integrated Gate D review found one blocker, one now-resolved
-artifact-location decision, missing fixtures, and audit/documentation defects;
-the original candidate is committed through `ebb82c8` and the Gate D record at
-`5c22ba6`; **dependencies:** D1, D1A, D1B, and D1C resolved; D1D and the P0-only
-retrospective Gate A exception remain open.
+surfaces; corrective code is committed through `37c806a` and the provisional
+writer/LOC/bypass/traceability snapshot through `0e0680f`. The final workspace
+gate cannot be claimed from the interrupted low-disk run; **dependencies:** D1,
+D1A, D1B, and D1C resolved; D1D and the P0-only retrospective Gate A exception
+remain open.
 
 ### What this phase fixes
 
@@ -604,11 +606,18 @@ retain their intended behavior where they are operator-selected.
   handoff regressions. Raw stalled-body fixtures prove the specialized statuses
   return from headers without waiting for or rendering the body; loop tests pin
   timeout-exit sweeping and the capacity-one retained-message handoff.
-- [ ] Regenerate production LOC with one syntax-aware method that excludes
+- [x] Regenerate production LOC with one syntax-aware method that excludes
   test-only items wherever they occur. Rebuild the bypass and artifact-writer
-  inventories with exact commands and inputs.
+  inventories with exact commands and inputs. The provisional code-head
+  snapshot at `37c806a` records 122 changed Rust files, no production file over
+  500 LOC, no thin-entrypoint violation, zero added bypass matches, and 88 raw
+  writer candidates. D1D changes require regeneration before final Gate C.
 - [ ] Complete the baseline-failure and finding-to-test traceability records,
-  then correct rather than append to the invalidated Gate C handoff.
+  then correct rather than append to the invalidated Gate C handoff. The exact
+  candidate matrix now exists in the
+  [`traceability record`](reviews/2026-07-12-p0-traceability.md), but it honestly
+  labels historical source proof where no pre-fix executable run was retained;
+  D1D and the final corrected handoff remain open.
 
 ### Phase-specific evidence
 
@@ -686,10 +695,19 @@ retain their intended behavior where they are operator-selected.
   tests cover ancestor and final symlinks, non-regular targets, permissive umask,
   legacy modes, reopen, absent trusted homes, and replacement races that prove
   outside sentinels remain unchanged under the exact D1 confinement contract.
-- [ ] A complete private/session artifact-writer inventory names every writer,
+- [x] TUI history uses the trusted Norn root and a narrow private line-log
+  capability with `0700`/`0600` mode healing, no-follow regular-file opens,
+  inter-process record locking, torn-tail recovery, corrupt-backing demotion,
+  and prompt/draft Debug non-disclosure. Focused evidence is recorded in the
+  [`history correction`](reviews/2026-07-12-p0-history-artifact-correction.md).
+- [x] A complete private/session artifact-writer inventory names every writer,
   its ownership and lifetime, root, mode, no-follow/atomicity behavior, and model
-  read surface. The inventory includes fetched documents and supports every
-  coverage claim made in the final handoff.
+  read surface. The
+  [`classification`](reviews/2026-07-12-p0-artifact-writer-inventory.md) and raw
+  JSON include fetched documents, TUI history, build output, user-directed
+  writers, the foreign OAuth store, cleanup/read false positives, and the
+  non-final Bash/process layout. Regenerate the raw rows after D1D before the
+  final handoff.
 - [x] A retained concurrency evidence script records 50/50 successful session
   convergence runs plus primitive-level same-name-create, `O_EXCL`, and
   persistent-failure cases on the affected macOS platform.
@@ -722,13 +740,18 @@ then becomes a P0 blocker:
 
 ### Review and exit gate
 
-**Current gate state:** Gate D returned `NOT READY`; corrective implementation
-and evidence reconciliation are active. Three provisional reports review frozen snapshot
+**Current gate state:** Gate D returned `NOT READY`; the corrective candidate is
+implemented through `37c806a` and its provisional evidence through `0e0680f`.
+D1D, the owner Gate A exception, historical baseline-evidence disposition,
+final Gate C, and fresh Gate D remain open. The final all-target run has not
+occurred: a preliminary invocation was deliberately interrupted when the host
+had about 345 MiB free and began compiling additional feature combinations; it
+is not pass/fail evidence. Three provisional reports review frozen snapshot
 `7d121c9`; they are archived review input, not Gate D evidence for the final P0
 candidate. Subsequent targeted credential/config, transport/streaming, and
-private-artifact closure reviewers each report `READY` on their owned final
-surfaces. The original code range is committed through `ebb82c8`; its single
-passing workspace test run and manual audits are recorded in the
+private-artifact closure reviewers each report `READY` on their exact historical
+surfaces. The original code range through `ebb82c8` and its single passing
+workspace test run/manual audits are recorded in the
 [`P0 Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md), but Gate D
 invalidated the unqualified test-pass claim. The corrective candidate must close
 the findings in the [`Gate D review`](reviews/2026-07-11-p0-gate-d-review.md),
