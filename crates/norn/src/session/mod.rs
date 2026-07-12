@@ -44,6 +44,3 @@ pub use persistence::{
 pub use resume_repair::repair_dangling_tool_calls;
 pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};
 pub use store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};
-
-#[cfg(test)]
-mod artifacts_tests;

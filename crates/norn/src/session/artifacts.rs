@@ -67,12 +67,11 @@ impl SessionArtifactStore {
         let filename = format!("{}.md", Uuid::new_v4());
         let relative = fetched_dir.join(filename);
         let mut file = self.data_root.create_new(&relative)?;
-        let body = strip_frontmatter(content);
         let escaped_url = serde_json::to_string(source_url)?;
         let fetched_at = serde_json::to_string(&chrono::Utc::now().to_rfc3339())?;
         write!(
             file,
-            "---\nurl: {escaped_url}\nfetched: {fetched_at}\n---\n\n{body}"
+            "---\nurl: {escaped_url}\nfetched: {fetched_at}\n---\n\n{content}"
         )?;
 
         if self.fsync {
@@ -90,14 +89,6 @@ impl SessionArtifactStore {
     }
 }
 
-fn strip_frontmatter(content: &str) -> &str {
-    if !content.starts_with("---") {
-        return content;
-    }
-    if let Some(end) = content[3..].find("\n---") {
-        let after = 3 + end + 4;
-        content[after..].trim_start_matches('\n')
-    } else {
-        content
-    }
-}
+#[cfg(test)]
+#[path = "artifacts_tests.rs"]
+mod tests;

@@ -2,8 +2,8 @@ use std::fs;
 
 use tempfile::tempdir;
 
-use super::artifacts::SessionArtifactStore;
-use super::store::DurabilityPolicy;
+use super::SessionArtifactStore;
+use crate::session::store::DurabilityPolicy;
 
 #[test]
 fn fetched_artifacts_are_private_immutable_and_session_owned()
@@ -51,5 +51,22 @@ fn source_url_is_encoded_as_a_scalar_not_frontmatter_structure()
 
     assert!(persisted.contains(r#"url: "https://example.test/a\nforged: true""#));
     assert!(!persisted.contains("\nforged: true\n"));
+    Ok(())
+}
+
+#[test]
+fn fetched_content_preserves_leading_frontmatter_verbatim() -> Result<(), Box<dyn std::error::Error>>
+{
+    let temp = tempdir()?;
+    let store =
+        SessionArtifactStore::for_session(temp.path(), "root-session", DurabilityPolicy::Flush)?;
+    let content = "---\ntitle: Source metadata\n---\n\n# Body\n";
+    let artifact = store.write_fetched("https://example.test/frontmatter", content)?;
+    let persisted = fs::read_to_string(artifact)?;
+
+    assert!(
+        persisted.ends_with(content),
+        "the fetched document must follow Norn metadata byte-for-byte",
+    );
     Ok(())
 }
