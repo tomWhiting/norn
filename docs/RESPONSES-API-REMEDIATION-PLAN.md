@@ -617,7 +617,10 @@ retain their intended behavior where they are operator-selected.
   candidate matrix now exists in the
   [`traceability record`](reviews/2026-07-12-p0-traceability.md), but it honestly
   labels historical source proof where no pre-fix executable run was retained;
-  D1D and the final corrected handoff remain open.
+  the [`baseline-evidence audit`](reviews/2026-07-12-p0-baseline-evidence-audit.md)
+  proves Git contains only one native defect-red/corrected-green sequence and
+  that a P0-only Gate B process exception is unavoidable. D1D, owner
+  disposition, and the final corrected handoff remain open.
 
 ### Phase-specific evidence
 
@@ -742,8 +745,8 @@ then becomes a P0 blocker:
 
 **Current gate state:** Gate D returned `NOT READY`; the corrective candidate is
 implemented through `37c806a` and its provisional evidence through `0e0680f`.
-D1D, the owner Gate A exception, historical baseline-evidence disposition,
-final Gate C, and fresh Gate D remain open. The final all-target run has not
+D1D, the owner Gate A and Gate B exceptions, final Gate C, and fresh Gate D
+remain open. The final all-target run has not
 occurred: a preliminary invocation was deliberately interrupted when the host
 had about 345 MiB free and began compiling additional feature combinations; it
 is not pass/fail evidence. Three provisional reports review frozen snapshot
