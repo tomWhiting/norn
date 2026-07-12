@@ -852,3 +852,38 @@ acceptance remains pending.
   under the governing product/contract terms and a pre-dispatch or guaranteed
   non-execution state-machine proof. If either is absent, `ROUTE-01` closes as an
   explicitly unsupported capability rather than an implicit retry behavior.
+
+## 9. P0 Gate D corrective rulings (2026-07-11)
+
+- **Fetched content is private session state.** New fetched documents must never
+  be written beneath the working directory. They belong to an immutable
+  artifact subtree owned by the active root session under the trusted user-level
+  Norn store. Built-in read/search may receive a narrow read-only capability for
+  that active artifact subtree; this does not expose credentials, the global
+  session index, raw child transcripts, or other sessions. P0 establishes the
+  scope and migrates new fetch writes. P3 decides broad transcript/storage
+  migration, historical references, fork copying, and retention.
+- **File-descriptor exhaustion is a P0 availability boundary.** The official
+  CLI must raise its inherited soft `RLIMIT_NOFILE` only to a finite
+  OS-reported ceiling, report inherited/effective limits and a labelled current
+  descriptor snapshot through `doctor`, and preserve typed process-local
+  `EMFILE` versus system-wide `ENFILE` errors through the inventoried P0 private,
+  session, and process paths. Library embedders opt in to process-global
+  hardening. Raising the limit is mitigation, not permission to leave avoidable
+  per-agent descriptors permanently open; sharing or lazy reopen remains a
+  separately owned follow-up.
+- **Core-dump hardening remains separate.** Setting both soft and hard
+  `RLIMIT_CORE` to zero would also disable traditional core dumps for commands
+  spawned by Norn. It is not implied by the NOFILE ruling and remains open until
+  that inherited behavior is explicitly accepted.
+- **Gate evidence is distributional and enumerable.** Concurrency-sensitive
+  claims require a checked-in repeatability command or script and the complete
+  pass/fail distribution. The macOS convergence correction requires 50 recorded
+  repetitions. Claims using `all`, `every`, or `complete` include the exact
+  generated inventory they quantify. A single successful suite invocation is
+  an observation, not stability evidence.
+- **Dormant MCP settings remain undecided.** The active explicit MCP commands
+  and library types are not in question. The consumerless layered
+  `mcp_servers` settings surface must either be removed or receive a
+  provenance-aware containment design and hostile no-authority evidence before
+  P0 can close.
