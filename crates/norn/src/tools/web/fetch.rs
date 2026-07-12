@@ -22,23 +22,29 @@
 //! `effect()` is [`ToolEffect::Network`] so the scheduler may run fetches
 //! concurrently with other read-only / network tools.
 
-use std::fmt::Write as _;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
-use futures_util::StreamExt;
 use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::error::ToolError;
-use crate::internal::extraction::{self, DetailLevel, SharedProvider};
+use crate::internal::extraction::{self, SharedProvider};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
 use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
+
+mod format;
+
+#[cfg(test)]
+use crate::internal::extraction::DetailLevel;
+#[cfg(test)]
+use format::{Format, html_to_markdown, html_to_text};
+use format::{convert, parse_detail, parse_format, prepend_line_numbers, read_body_with_cap};
 
 /// Hard cap on response body size (bytes).
 const MAX_SIZE: usize = 5 * 1024 * 1024;
@@ -380,128 +386,8 @@ impl Tool for WebFetchTool {
     }
 }
 
-/// Output format selector.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum Format {
-    Markdown,
-    Text,
-    Html,
-}
-
 fn is_http_url(url: &str) -> bool {
     url.starts_with("http://") || url.starts_with("https://")
-}
-
-fn parse_format(raw: Option<&str>) -> Result<Format, ToolError> {
-    match raw {
-        None | Some("markdown") => Ok(Format::Markdown),
-        Some("text") => Ok(Format::Text),
-        Some("html") => Ok(Format::Html),
-        Some(other) => Err(ToolError::pre_validation(
-            ToolErrorKind::InvalidArguments,
-            format!("unknown format `{other}`; expected markdown|text|html"),
-        )),
-    }
-}
-
-fn parse_detail(raw: Option<&str>) -> Result<DetailLevel, ToolError> {
-    match raw {
-        None | Some("normal") => Ok(DetailLevel::Normal),
-        Some("brief") => Ok(DetailLevel::Brief),
-        Some("detailed") => Ok(DetailLevel::Detailed),
-        Some(other) => Err(ToolError::pre_validation(
-            ToolErrorKind::InvalidArguments,
-            format!("unknown detail `{other}`; expected brief|normal|detailed"),
-        )),
-    }
-}
-
-async fn read_body_with_cap(response: reqwest::Response) -> Result<(Vec<u8>, bool), ToolError> {
-    let mut body_bytes: Vec<u8> = Vec::new();
-    let mut truncated = false;
-    let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("response body read failed: {e}"),
-        })?;
-        let remaining = MAX_SIZE.saturating_sub(body_bytes.len());
-        if chunk.len() > remaining {
-            body_bytes.extend_from_slice(&chunk[..remaining]);
-            truncated = true;
-            break;
-        }
-        body_bytes.extend_from_slice(&chunk);
-    }
-    Ok((body_bytes, truncated))
-}
-
-fn convert(body: &str, format: Format, content_type: &str) -> String {
-    match format {
-        Format::Html => body.to_owned(),
-        Format::Text => html_to_text(body),
-        Format::Markdown => {
-            if content_type.contains("text/html") {
-                html_to_markdown(body)
-            } else {
-                body.to_owned()
-            }
-        }
-    }
-}
-
-fn html_conversion_options(
-    output_format: html_to_markdown_rs::OutputFormat,
-) -> html_to_markdown_rs::ConversionOptions {
-    html_to_markdown_rs::ConversionOptions::builder()
-        .preprocessing(html_to_markdown_rs::PreprocessingOptions {
-            enabled: true,
-            preset: html_to_markdown_rs::PreprocessingPreset::Aggressive,
-            remove_navigation: true,
-            remove_forms: true,
-        })
-        .compact_tables(true)
-        .output_format(output_format)
-        .build()
-}
-
-fn html_to_text(html: &str) -> String {
-    convert_html(html, html_to_markdown_rs::OutputFormat::Plain, "text")
-}
-
-fn html_to_markdown(html: &str) -> String {
-    convert_html(
-        html,
-        html_to_markdown_rs::OutputFormat::Markdown,
-        "markdown",
-    )
-}
-
-/// Convert HTML via the parser-backed converter. When conversion fails
-/// (or produces no content) the raw HTML is returned so the page is
-/// never lost — but the fallback is logged, never silent: raw HTML in a
-/// `markdown`/`text` result is a degraded outcome the operator must be
-/// able to trace.
-fn convert_html(html: &str, format: html_to_markdown_rs::OutputFormat, label: &str) -> String {
-    match html_to_markdown_rs::convert(html, Some(html_conversion_options(format))) {
-        Ok(result) => {
-            let Some(content) = result.content else {
-                tracing::warn!(
-                    target_format = label,
-                    "HTML conversion produced no content; returning raw HTML",
-                );
-                return html.to_owned();
-            };
-            content
-        }
-        Err(error) => {
-            tracing::warn!(
-                target_format = label,
-                error = ?error,
-                "HTML conversion failed; returning raw HTML",
-            );
-            html.to_owned()
-        }
-    }
 }
 
 /// Archive the converted page through the session's narrow private-artifact
@@ -518,17 +404,14 @@ async fn save_fetched_content(
         .map_err(|e| ToolError::ExecutionFailed {
             reason: format!("fetched-artifact writer task failed: {e}"),
         })?
-        .map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("failed to write private fetched artifact: {e}"),
+        .map_err(|error| match error {
+            crate::session::SessionPersistError::DescriptorExhausted(source) => {
+                ToolError::DescriptorExhausted(source)
+            }
+            other => ToolError::ExecutionFailed {
+                reason: format!("failed to write private fetched artifact: {other}"),
+            },
         })
-}
-
-fn prepend_line_numbers(content: &str) -> String {
-    let mut out = String::with_capacity(content.len() + content.lines().count() * 6);
-    for (i, line) in content.lines().enumerate() {
-        let _ = writeln!(out, "{}\t{}", i + 1, line);
-    }
-    out
 }
 
 #[cfg(test)]

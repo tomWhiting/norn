@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use tokio::fs::File;
@@ -121,12 +121,13 @@ impl OutputCapture {
     ) -> Result<MigrationSnapshot, ToolError> {
         let mut state = self.inner.lock().await;
         let snapshot = if state.redirected {
-            state
-                .close_log_file()
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("failed to flush redirected bash output before migration: {e}"),
-                })?;
+            state.close_log_file().await.map_err(|error| {
+                output_io_error(
+                    &error,
+                    "flushing redirected bash output before migration",
+                    state.output_path.as_deref(),
+                )
+            })?;
             let output_root =
                 state
                     .output_root
@@ -141,25 +142,26 @@ impl OutputCapture {
                     .ok_or_else(|| ToolError::ExecutionFailed {
                         reason: "bash output was redirected without a relative path".to_owned(),
                     })?;
+            let output_path = output_root.display_path(output_relative);
             let mut redirected =
-                File::from_std(output_root.open_read(output_relative).map_err(|e| {
-                    ToolError::ExecutionFailed {
-                        reason: format!("failed to open pre-migration bash output: {e}"),
-                    }
+                File::from_std(output_root.open_read(output_relative).map_err(|error| {
+                    output_io_error(
+                        &error,
+                        "opening pre-migration bash output",
+                        Some(&output_path),
+                    )
                 })?);
             let mut bytes = Vec::new();
-            redirected
-                .read_to_end(&mut bytes)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("failed to read pre-migration bash output: {e}"),
-                })?;
-            spool
-                .append_raw(&bytes)
-                .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("failed to seed spool with pre-migration bash output: {e}"),
-                })?;
+            redirected.read_to_end(&mut bytes).await.map_err(|error| {
+                output_io_error(
+                    &error,
+                    "reading pre-migration bash output",
+                    Some(&output_path),
+                )
+            })?;
+            spool.append_raw(&bytes).await.map_err(|error| {
+                output_io_error(&error, "seeding a managed-process spool", None)
+            })?;
             CapturedOutput::Redirected {
                 output_path: state.tilde_output_path()?,
                 output_chars: state.output_chars,
@@ -168,12 +170,9 @@ impl OutputCapture {
             let stdout = std::mem::take(&mut state.stdout_inline);
             let stderr = std::mem::take(&mut state.stderr_inline);
             for buffered in [stdout.as_bytes(), stderr.as_bytes()] {
-                spool
-                    .append_raw(buffered)
-                    .await
-                    .map_err(|e| ToolError::ExecutionFailed {
-                        reason: format!("failed to seed spool with pre-migration bash output: {e}"),
-                    })?;
+                spool.append_raw(buffered).await.map_err(|error| {
+                    output_io_error(&error, "seeding a managed-process spool", None)
+                })?;
             }
             CapturedOutput::Inline { stdout, stderr }
         };
@@ -203,12 +202,13 @@ impl OutputCapture {
             });
         }
 
-        state
-            .close_log_file()
-            .await
-            .map_err(|e| ToolError::ExecutionFailed {
-                reason: format!("failed to flush redirected bash output: {e}"),
-            })?;
+        state.close_log_file().await.map_err(|error| {
+            output_io_error(
+                &error,
+                "flushing redirected bash output",
+                state.output_path.as_deref(),
+            )
+        })?;
 
         let output_chars = state.output_chars;
         let output_path = state.tilde_output_path()?;
@@ -216,6 +216,15 @@ impl OutputCapture {
             output_path,
             output_chars,
         })
+    }
+}
+
+fn output_io_error(error: &std::io::Error, operation: &str, path: Option<&Path>) -> ToolError {
+    match crate::resource::classify_descriptor_error(error, operation, path) {
+        Some(exhaustion) => ToolError::DescriptorExhausted(Box::new(exhaustion)),
+        None => ToolError::ExecutionFailed {
+            reason: format!("{operation}: {error}"),
+        },
     }
 }
 

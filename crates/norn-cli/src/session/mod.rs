@@ -10,5 +10,13 @@
 pub use norn::session::{
     CreateSessionOptions, OpenSession, SessionIndexEntry, SessionManager, SessionPersistError,
     SessionStatus, append_events, append_index_entry, read_index, read_session_events,
-    session_file_path, write_index_atomic,
+    write_index_atomic,
 };
+
+#[cfg(test)]
+pub(crate) fn session_file_path(
+    data_dir: &std::path::Path,
+    session_id: &str,
+) -> std::path::PathBuf {
+    data_dir.join(format!("{session_id}.jsonl"))
+}

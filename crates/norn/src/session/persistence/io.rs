@@ -19,17 +19,10 @@ use super::types::{
 
 /// Return the flat JSONL file path for `session_id` under `data_dir`.
 ///
-/// This is the **legacy/root derivation** only. Child sessions carry
-/// their real location on [`SessionIndexEntry::rel_path`]; every caller
-/// that holds an index entry must resolve through
-/// [`resolved_session_file_path`] instead, or a child id would silently
-/// map onto a flat file that does not exist.
-///
-/// Callers passing an id that did not come out of the session index must
-/// validate it first (see [`is_reserved_session_id`] and the manager's
-/// explicit-ID validation) — the mapping itself is mechanical.
-#[must_use]
-pub fn session_file_path(data_dir: &Path, session_id: &str) -> PathBuf {
+/// Test-only raw legacy path derivation. Production code must use the
+/// validated descriptor-relative session APIs.
+#[cfg(test)]
+pub(crate) fn session_file_path(data_dir: &Path, session_id: &str) -> PathBuf {
     data_dir.join(format!("{session_id}.jsonl"))
 }
 
@@ -39,8 +32,8 @@ pub fn session_file_path(data_dir: &Path, session_id: &str) -> PathBuf {
 /// (`{data_dir}/{id}.jsonl`). Legacy rows have no `rel_path` and keep
 /// resolving exactly as before the nested layout existed — zero
 /// migration.
-#[must_use]
-pub fn resolved_session_file_path(data_dir: &Path, entry: &SessionIndexEntry) -> PathBuf {
+#[cfg(test)]
+pub(crate) fn resolved_session_file_path(data_dir: &Path, entry: &SessionIndexEntry) -> PathBuf {
     entry.rel_path.as_ref().map_or_else(
         || session_file_path(data_dir, &entry.id),
         |rel| data_dir.join(rel),
@@ -51,7 +44,7 @@ pub fn resolved_session_file_path(data_dir: &Path, entry: &SessionIndexEntry) ->
 /// session data directory.
 ///
 /// Session IDs and persistence-owned files share the data directory:
-/// [`session_file_path`] maps an id to `{id}.jsonl`, so the id `"index"`
+/// A flat legacy session maps an id to `{id}.jsonl`, so the id `"index"`
 /// would name `index.jsonl` — the session index itself. A reserved stem
 /// excludes the stem and its entire `.`-extended family (`index`,
 /// `index.jsonl`, `index.lock`, `index.jsonl.tmp.{uuid}`, …) from the
@@ -83,7 +76,7 @@ pub fn is_reserved_session_id(id: &str) -> bool {
 /// reserved by the persistence layer. Every boundary where a session ID
 /// selects a file in the data directory calls this — the manager's
 /// explicit-ID validation, index insertion, event append/read, and sink
-/// open — so a reserved ID can never reach [`session_file_path`].
+/// open — so a reserved ID can never select a persistence-owned filename.
 pub(crate) fn ensure_session_id_not_reserved(id: &str) -> Result<(), SessionPersistError> {
     if is_reserved_session_id(id) {
         return Err(SessionPersistError::InvalidSessionId {
@@ -230,7 +223,7 @@ fn open_session_append_under(
         Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
             reopen_and_heal(root, relative)
         }
-        Err(error) => Err(SessionPersistError::Io(error)),
+        Err(error) => Err(error.into()),
     }
 }
 
@@ -389,14 +382,14 @@ fn read_session_events_at(
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(ReplayArtifacts::default());
         }
-        Err(error) => return Err(SessionPersistError::Io(error)),
+        Err(error) => return Err(error.into()),
     };
     let file = match root.open_read(relative) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(ReplayArtifacts::default());
         }
-        Err(error) => return Err(SessionPersistError::Io(error)),
+        Err(error) => return Err(error.into()),
     };
     read_session_events_from(BufReader::new(file), session_id)
 }

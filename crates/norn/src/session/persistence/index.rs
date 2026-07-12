@@ -47,7 +47,7 @@ pub fn read_index(data_dir: &Path) -> Result<Vec<SessionIndexEntry>, SessionPers
     let root = match PrivateRoot::open(data_dir) {
         Ok(root) => root,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(SessionPersistError::Io(error)),
+        Err(error) => return Err(error.into()),
     };
     read_index_in(&root)
 }
@@ -56,7 +56,7 @@ fn read_index_in(root: &PrivateRoot) -> Result<Vec<SessionIndexEntry>, SessionPe
     let file = match root.open_read(Path::new(INDEX_FILE_NAME)) {
         Ok(file) => file,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
-        Err(error) => return Err(SessionPersistError::Io(error)),
+        Err(error) => return Err(error.into()),
     };
     let reader = BufReader::new(file);
     let mut out = Vec::new();
@@ -126,7 +126,7 @@ fn write_index_atomic_in(
     }
     if let Err(err) = root.rename(tmp_path, final_path) {
         remove_tmp_after_failure(root, tmp_path);
-        return Err(SessionPersistError::Io(err));
+        return Err(err.into());
     }
     Ok(())
 }

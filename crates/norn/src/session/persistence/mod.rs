@@ -43,8 +43,10 @@ pub use index::{
 };
 pub use io::{
     RESERVED_SESSION_ID_STEMS, append_events, is_reserved_session_id, read_session_events,
-    read_session_events_for_entry, resolved_session_file_path, session_file_path,
+    read_session_events_for_entry,
 };
+#[cfg(test)]
+pub(crate) use io::{resolved_session_file_path, session_file_path};
 pub use replay::ReplayArtifacts;
 pub use types::{
     SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,

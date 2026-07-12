@@ -109,14 +109,10 @@ impl DiskTaskStore {
         let relative = self.task_relative(task_id)?;
         let mut file = root
             .open_read(&relative)
-            .map_err(|error| ToolError::ExecutionFailed {
-                reason: format!("failed to read task '{task_id}': {error}"),
-            })?;
+            .map_err(|error| private_io_error(&root.display_path(&relative), &error))?;
         let mut bytes = Vec::new();
         file.read_to_end(&mut bytes)
-            .map_err(|error| ToolError::ExecutionFailed {
-                reason: format!("failed to read task '{task_id}': {error}"),
-            })?;
+            .map_err(|error| private_io_error(&root.display_path(&relative), &error))?;
         serde_json::from_slice(&bytes).map_err(|err| ToolError::ExecutionFailed {
             reason: format!("failed to deserialise task '{task_id}': {err}"),
         })
@@ -226,11 +222,18 @@ fn validate_task_id(task_id: &str) -> Result<&str, ToolError> {
 }
 
 fn private_io_error(path: &Path, error: &std::io::Error) -> ToolError {
-    ToolError::ExecutionFailed {
-        reason: format!(
-            "private task storage failed at '{}': {error}",
-            path.display()
-        ),
+    match crate::resource::classify_descriptor_error(
+        error,
+        "accessing private task storage",
+        Some(path),
+    ) {
+        Some(exhaustion) => ToolError::DescriptorExhausted(Box::new(exhaustion)),
+        None => ToolError::ExecutionFailed {
+            reason: format!(
+                "private task storage failed at '{}': {error}",
+                path.display()
+            ),
+        },
     }
 }
 
@@ -271,47 +274,23 @@ fn write_json_atomic(
 ) -> Result<(), ToolError> {
     let mut file = root
         .create_new(tmp_path)
-        .map_err(|err| ToolError::ExecutionFailed {
-            reason: format!(
-                "failed to open task tmp file '{}': {err}",
-                root.display_path(tmp_path).display(),
-            ),
-        })?;
+        .map_err(|error| private_io_error(&root.display_path(tmp_path), &error))?;
     let bytes = serde_json::to_vec_pretty(entry).map_err(|err| ToolError::ExecutionFailed {
         reason: format!("failed to serialise task '{}': {err}", entry.id),
     })?;
     file.write_all(&bytes)
-        .map_err(|err| ToolError::ExecutionFailed {
-            reason: format!(
-                "failed to write task tmp file '{}': {err}",
-                root.display_path(tmp_path).display(),
-            ),
-        })?;
-    file.flush().map_err(|err| ToolError::ExecutionFailed {
-        reason: format!(
-            "failed to flush task tmp file '{}': {err}",
-            root.display_path(tmp_path).display(),
-        ),
-    })?;
-    file.sync_all().map_err(|err| ToolError::ExecutionFailed {
-        reason: format!(
-            "failed to fsync task tmp file '{}': {err}",
-            root.display_path(tmp_path).display(),
-        ),
-    })?;
+        .map_err(|error| private_io_error(&root.display_path(tmp_path), &error))?;
+    file.flush()
+        .map_err(|error| private_io_error(&root.display_path(tmp_path), &error))?;
+    file.sync_all()
+        .map_err(|error| private_io_error(&root.display_path(tmp_path), &error))?;
     drop(file);
     let publish = if replace {
         root.rename(tmp_path, final_path)
     } else {
         root.publish_new(tmp_path, final_path)
     };
-    publish.map_err(|err| ToolError::ExecutionFailed {
-        reason: format!(
-            "failed to publish '{}' as '{}': {err}",
-            root.display_path(tmp_path).display(),
-            root.display_path(final_path).display(),
-        ),
-    })?;
+    publish.map_err(|error| private_io_error(&root.display_path(final_path), &error))?;
     Ok(())
 }
 

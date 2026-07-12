@@ -133,9 +133,9 @@ pub(super) async fn run_shell(
     capture: Arc<OutputCapture>,
 ) -> Result<ShellOutcome, ToolError> {
     let mut cmd = build_shell_command(command, cwd, ctx);
-    let mut child = cmd.spawn().map_err(|e| ToolError::ExecutionFailed {
-        reason: format!("failed to spawn `sh`: {e}"),
-    })?;
+    let mut child = cmd
+        .spawn()
+        .map_err(|error| map_shell_io_error(&error, "spawning a foreground shell"))?;
 
     let stdout_handle = child.stdout.take().ok_or(ToolError::ExecutionFailed {
         reason: "child stdout pipe was not captured".to_owned(),
@@ -195,6 +195,15 @@ pub(super) async fn run_shell(
         streams_still_open: stdout_open || stderr_open,
         captured,
     }))
+}
+
+fn map_shell_io_error(error: &std::io::Error, operation: &str) -> ToolError {
+    match crate::resource::classify_descriptor_error(error, operation, None) {
+        Some(exhaustion) => ToolError::DescriptorExhausted(Box::new(exhaustion)),
+        None => ToolError::ExecutionFailed {
+            reason: format!("{operation}: {error}"),
+        },
+    }
 }
 
 /// Builds the `sh -c` command: piped stdio, the agent's working
@@ -284,8 +293,8 @@ async fn settle_drain(
                 .map_err(|e| ToolError::ExecutionFailed {
                     reason: format!("{stream} drain task failed: {e}"),
                 })?
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("{stream} read failed: {e}"),
+                .map_err(|error| {
+                    map_shell_io_error(&error, &format!("reading {stream} from a shell"))
                 })?;
             Ok(false)
         }
@@ -298,9 +307,10 @@ async fn settle_drain(
             match (&mut task).await {
                 // Completed in the abort race: the stream closed after all.
                 Ok(Ok(())) => Ok(false),
-                Ok(Err(e)) => Err(ToolError::ExecutionFailed {
-                    reason: format!("{stream} read failed: {e}"),
-                }),
+                Ok(Err(error)) => Err(map_shell_io_error(
+                    &error,
+                    &format!("reading {stream} from a shell"),
+                )),
                 Err(join_err) if join_err.is_cancelled() => {
                     tracing::warn!(
                         stream,

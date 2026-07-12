@@ -25,25 +25,27 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::PathBuf;
-use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use chrono::Utc;
 use parking_lot::Mutex;
-use tokio::io::{AsyncBufReadExt, BufReader};
-use tokio::process::{Child, Command};
-use tokio::sync::watch;
 use tokio::task::JoinHandle;
 use uuid::Uuid;
 
 use crate::config::paths::norn_dir;
 use crate::tool::context::ProcessEnv;
-use crate::util::{PrivateRoot, validate_private_component};
+use crate::util::PrivateRoot;
 
-use super::handle::{ProcessCompletion, ProcessHandle, ProcessShared, ProcessStatus};
-use super::spool::{Spool, StreamTag};
+use super::ProcessError;
+use super::handle::{ProcessCompletion, ProcessHandle, ProcessStatus};
 use super::watch::{NewWatch, Watch, WatchAlert, WatchAttachError, WatchError, WatchRegistry};
+
+mod launch;
+
+#[cfg(test)]
+use super::spool::StreamTag;
+#[cfg(test)]
+use launch::{build_bg_command, drain_to_spool};
 
 /// Exit code reported when a process died by signal without a wait-status code.
 pub const SIGNAL_EXIT_CODE: i32 = -1;
@@ -86,7 +88,7 @@ pub struct ProcessManager {
     /// Descriptor-pinned Norn root captured at manager construction.
     spool_root: Option<Arc<PrivateRoot>>,
     /// Construction-time root failure surfaced by every spool attempt.
-    spool_root_error: Option<String>,
+    spool_root_error: Option<ProcessError>,
     /// Monotonic id counter — `p1`, `p2`, … There is no ceiling.
     next_id: AtomicU64,
     /// The process registry, ordered by numeric id. No cap on size.
@@ -128,11 +130,22 @@ impl ProcessManager {
         let (spool_root, spool_root_error) = match norn_dir() {
             Some(path) => match PrivateRoot::create(&path) {
                 Ok(root) => (Some(Arc::new(root)), None),
-                Err(error) => (None, Some(error.to_string())),
+                Err(error) => (
+                    None,
+                    Some(ProcessError::from_io(
+                        "opening the private process-spool root",
+                        Some(&path),
+                        &error,
+                    )),
+                ),
             },
             None => (
                 None,
-                Some("cannot resolve an absolute NORN_HOME or user home directory".to_owned()),
+                Some(ProcessError::Io {
+                    operation: "resolving the private process-spool root".to_owned(),
+                    reason: "cannot resolve an absolute NORN_HOME or user home directory"
+                        .to_owned(),
+                }),
             ),
         };
         Self {
@@ -147,148 +160,6 @@ impl ProcessManager {
             notifier,
             shutting_down: AtomicBool::new(false),
         }
-    }
-
-    /// Resolve the spool path for a numeric id under this manager's token.
-    ///
-    /// RULED-AS-FLAGGED (NP-002 pre-task, under NP-001's spool-persistence
-    /// intent): the path carries a per-manager `run_id` segment —
-    /// `<norn_dir>/outputs/<session|run-uuid>/processes/<run_id>/pN.log`. A
-    /// resumed session builds a fresh [`ProcessManager`] that restarts ids at
-    /// `p1`; without the `run_id` segment its `File::create` would clobber the
-    /// prior run's `<session>/processes/p1.log`, contradicting spool
-    /// persistence. The fresh `run_id` per manager instance isolates every
-    /// run's spools so no run can overwrite another's, while keeping them all
-    /// discoverable under the one session directory.
-    fn spool_location(&self, id: u64) -> std::io::Result<(PathBuf, PathBuf)> {
-        let root =
-            self.spool_root.as_ref().ok_or_else(|| {
-                std::io::Error::other(self.spool_root_error.as_deref().unwrap_or(
-                    "private process spool root was unavailable at manager construction",
-                ))
-            })?;
-        validate_private_component(&self.base_token, "process spool session id")?;
-        validate_private_component(&self.run_id, "process spool run id")?;
-        let relative = PathBuf::from("outputs")
-            .join(&self.base_token)
-            .join("processes")
-            .join(&self.run_id)
-            .join(format!("p{id}.log"));
-        Ok((root.path().to_path_buf(), relative))
-    }
-
-    /// Spawn `command` via `sh -c`, detached from any tool call, in its own
-    /// process group (on Unix), with the manager owning the stdout/stderr
-    /// pipes for the process's whole life. Returns the process handle.
-    ///
-    /// # Errors
-    ///
-    /// Returns any I/O error from resolving the spool path, creating the spool
-    /// file, or spawning the shell.
-    pub async fn spawn(
-        self: &Arc<Self>,
-        command: &str,
-        cwd: &std::path::Path,
-        process_env: Option<&ProcessEnv>,
-    ) -> std::io::Result<ProcessHandle> {
-        let id = self.next_id.fetch_add(1, Ordering::AcqRel);
-        let (_, spool_relative) = self.spool_location(id)?;
-        let spool_root = self
-            .spool_root
-            .as_ref()
-            .ok_or_else(|| std::io::Error::other("private process spool root unavailable"))?;
-        let spool = Arc::new(Spool::create_under(Arc::clone(spool_root), &spool_relative).await?);
-
-        let mut cmd = build_bg_command(command, cwd, process_env);
-        let mut child = cmd.spawn()?;
-        let pid = child.id();
-        let stdout = child
-            .stdout
-            .take()
-            .ok_or_else(|| std::io::Error::other("child stdout pipe was not captured"))?;
-        let stderr = child
-            .stderr
-            .take()
-            .ok_or_else(|| std::io::Error::other("child stderr pipe was not captured"))?;
-
-        let drains = vec![
-            tokio::spawn(drain_to_spool(
-                stdout,
-                Arc::clone(&spool),
-                StreamTag::Stdout,
-            )),
-            tokio::spawn(drain_to_spool(
-                stderr,
-                Arc::clone(&spool),
-                StreamTag::Stderr,
-            )),
-        ];
-
-        Ok(self.install(id, command.to_owned(), pid, spool, child, drains))
-    }
-
-    /// Adopt an already-spawned child and its drain tasks (the timeout-boundary
-    /// migration path). From this point the child is tracked identically to an
-    /// explicitly-spawned process. The caller is responsible for teeing the
-    /// child's ongoing output into the returned handle's spool.
-    ///
-    /// # Errors
-    ///
-    /// Returns any I/O error from resolving the spool path or creating the
-    /// spool file.
-    pub async fn adopt(
-        self: &Arc<Self>,
-        command: &str,
-        child: Child,
-        stdout_task: JoinHandle<std::io::Result<()>>,
-        stderr_task: JoinHandle<std::io::Result<()>>,
-    ) -> std::io::Result<ProcessHandle> {
-        let id = self.next_id.fetch_add(1, Ordering::AcqRel);
-        let (_, spool_relative) = self.spool_location(id)?;
-        let spool_root = self
-            .spool_root
-            .as_ref()
-            .ok_or_else(|| std::io::Error::other("private process spool root unavailable"))?;
-        let spool = Arc::new(Spool::create_under(Arc::clone(spool_root), &spool_relative).await?);
-        let pid = child.id();
-        let drains = vec![stdout_task, stderr_task];
-        Ok(self.install(id, command.to_owned(), pid, spool, child, drains))
-    }
-
-    /// Build the shared state, register the process, and spawn its supervisor.
-    fn install(
-        self: &Arc<Self>,
-        id: u64,
-        command: String,
-        pid: Option<u32>,
-        spool: Arc<Spool>,
-        child: Child,
-        drains: Vec<JoinHandle<std::io::Result<()>>>,
-    ) -> ProcessHandle {
-        let (exit_tx, _exit_rx) = watch::channel(false);
-        let shared = Arc::new(ProcessShared {
-            label: format!("p{id}"),
-            command,
-            pid,
-            started_at: Utc::now(),
-            status: Mutex::new(ProcessStatus::Running),
-            exited_at: Mutex::new(None),
-            spool,
-            exit_tx,
-        });
-        let handle = ProcessHandle::new(shared);
-
-        let supervisor = tokio::spawn(supervise(id, handle.clone(), child, Arc::downgrade(self)));
-
-        self.registry.lock().insert(
-            id,
-            RegistryEntry {
-                handle: handle.clone(),
-                supervisor: Some(supervisor),
-                drains,
-            },
-        );
-        handle
     }
 
     /// Look up a process by its short id (`"p1"`).
@@ -553,73 +424,6 @@ impl ProcessManagerGuard {
 impl Drop for ProcessManagerGuard {
     fn drop(&mut self) {
         self.manager.shutdown();
-    }
-}
-
-/// Build the `sh -c` command for a manager-owned process: piped stdio, its own
-/// process group on Unix (so a kill reaches grandchildren), the agent's working
-/// directory, and the context's process environment. Mirrors bash's
-/// `build_shell_command`.
-fn build_bg_command(
-    command: &str,
-    cwd: &std::path::Path,
-    process_env: Option<&ProcessEnv>,
-) -> Command {
-    let mut cmd = Command::new("sh");
-    cmd.arg("-c")
-        .arg(command)
-        .stdin(Stdio::null())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .kill_on_drop(true)
-        .current_dir(cwd);
-    #[cfg(unix)]
-    cmd.process_group(0);
-    if let Some(process_env) = process_env {
-        for (key, value) in process_env.iter() {
-            cmd.env(key, value);
-        }
-    }
-    cmd
-}
-
-/// Drain one stream to the spool, one tagged line per read, until the pipe
-/// closes.
-async fn drain_to_spool<R>(reader: R, spool: Arc<Spool>, tag: StreamTag) -> std::io::Result<()>
-where
-    R: tokio::io::AsyncRead + Unpin + Send + 'static,
-{
-    let mut lines = BufReader::new(reader).lines();
-    while let Some(line) = lines.next_line().await? {
-        spool.append_tagged(tag, &line).await?;
-    }
-    Ok(())
-}
-
-/// Await the direct child's exit, record its status, then finalize any
-/// attached watches (their final-region filters run before the completion
-/// notice — NP-002 R5) and deliver the completion notice. The drain tasks are
-/// deliberately left running (owned by the registry) so a backgrounded
-/// grandchild keeps spooling after the direct child exits.
-async fn supervise(
-    id: u64,
-    handle: ProcessHandle,
-    mut child: Child,
-    manager: std::sync::Weak<ProcessManager>,
-) {
-    match child.wait().await {
-        Ok(status) => handle.mark_exited(status.code().unwrap_or(SIGNAL_EXIT_CODE)),
-        Err(error) => {
-            tracing::warn!(
-                process = %handle.label(),
-                %error,
-                "failed to wait on managed process; recording a signal exit",
-            );
-            handle.mark_exited(SIGNAL_EXIT_CODE);
-        }
-    }
-    if let Some(manager) = manager.upgrade() {
-        manager.finalize_and_deliver(&handle, id).await;
     }
 }
 

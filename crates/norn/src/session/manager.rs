@@ -578,6 +578,15 @@ impl SessionManager {
         if let Err(error) = root.remove_file(&relative)
             && error.kind() != std::io::ErrorKind::NotFound
         {
+            if let Some(exhaustion) = crate::resource::classify_descriptor_error(
+                &error,
+                "deleting a session file",
+                Some(&root.display_path(&relative)),
+            ) {
+                return Err(SessionPersistError::DescriptorExhausted(Box::new(
+                    exhaustion,
+                )));
+            }
             return Err(SessionPersistError::Io(std::io::Error::new(
                 error.kind(),
                 format!(
@@ -598,6 +607,15 @@ impl SessionManager {
             if let Err(error) = root.remove_dir_all(children_dir)
                 && error.kind() != std::io::ErrorKind::NotFound
             {
+                if let Some(exhaustion) = crate::resource::classify_descriptor_error(
+                    &error,
+                    "deleting a session artifact directory",
+                    Some(&root.display_path(children_dir)),
+                ) {
+                    return Err(SessionPersistError::DescriptorExhausted(Box::new(
+                        exhaustion,
+                    )));
+                }
                 return Err(SessionPersistError::Io(std::io::Error::new(
                     error.kind(),
                     format!(

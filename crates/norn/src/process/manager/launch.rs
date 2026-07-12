@@ -1,0 +1,232 @@
+//! Managed-process launch, adoption, and output-drain construction.
+
+use std::path::{Path, PathBuf};
+use std::process::Stdio;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
+use chrono::Utc;
+use parking_lot::Mutex;
+use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::watch;
+use tokio::task::JoinHandle;
+
+use crate::tool::context::ProcessEnv;
+use crate::util::validate_private_component;
+
+use super::{ProcessManager, RegistryEntry, SIGNAL_EXIT_CODE};
+use crate::process::ProcessError;
+use crate::process::handle::{ProcessHandle, ProcessShared, ProcessStatus};
+use crate::process::spool::{Spool, StreamTag};
+
+impl ProcessManager {
+    /// Resolve the spool path for a numeric id under this manager's token.
+    fn spool_location(&self, id: u64) -> Result<(PathBuf, PathBuf), ProcessError> {
+        let root = self.spool_root.as_ref().ok_or_else(|| {
+            self.spool_root_error.clone().unwrap_or(ProcessError::Io {
+                operation: "opening the private process-spool root".to_owned(),
+                reason: "root was unavailable at manager construction".to_owned(),
+            })
+        })?;
+        validate_private_component(&self.base_token, "process spool session id").map_err(
+            |error| ProcessError::from_io("validating the process-spool session id", None, &error),
+        )?;
+        validate_private_component(&self.run_id, "process spool run id").map_err(|error| {
+            ProcessError::from_io("validating the process-spool run id", None, &error)
+        })?;
+        let relative = PathBuf::from("outputs")
+            .join(&self.base_token)
+            .join("processes")
+            .join(&self.run_id)
+            .join(format!("p{id}.log"));
+        Ok((root.path().to_path_buf(), relative))
+    }
+
+    /// Spawn a manager-owned shell process and capture both output pipes.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed failure from spool creation or process construction.
+    pub async fn spawn(
+        self: &Arc<Self>,
+        command: &str,
+        cwd: &Path,
+        process_env: Option<&ProcessEnv>,
+    ) -> Result<ProcessHandle, ProcessError> {
+        let id = self.next_id.fetch_add(1, Ordering::AcqRel);
+        let (_, spool_relative) = self.spool_location(id)?;
+        let spool_root = self.spool_root.as_ref().ok_or_else(|| ProcessError::Io {
+            operation: "opening the private process-spool root".to_owned(),
+            reason: "root became unavailable after path resolution".to_owned(),
+        })?;
+        let spool = Arc::new(
+            Spool::create_under(Arc::clone(spool_root), &spool_relative)
+                .await
+                .map_err(|error| {
+                    ProcessError::from_io(
+                        "creating a background-process spool",
+                        Some(&spool_root.display_path(&spool_relative)),
+                        &error,
+                    )
+                })?,
+        );
+
+        let mut child = build_bg_command(command, cwd, process_env)
+            .spawn()
+            .map_err(|error| {
+                ProcessError::from_io("spawning a managed background process", None, &error)
+            })?;
+        let pid = child.id();
+        let stdout = child.stdout.take().ok_or_else(|| ProcessError::Io {
+            operation: "capturing managed-process stdout".to_owned(),
+            reason: "child stdout pipe was not captured".to_owned(),
+        })?;
+        let stderr = child.stderr.take().ok_or_else(|| ProcessError::Io {
+            operation: "capturing managed-process stderr".to_owned(),
+            reason: "child stderr pipe was not captured".to_owned(),
+        })?;
+        let drains = vec![
+            tokio::spawn(drain_to_spool(
+                stdout,
+                Arc::clone(&spool),
+                StreamTag::Stdout,
+            )),
+            tokio::spawn(drain_to_spool(
+                stderr,
+                Arc::clone(&spool),
+                StreamTag::Stderr,
+            )),
+        ];
+        Ok(self.install(id, command.to_owned(), pid, spool, child, drains))
+    }
+
+    /// Adopt a child whose output drains have already been established.
+    ///
+    /// # Errors
+    ///
+    /// Returns a typed failure from spool construction.
+    pub async fn adopt(
+        self: &Arc<Self>,
+        command: &str,
+        child: Child,
+        stdout_task: JoinHandle<std::io::Result<()>>,
+        stderr_task: JoinHandle<std::io::Result<()>>,
+    ) -> Result<ProcessHandle, ProcessError> {
+        let id = self.next_id.fetch_add(1, Ordering::AcqRel);
+        let (_, spool_relative) = self.spool_location(id)?;
+        let spool_root = self.spool_root.as_ref().ok_or_else(|| ProcessError::Io {
+            operation: "opening the private process-spool root".to_owned(),
+            reason: "root became unavailable after path resolution".to_owned(),
+        })?;
+        let spool = Arc::new(
+            Spool::create_under(Arc::clone(spool_root), &spool_relative)
+                .await
+                .map_err(|error| {
+                    ProcessError::from_io(
+                        "creating an adopted-process spool",
+                        Some(&spool_root.display_path(&spool_relative)),
+                        &error,
+                    )
+                })?,
+        );
+        let pid = child.id();
+        let drains = vec![stdout_task, stderr_task];
+        Ok(self.install(id, command.to_owned(), pid, spool, child, drains))
+    }
+
+    fn install(
+        self: &Arc<Self>,
+        id: u64,
+        command: String,
+        pid: Option<u32>,
+        spool: Arc<Spool>,
+        child: Child,
+        drains: Vec<JoinHandle<std::io::Result<()>>>,
+    ) -> ProcessHandle {
+        let (exit_tx, _exit_rx) = watch::channel(false);
+        let shared = Arc::new(ProcessShared {
+            label: format!("p{id}"),
+            command,
+            pid,
+            started_at: Utc::now(),
+            status: Mutex::new(ProcessStatus::Running),
+            exited_at: Mutex::new(None),
+            spool,
+            exit_tx,
+        });
+        let handle = ProcessHandle::new(shared);
+        let supervisor = tokio::spawn(supervise(id, handle.clone(), child, Arc::downgrade(self)));
+        self.registry.lock().insert(
+            id,
+            RegistryEntry {
+                handle: handle.clone(),
+                supervisor: Some(supervisor),
+                drains,
+            },
+        );
+        handle
+    }
+}
+
+/// Build the `sh -c` command used by manager-owned processes.
+pub(super) fn build_bg_command(
+    command: &str,
+    cwd: &Path,
+    process_env: Option<&ProcessEnv>,
+) -> Command {
+    let mut cmd = Command::new("sh");
+    cmd.arg("-c")
+        .arg(command)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .current_dir(cwd);
+    #[cfg(unix)]
+    cmd.process_group(0);
+    if let Some(process_env) = process_env {
+        for (key, value) in process_env.iter() {
+            cmd.env(key, value);
+        }
+    }
+    cmd
+}
+
+/// Drain one child stream to the persistent spool.
+pub(super) async fn drain_to_spool<R>(
+    reader: R,
+    spool: Arc<Spool>,
+    tag: StreamTag,
+) -> std::io::Result<()>
+where
+    R: tokio::io::AsyncRead + Unpin + Send + 'static,
+{
+    let mut lines = BufReader::new(reader).lines();
+    while let Some(line) = lines.next_line().await? {
+        spool.append_tagged(tag, &line).await?;
+    }
+    Ok(())
+}
+
+async fn supervise(
+    id: u64,
+    handle: ProcessHandle,
+    mut child: Child,
+    manager: std::sync::Weak<ProcessManager>,
+) {
+    match child.wait().await {
+        Ok(status) => handle.mark_exited(status.code().unwrap_or(SIGNAL_EXIT_CODE)),
+        Err(error) => {
+            tracing::warn!(
+                process = %handle.label(),
+                %error,
+                "failed to wait on managed process; recording a signal exit",
+            );
+            handle.mark_exited(SIGNAL_EXIT_CODE);
+        }
+    }
+    if let Some(manager) = manager.upgrade() {
+        manager.finalize_and_deliver(&handle, id).await;
+    }
+}

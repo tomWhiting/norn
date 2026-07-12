@@ -484,11 +484,7 @@ impl EventStore {
                     reason: format!("duplicate event ID: {id}"),
                 });
             }
-            sink_guard
-                .persist(&event)
-                .map_err(|e| SessionError::StorageError {
-                    reason: format!("write-through persistence failed: {e}"),
-                })?;
+            sink_guard.persist(&event).map_err(SessionError::from)?;
             self.inner.write().push(id.clone(), event);
         } else {
             let mut inner = self.inner.write();
@@ -571,11 +567,7 @@ impl EventStore {
     /// unaffected.
     pub fn checkpoint(&self) -> Result<(), SessionError> {
         if let Some(sink) = &self.sink {
-            sink.lock()
-                .checkpoint()
-                .map_err(|e| SessionError::StorageError {
-                    reason: format!("persistence sink checkpoint failed: {e}"),
-                })?;
+            sink.lock().checkpoint().map_err(SessionError::from)?;
         }
         Ok(())
     }

@@ -134,7 +134,7 @@ fn lock_with_deadline(
                 };
                 std::thread::sleep(remaining.min(LOCK_POLL_INTERVAL));
             }
-            Err(TryLockError::Error(error)) => return Err(SessionPersistError::Io(error)),
+            Err(TryLockError::Error(error)) => return Err(error.into()),
         }
     }
 }

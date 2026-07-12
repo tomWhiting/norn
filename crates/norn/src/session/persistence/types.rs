@@ -38,7 +38,11 @@ pub struct SessionFileHeader {
 pub enum SessionPersistError {
     /// Filesystem I/O failed.
     #[error("session persistence I/O failed: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
+
+    /// The process or system descriptor pool was exhausted.
+    #[error(transparent)]
+    DescriptorExhausted(Box<crate::resource::DescriptorExhaustion>),
 
     /// JSON (de)serialization failed.
     #[error("session persistence serde error: {0}")]
@@ -163,9 +167,42 @@ pub enum SessionPersistError {
     EventStore(String),
 }
 
+impl From<std::io::Error> for SessionPersistError {
+    fn from(error: std::io::Error) -> Self {
+        Self::from_io(error, "performing session persistence I/O", None)
+    }
+}
+
+impl SessionPersistError {
+    pub(crate) fn from_io(
+        error: std::io::Error,
+        operation: &str,
+        path: Option<&std::path::Path>,
+    ) -> Self {
+        match crate::resource::classify_descriptor_error(&error, operation, path) {
+            Some(exhaustion) => Self::DescriptorExhausted(Box::new(exhaustion)),
+            None => Self::Io(error),
+        }
+    }
+}
+
+impl From<SessionPersistError> for SessionError {
+    fn from(error: SessionPersistError) -> Self {
+        match error {
+            SessionPersistError::DescriptorExhausted(source) => Self::DescriptorExhausted(source),
+            other => Self::StorageError {
+                reason: other.to_string(),
+            },
+        }
+    }
+}
+
 impl From<SessionError> for SessionPersistError {
     fn from(value: SessionError) -> Self {
-        Self::EventStore(value.to_string())
+        match value {
+            SessionError::DescriptorExhausted(source) => Self::DescriptorExhausted(source),
+            other => Self::EventStore(other.to_string()),
+        }
     }
 }
 

@@ -1,7 +1,8 @@
 //! `norn doctor` subcommand (NC-008 R13).
 //!
-//! Three checks run unconditionally in order: OAuth status, provider
-//! connectivity, and working-directory permissions. Each emits a
+//! Five checks run unconditionally in order: OAuth status, provider
+//! connectivity, working-directory permissions, PATH shims, and descriptor
+//! capacity. Each emits a
 //! `[PASS]` or `[FAIL] … : <remediation>` line on stderr. The exit code
 //! is `0` if every check passes, `1` if any check fails.
 //!
@@ -20,6 +21,8 @@ use std::time::Duration;
 use crate::cli::ExitCode;
 use crate::cli::ProviderKind;
 use crate::commands::auth::{auth_health, resolve_codex_home};
+
+mod descriptors;
 
 /// `OpenAI` Responses API root used for the connectivity probe. Mirrors
 /// `crate::provider::openai::DEFAULT_BASE_URL` which is module-private.
@@ -44,6 +47,7 @@ pub fn run_doctor() -> ExitCode {
     failed |= !check_connectivity(ProviderKind::Openai);
     failed |= !check_working_dir();
     failed |= !check_path_executable_shims();
+    failed |= !descriptors::check_descriptors();
 
     if failed {
         ExitCode::AgentError

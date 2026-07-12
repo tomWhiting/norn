@@ -467,6 +467,10 @@ pub enum ToolError {
         reason: String,
     },
 
+    /// The process or system descriptor pool was exhausted.
+    #[error(transparent)]
+    DescriptorExhausted(Box<crate::resource::DescriptorExhaustion>),
+
     /// A post-validation check failed after execution.
     #[error("post-validation failed: {reason}")]
     PostValidationFailed {
@@ -565,6 +569,10 @@ pub enum SessionError {
         /// Description of the storage failure.
         reason: String,
     },
+
+    /// The process or system descriptor pool was exhausted.
+    #[error(transparent)]
+    DescriptorExhausted(Box<crate::resource::DescriptorExhaustion>),
 }
 
 /// Errors from the rules engine.

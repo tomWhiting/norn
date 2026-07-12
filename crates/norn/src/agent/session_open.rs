@@ -61,11 +61,9 @@ pub(super) fn open_root_session(
 ) -> Result<OpenedRootSession, NornError> {
     let manager = request.manager.clone();
     let durability = request.durability;
-    let opened = request.open(model, working_dir).map_err(|e| {
-        NornError::Session(SessionError::StorageError {
-            reason: format!("open_session failed: {e}"),
-        })
-    })?;
+    let opened = request
+        .open(model, working_dir)
+        .map_err(|error| map_session_open_error("open_session failed", error))?;
     if opened.replay.skipped_lines > 0 {
         tracing::warn!(
             session_id = %opened.entry.id,
@@ -104,10 +102,8 @@ pub(super) fn open_root_session(
         .map_or_else(|| opened.entry.id.clone(), str::to_owned);
     let artifacts = Arc::new(
         SessionArtifactStore::for_session(manager.data_dir(), &root_for_children, durability)
-            .map_err(|e| {
-                NornError::Session(SessionError::StorageError {
-                    reason: format!("open_session artifact storage failed: {e}"),
-                })
+            .map_err(|error| {
+                map_session_open_error("open_session artifact storage failed", error)
             })?,
     );
     let brancher = Arc::new(SessionBrancher::new(manager, root_for_children, durability));
@@ -123,4 +119,15 @@ pub(super) fn open_root_session(
         binding,
         artifacts,
     })
+}
+
+fn map_session_open_error(context: &str, error: crate::session::SessionPersistError) -> NornError {
+    match error {
+        crate::session::SessionPersistError::DescriptorExhausted(source) => {
+            NornError::Session(SessionError::DescriptorExhausted(source))
+        }
+        other => NornError::Session(SessionError::StorageError {
+            reason: format!("{context}: {other}"),
+        }),
+    }
 }

@@ -395,9 +395,7 @@ impl Tool for BashTool {
             let handle = manager
                 .spawn(&args.command, &child_cwd, process_env.as_deref())
                 .await
-                .map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("failed to start background process: {e}"),
-                })?;
+                .map_err(ToolError::from)?;
             let mut content = background_content(&handle, &args.command, tier);
             if let Some(watch) = &args.watch {
                 attach_spawn_watch(
@@ -451,9 +449,7 @@ impl Tool for BashTool {
                         handoff.stderr_task,
                     )
                     .await
-                    .map_err(|e| ToolError::ExecutionFailed {
-                        reason: format!("failed to migrate command to the background: {e}"),
-                    })?;
+                    .map_err(ToolError::from)?;
                 // Attach the spool AFTER adopt (the spool is created inside
                 // adopt, keyed to the assigned id, so it cannot be built
                 // earlier). If teeing cannot be enabled, the child is already

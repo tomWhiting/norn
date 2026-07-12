@@ -37,9 +37,8 @@ pub use persistence::{
     SessionIndexEntry, SessionPersistError, SessionStatus, append_events, append_index_entry,
     index_file_path, insert_index_entry_if_absent, is_reserved_session_id, read_index,
     read_session_events, read_session_events_for_entry, remove_index_entry,
-    resolve_latest_session_in_working_dir, resolve_session, resolved_session_file_path,
-    session_file_path, sum_usage_from_events, update_index_entry, update_session_index,
-    write_index_atomic,
+    resolve_latest_session_in_working_dir, resolve_session, sum_usage_from_events,
+    update_index_entry, update_session_index, write_index_atomic,
 };
 pub use resume_repair::repair_dangling_tool_calls;
 pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};

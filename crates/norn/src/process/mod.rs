@@ -31,12 +31,14 @@
 //! (NP-002) consume it — the deterministic watch layer attaches here and never
 //! reaches into manager or spool internals.
 
+pub mod error;
 pub mod handle;
 pub mod manager;
 pub mod spool;
 pub mod watch;
 pub mod watch_exec;
 
+pub use error::ProcessError;
 pub use handle::{ProcessCompletion, ProcessHandle, ProcessStatus};
 pub use manager::{ProcessManager, ProcessManagerGuard, ProcessNotifier, SIGNAL_EXIT_CODE};
 pub use spool::{Spool, SpoolReader, StreamTag};

@@ -185,6 +185,17 @@ impl NornDiagnostic {
                     suggestion: None,
                 }
             }
+            ToolError::DescriptorExhausted(source) => {
+                let tool = tool_name.into();
+                Self {
+                    severity: DiagnosticSeverity::Error,
+                    code: "tool-resource-exhausted".to_owned(),
+                    message: format!("tool '{tool}' failed: {source}"),
+                    source_tool: Some(tool),
+                    file_path: source.path.as_ref().map(|path| path.display().to_string()),
+                    suggestion: Some("run `norn doctor` for descriptor diagnostics".to_owned()),
+                }
+            }
             ToolError::ToolNotFound { name } => Self {
                 severity: DiagnosticSeverity::Error,
                 code: "tool-not-found".to_owned(),

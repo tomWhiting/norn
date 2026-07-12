@@ -47,6 +47,8 @@ pub enum ToolErrorKind {
     Timeout,
     /// A local I/O operation failed.
     Io,
+    /// The process or system descriptor pool was exhausted.
+    ResourceExhausted,
     /// A network operation failed.
     Network,
     /// A remote service reported an error.
@@ -72,6 +74,7 @@ impl ToolErrorKind {
             Self::Conflict => "conflict",
             Self::Timeout => "timeout",
             Self::Io => "io",
+            Self::ResourceExhausted => "resource_exhausted",
             Self::Network => "network",
             Self::ExternalService => "external_service",
             Self::ExecutionFailed => "execution_failed",
@@ -93,6 +96,7 @@ impl ToolErrorKind {
             "conflict" => Self::Conflict,
             "timeout" => Self::Timeout,
             "io" => Self::Io,
+            "resource_exhausted" => Self::ResourceExhausted,
             "network" => Self::Network,
             "external_service" => Self::ExternalService,
             "execution_failed" => Self::ExecutionFailed,
@@ -227,6 +231,10 @@ impl From<&ToolError> for ToolErrorPayload {
             ToolError::ExecutionFailed { reason } => {
                 Self::new(ToolErrorKind::ExecutionFailed, reason.clone())
             }
+            ToolError::DescriptorExhausted(source) => {
+                Self::new(ToolErrorKind::ResourceExhausted, source.to_string())
+                    .with_detail(serde_json::json!({ "descriptor": source }))
+            }
             ToolError::PostValidationFailed {
                 reason,
                 committed_output,
@@ -269,6 +277,7 @@ mod tests {
             ToolErrorKind::Conflict,
             ToolErrorKind::Timeout,
             ToolErrorKind::Io,
+            ToolErrorKind::ResourceExhausted,
             ToolErrorKind::Network,
             ToolErrorKind::ExternalService,
             ToolErrorKind::ExecutionFailed,

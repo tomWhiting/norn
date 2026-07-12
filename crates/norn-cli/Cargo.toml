@@ -33,6 +33,7 @@ norn = { path = "../norn" }
 norn-tui = { path = "../norn-tui" }
 parking_lot = "0.12.5"
 reqwest = { workspace = true, features = ["json"] }
+rustix.workspace = true
 serde = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 termina = { version = "0.3", features = ["event-stream"] }

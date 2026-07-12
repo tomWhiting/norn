@@ -15,6 +15,12 @@ use norn_cli::commands::{run_auth, run_completion, run_doctor, run_init, run_mcp
 use norn_cli::print;
 
 fn main() -> ProcessExitCode {
+    let nofile = norn_cli::nofile::initialize();
+    if let norn_cli::nofile::NofileOutcome::Failed { reason } = &nofile.outcome {
+        eprintln!(
+            "[WARN] File-descriptor capacity hardening failed ({reason}); run `norn doctor` for diagnostics."
+        );
+    }
     // Send tracing output to stderr so stdout stays clean for piping
     // (DESIGN CO5). The subscriber is best-effort: if a global subscriber
     // is already installed (tests, embedding), silently continue.
