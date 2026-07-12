@@ -3,6 +3,16 @@ use std::path::Path;
 
 use super::*;
 
+#[cfg(target_os = "macos")]
+fn worker_panic(label: &str, payload: &(dyn std::any::Any + Send)) -> io::Error {
+    let detail = payload
+        .downcast_ref::<&str>()
+        .copied()
+        .or_else(|| payload.downcast_ref::<String>().map(String::as_str))
+        .unwrap_or("non-string panic payload");
+    io::Error::other(format!("{label}: {detail}"))
+}
+
 #[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
 #[test]
 fn unsupported_targets_fail_before_private_artifact_io() -> Result<(), Box<dyn std::error::Error>> {
@@ -36,6 +46,120 @@ fn creates_private_tree_and_reopens_regular_file() -> Result<(), Box<dyn std::er
     root.open_read(Path::new("nested/deep/data.json"))?
         .read_to_string(&mut content)?;
     assert_eq!(content, "private");
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn macos_create_retry_is_single_bounded_and_create_only() {
+    use std::cell::Cell;
+
+    let transient_attempts = Cell::new(0_u8);
+    let transient = openat_with_macos_create_retry(true, || {
+        let attempt = transient_attempts.get();
+        transient_attempts.set(attempt.saturating_add(1));
+        if attempt == 0 {
+            Err(rustix::io::Errno::NOENT)
+        } else {
+            Ok(())
+        }
+    });
+    assert_eq!(transient, Ok(()));
+    assert_eq!(transient_attempts.get(), 2);
+
+    let persistent_attempts = Cell::new(0_u8);
+    let persistent: Result<(), rustix::io::Errno> = openat_with_macos_create_retry(true, || {
+        persistent_attempts.set(persistent_attempts.get().saturating_add(1));
+        Err(rustix::io::Errno::NOENT)
+    });
+    assert_eq!(persistent, Err(rustix::io::Errno::NOENT));
+    assert_eq!(persistent_attempts.get(), 2);
+
+    let read_attempts = Cell::new(0_u8);
+    let read: Result<(), rustix::io::Errno> = openat_with_macos_create_retry(false, || {
+        read_attempts.set(read_attempts.get().saturating_add(1));
+        Err(rustix::io::Errno::NOENT)
+    });
+    assert_eq!(read, Err(rustix::io::Errno::NOENT));
+    assert_eq!(read_attempts.get(), 1);
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn concurrent_independent_roots_open_one_shared_lock() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::{Arc, Barrier};
+
+    const CALLERS: usize = 8;
+
+    let container = tempfile::tempdir()?;
+    let root_path = container.path().join("private");
+    PrivateRoot::create(&root_path)?;
+    let root_path = Arc::new(root_path);
+    let barrier = Arc::new(Barrier::new(CALLERS));
+    let handles = (0..CALLERS)
+        .map(|_| {
+            let root_path = Arc::clone(&root_path);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || -> io::Result<()> {
+                let root = PrivateRoot::open(&root_path)?;
+                barrier.wait();
+                drop(root.open_lock(Path::new("index.lock"))?);
+                Ok(())
+            })
+        })
+        .collect::<Vec<_>>();
+
+    for handle in handles {
+        handle
+            .join()
+            .map_err(|payload| worker_panic("shared-lock worker panicked", payload.as_ref()))??;
+    }
+    assert!(root_path.join("index.lock").is_file());
+    Ok(())
+}
+
+#[cfg(target_os = "macos")]
+#[test]
+fn concurrent_create_new_has_exactly_one_winner() -> Result<(), Box<dyn std::error::Error>> {
+    use std::sync::{Arc, Barrier};
+
+    const CALLERS: usize = 8;
+
+    let container = tempfile::tempdir()?;
+    let root_path = container.path().join("private");
+    PrivateRoot::create(&root_path)?;
+    let root_path = Arc::new(root_path);
+    let barrier = Arc::new(Barrier::new(CALLERS));
+    let handles = (0..CALLERS)
+        .map(|_| {
+            let root_path = Arc::clone(&root_path);
+            let barrier = Arc::clone(&barrier);
+            std::thread::spawn(move || -> io::Result<bool> {
+                let root = PrivateRoot::open(&root_path)?;
+                barrier.wait();
+                match root.create_new(Path::new("exclusive.bin")) {
+                    Ok(file) => {
+                        drop(file);
+                        Ok(true)
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => Ok(false),
+                    Err(error) => Err(error),
+                }
+            })
+        })
+        .collect::<Vec<_>>();
+
+    let mut winners = 0_usize;
+    for handle in handles {
+        if handle
+            .join()
+            .map_err(|payload| worker_panic("create-new worker panicked", payload.as_ref()))??
+        {
+            winners = winners.saturating_add(1);
+        }
+    }
+    assert_eq!(winners, 1);
+    assert!(root_path.join("exclusive.bin").is_file());
     Ok(())
 }
 

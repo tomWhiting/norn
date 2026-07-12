@@ -61,9 +61,11 @@ pub fn validate_private_component<'a>(value: &'a str, label: &str) -> io::Result
 
 /// An absolute private-storage root pinned by an open directory descriptor.
 ///
-/// Unix opens every absolute ancestor with `O_NOFOLLOW`, then creates and
-/// hardens only the root and its descriptor-relative descendants. Platforms
-/// without equivalent descriptor-relative primitives fail closed.
+/// Unix opens every absolute ancestor with `O_NOFOLLOW`. [`Self::create`]
+/// creates and hardens missing ancestors, including the root, while
+/// [`Self::open`] requires the complete path to exist. Descriptor-relative
+/// descendants are always confined beneath the pinned root. Platforms without
+/// equivalent descriptor-relative primitives fail closed.
 #[derive(Debug)]
 pub(crate) struct PrivateRoot {
     path: PathBuf,
@@ -285,7 +287,7 @@ fn harden_directory(directory: &OwnedFd, created: bool) -> io::Result<()> {
 }
 
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
-fn open_absolute(path: &Path, create_final: bool) -> io::Result<OwnedFd> {
+fn open_absolute(path: &Path, create_missing: bool) -> io::Result<OwnedFd> {
     use rustix::fs::{Mode, mkdirat, open, openat};
     use rustix::io::Errno;
 
@@ -297,7 +299,7 @@ fn open_absolute(path: &Path, create_final: bool) -> io::Result<OwnedFd> {
         let mut created = false;
         directory = match openat(&directory, component, directory_flags(), Mode::empty()) {
             Ok(opened) => opened,
-            Err(Errno::NOENT) if create_final => {
+            Err(Errno::NOENT) if create_missing => {
                 match mkdirat(&directory, component, Mode::RWXU) {
                     Ok(()) => created = true,
                     Err(Errno::EXIST) => {}
@@ -418,6 +420,12 @@ fn open_file_at(parent: &OwnedFd, name: &OsStr, access: FileAccess) -> io::Resul
         FileAccess::CreateNew => OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
     };
     let file_mode = Mode::RUSR | Mode::WUSR;
+    #[cfg(target_os = "macos")]
+    let descriptor = openat_with_macos_create_retry(flags.contains(OFlags::CREATE), || {
+        openat(parent, name, flags, file_mode)
+    })
+    .map_err(io::Error::from)?;
+    #[cfg(not(target_os = "macos"))]
     let descriptor = openat(parent, name, flags, file_mode).map_err(io::Error::from)?;
     let file = File::from(descriptor);
     if !file.metadata()?.file_type().is_file() {
@@ -425,6 +433,24 @@ fn open_file_at(parent: &OwnedFd, name: &OsStr, access: FileAccess) -> io::Resul
     }
     fchmod(&file, file_mode).map_err(io::Error::from)?;
     Ok(file)
+}
+
+/// Retry one macOS-only transient failure observed for concurrent same-name
+/// descriptor-relative creates on Darwin 25.3/APFS.
+///
+/// The retained Gate D reproducer observed every `ENOENT` converging on the
+/// immediately following call. One retry is therefore the smallest
+/// evidence-backed correction. Extending the bound requires new retained
+/// evidence. Non-create operations and every other error return immediately.
+#[cfg(target_os = "macos")]
+fn openat_with_macos_create_retry<T>(
+    creates_file: bool,
+    mut open: impl FnMut() -> Result<T, rustix::io::Errno>,
+) -> Result<T, rustix::io::Errno> {
+    match open() {
+        Err(rustix::io::Errno::NOENT) if creates_file => open(),
+        result => result,
+    }
 }
 
 #[cfg(any(not(unix), target_os = "redox", target_os = "espidf"))]
