@@ -567,7 +567,11 @@ retain their intended behavior where they are operator-selected.
   writes; cover existing targets, independently opened parent descriptors,
   `O_EXCL` exactly-one-winner behavior, and persistent failure termination.
 - [x] Run the session convergence regression 50 times after the correction and
-  record every result, not only the final invocation.
+  record every result, not only the final invocation. The same Gate D reviewer
+  independently accepted F1 after an additional 15/15 run of all three tests
+  and 14,400 higher-contention reproducer attempts with no second-order
+  `ENOENT`; see the
+  [`correction review`](reviews/2026-07-12-p0-openat-correction-review.md).
 - [ ] Introduce one typed active-session artifact scope and migrate fetched
   documents out of the workspace into immutable private session artifacts.
   Repeated fetches of one URL must not rewrite bytes referenced by an older

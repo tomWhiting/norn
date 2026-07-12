@@ -7,8 +7,10 @@
 **Platform:** macOS 26.3.1, Darwin 25.3, arm64, APFS
 
 **Disposition:** The Gate D F1 implementation and targeted repeatability
-evidence are complete pending independent re-review. Integrated P0 Gate C
-remains open until the other corrective items land and the complete suite runs.
+evidence are accepted by the independent
+[`P0 openat correction review`](2026-07-12-p0-openat-correction-review.md).
+Integrated P0 Gate C remains open until the other corrective items land and the
+complete suite runs.
 
 ## Corrected claim
 
@@ -30,6 +32,15 @@ One retry after only macOS `ENOENT + O_CREAT` succeeded 400/400 times and used
 production correction is macOS-only; non-create operations, other errors, and
 other platforms preserve their prior single-call behavior. Extending the bound
 requires new evidence.
+
+The bound also has a structural justification. Every baseline `ENOENT`
+observation recorded `target_exists: true`: the failure occurred only after a
+racing winner's directory entry was visible. The pre-existing-target control
+then completed 400/400 attempts without one `ENOENT`. The retry therefore runs
+against the already-existing entry that ends the affected missing-entry create
+race. A separate unlink and fresh create race between the failure and retry
+would still fail loud without escaping the pinned directory; no current affected
+path performs that churn.
 
 The `O_CREAT | O_EXCL` control produced exactly one success and three expected
 `EEXIST` outcomes in each of 100 trials: 100 winners, 300 losers, zero
