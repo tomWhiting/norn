@@ -5389,6 +5389,32 @@ struct SendThenFailProvider {
     kind: crate::r#loop::inbound::MessageKind,
 }
 
+/// Provider that places a message in the live inbound channel and then never
+/// yields an event. The outer step-timeout arm must still sweep that undrained
+/// channel into durable pending storage.
+struct SendThenStallProvider {
+    tx: crate::r#loop::inbound::InboundSender,
+    content: &'static str,
+}
+
+impl Provider for SendThenStallProvider {
+    fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
+        self.tx
+            .try_send(make_channel_message(
+                "timeout-sender",
+                self.content,
+                crate::r#loop::inbound::MessageKind::Update,
+                0,
+            ))
+            .expect("test channel has capacity");
+        Ok(Box::pin(stream::pending()))
+    }
+
+    fn capabilities(&self) -> ProviderCapabilities {
+        ProviderCapabilities::default()
+    }
+}
+
 impl Provider for SendThenFailProvider {
     fn stream(&self, _request: ProviderRequest) -> Result<ProviderStream, ProviderError> {
         self.tx
@@ -5472,6 +5498,110 @@ async fn exit_sweeps_undrained_channel_messages_into_pending_store() {
         audited,
         "the sweep must append an agent_message.queued audit event",
     );
+}
+
+#[tokio::test(start_paused = true)]
+async fn timeout_arm_sweeps_undrained_channel_messages_into_pending_store() {
+    let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(1);
+    let provider = SendThenStallProvider {
+        tx,
+        content: "accepted before timeout",
+    };
+    let store = EventStore::new();
+    let executor = MockToolExecutor::empty();
+    let agent_id = uuid::Uuid::new_v4();
+    let (mut loop_ctx, pending) = requeue_loop_ctx(agent_id);
+    let config = AgentLoopConfig {
+        step_timeout: Some(Duration::from_millis(100)),
+        ..AgentLoopConfig::default()
+    };
+
+    let result = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: Some(&mut rx),
+        loop_context: &mut loop_ctx,
+        cancel: None,
+    })
+    .await
+    .expect("a timed-out step returns Ok(TimedOut)");
+    assert!(matches!(result, AgentStepResult::TimedOut { .. }));
+    assert_update_requeued(&pending, agent_id, &store, "accepted before timeout");
+}
+
+#[tokio::test]
+async fn full_try_send_hands_retained_message_to_awaited_send_losslessly() {
+    use crate::r#loop::inbound::InboundTrySendError;
+
+    let (tx, mut rx) = crate::r#loop::inbound::inbound_channel(1);
+    let first = make_channel_message(
+        "capacity-sender",
+        "first buffered update",
+        crate::r#loop::inbound::MessageKind::Update,
+        0,
+    );
+    let second = make_channel_message(
+        "capacity-sender",
+        "second awaited update",
+        crate::r#loop::inbound::MessageKind::Update,
+        0,
+    );
+    tx.try_send(first)
+        .expect("first message fills capacity one");
+    assert_eq!(
+        tx.try_send(second.clone()),
+        Err(InboundTrySendError::Full),
+        "the non-blocking attempt must report Full without claiming delivery",
+    );
+
+    let provider = DelayedProvider::new(
+        vec![
+            vec![text_delta("turn one"), done_event(StopReason::EndTurn)],
+            vec![text_delta("turn two"), done_event(StopReason::EndTurn)],
+        ],
+        Duration::from_millis(10),
+    );
+    let store = EventStore::new();
+    let executor = MockToolExecutor::empty();
+    let mut loop_ctx = LoopContext::new("system");
+    let config = default_config();
+    let run = run_agent_step(AgentStepRequest {
+        provider: &provider,
+        executor: &executor,
+        store: &store,
+        user_prompt: "prompt",
+        tools: &[],
+        output_schema: None,
+        model: "test-model",
+        config: &config,
+        event_tx: None,
+        inbound: Some(&mut rx),
+        loop_context: &mut loop_ctx,
+        cancel: None,
+    });
+    let handoff = tx.send(second);
+    let (result, delivery) = tokio::join!(run, handoff);
+    delivery.expect("awaited handoff sends after the loop frees capacity");
+    result.expect("step completes after draining both updates");
+
+    let user_text = store
+        .events()
+        .iter()
+        .filter_map(|event| match event {
+            SessionEvent::UserMessage { content, .. } => Some(content.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>()
+        .join("\n");
+    assert!(user_text.contains("first buffered update"));
+    assert!(user_text.contains("second awaited update"));
 }
 
 /// A step that ends through a stop boundary has already flushed its
