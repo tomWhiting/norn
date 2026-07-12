@@ -4,10 +4,20 @@
 
 **Phase:** P0 - credential and workspace authority containment
 
-**Handoff status:** Review package assembled; known progress-record gaps remain
+**Handoff status:** Invalidated as integrated Gate C evidence by the 2026-07-11
+Gate D rerun; retained as a historical record of the commands that ran
 
 **Phase status:** Not accepted; the P0 roadmap and evidence-ledger entries
 remain open
+
+> **Correction, 2026-07-12:** The `cargo test --workspace --all-targets`
+> invocation below did exit successfully, but it was one lucky observation over
+> a concurrency regression that Gate D reproduced failing 6/10 times. It must
+> not be cited as an unqualified pass or as stability evidence. The macOS
+> correction and 50-run distributions are recorded in
+> [`2026-07-12-p0-openat-correction.md`](2026-07-12-p0-openat-correction.md).
+> Integrated Gate C remains open until every P0 correction lands and the complete
+> gate is rerun.
 
 ## Review range
 
@@ -20,10 +30,11 @@ remain open
 ## Tracker state
 
 The remediation plan now separates objective progress from phase acceptance.
-Seventy-one P0 progress items are checked: all 33 implementation items, 23
-phase-specific evidence items, three Gate A items, three Gate B items, and all
-nine Gate C machine/policy items. Gate D and every phase-acceptance record remain
-open.
+At handoff time, 71 P0 progress items were checked: all 33 implementation items,
+23 phase-specific evidence items, three Gate A items, three Gate B items, and all
+nine Gate C machine/policy items. Gate D later invalidated the phase-specific
+and workspace-test pass marks. The live remediation plan is authoritative for
+current checklist state; this document preserves the historical packaging state.
 
 Seven progress records remain open before a whole-phase `READY` verdict:
 
@@ -94,7 +105,7 @@ The following commands were rerun after code head `ebb82c8` was created:
 |---|---|
 | `cargo fmt --all --check` | Pass. |
 | `cargo clippy --workspace --all-targets -- -D warnings` | Pass with no warning. |
-| `cargo test --workspace --all-targets` | Pass. This includes 3,134 `norn` library tests, 437 CLI tests, 674 TUI tests, 17 PTY tests, and the remaining workspace integration, trybuild, example, and macro targets. |
+| `cargo test --workspace --all-targets` | Historical single exit-zero observation only; invalidated as an unqualified Gate C pass after Gate D reproduced the P0 convergence test failing 6/10 isolated runs. |
 | `cargo test --workspace --doc` | Pass: four runnable `norn` doctests and two compile-fail API-boundary doctests; other crates have no doctests. |
 | `git diff --no-ext-diff --check 41ea210...ebb82c8` | Pass. |
 

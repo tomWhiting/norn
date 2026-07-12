@@ -561,12 +561,12 @@ retain their intended behavior where they are operator-selected.
 
 ### Gate D corrective checklist
 
-- [ ] Retain a standalone macOS reproducer and raw distribution for the
+- [x] Retain a standalone macOS reproducer and raw distribution for the
   concurrent same-name descriptor-relative `O_CREAT` failure. Implement a
   bounded, documented correction without returning to absolute-path sensitive
   writes; cover existing targets, independently opened parent descriptors,
   `O_EXCL` exactly-one-winner behavior, and persistent failure termination.
-- [ ] Run the session convergence regression 50 times after the correction and
+- [x] Run the session convergence regression 50 times after the correction and
   record every result, not only the final invocation.
 - [ ] Introduce one typed active-session artifact scope and migrate fetched
   documents out of the workspace into immutable private session artifacts.
@@ -673,7 +673,7 @@ retain their intended behavior where they are operator-selected.
   its ownership and lifetime, root, mode, no-follow/atomicity behavior, and model
   read surface. The inventory includes fetched documents and supports every
   coverage claim made in the final handoff.
-- [ ] A retained concurrency evidence script records 50/50 successful session
+- [x] A retained concurrency evidence script records 50/50 successful session
   convergence runs plus primitive-level same-name-create, `O_EXCL`, and
   persistent-failure cases on the affected macOS platform.
 - [x] A no-external-diff audit reports zero campaign-added unwrap, expect, panic,

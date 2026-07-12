@@ -1,0 +1,19 @@
+{
+  "absolute": false,
+  "different_names": true,
+  "enoent_retry_limit": 0,
+  "enoent_with_target_observed": 0,
+  "errno_counts": {},
+  "exclusive": false,
+  "outcomes": {
+    "success": 400
+  },
+  "platform": "macOS-26.3.1-arm64-arm-64bit-Mach-O",
+  "precreate": false,
+  "python": "3.14.3",
+  "retries_used": 0,
+  "thread_attempts": 400,
+  "threads_per_trial": 4,
+  "trials": 100,
+  "worker_errors": []
+}
