@@ -7,6 +7,12 @@ weighted-admission half of D1E at the current candidate. D1E and whole-phase P0
 remain open until the inventory boundary, retained evidence, and implementation
 pass independent review. D1D and the final P0 gates are separate open work.
 
+The external D1C/D1E review covered only the earlier range through `09b9d49`.
+Its F-1 through F-3 actions are implemented through `d488c1a` and recorded in
+the [correction record](2026-07-13-p0-d1c-d1e-correction.md). Review of the
+integrated candidate should therefore use `ca43c1b..d488c1a`; the older
+`ACCEPTED` verdict is not attributed to the later weighted-admission changes.
+
 The candidate does not claim to prevent system-wide `ENFILE`, exhaustion caused
 by unrelated embedder code, or every short one-shot filesystem syscall. The
 enumerated active/scalable families below use the authority. Ordinary serialized
@@ -111,6 +117,10 @@ this record claims only Norn's three workspace-root Chiron dependencies.
   500 lines (largest 487), zero thin-entrypoint violations, and zero added
   unwrap/expect/panic/todo/unimplemented/suppression/ignored-test/marker
   matches. Raw rows are in `evidence/2026-07-13-d1e-policy.json`.
+- The review-correction runner passes 20/20 for both configured lock-deadline
+  reporting and first-request full replay after interrupted-tool repair. Its
+  final-head policy report for `aa6a653..d488c1a` has zero prohibited matches
+  and zero production files over 500 lines; see the correction record above.
 
 ## Review questions
 
