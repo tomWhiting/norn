@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 use super::{McpClient, McpClientConfig};
 use crate::error::IntegrationError;
 use crate::tool::registry::ToolRegistry;
+use crate::tool::traits::Tool;
 
 /// Keeps connected servers alive and installs their qualified proxy tools.
 pub struct McpRuntime {
@@ -87,6 +88,34 @@ impl McpRuntime {
             .values()
             .flat_map(McpClient::qualified_tool_names)
             .collect()
+    }
+
+    /// Build every proxy tool in the connected pool.
+    pub fn proxy_tools(&self) -> Vec<Box<dyn Tool + Send + Sync>> {
+        self.clients
+            .values()
+            .flat_map(McpClient::proxy_tools)
+            .collect()
+    }
+
+    /// Build proxy tools for a selected server view. A configured server that
+    /// failed to connect contributes no tools; an unknown name is a typed
+    /// configuration error.
+    pub fn proxy_tools_for_servers(
+        &self,
+        servers: &[String],
+    ) -> Result<Vec<Box<dyn Tool + Send + Sync>>, IntegrationError> {
+        let mut tools = Vec::new();
+        for server in servers {
+            if let Some(client) = self.clients.get(server) {
+                tools.extend(client.proxy_tools());
+            } else if !self.failures.contains_key(server) {
+                return Err(IntegrationError::McpError {
+                    reason: format!("MCP server selection names unknown server '{server}'"),
+                });
+            }
+        }
+        Ok(tools)
     }
 
     /// Narrow a registry's current MCP surface while leaving non-MCP tools

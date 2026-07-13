@@ -83,13 +83,6 @@ pub fn builder_from_cli(
         .working_dir(cwd.clone())
         .load_runtime_base()
         .tool(Box::new(write_tool));
-    if let Some(servers) = settings
-        .agent
-        .as_ref()
-        .and_then(|agent| agent.mcp_servers.clone())
-    {
-        builder = builder.mcp_servers(servers);
-    }
 
     // `--workspace-root` confines the file tools to the given root.
     // `AgentBuilder::build` validates it through the single shared

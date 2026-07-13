@@ -109,8 +109,6 @@ pub struct AgentBuilder {
     pub(super) bash_drain_grace: Option<Duration>,
     pub(super) allowed_tools: Option<Vec<String>>,
     pub(super) extra_tools: Vec<Box<dyn Tool + Send + Sync>>,
-    pub(super) mcp_runtime: Option<Arc<crate::integration::McpRuntime>>,
-    pub(super) mcp_server_selection: Option<Vec<String>>,
     pub(super) without_tools: Vec<String>,
     pub(super) lsp_backend: Option<Arc<dyn LspBackend>>,
     pub(super) lsp_workspace: Option<Arc<LspWorkspace>>,
@@ -164,8 +162,6 @@ impl AgentBuilder {
             bash_drain_grace: None,
             allowed_tools: None,
             extra_tools: Vec::new(),
-            mcp_runtime: None,
-            mcp_server_selection: None,
             without_tools: Vec::new(),
             lsp_backend: None,
             lsp_workspace: None,
@@ -327,16 +323,12 @@ impl AgentBuilder {
         }
 
         let lsp_backend = self.lsp_backend.clone();
-        let mcp_runtime = self.mcp_runtime.take();
         let mut registry = build_base_tool_registry(
             lsp_backend.clone(),
             self.extra_tools,
             &self.without_tools,
             self.bash_drain_grace,
         );
-        if let Some(runtime) = mcp_runtime.as_ref() {
-            runtime.register_tools(&mut registry)?;
-        }
         // D5: register the skill tool on the `load_runtime_base` path when a
         // non-empty skill catalog was discovered, matching the CLI's
         // `!skill_catalog.is_empty()` gate. It is registered before
@@ -374,11 +366,6 @@ impl AgentBuilder {
         // exactly the registry the loop dispatches.
         let hooks_for_ctx = hooks.clone();
         let (mut loop_context, mut registry) = from_profile(&profile, registry, rules, hooks);
-        if let (Some(runtime), Some(servers)) =
-            (mcp_runtime.as_ref(), self.mcp_server_selection.as_ref())
-        {
-            runtime.restrict_registry_to_servers(&mut registry, servers)?;
-        }
         loop_context.event_schemas = self.event_schemas.take();
         // Deny-wins gating: applied after `from_profile`'s allow-list
         // gating so a disallowed name stays unavailable even when the
@@ -587,9 +574,6 @@ impl AgentBuilder {
                 diagnostics.as_ref(),
                 &working_dir,
             )?;
-        }
-        if let Some(runtime) = mcp_runtime {
-            shared.insert_extension(runtime);
         }
         install_tool_catalog(&registry, shared.as_ref());
         // Every agent's context carries its OWN base system instruction

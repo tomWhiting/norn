@@ -342,7 +342,18 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
         &resolved.applied,
     )?;
     if let Some(runtime) = mcp.runtime {
-        builder = builder.mcp_runtime(runtime);
+        if let Some(servers) = resolved
+            .settings
+            .agent
+            .as_ref()
+            .and_then(|agent| agent.mcp_servers.as_deref())
+        {
+            builder = builder
+                .mcp_runtime_for_servers(runtime, servers)
+                .map_err(|error| PrintError::Agent(error.to_string()))?;
+        } else {
+            builder = builder.mcp_runtime(runtime);
+        }
     }
     let agent = builder
         .execution_mode(ExecutionMode::Headless)
