@@ -8,8 +8,11 @@ pub mod diagnostics;
 pub mod extensions;
 pub mod hooks;
 pub mod mcp_client;
+mod mcp_http;
 pub mod mcp_proxy;
+pub mod mcp_runtime;
 pub mod mcp_server;
+mod mcp_stdio;
 pub mod rhai;
 pub mod variables;
 
@@ -33,6 +36,7 @@ pub use mcp_client::{
     McpToolDef, McpTransport,
 };
 pub use mcp_proxy::McpProxyTool;
+pub use mcp_runtime::McpRuntime;
 pub use mcp_server::{McpServer, McpServerConfig};
 pub use rhai::{
     AgentHandle, NornRhaiContext, build_norn_engine, eval_with_args, register_norn_builtins,

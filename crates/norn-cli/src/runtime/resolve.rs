@@ -16,17 +16,17 @@ use std::time::Duration;
 use norn::agent_loop::{
     effort_label, reasoning_effort_supported_for_model, unsupported_reasoning_effort_message,
 };
-use norn::config::NornSettings;
+use norn::config::{McpRuntimeOverrides, NornSettings, ResolvedMcpServers};
 use norn::profile::Profile;
-use norn::runtime_init::load_merged_settings;
+use norn::runtime_init::load_resolved_settings;
 
 use crate::cli::{BuildError, Cli, ProviderKind};
 use crate::config::{
     AppliedOverrides, ConfigOverrides, ProviderConfigOverrides, apply_cli_profile_overrides,
-    apply_settings_reasoning_to_profile, apply_working_dir, overlay_cli_provider_overrides,
-    overlay_provider_profile_overrides, provider_overrides_from_settings,
-    resolve_index_lock_deadline, resolve_model_selection, resolve_profile_with_origin,
-    resolve_provider_selection,
+    apply_settings_reasoning_to_profile, apply_working_dir, collect_extension_servers,
+    overlay_cli_provider_overrides, overlay_provider_profile_overrides,
+    provider_overrides_from_settings, resolve_index_lock_deadline, resolve_model_selection,
+    resolve_profile_with_origin, resolve_provider_selection,
 };
 
 /// The resolved CLI invocation state each driver needs to construct the
@@ -42,6 +42,10 @@ pub struct ResolvedInvocation {
     /// The merged, validated settings both the provider construction and
     /// the builder's `load_runtime_base` consult.
     pub settings: NornSettings,
+    /// Canonical project root used by MCP roots and project approval.
+    pub project_root: std::path::PathBuf,
+    /// Effective MCP definitions with winning-layer provenance.
+    pub mcp_servers: ResolvedMcpServers,
     /// The resolved profile with model / tool / reasoning overrides
     /// applied, ready to move into `builder_from_cli`.
     pub profile: Profile,
@@ -93,8 +97,13 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
     apply_working_dir(cli)?;
 
     let cwd = std::env::current_dir()?;
-    let settings =
-        load_merged_settings(&cwd).map_err(|error| BuildError::Argument(error.to_string()))?;
+    let mcp_overrides = McpRuntimeOverrides {
+        cli: collect_extension_servers(&cli.extension)?,
+        session: std::collections::BTreeMap::new(),
+    };
+    let resolved_settings = load_resolved_settings(&cwd, &mcp_overrides)
+        .map_err(|error| BuildError::Argument(error.to_string()))?;
+    let settings = resolved_settings.settings;
 
     let resolved_profile = resolve_profile_with_origin(cli.profile.as_deref())?;
     let profile_is_working_directory_controlled = resolved_profile.working_directory_controlled;
@@ -178,6 +187,8 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
     let model = profile.model.clone();
     Ok(ResolvedInvocation {
         settings,
+        project_root: resolved_settings.project_root,
+        mcp_servers: resolved_settings.mcp_servers,
         profile,
         applied,
         provider_kind: provider_selection.kind,

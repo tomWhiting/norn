@@ -64,7 +64,7 @@ use crate::commands::slash::{
 use crate::config::parse_inline_or_file;
 use crate::runtime::{
     SlashStateInputs, build_slash_state_with_schema, builder_from_cli, cli_coordination_envelope,
-    resolve_invocation, warn_unmatched_tool_flag_names,
+    connect_mcp_runtime, resolve_invocation, warn_unmatched_tool_flag_names,
 };
 use crate::session::SessionPersistError;
 use norn::tools::lsp::build_lsp_backend;
@@ -317,24 +317,44 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
                 _ => PrintError::Agent(err.to_string()),
             })?;
 
+    let mcp = connect_mcp_runtime(&resolved.project_root, &resolved.mcp_servers)
+        .await
+        .map_err(|error| PrintError::Agent(error.to_string()))?;
+    for server in &mcp.pending_project_servers {
+        eprintln!(
+            "norn: MCP server '{server}' is waiting for project approval; from {} run `norn mcp approve {server}`",
+            resolved.project_root.display(),
+        );
+    }
+    for (server, error) in &mcp.failed_servers {
+        eprintln!("norn: MCP server '{server}' is unavailable; continuing without it: {error}");
+    }
+    if let Some(error) = mcp.project_approval_error.as_deref() {
+        eprintln!("norn: project MCP approvals could not be read: {error}");
+    }
+
     let envelope = cli_coordination_envelope(resolved.delegation_depth);
-    let agent = builder_from_cli(
+    let mut builder = builder_from_cli(
         cli,
         built_provider.as_arc(),
         resolved.profile,
         &resolved.settings,
         &resolved.applied,
-    )?
-    .execution_mode(ExecutionMode::Headless)
-    .lsp_backend(build_lsp_backend().map_err(|error| PrintError::Agent(error.to_string()))?)
-    .agent_registry(AgentRegistry::shared())
-    .child_policy(envelope.child_policy.clone())
-    .child_result_capacity(envelope.child_result_capacity)
-    .event_channel_capacity(BROADCAST_BUFFER_CAPACITY)
-    .inbound_capacity(envelope.child_policy.inbound_capacity)
-    .register_root("/root".to_string(), "lead".to_string())
-    .terminal_reclamation(true)
-    .build()?;
+    )?;
+    if let Some(runtime) = mcp.runtime {
+        builder = builder.mcp_runtime(runtime);
+    }
+    let agent = builder
+        .execution_mode(ExecutionMode::Headless)
+        .lsp_backend(build_lsp_backend().map_err(|error| PrintError::Agent(error.to_string()))?)
+        .agent_registry(AgentRegistry::shared())
+        .child_policy(envelope.child_policy.clone())
+        .child_result_capacity(envelope.child_result_capacity)
+        .event_channel_capacity(BROADCAST_BUFFER_CAPACITY)
+        .inbound_capacity(envelope.child_policy.inbound_capacity)
+        .register_root("/root".to_string(), "lead".to_string())
+        .terminal_reclamation(true)
+        .build()?;
     let parts = agent.into_parts();
     // Deferred until here (not inside `builder_from_cli`) because gating
     // happens during `build()`: the assembled registry is the authoritative

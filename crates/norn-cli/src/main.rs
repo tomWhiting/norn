@@ -39,7 +39,7 @@ fn main() -> ProcessExitCode {
     let result = match command {
         Some(Command::Session { command }) => run_session(cli, command, agent_fn),
         Some(Command::Auth { command }) => run_auth(command),
-        Some(Command::Mcp { command }) => run_mcp(command),
+        Some(Command::Mcp { command }) => run_mcp(&cli, command),
         Some(Command::Doctor) => run_doctor(),
         Some(Command::Completion(ref args)) => run_completion(args),
         Some(Command::Init { command }) => run_init(command),

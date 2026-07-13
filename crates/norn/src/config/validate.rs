@@ -367,10 +367,112 @@ fn validate_mcp_servers(settings: &NornSettings) -> Result<(), ConfigError> {
         return Ok(());
     };
     for (name, def) in servers {
-        if def.command.is_none() && def.url.is_none() {
+        check_nonempty_clean("mcp_servers key", name)?;
+        if !name
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || matches!(character, '_' | '-'))
+        {
             return Err(ConfigError::InvalidConfig {
-                reason: format!("mcp server '{name}' has neither command nor url"),
+                reason: format!(
+                    "invalid mcp server name '{name}': use only ASCII letters, digits, '-' or '_'",
+                ),
             });
+        }
+        if def.enabled == Some(false) && def.command.is_none() && def.url.is_none() {
+            continue;
+        }
+        if def.command.is_some() == def.url.is_some() {
+            return Err(ConfigError::InvalidConfig {
+                reason: format!("mcp server '{name}' must set exactly one of command or url"),
+            });
+        }
+        match def.transport.as_deref() {
+            None | Some("stdio") if def.command.is_some() => {
+                let command = def.command.as_deref().unwrap_or_default();
+                check_nonempty_clean(&format!("mcp_servers.{name}.command"), command)?;
+                if def
+                    .headers
+                    .as_ref()
+                    .is_some_and(|headers| !headers.is_empty())
+                {
+                    return Err(ConfigError::InvalidConfig {
+                        reason: format!(
+                            "mcp server '{name}' cannot set headers for stdio transport",
+                        ),
+                    });
+                }
+            }
+            None | Some("http") if def.url.is_some() => {
+                validate_mcp_http_server(name, def)?;
+            }
+            Some("sse") => {
+                return Err(ConfigError::InvalidConfig {
+                    reason: format!(
+                        "mcp server '{name}' selects unsupported transport 'sse'; use 'http'",
+                    ),
+                });
+            }
+            Some(transport) => {
+                return Err(ConfigError::InvalidConfig {
+                    reason: format!(
+                        "mcp server '{name}' has incompatible or unsupported transport '{transport}'",
+                    ),
+                });
+            }
+            None => {
+                return Err(ConfigError::InvalidConfig {
+                    reason: format!("mcp server '{name}' transport could not be inferred"),
+                });
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_mcp_http_server(
+    name: &str,
+    definition: &crate::config::McpServerSettings,
+) -> Result<(), ConfigError> {
+    if definition
+        .args
+        .as_ref()
+        .is_some_and(|args| !args.is_empty())
+        || definition.env.as_ref().is_some_and(|env| !env.is_empty())
+    {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!("mcp server '{name}' cannot set args or env for HTTP transport"),
+        });
+    }
+    let url = definition.url.as_deref().unwrap_or_default();
+    let parsed = url::Url::parse(url).map_err(|_parse_error| ConfigError::InvalidConfig {
+        reason: format!("mcp server '{name}' has an invalid URL"),
+    })?;
+    if !matches!(parsed.scheme(), "http" | "https") {
+        return Err(ConfigError::InvalidConfig {
+            reason: format!("mcp server '{name}' URL must use http or https"),
+        });
+    }
+    if let Some(headers) = definition.headers.as_ref() {
+        let mut normalized = std::collections::BTreeSet::new();
+        for (header, value) in headers {
+            let name =
+                reqwest::header::HeaderName::from_bytes(header.as_bytes()).map_err(|_error| {
+                    ConfigError::InvalidConfig {
+                        reason: format!("mcp server '{name}' has an invalid HTTP header name"),
+                    }
+                })?;
+            reqwest::header::HeaderValue::from_str(value).map_err(|_error| {
+                ConfigError::InvalidConfig {
+                    reason: format!("mcp server '{name}' has an invalid HTTP header value"),
+                }
+            })?;
+            if !normalized.insert(name.as_str().to_owned()) {
+                return Err(ConfigError::InvalidConfig {
+                    reason: format!(
+                        "mcp server '{name}' repeats an HTTP header name with different casing",
+                    ),
+                });
+            }
         }
     }
     Ok(())
@@ -475,6 +577,7 @@ mod tests {
         servers.insert(
             "fs".to_owned(),
             McpServerSettings {
+                enabled: None,
                 transport: Some("stdio".to_owned()),
                 command: Some("mcp-fs".to_owned()),
                 args: None,
@@ -1057,6 +1160,7 @@ mod tests {
         servers.insert(
             "broken".to_owned(),
             McpServerSettings {
+                enabled: None,
                 transport: Some("stdio".to_owned()),
                 command: None,
                 args: None,
@@ -1087,6 +1191,7 @@ mod tests {
         servers.insert(
             "stdio".to_owned(),
             McpServerSettings {
+                enabled: None,
                 transport: None,
                 command: Some("/bin/server".to_owned()),
                 args: None,
@@ -1108,6 +1213,7 @@ mod tests {
         servers.insert(
             "remote".to_owned(),
             McpServerSettings {
+                enabled: None,
                 transport: None,
                 command: None,
                 args: None,

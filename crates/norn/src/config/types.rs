@@ -427,6 +427,11 @@ impl<'de> Deserialize<'de> for AutoCompactReserve {
 /// [`crate::provider::request::ReasoningSummary`] there too.
 #[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct AgentSettings {
+    /// MCP server names visible to the root agent. Absent selects every
+    /// connected server; an explicit empty list selects none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Vec<String>>,
+
     /// Hard cap on the number of model turns per agent run.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub max_turns: Option<u32>,
@@ -856,6 +861,11 @@ pub struct VariantSettings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tools: Option<Vec<String>>,
 
+    /// MCP server subset for children of this variant. Absent inherits the
+    /// parent's server view; an explicit empty list selects none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mcp_servers: Option<Vec<String>>,
+
     /// Model id for children of this variant. Absent = inherit the parent's
     /// model — never a hardcoded fallback, never a silent downgrade — unless
     /// [`Self::model_required`] is set, in which case absence is a typed
@@ -891,8 +901,14 @@ pub struct VariantSettings {
 /// representable: subprocess servers populate [`Self::command`]/[`Self::args`]
 /// and remote servers populate [`Self::url`]/[`Self::headers`]. Validation
 /// of the combination lives in NC-003 / the MCP cluster (NG4).
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct McpServerSettings {
+    /// Whether this definition is active. `false` masks lower-precedence
+    /// definitions with the same name without deleting them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub enabled: Option<bool>,
+
     /// Transport identifier (e.g. `"stdio"`, `"sse"`, `"http"`). The MCP
     /// cluster owns the canonical list of values.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -920,6 +936,21 @@ pub struct McpServerSettings {
     /// for deterministic JSON ordering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headers: Option<BTreeMap<String, String>>,
+}
+
+impl fmt::Debug for McpServerSettings {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("McpServerSettings")
+            .field("enabled", &self.enabled)
+            .field("transport", &self.transport)
+            .field("command_present", &self.command.is_some())
+            .field("args_count", &self.args.as_ref().map(Vec::len))
+            .field("url_present", &self.url.is_some())
+            .field("env_entries", &self.env.as_ref().map(BTreeMap::len))
+            .field("header_entries", &self.headers.as_ref().map(BTreeMap::len))
+            .finish()
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1209,6 +1240,7 @@ mod tests {
         mcp.insert(
             "fs".to_owned(),
             McpServerSettings {
+                enabled: None,
                 transport: Some("stdio".to_owned()),
                 command: Some("mcp-fs".to_owned()),
                 args: Some(vec!["--root".to_owned(), "/tmp".to_owned()]),
@@ -1271,6 +1303,7 @@ mod tests {
                 debug_dump_dir: Some("/tmp/norn-debug".to_owned()),
             }),
             agent: Some(AgentSettings {
+                mcp_servers: Some(vec!["docs".to_owned()]),
                 max_turns: Some(10),
                 step_timeout: Some("45s".to_owned()),
                 schema_budget: Some(4),
@@ -1340,6 +1373,7 @@ mod tests {
                     prompt: Some("Survey the code and report.".to_owned()),
                     prompt_file: None,
                     tools: Some(vec!["read".to_owned(), "search".to_owned()]),
+                    mcp_servers: Some(vec!["docs".to_owned()]),
                     model: Some("gpt-5.5".to_owned()),
                     model_required: None,
                     reasoning_effort: Some("low".to_owned()),

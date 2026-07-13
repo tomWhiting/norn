@@ -265,6 +265,7 @@ fn mcp_same_name_project_fully_replaces_user_definition() {
     user_map.insert(
         "s1".to_owned(),
         McpServerSettings {
+            enabled: None,
             transport: Some("stdio".to_owned()),
             command: Some("user-bin".to_owned()),
             args: Some(vec!["--user".to_owned()]),
@@ -282,6 +283,7 @@ fn mcp_same_name_project_fully_replaces_user_definition() {
     project_map.insert(
         "s1".to_owned(),
         McpServerSettings {
+            enabled: None,
             transport: None,
             command: None,
             args: None,
@@ -293,6 +295,7 @@ fn mcp_same_name_project_fully_replaces_user_definition() {
     project_map.insert(
         "s2".to_owned(),
         McpServerSettings {
+            enabled: None,
             transport: Some("stdio".to_owned()),
             command: Some("s2-bin".to_owned()),
             args: None,

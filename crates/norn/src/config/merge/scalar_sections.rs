@@ -113,6 +113,12 @@ pub(super) fn merge_agent(
     let mut lcl = lcl.take().unwrap_or_default();
     let mut ovr = ovr.take().unwrap_or_default();
     Some(AgentSettings {
+        mcp_servers: pick_scalar(
+            &mut usr.mcp_servers,
+            &mut prj.mcp_servers,
+            &mut lcl.mcp_servers,
+            &mut ovr.mcp_servers,
+        ),
         max_turns: pick_scalar(
             &mut usr.max_turns,
             &mut prj.max_turns,

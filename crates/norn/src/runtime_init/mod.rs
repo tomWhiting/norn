@@ -8,6 +8,7 @@ pub mod base;
 pub mod extensions;
 pub mod hooks;
 
+pub use crate::config::load_resolved_settings;
 pub use base::{
     LoadedRuntimeBase, ProviderSettingsResolved, agent_config_from_settings,
     apply_settings_reasoning_to_profile, load_merged_settings, load_runtime_base,

@@ -11,29 +11,29 @@
 //! - `tools/call` — `{ name, arguments }` → `{ content: [...], isError }`.
 
 use std::collections::HashMap;
-use std::process::Stdio;
+use std::fmt;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout, Command};
 use tokio::sync::Mutex;
 
 use crate::error::IntegrationError;
 use crate::tool::registry::ToolRegistry;
+use crate::tool::traits::Tool;
 
 use super::mcp_proxy::McpProxyTool;
 
 /// Default protocol version sent in the `initialize` handshake.
-pub const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
+pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 
 /// Wall-clock budget for any single MCP request.
-const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
+pub(super) const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Transport for reaching an MCP server.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub enum McpTransport {
     /// Spawn `command` with `args` and exchange JSON-RPC over stdio.
     Stdio {
@@ -49,8 +49,24 @@ pub enum McpTransport {
     },
 }
 
+impl fmt::Debug for McpTransport {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Stdio { args, .. } => formatter
+                .debug_struct("Stdio")
+                .field("command_present", &true)
+                .field("args_count", &args.len())
+                .finish(),
+            Self::Http { .. } => formatter
+                .debug_struct("Http")
+                .field("url_present", &true)
+                .finish(),
+        }
+    }
+}
+
 /// Configuration for one MCP server connection.
-#[derive(Clone, Debug)]
+#[derive(Clone)]
 pub struct McpServerConfig {
     /// Local logical name (used for diagnostics and proxy-tool prefixing).
     pub name: String,
@@ -58,6 +74,23 @@ pub struct McpServerConfig {
     pub transport: McpTransport,
     /// Environment variables passed through to a stdio server.
     pub env: HashMap<String, String>,
+    /// HTTP headers attached to every remote-transport request.
+    pub headers: HashMap<String, String>,
+    /// Working directory supplied explicitly to a stdio server.
+    pub working_dir: Option<PathBuf>,
+}
+
+impl fmt::Debug for McpServerConfig {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("McpServerConfig")
+            .field("name", &self.name)
+            .field("transport", &self.transport)
+            .field("env_entries", &self.env.len())
+            .field("header_entries", &self.headers.len())
+            .field("working_dir_present", &self.working_dir.is_some())
+            .finish()
+    }
 }
 
 /// Tool definition discovered from an MCP server.
@@ -87,10 +120,21 @@ struct JsonRpcRequest<'a, T: Serialize> {
     params: T,
 }
 
+#[derive(Serialize)]
+struct JsonRpcNotification<'a, T: Serialize> {
+    jsonrpc: &'static str,
+    method: &'a str,
+    params: T,
+}
+
 /// JSON-RPC 2.0 response envelope. Exposed at crate-private visibility so
 /// the [`Transport`] trait can name it.
 #[derive(Deserialize, Debug)]
 pub(crate) struct JsonRpcResponse {
+    #[serde(default)]
+    jsonrpc: Option<String>,
+    #[serde(default)]
+    pub(crate) id: Option<serde_json::Value>,
     #[serde(default)]
     result: Option<serde_json::Value>,
     #[serde(default)]
@@ -107,6 +151,28 @@ struct JsonRpcError {
 struct ToolsListResult {
     #[serde(default)]
     tools: Vec<McpToolDef>,
+    #[serde(default, rename = "nextCursor")]
+    next_cursor: Option<String>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InitializeResult {
+    protocol_version: String,
+    capabilities: ServerCapabilities,
+    server_info: ServerInfo,
+}
+
+#[derive(Deserialize)]
+struct ServerCapabilities {
+    #[serde(default)]
+    tools: Option<serde_json::Value>,
+}
+
+#[derive(Deserialize)]
+struct ServerInfo {
+    name: String,
+    version: String,
 }
 
 #[derive(Deserialize, Default)]
@@ -133,132 +199,15 @@ pub(crate) enum ToolCallContent {
 
 #[async_trait]
 pub(crate) trait Transport: Send + Sync {
-    async fn rpc(&self, payload: String) -> Result<JsonRpcResponse, IntegrationError>;
-}
-
-struct StdioTransport {
-    state: Mutex<StdioState>,
-}
-
-struct StdioState {
-    child: Child,
-    stdin: ChildStdin,
-    stdout: BufReader<ChildStdout>,
-    _permit: crate::resource::DescriptorPermit,
-}
-
-struct HttpTransport {
-    client: reqwest::Client,
-    url: String,
-}
-
-#[async_trait]
-impl Transport for StdioTransport {
-    async fn rpc(&self, payload: String) -> Result<JsonRpcResponse, IntegrationError> {
-        let fut = async {
-            let mut state = self.state.lock().await;
-            state
-                .stdin
-                .write_all(payload.as_bytes())
-                .await
-                .map_err(|e| IntegrationError::McpError {
-                    reason: format!("write failed: {e}"),
-                })?;
-            state
-                .stdin
-                .write_all(b"\n")
-                .await
-                .map_err(|e| IntegrationError::McpError {
-                    reason: format!("write failed: {e}"),
-                })?;
-            state
-                .stdin
-                .flush()
-                .await
-                .map_err(|e| IntegrationError::McpError {
-                    reason: format!("flush failed: {e}"),
-                })?;
-
-            let mut line = String::new();
-            let read = state.stdout.read_line(&mut line).await.map_err(|e| {
-                IntegrationError::McpError {
-                    reason: format!("read failed: {e}"),
-                }
-            })?;
-            if read == 0 {
-                return Err(IntegrationError::McpError {
-                    reason: "server closed stdout".to_owned(),
-                });
-            }
-            serde_json::from_str::<JsonRpcResponse>(line.trim()).map_err(|e| {
-                IntegrationError::McpError {
-                    reason: format!("invalid JSON-RPC response: {e}: {line}"),
-                }
-            })
-        };
-
-        match tokio::time::timeout(MCP_REQUEST_TIMEOUT, fut).await {
-            Ok(r) => r,
-            Err(_) => Err(IntegrationError::McpError {
-                reason: "MCP request timed out".to_owned(),
-            }),
-        }
-    }
-}
-
-impl Drop for StdioTransport {
-    fn drop(&mut self) {
-        // Best-effort cleanup: kill the subprocess if it's still running.
-        if let Ok(mut guard) = self.state.try_lock() {
-            let _ = guard.child.start_kill();
-        }
-    }
-}
-
-#[async_trait]
-impl Transport for HttpTransport {
-    async fn rpc(&self, payload: String) -> Result<JsonRpcResponse, IntegrationError> {
-        let fut = async {
-            let governor = crate::resource::DescriptorGovernor::global().map_err(|error| {
-                IntegrationError::McpError {
-                    reason: format!("MCP HTTP descriptor admission unavailable: {error}"),
-                }
-            })?;
-            let _permit = governor
-                .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
-                .map_err(|error| IntegrationError::McpError {
-                    reason: format!("MCP HTTP descriptor admission failed: {error}"),
-                })?;
-            let resp = self
-                .client
-                .post(&self.url)
-                .header("Content-Type", "application/json")
-                .body(payload)
-                .send()
-                .await
-                .map_err(|e| IntegrationError::McpError {
-                    reason: format!("HTTP request failed: {e}"),
-                })?;
-            if !resp.status().is_success() {
-                return Err(IntegrationError::McpError {
-                    reason: format!("HTTP status {}", resp.status()),
-                });
-            }
-            let text = resp.text().await.map_err(|e| IntegrationError::McpError {
-                reason: format!("HTTP body read failed: {e}"),
-            })?;
-            serde_json::from_str::<JsonRpcResponse>(&text).map_err(|e| IntegrationError::McpError {
-                reason: format!("invalid JSON-RPC response: {e}: {text}"),
-            })
-        };
-
-        match tokio::time::timeout(MCP_REQUEST_TIMEOUT, fut).await {
-            Ok(r) => r,
-            Err(_) => Err(IntegrationError::McpError {
-                reason: "MCP request timed out".to_owned(),
-            }),
-        }
-    }
+    async fn request(
+        &self,
+        payload: String,
+        request_id: u64,
+    ) -> Result<JsonRpcResponse, IntegrationError>;
+    async fn notify(&self, payload: String) -> Result<(), IntegrationError>;
+    fn supports_protocol_version(&self, version: &str) -> bool;
+    async fn set_protocol_version(&self, _version: &str) {}
+    async fn invalidate(&self) {}
 }
 
 // -- McpClient ------------------------------------------------------------
@@ -293,7 +242,24 @@ impl McpClientInner {
         let payload = serde_json::to_string(&req).map_err(|e| IntegrationError::McpError {
             reason: format!("serialize request: {e}"),
         })?;
-        let resp = self.transport.rpc(payload).await?;
+        let resp = self.transport.request(payload, id).await?;
+        if resp.jsonrpc.as_deref() != Some("2.0") {
+            self.transport.invalidate().await;
+            return Err(IntegrationError::McpError {
+                reason: "MCP response did not declare JSON-RPC 2.0".to_owned(),
+            });
+        }
+        if resp.id.as_ref() != Some(&serde_json::json!(id)) {
+            self.transport.invalidate().await;
+            return Err(IntegrationError::McpError {
+                reason: format!("JSON-RPC response id did not match request {id}"),
+            });
+        }
+        if resp.result.is_some() == resp.error.is_some() {
+            return Err(IntegrationError::McpError {
+                reason: "MCP response must contain exactly one of result or error".to_owned(),
+            });
+        }
         if let Some(err) = resp.error {
             return Err(IntegrationError::McpError {
                 reason: format!("server error ({}): {}", err.code, err.message),
@@ -302,6 +268,19 @@ impl McpClientInner {
         resp.result.ok_or_else(|| IntegrationError::McpError {
             reason: "missing result in JSON-RPC response".to_owned(),
         })
+    }
+
+    async fn notify<P: Serialize>(&self, method: &str, params: P) -> Result<(), IntegrationError> {
+        let notification = JsonRpcNotification {
+            jsonrpc: "2.0",
+            method,
+            params,
+        };
+        let payload =
+            serde_json::to_string(&notification).map_err(|error| IntegrationError::McpError {
+                reason: format!("serialize notification: {error}"),
+            })?;
+        self.transport.notify(payload).await
     }
 }
 
@@ -324,69 +303,17 @@ impl McpClient {
     pub async fn connect(config: McpServerConfig) -> Result<Self, IntegrationError> {
         let transport: Box<dyn Transport> = match &config.transport {
             McpTransport::Stdio { command, args } => {
-                let governor = crate::resource::DescriptorGovernor::global().map_err(|error| {
-                    IntegrationError::McpError {
-                        reason: format!("MCP descriptor admission unavailable: {error}"),
-                    }
-                })?;
-                let mut launch_permit = governor
-                    .try_acquire(crate::resource::TWO_PIPE_SPAWN_PEAK)
-                    .map_err(|error| IntegrationError::McpError {
-                        reason: format!("MCP descriptor admission failed: {error}"),
-                    })?;
-                let retained_permit =
-                    launch_permit
-                        .split(2)
-                        .ok_or_else(|| IntegrationError::McpError {
-                            reason: "MCP launch admission did not contain two retained pipes"
-                                .to_owned(),
-                        })?;
-                let mut cmd = Command::new(command);
-                cmd.args(args)
-                    .stdin(Stdio::piped())
-                    .stdout(Stdio::piped())
-                    .stderr(Stdio::null())
-                    .kill_on_drop(true);
-                for (k, v) in &config.env {
-                    cmd.env(k, v);
-                }
-                let mut child = cmd.spawn().map_err(|e| IntegrationError::McpError {
-                    reason: format!("failed to spawn MCP server '{command}': {e}"),
-                })?;
-                let stdin = child
-                    .stdin
-                    .take()
-                    .ok_or_else(|| IntegrationError::McpError {
-                        reason: "stdin handle missing on spawned MCP server".to_owned(),
-                    })?;
-                let stdout = child
-                    .stdout
-                    .take()
-                    .ok_or_else(|| IntegrationError::McpError {
-                        reason: "stdout handle missing on spawned MCP server".to_owned(),
-                    })?;
-                Box::new(StdioTransport {
-                    state: Mutex::new(StdioState {
-                        child,
-                        stdin,
-                        stdout: BufReader::new(stdout),
-                        _permit: retained_permit,
-                    }),
-                })
+                Box::new(super::mcp_stdio::StdioTransport::spawn(
+                    command,
+                    args,
+                    &config.env,
+                    config.working_dir.as_deref(),
+                )?)
             }
-            McpTransport::Http { url } => {
-                let client = reqwest::Client::builder()
-                    .timeout(MCP_REQUEST_TIMEOUT)
-                    .pool_max_idle_per_host(0)
-                    .build()
-                    .map_err(|e| IntegrationError::McpError {
-                        reason: format!("failed to build HTTP client: {e}"),
-                    })?;
-                Box::new(HttpTransport {
-                    client,
-                    url: url.clone(),
-                })
-            }
+            McpTransport::Http { url } => Box::new(super::mcp_http::HttpTransport::new(
+                url.clone(),
+                &config.headers,
+            )?),
         };
 
         let inner = Arc::new(McpClientInner {
@@ -403,19 +330,50 @@ impl McpClient {
                 "version": env!("CARGO_PKG_VERSION"),
             }
         });
-        let _ = inner.rpc("initialize", init_params).await?;
-
-        // Best-effort initialized notification. Failure here is non-fatal —
-        // some servers do not expect it.
-        let _ = inner
-            .rpc("notifications/initialized", serde_json::json!({}))
+        let init_value = inner.rpc("initialize", init_params).await?;
+        let initialized: InitializeResult =
+            serde_json::from_value(init_value).map_err(|error| IntegrationError::McpError {
+                reason: format!("invalid MCP initialize result: {error}"),
+            })?;
+        if !inner
+            .transport
+            .supports_protocol_version(&initialized.protocol_version)
+        {
+            inner.transport.invalidate().await;
+            return Err(IntegrationError::McpError {
+                reason: format!(
+                    "MCP server selected unsupported protocol version '{}'",
+                    initialized.protocol_version,
+                ),
+            });
+        }
+        inner
+            .transport
+            .set_protocol_version(&initialized.protocol_version)
             .await;
+        tracing::debug!(
+            server = %config.name,
+            implementation = %initialized.server_info.name,
+            version = %initialized.server_info.version,
+            protocol = %initialized.protocol_version,
+            "MCP server initialized",
+        );
+
+        inner
+            .notify("notifications/initialized", serde_json::json!({}))
+            .await?;
 
         let mut client = Self {
             inner,
             tools: Vec::new(),
         };
-        client.tools = client.discover_tools().await?;
+        if initialized.capabilities.tools.is_some() {
+            client.tools = tokio::time::timeout(MCP_REQUEST_TIMEOUT, client.discover_tools())
+                .await
+                .map_err(|_elapsed| IntegrationError::McpError {
+                    reason: "MCP tool discovery exceeded the request deadline".to_owned(),
+                })??;
+        }
         Ok(client)
     }
 
@@ -452,12 +410,31 @@ impl McpClient {
     /// Returns [`IntegrationError::McpError`] on transport failures or
     /// malformed responses.
     pub async fn discover_tools(&self) -> Result<Vec<McpToolDef>, IntegrationError> {
-        let value = self.inner.rpc("tools/list", serde_json::json!({})).await?;
-        let parsed: ToolsListResult =
-            serde_json::from_value(value).map_err(|e| IntegrationError::McpError {
-                reason: format!("invalid tools/list response: {e}"),
-            })?;
-        Ok(parsed.tools)
+        let mut tools = Vec::new();
+        let mut cursor = None;
+        let mut seen_cursors = std::collections::HashSet::new();
+        loop {
+            let params = cursor.as_ref().map_or_else(
+                || serde_json::json!({}),
+                |value| serde_json::json!({"cursor": value}),
+            );
+            let value = self.inner.rpc("tools/list", params).await?;
+            let parsed: ToolsListResult =
+                serde_json::from_value(value).map_err(|error| IntegrationError::McpError {
+                    reason: format!("invalid tools/list response: {error}"),
+                })?;
+            tools.extend(parsed.tools);
+            let Some(next_cursor) = parsed.next_cursor else {
+                validate_discovered_tools(&tools)?;
+                return Ok(tools);
+            };
+            if !seen_cursors.insert(next_cursor.clone()) {
+                return Err(IntegrationError::McpError {
+                    reason: "MCP tools/list repeated a pagination cursor".to_owned(),
+                });
+            }
+            cursor = Some(next_cursor);
+        }
     }
 
     /// Wrap every discovered tool in an [`McpProxyTool`] and register them
@@ -467,6 +444,7 @@ impl McpClient {
         let mut n = 0;
         for tool in &self.tools {
             registry.register(Box::new(McpProxyTool::new(
+                self.name(),
                 tool.clone(),
                 Arc::clone(&self.inner),
             )));
@@ -474,6 +452,68 @@ impl McpClient {
         }
         n
     }
+
+    /// Build server-qualified proxy tools without registering them.
+    pub fn proxy_tools(&self) -> Vec<Box<dyn Tool + Send + Sync>> {
+        self.tools
+            .iter()
+            .map(|tool| {
+                Box::new(McpProxyTool::new(
+                    self.name(),
+                    tool.clone(),
+                    Arc::clone(&self.inner),
+                )) as Box<dyn Tool + Send + Sync>
+            })
+            .collect()
+    }
+
+    pub(crate) fn qualified_tool_names(&self) -> impl Iterator<Item = String> + '_ {
+        self.tools
+            .iter()
+            .map(|tool| super::mcp_proxy::qualified_tool_name(self.name(), tool.name.as_str()))
+    }
+}
+
+fn validate_discovered_tools(tools: &[McpToolDef]) -> Result<(), IntegrationError> {
+    let mut names = std::collections::HashSet::new();
+    for tool in tools {
+        if tool.name.trim().is_empty() {
+            return Err(IntegrationError::McpError {
+                reason: "MCP tools/list returned an empty tool name".to_owned(),
+            });
+        }
+        if !names.insert(tool.name.as_str()) {
+            return Err(IntegrationError::McpError {
+                reason: format!("MCP tools/list returned duplicate tool '{}'", tool.name),
+            });
+        }
+        if schema_uses_envelope_key(&tool.input_schema) {
+            return Err(IntegrationError::McpError {
+                reason: format!(
+                    "MCP tool '{}' uses a Norn-reserved tool envelope property",
+                    tool.name,
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+fn schema_uses_envelope_key(schema: &serde_json::Value) -> bool {
+    let declares = |value: &serde_json::Value| {
+        value
+            .get("properties")
+            .and_then(serde_json::Value::as_object)
+            .is_some_and(|properties| {
+                properties.contains_key(crate::tool::envelope::ENVELOPE_DESCRIPTION_KEY)
+                    || properties.contains_key(crate::tool::envelope::ENVELOPE_METADATA_KEY)
+            })
+    };
+    declares(schema)
+        || schema
+            .get("oneOf")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|variants| variants.iter().any(declares))
 }
 
 #[cfg(test)]
@@ -498,8 +538,7 @@ impl McpClient {
     clippy::unnecessary_trailing_comma,
     clippy::uninlined_format_args,
     clippy::wildcard_enum_match_arm,
-    clippy::collapsible_if,
-    clippy::match_wildcard_for_single_variants
+    clippy::collapsible_if
 )]
 mod tests {
     use super::*;
@@ -511,7 +550,21 @@ mod tests {
 
     fn list_response(tools: serde_json::Value) -> JsonRpcResponse {
         JsonRpcResponse {
+            jsonrpc: Some("2.0".to_owned()),
+            id: None,
             result: Some(serde_json::json!({"tools": tools})),
+            error: None,
+        }
+    }
+
+    fn paged_list_response(tools: serde_json::Value, next_cursor: Option<&str>) -> JsonRpcResponse {
+        JsonRpcResponse {
+            jsonrpc: Some("2.0".to_owned()),
+            id: None,
+            result: Some(serde_json::json!({
+                "tools": tools,
+                "nextCursor": next_cursor,
+            })),
             error: None,
         }
     }
@@ -525,7 +578,11 @@ mod tests {
 
     #[async_trait]
     impl Transport for ScriptedTransport {
-        async fn rpc(&self, payload: String) -> Result<JsonRpcResponse, IntegrationError> {
+        async fn request(
+            &self,
+            payload: String,
+            _request_id: u64,
+        ) -> Result<JsonRpcResponse, IntegrationError> {
             // Capture the method for assertion.
             let parsed: serde_json::Value =
                 serde_json::from_str(&payload).expect("payload is JSON");
@@ -542,7 +599,31 @@ mod tests {
                     reason: "no scripted responses left".to_owned(),
                 });
             }
-            Ok(responses.remove(0))
+            let mut response = responses.remove(0);
+            if response.id.is_none() {
+                response.id = parsed.get("id").cloned();
+            }
+            Ok(response)
+        }
+
+        async fn notify(&self, payload: String) -> Result<(), IntegrationError> {
+            let parsed: serde_json::Value =
+                serde_json::from_str(&payload).expect("payload is JSON");
+            assert!(
+                parsed.get("id").is_none(),
+                "notification must not carry an id"
+            );
+            let method = parsed
+                .get("method")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            self.seen_methods.lock().unwrap().push(method);
+            Ok(())
+        }
+
+        fn supports_protocol_version(&self, _version: &str) -> bool {
+            true
         }
     }
 
@@ -565,8 +646,131 @@ mod tests {
         let mut registry = ToolRegistry::new();
         let n = client.register_tools(&mut registry);
         assert_eq!(n, 2);
-        assert!(registry.get("alpha").is_some());
-        assert!(registry.get("beta").is_some());
+        let alpha = super::super::mcp_proxy::qualified_tool_name("test", "alpha");
+        let beta = super::super::mcp_proxy::qualified_tool_name("test", "beta");
+        assert!(registry.get(&alpha).is_some());
+        assert!(registry.get(&beta).is_some());
+    }
+
+    #[tokio::test]
+    async fn discovery_follows_every_page() {
+        let transport = Box::new(ScriptedTransport {
+            responses: StdMutex::new(vec![
+                paged_list_response(serde_json::json!([{"name": "alpha"}]), Some("page-2")),
+                paged_list_response(serde_json::json!([{"name": "beta"}]), None),
+            ]),
+            seen_methods: StdMutex::new(Vec::new()),
+        });
+        let client = McpClient::from_transport("test", transport);
+
+        let tools = client.discover_tools().await.unwrap();
+
+        assert_eq!(tools.len(), 2);
+        assert_eq!(tools[0].name, "alpha");
+        assert_eq!(tools[1].name, "beta");
+    }
+
+    #[tokio::test]
+    async fn repeated_pagination_cursor_is_rejected() {
+        let transport = Box::new(ScriptedTransport {
+            responses: StdMutex::new(vec![
+                paged_list_response(serde_json::json!([]), Some("same")),
+                paged_list_response(serde_json::json!([]), Some("same")),
+            ]),
+            seen_methods: StdMutex::new(Vec::new()),
+        });
+        let client = McpClient::from_transport("test", transport);
+
+        let error = client.discover_tools().await.unwrap_err();
+
+        assert!(error.to_string().contains("repeated a pagination cursor"));
+    }
+
+    #[tokio::test]
+    async fn duplicate_and_reserved_tool_schemas_are_rejected() {
+        let duplicate = Box::new(ScriptedTransport {
+            responses: StdMutex::new(vec![list_response(serde_json::json!([
+                {"name": "same"},
+                {"name": "same"}
+            ]))]),
+            seen_methods: StdMutex::new(Vec::new()),
+        });
+        let duplicate_client = McpClient::from_transport("test", duplicate);
+        let duplicate_error = duplicate_client.discover_tools().await.unwrap_err();
+        assert!(duplicate_error.to_string().contains("duplicate tool"));
+
+        let reserved = Box::new(ScriptedTransport {
+            responses: StdMutex::new(vec![list_response(serde_json::json!([{
+                "name": "reserved",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"tool_use_description": {"type": "string"}}
+                }
+            }]))]),
+            seen_methods: StdMutex::new(Vec::new()),
+        });
+        let reserved_client = McpClient::from_transport("test", reserved);
+        let reserved_error = reserved_client.discover_tools().await.unwrap_err();
+        assert!(
+            reserved_error
+                .to_string()
+                .contains("reserved tool envelope")
+        );
+    }
+
+    #[tokio::test]
+    async fn mismatched_response_id_is_rejected() {
+        let transport = Box::new(ScriptedTransport {
+            responses: StdMutex::new(vec![JsonRpcResponse {
+                jsonrpc: Some("2.0".to_owned()),
+                id: Some(serde_json::json!(999)),
+                result: Some(serde_json::json!({"tools": []})),
+                error: None,
+            }]),
+            seen_methods: StdMutex::new(Vec::new()),
+        });
+        let client = McpClient::from_transport("test", transport);
+
+        let error = client.discover_tools().await.unwrap_err();
+
+        assert!(error.to_string().contains("did not match request"));
+    }
+
+    #[tokio::test]
+    async fn notification_has_no_id_and_consumes_no_response() {
+        let transport = Box::new(ScriptedTransport {
+            responses: StdMutex::new(Vec::new()),
+            seen_methods: StdMutex::new(Vec::new()),
+        });
+        let inner = McpClient::from_transport("test", transport).inner;
+
+        inner
+            .notify("notifications/initialized", serde_json::json!({}))
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn server_config_debug_redacts_environment_and_headers() {
+        let config = McpServerConfig {
+            name: "example".to_owned(),
+            transport: McpTransport::Http {
+                url: "https://example.test/mcp".to_owned(),
+            },
+            env: HashMap::from([("TOKEN".to_owned(), "env-secret-sentinel".to_owned())]),
+            headers: HashMap::from([(
+                "Authorization".to_owned(),
+                "header-secret-sentinel".to_owned(),
+            )]),
+            working_dir: None,
+        };
+
+        let rendered = format!("{config:?}");
+
+        assert!(!rendered.contains("env-secret-sentinel"));
+        assert!(!rendered.contains("header-secret-sentinel"));
+        assert!(rendered.contains("env_entries: 1"));
+        assert!(rendered.contains("header_entries: 1"));
     }
 
     #[tokio::test]
@@ -577,6 +781,8 @@ mod tests {
                     {"name": "echo", "description": "echo back", "inputSchema": {"type": "object"}}
                 ])),
                 JsonRpcResponse {
+                    jsonrpc: Some("2.0".to_owned()),
+                    id: None,
                     result: Some(serde_json::json!({
                         "content": [{"type": "text", "text": "hello world"}],
                         "isError": false
@@ -592,10 +798,11 @@ mod tests {
         let mut registry = ToolRegistry::new();
         client.register_tools(&mut registry);
 
-        let tool = registry.get("echo").expect("echo registered");
+        let qualified = super::super::mcp_proxy::qualified_tool_name("test", "echo");
+        let tool = registry.get(&qualified).expect("qualified echo registered");
         let envelope = ToolEnvelope {
             tool_call_id: "tc_1".to_owned(),
-            tool_name: "echo".to_owned(),
+            tool_name: qualified,
             model_args: serde_json::json!({"text": "hello"}),
             metadata: serde_json::Value::Null,
         };
@@ -606,9 +813,46 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn malformed_tool_result_is_not_reported_as_success() {
+        let transport = Box::new(ScriptedTransport {
+            responses: StdMutex::new(vec![
+                list_response(serde_json::json!([{"name": "broken"}])),
+                JsonRpcResponse {
+                    jsonrpc: Some("2.0".to_owned()),
+                    id: None,
+                    result: Some(serde_json::json!({"content": "not-an-array"})),
+                    error: None,
+                },
+            ]),
+            seen_methods: StdMutex::new(Vec::new()),
+        });
+        let mut client = McpClient::from_transport("test", transport);
+        client.tools = client.discover_tools().await.unwrap();
+        let mut registry = ToolRegistry::new();
+        client.register_tools(&mut registry);
+        let qualified = super::super::mcp_proxy::qualified_tool_name("test", "broken");
+        let tool = registry.get(&qualified).expect("qualified tool registered");
+        let result = tool
+            .execute(
+                &ToolEnvelope {
+                    tool_call_id: "tc_broken".to_owned(),
+                    tool_name: qualified,
+                    model_args: serde_json::json!({}),
+                    metadata: serde_json::Value::Null,
+                },
+                &ToolContext::empty(),
+            )
+            .await;
+
+        assert!(result.is_err());
+    }
+
+    #[tokio::test]
     async fn server_error_propagates() {
         let transport = Box::new(ScriptedTransport {
             responses: StdMutex::new(vec![JsonRpcResponse {
+                jsonrpc: Some("2.0".to_owned()),
+                id: None,
                 result: None,
                 error: Some(JsonRpcError {
                     code: -32000,
@@ -642,7 +886,7 @@ mod tests {
             id_counter: Mutex::new(0),
             server_name: "test".to_owned(),
         });
-        let tool = McpProxyTool::new(def, inner);
+        let tool = McpProxyTool::new("test", def, inner);
         _assert_object_safe(Box::new(tool));
     }
 }

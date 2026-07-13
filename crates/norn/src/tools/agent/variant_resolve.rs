@@ -229,6 +229,8 @@ pub(crate) struct SpawnResolution {
     pub(crate) variant_prompt: Option<String>,
     /// The variant's tool allowlist, if any.
     pub(crate) variant_tools: Option<Vec<String>>,
+    /// The variant's MCP server subset, if any.
+    pub(crate) variant_mcp_servers: Option<Vec<String>>,
     /// The variant's parsed reasoning effort, if any.
     pub(crate) reasoning_effort: Option<crate::provider::request::ReasoningEffort>,
 }
@@ -287,6 +289,7 @@ pub(crate) fn resolve_spawn(
         variant_name: variant.map(|v| v.name.clone()),
         variant_prompt: variant.and_then(|v| v.prompt.clone()),
         variant_tools: variant.and_then(|v| v.tools.clone()),
+        variant_mcp_servers: variant.and_then(|v| v.mcp_servers.clone()),
         reasoning_effort: variant.and_then(|v| v.reasoning_effort),
     })
 }
@@ -483,6 +486,7 @@ mod tests {
             VariantSettings {
                 prompt: Some("Scout the area.".to_owned()),
                 tools: Some(vec!["read".to_owned()]),
+                mcp_servers: Some(vec!["docs".to_owned()]),
                 reasoning_effort: Some("low".to_owned()),
                 ..VariantSettings::default()
             },
@@ -498,6 +502,7 @@ mod tests {
         .expect("resolves");
         assert_eq!(resolved.variant_prompt.as_deref(), Some("Scout the area."));
         assert_eq!(resolved.variant_tools, Some(vec!["read".to_owned()]));
+        assert_eq!(resolved.variant_mcp_servers, Some(vec!["docs".to_owned()]));
         assert_eq!(resolved.reasoning_effort, Some(ReasoningEffort::Low));
     }
 

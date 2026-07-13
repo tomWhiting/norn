@@ -24,6 +24,9 @@
 //!   dispatch as the runtime consent boundary.
 
 pub mod loader;
+pub mod mcp;
+pub mod mcp_approval;
+mod mcp_local;
 pub(crate) mod merge;
 pub mod paths;
 pub mod permissions;
@@ -32,6 +35,12 @@ pub mod types;
 pub mod validate;
 
 pub use loader::{local_settings_path, project_settings_path};
+pub use mcp::{
+    McpConfigSource, McpDefinitionFingerprint, McpRuntimeOverrides, ResolvedMcpServer,
+    ResolvedMcpServers, ResolvedSettings, load_resolved_settings,
+};
+pub use mcp_approval::{McpApprovalState, McpApprovalStore};
+pub use mcp_local::project_local_mcp_settings_path;
 pub(crate) use merge::merge_settings;
 pub use permissions::{PermissionDecision, PermissionPolicy};
 pub(crate) use provider_security::validate_working_directory_authority;

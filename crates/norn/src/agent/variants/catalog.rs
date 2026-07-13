@@ -36,6 +36,8 @@ pub struct ResolvedVariant {
     /// Always intersected with the child's granted delegation policy at
     /// assembly (policy WINS — brief R6).
     pub tools: Option<Vec<String>>,
+    /// MCP server subset; `None` inherits the parent view.
+    pub mcp_servers: Option<Vec<String>>,
     /// Model id; `None` = inherit the parent's model unless
     /// [`Self::model_required`].
     pub model: Option<String>,
@@ -150,6 +152,7 @@ fn resolve_builtin(builtin: &BuiltinVariant) -> ResolvedVariant {
         tools: builtin
             .tools
             .map(|tools| tools.iter().map(|&tool| tool.to_owned()).collect()),
+        mcp_servers: None,
         model: None,
         model_required: builtin.model_required,
         reasoning_effort: None,
@@ -176,6 +179,10 @@ fn overlay(
             .tools
             .clone()
             .or_else(|| base.and_then(|b| b.tools.clone())),
+        mcp_servers: settings
+            .mcp_servers
+            .clone()
+            .or_else(|| base.and_then(|b| b.mcp_servers.clone())),
         model: settings
             .model
             .clone()

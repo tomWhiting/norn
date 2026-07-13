@@ -12,6 +12,7 @@ pub mod fork;
 pub mod goals;
 pub mod handle;
 pub mod instance;
+mod mcp;
 pub mod message_router;
 pub mod output;
 pub mod pending_messages;

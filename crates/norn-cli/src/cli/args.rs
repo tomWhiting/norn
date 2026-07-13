@@ -456,6 +456,26 @@ pub enum McpCmd {
         #[arg(value_name = "URI")]
         uri: String,
     },
+    /// List effective configured MCP servers and their activation state.
+    List,
+    /// Approve one or every shared-project MCP definition.
+    Approve {
+        /// Server name to approve.
+        #[arg(value_name = "NAME", required_unless_present = "all")]
+        name: Option<String>,
+        /// Approve every effective shared-project server.
+        #[arg(long, conflicts_with = "name")]
+        all: bool,
+    },
+    /// Revoke approval for one or every shared-project MCP name.
+    Revoke {
+        /// Server name to revoke.
+        #[arg(value_name = "NAME", required_unless_present = "all")]
+        name: Option<String>,
+        /// Revoke every effective shared-project server.
+        #[arg(long, conflicts_with = "name")]
+        all: bool,
+    },
 }
 
 /// Arguments for the `completion` subcommand (NC17).
@@ -573,6 +593,31 @@ mod tests {
             }) => assert_eq!(uri, "stdio://path/to/server"),
             other => panic!("expected mcp connect subcommand, got {other:?}"),
         }
+    }
+
+    #[test]
+    fn mcp_approval_subcommands_parse_name_or_all() {
+        let named = Cli::try_parse_from(["norn", "mcp", "approve", "docs"]).unwrap();
+        assert!(matches!(
+            named.command,
+            Some(Command::Mcp {
+                command: McpCmd::Approve {
+                    name: Some(ref name),
+                    all: false,
+                },
+            }) if name == "docs"
+        ));
+
+        let all = Cli::try_parse_from(["norn", "mcp", "revoke", "--all"]).unwrap();
+        assert!(matches!(
+            all.command,
+            Some(Command::Mcp {
+                command: McpCmd::Revoke {
+                    name: None,
+                    all: true,
+                },
+            })
+        ));
     }
 
     #[test]

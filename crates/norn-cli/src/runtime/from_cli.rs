@@ -31,9 +31,9 @@ use norn::tool::context::SharedWorkingDir;
 use crate::cli::{BuildError, Cli};
 use crate::config::{
     AppliedOverrides, ConfigOverrides, apply_config_overrides_to_loop, apply_loop_config_overrides,
-    apply_settings_to_agent_config, collect_extension_uris, default_agent_loop_config,
-    load_rule_engine, merge_event_schemas, parse_inline_or_file, parse_kv,
-    resolve_index_lock_deadline, session_data_dir,
+    apply_settings_to_agent_config, default_agent_loop_config, load_rule_engine,
+    merge_event_schemas, parse_inline_or_file, parse_kv, resolve_index_lock_deadline,
+    session_data_dir,
 };
 use crate::runtime::build_write_tool;
 
@@ -78,25 +78,18 @@ pub fn builder_from_cli(
     let config_overrides = ConfigOverrides::parse(&cli.config)?;
     let write_tool = build_write_tool(&profile, &config_overrides)?;
 
-    // Validate `--extension` URIs (an empty / whitespace value is a hard
-    // argument error, matching the brief's non-empty-URI requirement). MCP
-    // wiring does not yet consume the URIs on any driver path, so a
-    // non-empty set is surfaced as an explicit not-yet-wired warning rather
-    // than being silently dropped.
-    let extension_uris = collect_extension_uris(&cli.extension)?;
-    if !extension_uris.is_empty() {
-        tracing::warn!(
-            count = extension_uris.len(),
-            "--extension URIs are validated but not yet wired to an MCP client on \
-             this assembly path; the listed servers will not be connected",
-        );
-    }
-
     let mut builder = AgentBuilder::new(provider)
         .profile(profile)
         .working_dir(cwd.clone())
         .load_runtime_base()
         .tool(Box::new(write_tool));
+    if let Some(servers) = settings
+        .agent
+        .as_ref()
+        .and_then(|agent| agent.mcp_servers.clone())
+    {
+        builder = builder.mcp_servers(servers);
+    }
 
     // `--workspace-root` confines the file tools to the given root.
     // `AgentBuilder::build` validates it through the single shared

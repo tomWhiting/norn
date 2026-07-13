@@ -14,11 +14,13 @@ pub mod fork_tool;
 pub mod handle;
 pub mod infra;
 pub(crate) mod lifecycle;
+mod mcp_selection;
 pub mod reclaim;
 pub mod spawn;
 pub(crate) mod spawn_context;
 pub(crate) mod spawn_launch;
 pub(crate) mod spawn_outcome;
+mod spawn_schema;
 pub(crate) mod variant_resolve;
 
 pub use self::coord::{

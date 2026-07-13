@@ -266,6 +266,9 @@ pub(crate) fn forward_shared_extensions(parent_ctx: &ToolContext, child_ctx: &mu
     if let Some(variants) = parent_ctx.get_extension::<crate::agent::variants::VariantCatalog>() {
         child_ctx.insert_extension(variants);
     }
+    if let Some(runtime) = parent_ctx.get_extension::<crate::integration::McpRuntime>() {
+        child_ctx.insert_extension(runtime);
+    }
 }
 
 /// Forward convention diagnostics into a spawned/forked child context.

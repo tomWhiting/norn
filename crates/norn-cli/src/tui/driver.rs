@@ -23,7 +23,8 @@ use norn_tui::terminal::caps::TerminalCaps;
 use crate::cli::{Cli, ExitCode};
 use crate::print::build_provider;
 use crate::runtime::{
-    builder_from_cli, cli_coordination_envelope, resolve_invocation, warn_unmatched_tool_flag_names,
+    builder_from_cli, cli_coordination_envelope, connect_mcp_runtime, resolve_invocation,
+    warn_unmatched_tool_flag_names,
 };
 
 use super::startup_trace::StartupTrace;
@@ -110,30 +111,49 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         build_provider(resolved.provider_kind, &provider_overrides, &resolved.model).await?;
     startup_trace.mark("provider_built");
 
+    let mcp = connect_mcp_runtime(&resolved.project_root, &resolved.mcp_servers).await?;
+    for server in &mcp.pending_project_servers {
+        eprintln!(
+            "norn: MCP server '{server}' is waiting for project approval; from {} run `norn mcp approve {server}`",
+            resolved.project_root.display(),
+        );
+    }
+    for (server, error) in &mcp.failed_servers {
+        eprintln!("norn: MCP server '{server}' is unavailable; continuing without it: {error}");
+    }
+    if let Some(error) = mcp.project_approval_error.as_deref() {
+        eprintln!("norn: project MCP approvals could not be read: {error}");
+    }
+    startup_trace.mark("mcp_ready");
+
     // The status-panel registry: one clone stays with the TUI event loop
     // (`TuiInputs.registry`), the other is handed to the builder so the
     // registered root and every spawned child share one registry.
     let registry = AgentRegistry::shared();
     let envelope = cli_coordination_envelope(resolved.delegation_depth);
 
-    let agent = builder_from_cli(
+    let mut builder = builder_from_cli(
         cli,
         built_provider.as_arc(),
         resolved.profile,
         &resolved.settings,
         &resolved.applied,
-    )?
-    .execution_mode(ExecutionMode::Interactive)
-    .lsp_workspace(Arc::clone(&lsp_workspace))
-    .lsp_backend(Arc::clone(&lsp_backend))
-    .agent_registry(Arc::clone(&registry))
-    .child_policy(envelope.child_policy.clone())
-    .child_result_capacity(envelope.child_result_capacity)
-    .event_channel_capacity(AGENT_EVENT_CHANNEL_CAPACITY)
-    .inbound_capacity(envelope.child_policy.inbound_capacity)
-    .register_root("/root".to_string(), "lead".to_string())
-    .terminal_reclamation(false)
-    .build()?;
+    )?;
+    if let Some(runtime) = mcp.runtime {
+        builder = builder.mcp_runtime(runtime);
+    }
+    let agent = builder
+        .execution_mode(ExecutionMode::Interactive)
+        .lsp_workspace(Arc::clone(&lsp_workspace))
+        .lsp_backend(Arc::clone(&lsp_backend))
+        .agent_registry(Arc::clone(&registry))
+        .child_policy(envelope.child_policy.clone())
+        .child_result_capacity(envelope.child_result_capacity)
+        .event_channel_capacity(AGENT_EVENT_CHANNEL_CAPACITY)
+        .inbound_capacity(envelope.child_policy.inbound_capacity)
+        .register_root("/root".to_string(), "lead".to_string())
+        .terminal_reclamation(false)
+        .build()?;
     startup_trace.mark("runtime_built");
 
     let mut parts = agent.into_parts();
