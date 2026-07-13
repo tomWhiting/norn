@@ -227,8 +227,13 @@ fn require_position(
 }
 
 fn map_backend_err(err: &LspBackendError) -> ToolError {
-    ToolError::ExecutionFailed {
-        reason: err.to_string(),
+    match err {
+        LspBackendError::DescriptorAdmission(error) => {
+            ToolError::DescriptorAdmission(Box::new((**error).clone()))
+        }
+        other => ToolError::ExecutionFailed {
+            reason: other.to_string(),
+        },
     }
 }
 

@@ -326,7 +326,7 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
         &resolved.applied,
     )?
     .execution_mode(ExecutionMode::Headless)
-    .lsp_backend(build_lsp_backend())
+    .lsp_backend(build_lsp_backend().map_err(|error| PrintError::Agent(error.to_string()))?)
     .agent_registry(AgentRegistry::shared())
     .child_policy(envelope.child_policy.clone())
     .child_result_capacity(envelope.child_result_capacity)

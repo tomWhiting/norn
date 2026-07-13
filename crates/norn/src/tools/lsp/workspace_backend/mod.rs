@@ -10,10 +10,11 @@
 //! call-hierarchy fallback used by `related_tests`.
 
 pub mod adapter;
+mod admission;
 pub mod mapping;
 pub mod runnables;
 
 #[cfg(test)]
 mod stub_tests;
 
-pub use self::adapter::{WorkspaceLspBackend, build_lsp_backend};
+pub use self::adapter::{WorkspaceLspBackend, build_lsp_backend, build_lsp_workspace};

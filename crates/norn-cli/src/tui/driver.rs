@@ -13,7 +13,7 @@ use std::sync::Arc;
 use norn::agent::registry::AgentRegistry;
 use norn::agent_loop::runner::driver_executor;
 use norn::system_prompt::ExecutionMode;
-use norn::tools::lsp::{LspBackend, LspWorkspace, WorkspaceLspBackend};
+use norn::tools::lsp::{LspBackend, WorkspaceLspBackend, build_lsp_workspace};
 
 use norn_tui::TuiInputs;
 use norn_tui::input::history::{InputHistory, default_history_path};
@@ -84,9 +84,9 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     // fast path all observe the same language-server processes for the
     // duration of the run. The builder forwards both handles into the
     // diagnostics post-check pipeline.
-    let lsp_workspace = Arc::new(LspWorkspace::with_builtins());
+    let lsp_workspace = build_lsp_workspace()?;
     let lsp_backend: Arc<dyn LspBackend> =
-        Arc::new(WorkspaceLspBackend::new(Arc::clone(&lsp_workspace)));
+        Arc::new(WorkspaceLspBackend::new(Arc::clone(&lsp_workspace))?);
     startup_trace.mark("lsp_workspace_ready");
 
     let resolved = resolve_invocation(cli)?;

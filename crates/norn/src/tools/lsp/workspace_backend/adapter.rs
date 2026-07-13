@@ -41,6 +41,7 @@ use lsp::workspace::LspWorkspace;
 use super::super::backend::{
     LspBackend, LspBackendError, LspDiagnostic, LspHover, LspLocation, LspSymbol, TestRunnable,
 };
+use super::admission::NornServerProcessAdmission;
 use super::mapping::{
     METHOD_NOT_FOUND_CODE, MtimeResult, file_mtime, file_mtime_or_deleted, map_diagnostic,
     map_document_symbols, map_goto_response, map_hover, map_location, map_lsp_error, path_to_uri,
@@ -91,12 +92,18 @@ pub struct WorkspaceLspBackend {
 }
 
 impl WorkspaceLspBackend {
-    /// Wraps an existing [`LspWorkspace`] in the adapter.
-    pub fn new(workspace: Arc<LspWorkspace>) -> Self {
-        Self {
+    /// Wrap a workspace only when every physical server spawn is governed.
+    pub fn new(workspace: Arc<LspWorkspace>) -> Result<Self, LspBackendError> {
+        if !workspace.has_process_admission() {
+            return Err(LspBackendError::ProtocolError {
+                reason: "LSP workspace has no language-server process admission authority"
+                    .to_owned(),
+            });
+        }
+        Ok(Self {
             workspace,
             tracked: Mutex::new(HashMap::new()),
-        }
+        })
     }
 
     /// Borrow the wrapped [`Arc<LspWorkspace>`] so callers that hold the
@@ -503,13 +510,29 @@ impl LspBackend for WorkspaceLspBackend {
 
 /// Construct a [`WorkspaceLspBackend`] backed by an [`LspWorkspace`] with
 /// all built-in language server configurations pre-registered.
-pub fn build_lsp_backend() -> Arc<WorkspaceLspBackend> {
-    let workspace = Arc::new(LspWorkspace::with_builtins());
-    Arc::new(WorkspaceLspBackend::new(workspace))
+pub fn build_lsp_workspace() -> Result<Arc<LspWorkspace>, LspBackendError> {
+    let admission = NornServerProcessAdmission::new()
+        .map_err(|error| LspBackendError::DescriptorAdmission(Box::new(error)))?;
+    Ok(Arc::new(LspWorkspace::with_builtins_and_process_admission(
+        admission,
+    )))
+}
+
+/// Construct a governed backend with all built-in server configurations.
+pub fn build_lsp_backend() -> Result<Arc<WorkspaceLspBackend>, LspBackendError> {
+    let workspace = build_lsp_workspace()?;
+    Ok(Arc::new(WorkspaceLspBackend::new(workspace)?))
 }
 
 #[cfg(test)]
 impl WorkspaceLspBackend {
+    pub(crate) fn new_unmanaged_for_testing(workspace: Arc<LspWorkspace>) -> Self {
+        Self {
+            workspace,
+            tracked: Mutex::new(HashMap::new()),
+        }
+    }
+
     /// Number of files currently tracked by [`Self::ensure_synced`].
     ///
     /// Test-only accessor used by the shared-workspace contract tests to
@@ -540,11 +563,20 @@ mod tests {
     fn assert_send_sync<T: Send + Sync>() {}
 
     #[test]
+    fn production_constructor_rejects_an_unmanaged_workspace() {
+        let workspace = Arc::new(LspWorkspace::new());
+        assert!(matches!(
+            WorkspaceLspBackend::new(workspace),
+            Err(LspBackendError::ProtocolError { .. })
+        ));
+    }
+
+    #[test]
     fn workspace_backend_is_send_sync_and_arc_upcasts_to_trait_object() {
         assert_send_sync::<WorkspaceLspBackend>();
 
         let workspace = Arc::new(LspWorkspace::new());
-        let concrete = Arc::new(WorkspaceLspBackend::new(workspace));
+        let concrete = Arc::new(WorkspaceLspBackend::new_unmanaged_for_testing(workspace));
         let _backend: Arc<dyn LspBackend> = concrete;
     }
 
@@ -554,7 +586,7 @@ mod tests {
     #[tokio::test]
     async fn fresh_backend_tracks_no_files() {
         let workspace = Arc::new(LspWorkspace::new());
-        let backend = WorkspaceLspBackend::new(workspace);
+        let backend = WorkspaceLspBackend::new_unmanaged_for_testing(workspace);
         assert_eq!(backend.tracked_count().await, 0);
     }
 
@@ -565,7 +597,7 @@ mod tests {
     #[tokio::test]
     async fn workspace_accessor_returns_same_arc() {
         let workspace = Arc::new(LspWorkspace::new());
-        let backend = WorkspaceLspBackend::new(Arc::clone(&workspace));
+        let backend = WorkspaceLspBackend::new_unmanaged_for_testing(Arc::clone(&workspace));
         let recovered = backend.workspace();
         assert!(
             Arc::ptr_eq(&workspace, &recovered),
@@ -582,7 +614,7 @@ mod tests {
     #[tokio::test]
     async fn ensure_synced_failure_leaves_tracked_set_empty() {
         let workspace = Arc::new(LspWorkspace::new());
-        let backend = WorkspaceLspBackend::new(workspace);
+        let backend = WorkspaceLspBackend::new_unmanaged_for_testing(workspace);
 
         let tmp = tempfile::tempdir().unwrap();
         let path = tmp.path().join("unrecognised.unknownext");
@@ -604,7 +636,8 @@ mod tests {
     #[tokio::test]
     async fn concurrent_ensure_synced_failures_do_not_race_tracking_state() {
         let workspace = Arc::new(LspWorkspace::new());
-        let backend: Arc<dyn LspBackend> = Arc::new(WorkspaceLspBackend::new(workspace));
+        let backend: Arc<dyn LspBackend> =
+            Arc::new(WorkspaceLspBackend::new_unmanaged_for_testing(workspace));
 
         let tmp = tempfile::tempdir().unwrap();
         let path = Arc::new(tmp.path().join("unrecognised.unknownext"));

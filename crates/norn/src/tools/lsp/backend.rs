@@ -214,6 +214,10 @@ pub enum LspBackendError {
     /// The backend timed out waiting for the server.
     #[error("LSP request timed out")]
     Timeout,
+
+    /// Norn's active-descriptor budget refused a language-server spawn.
+    #[error(transparent)]
+    DescriptorAdmission(Box<crate::resource::DescriptorAdmissionError>),
 }
 
 /// Async trait for an LSP client backend.

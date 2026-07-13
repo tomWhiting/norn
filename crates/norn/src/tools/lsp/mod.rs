@@ -14,7 +14,7 @@ pub use self::backend::{
     LspSymbol, LspSymbolKind, TestRunnable, TestRunnableKind,
 };
 pub use self::tool::LspTool;
-pub use self::workspace_backend::{WorkspaceLspBackend, build_lsp_backend};
+pub use self::workspace_backend::{WorkspaceLspBackend, build_lsp_backend, build_lsp_workspace};
 
 /// Re-export of [`lsp::workspace::LspWorkspace`] so consumers of the
 /// `norn` crate (`norn-cli`, `meridian-services`) can name the workspace

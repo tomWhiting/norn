@@ -5,6 +5,7 @@
 //! provides the content-modified retry primitive used by every method on
 //! [`super::adapter::WorkspaceLspBackend`].
 
+use std::error::Error as _;
 use std::path::Path;
 use std::time::{Duration, SystemTime};
 
@@ -113,6 +114,17 @@ pub(super) fn map_lsp_error(err: lsp::error::LspError) -> LspBackendError {
     match err {
         lsp::error::LspError::Configuration(msg) => LspBackendError::NoServerForFile { path: msg },
         lsp::error::LspError::Timeout(_) => LspBackendError::Timeout,
+        lsp::error::LspError::Transport(lsp::error::TransportError::Admission(error)) => {
+            if let Some(admission) = error.source().and_then(|source| {
+                source.downcast_ref::<crate::resource::DescriptorAdmissionError>()
+            }) {
+                LspBackendError::DescriptorAdmission(Box::new(admission.clone()))
+            } else {
+                LspBackendError::ProtocolError {
+                    reason: error.to_string(),
+                }
+            }
+        }
         other => LspBackendError::ProtocolError {
             reason: other.to_string(),
         },
@@ -299,6 +311,24 @@ mod tests {
 
     fn uri(s: &str) -> lsp_types::Uri {
         s.parse().expect("valid uri")
+    }
+
+    #[test]
+    fn map_lsp_error_preserves_descriptor_admission_type() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let governor = crate::resource::DescriptorGovernor::with_capacity(1);
+        let admission = governor
+            .try_acquire(2)
+            .err()
+            .ok_or_else(|| std::io::Error::other("oversized admission unexpectedly succeeded"))?;
+        let lsp_error = lsp::error::LspError::Transport(lsp::error::TransportError::Admission(
+            lsp::server::admission::ProcessAdmissionError::new(admission),
+        ));
+        assert!(matches!(
+            map_lsp_error(lsp_error),
+            LspBackendError::DescriptorAdmission(_)
+        ));
+        Ok(())
     }
 
     // ─── One-based conversion pins ─────────────────────────────────────

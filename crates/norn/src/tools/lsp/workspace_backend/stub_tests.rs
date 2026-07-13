@@ -188,7 +188,9 @@ fn stub_fixture(python: &Path) -> StubFixture {
 
     let mut workspace = LspWorkspace::new();
     workspace.register_server(config);
-    let backend = Arc::new(WorkspaceLspBackend::new(Arc::new(workspace)));
+    let backend = Arc::new(WorkspaceLspBackend::new_unmanaged_for_testing(Arc::new(
+        workspace,
+    )));
 
     StubFixture {
         dir,

@@ -16,9 +16,9 @@ authors = ["Yggdrasil Contributors"]
 [workspace.dependencies]
 # Extracted crates — GitHub references
 claude_runner = { git = "https://github.com/tomWhiting/claude-runner" }
-diagnostics = { git = "https://github.com/tomWhiting/chiron", package = "diagnostics" }
-lsp = { git = "https://github.com/tomWhiting/chiron", package = "lsp" }
-syntax = { git = "https://github.com/tomWhiting/chiron", package = "syntax" }
+diagnostics = { git = "https://github.com/tomWhiting/chiron", package = "diagnostics", rev = "25161bc8f93484b34291184e49dc3dfdda957760" }
+lsp = { git = "https://github.com/tomWhiting/chiron", package = "lsp", rev = "25161bc8f93484b34291184e49dc3dfdda957760" }
+syntax = { git = "https://github.com/tomWhiting/chiron", package = "syntax", rev = "25161bc8f93484b34291184e49dc3dfdda957760" }
 libyggd = { git = "https://github.com/tomWhiting/yggdrasil", package = "libyggd" }
 
 # Serialization
