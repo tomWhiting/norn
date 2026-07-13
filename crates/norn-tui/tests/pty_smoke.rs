@@ -38,6 +38,7 @@ const CHILD_ACTIVITY_MARKER: &[u8] = b"read_file";
 const ROOT_INBOUND_MARKER: &[u8] = b"root inbound wake handled";
 const SOFT_WRAP_END_MARKER: &[u8] = b"wrap-omega";
 const RESIZE_MARKER: &[u8] = b"resize harness output";
+const RESIZED_STREAMING_SCROLL_REGION: &[u8] = b"\x1b[1;13r";
 const TYPE_DURING_STREAM_MARKER: &[u8] = b"stream-after-input";
 const SUBMIT_CLEAR_PROMPT: &str = "submit clear prompt before provider";
 const SUBMIT_CLEAR_PROVIDER_MARKER: &[u8] = b"submit-clear provider output";
@@ -339,8 +340,8 @@ fn run_app_handles_resize_during_streaming_output() -> Result<(), Box<dyn std::e
     assert_output_contains(&run.output, RESIZE_MARKER, "resize scenario output")?;
     assert_output_contains(
         &run.output,
-        b"\x1b[1;14r",
-        "scroll region after resize to 18 rows",
+        RESIZED_STREAMING_SCROLL_REGION,
+        "streaming scroll region after resize to 18 rows",
     )?;
 
     Ok(())
@@ -635,15 +636,18 @@ fn scenario_runtime(scenario: &str) -> Result<ScenarioRuntime, Box<dyn std::erro
             LoopContext::default(),
         )),
         "resize" => Ok((
-            Arc::new(MockProvider::new(vec![vec![
-                ProviderEvent::TextDelta {
-                    text: "resize harness output before resize\n".to_string(),
-                },
-                ProviderEvent::TextDelta {
-                    text: "resize harness output after resize\n".to_string(),
-                },
-                done_event(),
-            ]])),
+            Arc::new(DelayedProvider {
+                events: vec![
+                    ProviderEvent::TextDelta {
+                        text: "resize harness output before resize\n".to_string(),
+                    },
+                    ProviderEvent::TextDelta {
+                        text: "resize harness output after resize\n".to_string(),
+                    },
+                    done_event(),
+                ],
+                delay: Duration::from_millis(150),
+            }),
             Some("resize prompt from pty harness".to_string()),
             LoopContext::default(),
         )),
@@ -950,6 +954,12 @@ fn run_child_to_completion(
     interaction: PtyInteraction<'_>,
     size: PtySizeSpec,
 ) -> Result<PtyRun, Box<dyn std::error::Error>> {
+    // These fixtures exercise process-global PTY state, not concurrent TUI instances.
+    static PTY_TEST_LOCK: Mutex<()> = Mutex::new(());
+    let _pty_test_guard = PTY_TEST_LOCK
+        .lock()
+        .map_err(|err| io::Error::other(format!("PTY test lock poisoned: {err}")))?;
+
     let pty_system = native_pty_system();
     let pair = pty_system.openpty(PtySize {
         rows: size.rows,
@@ -1015,7 +1025,11 @@ fn run_child_to_completion(
                 pixel_width: 0,
                 pixel_height: 0,
             })?;
-            wait_for_output(&output, b"\x1b[1;14r", Duration::from_secs(5))?;
+            wait_for_output(
+                &output,
+                RESIZED_STREAMING_SCROLL_REGION,
+                Duration::from_secs(5),
+            )?;
             let mut writer = pair.master.take_writer()?;
             writer.write_all(b"\x03")?;
             writer.flush()?;
