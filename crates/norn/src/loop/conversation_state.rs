@@ -560,40 +560,36 @@ mod tests {
     }
 
     #[test]
-    fn resume_repair_drops_stale_anchor_for_first_healed_request() {
+    fn resume_repair_drops_stale_anchor_for_first_healed_request()
+    -> Result<(), Box<dyn std::error::Error>> {
         let store = EventStore::new();
-        store
-            .append(SessionEvent::UserMessage {
-                base: EventBase::new(None),
-                content: "run it".to_string(),
-            })
-            .unwrap();
-        store
-            .append(SessionEvent::AssistantMessage {
-                base: EventBase::new(None),
-                content: String::new(),
-                thinking: String::new(),
-                reasoning: Vec::new(),
-                tool_calls: vec![ToolCallEvent {
-                    call_id: "call_killed".to_string(),
-                    name: "bash".to_string(),
-                    arguments: serde_json::json!({"command": "long-running"}),
-                    kind: ToolCallKind::Function,
-                }],
-                usage: EventUsage::default(),
-                stop_reason: "tool_use".to_string(),
-                response_id: Some("resp_killed".to_string()),
-            })
-            .unwrap();
-        crate::session::repair_dangling_tool_calls(&store).unwrap();
+        store.append(SessionEvent::UserMessage {
+            base: EventBase::new(None),
+            content: "run it".to_string(),
+        })?;
+        store.append(SessionEvent::AssistantMessage {
+            base: EventBase::new(None),
+            content: String::new(),
+            thinking: String::new(),
+            reasoning: Vec::new(),
+            tool_calls: vec![ToolCallEvent {
+                call_id: "call_killed".to_string(),
+                name: "bash".to_string(),
+                arguments: serde_json::json!({"command": "long-running"}),
+                kind: ToolCallKind::Function,
+            }],
+            usage: EventUsage::default(),
+            stop_reason: "tool_use".to_string(),
+            response_id: Some("resp_killed".to_string()),
+        })?;
+        crate::session::repair_dangling_tool_calls(&store)?;
 
         let state = ConversationRequestState::new(
             &config(ConversationStateMode::ProviderThreaded),
             ProviderCapabilities::openai_responses(),
             1,
             latest_response_anchor(&store.events(), 1, false),
-        )
-        .unwrap();
+        )?;
         let mut messages = vec![message(MessageRole::System, "system")];
         messages.extend(crate::session::conversion::events_to_messages(
             &store.events(),
@@ -610,6 +606,7 @@ mod tests {
             Some("call_killed"),
         );
         assert_eq!(request_messages[4].content.as_deref(), Some("resume"));
+        Ok(())
     }
 
     #[test]
