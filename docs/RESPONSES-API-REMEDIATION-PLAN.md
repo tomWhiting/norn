@@ -255,6 +255,10 @@ recorded. Passing candidate tests do not retroactively prove either claim.
 ### Gate C: machine verification
 
 - [ ] Phase-specific tests pass.
+- [ ] Every crate touched in the round passes its complete integration surface
+  with `cargo test -p <crate> --tests`; a focused `--lib` run cannot substitute
+  for this per-round fence. Concurrency-sensitive cases additionally use the
+  distribution requirements below.
 - [x] `cargo fmt --all --check` passes.
 - [x] `cargo clippy --workspace --all-targets -- -D warnings` passes.
 - [ ] `cargo test --workspace --all-targets` passes.
@@ -338,7 +342,7 @@ The relevant phase cannot pass Gate A while its decision is open.
 | D1B | Location and access policy for fetched and other session-derived artifacts. | P0 | [x] Decided 2026-07-11: fetched documents are private session-owned artifacts beneath the trusted user-level Norn session store, never workspace files. P0 establishes a typed active-session artifact scope and migrates new fetch writes without pre-empting P3 transcript-format, historical-reference, fork-copy, or broad storage-migration decisions. Generic model file access may read/search only the active artifact subtree; it does not gain authority over credentials, indexes, raw child transcripts, or other sessions. |
 | D1C | File-descriptor exhaustion mitigation introduced by descriptor-pinned private storage and persistent agent sinks. | P0 | [x] Mandatory per the 2026-07-11 post-review owner ruling: the official CLI raises its soft `RLIMIT_NOFILE` only to a finite OS-provided ceiling, reports inherited/effective limits and a labelled descriptor snapshot through `doctor`, and preserves typed `EMFILE` versus `ENFILE` diagnostics across the P0 private/session/process boundary. Library embedders do not receive an implicit process-global mutation. Structural descriptor sharing or lazy reopen remains an explicitly owned follow-up rather than being misrepresented as solved by a higher limit. `RLIMIT_CORE=0` remains a separate open decision because it also affects spawned user commands. |
 | D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [ ] Integrated candidate ready for independent review 2026-07-13: idle retention is removed; the process-wide fail-fast weighted authority now covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback, read/search, Rhai, and debug families; Chiron is pinned to the published W8-to-W3 lease revision; and three low-limit release-path cases pass 20/20. The external review accepted D1C and the earlier idle-retention slice through `09b9d49`, and its F-1 through F-3 corrections are implemented through `d488c1a`; it did not review the later weighted-admission candidate. The candidate record explicitly excludes ordinary serialized one-shot configuration and write/edit/patch syscalls from its completeness claim and asks the reviewer to rule whether that residual emergency-headroom boundary is acceptable. Inventory acceptance and review of `ca43c1b..d488c1a` remain before closure. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
-| D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Decided 2026-07-13 in `DECISIONS-2026-07.md` section 10. The surface is retained. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption and approval are the first implementation slice; live add/remove/enable/disable/reload plus provider-visible tool refresh are the second. |
+| D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Owner decision confirmed by Tom on 2026-07-13 and attributed in `DECISIONS-2026-07.md` section 10. The surface is retained. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption and approval are the first implementation slice; live add/remove/enable/disable/reload plus provider-visible tool refresh are the second. |
 | D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
@@ -631,6 +635,12 @@ retain their intended behavior where they are operator-selected.
   unapproved project definition causes no process or network activity. Candidate
   evidence is recorded in `2026-07-13-p0-d1d-mcp-startup-candidate.md`; external
   acceptance remains open.
+- [x] Re-pin the D1D empty-extension integration regression at
+  `resolve_invocation`, the shared production validation boundary used before
+  builder assembly. The focused test passes 18/18 and the complete touched
+  `norn-cli` integration surface passes; exact suite counts and commands are in
+  `2026-07-14-p0-g1-correction.md`. This closes status-report finding G-1 only,
+  not D1D acceptance or whole-phase Gate C.
 - [ ] Add live list/inspect/add/remove/enable/disable/reload, child-only
   connections beyond the startup pool, dynamic roots, and request-boundary
   provider-tool refresh as a separate reviewable MCP slice. Root, variant, and
@@ -800,7 +810,10 @@ implemented through `37c806a` and its provisional evidence through `0e0680f`.
 D1D startup implementation is committed through `a949af1` and awaits scoped
 external acceptance; its live-mutation slice remains open. The owner Gate A and
 Gate B exceptions, final Gate C, and fresh integrated Gate D remain open. The
-final all-target run has not
+external status review at `51b83ea` accepted F-1 through F-3 and identified the
+stale D1D integration test as G-1; G-1 is corrected in
+`2026-07-14-p0-g1-correction.md`, without changing the open D1D/D1E acceptance
+gates. The final all-target run has not
 occurred: a preliminary invocation was deliberately interrupted when the host
 had about 345 MiB free and began compiling additional feature combinations; it
 is not pass/fail evidence. Three provisional reports review frozen snapshot

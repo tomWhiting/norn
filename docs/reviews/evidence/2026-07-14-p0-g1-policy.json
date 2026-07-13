@@ -1,0 +1,527 @@
+{
+  "added_line_policy_matches": {
+    "allow_or_expect_attr": [],
+    "empty_cfg_any": [],
+    "expect": [],
+    "ignore_attr": [],
+    "lint_cli_suppression": [],
+    "marker": [],
+    "panic": [],
+    "todo_macro": [],
+    "unimplemented": [],
+    "unwrap": []
+  },
+  "artifact_writer_candidates": [
+    {
+      "file": "crates/norn/build.rs",
+      "line": 40,
+      "text": "fs::write(out_dir.join(\"model_catalog_generated.rs\"), generated)"
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/blocking.rs",
+      "line": 43,
+      "text": "std::fs::create_dir_all(parent).map_err(|e| {"
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/blocking.rs",
+      "line": 47,
+      "text": "std::fs::write(path.as_str(), contents.as_str())"
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/blocking.rs",
+      "line": 101,
+      "text": "std::fs::create_dir_all(parent).map_err(|e| {"
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/blocking.rs",
+      "line": 105,
+      "text": "std::fs::write(path.as_str(), pretty)"
+    },
+    {
+      "file": "crates/norn/src/process/manager.rs",
+      "line": 132,
+      "text": "Some(path) => match PrivateRoot::create(&path) {"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 132,
+      "text": "let root = PrivateRoot::create(root_path)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 134,
+      "text": "root.create_dir_all(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 136,
+      "text": "let file = root.create_new(relative)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 186,
+      "text": "let root = PrivateRoot::open(&root_path)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 189,
+      "text": "file.set_len(committed)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 241,
+      "text": "let root = PrivateRoot::open(&root_path)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 246,
+      "text": "file.set_len(committed)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 338,
+      "text": "let root = PrivateRoot::open(&root_path)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 380,
+      "text": "active.file.set_len(committed).await?;"
+    },
+    {
+      "file": "crates/norn/src/provider/debug.rs",
+      "line": 227,
+      "text": "root.open_append_create(&relative)"
+    },
+    {
+      "file": "crates/norn/src/provider/debug.rs",
+      "line": 247,
+      "text": "let root = PrivateRoot::create(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 56,
+      "text": "std::fs::create_dir_all(codex_home)?;"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 61,
+      "text": "let mut options = OpenOptions::new();"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 62,
+      "text": "options.create_new(true).write(true);"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 75,
+      "text": "std::fs::rename(&tmp_path, &path)?;"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 80,
+      "text": "&& let Err(cleanup_err) = std::fs::remove_file(&tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 94,
+      "text": "match std::fs::remove_file(path) {"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 50,
+      "text": "let root = PrivateRoot::create(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 101,
+      "text": ".open_append_create(&self.relative)?"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 108,
+      "text": "let lock = self.root.open_lock(&self.lock_relative)?;"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 124,
+      "text": "file.set_len(u64::try_from(complete_len).map_err(io::Error::other)?)"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 37,
+      "text": "let data_root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 43,
+      "text": "data_root.create_dir_all(&store.artifacts_relative_dir())?;"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 65,
+      "text": "let data_root = PrivateRoot::open(&self.data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 66,
+      "text": "data_root.create_dir_all(&fetched_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 70,
+      "text": "let mut file = data_root.create_new(&relative)?;"
+    },
+    {
+      "file": "crates/norn/src/session/branch.rs",
+      "line": 430,
+      "text": "let root = PrivateRoot::create(brancher.manager.data_dir())?;"
+    },
+    {
+      "file": "crates/norn/src/session/branch.rs",
+      "line": 527,
+      "text": "let root = PrivateRoot::create(brancher.manager.data_dir())?;"
+    },
+    {
+      "file": "crates/norn/src/session/manager.rs",
+      "line": 579,
+      "text": "let root = PrivateRoot::open(&self.data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/manager.rs",
+      "line": 580,
+      "text": "if let Err(error) = root.remove_file(&relative)"
+    },
+    {
+      "file": "crates/norn/src/session/manager.rs",
+      "line": 609,
+      "text": "if let Err(error) = root.remove_dir_all(children_dir)"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/event_reader.rs",
+      "line": 46,
+      "text": "let root = match PrivateRoot::open(data_dir) {"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 49,
+      "text": "let root = match PrivateRoot::open(data_dir) {"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 111,
+      "text": "let root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 130,
+      "text": "if let Err(err) = root.rename(tmp_path, final_path) {"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 142,
+      "text": "if let Err(cleanup_error) = root.remove_file(tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 159,
+      "text": "let file = root.create_new(tmp_path)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 304,
+      "text": "let file = root.open_append_create(Path::new(INDEX_FILE_NAME))?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 219,
+      "text": "let root = PrivateRoot::create(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 232,
+      "text": "root.create_dir_all(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 266,
+      "text": "let root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 292,
+      "text": "let root = PrivateRoot::open(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 308,
+      "text": "let root = PrivateRoot::open(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 350,
+      "text": "let mut tmp = root.create_new(&tmp_path)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 356,
+      "text": "let link_result = write_result.and_then(|()| root.publish_new(&tmp_path, path));"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 362,
+      "text": "if let Err(error) = root.remove_file(&tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 461,
+      "text": "let root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/lock.rs",
+      "line": 143,
+      "text": "let root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/lock.rs",
+      "line": 144,
+      "text": "let file = root.open_lock(Path::new(INDEX_LOCK_FILE))?;"
+    },
+    {
+      "file": "crates/norn/src/session/spool.rs",
+      "line": 124,
+      "text": "let root = PrivateRoot::create(&self.data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/spool.rs",
+      "line": 127,
+      "text": "root.create_dir_all(&dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/spool.rs",
+      "line": 130,
+      "text": "let mut file = root.create_new(&path)?;"
+    },
+    {
+      "file": "crates/norn/src/session/spool.rs",
+      "line": 169,
+      "text": "let root = PrivateRoot::open(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/system_prompt/environment.rs",
+      "line": 179,
+      "text": "let mut options = std::fs::OpenOptions::new();"
+    },
+    {
+      "file": "crates/norn/src/tools/bash/output.rs",
+      "line": 322,
+      "text": "let root = Arc::new(PrivateRoot::create(&norn_home)?);"
+    },
+    {
+      "file": "crates/norn/src/tools/bash/output.rs",
+      "line": 327,
+      "text": "root.create_dir_all(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/tools/bash/output.rs",
+      "line": 330,
+      "text": "let mut log_file = File::from_std(root.create_new(&output_relative)?);"
+    },
+    {
+      "file": "crates/norn/src/tools/file_commit.rs",
+      "line": 45,
+      "text": "if let Err(cleanup) = tokio::fs::remove_file(&tmp).await"
+    },
+    {
+      "file": "crates/norn/src/tools/file_commit.rs",
+      "line": 125,
+      "text": "let mut file = tokio::fs::File::create(tmp).await?;"
+    },
+    {
+      "file": "crates/norn/src/tools/file_commit.rs",
+      "line": 140,
+      "text": "tokio::fs::rename(tmp, path).await"
+    },
+    {
+      "file": "crates/norn/src/tools/patch_commit.rs",
+      "line": 66,
+      "text": "PatchBlockKind::Create => tokio::fs::remove_file(&s.path)"
+    },
+    {
+      "file": "crates/norn/src/tools/patch_commit.rs",
+      "line": 143,
+      "text": "&& let Err(e) = tokio::fs::create_dir_all(parent).await"
+    },
+    {
+      "file": "crates/norn/src/tools/patch_commit.rs",
+      "line": 168,
+      "text": "if let Err(e) = tokio::fs::remove_file(&staged.path).await {"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 80,
+      "text": "PrivateRoot::create(&self.root_dir)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 85,
+      "text": "PrivateRoot::open(&self.root_dir).map_err(|error| private_io_error(&self.root_dir, &error))"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 89,
+      "text": "let root = match PrivateRoot::open(&self.root_dir) {"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 135,
+      "text": "root.create_dir_all(&group)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 141,
+      "text": "if let Err(cleanup_error) = root.remove_file(&tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 162,
+      "text": "let root = match PrivateRoot::open(&self.root_dir) {"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 276,
+      "text": ".create_new(tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 289,
+      "text": "root.rename(tmp_path, final_path)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 291,
+      "text": "root.publish_new(tmp_path, final_path)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 311,
+      "text": "match root.create_new(&relative) {"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 336,
+      "text": ".remove_file(&self.relative)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 350,
+      "text": "&& let Err(error) = self.root.remove_file(&self.relative)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 491,
+      "text": "root.create_dir_all(&self.group_relative()?)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 526,
+      "text": "root.create_dir_all(Path::new(validated))"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 531,
+      "text": "let root = match PrivateRoot::open(&self.root_dir) {"
+    },
+    {
+      "file": "crates/norn/src/tools/write.rs",
+      "line": 251,
+      "text": "&& let Err(e) = tokio::fs::create_dir_all(parent).await"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/doctor.rs",
+      "line": 167,
+      "text": "let result = std::fs::File::create(&scratch).map(|_| ());"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/doctor.rs",
+      "line": 170,
+      "text": "let _ = std::fs::remove_file(&scratch);"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/init/conventions.rs",
+      "line": 116,
+      "text": "if let Err(err) = std::fs::write(&target, rendered) {"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/init/upgrade.rs",
+      "line": 80,
+      "text": "std::fs::write(&target, rendered).map_err(|source| UpgradeError::Write {"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/slash/registry.rs",
+      "line": 478,
+      "text": "if let Err(err) = manager.rename(session_id, Some(name.to_owned())) {"
+    },
+    {
+      "file": "crates/norn-cli/src/print/step_output.rs",
+      "line": 79,
+      "text": "let mut file = std::fs::File::create(path)?;"
+    },
+    {
+      "file": "crates/norn-cli/src/print/step_output.rs",
+      "line": 93,
+      "text": "let mut file = std::fs::File::create(path)?;"
+    },
+    {
+      "file": "crates/norn-cli/src/print/step_output.rs",
+      "line": 110,
+      "text": "let mut file = std::fs::File::create(path)?;"
+    },
+    {
+      "file": "crates/norn-cli/src/print/step_output.rs",
+      "line": 145,
+      "text": "let mut file = std::fs::File::create(path)?;"
+    },
+    {
+      "file": "crates/norn-cli/src/print/step_output.rs",
+      "line": 155,
+      "text": "let mut file = std::fs::File::create(path)?;"
+    },
+    {
+      "file": "crates/norn-cli/src/print/step_output.rs",
+      "line": 243,
+      "text": "let mut file = std::fs::File::create(path)?;"
+    },
+    {
+      "file": "crates/norn-cli/src/print/step_output.rs",
+      "line": 252,
+      "text": "let mut file = std::fs::File::create(path)?;"
+    }
+  ],
+  "base": "51b83ea",
+  "changed_rust_file_count": 1,
+  "files": [
+    {
+      "file": "crates/norn-cli/tests/assembly_flag_wiring.rs",
+      "physical_lines": 751,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 28118,
+          "start": 0
+        }
+      ]
+    }
+  ],
+  "head": "880891f194a15946bc67485223f00a763890c4d2",
+  "method": {
+    "artifact_candidates": "repository-wide production/build-script lexical sweep for filesystem roots, opens, creates, mutations, publication, and removal; the retained candidate list is intentionally conservative and requires the adjacent manual ownership/lifetime classification",
+    "cfg_policy": "remove AST items whose cfg cannot be true with test=false",
+    "counter": "tokei 14.0.0 compiled with serialization support: json, cbor, yaml",
+    "parser": "ast-grep 0.42.0",
+    "rule": "docs/reviews/evidence/p0-rust-items.yml"
+  },
+  "over_500": [],
+  "test_only_file_count": 1,
+  "thin_entrypoint_violations": []
+}

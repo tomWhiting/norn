@@ -902,6 +902,11 @@ acceptance remains pending.
 
 ## 10. Layered and live MCP client direction (2026-07-13)
 
+**Owner ruling:** Tom confirmed this product direction on 2026-07-13. In
+particular, MCP roots communicate working context rather than a filesystem
+security boundary, and Norn must support machine-wide capability with
+user-, project-, agent-, CLI-, and live-session-level customization.
+
 - **MCP is a first-class runtime capability.** Norn keeps the existing stdio
   and HTTP client, tool discovery/proxying, `mcp connect`, and `mcp serve`, and
   wires configured clients into normal agent execution. The dormant settings
