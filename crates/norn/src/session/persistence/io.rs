@@ -5,15 +5,38 @@
 
 use std::fs::File;
 use std::io::{Read as _, Seek, SeekFrom, Write};
+use std::ops::{Deref, DerefMut};
 use std::path::{Path, PathBuf};
 
+use crate::resource::DescriptorPermit;
 use crate::session::events::SessionEvent;
 use crate::util::{PrivateFileIdentity, PrivateRoot, validate_private_component};
 
+use super::acquire_private_fs;
 use super::index::{read_index, sum_usage_from_events, update_session_index};
 use super::types::{
     SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,
 };
+
+#[derive(Debug)]
+pub(crate) struct AdmittedSessionFile {
+    file: File,
+    _permit: DescriptorPermit,
+}
+
+impl Deref for AdmittedSessionFile {
+    type Target = File;
+
+    fn deref(&self) -> &Self::Target {
+        &self.file
+    }
+}
+
+impl DerefMut for AdmittedSessionFile {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.file
+    }
+}
 
 #[cfg(test)]
 pub(crate) use super::event_reader::read_session_events_from;
@@ -179,7 +202,8 @@ fn path_component_is_safe(component: &std::ffi::OsStr) -> bool {
 /// corrupt line for the tolerant reader to skip, and the first append
 /// through this handle starts on a fresh line instead of concatenating
 /// onto the torn bytes (H19, reopen half).
-pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistError> {
+pub(crate) fn open_session_append(path: &Path) -> Result<AdmittedSessionFile, SessionPersistError> {
+    let permit = acquire_private_fs()?;
     let parent = path.parent().ok_or_else(|| {
         SessionPersistError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -193,7 +217,11 @@ pub(crate) fn open_session_append(path: &Path) -> Result<File, SessionPersistErr
         ))
     })?;
     let root = PrivateRoot::create(parent)?;
-    open_session_append_under(&root, Path::new(file_name))
+    let file = open_session_append_under(&root, Path::new(file_name))?;
+    Ok(AdmittedSessionFile {
+        file,
+        _permit: permit,
+    })
 }
 
 fn open_session_append_under(
@@ -232,17 +260,23 @@ fn open_session_append_under(
 pub(crate) fn open_session_append_for_entry(
     data_dir: &Path,
     entry: &SessionIndexEntry,
-) -> Result<File, SessionPersistError> {
+) -> Result<AdmittedSessionFile, SessionPersistError> {
+    let permit = acquire_private_fs()?;
     let relative = session_file_relative(entry)?;
     let root = PrivateRoot::create(data_dir)?;
-    open_session_append_under(&root, &relative)
+    let file = open_session_append_under(&root, &relative)?;
+    Ok(AdmittedSessionFile {
+        file,
+        _permit: permit,
+    })
 }
 
 /// Reopen an already-bound session path, verify its inode, then heal its tail.
 pub(crate) fn open_session_append_bound(
     path: &Path,
     identity: PrivateFileIdentity,
-) -> Result<File, SessionPersistError> {
+) -> Result<AdmittedSessionFile, SessionPersistError> {
+    let permit = acquire_private_fs()?;
     let parent = path.parent().ok_or_else(|| {
         SessionPersistError::Io(std::io::Error::new(
             std::io::ErrorKind::InvalidInput,
@@ -256,7 +290,11 @@ pub(crate) fn open_session_append_bound(
         ))
     })?;
     let root = PrivateRoot::open(parent)?;
-    reopen_bound_and_heal(&root, Path::new(file_name), identity)
+    let file = reopen_bound_and_heal(&root, Path::new(file_name), identity)?;
+    Ok(AdmittedSessionFile {
+        file,
+        _permit: permit,
+    })
 }
 
 /// Registered-entry counterpart of [`open_session_append_bound`].
@@ -264,10 +302,15 @@ pub(crate) fn open_session_append_for_entry_bound(
     data_dir: &Path,
     entry: &SessionIndexEntry,
     identity: PrivateFileIdentity,
-) -> Result<File, SessionPersistError> {
+) -> Result<AdmittedSessionFile, SessionPersistError> {
+    let permit = acquire_private_fs()?;
     let relative = session_file_relative(entry)?;
     let root = PrivateRoot::open(data_dir)?;
-    reopen_bound_and_heal(&root, &relative, identity)
+    let file = reopen_bound_and_heal(&root, &relative, identity)?;
+    Ok(AdmittedSessionFile {
+        file,
+        _permit: permit,
+    })
 }
 
 /// Stamp the versioned header into `path` atomically with the file
@@ -414,6 +457,7 @@ pub fn append_events(
         });
     };
     let relative = session_file_relative(&entry)?;
+    let permit = acquire_private_fs()?;
     let root = PrivateRoot::create(data_dir)?;
     let mut file = open_session_append_under(&root, &relative)?;
     let mut buf = Vec::new();
@@ -423,6 +467,9 @@ pub fn append_events(
     }
     file.write_all(&buf)?;
     file.sync_all()?;
+    drop(file);
+    drop(root);
+    drop(permit);
 
     let appended = u64::try_from(events.len()).unwrap_or(u64::MAX);
     let usage_delta = sum_usage_from_events(events);

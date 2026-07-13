@@ -9,8 +9,8 @@ use crate::session::events::SessionEvent;
 use crate::session::persistence::SessionPersistError;
 use crate::session::persistence::index::{sum_usage_from_events, update_session_index};
 use crate::session::persistence::io::{
-    open_session_append, open_session_append_bound, open_session_append_for_entry,
-    open_session_append_for_entry_bound,
+    AdmittedSessionFile, open_session_append, open_session_append_bound,
+    open_session_append_for_entry, open_session_append_for_entry_bound,
 };
 use crate::util::PrivateFileIdentity;
 
@@ -85,7 +85,7 @@ enum JsonlTarget {
 }
 
 impl JsonlTarget {
-    fn open_initial(&self) -> Result<std::fs::File, SessionPersistError> {
+    fn open_initial(&self) -> Result<AdmittedSessionFile, SessionPersistError> {
         match self {
             Self::Path(path) => open_session_append(path),
             Self::Registered { data_dir, entry } => open_session_append_for_entry(data_dir, entry),
@@ -95,7 +95,7 @@ impl JsonlTarget {
     fn reopen_bound(
         &self,
         identity: PrivateFileIdentity,
-    ) -> Result<std::fs::File, SessionPersistError> {
+    ) -> Result<AdmittedSessionFile, SessionPersistError> {
         match self {
             Self::Path(path) => open_session_append_bound(path, identity),
             Self::Registered { data_dir, entry } => {
@@ -224,7 +224,7 @@ impl PersistenceSink for JsonlSink {
         line.push(b'\n');
         let mut file = self.target.reopen_bound(self.identity)?;
         self.needs_newline = false;
-        write_event_line(&mut file, &mut self.needs_newline, &line)?;
+        write_event_line(&mut *file, &mut self.needs_newline, &line)?;
         let at_boundary = match self.durability {
             DurabilityPolicy::Flush => false,
             DurabilityPolicy::FsyncPerEvent => {
@@ -242,6 +242,7 @@ impl PersistenceSink for JsonlSink {
                 }
             }
         };
+        drop(file);
         if let Some(registration) = &mut self.index {
             registration.accumulate(event);
             if at_boundary && let Err(error) = registration.flush() {

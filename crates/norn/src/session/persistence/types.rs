@@ -44,6 +44,10 @@ pub enum SessionPersistError {
     #[error(transparent)]
     DescriptorExhausted(Box<crate::resource::DescriptorExhaustion>),
 
+    /// The operation could not reserve its bounded descriptor peak.
+    #[error(transparent)]
+    DescriptorAdmission(Box<crate::resource::DescriptorAdmissionError>),
+
     /// JSON (de)serialization failed.
     #[error("session persistence serde error: {0}")]
     Serde(#[from] serde_json::Error),
@@ -170,6 +174,12 @@ pub enum SessionPersistError {
 impl From<std::io::Error> for SessionPersistError {
     fn from(error: std::io::Error) -> Self {
         Self::from_io(error, "performing session persistence I/O", None)
+    }
+}
+
+impl From<crate::resource::DescriptorAdmissionError> for SessionPersistError {
+    fn from(error: crate::resource::DescriptorAdmissionError) -> Self {
+        Self::DescriptorAdmission(Box::new(error))
     }
 }
 

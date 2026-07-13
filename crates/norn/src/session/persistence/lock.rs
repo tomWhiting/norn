@@ -37,7 +37,9 @@ use std::path::{Path, PathBuf};
 use std::sync::{Condvar, LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
+use super::acquire_private_fs;
 use super::types::SessionPersistError;
+use crate::resource::DescriptorPermit;
 use crate::util::PrivateRoot;
 
 /// File name of the index lock inside the session data directory.
@@ -88,6 +90,7 @@ pub(crate) struct IndexLock {
     file: File,
     root: PrivateRoot,
     _process_guard: ProcessIndexGuard,
+    _descriptor_permit: DescriptorPermit,
 }
 
 impl IndexLock {
@@ -133,6 +136,7 @@ pub(crate) fn lock_index(
         })?),
         None => None,
     };
+    let permit = acquire_private_fs()?;
     let root = PrivateRoot::create(data_dir)?;
     let file = root.open_lock(Path::new(INDEX_LOCK_FILE))?;
     match remaining {
@@ -142,9 +146,10 @@ pub(crate) fn lock_index(
                 file,
                 root,
                 _process_guard: process_guard,
+                _descriptor_permit: permit,
             })
         }
-        Some(deadline) => lock_with_deadline(file, root, process_guard, path, deadline),
+        Some(deadline) => lock_with_deadline(file, root, process_guard, permit, path, deadline),
     }
 }
 
@@ -205,6 +210,7 @@ fn lock_with_deadline(
     file: File,
     root: PrivateRoot,
     process_guard: ProcessIndexGuard,
+    permit: DescriptorPermit,
     path: PathBuf,
     deadline: Duration,
 ) -> Result<IndexLock, SessionPersistError> {
@@ -216,6 +222,7 @@ fn lock_with_deadline(
                     file,
                     root,
                     _process_guard: process_guard,
+                    _descriptor_permit: permit,
                 });
             }
             Err(TryLockError::WouldBlock) => {

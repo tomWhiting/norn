@@ -120,6 +120,7 @@ impl SpoolWriter {
     pub fn write(&self, event_id: &EventId, output: &Value) -> Result<String, SessionPersistError> {
         let bytes = serde_json::to_vec(output)?;
         ensure_session_id_path_safe(&self.session_id)?;
+        let _permit = crate::session::persistence::acquire_private_fs()?;
         let root = PrivateRoot::create(&self.data_dir)?;
         let session_dir = PathBuf::from(&self.session_id);
         let dir = session_dir.join(SPOOL_DIR_NAME);
@@ -164,6 +165,7 @@ impl SpoolWriter {
 /// parse back into a JSON value.
 pub fn read_spooled_output(data_dir: &Path, spool_ref: &str) -> Result<Value, SessionPersistError> {
     let relative = validate_spool_ref(spool_ref)?;
+    let _permit = crate::session::persistence::acquire_private_fs()?;
     let root = PrivateRoot::open(data_dir)?;
     let mut file = root.open_read(&relative)?;
     let mut bytes = Vec::new();

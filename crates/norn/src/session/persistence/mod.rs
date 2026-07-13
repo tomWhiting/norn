@@ -53,3 +53,10 @@ pub use types::{
     SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,
     SessionStatus,
 };
+
+pub(crate) fn acquire_private_fs() -> Result<crate::resource::DescriptorPermit, SessionPersistError>
+{
+    crate::resource::DescriptorGovernor::global()?
+        .try_acquire(crate::resource::PRIVATE_FS_OPERATION_PEAK)
+        .map_err(Into::into)
+}

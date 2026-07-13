@@ -426,6 +426,7 @@ impl SessionBinding {
         // is orphan residue and a hard typed refusal.
         if let Some((brancher, _)) = &persistent {
             let rel_path = brancher.child_rel_path(&path_address);
+            let _permit = crate::session::persistence::acquire_private_fs()?;
             let root = PrivateRoot::create(brancher.manager.data_dir())?;
             if root.regular_file_exists(Path::new(&rel_path))? {
                 return Err(SessionPersistError::ChildPathOccupied { rel_path });
@@ -521,9 +522,12 @@ fn materialize_child(
     // still race file creation, but no check can close a TOCTOU window
     // against arbitrary external writers — the locked row claim is the
     // authoritative gate.
-    let root = PrivateRoot::create(brancher.manager.data_dir())?;
-    if root.regular_file_exists(Path::new(&rel_path))? {
-        return Err(SessionPersistError::ChildPathOccupied { rel_path });
+    {
+        let _permit = crate::session::persistence::acquire_private_fs()?;
+        let root = PrivateRoot::create(brancher.manager.data_dir())?;
+        if root.regular_file_exists(Path::new(&rel_path))? {
+            return Err(SessionPersistError::ChildPathOccupied { rel_path });
+        }
     }
     // Index row BEFORE the file: a crash here leaves a row without a
     // file, which resumes as an empty session (already-tolerated state).

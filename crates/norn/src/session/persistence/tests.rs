@@ -14,6 +14,61 @@ use chrono::Utc;
 
 use super::*;
 
+const SESSION_ADMISSION_CHILD: &str = "NORN_SESSION_ADMISSION_CHILD";
+
+#[test]
+fn session_descriptor_owners_retain_exact_private_fs_weight()
+-> Result<(), Box<dyn std::error::Error>> {
+    const TEST_NAME: &str =
+        "session::persistence::tests::session_descriptor_owners_retain_exact_private_fs_weight";
+    if std::env::var_os(SESSION_ADMISSION_CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args(["--exact", TEST_NAME, "--nocapture"])
+            .env(SESSION_ADMISSION_CHILD, "1")
+            .output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+        return Err(std::io::Error::other(format!(
+            "isolated session admission test failed with {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        ))
+        .into());
+    }
+
+    let governor = crate::resource::DescriptorGovernor::global()?;
+    let baseline = governor.available();
+    let admitted = baseline
+        .checked_sub(crate::resource::PRIVATE_FS_OPERATION_PEAK as usize)
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "isolated descriptor capacity {baseline} is below the private-filesystem peak"
+            ))
+        })?;
+    let temp = tempfile::tempdir()?;
+    let file = io::open_session_append(&temp.path().join("retained.jsonl"))?;
+    assert_eq!(governor.available(), admitted);
+    drop(file);
+    assert_eq!(governor.available(), baseline);
+
+    let lock = super::lock::lock_index(temp.path(), None)?;
+    assert_eq!(governor.available(), admitted);
+    drop(lock);
+    assert_eq!(governor.available(), baseline);
+
+    let all_weight = u32::try_from(baseline)?;
+    let all_capacity = governor.try_acquire(all_weight)?;
+    let error = read_index(temp.path()).err().ok_or_else(|| {
+        std::io::Error::other("session read was admitted while all capacity was reserved")
+    })?;
+    assert!(matches!(error, SessionPersistError::DescriptorAdmission(_)));
+    drop(all_capacity);
+    assert_eq!(governor.available(), baseline);
+    Ok(())
+}
+
 fn assistant_usage(input: u64, output: u64, cache_read: u64) -> Usage {
     Usage {
         input_tokens: input,

@@ -23,6 +23,7 @@ use chrono::Utc;
 use serde::Serialize;
 use uuid::Uuid;
 
+use super::acquire_private_fs;
 use super::io::{ensure_session_id_path_safe, session_file_relative};
 use super::lock::lock_index;
 use super::types::{SessionIndexEntry, SessionPersistError};
@@ -44,6 +45,7 @@ pub fn index_file_path(data_dir: &Path) -> PathBuf {
 /// hostile entry must never make every other session unlistable. The call
 /// fails only if the file itself is unreadable.
 pub fn read_index(data_dir: &Path) -> Result<Vec<SessionIndexEntry>, SessionPersistError> {
+    let _permit = acquire_private_fs()?;
     let root = match PrivateRoot::open(data_dir) {
         Ok(root) => root,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
@@ -105,6 +107,7 @@ pub fn write_index_atomic(
     data_dir: &Path,
     entries: &[SessionIndexEntry],
 ) -> Result<(), SessionPersistError> {
+    let _permit = acquire_private_fs()?;
     let root = PrivateRoot::create(data_dir)?;
     write_index_atomic_in(&root, entries)
 }
@@ -461,6 +464,7 @@ fn resolve_latest_in_working_dir_entries(
     entries: Vec<SessionIndexEntry>,
     working_dir: &Path,
 ) -> Result<SessionIndexEntry, SessionPersistError> {
+    let _permit = acquire_private_fs()?;
     let canonical_working_dir = fs::canonicalize(working_dir).ok();
     entries
         .into_iter()

@@ -573,44 +573,17 @@ impl SessionManager {
     /// lingers), and index-rewrite failures.
     pub fn delete(&self, id_or_name: &str) -> Result<SessionIndexEntry, SessionPersistError> {
         let entry = resolve_session(&self.data_dir, id_or_name)?;
-        let root = PrivateRoot::open(&self.data_dir)?;
         let relative = session_file_relative(&entry)?;
-        if let Err(error) = root.remove_file(&relative)
-            && error.kind() != std::io::ErrorKind::NotFound
         {
-            if let Some(exhaustion) = crate::resource::classify_descriptor_error(
-                &error,
-                "deleting a session file",
-                Some(&root.display_path(&relative)),
-            ) {
-                return Err(SessionPersistError::DescriptorExhausted(Box::new(
-                    exhaustion,
-                )));
-            }
-            return Err(SessionPersistError::Io(std::io::Error::new(
-                error.kind(),
-                format!(
-                    "failed to delete session file {}: {error}",
-                    root.display_path(&relative).display(),
-                ),
-            )));
-        }
-        // Root sessions may own a `{id}/` directory of child timelines
-        // (and spool payloads); remove it — and every row pointing into
-        // it — with the root. The row sweep runs UNCONDITIONALLY for
-        // roots, never gated on the directory still existing: a crash
-        // between `remove_dir_all` and the sweep on a previous delete
-        // attempt leaves phantom child rows over deleted files, and the
-        // re-run must still clear them (F3).
-        if entry.rel_path.is_none() {
-            let children_dir = Path::new(&entry.id);
-            if let Err(error) = root.remove_dir_all(children_dir)
+            let _permit = crate::session::persistence::acquire_private_fs()?;
+            let root = PrivateRoot::open(&self.data_dir)?;
+            if let Err(error) = root.remove_file(&relative)
                 && error.kind() != std::io::ErrorKind::NotFound
             {
                 if let Some(exhaustion) = crate::resource::classify_descriptor_error(
                     &error,
-                    "deleting a session artifact directory",
-                    Some(&root.display_path(children_dir)),
+                    "deleting a session file",
+                    Some(&root.display_path(&relative)),
                 ) {
                     return Err(SessionPersistError::DescriptorExhausted(Box::new(
                         exhaustion,
@@ -619,11 +592,43 @@ impl SessionManager {
                 return Err(SessionPersistError::Io(std::io::Error::new(
                     error.kind(),
                     format!(
-                        "failed to delete child-session directory {}: {error}",
-                        root.display_path(children_dir).display(),
+                        "failed to delete session file {}: {error}",
+                        root.display_path(&relative).display(),
                     ),
                 )));
             }
+            // Root sessions may own a `{id}/` directory of child timelines
+            // (and spool payloads); remove it — and every row pointing into
+            // it — with the root. The row sweep runs UNCONDITIONALLY for
+            // roots, never gated on the directory still existing: a crash
+            // between `remove_dir_all` and the sweep on a previous delete
+            // attempt leaves phantom child rows over deleted files, and the
+            // re-run must still clear them (F3).
+            if entry.rel_path.is_none() {
+                let children_dir = Path::new(&entry.id);
+                if let Err(error) = root.remove_dir_all(children_dir)
+                    && error.kind() != std::io::ErrorKind::NotFound
+                {
+                    if let Some(exhaustion) = crate::resource::classify_descriptor_error(
+                        &error,
+                        "deleting a session artifact directory",
+                        Some(&root.display_path(children_dir)),
+                    ) {
+                        return Err(SessionPersistError::DescriptorExhausted(Box::new(
+                            exhaustion,
+                        )));
+                    }
+                    return Err(SessionPersistError::Io(std::io::Error::new(
+                        error.kind(),
+                        format!(
+                            "failed to delete child-session directory {}: {error}",
+                            root.display_path(children_dir).display(),
+                        ),
+                    )));
+                }
+            }
+        }
+        if entry.rel_path.is_none() {
             let prefix = format!("{}/", entry.id);
             for child in read_index(&self.data_dir)? {
                 if child

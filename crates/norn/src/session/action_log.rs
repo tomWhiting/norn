@@ -719,6 +719,17 @@ where
     F: Fn(&Path) -> PathBuf,
 {
     let resolved = resolve(path);
+    let _permit = match crate::session::persistence::acquire_private_fs() {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::debug!(
+                path = %resolved.display(),
+                %error,
+                "follow-up expiry: file read was not admitted, treating action as expired",
+            );
+            return false;
+        }
+    };
     match std::fs::read(&resolved) {
         Ok(bytes) => hash_content(&bytes) == expected,
         Err(error) => {

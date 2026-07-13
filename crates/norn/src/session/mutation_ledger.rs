@@ -344,6 +344,17 @@ impl MutationLedger {
 /// — never silently conflated with deletion, which would miscalibrate
 /// the revert baseline.
 fn fingerprint(path: &Path) -> Fingerprint {
+    let _permit = match crate::session::persistence::acquire_private_fs() {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "mutation ledger could not admit a tracked-file read; its revert status is Unknown",
+            );
+            return Fingerprint::Unreadable;
+        }
+    };
     match std::fs::read(path) {
         Ok(bytes) => Fingerprint::Content(hash_bytes(&bytes)),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Fingerprint::Missing,

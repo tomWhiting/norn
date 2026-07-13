@@ -5,8 +5,8 @@ use std::path::{Path, PathBuf};
 
 use uuid::Uuid;
 
-use crate::session::persistence::SessionPersistError;
 use crate::session::persistence::io::ensure_session_id_path_safe;
+use crate::session::persistence::{SessionPersistError, acquire_private_fs};
 use crate::session::store::DurabilityPolicy;
 use crate::util::PrivateRoot;
 
@@ -33,6 +33,7 @@ impl SessionArtifactStore {
         durability: DurabilityPolicy,
     ) -> Result<Self, SessionPersistError> {
         ensure_session_id_path_safe(root_session_id)?;
+        let _permit = acquire_private_fs()?;
         let data_root = PrivateRoot::create(data_dir)?;
         let store = Self {
             data_dir: data_dir.to_path_buf(),
@@ -58,6 +59,7 @@ impl SessionArtifactStore {
         source_url: &str,
         content: &str,
     ) -> Result<PathBuf, SessionPersistError> {
+        let _permit = acquire_private_fs()?;
         let artifacts_dir = self.artifacts_relative_dir();
         let fetched_dir = artifacts_dir.join(FETCHED_DIR_NAME);
         let data_root = PrivateRoot::open(&self.data_dir)?;

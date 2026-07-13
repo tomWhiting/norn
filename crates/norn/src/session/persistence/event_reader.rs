@@ -7,6 +7,7 @@ use std::path::{Path, PathBuf};
 use crate::session::events::{EventId, SessionEvent};
 use crate::util::PrivateRoot;
 
+use super::acquire_private_fs;
 use super::io::{
     ensure_session_id_not_reserved, ensure_session_id_path_safe, session_file_relative,
 };
@@ -41,6 +42,7 @@ fn read_session_events_at(
     relative: &Path,
     session_id: &str,
 ) -> Result<ReplayArtifacts, SessionPersistError> {
+    let _permit = acquire_private_fs()?;
     let root = match PrivateRoot::open(data_dir) {
         Ok(root) => root,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
