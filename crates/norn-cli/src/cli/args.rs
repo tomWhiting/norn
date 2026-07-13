@@ -596,8 +596,8 @@ mod tests {
     }
 
     #[test]
-    fn mcp_approval_subcommands_parse_name_or_all() {
-        let named = Cli::try_parse_from(["norn", "mcp", "approve", "docs"]).unwrap();
+    fn mcp_approval_subcommands_parse_name_or_all() -> Result<(), clap::Error> {
+        let named = Cli::try_parse_from(["norn", "mcp", "approve", "docs"])?;
         assert!(matches!(
             named.command,
             Some(Command::Mcp {
@@ -608,7 +608,7 @@ mod tests {
             }) if name == "docs"
         ));
 
-        let all = Cli::try_parse_from(["norn", "mcp", "revoke", "--all"]).unwrap();
+        let all = Cli::try_parse_from(["norn", "mcp", "revoke", "--all"])?;
         assert!(matches!(
             all.command,
             Some(Command::Mcp {
@@ -618,6 +618,7 @@ mod tests {
                 },
             })
         ));
+        Ok(())
     }
 
     #[test]

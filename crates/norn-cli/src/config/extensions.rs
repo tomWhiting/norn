@@ -148,12 +148,11 @@ mod tests {
     }
 
     #[test]
-    fn named_and_generated_extensions_become_cli_servers() {
+    fn named_and_generated_extensions_become_cli_servers() -> Result<(), BuildError> {
         let servers = collect_extension_servers(&[
             "docs=https://example.test/mcp".to_owned(),
             "stdio:///usr/local/bin/browser".to_owned(),
-        ])
-        .unwrap();
+        ])?;
 
         assert_eq!(
             servers.get("docs").and_then(|server| server.url.as_deref()),
@@ -165,16 +164,20 @@ mod tests {
                 .and_then(|server| server.command.as_deref()),
             Some("/usr/local/bin/browser")
         );
+        Ok(())
     }
 
     #[test]
-    fn duplicate_explicit_extension_name_is_rejected() {
-        let error = collect_extension_servers(&[
+    fn duplicate_explicit_extension_name_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
+        let result = collect_extension_servers(&[
             "docs=https://one.example/mcp".to_owned(),
             "docs=https://two.example/mcp".to_owned(),
-        ])
-        .unwrap_err();
+        ]);
+        let Err(error) = result else {
+            return Err("duplicate extension name was accepted".into());
+        };
 
         assert!(error.to_string().contains("specified more than once"));
+        Ok(())
     }
 }

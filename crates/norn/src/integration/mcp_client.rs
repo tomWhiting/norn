@@ -548,6 +548,22 @@ mod tests {
     use crate::tool::envelope::ToolEnvelope;
     use crate::tool::traits::Tool;
 
+    fn scripted_error(reason: impl Into<String>) -> IntegrationError {
+        IntegrationError::McpError {
+            reason: reason.into(),
+        }
+    }
+
+    fn require_error<T>(
+        result: Result<T, IntegrationError>,
+        context: &str,
+    ) -> Result<IntegrationError, std::io::Error> {
+        match result {
+            Err(error) => Ok(error),
+            Ok(_) => Err(std::io::Error::other(context.to_owned())),
+        }
+    }
+
     fn list_response(tools: serde_json::Value) -> JsonRpcResponse {
         JsonRpcResponse {
             jsonrpc: Some("2.0".to_owned()),
@@ -584,16 +600,22 @@ mod tests {
             _request_id: u64,
         ) -> Result<JsonRpcResponse, IntegrationError> {
             // Capture the method for assertion.
-            let parsed: serde_json::Value =
-                serde_json::from_str(&payload).expect("payload is JSON");
+            let parsed: serde_json::Value = serde_json::from_str(&payload)
+                .map_err(|error| scripted_error(format!("invalid scripted request: {error}")))?;
             let method = parsed
                 .get("method")
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_owned();
-            self.seen_methods.lock().unwrap().push(method);
+            self.seen_methods
+                .lock()
+                .map_err(|_poisoned| scripted_error("scripted method lock was poisoned"))?
+                .push(method);
 
-            let mut responses = self.responses.lock().unwrap();
+            let mut responses = self
+                .responses
+                .lock()
+                .map_err(|_poisoned| scripted_error("scripted response lock was poisoned"))?;
             if responses.is_empty() {
                 return Err(IntegrationError::McpError {
                     reason: "no scripted responses left".to_owned(),
@@ -607,8 +629,9 @@ mod tests {
         }
 
         async fn notify(&self, payload: String) -> Result<(), IntegrationError> {
-            let parsed: serde_json::Value =
-                serde_json::from_str(&payload).expect("payload is JSON");
+            let parsed: serde_json::Value = serde_json::from_str(&payload).map_err(|error| {
+                scripted_error(format!("invalid scripted notification: {error}"))
+            })?;
             assert!(
                 parsed.get("id").is_none(),
                 "notification must not carry an id"
@@ -618,7 +641,10 @@ mod tests {
                 .and_then(serde_json::Value::as_str)
                 .unwrap_or("")
                 .to_owned();
-            self.seen_methods.lock().unwrap().push(method);
+            self.seen_methods
+                .lock()
+                .map_err(|_poisoned| scripted_error("scripted method lock was poisoned"))?
+                .push(method);
             Ok(())
         }
 
@@ -653,7 +679,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn discovery_follows_every_page() {
+    async fn discovery_follows_every_page() -> Result<(), IntegrationError> {
         let transport = Box::new(ScriptedTransport {
             responses: StdMutex::new(vec![
                 paged_list_response(serde_json::json!([{"name": "alpha"}]), Some("page-2")),
@@ -663,15 +689,16 @@ mod tests {
         });
         let client = McpClient::from_transport("test", transport);
 
-        let tools = client.discover_tools().await.unwrap();
+        let tools = client.discover_tools().await?;
 
         assert_eq!(tools.len(), 2);
         assert_eq!(tools[0].name, "alpha");
         assert_eq!(tools[1].name, "beta");
+        Ok(())
     }
 
     #[tokio::test]
-    async fn repeated_pagination_cursor_is_rejected() {
+    async fn repeated_pagination_cursor_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let transport = Box::new(ScriptedTransport {
             responses: StdMutex::new(vec![
                 paged_list_response(serde_json::json!([]), Some("same")),
@@ -681,13 +708,18 @@ mod tests {
         });
         let client = McpClient::from_transport("test", transport);
 
-        let error = client.discover_tools().await.unwrap_err();
+        let error = require_error(
+            client.discover_tools().await,
+            "repeated pagination cursor was accepted",
+        )?;
 
         assert!(error.to_string().contains("repeated a pagination cursor"));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn duplicate_and_reserved_tool_schemas_are_rejected() {
+    async fn duplicate_and_reserved_tool_schemas_are_rejected()
+    -> Result<(), Box<dyn std::error::Error>> {
         let duplicate = Box::new(ScriptedTransport {
             responses: StdMutex::new(vec![list_response(serde_json::json!([
                 {"name": "same"},
@@ -696,7 +728,10 @@ mod tests {
             seen_methods: StdMutex::new(Vec::new()),
         });
         let duplicate_client = McpClient::from_transport("test", duplicate);
-        let duplicate_error = duplicate_client.discover_tools().await.unwrap_err();
+        let duplicate_error = require_error(
+            duplicate_client.discover_tools().await,
+            "duplicate MCP tool names were accepted",
+        )?;
         assert!(duplicate_error.to_string().contains("duplicate tool"));
 
         let reserved = Box::new(ScriptedTransport {
@@ -710,16 +745,20 @@ mod tests {
             seen_methods: StdMutex::new(Vec::new()),
         });
         let reserved_client = McpClient::from_transport("test", reserved);
-        let reserved_error = reserved_client.discover_tools().await.unwrap_err();
+        let reserved_error = require_error(
+            reserved_client.discover_tools().await,
+            "reserved MCP tool schema property was accepted",
+        )?;
         assert!(
             reserved_error
                 .to_string()
                 .contains("reserved tool envelope")
         );
+        Ok(())
     }
 
     #[tokio::test]
-    async fn mismatched_response_id_is_rejected() {
+    async fn mismatched_response_id_is_rejected() -> Result<(), Box<dyn std::error::Error>> {
         let transport = Box::new(ScriptedTransport {
             responses: StdMutex::new(vec![JsonRpcResponse {
                 jsonrpc: Some("2.0".to_owned()),
@@ -731,13 +770,17 @@ mod tests {
         });
         let client = McpClient::from_transport("test", transport);
 
-        let error = client.discover_tools().await.unwrap_err();
+        let error = require_error(
+            client.discover_tools().await,
+            "mismatched MCP response id was accepted",
+        )?;
 
         assert!(error.to_string().contains("did not match request"));
+        Ok(())
     }
 
     #[tokio::test]
-    async fn notification_has_no_id_and_consumes_no_response() {
+    async fn notification_has_no_id_and_consumes_no_response() -> Result<(), IntegrationError> {
         let transport = Box::new(ScriptedTransport {
             responses: StdMutex::new(Vec::new()),
             seen_methods: StdMutex::new(Vec::new()),
@@ -746,8 +789,8 @@ mod tests {
 
         inner
             .notify("notifications/initialized", serde_json::json!({}))
-            .await
-            .unwrap();
+            .await?;
+        Ok(())
     }
 
     #[test]
@@ -774,7 +817,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proxy_tool_forwards_call() {
+    async fn proxy_tool_forwards_call() -> Result<(), Box<dyn std::error::Error>> {
         let transport = Box::new(ScriptedTransport {
             responses: StdMutex::new(vec![
                 list_response(serde_json::json!([
@@ -794,12 +837,14 @@ mod tests {
         });
 
         let mut client = McpClient::from_transport("test", transport);
-        client.tools = client.discover_tools().await.unwrap();
+        client.tools = client.discover_tools().await?;
         let mut registry = ToolRegistry::new();
         client.register_tools(&mut registry);
 
         let qualified = super::super::mcp_proxy::qualified_tool_name("test", "echo");
-        let tool = registry.get(&qualified).expect("qualified echo registered");
+        let tool = registry
+            .get(&qualified)
+            .ok_or_else(|| std::io::Error::other("qualified echo tool was not registered"))?;
         let envelope = ToolEnvelope {
             tool_call_id: "tc_1".to_owned(),
             tool_name: qualified,
@@ -807,13 +852,15 @@ mod tests {
             metadata: serde_json::Value::Null,
         };
         let ctx = ToolContext::empty();
-        let output = tool.execute(&envelope, &ctx).await.unwrap();
+        let output = tool.execute(&envelope, &ctx).await?;
         assert_eq!(output.content["text"], "hello world");
         assert!(!output.is_error());
+        Ok(())
     }
 
     #[tokio::test]
-    async fn malformed_tool_result_is_not_reported_as_success() {
+    async fn malformed_tool_result_is_not_reported_as_success()
+    -> Result<(), Box<dyn std::error::Error>> {
         let transport = Box::new(ScriptedTransport {
             responses: StdMutex::new(vec![
                 list_response(serde_json::json!([{"name": "broken"}])),
@@ -827,11 +874,13 @@ mod tests {
             seen_methods: StdMutex::new(Vec::new()),
         });
         let mut client = McpClient::from_transport("test", transport);
-        client.tools = client.discover_tools().await.unwrap();
+        client.tools = client.discover_tools().await?;
         let mut registry = ToolRegistry::new();
         client.register_tools(&mut registry);
         let qualified = super::super::mcp_proxy::qualified_tool_name("test", "broken");
-        let tool = registry.get(&qualified).expect("qualified tool registered");
+        let tool = registry
+            .get(&qualified)
+            .ok_or_else(|| std::io::Error::other("qualified broken tool was not registered"))?;
         let result = tool
             .execute(
                 &ToolEnvelope {
@@ -845,6 +894,7 @@ mod tests {
             .await;
 
         assert!(result.is_err());
+        Ok(())
     }
 
     #[tokio::test]
