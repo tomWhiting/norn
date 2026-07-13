@@ -1,5 +1,6 @@
 //! Assembly fences for CLI flags that reach the library `AgentBuilder`
-//! through [`builder_from_cli`](norn_cli::runtime::builder_from_cli):
+//! through [`resolve_invocation`](norn_cli::runtime::resolve_invocation) and
+//! [`builder_from_cli`](norn_cli::runtime::builder_from_cli):
 //! `--workspace-root`, `--variables`, `--rules`, `--extension`, and the
 //! settings/`-c` agent-config merge. These pin the flags that a Wave-6
 //! adversarial review found silently ignored or regressed on the unified
@@ -45,8 +46,7 @@ fn merged_settings() -> Result<NornSettings, BuildError> {
         .map_err(|error| BuildError::Argument(error.to_string()))
 }
 
-/// Resolve the profile pipeline and return the un-built builder (or the
-/// `builder_from_cli` argument error, e.g. an empty `--extension` URI).
+/// Resolve the profile pipeline and return the un-built builder.
 fn resolve_builder(cli: &Cli) -> Result<AgentBuilder, BuildError> {
     let settings = merged_settings()?;
     let mut profile = resolve_profile(cli.profile.as_deref()).expect("resolve profile");
@@ -375,14 +375,14 @@ async fn variables_with_default_persisted_session_builds() {
 // Finding 6 (LOW): `--extension` URIs must be validated (empty is an error).
 // ---------------------------------------------------------------------------
 
-/// An empty `--extension` URI is a hard argument error, matching main and
-/// the brief's non-empty-URI requirement (not silently accepted).
+/// An empty `--extension` URI is a hard error at the shared invocation
+/// resolution boundary used by both production drivers.
 #[test]
 #[serial_test::serial]
 fn empty_extension_uri_is_argument_error() {
     with_isolated_env(|| {
         let cli = Cli::parse_from(["norn", "-m", "gpt-5.5", "--no-session", "--extension", ""]);
-        match resolve_builder(&cli) {
+        match resolve_invocation(&cli) {
             Ok(_) => panic!("expected an argument error for an empty --extension URI"),
             Err(BuildError::Argument(_)) => {}
             Err(other) => panic!("expected an argument error, got: {other:?}"),
@@ -390,8 +390,8 @@ fn empty_extension_uri_is_argument_error() {
     });
 }
 
-/// A non-empty `--extension` URI passes validation and assembly still
-/// succeeds (the URI is carried past validation, not rejected).
+/// A non-empty `--extension` URI passes shared invocation resolution and the
+/// resolved profile/settings continue through builder assembly.
 #[test]
 #[serial_test::serial]
 fn valid_extension_uri_passes_validation() {
@@ -404,8 +404,26 @@ fn valid_extension_uri_passes_validation() {
             "--extension",
             "stdio://server",
         ]);
-        // Assembles without error — the flag is validated, not a hard stop.
-        let _ = build_parts(&cli);
+        let resolved = resolve_invocation(&cli);
+        assert!(resolved.is_ok(), "valid extension must resolve");
+        let Ok(resolved) = resolved else {
+            return;
+        };
+        let builder = builder_from_cli(
+            &cli,
+            mock_provider(),
+            resolved.profile,
+            &resolved.settings,
+            &resolved.applied,
+        );
+        assert!(builder.is_ok(), "resolved extension must reach assembly");
+        let Ok(builder) = builder else {
+            return;
+        };
+        assert!(
+            builder.build().is_ok(),
+            "resolved extension must build successfully"
+        );
     });
 }
 
