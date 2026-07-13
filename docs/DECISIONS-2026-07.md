@@ -892,8 +892,79 @@ acceptance remains pending.
   repetitions. Claims using `all`, `every`, or `complete` include the exact
   generated inventory they quantify. A single successful suite invocation is
   an observation, not stability evidence.
-- **Dormant MCP settings remain undecided.** The active explicit MCP commands
-  and library types are not in question. The consumerless layered
-  `mcp_servers` settings surface must either be removed or receive a
-  provenance-aware containment design and hostile no-authority evidence before
-  P0 can close.
+- **Dormant MCP settings will become the real layered client surface.** The
+  `mcp_servers` schema is retained and completed, not removed. User, shared
+  project, private project-local, per-agent, CLI, and live-session scopes are
+  all supported under the contract in section 10. P0 must preserve source
+  provenance and prove that a shared project definition is not activated
+  before its remembered project approval; subsequent MCP slices complete
+  startup consumption and live mutation.
+
+## 10. Layered and live MCP client direction (2026-07-13)
+
+- **MCP is a first-class runtime capability.** Norn keeps the existing stdio
+  and HTTP client, tool discovery/proxying, `mcp connect`, and `mcp serve`, and
+  wires configured clients into normal agent execution. The dormant settings
+  surface is not deleted merely because its consumer is incomplete.
+- **Configuration is layered and ergonomic.** Server definitions may come from
+  user scope, shared project scope, private project-local scope, explicit CLI
+  input, or the live session. Same-name precedence is
+  `session > CLI > local > project > user`; replacement is whole-definition so
+  command, arguments, environment, URL, and headers never combine accidentally
+  across scopes. This follows the useful local/project/user shape established
+  by other coding agents while adding the live session as an explicit scope.
+- **Shared project servers use remembered approval, not prohibition.** A
+  checked-in project definition is visible immediately and may be approved for
+  the canonical project. Approval is keyed to the project and normalized
+  server definition; changing the executable, arguments, environment, URL, or
+  headers asks again. User, private local, CLI, and live-session definitions
+  are direct operator actions and do not require a second project approval.
+  Headless mode surfaces an actionable pending-approval notice instead of
+  hanging; an explicit command can approve it.
+- **Agents receive independently selectable views.** A root agent may select
+  all enabled servers or a named subset. Variants and spawned children inherit
+  by default and may select a different subset from the session's connected
+  pool; forks inherit their source agent's current view. This is customization,
+  not filesystem confinement: an MCP server may work across the computer as
+  its own configuration and operating-system access allow. A child changing
+  its view does not mutate the parent's view. Tool names are server-qualified
+  so two servers may expose the same leaf tool without nondeterministic
+  replacement.
+- **Live changes are session operations.** List, inspect, add, remove, enable,
+  disable, approve, and reload must be available without editing files or
+  restarting the whole application. A live definition is ephemeral unless the
+  operator explicitly chooses a persistent scope. Adding or removing a server
+  refreshes both dispatch and the provider-visible tool catalogue at the next
+  request boundary; an in-flight tool call retains its connection until that
+  call completes.
+- **Project roots follow agent context.** Each MCP client exposes the agent's
+  current workspace roots and can notify a capable server when they change.
+  Roots communicate intended project context rather than pretending to be an
+  operating-system sandbox, matching the MCP roots model. Norn does not use an
+  MCP root to prohibit a user-selected server from accessing other machine
+  locations.
+- **Implementation is sliced, not deferred indefinitely.** The first slice
+  preserves provenance, validates and redacts definitions, implements approval,
+  connects selected startup servers, and installs per-agent qualified tools.
+  The second slice adds live catalog mutation and provider-tool refresh. Later
+  protocol work may add OAuth, elicitation, sampling, resources, and prompts
+  without reopening the scope model.
+
+Reference behavior: the MCP specification describes roots as dynamically
+changeable project/workspace context, and Claude Code demonstrates practical
+user, local, and shared-project server scopes with approval for shared project
+configuration. Norn adopts those useful interaction patterns without treating
+roots as an enforcement boundary.
+
+**Implementation status (2026-07-13):** the first startup slice is implemented
+as a review candidate. It preserves all five sources, fingerprints normalized
+definitions, supplies `mcp list/approve/revoke`, keeps unapproved project
+servers inactive, independently connects direct and approved stdio and
+Streamable HTTP servers, negotiates the current `2025-11-25` protocol, handles
+JSON or SSE POST responses and server ping requests, follows paginated tool
+discovery, and installs server-qualified tools through an owned runtime.
+Root, variant, and spawned-agent settings can select startup views from that
+pool. Live session mutation, request-boundary tool-catalogue refresh, connecting
+a child-only server outside the current pool, dynamic roots, HTTP GET listening,
+reconnection/resumption, and DELETE shutdown remain open and are not claimed by
+this slice.

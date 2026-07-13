@@ -338,7 +338,7 @@ The relevant phase cannot pass Gate A while its decision is open.
 | D1B | Location and access policy for fetched and other session-derived artifacts. | P0 | [x] Decided 2026-07-11: fetched documents are private session-owned artifacts beneath the trusted user-level Norn session store, never workspace files. P0 establishes a typed active-session artifact scope and migrates new fetch writes without pre-empting P3 transcript-format, historical-reference, fork-copy, or broad storage-migration decisions. Generic model file access may read/search only the active artifact subtree; it does not gain authority over credentials, indexes, raw child transcripts, or other sessions. |
 | D1C | File-descriptor exhaustion mitigation introduced by descriptor-pinned private storage and persistent agent sinks. | P0 | [x] Mandatory per the 2026-07-11 post-review owner ruling: the official CLI raises its soft `RLIMIT_NOFILE` only to a finite OS-provided ceiling, reports inherited/effective limits and a labelled descriptor snapshot through `doctor`, and preserves typed `EMFILE` versus `ENFILE` diagnostics across the P0 private/session/process boundary. Library embedders do not receive an implicit process-global mutation. Structural descriptor sharing or lazy reopen remains an explicitly owned follow-up rather than being misrepresented as solved by a higher limit. `RLIMIT_CORE=0` remains a separate open decision because it also affects spawned user commands. |
 | D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [ ] Integrated candidate ready for independent review 2026-07-13: idle retention is removed; the process-wide fail-fast weighted authority now covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback, read/search, Rhai, and debug families; Chiron is pinned to the published W8-to-W3 lease revision; and three low-limit release-path cases pass 20/20. The external review accepted D1C and the earlier idle-retention slice through `09b9d49`, and its F-1 through F-3 corrections are implemented through `d488c1a`; it did not review the later weighted-admission candidate. The candidate record explicitly excludes ordinary serialized one-shot configuration and write/edit/patch syscalls from its completeness claim and asks the reviewer to rule whether that residual emergency-headroom boundary is acceptable. Inventory acceptance and review of `ca43c1b..d488c1a` remain before closure. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
-| D1D | Remove the dormant `NornSettings.mcp_servers` configuration surface, or retain it behind provenance-aware containment and a real no-authority fixture. Active explicit MCP commands and library types are not this decision. | P0 | [ ] Open |
+| D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Decided 2026-07-13 in `DECISIONS-2026-07.md` section 10. The surface is retained. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption and approval are the first implementation slice; live add/remove/enable/disable/reload plus provider-visible tool refresh are the second. |
 | D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
@@ -372,17 +372,23 @@ close the P0 findings.
 **implementation status:** original 33 work items plus F1, D1B, D1C, legacy
 path-helper removal, missing transport/loop sentinels, SEC-05 compile contracts,
 and the TUI-history artifact correction are implemented; D1E structural
-descriptor closure is active; D1D, historical
+descriptor closure is active; D1D is decided with its provenance/approval and
+startup-consumption candidate implemented; live mutation remains a separate
+unclaimed slice; historical
 baseline evidence disposition, final Gate C, and whole-phase Gate D remain open;
 **findings addressed by candidate:** `SEC-01` through `SEC-13`, `SEC-15`,
 `SEC-16`, `BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and
-`QUAL-01`; the complete `SEC-14` claim remains open specifically at D1D;
+`QUAL-01`; the D1D startup candidate now includes provenance, approval,
+zero-activation, and real-activation fixtures, while whole-phase `SEC-14`
+acceptance remains review-gated;
 **current evidence:** the scoped closure reviews remain valid for their exact
 surfaces; corrective code is committed through `37c806a` and the provisional
-writer/LOC/bypass/traceability snapshot through `0e0680f`. The final workspace
-gate cannot be claimed from the interrupted low-disk run; **dependencies:** D1,
-D1A, D1B, and D1C resolved; D1E, D1D, and the P0-only retrospective Gate A exception
-remain open.
+writer/LOC/bypass/traceability snapshot through `0e0680f`. The D1D startup code
+is committed through `a949af1`, with its scoped policy inventory and exact gate
+observations in `2026-07-13-p0-d1d-mcp-startup-candidate.md`. The final workspace
+gate cannot be claimed from these scoped runs; **dependencies:** D1, D1A, D1B,
+D1C, and the D1D design resolved; D1E review, D1D startup review, live MCP
+mutation, and the P0-only retrospective Gate A exception remain open.
 
 ### What this phase fixes
 
@@ -618,9 +624,17 @@ retain their intended behavior where they are operator-selected.
     on success, spawn failure, timeout, cancellation,
     foreground-to-background adoption, transport drop, and shutdown under
     repeated low-limit runs; reconcile the complete inventory.
-- [ ] Resolve D1D. Remove the consumerless settings surface or retain it only
-  with explicit provenance-aware containment, redacted secret-bearing fields,
-  and a hostile real-entrypoint no-authority regression.
+- [x] Implement the D1D startup slice under the section 10 ruling: preserve source scope through
+  resolution; redact secret-bearing definition state; remember approval for a
+  canonical project plus normalized shared-project definition; connect selected
+  startup servers; install server-qualified tools per agent; and prove an
+  unapproved project definition causes no process or network activity. Candidate
+  evidence is recorded in `2026-07-13-p0-d1d-mcp-startup-candidate.md`; external
+  acceptance remains open.
+- [ ] Add live list/inspect/add/remove/enable/disable/reload, child-only
+  connections beyond the startup pool, dynamic roots, and request-boundary
+  provider-tool refresh as a separate reviewable MCP slice. Root, variant, and
+  spawned-agent startup selection from the connected pool is implemented.
 - [x] Delete or demote `session_file_path` and
   `resolved_session_file_path`; no production-compatible raw path derivation may
   remain beside the validated replacement. Both helpers are now `cfg(test)` and
@@ -640,7 +654,10 @@ retain their intended behavior where they are operator-selected.
   inventories with exact commands and inputs. The provisional code-head
   snapshot at `37c806a` records 122 changed Rust files, no production file over
   500 LOC, no thin-entrypoint violation, zero added bypass matches, and 88 raw
-  writer candidates. D1D changes require regeneration before final Gate C.
+  writer candidates. The scoped D1D regeneration over `5015e79..a949af1`
+  likewise records zero changed production files over 500 LOC, zero
+  thin-entrypoint violations, and zero added bypass matches. A complete final
+  candidate regeneration remains required at Gate C.
 - [ ] Complete the baseline-failure and finding-to-test traceability records,
   then correct rather than append to the invalidated Gate C handoff. The exact
   candidate matrix now exists in the
@@ -694,9 +711,13 @@ retain their intended behavior where they are operator-selected.
 - [x] Project/local provider-options, profile API-shape, and same-name collision
   fixtures prove no untrusted value reaches backend, environment, process, or
   network consumers.
-- [ ] A dormant-MCP provenance fixture proves merged `mcp_servers` values cannot
-  gain runtime authority before a provenance-aware, consent-gated consumer is
-  implemented.
+- [ ] Complete independent acceptance of the MCP fixture matrix. The candidate
+  proves five-scope precedence, definition-bound approval/revocation, no process
+  activation while project approval is pending, a real private-local stdio
+  handshake without approval, independent failure isolation, protocol-version
+  negotiation, server ping handling, HTTP session/version headers, and JSON/SSE
+  POST handling. Approved-project activation and end-to-end root/spawn selection
+  remain explicit test gaps; live mutation is a later slice.
 - [x] URL tests cover HTTP, userinfo, case, trailing dots, default/non-default
   ports, lookalike hosts, path variants, redirects, and canonical URLs.
 - [x] Capability/payload snapshots prove explicit and implicit canonical Codex
@@ -763,9 +784,11 @@ then becomes a P0 blocker:
 - Public `Scanner`, `scan_rule_dirs`, and `discover_skills` convenience APIs are
   trusted-input-only. Secure runtime assembly uses launch-root-aware paths; an
   embedder must not pass repository-controlled roots through the legacy APIs.
-- `mcp_servers` and its environment map are merged but currently dormant. They
-  require source provenance and explicit consent before any future runtime wiring;
-  merge precedence is not authorization.
+- MCP startup clients are now active with source provenance. Only shared
+  checked-in project definitions require remembered approval; user-owned
+  private, CLI, and future live-session scopes are direct operator input. Live
+  mutation, dynamic roots, HTTP GET/reconnect/delete behavior, and catalogue
+  refresh remain unimplemented rather than dormant.
 - Redox, ESP-IDF, and non-Unix workspace input deliberately fail closed. This
   protects the trust boundary but is a release compatibility limitation until
   equivalent no-follow filesystem primitives are implemented and reviewed.
@@ -774,8 +797,10 @@ then becomes a P0 blocker:
 
 **Current gate state:** Gate D returned `NOT READY`; the corrective candidate is
 implemented through `37c806a` and its provisional evidence through `0e0680f`.
-D1D, the owner Gate A and Gate B exceptions, final Gate C, and fresh Gate D
-remain open. The final all-target run has not
+D1D startup implementation is committed through `a949af1` and awaits scoped
+external acceptance; its live-mutation slice remains open. The owner Gate A and
+Gate B exceptions, final Gate C, and fresh integrated Gate D remain open. The
+final all-target run has not
 occurred: a preliminary invocation was deliberately interrupted when the host
 had about 345 MiB free and began compiling additional feature combinations; it
 is not pass/fail evidence. Three provisional reports review frozen snapshot
