@@ -34,7 +34,6 @@ use uuid::Uuid;
 
 use crate::config::paths::norn_dir;
 use crate::tool::context::ProcessEnv;
-use crate::util::PrivateRoot;
 
 use super::ProcessError;
 use super::handle::{ProcessCompletion, ProcessHandle, ProcessStatus};
@@ -129,20 +128,7 @@ impl ProcessManager {
     pub fn new(session_id: Option<String>, notifier: Option<Arc<dyn ProcessNotifier>>) -> Self {
         let base_token = session_id.unwrap_or_else(|| Uuid::new_v4().to_string());
         let (spool_root, spool_root_error) = match norn_dir() {
-            Some(path) => match PrivateRoot::create(&path) {
-                Ok(root) => {
-                    drop(root);
-                    (Some(path), None)
-                }
-                Err(error) => (
-                    None,
-                    Some(ProcessError::from_io(
-                        "opening the private process-spool root",
-                        Some(&path),
-                        &error,
-                    )),
-                ),
-            },
+            Some(path) => (Some(path), None),
             None => (
                 None,
                 Some(ProcessError::Io {
@@ -939,12 +925,14 @@ mod tests {
         let private_fs_permit = governor
             .acquire(crate::resource::PRIVATE_FS_OPERATION_PEAK)
             .await?;
-        let (handle, private_fs_permit) = mgr
+        let mut adoption = mgr
             .adopt("echo adopted; sleep 30", handoff, private_fs_permit)
             .await?;
         // Tee the adopted child's output into the entry's own spool, exactly as
         // a migrated command's attached capture does.
-        let (appender, mut permits) = handle.spool().appender(private_fs_permit).await?;
+        let spool = Arc::clone(adoption.handle().spool());
+        let private_fs_permit = adoption.take_private_fs_permit()?;
+        let (appender, mut permits) = spool.appender(private_fs_permit).await?;
         let stdout_permit = permits
             .split(1)
             .ok_or_else(|| std::io::Error::other("stdout admission split failed"))?;
@@ -963,6 +951,7 @@ mod tests {
             StreamTag::Stderr,
             stderr_permit,
         ));
+        let handle = adoption.commit()?;
 
         // Indistinguishable from a spawned sleeper: same id, Running status,
         // present in the list.

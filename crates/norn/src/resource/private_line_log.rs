@@ -3,19 +3,22 @@
 use std::fs::File;
 use std::io::{self, Read as _, Write as _};
 use std::path::{Path, PathBuf};
+use std::sync::{Mutex, MutexGuard};
 
-use crate::util::{PrivateRoot, validate_private_component};
+use crate::util::{PrivateFileIdentity, PrivateRoot, validate_private_component};
 
 /// One private regular file that can be read and appended one line at a time.
 ///
-/// The parent directory is descriptor-pinned and private. Every open is
-/// descriptor-relative, refuses links and non-regular files, and heals the
-/// file mode to `0600` on supported Unix targets.
+/// Each transaction reopens the private parent under weighted descriptor
+/// admission. Every file open is descriptor-relative, refuses links and
+/// non-regular files, heals mode to `0600`, and verifies the file identity
+/// captured by the first successful read or append.
 #[derive(Debug)]
 pub struct PrivateLineLog {
-    root: PrivateRoot,
+    parent: PathBuf,
     relative: PathBuf,
     lock_relative: PathBuf,
+    identity: Mutex<Option<PrivateFileIdentity>>,
 }
 
 impl PrivateLineLog {
@@ -47,27 +50,31 @@ impl PrivateLineLog {
                 )
             })?;
         validate_private_component(name, "private line-log file name")?;
-        let root = PrivateRoot::create(parent)?;
+        let _descriptor_permit = acquire_private_fs_io()?;
+        drop(PrivateRoot::create(parent)?);
         Ok(Self {
-            root,
+            parent: parent.to_path_buf(),
             relative: PathBuf::from(name),
             lock_relative: PathBuf::from(format!("{name}.lock")),
+            identity: Mutex::new(None),
         })
     }
 
     /// The diagnostic spelling of the bound file path.
     #[must_use]
     pub fn path(&self) -> PathBuf {
-        self.root.display_path(&self.relative)
+        self.parent.join(&self.relative)
     }
 
     /// Read the complete UTF-8 text file.
     pub fn read_to_string(&self) -> io::Result<String> {
-        let _lock = self.lock()?;
+        let _descriptor_permit = acquire_private_fs_io()?;
+        let root = PrivateRoot::open(&self.parent)?;
+        let _lock = self.lock(&root)?;
         let mut contents = String::new();
-        self.root
-            .open_read(&self.relative)?
-            .read_to_string(&mut contents)?;
+        let mut file = root.open_read(&self.relative)?;
+        self.verify_or_bind(&file)?;
+        file.read_to_string(&mut contents)?;
         if !contents.is_empty() && !contents.ends_with('\n') {
             let complete_len = contents.rfind('\n').map_or(0, |position| position + 1);
             contents.truncate(complete_len);
@@ -90,25 +97,51 @@ impl PrivateLineLog {
         let mut record = Vec::with_capacity(line.len() + 1);
         record.extend_from_slice(line.as_bytes());
         record.push(b'\n');
-        let _lock = self.lock()?;
-        match self.root.open_read_append(&self.relative) {
+        let _descriptor_permit = acquire_private_fs_io()?;
+        let root = PrivateRoot::open(&self.parent)?;
+        let _lock = self.lock(&root)?;
+        match root.open_read_append(&self.relative) {
             Ok(mut file) => {
+                self.verify_or_bind(&file)?;
                 truncate_incomplete_tail(&mut file)?;
                 file.write_all(&record)
             }
-            Err(error) if error.kind() == io::ErrorKind::NotFound => self
-                .root
-                .open_append_create(&self.relative)?
-                .write_all(&record),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {
+                let mut file = root.open_append_create(&self.relative)?;
+                self.verify_or_bind(&file)?;
+                file.write_all(&record)
+            }
             Err(error) => Err(error),
         }
     }
 
-    fn lock(&self) -> io::Result<File> {
-        let lock = self.root.open_lock(&self.lock_relative)?;
+    fn lock(&self, root: &PrivateRoot) -> io::Result<File> {
+        let lock = root.open_lock(&self.lock_relative)?;
         File::lock(&lock)?;
         Ok(lock)
     }
+
+    fn verify_or_bind(&self, file: &File) -> io::Result<()> {
+        let mut identity = self.identity()?;
+        if let Some(bound) = *identity {
+            bound.verify(file)
+        } else {
+            *identity = Some(PrivateFileIdentity::capture(file)?);
+            Ok(())
+        }
+    }
+
+    fn identity(&self) -> io::Result<MutexGuard<'_, Option<PrivateFileIdentity>>> {
+        self.identity.lock().map_err(|error| {
+            io::Error::other(format!(
+                "private line-log identity lock is poisoned: {error}"
+            ))
+        })
+    }
+}
+
+fn acquire_private_fs_io() -> io::Result<crate::resource::DescriptorPermit> {
+    crate::resource::acquire_private_fs().map_err(io::Error::other)
 }
 
 fn truncate_incomplete_tail(file: &mut File) -> io::Result<()> {

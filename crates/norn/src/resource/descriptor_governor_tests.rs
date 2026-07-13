@@ -104,3 +104,57 @@ async fn fail_fast_admission_recovers_after_capacity_returns()
     assert_eq!(governor.available(), 2);
     Ok(())
 }
+
+#[test]
+fn live_foreign_growth_refuses_admission_without_leaking_capacity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let governor = DescriptorGovernor::with_capacity(5);
+    let snapshot = DescriptorSnapshot {
+        limits: Some(DescriptorLimits {
+            soft: Some(10),
+            hard: Some(10),
+        }),
+        limits_error: None,
+        open: Some(DescriptorOpenCount {
+            count: 9,
+            source: "foreign-growth-fixture",
+            includes_observer: false,
+        }),
+        open_error: None,
+    };
+
+    let error = governor
+        .try_acquire_with_snapshot(1, snapshot)
+        .err()
+        .ok_or_else(|| std::io::Error::other("unsafe live admission unexpectedly succeeded"))?;
+
+    assert!(error.to_string().contains("live descriptor usage"));
+    assert_eq!(governor.available(), 5);
+    Ok(())
+}
+
+#[test]
+fn live_snapshot_accepts_exact_observer_reserve_boundary() -> Result<(), Box<dyn std::error::Error>>
+{
+    let governor = DescriptorGovernor::with_capacity(5);
+    let snapshot = DescriptorSnapshot {
+        limits: Some(DescriptorLimits {
+            soft: Some(10),
+            hard: Some(10),
+        }),
+        limits_error: None,
+        open: Some(DescriptorOpenCount {
+            count: 8,
+            source: "observer-boundary-fixture",
+            includes_observer: false,
+        }),
+        open_error: None,
+    };
+
+    let admitted = governor.try_acquire_with_snapshot(1, snapshot)?;
+
+    assert_eq!(governor.available(), 4);
+    drop(admitted);
+    assert_eq!(governor.available(), 5);
+    Ok(())
+}

@@ -41,6 +41,66 @@ pub(crate) struct ProcessHandoff {
     stderr_task: Option<DrainTask>,
 }
 
+/// An adopted process that is not yet safe to expose as a background result.
+///
+/// Cancellation or any early return before [`Self::commit`] synchronously
+/// kills the process group. This keeps the adoption-to-spool-attachment await
+/// seam from leaving a running manager entry whose originating tool call no
+/// longer owns it.
+pub(crate) struct PendingAdoption {
+    handle: ProcessHandle,
+    private_fs_permit: Option<DescriptorPermit>,
+    armed: bool,
+}
+
+impl PendingAdoption {
+    fn new(handle: ProcessHandle, private_fs_permit: DescriptorPermit) -> Self {
+        Self {
+            handle,
+            private_fs_permit: Some(private_fs_permit),
+            armed: true,
+        }
+    }
+
+    pub(crate) fn handle(&self) -> &ProcessHandle {
+        &self.handle
+    }
+
+    pub(crate) fn take_private_fs_permit(&mut self) -> Result<DescriptorPermit, ProcessError> {
+        self.private_fs_permit
+            .take()
+            .ok_or_else(|| ProcessError::Io {
+                operation: "attaching an adopted-process spool".to_owned(),
+                reason: "private-filesystem admission was already transferred".to_owned(),
+            })
+    }
+
+    pub(crate) fn commit(mut self) -> Result<ProcessHandle, ProcessError> {
+        if self.private_fs_permit.is_some() {
+            return Err(ProcessError::Io {
+                operation: "committing an adopted process".to_owned(),
+                reason: "spool attachment did not consume private-filesystem admission".to_owned(),
+            });
+        }
+        self.armed = false;
+        Ok(self.handle.clone())
+    }
+
+    pub(crate) fn abort(mut self) -> ProcessStatus {
+        self.handle.kill_blocking();
+        self.armed = false;
+        self.handle.status()
+    }
+}
+
+impl Drop for PendingAdoption {
+    fn drop(&mut self) {
+        if self.armed {
+            self.handle.kill_blocking();
+        }
+    }
+}
+
 impl ProcessHandoff {
     pub(crate) fn new(child: Child, stdout_task: DrainTask, stderr_task: DrainTask) -> Self {
         Self {
@@ -207,7 +267,7 @@ impl ProcessManager {
         command: &str,
         handoff: ProcessHandoff,
         private_fs_permit: DescriptorPermit,
-    ) -> Result<(ProcessHandle, DescriptorPermit), ProcessError> {
+    ) -> Result<PendingAdoption, ProcessError> {
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
         let (spool_root, spool_relative) = self.spool_location(id)?;
         let (spool, private_fs_permit) =
@@ -228,7 +288,7 @@ impl ProcessManager {
         } = handoff.into_parts()?;
         let pid = child.id();
         let drains = vec![stdout_task, stderr_task];
-        Ok((
+        Ok(PendingAdoption::new(
             self.install(id, command.to_owned(), pid, spool, child, drains),
             private_fs_permit,
         ))
@@ -267,6 +327,10 @@ impl ProcessManager {
         handle
     }
 }
+
+#[cfg(test)]
+#[path = "launch_tests.rs"]
+mod tests;
 
 /// Build the `sh -c` command used by manager-owned processes.
 pub(super) fn build_bg_command(

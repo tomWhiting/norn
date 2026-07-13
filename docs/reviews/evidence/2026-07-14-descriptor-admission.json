@@ -1,0 +1,11 @@
+{
+  "iterations": 20,
+  "cases": [
+    {"filter": "descriptor_retention", "passed": 20, "failed": 0},
+    {"filter": "cancelling_foreground_shell_releases_child_drains_and_capacity", "passed": 20, "failed": 0},
+    {"filter": "timeout_with_partial_output_migrates_and_seeds_spool", "passed": 20, "failed": 0},
+    {"filter": "cancellation_before_adoption_commit_kills_the_process", "passed": 20, "failed": 0},
+    {"filter": "concurrent_writers_preserve_complete_records", "passed": 20, "failed": 0},
+    {"filter": "exact_weight_supports_nested_work_without_nested_admission", "passed": 20, "failed": 0}
+  ]
+}

@@ -109,12 +109,24 @@ fn check_connectivity(provider: ProviderKind) -> bool {
         }
     };
 
-    let client = match reqwest::Client::builder().timeout(PROBE_TIMEOUT).build() {
+    let client = match reqwest::Client::builder()
+        .timeout(PROBE_TIMEOUT)
+        .pool_max_idle_per_host(0)
+        .build()
+    {
         Ok(c) => c,
         Err(err) => {
             eprintln!(
                 "[FAIL] Cannot probe provider ({err}): Internal HTTP client construction failed."
             );
+            return false;
+        }
+    };
+
+    let _descriptor_permit = match norn::resource::acquire_http_request() {
+        Ok(permit) => permit,
+        Err(err) => {
+            eprintln!("[FAIL] Cannot probe provider ({err}): Descriptor admission failed.");
             return false;
         }
     };
@@ -161,6 +173,8 @@ fn check_working_dir() -> bool {
 }
 
 fn check_dir_io(dir: &Path) -> std::io::Result<()> {
+    let _descriptor_permit =
+        norn::resource::acquire_filesystem_operation().map_err(std::io::Error::other)?;
     // Reading metadata fails if the directory is unreadable or missing.
     let _ = std::fs::metadata(dir)?;
     let scratch = dir.join(format!(".norn-doctor-write-test-{}", std::process::id()));
@@ -204,20 +218,35 @@ fn check_path_executable_shims() -> bool {
 fn path_executable_issues(tools: &[&'static str]) -> Vec<PathExecutableIssue> {
     tools
         .iter()
-        .filter_map(|&tool| {
-            let path = resolve_on_path(tool)?;
-            probe_executable(tool, path)
+        .filter_map(|&tool| match resolve_on_path(tool) {
+            Ok(Some(path)) => probe_executable(tool, path),
+            Ok(None) => None,
+            Err(error) => Some(PathExecutableIssue {
+                tool,
+                path: PathBuf::from(tool),
+                reason: format!("descriptor admission failed during PATH resolution: {error}"),
+            }),
         })
         .collect()
 }
 
 fn probe_executable(tool: &'static str, path: PathBuf) -> Option<PathExecutableIssue> {
-    if !is_executable_file(&path) {
-        return Some(PathExecutableIssue {
-            tool,
-            path,
-            reason: "file exists but is not executable".to_owned(),
-        });
+    match is_executable_file(&path) {
+        Ok(true) => {}
+        Ok(false) => {
+            return Some(PathExecutableIssue {
+                tool,
+                path,
+                reason: "file exists but is not executable".to_owned(),
+            });
+        }
+        Err(error) => {
+            return Some(PathExecutableIssue {
+                tool,
+                path,
+                reason: format!("cannot inspect executable metadata: {error}"),
+            });
+        }
     }
 
     match run_version_probe(&path) {
@@ -253,6 +282,8 @@ enum ProbeStatus {
 }
 
 fn run_version_probe(path: &Path) -> std::io::Result<ProbeStatus> {
+    let _descriptor_permit =
+        norn::resource::acquire_null_stdio_subprocess().map_err(std::io::Error::other)?;
     let mut child = Command::new(path)
         .arg("--version")
         .stdin(Stdio::null())
@@ -280,24 +311,33 @@ fn run_version_probe(path: &Path) -> std::io::Result<ProbeStatus> {
     }
 }
 
-fn resolve_on_path(tool: &str) -> Option<PathBuf> {
-    let paths = std::env::var_os("PATH")?;
-    std::env::split_paths(&paths)
+fn resolve_on_path(
+    tool: &str,
+) -> Result<Option<PathBuf>, norn::resource::DescriptorAdmissionError> {
+    let _descriptor_permit = norn::resource::acquire_filesystem_operation()?;
+    let Some(paths) = std::env::var_os("PATH") else {
+        return Ok(None);
+    };
+    Ok(std::env::split_paths(&paths)
         .map(|dir| dir.join(tool))
-        .find(|candidate| candidate.is_file())
+        .find(|candidate| candidate.is_file()))
 }
 
 #[cfg(unix)]
-fn is_executable_file(path: &Path) -> bool {
+fn is_executable_file(path: &Path) -> std::io::Result<bool> {
     use std::os::unix::fs::PermissionsExt;
 
-    std::fs::metadata(path)
-        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    let _descriptor_permit =
+        norn::resource::acquire_filesystem_operation().map_err(std::io::Error::other)?;
+    let metadata = std::fs::metadata(path)?;
+    Ok(metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
 }
 
 #[cfg(not(unix))]
-fn is_executable_file(path: &Path) -> bool {
-    path.is_file()
+fn is_executable_file(path: &Path) -> std::io::Result<bool> {
+    let _descriptor_permit =
+        norn::resource::acquire_filesystem_operation().map_err(std::io::Error::other)?;
+    Ok(path.is_file())
 }
 
 #[cfg(test)]

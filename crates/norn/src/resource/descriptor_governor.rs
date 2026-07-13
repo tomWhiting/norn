@@ -7,12 +7,10 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 
 use super::{DescriptorSnapshot, descriptor_snapshot};
 
-/// Emergency headroom outside the weighted authority.
-///
-/// This covers the descriptor observer, typed-error reporting, and short OS or
-/// runtime cleanup lag after a governed owner drops. Private filesystem
-/// transactions, pipes, transports, and sockets consume their own weights.
-const TRANSIENT_HEADROOM: u64 = 8;
+/// Exact reserve for the descriptor observer opened by `descriptor_snapshot`.
+/// Every Norn-owned filesystem, subprocess, pipe, transport, and socket family
+/// consumes its own weighted admission instead of relying on extra headroom.
+const DESCRIPTOR_OBSERVER_RESERVE: u64 = 1;
 
 /// Parent-side peak for a child with piped stdout/stderr and null stdin:
 /// four stdio pipe ends, `/dev/null`, and both Unix exec-status pipe ends.
@@ -38,6 +36,19 @@ pub(crate) const HTTP_REQUEST_PEAK: u32 = 3;
 /// and a no-replace publication destination. Simpler private reads and writes
 /// use the same conservative operation-scoped reservation.
 pub(crate) const PRIVATE_FS_OPERATION_PEAK: u32 = 5;
+
+/// Serial `ignore::Walk` peak: `walkdir` 2.5.0 retains at most ten directory
+/// handles (`WalkDirOptions::max_open`) while `ignore` may open one ignore file
+/// when constructing the matcher for the current directory.
+pub(crate) const RECURSIVE_WALK_PEAK: u32 = 11;
+
+/// Child with null stdin and captured stdout/stderr: four pipe ends, one
+/// `/dev/null` handle, and both Unix exec-status pipe ends.
+pub(crate) const OUTPUT_SUBPROCESS_PEAK: u32 = 7;
+
+/// Child with all three standard streams attached to `/dev/null`: three null
+/// handles and both Unix exec-status pipe ends.
+pub(crate) const NULL_STDIO_SUBPROCESS_PEAK: u32 = 5;
 
 static GLOBAL: OnceLock<Arc<DescriptorGovernor>> = OnceLock::new();
 
@@ -114,7 +125,7 @@ impl DescriptorGovernor {
         let ceiling = limits.soft.unwrap_or(maximum);
         let capacity = ceiling
             .saturating_sub(open)
-            .saturating_sub(TRANSIENT_HEADROOM);
+            .saturating_sub(DESCRIPTOR_OBSERVER_RESERVE);
         let capacity = capacity.min(maximum).min(u64::from(u32::MAX));
         let capacity = u32::try_from(capacity).map_err(|error| DescriptorAdmissionError {
             requested: 0,
@@ -168,6 +179,14 @@ impl DescriptorGovernor {
         &self,
         weight: u32,
     ) -> Result<DescriptorPermit, DescriptorAdmissionError> {
+        self.try_acquire_with_snapshot(weight, descriptor_snapshot())
+    }
+
+    fn try_acquire_with_snapshot(
+        &self,
+        weight: u32,
+        snapshot: DescriptorSnapshot,
+    ) -> Result<DescriptorPermit, DescriptorAdmissionError> {
         if weight == 0 || weight > self.capacity {
             return Err(self.invalid_weight(weight));
         }
@@ -177,9 +196,8 @@ impl DescriptorGovernor {
                 requested: weight,
                 capacity: Some(self.capacity),
                 reason: format!("safe active descriptor capacity is busy: {error}"),
-                snapshot: Box::new(descriptor_snapshot()),
+                snapshot: Box::new(snapshot.clone()),
             })?;
-        let snapshot = descriptor_snapshot();
         let limits = snapshot.limits;
         let open = snapshot.open.as_ref().map(|observation| observation.count);
         let available = u32::try_from(self.semaphore.available_permits()).unwrap_or(0);
@@ -187,7 +205,7 @@ impl DescriptorGovernor {
         let live_safe = limits.zip(open).is_some_and(|(limits, open)| {
             limits.soft.is_none_or(|soft| {
                 open.saturating_add(reserved)
-                    .saturating_add(TRANSIENT_HEADROOM)
+                    .saturating_add(DESCRIPTOR_OBSERVER_RESERVE)
                     <= soft
             })
         });

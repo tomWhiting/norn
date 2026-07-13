@@ -110,6 +110,25 @@ fn truncates_torn_tail_before_append() -> io::Result<()> {
 
 #[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
 #[test]
+fn rejects_bound_file_identity_replacement() -> io::Result<()> {
+    let temporary = tempfile::tempdir()?;
+    let path = temporary.path().join("history.txt");
+    let displaced = temporary.path().join("history.displaced");
+    let log = PrivateLineLog::new(&path)?;
+    log.append_line("trusted")?;
+
+    fs::rename(&path, displaced)?;
+    fs::write(&path, "replacement\n")?;
+
+    let error = log.read_to_string().err().ok_or_else(|| {
+        io::Error::other("replaced private line-log identity was unexpectedly accepted")
+    })?;
+    assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+    Ok(())
+}
+
+#[cfg(all(unix, not(any(target_os = "redox", target_os = "espidf"))))]
+#[test]
 fn concurrent_writers_preserve_complete_records() -> io::Result<()> {
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().join("history.txt");

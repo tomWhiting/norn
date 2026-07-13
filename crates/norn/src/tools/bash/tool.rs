@@ -442,7 +442,7 @@ impl Tool for BashTool {
                         .to_owned(),
                 })?;
                 let private_fs_permit = capture.take_auxiliary_permit().await?;
-                let (handle, private_fs_permit) = manager
+                let mut adoption = manager
                     .adopt(&args.command, handoff, private_fs_permit)
                     .await
                     .map_err(ToolError::from)?;
@@ -452,19 +452,19 @@ impl Tool for BashTool {
                 // registered and supervised but its post-migration output would
                 // go nowhere — a half-migrated zombie. Rather than leave that,
                 // kill the adoptee and return a named error (F6).
-                let snapshot = match capture
-                    .attach_spool(Arc::clone(handle.spool()), private_fs_permit)
-                    .await
-                {
+                let spool = Arc::clone(adoption.handle().spool());
+                let private_fs_permit =
+                    adoption.take_private_fs_permit().map_err(ToolError::from)?;
+                let snapshot = match capture.attach_spool(spool, private_fs_permit).await {
                     Ok(snapshot) => snapshot,
                     Err(attach_error) => {
-                        let final_status = handle.kill().await;
+                        let label = adoption.handle().label().to_owned();
+                        let final_status = adoption.abort();
                         return Err(ToolError::ExecutionFailed {
                             reason: format!(
                                 "failed to attach the migrated command's output spool for \
                                  process {label}: {attach_error}; the adopted process was killed \
                                  to avoid a half-migrated state (final status {final_status:?})",
-                                label = handle.label(),
                             ),
                         });
                     }
@@ -472,14 +472,16 @@ impl Tool for BashTool {
                 // F5: when the seed was delivered inline the model has already
                 // seen it, so its output cursor starts past the seed; a redirect
                 // seed leaves the cursor at 0 (see `MigrationSnapshot`).
-                manager.set_model_cursor(handle.label(), snapshot.model_cursor_seed);
-                Ok(ToolOutput::success(migrated_content(
-                    &handle,
+                manager.set_model_cursor(adoption.handle().label(), snapshot.model_cursor_seed);
+                let content = migrated_content(
+                    adoption.handle(),
                     &args.command,
                     timeout_secs,
                     tier,
                     snapshot.output,
-                )))
+                );
+                let _handle = adoption.commit().map_err(ToolError::from)?;
+                Ok(ToolOutput::success(content))
             }
             ShellOutcome::Completed(execution) => {
                 let mut content = completed_content(&execution, timeout_secs, tier);
