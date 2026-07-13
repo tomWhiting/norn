@@ -1,0 +1,21 @@
+{
+  "reviewer": "external Gate D seat",
+  "purpose": "independent battery for 2026-07-13-p0-status-report.md",
+  "head": "373c5b03383123c5ee41d26bdd1b8f9276c1f058",
+  "environment": {
+    "isolation": "dedicated git worktree, freshly wiped CARGO_TARGET_DIR (fully cold build)",
+    "toolchain": "rustc 1.96.0-nightly (80282b130 2026-03-06)",
+    "exit_codes": "captured directly to log files, never through a pipe"
+  },
+  "gates": [
+    { "gate": "cargo fmt --all --check", "exit": 0 },
+    { "gate": "cargo clippy --workspace --all-targets -- -D warnings", "exit": 0, "seconds": 103, "freshness": "cold build, all workspace crates re-analyzed" },
+    { "gate": "cargo test --workspace --all-targets", "exit": 101, "passed": 3694, "failed": 1, "suites": 13, "seconds": 152,
+      "failure": { "test": "empty_extension_uri_is_argument_error", "suite": "norn-cli tests/assembly_flag_wiring.rs", "deterministic_reruns": "3/3 fail", "classification": "stale test pinning validation at pre-D1D layer; production drivers validate via resolve_invocation (G-1)" } },
+    { "gate": "sh docs/reviews/evidence/run_p0_review_corrections.sh 20", "exit": 0,
+      "cases": [
+        { "filter": "held_lock_times_out_typed_with_config_derived_deadline", "passed": 20, "failed": 0 },
+        { "filter": "resume_repair_drops_stale_anchor_for_first_healed_request", "passed": 20, "failed": 0 }
+      ] }
+  ]
+}
