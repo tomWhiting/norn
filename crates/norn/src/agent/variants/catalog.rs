@@ -51,6 +51,9 @@ pub struct ResolvedVariant {
 /// Failure building the catalog from merged settings.
 #[derive(Debug, thiserror::Error)]
 pub enum VariantCatalogError {
+    /// The process-wide descriptor budget could not admit prompt resolution.
+    #[error(transparent)]
+    DescriptorAdmission(#[from] crate::resource::DescriptorAdmissionError),
     /// A variant supplied both `prompt` and `prompt_file`.
     #[error("variant '{name}': prompt and prompt_file are mutually exclusive — set one")]
     PromptConflict {
@@ -104,9 +107,12 @@ impl VariantCatalog {
         configured: Option<&BTreeMap<String, VariantSettings>>,
         base_dir: &Path,
     ) -> Result<Self, VariantCatalogError> {
-        let canonical_base = base_dir
-            .canonicalize()
-            .unwrap_or_else(|_| base_dir.to_path_buf());
+        let canonical_base = {
+            let _descriptor_permit = crate::resource::acquire_filesystem_operation()?;
+            base_dir
+                .canonicalize()
+                .unwrap_or_else(|_| base_dir.to_path_buf())
+        };
         Self::build_at_launch_root(configured, &canonical_base)
     }
 
@@ -211,11 +217,14 @@ fn load_prompt(
         (Some(inline), None) => Ok(Some(inline.clone())),
         (None, Some(file)) => {
             let path = base_dir.join(file);
-            let content = match workspace_relative_path(base_dir, &path) {
-                Some(relative) => {
-                    read_workspace_text_file(base_dir, &relative).map(|loaded| loaded.content)
+            let content = {
+                let _descriptor_permit = crate::resource::acquire_filesystem_operation()?;
+                match workspace_relative_path(base_dir, &path) {
+                    Some(relative) => {
+                        read_workspace_text_file(base_dir, &relative).map(|loaded| loaded.content)
+                    }
+                    None => std::fs::read_to_string(&path),
                 }
-                None => std::fs::read_to_string(&path),
             };
             content
                 .map(Some)

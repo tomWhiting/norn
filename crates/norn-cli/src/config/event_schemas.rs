@@ -102,6 +102,8 @@ pub fn parse_inline_or_file(value: &str) -> Result<Value, BuildError> {
     }
 
     let path = Path::new(value);
+    let _descriptor_permit = norn::resource::acquire_filesystem_operation()
+        .map_err(|error| BuildError::Argument(error.to_string()))?;
     let contents = std::fs::read_to_string(path).map_err(|err| {
         BuildError::Argument(format!(
             "failed to read schema file {}: {err}",

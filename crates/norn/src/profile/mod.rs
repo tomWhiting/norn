@@ -10,12 +10,14 @@
 
 pub mod loader;
 pub mod resolve;
+mod scanner;
 pub mod types;
 
 pub use loader::{
-    ProfileOrigin, ResolvedWorkspaceProfile, Scanner, capability_scan_dirs, default_scan_dirs,
+    ProfileOrigin, ResolvedWorkspaceProfile, capability_scan_dirs, default_scan_dirs,
     parse_capability, parse_profile, resolve_capability, resolve_profile,
     resolve_profile_capabilities, resolve_workspace_profile,
 };
 pub use resolve::from_profile;
+pub use scanner::Scanner;
 pub use types::{Capability, Profile, PromptCommand};

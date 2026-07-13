@@ -40,9 +40,18 @@ pub fn build_diagnostic_infra(
     lsp_backend: Option<Arc<dyn LspBackend>>,
     lsp_workspace: Option<&LspWorkspace>,
 ) -> DiagnosticInfra {
-    let workspace_root = workspace_root
-        .canonicalize()
-        .unwrap_or_else(|_| workspace_root.to_path_buf());
+    let workspace_root = match crate::resource::acquire_filesystem_operation() {
+        Ok(_descriptor_permit) => workspace_root
+            .canonicalize()
+            .unwrap_or_else(|_| workspace_root.to_path_buf()),
+        Err(error) => {
+            tracing::warn!(
+                %error,
+                "diagnostics root resolution skipped because descriptor admission failed"
+            );
+            workspace_root.to_path_buf()
+        }
+    };
     build_diagnostic_infra_at_launch_root(&workspace_root, lsp_backend, lsp_workspace)
 }
 
@@ -96,14 +105,21 @@ pub(crate) fn build_diagnostic_infra_at_launch_root(
 fn load_non_executing_conventions(
     workspace_root: &Path,
 ) -> Result<Option<ConventionsConfig>, ConventionsError> {
-    let source = match read_workspace_text_file(workspace_root, Path::new("CONVENTIONS.toml")) {
-        Ok(file) => file.content,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
-        Err(source) => {
-            return Err(ConventionsError::Io {
-                path: workspace_root.join("CONVENTIONS.toml"),
-                source,
-            });
+    let path = workspace_root.join("CONVENTIONS.toml");
+    let source = {
+        let _descriptor_permit =
+            crate::resource::acquire_filesystem_operation().map_err(|error| {
+                ConventionsError::Io {
+                    path: path.clone(),
+                    source: std::io::Error::other(error),
+                }
+            })?;
+        match read_workspace_text_file(workspace_root, Path::new("CONVENTIONS.toml")) {
+            Ok(file) => file.content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+            Err(source) => {
+                return Err(ConventionsError::Io { path, source });
+            }
         }
     };
     let sanitized = strip_process_authority(&source)?;

@@ -50,6 +50,8 @@ where
 // ─── Filesystem ────────────────────────────────────────────────────────
 
 pub(super) async fn read_file(path: &Path) -> Result<String, LspBackendError> {
+    let _descriptor_permit = crate::resource::acquire_filesystem_operation()
+        .map_err(|error| LspBackendError::DescriptorAdmission(Box::new(error)))?;
     tokio::fs::read_to_string(path)
         .await
         .map_err(|e| LspBackendError::ProtocolError {
@@ -67,6 +69,8 @@ pub(super) enum MtimeResult {
 }
 
 pub(super) fn file_mtime_or_deleted(path: &Path) -> Result<MtimeResult, LspBackendError> {
+    let _descriptor_permit = crate::resource::acquire_filesystem_operation()
+        .map_err(|error| LspBackendError::DescriptorAdmission(Box::new(error)))?;
     match std::fs::metadata(path).and_then(|m| m.modified()) {
         Ok(t) => Ok(MtimeResult::Ok(t)),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(MtimeResult::Deleted),
@@ -77,6 +81,8 @@ pub(super) fn file_mtime_or_deleted(path: &Path) -> Result<MtimeResult, LspBacke
 }
 
 pub(super) fn file_mtime(path: &Path) -> Result<SystemTime, LspBackendError> {
+    let _descriptor_permit = crate::resource::acquire_filesystem_operation()
+        .map_err(|error| LspBackendError::DescriptorAdmission(Box::new(error)))?;
     std::fs::metadata(path)
         .and_then(|m| m.modified())
         .map_err(|e| LspBackendError::ProtocolError {

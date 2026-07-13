@@ -171,9 +171,20 @@ impl Profile {
     /// frontmatter omits `name`.
     pub fn from_file(path: impl AsRef<Path>) -> Result<Self, ConfigError> {
         let path = path.as_ref();
-        let contents = std::fs::read_to_string(path).map_err(|e| ConfigError::InvalidConfig {
-            reason: format!("failed to read profile at {}: {e}", path.display()),
-        })?;
+        let contents = {
+            let _descriptor_permit =
+                crate::resource::acquire_filesystem_operation().map_err(|error| {
+                    ConfigError::InvalidConfig {
+                        reason: format!(
+                            "descriptor admission failed while reading profile at {}: {error}",
+                            path.display()
+                        ),
+                    }
+                })?;
+            std::fs::read_to_string(path).map_err(|e| ConfigError::InvalidConfig {
+                reason: format!("failed to read profile at {}: {e}", path.display()),
+            })?
+        };
         Self::from_contents(path, &contents)
     }
 

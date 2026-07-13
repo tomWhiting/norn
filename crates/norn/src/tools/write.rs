@@ -219,6 +219,8 @@ impl Tool for WriteTool {
             }
         })?;
         let path = ctx.resolve_path(&args.path);
+        let _descriptor_permit = crate::resource::acquire_private_fs()
+            .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
 
         // Workspace confinement (opt-in): re-checked at execute time so a
         // direct invocation cannot bypass the pre_validate gate.

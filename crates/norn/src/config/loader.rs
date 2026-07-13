@@ -71,6 +71,10 @@ pub(crate) fn load_settings(cwd: &Path) -> Result<LoadedSettings, ConfigError> {
 
 /// Loads settings from an already-canonical immutable launch root.
 pub(crate) fn load_settings_at_launch_root(cwd: &Path) -> Result<LoadedSettings, ConfigError> {
+    let _descriptor_permit =
+        crate::resource::acquire_private_fs().map_err(|error| ConfigError::InvalidConfig {
+            reason: error.to_string(),
+        })?;
     paths::validate_norn_home()?;
     paths::validate_user_home()?;
     let user_path = paths::settings_file();

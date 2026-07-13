@@ -53,6 +53,8 @@ pub(crate) fn save_auth_dot_json(
     codex_home: &Path,
     auth: &AuthDotJson,
 ) -> Result<(), StorageError> {
+    let _descriptor_permit =
+        crate::resource::acquire_private_fs().map_err(std::io::Error::other)?;
     std::fs::create_dir_all(codex_home)?;
     let path = auth_json_path(codex_home);
     let json = serde_json::to_vec_pretty(auth)?;
@@ -90,6 +92,8 @@ pub(crate) fn save_auth_dot_json(
 }
 
 pub(crate) fn delete_auth_dot_json(codex_home: &Path) -> Result<(), std::io::Error> {
+    let _descriptor_permit =
+        crate::resource::acquire_private_fs().map_err(std::io::Error::other)?;
     let path = auth_json_path(codex_home);
     match std::fs::remove_file(path) {
         Ok(()) => Ok(()),
@@ -112,6 +116,8 @@ fn temp_json_path(codex_home: &Path) -> PathBuf {
 }
 
 fn load_file(codex_home: &Path) -> Result<Option<AuthDotJson>, std::io::Error> {
+    let _descriptor_permit =
+        crate::resource::acquire_private_fs().map_err(std::io::Error::other)?;
     let path = auth_json_path(codex_home);
     match std::fs::read_to_string(path) {
         Ok(raw) => serde_json::from_str(&raw)

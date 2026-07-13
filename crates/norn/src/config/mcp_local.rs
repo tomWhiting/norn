@@ -40,6 +40,10 @@ pub fn project_local_mcp_settings_path(project_root: &Path) -> Result<PathBuf, C
 pub(crate) fn load_project_local_mcp_settings(
     project_root: &Path,
 ) -> Result<NornSettings, ConfigError> {
+    let _descriptor_permit =
+        crate::resource::acquire_private_fs().map_err(|error| ConfigError::InvalidConfig {
+            reason: error.to_string(),
+        })?;
     let path = project_local_mcp_settings_path(project_root)?;
     let contents = match std::fs::read_to_string(&path) {
         Ok(contents) => contents,

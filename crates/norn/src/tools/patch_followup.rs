@@ -78,7 +78,21 @@ pub(super) async fn strict_escalation_follow_ups(output: &ToolOutput) -> Vec<Fol
             if file_hashes.contains_key(&path) {
                 continue;
             }
-            match tokio::fs::read(&path).await {
+            let read_result = {
+                let _descriptor_permit = match crate::resource::acquire_filesystem_operation() {
+                    Ok(permit) => permit,
+                    Err(error) => {
+                        tracing::warn!(
+                            path = %path.display(),
+                            %error,
+                            "apply_patch follow-up omitted because descriptor admission failed"
+                        );
+                        return Vec::new();
+                    }
+                };
+                tokio::fs::read(&path).await
+            };
+            match read_result {
                 Ok(bytes) => {
                     file_hashes.insert(path, hash_content(&bytes));
                 }

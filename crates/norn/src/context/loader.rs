@@ -92,13 +92,22 @@ impl ContextLoader {
     /// loader trivially testable with `tempfile::tempdir`.
     #[must_use]
     pub fn load(cwd: &Path) -> Self {
-        let cwd = cwd.canonicalize().unwrap_or_else(|error| {
-            tracing::warn!(
-                error = %error,
-                "failed to resolve context workspace root; project context will be unavailable"
-            );
-            cwd.to_path_buf()
-        });
+        let cwd = match crate::resource::acquire_filesystem_operation() {
+            Ok(_descriptor_permit) => cwd.canonicalize().unwrap_or_else(|error| {
+                tracing::warn!(
+                    error = %error,
+                    "failed to resolve context workspace root; project context will be unavailable"
+                );
+                cwd.to_path_buf()
+            }),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "context workspace-root resolution skipped because descriptor admission failed"
+                );
+                cwd.to_path_buf()
+            }
+        };
         Self::load_at_launch_root(&cwd)
     }
 
@@ -160,26 +169,35 @@ impl ContextLoader {
     /// changed (re-read, cleared, or newly populated). Returns `false`
     /// when the layer's state matches the prior observation.
     fn refresh_layer(slot: &mut Option<ContextFile>, path: &Path) -> bool {
-        let on_disk_mtime = match std::fs::metadata(path) {
-            Ok(meta) => match meta.modified() {
-                Ok(m) => Some(Some(m)),
-                Err(_) => Some(None),
-            },
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-            Err(e) => {
-                tracing::warn!(
-                    "Failed to stat context file {} during staleness check: {e}",
-                    path.display(),
-                );
-                // Treat any non-NotFound stat error as "layer is no longer
-                // observable" — clear the slot if we had one, otherwise
-                // it stays absent. This matches the policy applied at
-                // load time where read failures clear the layer.
-                if slot.is_some() {
-                    *slot = None;
-                    return true;
+        let on_disk_mtime = {
+            let _descriptor_permit = match crate::resource::acquire_filesystem_operation() {
+                Ok(permit) => permit,
+                Err(error) => {
+                    tracing::warn!(
+                        path = %path.display(),
+                        %error,
+                        "context staleness check skipped because descriptor admission failed"
+                    );
+                    return false;
                 }
-                return false;
+            };
+            match std::fs::metadata(path) {
+                Ok(meta) => match meta.modified() {
+                    Ok(m) => Some(Some(m)),
+                    Err(_) => Some(None),
+                },
+                Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                Err(e) => {
+                    tracing::warn!(
+                        "Failed to stat context file {} during staleness check: {e}",
+                        path.display(),
+                    );
+                    if slot.is_some() {
+                        *slot = None;
+                        return true;
+                    }
+                    return false;
+                }
             }
         };
 
@@ -219,19 +237,32 @@ impl ContextLoader {
         root: &Path,
         relative: &Path,
     ) -> bool {
-        let on_disk_mtime = match workspace_file_mtime(root, relative) {
-            Ok(mtime) => Some(mtime),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
-            Err(error) => {
-                tracing::warn!(
-                    "Refusing workspace context file {} during staleness check: {error}",
-                    root.join(relative).display(),
-                );
-                if slot.is_some() {
-                    *slot = None;
-                    return true;
+        let on_disk_mtime = {
+            let _descriptor_permit = match crate::resource::acquire_filesystem_operation() {
+                Ok(permit) => permit,
+                Err(error) => {
+                    tracing::warn!(
+                        path = %root.join(relative).display(),
+                        %error,
+                        "workspace context staleness check skipped because descriptor admission failed"
+                    );
+                    return false;
                 }
-                return false;
+            };
+            match workspace_file_mtime(root, relative) {
+                Ok(mtime) => Some(mtime),
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+                Err(error) => {
+                    tracing::warn!(
+                        "Refusing workspace context file {} during staleness check: {error}",
+                        root.join(relative).display(),
+                    );
+                    if slot.is_some() {
+                        *slot = None;
+                        return true;
+                    }
+                    return false;
+                }
             }
         };
 
@@ -302,6 +333,17 @@ fn user_norn_md_path() -> Option<PathBuf> {
 /// with `mtime: None`, which NX-002's staleness check treats as
 /// "always re-read".
 fn read_context_file(path: PathBuf) -> Option<ContextFile> {
+    let _descriptor_permit = match crate::resource::acquire_filesystem_operation() {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "context file read skipped because descriptor admission failed"
+            );
+            return None;
+        }
+    };
     let content = match std::fs::read_to_string(&path) {
         Ok(s) => s,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -323,6 +365,17 @@ fn read_context_file(path: PathBuf) -> Option<ContextFile> {
 
 fn read_workspace_context_file(root: &Path, relative: &Path) -> Option<ContextFile> {
     let path = root.join(relative);
+    let _descriptor_permit = match crate::resource::acquire_filesystem_operation() {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "workspace context read skipped because descriptor admission failed"
+            );
+            return None;
+        }
+    };
     let loaded = match read_workspace_text_file(root, relative) {
         Ok(loaded) => loaded,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {

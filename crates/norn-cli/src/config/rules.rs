@@ -31,6 +31,8 @@ use crate::cli::BuildError;
 /// Returns [`BuildError::Argument`] when the file cannot be read or when
 /// [`parse_rule_file`] rejects the contents.
 pub fn load_rule_engine(path: &Path) -> Result<RuleEngine, BuildError> {
+    let _descriptor_permit = norn::resource::acquire_filesystem_operation()
+        .map_err(|error| BuildError::Argument(error.to_string()))?;
     let contents = std::fs::read_to_string(path).map_err(|err| {
         BuildError::Argument(format!(
             "failed to read rules file {}: {err}",

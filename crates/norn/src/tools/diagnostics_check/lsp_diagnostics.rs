@@ -125,7 +125,16 @@ pub(super) async fn try_lsp_diagnostics_for_rules(
     // file once up front so wait-for-publish and the merge filter compare
     // like with like; otherwise a symlinked spelling of the same file
     // never matches and the path always times out into FellBack.
-    let canonical_file = canonicalize_or_fallback(file_path).await;
+    let canonical_file = match canonicalize_or_fallback(file_path).await {
+        Ok(path) => path,
+        Err(error) => {
+            findings.errors.push(format!(
+                "{} [lsp] descriptor admission failed before path resolution: {error}",
+                file_path.display()
+            ));
+            return LspDiagnosticsOutcome::Used;
+        }
+    };
 
     // R1 race-prevention: subscribe BEFORE triggering flycheck so the
     // broadcast send cannot race ahead of our receiver. Broadcasts have
@@ -175,10 +184,13 @@ pub(super) async fn try_lsp_diagnostics_for_rules(
 /// [`DiagnosticAggregator`](lsp::features::diagnostics::DiagnosticAggregator)
 /// uses to derive its storage keys, so paths compared against broadcast
 /// updates use the same spelling as the aggregator's keys.
-async fn canonicalize_or_fallback(path: &Path) -> PathBuf {
+async fn canonicalize_or_fallback(
+    path: &Path,
+) -> Result<PathBuf, crate::resource::DescriptorAdmissionError> {
+    let _descriptor_permit = crate::resource::acquire_filesystem_operation()?;
     match tokio::fs::canonicalize(path).await {
-        Ok(canonical) => canonical,
-        Err(_) => path.to_path_buf(),
+        Ok(canonical) => Ok(canonical),
+        Err(_) => Ok(path.to_path_buf()),
     }
 }
 

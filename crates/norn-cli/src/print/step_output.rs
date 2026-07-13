@@ -17,6 +17,14 @@ use super::output::{
 };
 use crate::cli::{Cli, OutputFormat};
 
+fn create_output_file(
+    path: &std::path::Path,
+) -> std::io::Result<(norn::resource::FilesystemOperationPermit, std::fs::File)> {
+    let permit = norn::resource::acquire_filesystem_operation().map_err(std::io::Error::other)?;
+    let file = std::fs::File::create(path)?;
+    Ok((permit, file))
+}
+
 /// Post-step output data bundled for the output writers. Eliminates
 /// the `too_many_arguments` lint without sacrificing the named-field
 /// clarity that the orchestrator needs.
@@ -76,7 +84,7 @@ fn write_text(
     diagnostics: &[norn::integration::NornDiagnostic],
 ) -> Result<(), PrintError> {
     if let Some(path) = cli.output.as_ref() {
-        let mut file = std::fs::File::create(path)?;
+        let (_descriptor_permit, mut file) = create_output_file(path)?;
         let mut stderr = std::io::stderr().lock();
         render_text(&mut file, &mut stderr, output, diagnostics, cli.quiet)?;
         return Ok(());
@@ -90,7 +98,7 @@ fn write_text(
 fn write_json(cli: &Cli, step: &StepOutput<'_>) -> Result<(), PrintError> {
     let envelope = step.envelope();
     if let Some(path) = cli.output.as_ref() {
-        let mut file = std::fs::File::create(path)?;
+        let (_descriptor_permit, mut file) = create_output_file(path)?;
         render_json(&mut file, &envelope)?;
         return Ok(());
     }
@@ -107,7 +115,7 @@ fn write_stream_completed(
     diagnostics: &[norn::integration::NornDiagnostic],
 ) -> Result<(), PrintError> {
     if let Some(path) = cli.output.as_ref() {
-        let mut file = std::fs::File::create(path)?;
+        let (_descriptor_permit, mut file) = create_output_file(path)?;
         emit_stream_completed(&mut file, output, usage, stop, diagnostics)?;
         return Ok(());
     }
@@ -142,7 +150,7 @@ pub(crate) fn write_handled_locally(
                 diagnostics: &diagnostics,
             };
             if let Some(path) = cli.output.as_ref() {
-                let mut file = std::fs::File::create(path)?;
+                let (_descriptor_permit, mut file) = create_output_file(path)?;
                 render_json(&mut file, &envelope)?;
             } else {
                 let mut stdout = std::io::stdout().lock();
@@ -152,7 +160,7 @@ pub(crate) fn write_handled_locally(
         }
         OutputFormat::StreamJson => {
             if let Some(path) = cli.output.as_ref() {
-                let mut file = std::fs::File::create(path)?;
+                let (_descriptor_permit, mut file) = create_output_file(path)?;
                 emit_stream_completed(&mut file, None, &usage, &StopInfo::Completed, &diagnostics)?;
             } else {
                 let mut stdout = std::io::stdout().lock();
@@ -240,7 +248,7 @@ fn write_error_envelope(
                 diagnostics: &[],
             };
             if let Some(path) = cli.output.as_ref() {
-                let mut file = std::fs::File::create(path)?;
+                let (_descriptor_permit, mut file) = create_output_file(path)?;
                 render_json(&mut file, &envelope)
             } else {
                 let mut stdout = std::io::stdout().lock();
@@ -249,7 +257,7 @@ fn write_error_envelope(
         }
         OutputFormat::StreamJson => {
             if let Some(path) = cli.output.as_ref() {
-                let mut file = std::fs::File::create(path)?;
+                let (_descriptor_permit, mut file) = create_output_file(path)?;
                 emit_stream_completed(&mut file, None, &usage, stop, &[])
             } else {
                 let mut stdout = std::io::stdout().lock();

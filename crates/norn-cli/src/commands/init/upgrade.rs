@@ -68,15 +68,29 @@ fn run_upgrade_inner(input: Option<PathBuf>, output: Option<PathBuf>) -> Result<
         &cwd,
         input.unwrap_or_else(|| PathBuf::from(DEFAULT_FILENAME)),
     );
-    let contents = std::fs::read_to_string(&input_path).map_err(|source| UpgradeError::Read {
-        path: input_path.display().to_string(),
-        source,
-    })?;
+    let contents = {
+        let _descriptor_permit = norn::resource::acquire_filesystem_operation()
+            .map_err(std::io::Error::other)
+            .map_err(|source| UpgradeError::Read {
+                path: input_path.display().to_string(),
+                source,
+            })?;
+        std::fs::read_to_string(&input_path).map_err(|source| UpgradeError::Read {
+            path: input_path.display().to_string(),
+            source,
+        })?
+    };
 
     let rendered = upgrade_conventions(&contents, &input_path.display().to_string())?;
 
     if let Some(path) = output {
         let target = resolve_path(&cwd, path);
+        let _descriptor_permit = norn::resource::acquire_filesystem_operation()
+            .map_err(std::io::Error::other)
+            .map_err(|source| UpgradeError::Write {
+                path: target.display().to_string(),
+                source,
+            })?;
         std::fs::write(&target, rendered).map_err(|source| UpgradeError::Write {
             path: target.display().to_string(),
             source,

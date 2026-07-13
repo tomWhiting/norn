@@ -179,6 +179,8 @@ impl Tool for ApplyPatchTool {
         let blocks = parse_blocks(&args.patch).map_err(|e| ToolError::ExecutionFailed {
             reason: format!("patch parse failed: {e}"),
         })?;
+        let _descriptor_permit = crate::resource::acquire_private_fs()
+            .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
 
         let effective_wd = effective_working_dir(args.working_dir.as_deref(), ctx);
         if args.working_dir.is_some()

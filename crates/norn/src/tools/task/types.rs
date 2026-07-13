@@ -70,10 +70,16 @@ pub trait TaskStore: Send + Sync {
     fn create(&self, entry: TaskEntry) -> Result<(), ToolError>;
 
     /// Retrieve a task by id.
-    fn get(&self, id: &str) -> Option<TaskEntry>;
+    ///
+    /// # Errors
+    /// Returns a storage error when the backend cannot inspect the task.
+    fn get(&self, id: &str) -> Result<Option<TaskEntry>, ToolError>;
 
     /// List tasks, optionally filtered by status.
-    fn list(&self, filter: Option<TaskStatus>) -> Vec<TaskEntry>;
+    ///
+    /// # Errors
+    /// Returns a storage error when the backend cannot enumerate tasks.
+    fn list(&self, filter: Option<TaskStatus>) -> Result<Vec<TaskEntry>, ToolError>;
 
     /// Update fields of an existing task. Missing fields are left untouched.
     ///
@@ -110,9 +116,12 @@ pub trait TaskStore: Send + Sync {
     /// Return the direct children of `parent_id`, ordered by creation time.
     ///
     /// Stores that do not support hierarchical tasks return an empty vector.
-    fn children(&self, parent_id: &str) -> Vec<TaskEntry> {
+    ///
+    /// # Errors
+    /// Returns a storage error when the backend cannot enumerate tasks.
+    fn children(&self, parent_id: &str) -> Result<Vec<TaskEntry>, ToolError> {
         let _ = parent_id;
-        Vec::new()
+        Ok(Vec::new())
     }
 
     /// Walk the parent chain from `task_id` to the root, inclusive.
@@ -158,8 +167,11 @@ pub trait TaskStore: Send + Sync {
     /// Return all known task group slugs.
     ///
     /// Stores that do not support task groups return an empty vector.
-    fn list_groups(&self) -> Vec<String> {
-        Vec::new()
+    ///
+    /// # Errors
+    /// Returns a storage error when the backend cannot enumerate groups.
+    fn list_groups(&self) -> Result<Vec<String>, ToolError> {
+        Ok(Vec::new())
     }
 }
 

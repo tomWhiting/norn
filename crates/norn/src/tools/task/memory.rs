@@ -53,11 +53,11 @@ impl TaskStore for InMemoryTaskStore {
         Ok(())
     }
 
-    fn get(&self, id: &str) -> Option<TaskEntry> {
-        self.inner.lock().get(id).cloned()
+    fn get(&self, id: &str) -> Result<Option<TaskEntry>, ToolError> {
+        Ok(self.inner.lock().get(id).cloned())
     }
 
-    fn list(&self, filter: Option<TaskStatus>) -> Vec<TaskEntry> {
+    fn list(&self, filter: Option<TaskStatus>) -> Result<Vec<TaskEntry>, ToolError> {
         let guard = self.inner.lock();
         let mut out: Vec<TaskEntry> = guard
             .values()
@@ -65,7 +65,7 @@ impl TaskStore for InMemoryTaskStore {
             .cloned()
             .collect();
         out.sort_by_key(|e| e.created_at);
-        out
+        Ok(out)
     }
 
     fn update(
@@ -119,7 +119,7 @@ impl TaskStore for InMemoryTaskStore {
         Ok(())
     }
 
-    fn children(&self, parent_id: &str) -> Vec<TaskEntry> {
+    fn children(&self, parent_id: &str) -> Result<Vec<TaskEntry>, ToolError> {
         let guard = self.inner.lock();
         let mut out: Vec<TaskEntry> = guard
             .values()
@@ -127,7 +127,7 @@ impl TaskStore for InMemoryTaskStore {
             .cloned()
             .collect();
         out.sort_by_key(|e| e.created_at);
-        out
+        Ok(out)
     }
 
     fn ancestors(&self, task_id: &str) -> Result<Vec<TaskEntry>, ToolError> {
@@ -173,10 +173,10 @@ impl TaskStore for InMemoryTaskStore {
         Ok(())
     }
 
-    fn list_groups(&self) -> Vec<String> {
+    fn list_groups(&self) -> Result<Vec<String>, ToolError> {
         let mut out: Vec<String> = self.groups.lock().iter().cloned().collect();
         out.sort();
-        out
+        Ok(out)
     }
 }
 
@@ -213,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn create_subtask_sets_parent_and_lists_children() {
+    fn create_subtask_sets_parent_and_lists_children() -> Result<(), ToolError> {
         let store = InMemoryTaskStore::new();
         store.create(entry("parent", TaskStatus::Pending)).unwrap();
         for i in 0..3 {
@@ -221,11 +221,12 @@ mod tests {
                 .create_subtask("parent", entry(&format!("child-{i}"), TaskStatus::Pending))
                 .unwrap();
         }
-        let children = store.children("parent");
+        let children = store.children("parent")?;
         assert_eq!(children.len(), 3);
         for child in &children {
             assert_eq!(child.parent_task_id.as_deref(), Some("parent"));
         }
+        Ok(())
     }
 
     #[test]
@@ -268,13 +269,14 @@ mod tests {
     }
 
     #[test]
-    fn create_group_and_list_groups_round_trip() {
+    fn create_group_and_list_groups_round_trip() -> Result<(), ToolError> {
         let store = InMemoryTaskStore::new();
         store.create_group("norn-agents-wiring").unwrap();
         store.create_group("implement-hooks").unwrap();
         // Duplicate insert is idempotent.
         store.create_group("implement-hooks").unwrap();
-        let groups = store.list_groups();
+        let groups = store.list_groups()?;
         assert_eq!(groups, vec!["implement-hooks", "norn-agents-wiring"]);
+        Ok(())
     }
 }

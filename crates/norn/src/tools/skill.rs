@@ -135,24 +135,38 @@ struct SkillArgs {
 fn directory_entries(
     directory: &Path,
     workspace_root: Option<&Path>,
-) -> Vec<(PathBuf, WorkspaceEntryKind)> {
+) -> Result<Vec<(PathBuf, WorkspaceEntryKind)>, ToolError> {
+    let _descriptor_permit = admit_skill_operation()?;
     if let Some(root) = workspace_root
         && let Some(relative) = workspace_relative_path(root, directory)
     {
-        return read_workspace_directory(root, &relative).map_or_else(
-            |_| Vec::new(),
-            |entries| {
-                entries
-                    .into_iter()
-                    .map(|entry| (directory.join(entry.name), entry.kind))
-                    .collect()
-            },
-        );
+        return match read_workspace_directory(root, &relative) {
+            Ok(entries) => Ok(entries
+                .into_iter()
+                .map(|entry| (directory.join(entry.name), entry.kind))
+                .collect()),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(Vec::new()),
+            Err(error) => Err(ToolError::ExecutionFailed {
+                reason: format!(
+                    "failed to enumerate skill directory {}: {error}",
+                    directory.display()
+                ),
+            }),
+        };
     }
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return Vec::new();
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(ToolError::ExecutionFailed {
+                reason: format!(
+                    "failed to enumerate skill directory {}: {error}",
+                    directory.display()
+                ),
+            });
+        }
     };
-    entries
+    Ok(entries
         .filter_map(|entry| {
             let entry = entry.ok()?;
             let kind = match entry.file_type().ok()? {
@@ -162,23 +176,30 @@ fn directory_entries(
             };
             Some((entry.path(), kind))
         })
-        .collect()
+        .collect())
 }
 
-fn enumerate_available(dirs: &[PathBuf], workspace_root: Option<&Path>) -> Vec<String> {
+fn enumerate_available(
+    dirs: &[PathBuf],
+    workspace_root: Option<&Path>,
+) -> Result<Vec<String>, ToolError> {
     let mut names = std::collections::BTreeSet::new();
     for dir in dirs {
-        for (path, kind) in directory_entries(dir, workspace_root) {
-            if kind == WorkspaceEntryKind::Directory
-                && workspace_root
+        for (path, kind) in directory_entries(dir, workspace_root)? {
+            let directory_skill = if kind == WorkspaceEntryKind::Directory {
+                let candidate = path.join("SKILL.md");
+                let _descriptor_permit = admit_skill_operation()?;
+                workspace_root
                     .and_then(|root| {
-                        workspace_relative_path(root, &path.join("SKILL.md")).map(|relative| {
+                        workspace_relative_path(root, &candidate).map(|relative| {
                             validate_workspace_regular_file(root, &relative).is_ok()
                         })
                     })
-                    .unwrap_or_else(|| path.join("SKILL.md").is_file())
-                && let Some(name) = path.file_name().and_then(OsStr::to_str)
-            {
+                    .unwrap_or_else(|| candidate.is_file())
+            } else {
+                false
+            };
+            if directory_skill && let Some(name) = path.file_name().and_then(OsStr::to_str) {
                 names.insert(name.to_string());
             } else if kind == WorkspaceEntryKind::File
                 && path.extension().and_then(OsStr::to_str) == Some("md")
@@ -188,7 +209,12 @@ fn enumerate_available(dirs: &[PathBuf], workspace_root: Option<&Path>) -> Vec<S
             }
         }
     }
-    names.into_iter().collect()
+    Ok(names.into_iter().collect())
+}
+
+fn admit_skill_operation() -> Result<crate::resource::FilesystemOperationPermit, ToolError> {
+    crate::resource::acquire_filesystem_operation()
+        .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))
 }
 
 /// Tokenise a free-form arguments string into positional arguments using
@@ -280,11 +306,11 @@ fn list_resources(
     skill_dir: &Path,
     skill_path: &Path,
     workspace_root: Option<&Path>,
-) -> Vec<String> {
+) -> Result<Vec<String>, ToolError> {
     let loaded_file_name = skill_path.file_name();
 
     let mut names: Vec<String> = Vec::new();
-    for (path, kind) in directory_entries(skill_dir, workspace_root) {
+    for (path, kind) in directory_entries(skill_dir, workspace_root)? {
         if kind != WorkspaceEntryKind::File {
             continue;
         }
@@ -304,7 +330,7 @@ fn list_resources(
 
     names.sort();
     names.truncate(MAX_RESOURCE_ENTRIES);
-    names
+    Ok(names)
 }
 
 #[async_trait]
@@ -420,18 +446,22 @@ impl Tool for SkillTool {
                 dir.join(&args.name).join("SKILL.md"),
                 dir.join(format!("{}.md", args.name)),
             ] {
-                if let Some(root) = workspace_root.as_ref()
-                    && let Some(relative) = workspace_relative_path(&root.0, &candidate)
-                {
-                    let absent = matches!(
-                        validate_workspace_regular_file(&root.0, &relative),
-                        Err(error) if error.kind() == std::io::ErrorKind::NotFound
-                    );
-                    if !absent {
-                        return activate(&activation, &candidate, Some(&root.0)).await;
+                let candidate_source = {
+                    let _descriptor_permit = admit_skill_operation()?;
+                    if let Some(root) = workspace_root.as_ref()
+                        && let Some(relative) = workspace_relative_path(&root.0, &candidate)
+                    {
+                        let absent = matches!(
+                            validate_workspace_regular_file(&root.0, &relative),
+                            Err(error) if error.kind() == std::io::ErrorKind::NotFound
+                        );
+                        (!absent).then_some(Some(root.0.as_path()))
+                    } else {
+                        candidate.is_file().then_some(None)
                     }
-                } else if candidate.is_file() {
-                    return activate(&activation, &candidate, None).await;
+                };
+                if let Some(source) = candidate_source {
+                    return activate(&activation, &candidate, source).await;
                 }
             }
         }
@@ -439,7 +469,7 @@ impl Tool for SkillTool {
         let available = enumerate_available(
             &paths.0,
             workspace_root.as_deref().map(|root| root.0.as_path()),
-        );
+        )?;
         Err(ToolError::ExecutionFailed {
             reason: format!(
                 "skill \"{}\" not found. Available: {:?}",
@@ -514,7 +544,7 @@ async fn activate(
         expanded.push_str(inputs.arguments_raw);
     }
 
-    let resources = list_resources(skill_dir, skill_path, workspace_root);
+    let resources = list_resources(skill_dir, skill_path, workspace_root)?;
 
     let payload = serde_json::json!({
         "name": inputs.requested_name,
@@ -639,7 +669,8 @@ mod tests {
     // ---------------- list_resources ----------------
 
     #[test]
-    fn list_resources_excludes_skill_md_and_caps_at_twenty() {
+    fn list_resources_excludes_skill_md_and_caps_at_twenty()
+    -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir().unwrap();
         let skill_dir = dir.path().join("with-resources");
         std::fs::create_dir(&skill_dir).unwrap();
@@ -649,35 +680,38 @@ mod tests {
             std::fs::write(skill_dir.join(format!("ref-{i:02}.md")), "ref").unwrap();
         }
 
-        let names = list_resources(&skill_dir, &skill_path, None);
+        let names = list_resources(&skill_dir, &skill_path, None)?;
         assert_eq!(names.len(), 20);
         assert!(!names.iter().any(|n| n == "SKILL.md"));
         // Sorted: the first should be ref-00 with a leading zero.
         assert_eq!(names[0], "ref-00.md");
+        Ok(())
     }
 
     #[test]
-    fn list_resources_excludes_loaded_flat_file() {
+    fn list_resources_excludes_loaded_flat_file() -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempdir().unwrap();
         let skill_path = dir.path().join("alias.md");
         std::fs::write(&skill_path, "---\ndescription: a\n---\n").unwrap();
         std::fs::write(dir.path().join("README.md"), "readme").unwrap();
         std::fs::write(dir.path().join("data.json"), "{}").unwrap();
 
-        let names = list_resources(dir.path(), &skill_path, None);
+        let names = list_resources(dir.path(), &skill_path, None)?;
         assert!(!names.iter().any(|n| n == "alias.md"));
         assert!(names.iter().any(|n| n == "README.md"));
         assert!(names.iter().any(|n| n == "data.json"));
+        Ok(())
     }
 
     #[test]
-    fn list_resources_missing_dir_returns_empty() {
+    fn list_resources_missing_dir_returns_empty() -> Result<(), Box<dyn std::error::Error>> {
         let names = list_resources(
             Path::new("/nonexistent/path"),
             Path::new("/nonexistent/SKILL.md"),
             None,
-        );
+        )?;
         assert!(names.is_empty());
+        Ok(())
     }
 
     // ---------------- name validation / traversal ----------------

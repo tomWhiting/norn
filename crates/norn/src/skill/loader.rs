@@ -120,39 +120,50 @@ fn discover_skills_impl(dirs: &[PathBuf], workspace_root: Option<&Path>) -> Disc
 
     for dir in dirs {
         let workspace_relative = workspace_root.and_then(|root| workspace_relative_path(root, dir));
-        let entries: Vec<(PathBuf, WorkspaceEntryKind)> = match (workspace_root, workspace_relative)
-        {
-            (Some(root), Some(relative)) => match read_workspace_directory(root, &relative) {
-                Ok(entries) => entries
-                    .into_iter()
-                    .map(|entry| (dir.join(entry.name), entry.kind))
-                    .collect(),
-                Err(error) => {
-                    diagnostics.push(skip_diagnostic(
-                        dir,
-                        "skill-workspace-root-refused",
-                        format!("refused workspace skill directory: {error}"),
-                    ));
+        let entries: Vec<(PathBuf, WorkspaceEntryKind)> = {
+            let _descriptor_permit = match acquire_skill_fs(dir) {
+                Ok(permit) => permit,
+                Err(diag) => {
+                    diagnostics.extend(diag);
                     continue;
                 }
-            },
-            _ => match std::fs::read_dir(dir) {
-                Ok(entries) => entries
-                    .filter_map(|entry| {
-                        let entry = entry.ok()?;
-                        let kind = match entry.file_type().ok()? {
-                            file_type if file_type.is_dir() => WorkspaceEntryKind::Directory,
-                            file_type if file_type.is_file() => WorkspaceEntryKind::File,
-                            _ => WorkspaceEntryKind::Other,
-                        };
-                        Some((entry.path(), kind))
-                    })
-                    .collect(),
-                Err(error) => {
-                    tracing::debug!("Skipping skill dir {} during scan: {error}", dir.display());
-                    continue;
-                }
-            },
+            };
+            match (workspace_root, workspace_relative) {
+                (Some(root), Some(relative)) => match read_workspace_directory(root, &relative) {
+                    Ok(entries) => entries
+                        .into_iter()
+                        .map(|entry| (dir.join(entry.name), entry.kind))
+                        .collect(),
+                    Err(error) => {
+                        diagnostics.push(skip_diagnostic(
+                            dir,
+                            "skill-workspace-root-refused",
+                            format!("refused workspace skill directory: {error}"),
+                        ));
+                        continue;
+                    }
+                },
+                _ => match std::fs::read_dir(dir) {
+                    Ok(entries) => entries
+                        .filter_map(|entry| {
+                            let entry = entry.ok()?;
+                            let kind = match entry.file_type().ok()? {
+                                file_type if file_type.is_dir() => WorkspaceEntryKind::Directory,
+                                file_type if file_type.is_file() => WorkspaceEntryKind::File,
+                                _ => WorkspaceEntryKind::Other,
+                            };
+                            Some((entry.path(), kind))
+                        })
+                        .collect(),
+                    Err(error) => {
+                        tracing::debug!(
+                            "Skipping skill dir {} during scan: {error}",
+                            dir.display()
+                        );
+                        continue;
+                    }
+                },
+            }
         };
 
         let mut dir_skill_paths: Vec<PathBuf> = Vec::new();
@@ -161,6 +172,13 @@ fn discover_skills_impl(dirs: &[PathBuf], workspace_root: Option<&Path>) -> Disc
         for (path, kind) in entries {
             if kind == WorkspaceEntryKind::Directory {
                 let candidate = path.join("SKILL.md");
+                let _descriptor_permit = match acquire_skill_fs(&candidate) {
+                    Ok(permit) => permit,
+                    Err(diag) => {
+                        diagnostics.extend(diag);
+                        continue;
+                    }
+                };
                 let exists = workspace_root
                     .and_then(|root| {
                         workspace_relative_path(root, &candidate).map(|relative| {
@@ -232,14 +250,17 @@ fn discover_skills_impl(dirs: &[PathBuf], workspace_root: Option<&Path>) -> Disc
 /// Returns a non-empty vector of diagnostics describing why the file
 /// was dropped.
 pub fn load_skill_from_path(path: &Path) -> Result<LoadedSkill, Vec<NornDiagnostic>> {
-    let content = match std::fs::read_to_string(path) {
-        Ok(c) => c,
-        Err(e) => {
-            return Err(vec![skip_diagnostic(
-                path,
-                "skill-io-error",
-                format!("failed to read skill file: {e}"),
-            )]);
+    let content = {
+        let _descriptor_permit = acquire_skill_fs(path)?;
+        match std::fs::read_to_string(path) {
+            Ok(content) => content,
+            Err(error) => {
+                return Err(vec![skip_diagnostic(
+                    path,
+                    "skill-io-error",
+                    format!("failed to read skill file: {error}"),
+                )]);
+            }
         }
     };
 
@@ -258,16 +279,31 @@ pub(crate) fn load_workspace_skill_from_path(
             "skill path escaped its workspace root".to_owned(),
         )]
     })?;
-    let content = read_workspace_text_file(workspace_root, &relative)
-        .map_err(|error| {
-            vec![skip_diagnostic(
-                path,
-                "skill-io-error",
-                format!("refused workspace skill file: {error}"),
-            )]
-        })?
-        .content;
+    let content = {
+        let _descriptor_permit = acquire_skill_fs(path)?;
+        read_workspace_text_file(workspace_root, &relative)
+            .map_err(|error| {
+                vec![skip_diagnostic(
+                    path,
+                    "skill-io-error",
+                    format!("refused workspace skill file: {error}"),
+                )]
+            })?
+            .content
+    };
     parse_loaded_skill(path, &content)
+}
+
+fn acquire_skill_fs(
+    path: &Path,
+) -> Result<crate::resource::FilesystemOperationPermit, Vec<NornDiagnostic>> {
+    crate::resource::acquire_filesystem_operation().map_err(|error| {
+        vec![skip_diagnostic(
+            path,
+            "skill-descriptor-admission",
+            format!("descriptor admission failed while reading skill storage: {error}"),
+        )]
+    })
 }
 
 fn parse_loaded_skill(path: &Path, content: &str) -> Result<LoadedSkill, Vec<NornDiagnostic>> {

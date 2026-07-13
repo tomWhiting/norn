@@ -93,14 +93,18 @@ where
     match condition {
         ExpiryCondition::FileModified { path, content_hash } => {
             match read_and_hash(path, resolve) {
-                Some(current) if current == *content_hash => Ok(()),
-                Some(_) => Err(expired(format!(
+                Ok(Some(current)) if current == *content_hash => Ok(()),
+                Ok(Some(_)) => Err(expired(format!(
                     "file {} has been modified since the follow-up was registered",
                     path.display(),
                 ))),
-                None => Err(expired(format!(
+                Ok(None) => Err(expired(format!(
                     "file {} is no longer readable (it may have been deleted or moved)",
                     path.display(),
+                ))),
+                Err(error) => Err(expired(format!(
+                    "could not validate file {} because descriptor admission failed: {error}",
+                    path.display()
                 ))),
             }
         }
@@ -111,17 +115,23 @@ where
             entries.sort_by(|a, b| a.0.cmp(b.0));
             for (path, expected) in entries {
                 match read_and_hash(path, resolve) {
-                    Some(current) if current == *expected => {}
-                    Some(_) => {
+                    Ok(Some(current)) if current == *expected => {}
+                    Ok(Some(_)) => {
                         return Err(expired(format!(
                             "file {} has been modified since the follow-up was registered",
                             path.display(),
                         )));
                     }
-                    None => {
+                    Ok(None) => {
                         return Err(expired(format!(
                             "file {} is no longer readable (it may have been deleted or moved)",
                             path.display(),
+                        )));
+                    }
+                    Err(error) => {
+                        return Err(expired(format!(
+                            "could not validate file {} because descriptor admission failed: {error}",
+                            path.display()
                         )));
                     }
                 }
@@ -143,20 +153,27 @@ where
 
 /// Read the resolved file and return its content hash, or `None` when the file
 /// cannot be read.
-fn read_and_hash<F>(path: &Path, resolve: &F) -> Option<String>
+fn read_and_hash<F>(
+    path: &Path,
+    resolve: &F,
+) -> Result<Option<String>, crate::resource::DescriptorAdmissionError>
 where
     F: Fn(&Path) -> std::path::PathBuf,
 {
     let resolved = resolve(path);
-    match std::fs::read(&resolved) {
-        Ok(bytes) => Some(hash_content(&bytes)),
+    let read_result = {
+        let _descriptor_permit = crate::resource::acquire_filesystem_operation()?;
+        std::fs::read(&resolved)
+    };
+    match read_result {
+        Ok(bytes) => Ok(Some(hash_content(&bytes))),
         Err(error) => {
             tracing::debug!(
                 path = %resolved.display(),
                 %error,
                 "follow-up expiry: file unreadable, treating action as expired",
             );
-            None
+            Ok(None)
         }
     }
 }

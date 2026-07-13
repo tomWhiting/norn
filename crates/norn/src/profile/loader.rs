@@ -12,152 +12,16 @@
 //! written fresh against Norn's [`Profile`] / [`Capability`] types and
 //! the project-wide [`ConfigError`] error type.
 
-use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 
+pub use super::scanner::Scanner;
+use super::scanner::{PROFILE_EXTENSIONS, is_safe_name};
 use super::types::{Capability, Profile};
 use crate::error::ConfigError;
 use crate::provider::request::{ReasoningEffort, ReasoningSummary, ServiceTier};
 use crate::util::read_workspace_text_file;
-
-/// File extensions checked by [`Scanner::resolve`], in priority order.
-///
-/// Markdown (the canonical NA-001 format) wins; `.toml` and `.json` remain
-/// for backwards compatibility with profiles written under the previous
-/// `~/.norn/config/profiles/` regime.
-const PROFILE_EXTENSIONS: [&str; 3] = ["md", "toml", "json"];
-
-/// Returns `true` when `name` is safe to use as a profile filename stem.
-///
-/// Bare names use a conservative visible ASCII alphabet: letters, digits,
-/// hyphens, and underscores. Used by [`Scanner::resolve`] and
-/// [`Scanner::list_profiles`] to reject path traversal and diagnostic control
-/// characters before they touch the filesystem or an error surface.
-fn is_safe_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .bytes()
-            .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
-}
-
-/// Two-tier profile discovery: walks an ordered list of directories and
-/// returns the first match for a requested profile name.
-///
-/// Within each directory the extension search order is `.md` → `.toml` →
-/// `.json`. Across directories, the first match wins — so a workspace
-/// profile shadows a user-level profile of the same name. The higher-level
-/// [`resolve_workspace_profile`] API retains that origin and rejects automatic
-/// commands from workspace profiles.
-///
-/// Construct via [`Scanner::new`]; the typical scan-dir list comes from
-/// [`default_scan_dirs`]. Non-existent directories are silently skipped
-/// (debug-logged, not errored) to match the claude-runner reference
-/// implementation.
-///
-/// # Trust boundary
-///
-/// `Scanner` is a low-level compatibility API for caller-trusted directories.
-/// It uses ordinary filesystem metadata and does not retain workspace origin.
-/// Use [`resolve_workspace_profile`] or `AgentBuilder` for bare names that can
-/// resolve beneath a repository.
-pub struct Scanner {
-    /// Ordered list of directories to search. First match wins across this
-    /// list; `.md` beats `.toml` beats `.json` within each directory.
-    scan_dirs: Vec<PathBuf>,
-}
-
-impl Scanner {
-    /// Constructs a scanner that walks `scan_dirs` in the given order.
-    ///
-    /// The caller owns ordering: workspace-level directories should appear
-    /// before user-level ones so workspace profiles win on name collision.
-    #[must_use]
-    pub fn new(scan_dirs: Vec<PathBuf>) -> Self {
-        Self { scan_dirs }
-    }
-
-    /// Locates the first profile file named `name` across the scan dirs.
-    ///
-    /// Returns `Some(path)` for the first `{dir}/{name}.{md|toml|json}`
-    /// that exists, checking `.md` before `.toml` before `.json` within
-    /// each directory and walking directories in their configured order.
-    /// Returns `None` when `name` is unsafe (path-traversal check) or no
-    /// match is found anywhere.
-    #[must_use]
-    pub fn resolve(&self, name: &str) -> Option<PathBuf> {
-        self.resolve_with_directory_index(name)
-            .map(|resolved| resolved.0)
-    }
-
-    fn resolve_with_directory_index(&self, name: &str) -> Option<(PathBuf, usize)> {
-        if !is_safe_name(name) {
-            return None;
-        }
-        for (index, dir) in self.scan_dirs.iter().enumerate() {
-            for ext in PROFILE_EXTENSIONS {
-                let candidate = dir.join(format!("{name}.{ext}"));
-                match std::fs::symlink_metadata(&candidate) {
-                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-                    Ok(_) | Err(_) => return Some((candidate, index)),
-                }
-            }
-        }
-        None
-    }
-
-    /// Returns the deduplicated, sorted list of profile names discovered
-    /// across the scan dirs.
-    ///
-    /// Walks directories in their configured order; within each directory,
-    /// `.md`/`.toml`/`.json` stems are gathered. First occurrence wins on
-    /// name collision (workspace profiles shadow user-level profiles).
-    /// Unsafe names are skipped. Non-existent directories are skipped
-    /// silently. The returned vector is sorted alphabetically.
-    #[must_use]
-    pub fn list_profiles(&self) -> Vec<String> {
-        let mut seen: HashSet<String> = HashSet::new();
-        let mut names: Vec<String> = Vec::new();
-        for dir in &self.scan_dirs {
-            let entries = match std::fs::read_dir(dir) {
-                Ok(entries) => entries,
-                Err(e) => {
-                    tracing::debug!("Skipping profile dir {} during list: {e}", dir.display());
-                    continue;
-                }
-            };
-            for entry in entries {
-                let entry = match entry {
-                    Ok(e) => e,
-                    Err(e) => {
-                        tracing::warn!("Error reading directory entry in {}: {e}", dir.display());
-                        continue;
-                    }
-                };
-                let path = entry.path();
-                let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
-                    continue;
-                };
-                if !PROFILE_EXTENSIONS.contains(&ext) {
-                    continue;
-                }
-                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
-                    continue;
-                };
-                if !is_safe_name(stem) {
-                    tracing::warn!("Skipping unsafe profile filename: {}", path.display());
-                    continue;
-                }
-                if seen.insert(stem.to_owned()) {
-                    names.push(stem.to_owned());
-                }
-            }
-        }
-        names.sort();
-        names
-    }
-}
 
 /// Trust origin of a profile resolved through [`default_scan_dirs`].
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -255,31 +119,39 @@ fn resolve_capability_in_dirs(
                             "working-directory capability escaped its workspace root: {error}"
                         ),
                     })?;
-            let contents = match read_workspace_text_file(root, relative) {
-                Ok(file) => file.content,
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
-                Err(error) => {
-                    return Err(ConfigError::InvalidConfig {
-                        reason: format!(
-                            "refused working-directory capability at {}: {error}",
-                            candidate.display(),
-                        ),
-                    });
+            let contents = {
+                let _descriptor_permit = admit_config_fs(&candidate, "read workspace capability")?;
+                match read_workspace_text_file(root, relative) {
+                    Ok(file) => file.content,
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                    Err(error) => {
+                        return Err(ConfigError::InvalidConfig {
+                            reason: format!(
+                                "refused working-directory capability at {}: {error}",
+                                candidate.display(),
+                            ),
+                        });
+                    }
                 }
             };
             return parse_capability(&contents, &candidate);
         }
-        if candidate.is_file() {
-            let contents = std::fs::read_to_string(&candidate).map_err(|error| {
-                ConfigError::InvalidConfig {
-                    reason: format!(
-                        "failed to read capability at {}: {error}",
-                        candidate.display(),
-                    ),
+        let contents = {
+            let _descriptor_permit = admit_config_fs(&candidate, "read capability")?;
+            match std::fs::read_to_string(&candidate) {
+                Ok(contents) => contents,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => continue,
+                Err(error) => {
+                    return Err(ConfigError::InvalidConfig {
+                        reason: format!(
+                            "failed to read capability at {}: {error}",
+                            candidate.display(),
+                        ),
+                    });
                 }
-            })?;
-            return parse_capability(&contents, &candidate);
-        }
+            }
+        };
+        return parse_capability(&contents, &candidate);
     }
     let searched = scan_dirs
         .iter()
@@ -325,7 +197,7 @@ pub fn resolve_profile(name: &str, scan_dirs: &[PathBuf]) -> Result<Profile, Con
         });
     }
     let scanner = Scanner::new(scan_dirs.to_vec());
-    let Some(path) = scanner.resolve(name) else {
+    let Some(path) = scanner.try_resolve(name)? else {
         let searched = scan_dirs
             .iter()
             .map(|p| p.display().to_string())
@@ -351,11 +223,13 @@ pub fn resolve_workspace_profile(
     name: &str,
     cwd: &Path,
 ) -> Result<ResolvedWorkspaceProfile, ConfigError> {
-    let cwd = cwd
-        .canonicalize()
-        .map_err(|error| ConfigError::InvalidConfig {
-            reason: format!("failed to resolve the profile workspace trust root: {error}"),
-        })?;
+    let cwd = {
+        let _descriptor_permit = admit_config_fs(cwd, "resolve profile workspace root")?;
+        cwd.canonicalize()
+            .map_err(|error| ConfigError::InvalidConfig {
+                reason: format!("failed to resolve the profile workspace trust root: {error}"),
+            })?
+    };
     resolve_workspace_profile_at_launch_root(name, &cwd)
 }
 
@@ -382,6 +256,7 @@ pub(crate) fn resolve_workspace_profile_at_launch_root(
                                 "working-directory profile escaped its workspace root: {error}"
                             ),
                         })?;
+                let _descriptor_permit = admit_config_fs(&path, "read workspace profile")?;
                 match read_workspace_text_file(cwd, relative) {
                     Ok(file) => {
                         resolved = Some((path, directory_index, Some(file.content)));
@@ -397,9 +272,23 @@ pub(crate) fn resolve_workspace_profile_at_launch_root(
                         });
                     }
                 }
-            } else if path.is_file() {
-                resolved = Some((path, directory_index, None));
-                break;
+            } else {
+                let _descriptor_permit = admit_config_fs(&path, "read user profile")?;
+                match std::fs::read_to_string(&path) {
+                    Ok(contents) => {
+                        resolved = Some((path, directory_index, Some(contents)));
+                        break;
+                    }
+                    Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                    Err(error) => {
+                        return Err(ConfigError::InvalidConfig {
+                            reason: format!(
+                                "failed to read user profile at {}: {error}",
+                                path.display()
+                            ),
+                        });
+                    }
+                }
             }
         }
         if resolved.is_some() {
@@ -421,14 +310,10 @@ pub(crate) fn resolve_workspace_profile_at_launch_root(
     } else {
         ProfileOrigin::User
     };
-    let profile = if origin == ProfileOrigin::WorkingDirectory {
-        let contents = workspace_contents.ok_or_else(|| ConfigError::InvalidConfig {
-            reason: "working-directory profile lost its securely read contents".to_owned(),
-        })?;
-        Profile::from_contents(&path, &contents)?
-    } else {
-        Profile::from_file(&path)?
-    };
+    let contents = workspace_contents.ok_or_else(|| ConfigError::InvalidConfig {
+        reason: "resolved profile lost its operation-scoped contents".to_owned(),
+    })?;
+    let profile = Profile::from_contents(&path, &contents)?;
     if origin == ProfileOrigin::WorkingDirectory && !profile.prompt_commands.is_empty() {
         return Err(ConfigError::InvalidConfig {
             reason: "working-directory profiles cannot declare prompt_commands because repository profiles cannot execute automatic commands; use a user profile or remove prompt_commands"
@@ -454,6 +339,18 @@ fn load_profile(path: PathBuf, scan_dirs: &[PathBuf]) -> Result<Profile, ConfigE
     let mut profile = Profile::from_file(path)?;
     resolve_profile_capabilities(&mut profile, scan_dirs)?;
     Ok(profile)
+}
+
+fn admit_config_fs(
+    path: &Path,
+    operation: &str,
+) -> Result<crate::resource::FilesystemOperationPermit, ConfigError> {
+    crate::resource::acquire_filesystem_operation().map_err(|error| ConfigError::InvalidConfig {
+        reason: format!(
+            "descriptor admission failed while attempting to {operation} at {}: {error}",
+            path.display()
+        ),
+    })
 }
 
 /// Resolve every pending [`Profile::capability_names`] entry into a

@@ -140,9 +140,20 @@ impl ExtensionRegistry {
     /// Returns [`IntegrationError`] when the file is unreadable or the
     /// manifest fails to parse.
     pub fn load_manifest(path: &Path) -> Result<ExtensionManifest, IntegrationError> {
-        let text = std::fs::read_to_string(path).map_err(|e| IntegrationError::McpError {
-            reason: format!("failed to read manifest at {}: {e}", path.display()),
-        })?;
+        let text = {
+            let _descriptor_permit =
+                crate::resource::acquire_filesystem_operation().map_err(|error| {
+                    IntegrationError::McpError {
+                        reason: format!(
+                            "extension manifest descriptor admission failed for {}: {error}",
+                            path.display()
+                        ),
+                    }
+                })?;
+            std::fs::read_to_string(path).map_err(|e| IntegrationError::McpError {
+                reason: format!("failed to read manifest at {}: {e}", path.display()),
+            })?
+        };
         serde_json::from_str(&text).map_err(|e| IntegrationError::McpError {
             reason: format!("invalid manifest at {}: {e}", path.display()),
         })

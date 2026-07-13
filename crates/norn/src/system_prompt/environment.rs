@@ -136,7 +136,11 @@ fn find_git_dir(start_dir: &Path) -> Option<PathBuf> {
     let mut dir = start_dir.to_path_buf();
     loop {
         let candidate = dir.join(".git");
-        match std::fs::symlink_metadata(&candidate) {
+        let metadata = {
+            let _descriptor_permit = admit_git_metadata(&candidate)?;
+            std::fs::symlink_metadata(&candidate)
+        };
+        match metadata {
             Ok(metadata) if metadata.file_type().is_dir() => return Some(candidate),
             Ok(metadata) if metadata.file_type().is_file() => {
                 return resolve_gitlink(&candidate);
@@ -164,6 +168,7 @@ fn resolve_gitlink(gitlink: &Path) -> Option<PathBuf> {
     } else {
         gitlink.parent()?.join(path)
     };
+    let _descriptor_permit = admit_git_metadata(&resolved)?;
     let canonical = resolved.canonicalize().ok()?;
     if canonical.is_dir() {
         Some(canonical)
@@ -176,6 +181,7 @@ fn read_small_regular_file(path: &Path) -> Option<String> {
     #[cfg(unix)]
     use std::os::unix::fs::OpenOptionsExt;
 
+    let _descriptor_permit = admit_git_metadata(path)?;
     let mut options = std::fs::OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -200,6 +206,20 @@ fn read_small_regular_file(path: &Path) -> Option<String> {
         None
     } else {
         Some(content)
+    }
+}
+
+fn admit_git_metadata(path: &Path) -> Option<crate::resource::FilesystemOperationPermit> {
+    match crate::resource::acquire_filesystem_operation() {
+        Ok(permit) => Some(permit),
+        Err(error) => {
+            tracing::warn!(
+                path = %path.display(),
+                %error,
+                "git metadata omitted because descriptor admission failed"
+            );
+            None
+        }
     }
 }
 

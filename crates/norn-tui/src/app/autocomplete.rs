@@ -274,6 +274,13 @@ fn profile_skills_dirs() -> Vec<PathBuf> {
 /// intentionally minimal — full validation belongs in
 /// [`norn::skill::catalog::SkillCatalog`].
 fn discover_skills(dir: &Path, snapshot: &mut Vec<SlashCandidate>, seen: &mut HashSet<String>) {
+    let _descriptor_permit = match norn::resource::acquire_filesystem_operation() {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::warn!(%error, path = %dir.display(), "skill autocomplete filesystem admission refused");
+            return;
+        }
+    };
     let Ok(entries) = std::fs::read_dir(dir) else {
         return;
     };

@@ -98,6 +98,14 @@ pub fn run_conventions(output: Option<PathBuf>) -> ExitCode {
     };
     let rendered = render_conventions(&generated);
 
+    let _descriptor_permit = match norn::resource::acquire_filesystem_operation() {
+        Ok(permit) => permit,
+        Err(err) => {
+            eprintln!("norn: cannot admit conventions output operation: {err}");
+            return ExitCode::AgentError;
+        }
+    };
+
     let target = if let Some(path) = output {
         if path.is_absolute() {
             path
@@ -137,6 +145,8 @@ pub fn run_conventions(output: Option<PathBuf>) -> ExitCode {
 /// (names starting with `.`, which covers `.git`), `target`, and
 /// `node_modules` are skipped. Extensions are lowercased for stability.
 fn scan_project_extensions(root: &Path) -> std::io::Result<BTreeMap<String, usize>> {
+    let _descriptor_permit =
+        norn::resource::acquire_filesystem_operation().map_err(std::io::Error::other)?;
     let mut counts: BTreeMap<String, usize> = BTreeMap::new();
     let mut stack = vec![root.to_path_buf()];
 
@@ -170,6 +180,13 @@ fn scan_project_extensions(root: &Path) -> std::io::Result<BTreeMap<String, usiz
 /// error (typically not-found) means it is absent. Missing tools are
 /// silent — no warning, no error.
 fn tool_on_path(tool: &str) -> bool {
+    let _descriptor_permit = match norn::resource::acquire_output_subprocess() {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::warn!(%error, tool, "conventions tool probe admission refused");
+            return false;
+        }
+    };
     std::process::Command::new(tool)
         .arg("--version")
         .output()

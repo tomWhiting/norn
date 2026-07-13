@@ -129,6 +129,17 @@ impl Tool for EditTool {
             );
         }
 
+        let _descriptor_permit = match crate::resource::acquire_private_fs() {
+            Ok(permit) => permit,
+            Err(error) => {
+                return PreValidateOutcome::Block(
+                    BlockDecision::new(format!("Edit blocked: {error}"))
+                        .with_kind(ToolErrorKind::Io)
+                        .with_detail(serde_json::json!({ "path": args.path })),
+                );
+            }
+        };
+
         let content = match tokio::fs::read_to_string(&path).await {
             Ok(c) => c,
             Err(e) => {
@@ -183,6 +194,8 @@ impl Tool for EditTool {
             }
         })?;
         let path = ctx.resolve_path(&args.path);
+        let _descriptor_permit = crate::resource::acquire_private_fs()
+            .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
 
         // Workspace confinement (opt-in): re-checked at execute time so a
         // direct invocation cannot bypass the pre_validate gate.

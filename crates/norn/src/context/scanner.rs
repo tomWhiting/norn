@@ -124,51 +124,67 @@ fn scan_rule_dirs_impl(
         std::collections::HashMap::new();
 
     for (directory_index, dir) in dirs.iter().enumerate() {
-        let workspace_entries = if let Some((workspace_root, untrusted_directory_indexes)) =
-            workspace_policy
-            && untrusted_directory_indexes.contains(&directory_index)
-        {
-            let Ok(relative) = dir.strip_prefix(workspace_root) else {
-                tracing::warn!(
-                    "Refusing rules directory outside workspace root: {}",
-                    dir.display(),
-                );
-                continue;
+        let entries = {
+            let _descriptor_permit = match crate::resource::acquire_filesystem_operation() {
+                Ok(permit) => permit,
+                Err(error) => {
+                    tracing::warn!(
+                        directory = %dir.display(),
+                        %error,
+                        "rule-directory scan skipped because descriptor admission failed"
+                    );
+                    continue;
+                }
             };
-            match read_workspace_directory(workspace_root, relative) {
-                Ok(entries) => Some(
-                    entries
-                        .into_iter()
-                        .map(|entry| (dir.join(entry.name), entry.kind))
-                        .collect::<Vec<_>>(),
-                ),
-                Err(error) => {
-                    tracing::debug!("Skipping untrusted rules dir {}: {error}", dir.display());
+            let workspace_entries = if let Some((workspace_root, untrusted_directory_indexes)) =
+                workspace_policy
+                && untrusted_directory_indexes.contains(&directory_index)
+            {
+                let Ok(relative) = dir.strip_prefix(workspace_root) else {
+                    tracing::warn!(
+                        "Refusing rules directory outside workspace root: {}",
+                        dir.display(),
+                    );
                     continue;
+                };
+                match read_workspace_directory(workspace_root, relative) {
+                    Ok(entries) => Some(
+                        entries
+                            .into_iter()
+                            .map(|entry| (dir.join(entry.name), entry.kind))
+                            .collect::<Vec<_>>(),
+                    ),
+                    Err(error) => {
+                        tracing::debug!("Skipping untrusted rules dir {}: {error}", dir.display());
+                        continue;
+                    }
                 }
+            } else {
+                None
+            };
+            match workspace_entries {
+                Some(entries) => entries,
+                None => match std::fs::read_dir(dir) {
+                    Ok(entries) => entries
+                        .filter_map(|entry| {
+                            let entry = entry.ok()?;
+                            let kind = match entry.file_type().ok()? {
+                                file_type if file_type.is_file() => WorkspaceEntryKind::File,
+                                file_type if file_type.is_dir() => WorkspaceEntryKind::Directory,
+                                _ => WorkspaceEntryKind::Other,
+                            };
+                            Some((entry.path(), kind))
+                        })
+                        .collect(),
+                    Err(error) => {
+                        tracing::debug!(
+                            "Skipping rules dir {} during scan: {error}",
+                            dir.display()
+                        );
+                        continue;
+                    }
+                },
             }
-        } else {
-            None
-        };
-        let entries = match workspace_entries {
-            Some(entries) => entries,
-            None => match std::fs::read_dir(dir) {
-                Ok(entries) => entries
-                    .filter_map(|entry| {
-                        let entry = entry.ok()?;
-                        let kind = match entry.file_type().ok()? {
-                            file_type if file_type.is_file() => WorkspaceEntryKind::File,
-                            file_type if file_type.is_dir() => WorkspaceEntryKind::Directory,
-                            _ => WorkspaceEntryKind::Other,
-                        };
-                        Some((entry.path(), kind))
-                    })
-                    .collect(),
-                Err(error) => {
-                    tracing::debug!("Skipping rules dir {} during scan: {error}", dir.display());
-                    continue;
-                }
-            },
         };
 
         for (path, kind) in entries {
@@ -247,6 +263,8 @@ fn read_rule_file(
     directory_index: usize,
     workspace_policy: Option<(&Path, &[usize])>,
 ) -> std::io::Result<String> {
+    let _descriptor_permit =
+        crate::resource::acquire_filesystem_operation().map_err(std::io::Error::other)?;
     let Some((workspace_root, untrusted_directory_indexes)) = workspace_policy else {
         return std::fs::read_to_string(path);
     };
@@ -320,13 +338,22 @@ impl NestedScanner {
     /// [`Self::scan_on_path_change`].
     #[must_use]
     pub fn new(cwd: &Path) -> Self {
-        let cwd = cwd.canonicalize().unwrap_or_else(|error| {
-            tracing::warn!(
-                error = %error,
-                "failed to resolve nested-context workspace root"
-            );
-            cwd.to_path_buf()
-        });
+        let cwd = match crate::resource::acquire_filesystem_operation() {
+            Ok(_descriptor_permit) => cwd.canonicalize().unwrap_or_else(|error| {
+                tracing::warn!(
+                    error = %error,
+                    "failed to resolve nested-context workspace root"
+                );
+                cwd.to_path_buf()
+            }),
+            Err(error) => {
+                tracing::warn!(
+                    %error,
+                    "nested-context root resolution skipped because descriptor admission failed"
+                );
+                cwd.to_path_buf()
+            }
+        };
         Self::new_at_launch_root(cwd)
     }
 
@@ -414,12 +441,24 @@ impl NestedScanner {
     /// `NORN.md` lookup so an absent file still costs O(1) on every
     /// subsequent event in the same directory.
     fn register_if_new(&mut self, rel_dir: &Path, engine: &mut RuleEngine) {
-        if !self.scanned_dirs.insert(rel_dir.to_path_buf()) {
+        if self.scanned_dirs.contains(rel_dir) {
             return;
         }
 
         let relative_path = rel_dir.join(NORN_MD);
         let norn_path = self.cwd.join(&relative_path);
+        let _descriptor_permit = match crate::resource::acquire_filesystem_operation() {
+            Ok(permit) => permit,
+            Err(error) => {
+                tracing::warn!(
+                    path = %norn_path.display(),
+                    %error,
+                    "nested context scan deferred because descriptor admission failed"
+                );
+                return;
+            }
+        };
+        self.scanned_dirs.insert(rel_dir.to_path_buf());
         let content = match read_workspace_text_file(&self.cwd, &relative_path) {
             Ok(loaded) => loaded.content,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {

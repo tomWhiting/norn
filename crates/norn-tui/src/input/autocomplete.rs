@@ -589,6 +589,13 @@ pub fn generate_file_candidates(
 /// filter off nothing else excludes it, and VCS internals are never
 /// attachment candidates.
 pub fn walk_entries(root: &Path) -> Vec<(String, bool)> {
+    let _descriptor_permit = match norn::resource::acquire_recursive_walk() {
+        Ok(permit) => permit,
+        Err(error) => {
+            tracing::warn!(%error, path = %root.display(), "file autocomplete walk admission refused");
+            return Vec::new();
+        }
+    };
     let walker = WalkBuilder::new(root)
         .hidden(false)
         .git_ignore(true)

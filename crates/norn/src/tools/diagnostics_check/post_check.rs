@@ -300,6 +300,17 @@ async fn run_rule_activations(
                 }
                 ToolRef::Pattern(def) => {
                     if file_content.is_none() {
+                        let _descriptor_permit =
+                            match crate::resource::acquire_filesystem_operation() {
+                                Ok(permit) => permit,
+                                Err(error) => {
+                                    findings.errors.push(format!(
+                                    "{} [pattern:{tool_name}] descriptor admission failed: {error}",
+                                    ctx.file_path.display()
+                                ));
+                                    continue;
+                                }
+                            };
                         match std::fs::read_to_string(ctx.file_path) {
                             Ok(content) => file_content = Some(content),
                             Err(error) => {
