@@ -1,14 +1,19 @@
 # Responses API remediation plan
 
-- **Status:** Active; the P0 implementation candidate is committed through
-  `ebb82c8`, but whole-phase Gate D returned `NOT READY` in the
+- **Status:** Active; the original P0 candidate received whole-phase Gate D
+  `NOT READY` in the
   [`P0 Gate D review`](reviews/2026-07-11-p0-gate-d-review.md). The review
   reproduced a P0-introduced concurrent `openat(O_CREAT)` availability failure,
   invalidated the unqualified Gate C test-pass claim, found fetched content
   outside the private-artifact inventory, and required a corrective closure
   round. The prior scoped `READY` reviews and passing commands remain historical
   evidence for their exact snapshots; they are not evidence that the integrated
-  candidate is ready. P0 remains unaccepted, and P1 and P2 have not started.
+  candidate is ready. The corrective code candidate is committed through
+  `f788823`; its final machine Gate C rerun is green, with retained full-range
+  policy/inventory and repeated-test distributions. Independent reproduction,
+  owner disposition of the retrospective Gate A/Gate B evidence gaps, and a
+  fresh whole-phase Gate D verdict remain open. P0 remains unaccepted, and P1
+  and P2 have not started.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -206,8 +211,8 @@ never acceptance evidence for this program.
 Every phase must satisfy all four gates below.
 
 Gates A-C are the active-phase dashboard. The marks below apply to the P0
-corrective candidate based on code head `ebb82c8` and the Gate D review committed
-at `5c22ba6`. After P0 receives Gate D `READY` and its final evidence is
+corrective code candidate at `f788823` and the Gate D review committed at
+`5c22ba6`. After P0 receives Gate D `READY` and its final evidence is
 entered in the ledger, this dashboard resets for P1; the ledger preserves P0's
 accepted gate record. Gate D remains open until the whole-phase verdict.
 
@@ -254,14 +259,14 @@ recorded. Passing candidate tests do not retroactively prove either claim.
 
 ### Gate C: machine verification
 
-- [ ] Phase-specific tests pass.
-- [ ] Every crate touched in the round passes its complete integration surface
+- [x] Phase-specific tests pass.
+- [x] Every crate touched in the round passes its complete integration surface
   with `cargo test -p <crate> --tests`; a focused `--lib` run cannot substitute
   for this per-round fence. Concurrency-sensitive cases additionally use the
   distribution requirements below.
 - [x] `cargo fmt --all --check` passes.
 - [x] `cargo clippy --workspace --all-targets -- -D warnings` passes.
-- [ ] `cargo test --workspace --all-targets` passes.
+- [x] `cargo test --workspace --all-targets` passes.
 - [x] `cargo test --workspace --doc` passes.
 - [x] `git diff --check <phase-base>...HEAD` passes. Running bare
   `git diff --check` on the required clean checkout is not evidence.
@@ -276,14 +281,16 @@ recorded. Passing candidate tests do not retroactively prove either claim.
   no credential, real account identifier, private prompt content, reusable turn
   state, or raw cache key is present.
 
-Gate D invalidated the two unchecked test claims: the convergence regression
+Gate D invalidated the original two test claims: the convergence regression
 failed 6/10 isolated reviewer runs and 19/20 subsequent independent repetitions.
-The previous single passing workspace invocation is retained as a truthful
-historical observation, not a stability claim. Corrective evidence must come
-from a checked-in command or script that records the full distribution: at
-least 20 repetitions for concurrency-sensitive tests, 50 for this regression,
-plus one complete Gate C run. Any `all`, `every`, or `complete` coverage claim
-must ship the exact mechanically generated inventory it quantifies.
+The original single passing workspace invocation remains a historical
+observation, not stability evidence. The corrective candidate records 50/50 for
+each of the three macOS-sensitive concurrency regressions, 20/20 complete D1E,
+MCP, prior-correction, and PTY distributions, and one complete green Gate C run.
+The first final workspace attempt is also retained honestly: it exposed PTY
+allocation and resize-harness nondeterminism, which was corrected before the
+green rerun. Any `all`, `every`, or `complete` coverage claim still requires the
+exact mechanically generated inventory it quantifies.
 
 ### Gate D: independent review
 
@@ -341,7 +348,7 @@ The relevant phase cannot pass Gate A while its decision is open.
 | D1A | Non-disclosing representation for unknown provider terminal discriminators: equality semantics, keying, identifier lifetime, output size, and deterministic test control. | P0 | [x] Decided 2026-07-11: known values retain typed mappings; an unknown exact byte sequence is represented only by its terminal category and a domain-separated full HMAC-SHA-256 tag under an OS-random process-lifetime key. The key and raw value are never persisted or logged. A deterministic key seam is crate-private and compiled only under `cfg(test)`; production exposes no public, configuration, or environment override. OS-random initialization failure is a typed fail-closed diagnostic error, never a fixed-key fallback. Tags support equality only within one process and are not cross-run fingerprints. Raw value and byte length are not exposed. |
 | D1B | Location and access policy for fetched and other session-derived artifacts. | P0 | [x] Decided 2026-07-11: fetched documents are private session-owned artifacts beneath the trusted user-level Norn session store, never workspace files. P0 establishes a typed active-session artifact scope and migrates new fetch writes without pre-empting P3 transcript-format, historical-reference, fork-copy, or broad storage-migration decisions. Generic model file access may read/search only the active artifact subtree; it does not gain authority over credentials, indexes, raw child transcripts, or other sessions. |
 | D1C | File-descriptor exhaustion mitigation introduced by descriptor-pinned private storage and persistent agent sinks. | P0 | [x] Mandatory per the 2026-07-11 post-review owner ruling: the official CLI raises its soft `RLIMIT_NOFILE` only to a finite OS-provided ceiling, reports inherited/effective limits and a labelled descriptor snapshot through `doctor`, and preserves typed `EMFILE` versus `ENFILE` diagnostics across the P0 private/session/process boundary. Library embedders do not receive an implicit process-global mutation. Structural descriptor sharing or lazy reopen remains an explicitly owned follow-up rather than being misrepresented as solved by a higher limit. `RLIMIT_CORE=0` remains a separate open decision because it also affects spawned user commands. |
-| D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [ ] Integrated candidate ready for independent review 2026-07-13: idle retention is removed; the process-wide fail-fast weighted authority now covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback, read/search, Rhai, and debug families; Chiron is pinned to the published W8-to-W3 lease revision; and three low-limit release-path cases pass 20/20. The external review accepted D1C and the earlier idle-retention slice through `09b9d49`, and its F-1 through F-3 corrections are implemented through `d488c1a`; it did not review the later weighted-admission candidate. The candidate record explicitly excludes ordinary serialized one-shot configuration and write/edit/patch syscalls from its completeness claim and asks the reviewer to rule whether that residual emergency-headroom boundary is acceptable. Inventory acceptance and review of `ca43c1b..d488c1a` remain before closure. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
+| D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [ ] Integrated candidate at `f788823` awaits independent acceptance: idle session/history/process retention and eager spool-root probing are removed; cancellation-safe adoption owns process groups until spool attachment commits; and the process-wide fail-fast authority covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback, read/search, Rhai, debug, ordinary one-shot configuration, discovery, task, and write/edit/patch families. The former arbitrary transient headroom is replaced by exact observer reserve and typed filesystem/subprocess/HTTP permits. Chiron remains pinned to the published W8-to-W3 lease revision. Retained integrated evidence records all six descriptor/cancellation/task cases 20/20, but permit-lifetime and 92-row inventory reconciliation remain reviewer work. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
 | D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Owner decision confirmed by Tom on 2026-07-13 and attributed in `DECISIONS-2026-07.md` section 10. The surface is retained. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption and approval are the first implementation slice; live add/remove/enable/disable/reload plus provider-visible tool refresh are the second. |
 | D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
@@ -372,27 +379,25 @@ close the P0 findings.
 
 ## P0. Credential and workspace authority containment
 
-**Acceptance:** [ ] Gate D `NOT READY`; corrective round active;
+**Acceptance:** [ ] Gate D `NOT READY`; corrective candidate awaits fresh review;
 **implementation status:** original 33 work items plus F1, D1B, D1C, legacy
 path-helper removal, missing transport/loop sentinels, SEC-05 compile contracts,
 and the TUI-history artifact correction are implemented; D1E structural
-descriptor closure is active; D1D is decided with its provenance/approval and
-startup-consumption candidate implemented; live mutation remains a separate
-unclaimed slice; historical
-baseline evidence disposition, final Gate C, and whole-phase Gate D remain open;
+descriptor closure and the D1D startup-consumption candidate are implemented
+through `f788823`; live mutation remains a separate unclaimed MCP slice;
+historical baseline evidence disposition and whole-phase Gate D remain open;
 **findings addressed by candidate:** `SEC-01` through `SEC-13`, `SEC-15`,
 `SEC-16`, `BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and
 `QUAL-01`; the D1D startup candidate now includes provenance, approval,
 zero-activation, and real-activation fixtures, while whole-phase `SEC-14`
 acceptance remains review-gated;
 **current evidence:** the scoped closure reviews remain valid for their exact
-surfaces; corrective code is committed through `37c806a` and the provisional
-writer/LOC/bypass/traceability snapshot through `0e0680f`. The D1D startup code
-is committed through `a949af1`, with its scoped policy inventory and exact gate
-observations in `2026-07-13-p0-d1d-mcp-startup-candidate.md`. The final workspace
-gate cannot be claimed from these scoped runs; **dependencies:** D1, D1A, D1B,
-D1C, and the D1D design resolved; D1E review, D1D startup review, live MCP
-mutation, and the P0-only retrospective Gate A exception remain open.
+surfaces. The integrated correction range `8c66c12..f788823`, full P0 policy
+inventory, exact gate commands, failed-first-run disclosure, and repeated
+distributions are recorded in
+`2026-07-14-p0-d1d-d1e-correction-candidate.md`. **Dependencies:** D1, D1A,
+D1B, D1C, and the D1D design resolved; D1E review, D1D startup review, live MCP
+mutation, and the P0-only retrospective Gate A/Gate B dispositions remain open.
 
 ### What this phase fixes
 
@@ -624,6 +629,13 @@ retain their intended behavior where they are operator-selected.
     stale `previous_response_id`, then normal threading may resume from the next
     response. The durable-state request fixture passes 20/20; no live-provider
     or literal-SIGKILL claim is made.
+  - [x] Remove idle descriptors from private line logs and eager process-spool
+    probing; use a cancellation-safe adoption guard so a process group cannot
+    survive cancellation before spool attachment commits.
+  - [x] Replace transient emergency headroom with exact observer reserve and
+    typed filesystem, subprocess, and HTTP admission; cover recursive walks,
+    one-shot configuration/read/write paths, OAuth storage, task transactions,
+    diagnostics, LSP, and TUI discovery without nested permit acquisition.
   - [ ] Independently accept the candidate proof of permit transfer and release
     on success, spawn failure, timeout, cancellation,
     foreground-to-background adoption, transport drop, and shutdown under
@@ -666,8 +678,10 @@ retain their intended behavior where they are operator-selected.
   500 LOC, no thin-entrypoint violation, zero added bypass matches, and 88 raw
   writer candidates. The scoped D1D regeneration over `5015e79..a949af1`
   likewise records zero changed production files over 500 LOC, zero
-  thin-entrypoint violations, and zero added bypass matches. A complete final
-  candidate regeneration remains required at Gate C.
+  thin-entrypoint violations, and zero added bypass matches. The final full-P0
+  regeneration at `f788823` covers 227 changed Rust files: zero over 500, zero
+  thin-entrypoint violations, zero added policy matches, and 92 enumerated
+  artifact-writer candidates.
 - [ ] Complete the baseline-failure and finding-to-test traceability records,
   then correct rather than append to the invalidated Gate C handoff. The exact
   candidate matrix now exists in the
@@ -675,8 +689,8 @@ retain their intended behavior where they are operator-selected.
   labels historical source proof where no pre-fix executable run was retained;
   the [`baseline-evidence audit`](reviews/2026-07-12-p0-baseline-evidence-audit.md)
   proves Git contains only one native defect-red/corrected-green sequence and
-  that a P0-only Gate B process exception is unavoidable. D1D, owner
-  disposition, and the final corrected handoff remain open.
+  that a P0-only Gate B process exception is unavoidable. The D1D/SEC-14 row is
+  now populated; owner disposition and independent acceptance remain open.
 
 ### Phase-specific evidence
 
@@ -805,18 +819,18 @@ then becomes a P0 blocker:
 
 ### Review and exit gate
 
-**Current gate state:** Gate D returned `NOT READY`; the corrective candidate is
-implemented through `37c806a` and its provisional evidence through `0e0680f`.
-D1D startup implementation is committed through `a949af1` and awaits scoped
-external acceptance; its live-mutation slice remains open. The owner Gate A and
-Gate B exceptions, final Gate C, and fresh integrated Gate D remain open. The
+**Current gate state:** Gate D returned `NOT READY`; the corrective code
+candidate is implemented through `f788823` and the final machine Gate C rerun is
+green. D1D startup and D1E structural admission await scoped external
+acceptance; the MCP live-mutation slice remains open. The owner Gate A and Gate
+B exceptions and fresh integrated Gate D remain open. The
 external status review at `51b83ea` accepted F-1 through F-3 and identified the
 stale D1D integration test as G-1; G-1 is corrected in
 `2026-07-14-p0-g1-correction.md`, without changing the open D1D/D1E acceptance
-gates. The final all-target run has not
-occurred: a preliminary invocation was deliberately interrupted when the host
-had about 345 MiB free and began compiling additional feature combinations; it
-is not pass/fail evidence. Three provisional reports review frozen snapshot
+gates. A later final all-target attempt failed in the PTY integration surface;
+that failure, its deterministic harness correction, a 20/20 complete PTY-suite
+distribution, and the subsequent green workspace rerun are retained in
+`2026-07-14-p0-d1d-d1e-correction-candidate.md`. Three provisional reports review frozen snapshot
 `7d121c9`; they are archived review input, not Gate D evidence for the final P0
 candidate. Subsequent targeted credential/config, transport/streaming, and
 private-artifact closure reviewers each report `READY` on their exact historical
@@ -825,8 +839,8 @@ workspace test run/manual audits are recorded in the
 [`P0 Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md), but Gate D
 invalidated the unqualified test-pass claim. The corrective candidate must close
 the findings in the [`Gate D review`](reviews/2026-07-11-p0-gate-d-review.md),
-rerun all gates with distribution and inventory evidence, and receive a fresh
-integrated verdict over the complete range. No scoped `READY` or prior lucky
+independently reproduce the final distributions and inventory, and receive a
+fresh integrated verdict over the complete range. No scoped `READY` or prior lucky
 sample is a whole-phase verdict.
 
 - [ ] A security reviewer threat-models every credential destination, redirect,

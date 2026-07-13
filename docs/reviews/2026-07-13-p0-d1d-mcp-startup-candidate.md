@@ -1,7 +1,11 @@
 # P0 D1D MCP startup candidate
 
-Date: 2026-07-13  
-Status: implementation candidate; independent review pending
+Date: 2026-07-13
+Status: superseded by the integrated correction candidate; independent review pending
+
+The follow-up range closes this snapshot's approved-project activation,
+hostile-protocol, and real child-selection fixture gaps. See
+[`2026-07-14-p0-d1d-d1e-correction-candidate.md`](2026-07-14-p0-d1d-d1e-correction-candidate.md).
 
 ## Scope
 
@@ -103,9 +107,7 @@ not grow that debt.
 
 This candidate does not claim live add/remove/enable/disable/reload,
 provider-visible tool refresh between requests, child-only connections beyond
-the startup pool, dynamic MCP roots, approved-project activation coverage, HTTP
-GET listening, reconnect/resumption, DELETE shutdown, OAuth,
-resources/prompts/sampling, bounded response bodies, or bounded tool counts.
-End-to-end root/spawn selection also needs a stronger fixture than the current
-runtime and variant-resolution tests. These remain separately reviewable work
-rather than being hidden inside the startup claim.
+the startup pool, dynamic MCP roots, HTTP GET listening, reconnect/resumption,
+DELETE shutdown, OAuth, resources/prompts/sampling, bounded response bodies, or
+bounded tool counts. These remain separately reviewable work rather than being
+hidden inside the startup claim.

@@ -1,6 +1,6 @@
 # P0 D1C file-descriptor capacity correction
 
-**Date:** 2026-07-12  
+**Date:** 2026-07-12
 **Status:** implementation complete; whole-P0 Gate C and Gate D remain open
 
 ## Scope and owner ruling

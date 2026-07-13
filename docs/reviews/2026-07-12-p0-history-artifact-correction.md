@@ -1,8 +1,8 @@
 # P0 TUI-history artifact correction
 
-**Date:** 2026-07-12  
-**Implementation commit:** `2c6b50c`  
-**Companion boundary commit:** `37c806a`  
+**Date:** 2026-07-12
+**Implementation commit:** `2c6b50c`
+**Companion boundary commit:** `37c806a`
 **Status:** implementation complete; whole-P0 Gate C and Gate D remain open
 
 ## Finding

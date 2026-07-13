@@ -24,7 +24,9 @@ FORBIDDEN = {
     "ignore_attr": re.compile(r"#\s*\[\s*ignore(?:\s|\]|\()"),
     "empty_cfg_any": re.compile(r"#\s*\[\s*cfg\s*\(\s*any\s*\(\s*\)"),
     "lint_cli_suppression": re.compile(r"(?:^|\s)-A(?:\s|clippy::|warnings)"),
-    "marker": re.compile(r"\b(?:TODO|FIXME|HACK)\b"),
+    "marker": re.compile(
+        r"(?:^|\s)(?://+|/\*+|\*+)\s*[^\n]*\b(?:TODO|FIXME|HACK)\b"
+    ),
 }
 ARTIFACT_WRITER = re.compile(
     r"(?:PrivateRoot::(?:create|open)|"
@@ -423,6 +425,11 @@ def main() -> None:
             "counter": command("tokei", "--version", cwd=repo).strip(),
             "rule": str(rule.relative_to(repo)),
             "cfg_policy": "remove AST items whose cfg cannot be true with test=false",
+            "added_line_policy": (
+                "scan added Rust lines for prohibited calls, attributes, lint flags, "
+                "and debt markers in comments; todo! and unimplemented! are separate "
+                "rules, while string fixtures containing marker words are not debt"
+            ),
             "artifact_candidates": (
                 "repository-wide production/build-script lexical sweep for filesystem "
                 "roots, opens, creates, mutations, publication, and removal; the retained "

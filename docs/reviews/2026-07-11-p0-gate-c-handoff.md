@@ -1,255 +1,154 @@
 # P0 Gate C external-review handoff
 
-**Date:** 2026-07-11
-
+**Original date:** 2026-07-11
+**Corrected:** 2026-07-14
 **Phase:** P0 - credential and workspace authority containment
+**Phase base:** `41ea210d24ec0653480be3a097b15adcb1e4bfb0`
+**Corrective code head:** `f7888235dcae32fa66416c2380c7f376608cafff`
+**Phase status:** not accepted; independent review and owner dispositions remain open
 
-**Handoff status:** Invalidated as integrated Gate C evidence by the 2026-07-11
-Gate D rerun; retained as a historical record of the commands that ran
+## Evidence status
 
-**Phase status:** Not accepted; the P0 roadmap and evidence-ledger entries
-remain open
+This document replaces the invalidated 2026-07-11 Gate C packaging. The
+original workspace test invocation did exit successfully, but Gate D later
+reproduced its P0-introduced concurrency test failing 6/10 times. That result is
+historical evidence of one observation, not a pass claim.
 
-> **Correction, 2026-07-12:** The `cargo test --workspace --all-targets`
-> invocation below did exit successfully, but it was one lucky observation over
-> a concurrency regression that Gate D reproduced failing 6/10 times. It must
-> not be cited as an unqualified pass or as stability evidence. The macOS
-> correction and 50-run distributions are recorded in
-> [`2026-07-12-p0-openat-correction.md`](2026-07-12-p0-openat-correction.md).
-> Integrated Gate C remains open until every P0 correction lands and the complete
-> gate is rerun.
+The current machine candidate is the complete P0 code range
+`41ea210...f788823`. The latest independently reviewable correction range is
+`8c66c12...f788823`. The integrated correction record is
+[`2026-07-14-p0-d1d-d1e-correction-candidate.md`](2026-07-14-p0-d1d-d1e-correction-candidate.md).
 
-## Review range
+Machine Gate C is green at the corrective code head. This is implementer
+evidence, not independent acceptance and not a whole-phase `READY` verdict.
 
-- Phase base: `41ea210d24ec0653480be3a097b15adcb1e4bfb0`
-- Gate C code head: `ebb82c8cf2224790f8150676a8acbef5df6ed85c`
-- Code range: `41ea210...ebb82c8`
-- Documentation range: review `41ea210...HEAD` after checking out the commit that
-  contains this handoff.
+## Correction commits
 
-## Tracker state
-
-The remediation plan now separates objective progress from phase acceptance.
-At handoff time, 71 P0 progress items were checked: all 33 implementation items,
-23 phase-specific evidence items, three Gate A items, three Gate B items, and all
-nine Gate C machine/policy items. Gate D later invalidated the phase-specific
-and workspace-test pass marks. The live remediation plan is authoritative for
-current checklist state; this document preserves the historical packaging state.
-
-Seven progress records remain open before a whole-phase `READY` verdict:
-
-- The committed history does not prove that D1/D1A and the expanded evidence
-  method were agreed before implementation.
-- There is no durable per-finding baseline-failure matrix or
-  finding-to-specific-test traceability table.
-- A real Meridian upgrade/build/request assertion remains separate downstream
-  evidence and is not part of Norn's clean-checkout Gate C.
-- There is no dedicated dormant-MCP provenance fixture.
-- The specialized 429 path lacks a stalled-body or explicit read-observer
-  fixture plus a non-disclosure sentinel.
-
-The two Gate A timing claims cannot be repaired by later review. Under the
-current non-negotiable gate text, they require an explicit owner-approved
-P0-only retrospective process exception before `READY`; the historical boxes
-remain unchecked even if that exception is granted. Gate D may verify the other
-records but cannot silently waive them. If granted, the exception substitutes
-only for those two requirements when evaluating P0 Gate A and the universal
-exit gate; it is not precedent for later phases.
-
-The phase was assembled as the following logical commits, in order:
-
-| Commit | Purpose |
+| Commit | Review unit |
 |---|---|
-| `cd91c39` | Enforce trusted workspace authority. |
-| `4fbc716` | Harden Responses credentials and transport. |
-| `0f110d5` | Protect persisted session data. |
-| `7d121c9` | Record the initial P0 implementation evidence. |
-| `aceea4b` | Remove strict-Clippy failures from P0 regressions. |
-| `82a2708` | Isolate provider-authority rejection cases. |
-| `461b37b` | Archive the provisional P0 review reports. |
-| `1bfa1a9` | Reconcile remediation scope and review findings. |
-| `7d7d559` | Define the portable private-artifact race boundary. |
-| `cca0432` | Add the P0 security dependencies. |
-| `864b473` | Confine private runtime artifacts. |
-| `30e5126` | Seal configuration and provider authority. |
-| `9406df8` | Harden Responses terminal diagnostics. |
-| `ebb82c8` | Satisfy the strict P0 regression lint gate. |
+| `b0da011` | MCP registry/view separation, child dispatch, hostile protocol fixtures, and redaction |
+| `2685216` | Descriptor lifetime, process-adoption cancellation, and exact weighted admission |
+| `e4c3f43` | One-shot filesystem/read admission and task-store transaction governance |
+| `f788823` | Deterministic PTY ownership and during-stream resize fixture |
 
-The three provisional reports under
-[`2026-07-11-remediation-review/`](2026-07-11-remediation-review/) review frozen
-snapshot `7d121c9`. They are historical review input, not Gate D verdicts. The
-subsequent credential/config, transport/streaming, and private-artifact closure
-reviews each returned `READY` on the owned surface now committed in the code
-range. Those scoped verdicts are also not a whole-phase verdict.
+Earlier P0 logical commits and their scoped reviews remain visible in Git and
+the remediation plan. No earlier scoped `READY` is treated as a verdict on this
+integrated range.
 
-Each closure reviewer inspected the final content of its owned surface before
-packaging. No code in an owned surface changed between its verdict and code head
-`ebb82c8`; work in a different slice may have continued until that slice's own
-review. After all three verdicts, the only subsequent operations were whole-file
-staging, the logical commits listed above, Gate C reruns, and documentation.
-This handoff is the durable record for the scoped verdicts and the independent
-whole-range policy fact-check:
+## Gate C commands
 
-| Evidence label | Reviewer | Date | Reviewed content | Verdict |
-|---|---|---|---|---|
-| `P0-CRED-CONFIG-R2` | Independent credential/config closure reviewer | 2026-07-11 | Credential/config and child-authority surface byte-equivalent to `ebb82c8` | `READY` |
-| `P0-TRANSPORT-R2` | Independent task `/root/p0_transport_final_review` | 2026-07-11 | Transport/streaming surface byte-equivalent to `ebb82c8` | `READY` |
-| `P0-ARTIFACT-R2` | Independent task `/root/p0_artifact_final_review` | 2026-07-11 | Private-artifact surface byte-equivalent to `ebb82c8` | `READY` |
-| `P0-POLICY-R2` | Independent task `/root/tracker_audit/handoff_fact_check` | 2026-07-11 | All 91 changed Rust files, the 62/2/27 LOC classification, forbidden-call and suppression audits, marker disposition, and seven changed `mod.rs` files | `READY` |
-
-## Gate C results
-
-The following commands were rerun after code head `ebb82c8` was created:
+The following commands completed successfully:
 
 | Command | Result |
 |---|---|
-| `cargo fmt --all --check` | Pass. |
-| `cargo clippy --workspace --all-targets -- -D warnings` | Pass with no warning. |
-| `cargo test --workspace --all-targets` | Historical single exit-zero observation only; invalidated as an unqualified Gate C pass after Gate D reproduced the P0 convergence test failing 6/10 isolated runs. |
-| `cargo test --workspace --doc` | Pass: four runnable `norn` doctests and two compile-fail API-boundary doctests; other crates have no doctests. |
-| `git diff --no-ext-diff --check 41ea210...ebb82c8` | Pass. |
+| `cargo fmt --all -- --check` | Pass. |
+| `cargo clippy --workspace --all-targets -- -D warnings` | Pass with no warning or allowance. |
+| `cargo check --workspace --all-targets` | Pass. |
+| `cargo test -p norn --tests` | Pass, including library and integration targets. |
+| `cargo test -p norn-cli --tests` | Pass, including the re-pinned extension and index-lock integrations. |
+| `cargo test -p norn-tui --tests` | Pass, including all 17 PTY cases. |
+| `cargo test --workspace --all-targets` | Pass after the PTY harness correction described below. |
+| `cargo test --workspace --doc` | Pass. |
+| `cargo test -p norn --doc --features test-utils` | Pass, including four compile-fail authority contracts. |
+| `git diff --check 41ea210...HEAD` | Pass at the packaged documentation head. |
 
-The all-target run printed two benign process-cleanup messages of the form
-`kill: <pid>: No such process`; the command exited zero and every test target
-passed.
+### Failed-first-run disclosure
 
-## Policy audits
+The first final `cargo test --workspace --all-targets` attempt failed in the PTY
+integration file with macOS `openpty` `ENXIO`. An unchanged 20-run file
+distribution then produced 19 passes and one resize-marker failure. The harness
+was running process-global PTY fixtures concurrently, and the resize scenario
+raced an instantaneous stream between generating and idle panel geometries.
 
-The committed range changes 91 Rust files. Every changed production file is at
-or below 500 logical production LOC after excluding comments, blanks, and
-`cfg(test)` code. Sixty-two files were below the limit by whole-file inspection.
-Two over-500 files were test-only. The production prefixes of the remaining 27
-files were extracted at their test-module boundary and checked with `tokei`.
-None exceeded the limit.
+The correction serializes parent PTY ownership in the test process and uses a
+delayed stream to assert the during-stream geometry. It adds no retry, ignore,
+lint bypass, or production behavior. The retained post-fix result is 20/20
+complete PTY suites, 340/340 individual cases, followed by the green complete
+workspace run above.
 
-The table below records selected boundary-near and new/refactored files. For a
-whole file already below 500, the count is the conservative whole-file `tokei`
-code count and can include test code. For an over-500 physical file, the count
-is its production prefix through the test-module boundary. The mixed method is
-deliberately conservative and is not presented as an exact ranking of production
-LOC:
+## Repeated evidence
 
-| Production file | Audit LOC |
+| Artifact | Distribution |
 |---|---:|
-| `crates/norn/src/tools/task/disk.rs` | 498 |
-| `crates/norn/src/tools/agent/spawn.rs` | 497 |
-| `crates/norn/src/agent/builder.rs` | 490 |
-| `crates/norn/src/profile/loader.rs` | 488 |
-| `crates/norn-cli/src/print/orchestrator.rs` | 466 |
-| `crates/norn/src/agent/assembly.rs` | 463 |
-| `crates/norn/src/tools/skill.rs` | 460 |
-| `crates/norn/src/runtime_init/base.rs` | 445 |
-| `crates/norn/src/provider/auth.rs` | 426 |
-| `crates/norn/src/util/secure_file.rs` | 409 |
-| `crates/norn/src/process/manager.rs` | 403 |
-| `crates/norn/src/util/private_fs.rs` | 396 |
-| `crates/norn/src/session/manager.rs` | 389 |
-| `crates/norn/src/provider/openai/sse.rs` | 381 |
-| `crates/norn/src/util/private_fs_mutation.rs` | 173 |
+| [`2026-07-14-p0-concurrency-final.json`](evidence/2026-07-14-p0-concurrency-final.json) | three macOS-sensitive cases, each 50/50 |
+| [`2026-07-14-d1e-integrated.json`](evidence/2026-07-14-d1e-integrated.json) | six descriptor/cancellation/task cases, each 20/20 |
+| [`2026-07-14-mcp-startup-integrated.json`](evidence/2026-07-14-mcp-startup-integrated.json) | four MCP startup/protocol/cancellation cases, each 20/20 |
+| [`2026-07-14-p0-review-corrections-final.json`](evidence/2026-07-14-p0-review-corrections-final.json) | two prior Gate D corrections, each 20/20 |
+| [`2026-07-14-p0-pty-final.json`](evidence/2026-07-14-p0-pty-final.json) | complete PTY suite, 20/20 |
 
-Added-line inspection over `41ea210...ebb82c8` found:
+The concurrency JSON records the exact head and worktree status at execution.
+The shell-runner JSON files retain every aggregate denominator; the checked-in
+runners reproduce the distributions and print failure logs rather than only the
+last result.
 
-- Zero added `.unwrap()`, `.unwrap_err()`, `.expect()`, `.expect_err()`, or
-  `panic!()` calls.
-- Zero added or widened `#[allow]`, `#[expect]`, `#[deny]`, `#[ignore]`, empty
-  `cfg(any())`, command-line lint suppression, or workspace lint relaxation.
-- One `TODO` text match: `pattern = "TODO"` in the
-  `tools/diagnostics_infra.rs` TOML fixture. It proves non-executing pattern
-  checks survive workspace-convention sanitization; it is not an unresolved
-  marker.
-- Zero added `FIXME`, `HACK`, `todo!`, or `unimplemented!` markers.
+## Policy and artifact inventory
 
-The seven changed `mod.rs` files contain declarations, re-exports, or module
-documentation only:
+[`2026-07-14-p0-final-policy.json`](evidence/2026-07-14-p0-final-policy.json)
+was generated over `41ea210...f788823` and records:
 
-- `crates/norn-cli/src/config/mod.rs`
-- `crates/norn/src/config/merge/mod.rs`
-- `crates/norn/src/config/mod.rs`
-- `crates/norn/src/profile/mod.rs`
-- `crates/norn/src/provider/mod.rs`
-- `crates/norn/src/provider/openai/mod.rs`
-- `crates/norn/src/util/mod.rs`
+- 227 changed Rust files, including 42 test-only files.
+- Zero production files over 500 syntax-aware LOC and zero thin entrypoint
+  violations. The maximum is `agent/builder.rs` at 498 production LOC.
+- Zero added unwrap, expect, panic, suppression, ignore, empty-cfg,
+  command-line allowance, unresolved comment marker, todo, or unimplemented
+  matches.
+- 92 production/build-script artifact-writer candidates.
 
-## Secret-fixture inspection
+The exact 92 rows are classified in
+[`2026-07-12-p0-artifact-writer-inventory.md`](2026-07-12-p0-artifact-writer-inventory.md).
+The increase from the prior 88-row snapshot is reconciled by file/text set
+comparison: every new row belongs to session persistence/artifacts, process
+spool, private line log, task storage, or explicit CLI step output. The reviewer
+must reproduce that reconciliation; this handoff does not ask them to trust the
+summary.
 
-Manual inspection of the complete committed diff found no plausible real
-credential, account identifier, private prompt, reusable turn-state value,
-response id, or cache key. Credential-looking values are explicit synthetic
-sentinels such as `access-token-secret`, `dispatch-access-token`,
-`dispatch-account`, `turn-state-secret`, and `must-never-authenticate-child`.
-Environment names such as `OPENAI_API_KEY` and `PRIVATE_DEPLOYMENT_KEY` are
-names only, not values. The only added high-entropy literal is the published
-`hmac 0.12.1` checksum in `Cargo.lock`.
+The marker audit detects debt markers in Rust comments. `todo!` and
+`unimplemented!` are separate prohibited rules. A TOML test fixture that defines
+a policy for rejecting the literal word `TODO` is therefore not falsely counted
+as unresolved debt.
 
-## Scoped closure reviews
+## Traceability and open process evidence
 
-- `P0-CRED-CONFIG-R2`: `READY`. The reviewer confirmed raw settings and merge
-  authority are crate-internal, the public static-Codex constructor is sealed to
-  the compiled Codex destination, and the real child variant/profile/fork paths
-  cannot reconstruct backend or credential authority.
-- `P0-TRANSPORT-R2`: `READY`. The reviewer confirmed keyed non-disclosing
-  terminal discriminators, explicit redirect-policy refusal, complete response
-  header-value redaction, and the documented split between generic error-body
-  draining and specialized 401/429/redirect body drops.
-- `P0-ARTIFACT-R2`: `READY`. The reviewer confirmed descriptor-pinned private
-  roots, mode healing, no-follow traversal, no-replace publication, destination
-  and source race confinement, complete artifact-family coverage, removal of
-  relative sensitive-data fallback, and deletion of obsolete path-based
-  permission scaffolding.
-- `P0-POLICY-R2`: `READY`. The reviewer independently matched the 91-file
-  changed-Rust inventory, LOC classification, bypass and marker results, and
-  module-shape claims to `41ea210...ebb82c8`.
+The finding-to-candidate matrix is
+[`2026-07-12-p0-traceability.md`](2026-07-12-p0-traceability.md). Its `SEC-14`
+row now includes MCP provenance, approval, hostile protocol, complete-pool/view,
+and real child-dispatch fixtures.
 
-The scoped reviewers also recorded evidence limits for Gate D to assess. The
-redirect regression exercises the real bounded client and `StreamExecutor`, but
-not a complete public `Provider::stream` fixture, and its redirect body is
-finite rather than stalled. Entropy failure is injected at the key-generation
-seam rather than through the process-global terminal dispatcher. Redox and
-ESP-IDF fail-closed branches were inspected but not compiled locally. OAuth
-lifecycle findings remain assigned to P2; no scoped `READY` closes them.
+The baseline audit proves that Git does not contain an executable red-state
+chronology for most original P0 defects. That history cannot be reconstructed
+honestly. Two owner dispositions therefore remain open:
 
-## Gate D residuals
+- A P0-only retrospective Gate A timing exception.
+- A Gate B disposition accepting source-review proof where no retained
+  baseline execution exists.
 
-The external reviewer must verify these are honest limitations rather than
-reachable defects in P0's claimed outcome:
+Neither exception changes the unchecked historical facts or creates precedent
+for P1 and later phases.
 
-- The portable same-UID race guarantee is descriptor confinement and
-  outside-target preservation, not serializability against another process with
-  the same authority.
-- Workspace text reads remain unbounded pending an owner-approved size or
-  streaming policy.
-- The legacy raw provider-settings container still derives `Debug`; no reachable
-  logging sink was found, but the type remains misuse-prone.
-- Public `Scanner`, `scan_rule_dirs`, and `discover_skills` convenience APIs are
-  trusted-input-only and are not used by secure runtime assembly for
-  repository-controlled roots.
-- `mcp_servers` remains a dormant merged surface. Future runtime wiring requires
-  source provenance and explicit consent.
-- Redox, ESP-IDF, and non-Unix workspace/private-artifact operations deliberately
-  return typed `Unsupported`. Those cfg paths were source-reviewed but were not
-  compiled locally because the targets are unavailable.
-- The in-repository static-Codex public API fixture passes. A real Meridian
-  dependency upgrade and request assertion remain downstream integration
-  evidence, not Norn's clean-checkout Gate C.
-- The separately reported exchange-changeset review artifact is absent and is
-  not counted as evidence.
+## Product work still open
+
+- D1D startup and D1E structural admission require independent adversarial
+  acceptance over the current range.
+- MCP live list/inspect/add/remove/enable/disable/reload, child-only connection
+  beyond the startup pool, dynamic roots, and request-boundary provider-tool
+  refresh remain a separate unimplemented slice.
+- OAuth lifecycle correctness remains assigned to P2.
+- The session-centric outputs/transcripts/subagent layout remains reserved for
+  the explicit pre-P3 storage and transcript design discussion.
 
 ## Requested reviewer action
 
-1. Review `41ea210...HEAD` from a clean checkout, with particular attention to
-   the five logical closure commits from `cca0432` through `ebb82c8`.
-2. Read the source review, remediation plan, July decisions, archived
-   provisional reports, and this handoff.
-3. Rerun the Gate C commands and independently inspect the LOC, bypass, marker,
-   module-shape, and secret-fixture claims.
-4. Threat-model the integrated credential destination, workspace command/read,
-   static-Codex, terminal-diagnostic, and private-artifact boundaries.
-5. Verify every open progress record listed above. Gate D may recommend, but
-   cannot grant, the P0-only owner exception required by the two Gate A timing
-   records.
-6. Return `READY` only if the complete P0 outcome has no unresolved phase-owned,
-   phase-introduced, newly unowned, or required-evidence item at any severity.
-   Otherwise return `NOT READY` with reproducible findings.
+1. Review `8c66c12...f788823` as four logical units, then inspect its integration
+   with the full `41ea210...f788823` P0 range.
+2. Rerun every Gate C command and checked-in distribution runner rather than
+   trusting the tables.
+3. Reconcile all 92 artifact-writer candidates and the descriptor permit
+   lifetimes across success, failure, timeout, cancellation, adoption, transport
+   drop, and shutdown.
+4. Adversarially verify MCP project approval, protocol rejection, registry/view
+   separation, optional-server failure, and real child dispatch.
+5. Return scoped `READY` or `NOT READY` for the D1D startup and D1E correction
+   slices. Do not call whole P0 accepted while the owner exceptions and required
+   live MCP product slice remain open.
 
-P1 must not begin until this whole-phase Gate D review returns `READY` and the
-P0 evidence-ledger row is updated.
+P1 does not begin until the plan's P0 acceptance gate is satisfied.

@@ -1,7 +1,7 @@
 # P0 G-1 integration-fence correction
 
-**Source review:** `2026-07-13-p0-status-report.md` at `51b83ea`  
-**Scope:** status-report finding G-1 only  
+**Source review:** `2026-07-13-p0-status-report.md` at `51b83ea`
+**Scope:** status-report finding G-1 only
 **Whole-phase status:** P0 remains open
 
 ## Correction

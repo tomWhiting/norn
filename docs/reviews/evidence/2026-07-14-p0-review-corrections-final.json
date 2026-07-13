@@ -1,0 +1,7 @@
+{
+  "iterations": 20,
+  "cases": [
+    {"filter": "held_lock_times_out_typed_with_config_derived_deadline", "passed": 20, "failed": 0},
+    {"filter": "resume_repair_drops_stale_anchor_for_first_healed_request", "passed": 20, "failed": 0}
+  ]
+}

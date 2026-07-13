@@ -1,0 +1,627 @@
+{
+  "head": "e4c3f439143db4ddff82e92b92db64c0168126d8",
+  "platform": "macOS-26.3.1-arm64-arm-64bit-Mach-O",
+  "python": "3.14.3",
+  "runs_per_test": 50,
+  "tests": {
+    "session::manager::tests::open_or_resume_concurrent_same_id_converges_on_one_session": {
+      "failed": 0,
+      "passed": 50,
+      "runs": [
+        {
+          "duration_ms": 29446,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 1070,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 546,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 537,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 550,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 539,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 569,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 544,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 549,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 567,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 812,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 625,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 554,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 553,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 546,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 547,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 540,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 556,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 556,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 544,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 543,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 555,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 550,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 541,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 581,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 565,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 587,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 613,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 543,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 544,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 554,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 555,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 570,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 549,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 551,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 541,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 545,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 533,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 557,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 525,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 541,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 549,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 580,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 598,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 573,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 551,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 537,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 543,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 576,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 540,
+          "exit_code": 0
+        }
+      ]
+    },
+    "util::private_fs::tests::concurrent_create_new_has_exactly_one_winner": {
+      "failed": 0,
+      "passed": 50,
+      "runs": [
+        {
+          "duration_ms": 461,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 471,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 498,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 486,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 489,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 466,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 463,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 471,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 459,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 469,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 458,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 468,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 459,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 460,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 468,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 475,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 473,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 462,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 467,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 474,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 470,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 461,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 458,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 460,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 461,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 466,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 459,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 465,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 465,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 478,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 475,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 468,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 468,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 465,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 469,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 464,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 469,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 474,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 458,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 475,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 468,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 474,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 462,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 470,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 459,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 456,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 468,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 466,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 468,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 463,
+          "exit_code": 0
+        }
+      ]
+    },
+    "util::private_fs::tests::concurrent_independent_roots_open_one_shared_lock": {
+      "failed": 0,
+      "passed": 50,
+      "runs": [
+        {
+          "duration_ms": 504,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 476,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 488,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 484,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 494,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 640,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 507,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 503,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 529,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 487,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 482,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 478,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 484,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 470,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 481,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 465,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 484,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 477,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 473,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 508,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 485,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 468,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 490,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 474,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 487,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 487,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 469,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 472,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 466,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 463,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 483,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 488,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 527,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 476,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 503,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 474,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 478,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 472,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 468,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 561,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 535,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 486,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 491,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 482,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 463,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 471,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 465,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 472,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 463,
+          "exit_code": 0
+        },
+        {
+          "duration_ms": 462,
+          "exit_code": 0
+        }
+      ]
+    }
+  },
+  "worktree_status": "M .claude/skills/norn/SKILL.md\n?? docs/reviews/evidence/2026-07-14-d1e-integrated.json\n?? docs/reviews/evidence/2026-07-14-mcp-startup-integrated.json\n?? docs/reviews/evidence/2026-07-14-p0-concurrency-final.json\n?? docs/reviews/evidence/2026-07-14-p0-d1d-d1e-policy.json\n?? docs/reviews/evidence/__pycache__/"
+}

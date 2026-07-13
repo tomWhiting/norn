@@ -1,9 +1,9 @@
 # P0 artifact-writer inventory
 
-**Date:** 2026-07-12  
-**Phase base:** `41ea210`  
-**Snapshot code head:** `37c806a`  
-**Status:** complete candidate inventory; regenerate after D1D before final Gate C  
+**Date:** 2026-07-12
+**Phase base:** `41ea210`
+**Snapshot code head:** `f788823`
+**Status:** final candidate enumeration classified; independent reconciliation pending
 **Scope:** every production or build-script filesystem-mutation candidate in
 `crates/**/*.rs`; test-only AST items and integration-test crates are excluded
 
@@ -14,7 +14,7 @@ syntax-aware test exclusion followed by a deliberately conservative lexical
 sweep for filesystem roots, opens, creates, directory creation, publication,
 rename, truncation, and removal. The exact raw rows, including file, line, and
 source text, are retained as `artifact_writer_candidates` in
-`docs/reviews/evidence/2026-07-12-p0-policy.json` at the final P0 head.
+`docs/reviews/evidence/2026-07-14-p0-final-policy.json` at the final P0 code head.
 
 The candidate list is not treated as type inference. It deliberately retains
 read-only opens, cleanup operations, and a semantic `SessionManager::rename`
@@ -29,7 +29,7 @@ Run from the repository root:
 ```sh
 python3 docs/reviews/evidence/run_p0_policy_evidence.py \
   --base 41ea210 --head HEAD \
-  --output docs/reviews/evidence/2026-07-12-p0-policy.json
+  --output docs/reviews/evidence/2026-07-14-p0-final-policy.json
 ```
 
 ## Implicit private artifacts
@@ -45,9 +45,9 @@ later in this document.
 | Immutable fetched documents: `session/artifacts.rs` | One root session; retained with the session under `<session>/artifacts/fetched/` | Descriptor-relative `0700`/`0600`; UUID exclusive creation; no overwrite; configured durability syncs the file and complete directory chain. | Only the active session artifact subtree is added as a read/search exemption. Other sessions, transcripts, indexes, and credentials remain unavailable. |
 | Oversized persisted tool results: `session/spool.rs` | One event in one persisted session under `<session>/spool/`; retained with the session | Descriptor-relative private directory and exclusive file; verbatim serialized bytes; write completes before the referencing event; configured durability syncs the file and directory chain. | The model receives the bounded projection, not automatic access to the full spool. The validated read side exists for resume/forensics. |
 | Foreground Bash threshold output: `tools/bash/output.rs` | One session/tool call under `$NORN_HOME/outputs/<session>/<call>.log`; retained until user cleanup | Trusted absolute Norn root; validated components; descriptor-relative private directories and exclusive regular file. No overwrite or link following. | The tool result returns the path and read/search follow-ups can address that specific output. |
-| Managed process output: `process/{manager,spool}.rs` and `process/manager/launch.rs` | One process-manager run under `$NORN_HOME/outputs/<session-or-run>/processes/<run>/<id>.log`; retained after process exit | One pinned `PrivateRoot` shared by the manager; validated path components; private directories and exclusive files; serialized async append/flush and committed-length cursor. | The process tool exposes the spool path and bounded cursor reads; output is not injected wholesale. |
-| Persistent tasks and claim locks: `tools/task/disk.rs` | Explicit cross-session task group beneath `$NORN_HOME/tasks/<group>/`; lives until task/group deletion | Descriptor-relative private tree; validated group/task IDs; exclusive lock creation; sibling temp plus fsync and atomic rename/no-replace publication; link/non-regular rejection. Removal rows are scoped task/lock cleanup. | Only through the task tool's typed operations; the task root is not a generic read exemption. |
-| TUI input history and sibling lock: `resource/private_line_log.rs`, `norn-tui/input/history.rs` | Current user across TUI runs at `$NORN_HOME/history.txt`; retained until user removal | Trusted `norn_dir`; pinned private parent; validated UTF-8 final component; regular no-follow data and lock files; `0700`/`0600`; advisory inter-process lock across reads/appends; unterminated tails ignored on read and truncated before append; corrupt/unreadable backing is disabled rather than extended. | No direct model file authority. Recalled entries become user input only when the user selects/submits them. `Debug` reveals counts/presence, not prompts or drafts. |
+| Managed process output: `process/{manager,spool}.rs` and `process/manager/launch.rs` | One process-manager run under `$NORN_HOME/outputs/<session-or-run>/processes/<run>/<id>.log`; retained after process exit | No eager manager root descriptor. Admitted filesystem transactions open the private root when needed; active spools retain only their live file, with validated path components, private directories, exclusive creation, serialized async append/flush, and committed-length cursor. | The process tool exposes the spool path and bounded cursor reads; output is not injected wholesale. |
+| Persistent tasks and claim locks: `tools/task/disk.rs`, `tools/task/disk/storage.rs` | Explicit cross-session task group beneath `$NORN_HOME/tasks/<group>/`; lives until task/group deletion | One admitted W5 descriptor-relative private transaction; nested operations reuse it. Validated group/task IDs; exclusive lock creation; sibling temp plus fsync and atomic rename/no-replace publication; link/non-regular rejection. Removal rows are scoped task/lock cleanup. | Only through the task tool's typed operations; the task root is not a generic read exemption. |
+| TUI input history and sibling lock: `resource/private_line_log.rs`, `norn-tui/input/history.rs` | Current user across TUI runs at `$NORN_HOME/history.txt`; retained until user removal | Trusted `norn_dir`; no idle descriptor; each W5 transaction reopens and pins the private parent and verifies stable file identity. Validated UTF-8 final component; regular no-follow data and lock files; `0700`/`0600`; advisory inter-process lock across reads/appends; unterminated tails ignored on read and truncated before append; corrupt/unreadable backing is disabled rather than extended. | No direct model file authority. Recalled entries become user input only when the user selects/submits them. `Debug` reveals counts/presence, not prompts or drafts. |
 
 ### Layout boundary
 
@@ -101,6 +101,14 @@ so they are not implicit private artifacts.
   requested destination. They do not imply another writer or read surface.
 
 ## Coverage conclusion
+
+The final regeneration increased the conservative raw count from 88 to 92
+while code was split and formerly retained handles became per-transaction
+opens. A file/text set comparison places every newly appearing row in an
+already classified family: session artifact/persistence, process spool, private
+line log, task storage, or explicit CLI step output. No new implicit artifact
+family is left unclassified. The exact 92 rows remain in the final JSON so the
+reviewer can reproduce this reconciliation rather than trust the grouping.
 
 The raw JSON enumeration plus the classifications above support the narrow P0
 claim: every implicit runtime artifact writer currently identified is either

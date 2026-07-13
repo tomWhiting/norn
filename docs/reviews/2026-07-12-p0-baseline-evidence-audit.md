@@ -1,8 +1,8 @@
 # P0 baseline-evidence audit
 
-**Date:** 2026-07-12  
-**Phase base:** `41ea210`  
-**Status:** historical audit complete; owner disposition required  
+**Date:** 2026-07-12
+**Phase base:** `41ea210`
+**Status:** historical audit complete; owner disposition required
 **Method:** inspect every commit from `41ea210..78d982b`, its parent, and the
 introduction history of the decisive P0 tests; no worktree was mutated
 

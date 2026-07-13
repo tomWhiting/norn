@@ -1,9 +1,9 @@
 # P0 finding-to-evidence traceability
 
-**Date:** 2026-07-12  
-**Phase base:** `41ea210`  
-**Snapshot code head:** `37c806a`  
-**Status:** candidate matrix complete; D1D/SEC-14 and final Gate C remain open  
+**Date:** 2026-07-12
+**Phase base:** `41ea210`
+**Snapshot code head:** `f788823`
+**Status:** candidate matrix and machine Gate C complete; independent acceptance remains open
 **Source review:** `docs/reviews/2026-07-10-responses-api-implementation-review.md`
 
 ## Evidence rule
@@ -38,7 +38,7 @@ run at the final P0 head; listing a test here is not a pass claim.
 | `SEC-11` | Source proof at lines 352 onward: repeated path resolution and links escape/change the workspace root. | Secure-file final/intermediate/launch-root tests; settings/context/rule/profile/skill/conventions family tests named in the P0 Gate C handoff and remediation plan. | Candidate family present; final reviewer rechecks the enumerated automatic-reader families. |
 | `SEC-12` | Source proof at lines 389 onward: skills and conventions translate repository text into processes. | Workspace-skill disable/symlink tests in `tools/skill.rs`; LOC/pattern-only and symlink tests in `tools/diagnostics_infra.rs`. | Candidate present. |
 | `SEC-13` | Source proof at lines 409 onward: model-selected trusted profile executes prompt commands. | `profile/loader.rs::static_workspace_and_user_prompt_command_profiles_keep_their_trust_contract`; child validation through `tools/agent/spawn_context.rs`. | Fixture covers the exact confused-deputy case although the legacy test name is broad. |
-| `SEC-14` | Source proof at lines 425 onward: provider options, profile API shape, and name collisions select authority indirectly. | Provider-profile/options/alias/collision tests in `config/provider_security.rs`; protected compatible-request keys in `provider/openai_compatible/request.rs`. | **Open until D1D resolves the merged dormant `mcp_servers` surface.** |
+| `SEC-14` | Source proof at lines 425 onward: provider options, profile API shape, name collisions, and the dormant merged `mcp_servers` map select authority indirectly. | Provider-profile/options/alias/collision tests in `config/provider_security.rs`; protected compatible-request keys in `provider/openai_compatible/request.rs`; `runtime::mcp::tests::{pending_project_server_causes_no_process_activation,approved_project_server_connects_through_startup,private_local_server_connects_without_project_approval}`; `tools::agent::spawn_mcp_tests::variant_child_can_widen_root_mcp_view_and_dispatch_beta`; hostile HTTP initialization and stdio cancellation fixtures retained by `run_mcp_startup_evidence.sh`. | Startup candidate present with provenance, definition-bound project approval, independent optional-server failure, complete-pool/view separation, and real child dispatch. Live mutation remains explicitly outside this startup claim; final independent acceptance pending. |
 | `SEC-16` | Provisional source proof at review lines 527 onward and credential review section 01 lines 64 onward: public raw load/merge bypasses validation. | Two external `compile_fail` doctests on `runtime_init/base.rs::load_merged_settings`; implementation validates raw layers before merge. | Candidate present. |
 
 ## Disclosure, terminal diagnostics, and redirects
@@ -54,19 +54,18 @@ run at the final P0 head; listing a test here is not a pass claim.
 
 | Finding | Baseline proof | Candidate regression(s) | State before final Gate C |
 |---|---|---|---|
-| `SEC-15` | Source proof at review lines 445 onward plus Gate D finding F2: artifact families had mixed permissions, link behavior, relative roots, and a workspace fetch cache. | Session/index/lock tests in `session/persistence/tests.rs`; session spool tests in `session/spool.rs`; process spool tests; task disk tests; Bash private-output tests; fetched-artifact tests; TUI `resource/private_line_log_tests.rs` covering modes, final links, torn tails, corrupt data, and concurrent writers. Exact writer enumeration and classification: `2026-07-12-p0-artifact-writer-inventory.md` plus the final policy JSON. | Candidate present; final writer JSON and all-target pass pending. Layout redesign is explicitly not claimed. |
-| `QUAL-01` | Provisional source proof at review lines 559 onward: 177 campaign-added panic/unwrap/expect calls were hidden by inherited test allowances. | `docs/reviews/evidence/run_p0_policy_evidence.py`, `p0-rust-items.yml`, and final `2026-07-12-p0-policy.json`; focused history correction removes its inherited `unwrap_used` allowance rather than adding another. | Final-head generation pending; empty matches are not claimed until then. |
+| `SEC-15` | Source proof at review lines 445 onward plus Gate D finding F2: artifact families had mixed permissions, link behavior, relative roots, and a workspace fetch cache. | Session/index/lock tests in `session/persistence/tests.rs`; session spool tests in `session/spool.rs`; process spool tests; task disk tests; Bash private-output tests; fetched-artifact tests; TUI `resource/private_line_log_tests.rs` covering modes, final links, torn tails, corrupt data, and concurrent writers. Exact writer enumeration and classification: `2026-07-12-p0-artifact-writer-inventory.md` plus `2026-07-14-p0-final-policy.json`. | Candidate present; 92 writer candidates enumerated and machine all-target gate green. Layout redesign is explicitly not claimed; final inventory reconciliation remains with the reviewer. |
+| `QUAL-01` | Provisional source proof at review lines 559 onward: 177 campaign-added panic/unwrap/expect calls were hidden by inherited test allowances. | `docs/reviews/evidence/run_p0_policy_evidence.py`, `p0-rust-items.yml`, and `2026-07-14-p0-final-policy.json`; focused history correction removes its inherited `unwrap_used` allowance rather than adding another. | Full-range final-head generation covers 227 changed Rust files with zero added policy matches and zero production files over 500 LOC; independent rerun pending. |
 
 ## Finalization requirements
 
 Before this record supports a P0 closure claim:
 
-1. Resolve D1D and update the `SEC-14` row with either removal evidence or the
-   provenance-aware hostile-entrypoint fixture.
-2. Generate the policy/writer JSON at the final committed P0 head.
-3. Run every named candidate through the complete Gate C suite, including
-   repeated concurrency evidence and doctests with `test-utils` enabled.
-4. Correct the invalidated Gate C handoff in place with the final commit,
-   commands, distributions, and counts.
-5. Obtain the fresh independent whole-P0 Gate D verdict. This record does not
+1. Independently verify the D1D/SEC-14 provenance, approval, hostile protocol,
+   complete-pool/view, and real child-dispatch evidence.
+2. Independently reproduce the final policy/writer inventory and repeated
+   machine distributions recorded at the packaged P0 head.
+3. Dispose the retrospective Gate A and Gate B evidence gaps without inventing
+   historical proof.
+4. Obtain the fresh independent whole-P0 Gate D verdict. This record does not
    substitute for that review.

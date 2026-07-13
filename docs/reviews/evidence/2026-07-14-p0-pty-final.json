@@ -1,0 +1,6 @@
+{
+  "iterations": 20,
+  "cases": [
+    {"filter": "norn-tui pty_smoke", "passed": 20, "failed": 0}
+  ]
+}

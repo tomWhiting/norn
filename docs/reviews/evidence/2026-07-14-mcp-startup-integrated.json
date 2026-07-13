@@ -1,0 +1,9 @@
+{
+  "iterations": 20,
+  "cases": [
+    {"filter": "variant_child_can_widen_root_mcp_view_and_dispatch_beta", "passed": 20, "failed": 0},
+    {"filter": "approved_project_server_connects_through_startup", "passed": 20, "failed": 0},
+    {"filter": "real_http_rejects_hostile_initialize_envelopes", "passed": 20, "failed": 0},
+    {"filter": "cancellation_after_write_invalidates_the_channel", "passed": 20, "failed": 0}
+  ]
+}
