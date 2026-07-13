@@ -33,3 +33,7 @@ pub use self::infra::{AgentCancellation, AgentModel, AgentToolInfra};
 pub(crate) use self::lifecycle::append_message_audit;
 pub use self::reclaim::ReclaimOnResultDelivery;
 pub use self::spawn::{SPAWN_TOOL_NAME, SpawnAgentTool};
+
+#[cfg(test)]
+#[path = "spawn_mcp_tests.rs"]
+mod spawn_mcp_tests;

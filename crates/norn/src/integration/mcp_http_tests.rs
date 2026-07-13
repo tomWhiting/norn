@@ -84,6 +84,39 @@ async fn streamable_http_negotiates_session_and_accepts_sse()
     Ok(())
 }
 
+#[tokio::test]
+async fn connection_errors_do_not_disclose_endpoint_url_secrets() -> Result<(), TestError> {
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let address = listener.local_addr()?;
+    drop(listener);
+    let url = format!("http://user:USER_SECRET@{address}/PATH_SECRET?token=QUERY_SECRET");
+
+    let rendered = match McpClient::connect(McpClientConfig {
+        name: "redaction-fixture".to_owned(),
+        transport: McpTransport::Http { url },
+        env: HashMap::new(),
+        headers: HashMap::new(),
+        working_dir: None,
+    })
+    .await
+    {
+        Ok(_client) => {
+            return Err(
+                std::io::Error::other("connection-refusal fixture unexpectedly connected").into(),
+            );
+        }
+        Err(error) => error.to_string(),
+    };
+
+    for secret in ["USER_SECRET", "PATH_SECRET", "QUERY_SECRET"] {
+        assert!(
+            !rendered.contains(secret),
+            "rendered HTTP error disclosed endpoint secret {secret}"
+        );
+    }
+    Ok(())
+}
+
 #[test]
 fn parses_multiline_sse_data() -> Result<(), Box<dyn std::error::Error>> {
     let mut decoder = SseDecoder::default();

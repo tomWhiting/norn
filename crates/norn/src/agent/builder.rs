@@ -61,6 +61,7 @@ use crate::agent::build_support::{
 use crate::agent::child_policy::ChildPolicy;
 use crate::agent::handle::ResolvedAgentInfo;
 use crate::agent::instance::Agent;
+use crate::agent::mcp::McpAttachment;
 use crate::agent::output::RunOutcome;
 use crate::agent::prompt_install::{SystemPromptInstall, install_system_prompt};
 use crate::agent::registry::AgentRegistry;
@@ -139,6 +140,7 @@ pub struct AgentBuilder {
     pub(super) variables: Option<Arc<VariableStore>>,
     pub(super) variable_pairs: Vec<(String, String)>,
     pub(super) disallowed_tools: Vec<String>,
+    pub(super) mcp: McpAttachment,
     pub(super) terminal_reclamation: bool,
     pub(super) register_root: Option<(String, String)>,
 }
@@ -192,6 +194,7 @@ impl AgentBuilder {
             variables: None,
             variable_pairs: Vec::new(),
             disallowed_tools: Vec::new(),
+            mcp: McpAttachment::default(),
             // D3: terminal reclamation defaults on, preserving today's
             // unconditional install for every headless / embedded runtime;
             // a status-panel driver (the TUI) opts out with
@@ -329,6 +332,7 @@ impl AgentBuilder {
             &self.without_tools,
             self.bash_drain_grace,
         );
+        self.mcp.register_tools(&mut registry)?;
         // D5: register the skill tool on the `load_runtime_base` path when a
         // non-empty skill catalog was discovered, matching the CLI's
         // `!skill_catalog.is_empty()` gate. It is registered before
@@ -371,6 +375,7 @@ impl AgentBuilder {
         // gating so a disallowed name stays unavailable even when the
         // allow-list names it (mirrors `build_runtime`'s `set_disallowed`).
         registry.set_disallowed(std::mem::take(&mut self.disallowed_tools));
+        self.mcp.restrict_tools(&mut registry)?;
 
         // A zero-tool agent is a legitimate configuration (a pure text
         // transform step: `--allowed-tools ""`, or a profile with

@@ -14,6 +14,17 @@ pub struct McpRuntime {
 }
 
 impl McpRuntime {
+    #[cfg(test)]
+    pub(crate) fn from_test_clients(clients: Vec<McpClient>) -> Self {
+        Self {
+            clients: clients
+                .into_iter()
+                .map(|client| (client.name().to_owned(), client))
+                .collect(),
+            failures: BTreeMap::new(),
+        }
+    }
+
     /// Connect selected servers independently and retain both healthy clients
     /// and per-server failures.
     pub async fn connect(configs: impl IntoIterator<Item = McpClientConfig>) -> Self {
@@ -178,3 +189,7 @@ impl std::fmt::Debug for McpRuntime {
             .finish()
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_runtime_tests.rs"]
+pub(crate) mod tests;

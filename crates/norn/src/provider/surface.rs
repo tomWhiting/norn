@@ -301,6 +301,25 @@ pub fn collect_function_definitions(
         .collect()
 }
 
+/// Project an explicit child view from physically registered, non-denied
+/// tools, independently of the root agent's availability view.
+pub(crate) fn collect_registered_function_definitions(
+    registry: &ToolRegistry,
+    allow_list: &[String],
+) -> Vec<ToolDefinition> {
+    let names: std::collections::BTreeSet<_> = allow_list.iter().map(String::as_str).collect();
+    names
+        .into_iter()
+        .filter_map(|name| {
+            registry.get_registered(name).map(|tool| ToolDefinition {
+                name: tool.name().to_owned(),
+                description: tool.description().to_owned(),
+                parameters: wrap_schema_with_envelope(tool.input_schema()),
+            })
+        })
+        .collect()
+}
+
 #[cfg(test)]
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests {

@@ -143,6 +143,15 @@ impl ToolRegistry {
         self.tools.get(name).map(AsRef::as_ref)
     }
 
+    /// Look up a physically registered tool while bypassing only the current
+    /// availability view. Explicit deny rules remain authoritative.
+    pub(crate) fn get_registered(&self, name: &str) -> Option<&(dyn Tool + Send + Sync)> {
+        if self.disallowed.contains(name) {
+            return None;
+        }
+        self.tools.get(name).map(AsRef::as_ref)
+    }
+
     /// Returns `true` when a tool with this exact name is physically
     /// registered, regardless of allow-list / deny-list gating.
     ///

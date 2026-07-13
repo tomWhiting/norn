@@ -30,9 +30,13 @@ pub(super) fn apply_mcp_server_selection(
         base_allow_list.unwrap_or_else(|| parent_registry.names().map(str::to_owned).collect());
     available.retain(|name| !all.contains(name));
     for name in selected {
-        if parent_registry.get(&name).is_some() && !available.contains(&name) {
+        if parent_registry.get_registered(&name).is_some() && !available.contains(&name) {
             available.push(name);
         }
     }
     Ok(Some(available))
 }
+
+#[cfg(test)]
+#[path = "mcp_selection_tests.rs"]
+mod tests;

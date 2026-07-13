@@ -34,9 +34,10 @@ operator input.
   tool context, including zero-tool servers. Connections run independently, so
   one broken optional server does not prevent healthy servers or Norn itself
   from starting.
-- Discovered tools are exposed as `mcp__<server>__<leaf>` while `tools/call`
-  sends the original leaf name. Provider-facing names are bounded, safe, and
-  pair-qualified; registration rejects existing and intra-MCP collisions.
+- Discovered tools use the bounded, server-qualified
+  `mcp_<server-segment>_<tool-segment>_<digest>` form while `tools/call` sends
+  the original leaf name. Provider-facing names are safe and pair-qualified;
+  registration rejects existing and intra-MCP collisions.
 - The client negotiates MCP `2025-11-25`, requires the initialize result's
   protocol/capability/server-info fields, advertises initialized, answers server
   ping requests, validates JSON-RPC shape and response IDs, and follows

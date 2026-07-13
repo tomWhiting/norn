@@ -156,7 +156,7 @@ pub(crate) fn effective_child_tools(
 ) -> Option<Vec<String>> {
     if let Some(names) = base_allowlist.as_ref() {
         for name in names {
-            if parent_registry.get(name).is_none() {
+            if parent_registry.get_registered(name).is_none() {
                 tracing::warn!(
                     tool = %name,
                     child = %child,

@@ -380,7 +380,7 @@ impl McpClient {
     /// Build a client from a transport already wrapped in
     /// [`Arc<McpClientInner>`] form. Test-only constructor.
     #[cfg(test)]
-    fn from_transport(name: impl Into<String>, transport: Box<dyn Transport>) -> Self {
+    pub(crate) fn from_transport(name: impl Into<String>, transport: Box<dyn Transport>) -> Self {
         Self {
             inner: Arc::new(McpClientInner {
                 transport,
@@ -389,6 +389,12 @@ impl McpClient {
             }),
             tools: Vec::new(),
         }
+    }
+
+    #[cfg(test)]
+    pub(crate) fn with_test_tools(mut self, tools: Vec<McpToolDef>) -> Self {
+        self.tools = tools;
+        self
     }
 
     /// Logical server name from the config.

@@ -177,7 +177,12 @@ fn build_tool_definitions(
     registry: &ToolRegistry,
     allow_list: Option<&[String]>,
 ) -> Vec<ToolDefinition> {
-    crate::provider::surface::collect_function_definitions(registry, allow_list)
+    match allow_list {
+        Some(allow_list) => {
+            crate::provider::surface::collect_registered_function_definitions(registry, allow_list)
+        }
+        None => crate::provider::surface::collect_function_definitions(registry, None),
+    }
 }
 
 /// Public tool name for the Norn spawn delegation tool.

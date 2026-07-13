@@ -83,7 +83,7 @@ impl HttpTransport {
             .send()
             .await
             .map_err(|error| IntegrationError::McpError {
-                reason: format!("MCP HTTP request failed: {error}"),
+                reason: format!("MCP HTTP request failed: {}", error.without_url()),
             })?;
         Ok(AdmittedResponse {
             response,
@@ -120,7 +120,7 @@ impl HttpTransport {
                 .text()
                 .await
                 .map_err(|error| IntegrationError::McpError {
-                    reason: format!("MCP HTTP body read failed: {error}"),
+                    reason: format!("MCP HTTP body read failed: {}", error.without_url()),
                 })?;
             return serde_json::from_str(&body).map_err(|error| IntegrationError::McpError {
                 reason: format!("invalid JSON-RPC response: {error}"),
@@ -143,7 +143,7 @@ impl HttpTransport {
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
             let chunk = chunk.map_err(|error| IntegrationError::McpError {
-                reason: format!("MCP SSE body read failed: {error}"),
+                reason: format!("MCP SSE body read failed: {}", error.without_url()),
             })?;
             for message in decoder.push(&chunk)? {
                 if let Some(response) = self.handle_sse_message(message, request_id).await? {
@@ -333,3 +333,7 @@ impl Transport for HttpTransport {
 #[cfg(test)]
 #[path = "mcp_http_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "mcp_http_adversarial_tests.rs"]
+mod adversarial_tests;

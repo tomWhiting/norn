@@ -310,12 +310,14 @@ impl ToolExecutor for SubAgentExecutor {
         // Look up the trait object from the parent registry, but dispatch
         // it through the child's context — never via `registry.execute`,
         // which would use the parent's shared context.
-        let tool = self
-            .registry
-            .get(name)
-            .ok_or_else(|| ToolError::ToolNotFound {
-                name: name.to_string(),
-            })?;
+        let tool = if self.available.is_some() {
+            self.registry.get_registered(name)
+        } else {
+            self.registry.get(name)
+        }
+        .ok_or_else(|| ToolError::ToolNotFound {
+            name: name.to_string(),
+        })?;
 
         let split = split_envelope_fields(arguments);
         let envelope = ToolEnvelope {
