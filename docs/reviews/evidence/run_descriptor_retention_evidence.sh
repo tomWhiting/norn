@@ -2,7 +2,7 @@
 set -eu
 
 iterations="${1:-20}"
-output="${2:-docs/reviews/evidence/2026-07-13-descriptor-retention.json}"
+output="${2:-docs/reviews/evidence/2026-07-13-descriptor-admission.json}"
 case "$iterations" in
     ''|*[!0-9]*)
         echo "iterations must be an integer of at least 20" >&2
@@ -16,21 +16,46 @@ fi
 
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT HUP INT TERM
-passed=0
-failed=0
+retention_passed=0
+retention_failed=0
+cancellation_passed=0
+cancellation_failed=0
+migration_passed=0
+migration_failed=0
 iteration=1
 while [ "$iteration" -le "$iterations" ]; do
     if CARGO_INCREMENTAL=0 cargo test -p norn --lib descriptor_retention -- --nocapture >"$log" 2>&1; then
-        passed=$((passed + 1))
+        retention_passed=$((retention_passed + 1))
     else
-        failed=$((failed + 1))
+        retention_failed=$((retention_failed + 1))
+        cat "$log" >&2
+    fi
+    if CARGO_INCREMENTAL=0 cargo test -p norn --lib \
+        cancelling_foreground_shell_releases_child_drains_and_capacity -- --nocapture \
+        >"$log" 2>&1; then
+        cancellation_passed=$((cancellation_passed + 1))
+    else
+        cancellation_failed=$((cancellation_failed + 1))
+        cat "$log" >&2
+    fi
+    if CARGO_INCREMENTAL=0 cargo test -p norn --lib \
+        timeout_with_partial_output_migrates_and_seeds_spool -- --nocapture \
+        >"$log" 2>&1; then
+        migration_passed=$((migration_passed + 1))
+    else
+        migration_failed=$((migration_failed + 1))
         cat "$log" >&2
     fi
     iteration=$((iteration + 1))
 done
 
 mkdir -p "$(dirname "$output")"
-printf '{\n  "command": "cargo test -p norn --lib descriptor_retention -- --nocapture",\n  "iterations": %s,\n  "passed": %s,\n  "failed": %s\n}\n' \
-    "$iterations" "$passed" "$failed" >"$output"
+printf '{\n  "iterations": %s,\n  "cases": [\n    {"filter": "descriptor_retention", "passed": %s, "failed": %s},\n    {"filter": "cancelling_foreground_shell_releases_child_drains_and_capacity", "passed": %s, "failed": %s},\n    {"filter": "timeout_with_partial_output_migrates_and_seeds_spool", "passed": %s, "failed": %s}\n  ]\n}\n' \
+    "$iterations" \
+    "$retention_passed" "$retention_failed" \
+    "$cancellation_passed" "$cancellation_failed" \
+    "$migration_passed" "$migration_failed" >"$output"
 cat "$output"
-test "$failed" -eq 0
+test "$retention_failed" -eq 0
+test "$cancellation_failed" -eq 0
+test "$migration_failed" -eq 0

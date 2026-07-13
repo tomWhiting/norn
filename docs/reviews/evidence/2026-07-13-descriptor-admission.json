@@ -1,0 +1,8 @@
+{
+  "iterations": 20,
+  "cases": [
+    {"filter": "descriptor_retention", "passed": 20, "failed": 0},
+    {"filter": "cancelling_foreground_shell_releases_child_drains_and_capacity", "passed": 20, "failed": 0},
+    {"filter": "timeout_with_partial_output_migrates_and_seeds_spool", "passed": 20, "failed": 0}
+  ]
+}
