@@ -127,19 +127,22 @@ pub(crate) fn lock_index(
     let path = data_dir.join(INDEX_LOCK_FILE);
     let started = Instant::now();
     let process_guard = lock_process_gate(&path, deadline, started)?;
-    let remaining = match deadline {
-        Some(limit) => Some(limit.checked_sub(started.elapsed()).ok_or_else(|| {
-            SessionPersistError::IndexLockTimeout {
-                path: path.clone(),
-                waited: limit,
-            }
-        })?),
+    let bounded_wait = match deadline {
+        Some(limit) => Some((
+            limit.checked_sub(started.elapsed()).ok_or_else(|| {
+                SessionPersistError::IndexLockTimeout {
+                    path: path.clone(),
+                    waited: limit,
+                }
+            })?,
+            limit,
+        )),
         None => None,
     };
     let permit = acquire_private_fs()?;
     let root = PrivateRoot::create(data_dir)?;
     let file = root.open_lock(Path::new(INDEX_LOCK_FILE))?;
-    match remaining {
+    match bounded_wait {
         None => {
             file.lock()?;
             Ok(IndexLock {
@@ -149,7 +152,15 @@ pub(crate) fn lock_index(
                 _descriptor_permit: permit,
             })
         }
-        Some(deadline) => lock_with_deadline(file, root, process_guard, permit, path, deadline),
+        Some((poll_budget, reported_wait)) => lock_with_deadline(
+            file,
+            root,
+            process_guard,
+            permit,
+            path,
+            poll_budget,
+            reported_wait,
+        ),
     }
 }
 
@@ -212,7 +223,8 @@ fn lock_with_deadline(
     process_guard: ProcessIndexGuard,
     permit: DescriptorPermit,
     path: PathBuf,
-    deadline: Duration,
+    poll_budget: Duration,
+    reported_wait: Duration,
 ) -> Result<IndexLock, SessionPersistError> {
     let started = Instant::now();
     loop {
@@ -227,10 +239,10 @@ fn lock_with_deadline(
             }
             Err(TryLockError::WouldBlock) => {
                 let elapsed = started.elapsed();
-                let Some(remaining) = deadline.checked_sub(elapsed) else {
+                let Some(remaining) = poll_budget.checked_sub(elapsed) else {
                     return Err(SessionPersistError::IndexLockTimeout {
                         path,
-                        waited: deadline,
+                        waited: reported_wait,
                     });
                 };
                 std::thread::sleep(remaining.min(LOCK_POLL_INTERVAL));

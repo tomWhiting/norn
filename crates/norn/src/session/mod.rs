@@ -41,6 +41,7 @@ pub use persistence::{
     resolve_latest_session_in_working_dir, resolve_session, sum_usage_from_events,
     update_index_entry, update_session_index, write_index_atomic,
 };
+pub(crate) use resume_repair::is_interrupted_tool_result;
 pub use resume_repair::repair_dangling_tool_calls;
 pub use spool::{SpoolWriter, read_spooled_output, resolve_spool_ref};
 pub use store::{DurabilityPolicy, EventStore, JsonlSink, PersistenceSink};

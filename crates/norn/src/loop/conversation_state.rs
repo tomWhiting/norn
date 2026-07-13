@@ -44,6 +44,13 @@ pub(super) fn latest_response_anchor(
                 response_id: response_id.clone(),
                 input_start: message_index,
             });
+        } else if crate::session::is_interrupted_tool_result(event) {
+            // Resume repair appends this result locally after a hard kill. It
+            // is absent from the provider-side state named by the preceding
+            // response ID, so sending it as a delta can produce a 400. Full
+            // replay heals both views; the next response establishes a fresh
+            // anchor through the normal observe_response path.
+            anchor = None;
         }
     }
     anchor
@@ -295,8 +302,9 @@ mod backend_security_tests {
 mod tests {
     use super::*;
     use crate::provider::request::MessageRole;
+    use crate::provider::request::ToolCallKind;
     use crate::rules::types::{DeliveryMode, TriggerTiming};
-    use crate::session::events::{EventBase, EventUsage};
+    use crate::session::events::{EventBase, EventUsage, ToolCallEvent};
     use crate::session::store::EventStore;
 
     /// `event_produces_prompt_message` must agree exactly with the message
@@ -549,6 +557,59 @@ mod tests {
         assert_eq!(request_messages[1].content.as_deref(), Some("tool result"));
         assert_eq!(request_messages[2].content.as_deref(), Some("queued user"));
         assert_eq!(request_messages[3].content.as_deref(), Some("new user"));
+    }
+
+    #[test]
+    fn resume_repair_drops_stale_anchor_for_first_healed_request() {
+        let store = EventStore::new();
+        store
+            .append(SessionEvent::UserMessage {
+                base: EventBase::new(None),
+                content: "run it".to_string(),
+            })
+            .unwrap();
+        store
+            .append(SessionEvent::AssistantMessage {
+                base: EventBase::new(None),
+                content: String::new(),
+                thinking: String::new(),
+                reasoning: Vec::new(),
+                tool_calls: vec![ToolCallEvent {
+                    call_id: "call_killed".to_string(),
+                    name: "bash".to_string(),
+                    arguments: serde_json::json!({"command": "long-running"}),
+                    kind: ToolCallKind::Function,
+                }],
+                usage: EventUsage::default(),
+                stop_reason: "tool_use".to_string(),
+                response_id: Some("resp_killed".to_string()),
+            })
+            .unwrap();
+        crate::session::repair_dangling_tool_calls(&store).unwrap();
+
+        let state = ConversationRequestState::new(
+            &config(ConversationStateMode::ProviderThreaded),
+            ProviderCapabilities::openai_responses(),
+            1,
+            latest_response_anchor(&store.events(), 1, false),
+        )
+        .unwrap();
+        let mut messages = vec![message(MessageRole::System, "system")];
+        messages.extend(crate::session::conversion::events_to_messages(
+            &store.events(),
+        ));
+        messages.push(message(MessageRole::User, "resume"));
+
+        assert!(state.previous_response_id().is_none());
+        let request_messages = state.request_messages(&messages);
+        assert_eq!(request_messages.len(), messages.len());
+        assert_eq!(request_messages[1].content.as_deref(), Some("run it"));
+        assert_eq!(request_messages[2].tool_calls[0].call_id, "call_killed");
+        assert_eq!(
+            request_messages[3].tool_call_id.as_deref(),
+            Some("call_killed"),
+        );
+        assert_eq!(request_messages[4].content.as_deref(), Some("resume"));
     }
 
     #[test]

@@ -1,5 +1,6 @@
 //! Lazy, inode-bound JSONL session persistence.
 
+use std::io::Write as _;
 use std::num::NonZeroU64;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -114,7 +115,6 @@ pub struct JsonlSink {
     target: JsonlTarget,
     identity: PrivateFileIdentity,
     durability: DurabilityPolicy,
-    needs_newline: bool,
     events_since_sync: u64,
     index: Option<IndexRegistration>,
 }
@@ -146,7 +146,6 @@ impl JsonlSink {
             target,
             identity: PrivateFileIdentity::capture(&file)?,
             durability,
-            needs_newline: false,
             events_since_sync: 0,
             index: None,
         })
@@ -174,7 +173,6 @@ impl JsonlSink {
             target,
             identity: PrivateFileIdentity::capture(&file)?,
             durability,
-            needs_newline: false,
             events_since_sync: 0,
             index: Some(IndexRegistration {
                 data_dir: data_dir.to_path_buf(),
@@ -202,6 +200,7 @@ impl Drop for JsonlSink {
     }
 }
 
+#[cfg(test)]
 pub(super) fn write_event_line<W: std::io::Write>(
     writer: &mut W,
     needs_newline: &mut bool,
@@ -223,8 +222,7 @@ impl PersistenceSink for JsonlSink {
         let mut line = serde_json::to_vec(event)?;
         line.push(b'\n');
         let mut file = self.target.reopen_bound(self.identity)?;
-        self.needs_newline = false;
-        write_event_line(&mut *file, &mut self.needs_newline, &line)?;
+        file.write_all(&line)?;
         let at_boundary = match self.durability {
             DurabilityPolicy::Flush => false,
             DurabilityPolicy::FsyncPerEvent => {

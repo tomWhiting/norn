@@ -54,6 +54,21 @@ use crate::session::store::EventStore;
 const INTERRUPTED_OUTPUT: &str =
     "interrupted — output unavailable; re-run the call if still needed";
 
+/// Whether `event` is a synthetic result appended by resume repair.
+///
+/// This durable distinction is also the response-thread safety boundary: the
+/// result exists only in the local transcript, not in the provider state
+/// addressed by the preceding response ID, so the first resumed request must
+/// replay the healed transcript instead of sending it as a threaded delta.
+pub(crate) fn is_interrupted_tool_result(event: &SessionEvent) -> bool {
+    matches!(
+        event,
+        SessionEvent::ToolResult { output, .. }
+            if output.get("error").and_then(serde_json::Value::as_str)
+                == Some(INTERRUPTED_OUTPUT)
+    )
+}
+
 /// Append a synthetic [`SessionEvent::ToolResult`] for every tool call in
 /// `store` that has no recorded output, healing a transcript killed
 /// mid-turn so a resumed session assembles a well-formed provider request.
