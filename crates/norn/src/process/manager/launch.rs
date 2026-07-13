@@ -12,6 +12,7 @@ use tokio::process::{Child, Command};
 use tokio::sync::watch;
 use tokio::task::JoinHandle;
 
+use crate::resource::{DescriptorGovernor, DescriptorPermit, TWO_PIPE_SPAWN_PEAK};
 use crate::tool::context::ProcessEnv;
 use crate::util::validate_private_component;
 
@@ -19,6 +20,86 @@ use super::{ProcessManager, RegistryEntry, SIGNAL_EXIT_CODE};
 use crate::process::ProcessError;
 use crate::process::handle::{ProcessHandle, ProcessShared, ProcessStatus};
 use crate::process::spool::{Spool, SpoolAppender, StreamTag};
+
+type DrainTask = JoinHandle<std::io::Result<()>>;
+
+pub(crate) struct ProcessHandoffParts {
+    pub(crate) child: Child,
+    pub(crate) stdout_task: DrainTask,
+    pub(crate) stderr_task: DrainTask,
+}
+
+/// A governed foreground process awaiting manager adoption.
+///
+/// Unless [`Self::into_parts`] transfers ownership into a registry entry,
+/// dropping the handoff aborts both drains and kills the process group. This
+/// prevents cancellation or spool-creation failure from detaching tasks that
+/// retain pipe permits indefinitely.
+pub(crate) struct ProcessHandoff {
+    child: Option<Child>,
+    stdout_task: Option<DrainTask>,
+    stderr_task: Option<DrainTask>,
+}
+
+impl ProcessHandoff {
+    pub(crate) fn new(child: Child, stdout_task: DrainTask, stderr_task: DrainTask) -> Self {
+        Self {
+            child: Some(child),
+            stdout_task: Some(stdout_task),
+            stderr_task: Some(stderr_task),
+        }
+    }
+
+    pub(crate) fn child_mut(&mut self) -> Result<&mut Child, ProcessError> {
+        self.child.as_mut().ok_or_else(|| ProcessError::Io {
+            operation: "using a governed process handoff".to_owned(),
+            reason: "handoff child was already transferred".to_owned(),
+        })
+    }
+
+    pub(crate) fn into_parts(mut self) -> Result<ProcessHandoffParts, ProcessError> {
+        let child = self.child.take().ok_or_else(|| ProcessError::Io {
+            operation: "adopting a governed process handoff".to_owned(),
+            reason: "handoff child was already transferred".to_owned(),
+        })?;
+        let stdout_task = self.stdout_task.take().ok_or_else(|| ProcessError::Io {
+            operation: "adopting a governed process handoff".to_owned(),
+            reason: "stdout drain was already transferred".to_owned(),
+        })?;
+        let stderr_task = self.stderr_task.take().ok_or_else(|| ProcessError::Io {
+            operation: "adopting a governed process handoff".to_owned(),
+            reason: "stderr drain was already transferred".to_owned(),
+        })?;
+        Ok(ProcessHandoffParts {
+            child,
+            stdout_task,
+            stderr_task,
+        })
+    }
+}
+
+impl Drop for ProcessHandoff {
+    fn drop(&mut self) {
+        if let Some(task) = self.stdout_task.take() {
+            task.abort();
+        }
+        if let Some(task) = self.stderr_task.take() {
+            task.abort();
+        }
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        #[cfg(unix)]
+        if let Some(pid) = child.id()
+            && let Err(error) = crate::util::kill_process_group(pid)
+        {
+            tracing::warn!(pid, %error, "failed to kill an unadopted process group");
+        }
+        if let Err(error) = child.start_kill() {
+            tracing::warn!(%error, "failed to kill an unadopted direct child");
+        }
+    }
+}
 
 impl ProcessManager {
     /// Resolve the spool path for a numeric id under this manager's token.
@@ -54,10 +135,15 @@ impl ProcessManager {
         cwd: &Path,
         process_env: Option<&ProcessEnv>,
     ) -> Result<ProcessHandle, ProcessError> {
+        let governor = DescriptorGovernor::global()
+            .map_err(|error| ProcessError::DescriptorAdmission(Box::new(error)))?;
+        let launch_permits = governor
+            .try_acquire(TWO_PIPE_SPAWN_PEAK)
+            .map_err(|error| ProcessError::DescriptorAdmission(Box::new(error)))?;
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
         let (spool_root, spool_relative) = self.spool_location(id)?;
-        let spool = Arc::new(
-            Spool::create_in(&spool_root, &spool_relative)
+        let (spool, launch_permits) =
+            Spool::create_in_reserved(&spool_root, &spool_relative, launch_permits)
                 .await
                 .map_err(|error| {
                     ProcessError::from_io(
@@ -65,8 +151,8 @@ impl ProcessManager {
                         Some(&spool_root.join(&spool_relative)),
                         &error,
                     )
-                })?,
-        );
+                })?;
+        let spool = Arc::new(spool);
 
         let mut child = build_bg_command(command, cwd, process_env)
             .spawn()
@@ -82,12 +168,31 @@ impl ProcessManager {
             operation: "capturing managed-process stderr".to_owned(),
             reason: "child stderr pipe was not captured".to_owned(),
         })?;
-        let appender = spool.appender().await.map_err(|error| {
-            ProcessError::from_io("opening the active process-spool writer", None, &error)
+        let (appender, mut launch_permits) =
+            spool.appender(launch_permits).await.map_err(|error| {
+                ProcessError::from_io("opening the active process-spool writer", None, &error)
+            })?;
+        let stdout_permit = launch_permits.split(1).ok_or_else(|| ProcessError::Io {
+            operation: "splitting managed-process descriptor admission".to_owned(),
+            reason: "launch admission did not contain a stdout permit".to_owned(),
+        })?;
+        let stderr_permit = launch_permits.split(1).ok_or_else(|| ProcessError::Io {
+            operation: "splitting managed-process descriptor admission".to_owned(),
+            reason: "launch admission did not contain a stderr permit".to_owned(),
         })?;
         let drains = vec![
-            tokio::spawn(drain_to_spool(stdout, appender.clone(), StreamTag::Stdout)),
-            tokio::spawn(drain_to_spool(stderr, appender, StreamTag::Stderr)),
+            tokio::spawn(drain_to_spool(
+                stdout,
+                appender.clone(),
+                StreamTag::Stdout,
+                stdout_permit,
+            )),
+            tokio::spawn(drain_to_spool(
+                stderr,
+                appender,
+                StreamTag::Stderr,
+                stderr_permit,
+            )),
         ];
         Ok(self.install(id, command.to_owned(), pid, spool, child, drains))
     }
@@ -97,17 +202,16 @@ impl ProcessManager {
     /// # Errors
     ///
     /// Returns a typed failure from spool construction.
-    pub async fn adopt(
+    pub(crate) async fn adopt(
         self: &Arc<Self>,
         command: &str,
-        child: Child,
-        stdout_task: JoinHandle<std::io::Result<()>>,
-        stderr_task: JoinHandle<std::io::Result<()>>,
-    ) -> Result<ProcessHandle, ProcessError> {
+        handoff: ProcessHandoff,
+        private_fs_permit: DescriptorPermit,
+    ) -> Result<(ProcessHandle, DescriptorPermit), ProcessError> {
         let id = self.next_id.fetch_add(1, Ordering::AcqRel);
         let (spool_root, spool_relative) = self.spool_location(id)?;
-        let spool = Arc::new(
-            Spool::create_in(&spool_root, &spool_relative)
+        let (spool, private_fs_permit) =
+            Spool::create_in_reserved(&spool_root, &spool_relative, private_fs_permit)
                 .await
                 .map_err(|error| {
                     ProcessError::from_io(
@@ -115,11 +219,19 @@ impl ProcessManager {
                         Some(&spool_root.join(&spool_relative)),
                         &error,
                     )
-                })?,
-        );
+                })?;
+        let spool = Arc::new(spool);
+        let ProcessHandoffParts {
+            child,
+            stdout_task,
+            stderr_task,
+        } = handoff.into_parts()?;
         let pid = child.id();
         let drains = vec![stdout_task, stderr_task];
-        Ok(self.install(id, command.to_owned(), pid, spool, child, drains))
+        Ok((
+            self.install(id, command.to_owned(), pid, spool, child, drains),
+            private_fs_permit,
+        ))
     }
 
     fn install(
@@ -185,6 +297,7 @@ pub(super) async fn drain_to_spool<R>(
     reader: R,
     appender: SpoolAppender,
     tag: StreamTag,
+    _permit: DescriptorPermit,
 ) -> std::io::Result<()>
 where
     R: tokio::io::AsyncRead + Unpin + Send + 'static,

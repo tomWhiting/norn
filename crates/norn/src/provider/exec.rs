@@ -102,6 +102,11 @@ pub(crate) struct StreamExecutor {
     pub(crate) backend_label: &'static str,
 }
 
+struct GovernedResponse {
+    response: reqwest::Response,
+    _permit: crate::resource::DescriptorPermit,
+}
+
 impl StreamExecutor {
     /// Executes one streaming provider request with a pre-serialized body.
     ///
@@ -130,8 +135,9 @@ impl StreamExecutor {
         let response = self.send_with_retries(&body).await?;
 
         if let Some(ref dump) = dumper {
-            let status = response.status().as_u16();
+            let status = response.response.status().as_u16();
             let headers: Vec<(String, String)> = response
+                .response
                 .headers()
                 .iter()
                 .map(|(key, value)| {
@@ -149,12 +155,11 @@ impl StreamExecutor {
     }
 
     /// Sends the request, retrying through 401 refresh and 429 backoff.
-    async fn send_with_retries(&self, body: &str) -> Result<reqwest::Response, ProviderError> {
+    async fn send_with_retries(&self, body: &str) -> Result<GovernedResponse, ProviderError> {
         let mut attempts = 0u32;
         let mut auth_retried = false;
         loop {
             self.rate_limiter.acquire().await;
-
             let send_start = std::time::Instant::now();
             let mut builder = self
                 .client
@@ -163,6 +168,11 @@ impl StreamExecutor {
                 .header("Accept", "text/event-stream")
                 .body(body.to_owned());
             builder = self.auth_provider.apply_auth(builder).await?;
+            let governor = crate::resource::DescriptorGovernor::global()
+                .map_err(|error| ProviderError::DescriptorAdmission(Box::new(error)))?;
+            let permit = governor
+                .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
+                .map_err(|error| ProviderError::DescriptorAdmission(Box::new(error)))?;
 
             let result = match tokio::time::timeout(self.timeout, builder.send()).await {
                 Ok(result) => result,
@@ -215,7 +225,11 @@ impl StreamExecutor {
                 }
             };
 
-            let status = response.status();
+            let response = GovernedResponse {
+                response,
+                _permit: permit,
+            };
+            let status = response.response.status();
 
             if status == reqwest::StatusCode::UNAUTHORIZED {
                 if auth_retried {
@@ -224,6 +238,7 @@ impl StreamExecutor {
                     });
                 }
                 auth_retried = true;
+                drop(response);
                 match self.auth_provider.on_unauthorized().await {
                     Ok(true) => continue,
                     Ok(false) => {
@@ -237,6 +252,7 @@ impl StreamExecutor {
 
             if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
                 let parsed_retry_after = response
+                    .response
                     .headers()
                     .get("Retry-After")
                     .and_then(|v| v.to_str().ok())
@@ -255,6 +271,7 @@ impl StreamExecutor {
                     (parsed, _) => parsed,
                 };
                 let wait = retry_after.unwrap_or(self.retry_backoff);
+                drop(response);
 
                 // Impose back-pressure on every caller sharing this
                 // limiter for the server-requested window; the gate
@@ -291,7 +308,8 @@ impl StreamExecutor {
     /// bodies stream to a sink under the configured deadline: a server that sends
     /// error headers and then stalls is a retryable timeout, while a completed
     /// body classifies by status.
-    async fn error_response_to_provider_error(&self, response: reqwest::Response) -> ProviderError {
+    async fn error_response_to_provider_error(&self, response: GovernedResponse) -> ProviderError {
+        let GovernedResponse { response, _permit } = response;
         let status = response.status();
         if status.is_redirection() {
             return ProviderError::RedirectPolicyRefused {
@@ -344,12 +362,13 @@ impl StreamExecutor {
     /// event, receiver drop, or a transport fault.
     async fn consume_stream<M: SseEventMapper>(
         &self,
-        response: reqwest::Response,
+        response: GovernedResponse,
         mapper: &mut M,
         tx: &tokio::sync::mpsc::Sender<Result<ProviderEvent, ProviderError>>,
         dumper: Option<DebugDumper>,
         request_start: std::time::Instant,
     ) -> Result<(), ProviderError> {
+        let GovernedResponse { response, _permit } = response;
         let stream_start = std::time::Instant::now();
         let mut chunk_count: u64 = 0;
         let mut event_count: u64 = 0;

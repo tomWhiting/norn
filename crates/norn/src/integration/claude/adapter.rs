@@ -21,6 +21,7 @@ use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::request::{Message, MessageRole, ProviderRequest};
 use crate::provider::traits::{Provider, ProviderStream};
 use crate::provider::usage::Usage;
+use crate::resource::DescriptorGovernor;
 
 /// Configuration for [`ClaudeRunnerAdapter`].
 ///
@@ -125,6 +126,22 @@ impl Provider for ClaudeRunnerAdapter {
         let (tx, rx) = tokio::sync::mpsc::channel::<Result<ProviderEvent, ProviderError>>(64);
 
         tokio::task::spawn_blocking(move || {
+            let governor = match DescriptorGovernor::global() {
+                Ok(governor) => governor,
+                Err(error) => {
+                    let _ =
+                        tx.blocking_send(Err(ProviderError::DescriptorAdmission(Box::new(error))));
+                    return;
+                }
+            };
+            let _permit = match governor.try_acquire(crate::resource::ONE_PIPE_SPAWN_PEAK) {
+                Ok(permit) => permit,
+                Err(error) => {
+                    let _ =
+                        tx.blocking_send(Err(ProviderError::DescriptorAdmission(Box::new(error))));
+                    return;
+                }
+            };
             let mut process = match ClaudeProcess::spawn(&cmd) {
                 Ok(p) => p,
                 Err(e) => {
@@ -219,6 +236,15 @@ fn render_system_prompt(messages: &[Message]) -> String {
 /// synchronously. Used by both the adapter and the wrapped Claude Code
 /// runner.
 pub(super) fn spawn_and_collect(cmd: &ClaudeCommand) -> Result<Vec<ClaudeEvent>, IntegrationError> {
+    let governor =
+        DescriptorGovernor::global().map_err(|error| IntegrationError::ClaudeRunnerError {
+            reason: error.to_string(),
+        })?;
+    let _permit = governor
+        .try_acquire(crate::resource::ONE_PIPE_SPAWN_PEAK)
+        .map_err(|error| IntegrationError::ClaudeRunnerError {
+            reason: error.to_string(),
+        })?;
     let mut process =
         ClaudeProcess::spawn(cmd).map_err(|e| IntegrationError::ClaudeRunnerError {
             reason: format!("failed to spawn Claude runner: {e}"),

@@ -90,6 +90,7 @@ mod platform {
     use diagnostics::server::{server_available, try_connect};
 
     use crate::tool::lifecycle::{Advisory, AdvisorySeverity};
+    use crate::tools::diagnostics_check::acquire_diagnostic_socket;
     use crate::tools::diagnostics_check::adapters::format_verdict_message;
     use crate::tools::diagnostics_check::findings::Findings;
     use crate::tools::diagnostics_check::infra::DiagnosticInfra;
@@ -107,6 +108,16 @@ mod platform {
         if !server_available(&infra.socket_path) {
             return ServerQueryOutcome::FellBack;
         }
+        let _descriptor_permit = match acquire_diagnostic_socket() {
+            Ok(permit) => permit,
+            Err(error) => {
+                tracing::debug!(
+                    %error,
+                    "diagnostic server socket admission failed; falling back to inline adapter"
+                );
+                return ServerQueryOutcome::FellBack;
+            }
+        };
         let Some(mut stream) = try_connect(&infra.socket_path).await else {
             return ServerQueryOutcome::FellBack;
         };

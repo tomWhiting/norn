@@ -2,6 +2,8 @@
 
 use base64::Engine as _;
 use rand::RngCore as _;
+use std::io::{Read as _, Write as _};
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -15,6 +17,9 @@ use super::types::{AuthDotJson, ChatGptTokens, IdTokenInfo};
 use super::{AUTHORIZE_URL, OAUTH_SCOPES, TOKEN_URL};
 
 const LOGIN_PORTS: [u16; 2] = [1455, 1457];
+const CALLBACK_DESCRIPTOR_WEIGHT: u32 = 2;
+const MAX_REQUEST_HEADER_BYTES: usize = 16 * 1024;
+const IDLE_CONNECTION_TIMEOUT: Duration = Duration::from_secs(2);
 
 /// Path the OAuth authority redirects the browser to on this host.
 const CALLBACK_PATH: &str = "/auth/callback";
@@ -58,6 +63,9 @@ pub struct LoginServer {
 /// Login flow errors.
 #[derive(Debug, thiserror::Error)]
 pub enum LoginError {
+    /// Safe descriptor capacity could not admit the callback listener.
+    #[error(transparent)]
+    DescriptorAdmission(Box<crate::resource::DescriptorAdmissionError>),
     /// Could not bind any allowed callback port.
     #[error("failed to bind local callback server on ports 1455 or 1457")]
     Bind,
@@ -88,7 +96,15 @@ pub enum LoginError {
 /// Returns `LoginError` if no allowlisted port can be bound or browser launch
 /// fails.
 pub fn run_login_server(opts: ServerOptions) -> Result<LoginServer, LoginError> {
-    let (server, port) = bind_allowed_port()?;
+    let governor = crate::resource::DescriptorGovernor::global()
+        .map_err(|error| LoginError::DescriptorAdmission(Box::new(error)))?;
+    let mut callback_permits = governor
+        .try_acquire(CALLBACK_DESCRIPTOR_WEIGHT)
+        .map_err(|error| LoginError::DescriptorAdmission(Box::new(error)))?;
+    let listener_permit = callback_permits
+        .split(1)
+        .ok_or_else(|| LoginError::Server("callback listener admission split failed".to_owned()))?;
+    let (listener, port) = bind_allowed_port()?;
     let redirect_uri = format!("http://localhost:{port}{CALLBACK_PATH}");
     let pkce = pkce::generate();
     let state = generate_state();
@@ -100,7 +116,15 @@ pub fn run_login_server(opts: ServerOptions) -> Result<LoginServer, LoginError> 
     std::thread::Builder::new()
         .name("norn-openai-oauth-login".to_string())
         .spawn(move || {
-            let result = run_callback_server(&server, &opts, &redirect_uri, &pkce.verifier, &state);
+            let result = run_callback_server(
+                listener,
+                listener_permit,
+                callback_permits,
+                &opts,
+                &redirect_uri,
+                &pkce.verifier,
+                &state,
+            );
             let _ignored = tx.send(result);
         })
         .map_err(|err| LoginError::Server(err.to_string()))?;
@@ -118,11 +142,13 @@ impl LoginServer {
     }
 }
 
-fn bind_allowed_port() -> Result<(tiny_http::Server, u16), LoginError> {
+fn bind_allowed_port() -> Result<(TcpListener, u16), LoginError> {
     for port in LOGIN_PORTS {
-        let address = format!("127.0.0.1:{port}");
-        if let Ok(server) = tiny_http::Server::http(address) {
-            return Ok((server, port));
+        if let Ok(listener) = TcpListener::bind(("127.0.0.1", port)) {
+            listener
+                .set_nonblocking(true)
+                .map_err(|error| LoginError::Server(error.to_string()))?;
+            return Ok((listener, port));
         }
     }
     Err(LoginError::Bind)
@@ -151,24 +177,43 @@ fn build_authorize_url(
 }
 
 fn run_callback_server(
-    server: &tiny_http::Server,
+    listener: TcpListener,
+    listener_permit: crate::resource::DescriptorPermit,
+    accepted_permit: crate::resource::DescriptorPermit,
     opts: &ServerOptions,
     redirect_uri: &str,
     verifier: &str,
     state: &str,
 ) -> Result<(), LoginError> {
-    let code = wait_for_callback(server, state, opts.http.callback_timeout)?;
-    let auth = exchange_code_blocking(
+    let mut callback = wait_for_callback(
+        listener,
+        listener_permit,
+        accepted_permit,
+        state,
+        opts.http.callback_timeout,
+    )?;
+    let auth = match exchange_code_blocking(
         &opts.client_id,
         redirect_uri,
         verifier,
-        &code,
+        &callback.code,
         opts.http.request_timeout,
-    )?;
-    match opts.mode {
+    ) {
+        Ok(auth) => auth,
+        Err(error) => {
+            callback.respond_failure();
+            return Err(error);
+        }
+    };
+    let stored = match opts.mode {
         AuthCredentialsStoreMode::File => save_auth_dot_json(&opts.codex_home, &auth)
-            .map_err(|err| LoginError::Storage(err.to_string()))?,
+            .map_err(|err| LoginError::Storage(err.to_string())),
+    };
+    if let Err(error) = stored {
+        callback.respond_failure();
+        return Err(error);
     }
+    callback.respond_success();
     Ok(())
 }
 
@@ -184,10 +229,12 @@ fn run_callback_server(
 /// `error` parameter fails the flow, a missing `code` fails the flow,
 /// and a `code` completes it.
 fn wait_for_callback(
-    server: &tiny_http::Server,
+    listener: TcpListener,
+    listener_permit: crate::resource::DescriptorPermit,
+    accepted_permit: crate::resource::DescriptorPermit,
     expected_state: &str,
     total_wait: Duration,
-) -> Result<String, LoginError> {
+) -> Result<PendingCallback, LoginError> {
     // Computed from the elapsed time rather than `Instant + Duration`,
     // which panics on overflow for absurd configured waits.
     let started = std::time::Instant::now();
@@ -198,18 +245,21 @@ fn wait_for_callback(
                 "timed out waiting for OAuth callback".to_string(),
             ));
         }
-        let request = server
-            .recv_timeout(remaining)
-            .map_err(|err| LoginError::Server(err.to_string()))?
-            .ok_or_else(|| {
-                LoginError::Server("timed out waiting for OAuth callback".to_string())
-            })?;
-
-        let callback_url = format!("http://localhost{}", request.url());
+        let (mut stream, _peer) = match listener.accept() {
+            Ok(accepted) => accepted,
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                std::thread::sleep(Duration::from_millis(10).min(remaining));
+                continue;
+            }
+            Err(error) => return Err(LoginError::Server(error.to_string())),
+        };
+        let Some(target) = read_request_target(&mut stream, remaining)? else {
+            continue;
+        };
+        let callback_url = format!("http://localhost{target}");
         match classify_callback(&callback_url, expected_state) {
             CallbackDisposition::Foreign => {
-                let response = tiny_http::Response::from_string("Not found.").with_status_code(404);
-                if let Err(err) = request.respond(response) {
+                if let Err(err) = write_response(&mut stream, 404, "Not found.") {
                     tracing::warn!(
                         error = %err,
                         "failed to answer non-callback request on the login port"
@@ -217,19 +267,20 @@ fn wait_for_callback(
                 }
             }
             CallbackDisposition::Ours(Ok(code)) => {
-                let response = tiny_http::Response::from_string(
-                    "Login complete. You can close this browser window and return to norn.",
-                );
-                request
-                    .respond(response)
-                    .map_err(|err| LoginError::Server(err.to_string()))?;
-                return Ok(code);
+                drop(listener);
+                drop(listener_permit);
+                return Ok(PendingCallback {
+                    stream,
+                    code,
+                    _permit: accepted_permit,
+                });
             }
             CallbackDisposition::Ours(Err(flow_err)) => {
-                let response =
-                    tiny_http::Response::from_string("Login failed. Return to norn for details.")
-                        .with_status_code(400);
-                if let Err(err) = request.respond(response) {
+                if let Err(err) = write_response(
+                    &mut stream,
+                    400,
+                    "Login failed. Return to norn for details.",
+                ) {
                     tracing::warn!(
                         error = %err,
                         "failed to answer failed OAuth callback on the login port"
@@ -239,6 +290,99 @@ fn wait_for_callback(
             }
         }
     }
+}
+
+struct PendingCallback {
+    stream: TcpStream,
+    code: String,
+    _permit: crate::resource::DescriptorPermit,
+}
+
+impl PendingCallback {
+    fn respond_success(&mut self) {
+        if let Err(error) = write_response(
+            &mut self.stream,
+            200,
+            "Login complete. You can close this browser window and return to norn.",
+        ) {
+            tracing::warn!(%error, "failed to send the completed OAuth login page");
+        }
+    }
+
+    fn respond_failure(&mut self) {
+        if let Err(error) = write_response(
+            &mut self.stream,
+            400,
+            "Login failed. Return to norn for details.",
+        ) {
+            tracing::warn!(%error, "failed to send the failed OAuth login page");
+        }
+    }
+}
+
+fn read_request_target(
+    stream: &mut TcpStream,
+    remaining: Duration,
+) -> Result<Option<String>, LoginError> {
+    let read_timeout = remaining.min(IDLE_CONNECTION_TIMEOUT);
+    stream
+        .set_read_timeout(Some(read_timeout))
+        .map_err(|error| LoginError::Server(error.to_string()))?;
+    let mut header = Vec::with_capacity(1024);
+    let mut chunk = [0_u8; 1024];
+    while header.len() < MAX_REQUEST_HEADER_BYTES {
+        match stream.read(&mut chunk) {
+            Ok(0) => return Ok(None),
+            Ok(read) => {
+                header.extend_from_slice(&chunk[..read]);
+                if header.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            Err(error)
+                if matches!(
+                    error.kind(),
+                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
+                ) =>
+            {
+                return Ok(None);
+            }
+            Err(error) => return Err(LoginError::Server(error.to_string())),
+        }
+    }
+    if !header.windows(4).any(|window| window == b"\r\n\r\n") {
+        return Ok(None);
+    }
+    let first_line = header
+        .split(|byte| *byte == b'\n')
+        .next()
+        .unwrap_or_default();
+    let line = std::str::from_utf8(first_line)
+        .unwrap_or_default()
+        .trim_end();
+    let mut parts = line.split_whitespace();
+    match (parts.next(), parts.next(), parts.next(), parts.next()) {
+        (Some("GET"), Some(target), Some(version), None) if version.starts_with("HTTP/1.") => {
+            Ok(Some(target.to_owned()))
+        }
+        _ => Ok(None),
+    }
+}
+
+fn write_response(stream: &mut TcpStream, status: u16, body: &str) -> std::io::Result<()> {
+    let reason = match status {
+        200 => "OK",
+        400 => "Bad Request",
+        404 => "Not Found",
+        _ => "Error",
+    };
+    write!(
+        stream,
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        body.len(),
+    )?;
+    stream.flush()?;
+    stream.shutdown(Shutdown::Write)
 }
 
 /// How an inbound request on the login port relates to this login attempt.
@@ -314,6 +458,11 @@ fn exchange_code_blocking(
     code: &str,
     timeout: Duration,
 ) -> Result<AuthDotJson, LoginError> {
+    let governor = crate::resource::DescriptorGovernor::global()
+        .map_err(|error| LoginError::TokenExchange(error.to_string()))?;
+    let _permit = governor
+        .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
+        .map_err(|error| LoginError::TokenExchange(error.to_string()))?;
     let client = crate::provider::http_client::build_blocking_bounded_client(timeout)
         .map_err(|err| LoginError::TokenExchange(err.to_string()))?;
     let response = client
@@ -435,14 +584,24 @@ mod tests {
         response
     }
 
-    fn test_server() -> (tiny_http::Server, u16) {
-        let server = tiny_http::Server::http("127.0.0.1:0").expect("bind test port");
-        let port = server
-            .server_addr()
-            .to_ip()
-            .expect("IP listen address")
-            .port();
-        (server, port)
+    fn test_server() -> Result<
+        (
+            TcpListener,
+            u16,
+            crate::resource::DescriptorPermit,
+            crate::resource::DescriptorPermit,
+        ),
+        Box<dyn std::error::Error>,
+    > {
+        let governor = crate::resource::DescriptorGovernor::global()?;
+        let mut permits = governor.try_acquire(2)?;
+        let listener_permit = permits
+            .split(1)
+            .ok_or_else(|| std::io::Error::other("listener permit split failed"))?;
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        listener.set_nonblocking(true)?;
+        let port = listener.local_addr()?.port();
+        Ok((listener, port, listener_permit, permits))
     }
 
     /// Regression test (final-state hardening, T1 item 7): the callback
@@ -451,11 +610,18 @@ mod tests {
     /// aborted the login. It must now answer foreign requests with 404
     /// and keep listening until the state-matching callback arrives.
     #[test]
-    fn stray_requests_get_404_and_login_still_completes() {
-        let (server, port) = test_server();
+    fn stray_requests_get_404_and_login_still_completes() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (listener, port, listener_permit, accepted_permit) = test_server()?;
 
         let waiter = std::thread::spawn(move || {
-            wait_for_callback(&server, "expected-state", Duration::from_secs(10))
+            wait_for_callback(
+                listener,
+                listener_permit,
+                accepted_permit,
+                "expected-state",
+                Duration::from_secs(10),
+            )
         });
 
         let favicon = raw_get(port, "/favicon.ico");
@@ -470,25 +636,41 @@ mod tests {
             "state-mismatched callback must get 404: {forged}"
         );
 
-        let genuine = raw_get(port, "/auth/callback?code=real-code&state=expected-state");
+        let genuine = std::thread::spawn(move || {
+            raw_get(port, "/auth/callback?code=real-code&state=expected-state")
+        });
+        let mut callback = waiter.join().map_err(|error| {
+            std::io::Error::other(format!("waiter thread panicked: {error:?}"))
+        })??;
+        assert_eq!(callback.code, "real-code");
+        assert!(
+            !genuine.is_finished(),
+            "the browser response must wait for exchange and storage"
+        );
+        callback.respond_success();
+        let genuine = genuine.join().map_err(|error| {
+            std::io::Error::other(format!("genuine request thread panicked: {error:?}"))
+        })?;
         assert!(
             genuine.starts_with("HTTP/1.1 200"),
             "the genuine callback must get the success page: {genuine}"
         );
-
-        let code = waiter
-            .join()
-            .expect("waiter thread")
-            .expect("callback must succeed after stray requests");
-        assert_eq!(code, "real-code");
+        Ok(())
     }
 
     #[test]
-    fn matching_error_callback_fails_the_flow_with_a_400_page() {
-        let (server, port) = test_server();
+    fn matching_error_callback_fails_the_flow_with_a_400_page()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (listener, port, listener_permit, accepted_permit) = test_server()?;
 
         let waiter = std::thread::spawn(move || {
-            wait_for_callback(&server, "expected-state", Duration::from_secs(10))
+            wait_for_callback(
+                listener,
+                listener_permit,
+                accepted_permit,
+                "expected-state",
+                Duration::from_secs(10),
+            )
         });
 
         let response = raw_get(
@@ -500,41 +682,50 @@ mod tests {
             "a failed genuine callback must get the failure page: {response}"
         );
 
-        let result = waiter.join().expect("waiter thread");
-        match result {
-            Err(LoginError::Server(message)) => {
-                assert!(message.contains("access_denied"), "message: {message}");
-            }
-            other => panic!("expected Server error, got {other:?}"),
-        }
+        let result = waiter
+            .join()
+            .map_err(|error| std::io::Error::other(format!("waiter thread panicked: {error:?}")))?;
+        let Err(LoginError::Server(message)) = result else {
+            return Err(std::io::Error::other("expected callback Server error").into());
+        };
+        assert!(message.contains("access_denied"), "message: {message}");
+        Ok(())
     }
 
     /// The overall wait is a total budget: stray requests must not extend
     /// it, and with no genuine callback the wait ends in the timeout
     /// error.
     #[test]
-    fn wait_times_out_when_no_matching_callback_arrives() {
-        let (server, port) = test_server();
+    fn wait_times_out_when_no_matching_callback_arrives() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let (listener, port, listener_permit, accepted_permit) = test_server()?;
 
         // Generous budget so the stray request below reliably lands while
         // the waiter is still listening, even on a loaded machine.
         let waiter = std::thread::spawn(move || {
-            wait_for_callback(&server, "expected-state", Duration::from_secs(2))
+            wait_for_callback(
+                listener,
+                listener_permit,
+                accepted_permit,
+                "expected-state",
+                Duration::from_secs(2),
+            )
         });
 
         // A stray request part-way through must not reset the deadline.
         let stray = raw_get(port, "/not-the-callback");
         assert!(stray.starts_with("HTTP/1.1 404"));
 
-        let result = waiter.join().expect("waiter thread");
-        match result {
-            Err(LoginError::Server(message)) => {
-                assert!(
-                    message.contains("timed out waiting for OAuth callback"),
-                    "message: {message}"
-                );
-            }
-            other => panic!("expected timeout Server error, got {other:?}"),
-        }
+        let result = waiter
+            .join()
+            .map_err(|error| std::io::Error::other(format!("waiter thread panicked: {error:?}")))?;
+        let Err(LoginError::Server(message)) = result else {
+            return Err(std::io::Error::other("expected callback timeout error").into());
+        };
+        assert!(
+            message.contains("timed out waiting for OAuth callback"),
+            "message: {message}"
+        );
+        Ok(())
     }
 }

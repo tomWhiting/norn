@@ -103,6 +103,7 @@ struct StdioIo {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    _permit: crate::resource::DescriptorPermit,
 }
 
 impl Drop for StdioIo {
@@ -160,6 +161,7 @@ impl ExtensionRegistry {
             ExtTransport::Http { .. } => {
                 let client = reqwest::Client::builder()
                     .timeout(EXTENSION_TIMEOUT)
+                    .pool_max_idle_per_host(0)
                     .build()
                     .map_err(|e| IntegrationError::McpError {
                         reason: format!("failed to build HTTP client: {e}"),
@@ -167,6 +169,23 @@ impl ExtensionRegistry {
                 ExtensionState::Http { client }
             }
             ExtTransport::Stdio { command } => {
+                let governor = crate::resource::DescriptorGovernor::global().map_err(|error| {
+                    IntegrationError::McpError {
+                        reason: format!("extension descriptor admission unavailable: {error}"),
+                    }
+                })?;
+                let mut launch_permit = governor
+                    .try_acquire(crate::resource::TWO_PIPE_SPAWN_PEAK)
+                    .map_err(|error| IntegrationError::McpError {
+                        reason: format!("extension descriptor admission failed: {error}"),
+                    })?;
+                let retained_permit =
+                    launch_permit
+                        .split(2)
+                        .ok_or_else(|| IntegrationError::McpError {
+                            reason: "extension launch admission did not contain two retained pipes"
+                                .to_owned(),
+                        })?;
                 let mut cmd = Command::new("sh");
                 cmd.arg("-c")
                     .arg(command)
@@ -197,6 +216,7 @@ impl ExtensionRegistry {
                         child,
                         stdin,
                         stdout: BufReader::new(stdout),
+                        _permit: retained_permit,
                     })),
                 }
             }
@@ -275,6 +295,11 @@ impl Tool for ExtensionProxyTool {
     ) -> Result<ToolOutput, ToolError> {
         let response = match &self.extension.state {
             ExtensionState::Http { client } => {
+                let governor = crate::resource::DescriptorGovernor::global()
+                    .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
+                let _permit = governor
+                    .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
+                    .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
                 let base = match &self.extension.manifest.transport {
                     ExtTransport::Http { base_url } => base_url.trim_end_matches('/').to_owned(),
                     ExtTransport::Stdio { .. } => {

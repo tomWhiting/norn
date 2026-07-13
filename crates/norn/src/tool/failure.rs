@@ -235,6 +235,10 @@ impl From<&ToolError> for ToolErrorPayload {
                 Self::new(ToolErrorKind::ResourceExhausted, source.to_string())
                     .with_detail(serde_json::json!({ "descriptor": source }))
             }
+            ToolError::DescriptorAdmission(source) => {
+                Self::new(ToolErrorKind::ResourceExhausted, source.to_string())
+                    .with_detail(serde_json::json!({ "descriptor_admission": source }))
+            }
             ToolError::PostValidationFailed {
                 reason,
                 committed_output,

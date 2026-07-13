@@ -13,6 +13,8 @@ use diagnostics::event::{DiagnosticEvent, Severity};
 
 use crate::tools::lsp::TestRunnable;
 
+use super::acquire_diagnostic_spawn;
+
 /// Source tool name attached to every test-derived [`DiagnosticEvent`].
 /// Used by reporters to distinguish LSP-discovered test failures from
 /// adapter subprocess output (R3 acceptance: "Source tool is `lsp-test`
@@ -43,6 +45,9 @@ pub(super) async fn execute_runnable(
         .map(PathBuf::from)
         .or_else(|| runnable.workspace_root.as_ref().map(PathBuf::from))
         .unwrap_or_else(|| workspace_root.to_path_buf());
+
+    let _descriptor_permit = acquire_diagnostic_spawn()
+        .map_err(|error| format!("test descriptor admission failed: {error}"))?;
 
     let result = invoke_tool_with_env(
         "cargo",

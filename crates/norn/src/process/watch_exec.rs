@@ -196,6 +196,22 @@ pub(super) async fn run_filter(
     cwd: &Path,
     env: Option<&ProcessEnv>,
 ) -> FilterOutcome {
+    let governor = match crate::resource::DescriptorGovernor::global() {
+        Ok(governor) => governor,
+        Err(error) => {
+            return FilterOutcome::Error(format!(
+                "watch filter descriptor admission unavailable: {error}"
+            ));
+        }
+    };
+    let _permit = match governor.try_acquire(crate::resource::THREE_PIPE_SPAWN_PEAK) {
+        Ok(permit) => permit,
+        Err(error) => {
+            return FilterOutcome::Error(format!(
+                "watch filter descriptor admission failed: {error}"
+            ));
+        }
+    };
     let mut command = Command::new("sh");
     command
         .arg("-c")

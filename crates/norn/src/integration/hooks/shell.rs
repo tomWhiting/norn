@@ -175,6 +175,29 @@ impl ShellCommandHook {
             }
         };
 
+        let governor = match crate::resource::DescriptorGovernor::global() {
+            Ok(governor) => governor,
+            Err(error) => {
+                tracing::warn!(
+                    command = %self.command,
+                    %error,
+                    "shell hook descriptor admission unavailable; treating as proceed",
+                );
+                return HookOutcome::Proceed;
+            }
+        };
+        let _permit = match governor.try_acquire(crate::resource::THREE_PIPE_SPAWN_PEAK) {
+            Ok(permit) => permit,
+            Err(error) => {
+                tracing::warn!(
+                    command = %self.command,
+                    %error,
+                    "shell hook descriptor admission failed; treating as proceed",
+                );
+                return HookOutcome::Proceed;
+            }
+        };
+
         let mut cmd = Command::new("sh");
         cmd.arg("-c")
             .arg(&self.command)

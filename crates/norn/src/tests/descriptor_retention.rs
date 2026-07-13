@@ -78,6 +78,51 @@ async fn completed_process_registry_stays_bounded() -> Result<(), Box<dyn std::e
 }
 
 #[tokio::test]
+async fn active_process_permits_release_on_terminal_paths() -> Result<(), Box<dyn std::error::Error>>
+{
+    const NAME: &str =
+        "tests::descriptor_retention::active_process_permits_release_on_terminal_paths";
+    if child_case()?.as_deref() != Some("active_processes") {
+        return run_child(NAME, "active_processes");
+    }
+    lower_nofile_limit()?;
+    let home = child_home()?;
+    let governor = crate::resource::DescriptorGovernor::global()?;
+    let baseline = governor.available();
+    let manager = Arc::new(ProcessManager::new(Some("fd-active".to_owned()), None));
+
+    let missing = home.join("missing-working-directory");
+    let failure = manager.spawn("printf never", &missing, None).await;
+    assert!(
+        failure.is_err(),
+        "missing working directory must fail spawn"
+    );
+    wait_for_available(&governor, baseline).await?;
+
+    let mut handles = Vec::with_capacity(20);
+    let mut denied = 0usize;
+    for _ in 0..20 {
+        match manager.spawn("printf x; sleep 0.1", &home, None).await {
+            Ok(handle) => handles.push(handle),
+            Err(crate::process::ProcessError::DescriptorAdmission(_)) => denied += 1,
+            Err(error) => return Err(error.into()),
+        }
+    }
+    assert!(!handles.is_empty(), "low-limit child must admit some work");
+    assert!(denied > 0, "low-limit child must reach typed admission");
+    wait_for_available(&governor, baseline).await?;
+    assert_eq!(manager.list().len(), handles.len());
+    assert!(handles.iter().all(|handle| !handle.is_running()));
+
+    let killed = manager.spawn("sleep 30", &home, None).await?;
+    wait_for_available(&governor, baseline.saturating_sub(3)).await?;
+    let _status = killed.kill().await;
+    wait_for_available(&governor, baseline).await?;
+    manager.shutdown();
+    Ok(())
+}
+
+#[tokio::test]
 async fn lazy_spool_reopen_rejects_replaced_inode() -> Result<(), Box<dyn std::error::Error>> {
     let temporary = tempfile::tempdir()?;
     let path = temporary.path().join("spool.log");
@@ -142,7 +187,7 @@ fn run_child(test_name: &str, case: &str) -> Result<(), Box<dyn std::error::Erro
 fn child_case() -> Result<Option<String>, Box<dyn std::error::Error>> {
     let value = std::env::var(CHILD_CASE_ENV).ok();
     match value.as_deref() {
-        Some("sessions" | "spools" | "processes") | None => Ok(value),
+        Some("sessions" | "spools" | "processes" | "active_processes") | None => Ok(value),
         Some(other) => Err(io::Error::new(
             io::ErrorKind::InvalidInput,
             format!("unknown descriptor-retention child case: {other}"),
@@ -202,4 +247,26 @@ fn assert_bounded_growth(
         "retained objects grew open descriptors from {baseline} to {observed}; allowance {allowance}"
     ))
     .into())
+}
+
+async fn wait_for_available(
+    governor: &crate::resource::DescriptorGovernor,
+    expected: usize,
+) -> Result<(), Box<dyn std::error::Error>> {
+    tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if governor.available() == expected {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .map_err(|elapsed| {
+        io::Error::other(format!(
+            "descriptor capacity did not return to {expected}; observed {}: {elapsed}",
+            governor.available(),
+        ))
+    })?;
+    Ok(())
 }

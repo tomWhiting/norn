@@ -150,8 +150,22 @@ impl RuleEngine {
     }
 
     async fn resolve_shell_content(&self, rule: &Rule, cmd: &str) -> String {
+        let governor = match crate::resource::DescriptorGovernor::global() {
+            Ok(governor) => governor,
+            Err(error) => {
+                self.record_failure(rule, &format!("descriptor admission unavailable: {error}"));
+                return rule.body.clone();
+            }
+        };
+        let _permit = match governor.try_acquire(crate::resource::TWO_PIPE_SPAWN_PEAK) {
+            Ok(permit) => permit,
+            Err(error) => {
+                self.record_failure(rule, &format!("descriptor admission failed: {error}"));
+                return rule.body.clone();
+            }
+        };
         let mut command = Command::new("sh");
-        command.arg("-c").arg(cmd);
+        command.arg("-c").arg(cmd).kill_on_drop(true);
         if let Some(ref wd) = self.working_dir {
             command.current_dir(wd.get());
         }

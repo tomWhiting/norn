@@ -67,17 +67,12 @@ impl WebSearchTool {
     pub fn new() -> Result<Self, ToolError> {
         let client = reqwest::Client::builder()
             .user_agent("Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+            .pool_max_idle_per_host(0)
             .build()
             .map_err(|e| ToolError::ExecutionFailed {
                 reason: format!("failed to build HTTP client: {e}"),
             })?;
         Ok(Self { client })
-    }
-
-    /// Constructs a `WebSearchTool` from a pre-built `reqwest::Client`.
-    #[must_use]
-    pub fn with_client(client: reqwest::Client) -> Self {
-        Self { client }
     }
 }
 
@@ -159,6 +154,11 @@ impl Tool for WebSearchTool {
 }
 
 async fn fetch_ddg_html(client: &reqwest::Client, query: &str) -> Result<String, ToolError> {
+    let governor = crate::resource::DescriptorGovernor::global()
+        .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
+    let _permit = governor
+        .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
+        .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
     let response = client
         .get("https://html.duckduckgo.com/html/")
         .query(&[("q", query)])

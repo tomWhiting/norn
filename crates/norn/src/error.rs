@@ -368,6 +368,10 @@ pub enum ProviderError {
         /// Human-readable description of why the request was rejected.
         message: String,
     },
+
+    /// The process-wide safe descriptor budget cannot admit this provider.
+    #[error(transparent)]
+    DescriptorAdmission(Box<crate::resource::DescriptorAdmissionError>),
 }
 
 impl ProviderError {
@@ -398,6 +402,7 @@ impl ProviderError {
             | Self::RedirectPolicyRefused { .. }
             | Self::ContextWindowExceeded
             | Self::QuotaExceeded
+            | Self::DescriptorAdmission(_)
             | Self::InvalidRequest { .. } => ErrorClass::Terminal,
         }
     }
@@ -470,6 +475,10 @@ pub enum ToolError {
     /// The process or system descriptor pool was exhausted.
     #[error(transparent)]
     DescriptorExhausted(Box<crate::resource::DescriptorExhaustion>),
+
+    /// Norn's safe active-descriptor budget could not admit the operation.
+    #[error(transparent)]
+    DescriptorAdmission(Box<crate::resource::DescriptorAdmissionError>),
 
     /// A post-validation check failed after execution.
     #[error("post-validation failed: {reason}")]

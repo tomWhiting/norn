@@ -6,6 +6,15 @@ use std::process::Command;
 use rhai::{Dynamic, Engine, EvalAltResult, ImmutableString, Map};
 
 use super::context::{AgentHandle, dynamic_to_json, json_to_dynamic, rhai_error};
+use crate::resource::{DescriptorGovernor, DescriptorPermit, PRIVATE_FS_OPERATION_PEAK};
+
+fn acquire_private_fs(operation: &str) -> Result<DescriptorPermit, Box<EvalAltResult>> {
+    let governor = DescriptorGovernor::global()
+        .map_err(|error| Box::new(rhai_error(format!("{operation}: {error}"))))?;
+    governor
+        .try_acquire(PRIVATE_FS_OPERATION_PEAK)
+        .map_err(|error| Box::new(rhai_error(format!("{operation}: {error}"))))
+}
 
 pub(super) fn register_blocking(
     engine: &mut Engine,
@@ -17,6 +26,7 @@ pub(super) fn register_blocking(
     engine.register_fn(
         "read_file",
         |path: ImmutableString| -> Result<ImmutableString, Box<EvalAltResult>> {
+            let _permit = acquire_private_fs("read_file")?;
             std::fs::read_to_string(path.as_str())
                 .map(ImmutableString::from)
                 .map_err(|e| Box::new(rhai_error(format!("read_file('{path}'): {e}"))))
@@ -26,6 +36,7 @@ pub(super) fn register_blocking(
     engine.register_fn(
         "write_file",
         |path: ImmutableString, contents: ImmutableString| -> Result<(), Box<EvalAltResult>> {
+            let _permit = acquire_private_fs("write_file")?;
             if let Some(parent) = PathBuf::from(path.as_str()).parent()
                 && !parent.as_os_str().is_empty()
             {
@@ -42,6 +53,11 @@ pub(super) fn register_blocking(
     engine.register_fn(
         "run_cmd",
         move |command: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            let governor = DescriptorGovernor::global()
+                .map_err(|error| Box::new(rhai_error(format!("run_cmd: {error}"))))?;
+            let _permit = governor
+                .try_acquire(crate::resource::TWO_PIPE_SPAWN_PEAK)
+                .map_err(|error| Box::new(rhai_error(format!("run_cmd: {error}"))))?;
             let output = Command::new("sh")
                 .arg("-c")
                 .arg(command.as_str())
@@ -62,6 +78,7 @@ pub(super) fn register_blocking(
     engine.register_fn(
         "read_json",
         |path: ImmutableString| -> Result<Dynamic, Box<EvalAltResult>> {
+            let _permit = acquire_private_fs("read_json")?;
             let text = std::fs::read_to_string(path.as_str())
                 .map_err(|e| Box::new(rhai_error(format!("read_json('{path}'): {e}"))))?;
             let value: serde_json::Value = serde_json::from_str(&text)
@@ -77,6 +94,7 @@ pub(super) fn register_blocking(
             let pretty = serde_json::to_string_pretty(&json).map_err(|e| {
                 Box::new(rhai_error(format!("write_json('{path}'): serialize: {e}")))
             })?;
+            let _permit = acquire_private_fs("write_json")?;
             if let Some(parent) = PathBuf::from(path.as_str()).parent()
                 && !parent.as_os_str().is_empty()
             {

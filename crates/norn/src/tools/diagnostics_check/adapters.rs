@@ -12,6 +12,7 @@ use diagnostics::registry::PolicyRegistry;
 
 use crate::tool::lifecycle::{Advisory, AdvisorySeverity};
 
+use super::acquire_diagnostic_spawn;
 use super::findings::Findings;
 use super::infra::DiagnosticInfra;
 use super::server_query::{ServerQueryOutcome, try_server_query_for_tool};
@@ -69,6 +70,20 @@ pub(super) async fn run_rule_diagnostic_tool(
             findings,
         );
         return;
+    };
+
+    let _descriptor_permit = match acquire_diagnostic_spawn() {
+        Ok(permit) => permit,
+        Err(error) => {
+            push_diagnostic_dispatch_failure(
+                tool_name,
+                relative_path,
+                handling,
+                &format!("descriptor admission failed before subprocess invocation: {error}"),
+                findings,
+            );
+            return;
+        }
     };
 
     // Resolve the owning crate only when the invocation actually references the

@@ -47,6 +47,7 @@ use tokio::process::{Child, Command};
 use tokio::task::JoinHandle;
 
 use crate::error::ToolError;
+use crate::resource::{DescriptorGovernor, TWO_PIPE_SPAWN_PEAK};
 use crate::tool::context::{ProcessEnv, ToolContext};
 
 use super::output::{CapturedOutput, OutputCapture, drain_stderr, drain_stdout};
@@ -81,19 +82,6 @@ pub(super) struct ShellExecution {
     pub(super) captured: CapturedOutput,
 }
 
-/// The live child and its still-running drain tasks, handed to the process
-/// manager when a foreground command reaches its timeout (R4). The drains are
-/// deliberately **not** settled and the process is **not** killed — the
-/// manager takes ownership and keeps spooling.
-pub(super) struct MigrationHandoff {
-    /// The live shell child (its own process group on Unix).
-    pub(super) child: Child,
-    /// The stdout drain task, still running.
-    pub(super) stdout_task: JoinHandle<std::io::Result<()>>,
-    /// The stderr drain task, still running.
-    pub(super) stderr_task: JoinHandle<std::io::Result<()>>,
-}
-
 /// The result of running a foreground shell command: either it completed (on
 /// its own, or was killed at its timeout when no manager is wired), or it
 /// reached its timeout and is being migrated to the background manager.
@@ -101,7 +89,7 @@ pub(super) enum ShellOutcome {
     /// The command finished; build the normal result.
     Completed(ShellExecution),
     /// The command reached its timeout and is handed off for migration.
-    Migrated(MigrationHandoff),
+    Migrated(crate::process::ProcessHandoff),
 }
 
 /// Runs `command` via `sh -c` in `cwd`, streaming output into `capture`.
@@ -132,6 +120,22 @@ pub(super) async fn run_shell(
     ctx: &ToolContext,
     capture: Arc<OutputCapture>,
 ) -> Result<ShellOutcome, ToolError> {
+    let governor = DescriptorGovernor::global()
+        .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
+    let mut launch_permits = governor
+        .try_acquire(TWO_PIPE_SPAWN_PEAK)
+        .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
+    let stdout_permit = launch_permits
+        .split(1)
+        .ok_or_else(|| ToolError::ExecutionFailed {
+            reason: "shell launch admission did not contain a stdout permit".to_owned(),
+        })?;
+    let stderr_permit = launch_permits
+        .split(1)
+        .ok_or_else(|| ToolError::ExecutionFailed {
+            reason: "shell launch admission did not contain a stderr permit".to_owned(),
+        })?;
+    capture.install_auxiliary_permit(launch_permits).await;
     let mut cmd = build_shell_command(command, cwd, ctx);
     let mut child = cmd
         .spawn()
@@ -144,17 +148,31 @@ pub(super) async fn run_shell(
         reason: "child stderr pipe was not captured".to_owned(),
     })?;
 
-    let stdout_task = tokio::spawn(drain_stdout(stdout_handle, Arc::clone(&capture)));
-    let stderr_task = tokio::spawn(drain_stderr(stderr_handle, Arc::clone(&capture)));
+    let stdout_task = tokio::spawn(drain_stdout(
+        stdout_handle,
+        Arc::clone(&capture),
+        stdout_permit,
+    ));
+    let stderr_task = tokio::spawn(drain_stderr(
+        stderr_handle,
+        Arc::clone(&capture),
+        stderr_permit,
+    ));
+    let mut handoff = crate::process::ProcessHandoff::new(child, stdout_task, stderr_task);
 
     let (status, timed_out) = if timeout_secs == 0 {
-        let status = child.wait().await.map_err(|e| ToolError::ExecutionFailed {
-            reason: format!("failed to wait on child: {e}"),
-        })?;
+        let status = handoff
+            .child_mut()
+            .map_err(ToolError::from)?
+            .wait()
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
+                reason: format!("failed to wait on child: {e}"),
+            })?;
         (status, false)
     } else {
         tokio::select! {
-            wait_result = child.wait() => {
+            wait_result = handoff.child_mut().map_err(ToolError::from)?.wait() => {
                 let status = wait_result.map_err(|e| ToolError::ExecutionFailed {
                     reason: format!("failed to wait on child: {e}"),
                 })?;
@@ -165,20 +183,27 @@ pub(super) async fn run_shell(
                     // Hand the live child and its still-running drains to the
                     // manager: no kill, no settle, no finalize — the process
                     // keeps running and its output keeps flowing.
-                    return Ok(ShellOutcome::Migrated(MigrationHandoff {
-                        child,
-                        stdout_task,
-                        stderr_task,
-                    }));
+                    return Ok(ShellOutcome::Migrated(handoff));
                 }
-                kill_process_tree(&mut child);
-                let status = child.wait().await.map_err(|e| ToolError::ExecutionFailed {
-                    reason: format!("failed to wait on killed child: {e}"),
-                })?;
+                kill_process_tree(handoff.child_mut().map_err(ToolError::from)?);
+                let status = handoff
+                    .child_mut()
+                    .map_err(ToolError::from)?
+                    .wait()
+                    .await
+                    .map_err(|e| ToolError::ExecutionFailed {
+                        reason: format!("failed to wait on killed child: {e}"),
+                    })?;
                 (status, true)
             }
         }
     };
+    let crate::process::ProcessHandoffParts {
+        child,
+        stdout_task,
+        stderr_task,
+    } = handoff.into_parts().map_err(ToolError::from)?;
+    drop(child);
 
     // Both drains settle concurrently so two held-open pipes cost one
     // grace period, not one per stream.
@@ -312,5 +337,101 @@ async fn settle_drain(
                 }),
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod admission_tests {
+    use std::io;
+
+    use super::*;
+    use crate::tool::envelope::ToolEnvelope;
+
+    const CHILD_ENV: &str = "NORN_BASH_ADMISSION_CHILD";
+
+    #[tokio::test]
+    async fn cancelling_foreground_shell_releases_child_drains_and_capacity()
+    -> Result<(), Box<dyn std::error::Error>> {
+        const NAME: &str = "tools::bash::process::admission_tests::cancelling_foreground_shell_releases_child_drains_and_capacity";
+        if std::env::var_os(CHILD_ENV).is_none() {
+            let output = std::process::Command::new(std::env::current_exe()?)
+                .args(["--exact", NAME, "--nocapture"])
+                .env(CHILD_ENV, "1")
+                .output()?;
+            if output.status.success() {
+                return Ok(());
+            }
+            return Err(io::Error::other(format!(
+                "low-limit cancellation child failed with {}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            ))
+            .into());
+        }
+
+        lower_nofile_limit()?;
+        let governor = DescriptorGovernor::global()?;
+        let baseline = governor.available();
+        let ctx = ToolContext::empty();
+        let envelope = ToolEnvelope {
+            tool_call_id: "cancel-admission".to_owned(),
+            tool_name: "bash".to_owned(),
+            model_args: serde_json::Value::Null,
+            metadata: serde_json::Value::Null,
+        };
+        let capture = OutputCapture::new(&ctx, &envelope);
+        let cwd = std::env::current_dir()?;
+        let task = tokio::spawn(async move {
+            run_shell(
+                "sleep 30",
+                &cwd,
+                0,
+                DEFAULT_DRAIN_GRACE,
+                false,
+                &ctx,
+                capture,
+            )
+            .await
+        });
+        wait_for_available(&governor, baseline.saturating_sub(7)).await?;
+        task.abort();
+        let _cancelled = task.await;
+        wait_for_available(&governor, baseline).await
+    }
+
+    fn lower_nofile_limit() -> io::Result<()> {
+        let inherited = rustix::process::getrlimit(rustix::process::Resource::Nofile);
+        let target = inherited.maximum.map_or(48, |hard| hard.min(48));
+        rustix::process::setrlimit(
+            rustix::process::Resource::Nofile,
+            rustix::process::Rlimit {
+                current: Some(target),
+                maximum: inherited.maximum,
+            },
+        )
+        .map_err(io::Error::from)
+    }
+
+    async fn wait_for_available(
+        governor: &DescriptorGovernor,
+        expected: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        tokio::time::timeout(Duration::from_secs(10), async {
+            loop {
+                if governor.available() == expected {
+                    return;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .map_err(|elapsed| {
+            io::Error::other(format!(
+                "descriptor capacity did not return to {expected}; observed {}: {elapsed}",
+                governor.available(),
+            ))
+        })?;
+        Ok(())
     }
 }

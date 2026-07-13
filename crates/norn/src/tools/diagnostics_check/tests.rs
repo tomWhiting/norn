@@ -27,6 +27,50 @@ use crate::tools::lsp::{
     LspBackend, LspBackendError, LspDiagnostic, LspHover, LspLocation, LspSymbol, TestRunnable,
 };
 
+const ADMISSION_HELPER_CHILD: &str = "NORN_DIAGNOSTIC_ADMISSION_HELPER_CHILD";
+
+#[test]
+fn descriptor_admission_helpers_reserve_exact_weights() -> Result<(), Box<dyn std::error::Error>> {
+    const TEST_NAME: &str =
+        "tools::diagnostics_check::tests::descriptor_admission_helpers_reserve_exact_weights";
+    if std::env::var_os(ADMISSION_HELPER_CHILD).is_none() {
+        let output = std::process::Command::new(std::env::current_exe()?)
+            .args(["--exact", TEST_NAME, "--nocapture"])
+            .env(ADMISSION_HELPER_CHILD, "1")
+            .output()?;
+        if output.status.success() {
+            return Ok(());
+        }
+        return Err(std::io::Error::other(format!(
+            "isolated diagnostic admission helper failed with {}\nstdout:\n{}\nstderr:\n{}",
+            output.status,
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        ))
+        .into());
+    }
+
+    let governor = crate::resource::DescriptorGovernor::global()?;
+    let baseline = governor.available();
+    let after_spawn = baseline
+        .checked_sub(crate::resource::TWO_PIPE_SPAWN_PEAK as usize)
+        .ok_or_else(|| {
+            std::io::Error::other(format!(
+                "isolated descriptor capacity {baseline} is below the two-pipe spawn peak"
+            ))
+        })?;
+    let spawn = super::acquire_diagnostic_spawn()?;
+    assert_eq!(governor.available(), after_spawn);
+    drop(spawn);
+    assert_eq!(governor.available(), baseline);
+
+    let socket = super::acquire_diagnostic_socket()?;
+    assert_eq!(governor.available(), baseline.saturating_sub(1));
+    drop(socket);
+    assert_eq!(governor.available(), baseline);
+    Ok(())
+}
+
 fn make_output(content: serde_json::Value) -> ToolOutput {
     ToolOutput::success(content)
 }

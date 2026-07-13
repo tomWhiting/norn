@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::ToolError;
+use crate::resource::{DescriptorGovernor, PRIVATE_FS_OPERATION_PEAK};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
@@ -197,29 +198,37 @@ impl Tool for SearchTool {
 
         let glob = args.glob;
         let include_ignored = args.include_ignored;
+        let governor = DescriptorGovernor::global()
+            .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
+        let permit = governor
+            .try_acquire(PRIVATE_FS_OPERATION_PEAK)
+            .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
 
         // Walks, file reads, and tree-sitter parsing are synchronous and
         // potentially heavy; keep them off the async executor.
-        tokio::task::spawn_blocking(move || match plan {
-            SearchPlan::Content { pattern } => run_content_search(
-                &pattern,
-                &root,
-                glob.as_deref(),
-                max_results,
-                include_ignored,
-            ),
-            SearchPlan::Files { glob: pattern } => {
-                run_file_find(&root, &pattern, max_results, include_ignored)
-            }
-            SearchPlan::Fuzzy { needle } => run_fuzzy_search(
-                &needle,
-                &root,
-                glob.as_deref(),
-                max_results,
-                include_ignored,
-            ),
-            SearchPlan::Ast { query } => {
-                run_ast_search(&query, &root, glob.as_deref(), max_results, include_ignored)
+        tokio::task::spawn_blocking(move || {
+            let _permit = permit;
+            match plan {
+                SearchPlan::Content { pattern } => run_content_search(
+                    &pattern,
+                    &root,
+                    glob.as_deref(),
+                    max_results,
+                    include_ignored,
+                ),
+                SearchPlan::Files { glob: pattern } => {
+                    run_file_find(&root, &pattern, max_results, include_ignored)
+                }
+                SearchPlan::Fuzzy { needle } => run_fuzzy_search(
+                    &needle,
+                    &root,
+                    glob.as_deref(),
+                    max_results,
+                    include_ignored,
+                ),
+                SearchPlan::Ast { query } => {
+                    run_ast_search(&query, &root, glob.as_deref(), max_results, include_ignored)
+                }
             }
         })
         .await

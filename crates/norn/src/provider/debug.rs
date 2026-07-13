@@ -26,7 +26,16 @@ use std::fs;
 use chrono::Utc;
 use serde::Serialize;
 
+use crate::resource::DescriptorGovernor;
 use crate::util::PrivateRoot;
+
+/// Peak descriptors held while opening one private debug entry.
+///
+/// [`PrivateRoot`] pins the dump root, duplicates that descriptor for the
+/// target's parent, then opens the target while both directory descriptors are
+/// still live. The parent duplicate and root drop before the returned file is
+/// written, but admission must cover the three-descriptor `openat` peak.
+const DEBUG_APPEND_DESCRIPTOR_PEAK: u32 = 3;
 
 /// Appends structured JSONL entries to a single debug dump file.
 ///
@@ -83,6 +92,28 @@ impl DebugDumper {
     /// `None` if the directory cannot be created, logging a warning.
     #[must_use]
     pub fn new(file_path: &Path) -> Option<Self> {
+        let governor = match DescriptorGovernor::global() {
+            Ok(governor) => governor,
+            Err(error) => {
+                tracing::warn!(
+                    path = %file_path.display(),
+                    %error,
+                    "debug dump descriptor admission unavailable; API dumps disabled",
+                );
+                return None;
+            }
+        };
+        let _permit = match governor.try_acquire(DEBUG_APPEND_DESCRIPTOR_PEAK) {
+            Ok(permit) => permit,
+            Err(error) => {
+                tracing::warn!(
+                    path = %file_path.display(),
+                    %error,
+                    "debug dump descriptor capacity is busy; API dumps disabled",
+                );
+                return None;
+            }
+        };
         if let Err(e) = validate_debug_path(file_path) {
             tracing::warn!(
                 path = %file_path.display(),
@@ -149,6 +180,27 @@ impl DebugDumper {
             }
         };
 
+        self.append_line_with_admission(&line, || {
+            let governor = DescriptorGovernor::global()?;
+            governor.try_acquire(DEBUG_APPEND_DESCRIPTOR_PEAK)
+        });
+    }
+
+    fn append_line_with_admission<G, E>(&self, line: &str, admit: impl FnOnce() -> Result<G, E>)
+    where
+        E: std::fmt::Display,
+    {
+        let _permit = match admit() {
+            Ok(permit) => permit,
+            Err(error) => {
+                tracing::warn!(
+                    path = %self.file_path.display(),
+                    %error,
+                    "debug dump descriptor admission failed; entry skipped",
+                );
+                return;
+            }
+        };
         match open_append(&self.file_path) {
             Ok(mut file) => {
                 if let Err(e) = writeln!(file, "{line}") {
@@ -198,7 +250,66 @@ fn debug_root_and_relative(path: &Path) -> Result<(PrivateRoot, PathBuf), std::i
 
 #[cfg(test)]
 mod security_tests {
+    use std::cell::Cell;
+
     use super::*;
+
+    struct AdmissionProbe<'flag>(&'flag Cell<bool>);
+
+    impl Drop for AdmissionProbe<'_> {
+        fn drop(&mut self) {
+            self.0.set(true);
+        }
+    }
+
+    #[test]
+    fn refused_debug_admission_opens_no_target() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("debug.jsonl");
+        let dumper = DebugDumper {
+            file_path: file.clone(),
+        };
+
+        dumper.append_line_with_admission("entry", || Err::<(), _>("capacity busy"));
+
+        assert!(!file.exists());
+        Ok(())
+    }
+
+    #[test]
+    fn debug_admission_lives_through_write_and_releases() -> Result<(), Box<dyn std::error::Error>>
+    {
+        let directory = tempfile::tempdir()?;
+        let file = directory.path().join("debug.jsonl");
+        let dumper = DebugDumper {
+            file_path: file.clone(),
+        };
+        let released = Cell::new(false);
+
+        dumper.append_line_with_admission("entry", || {
+            Ok::<_, std::io::Error>(AdmissionProbe(&released))
+        });
+
+        assert!(released.get());
+        assert_eq!(std::fs::read_to_string(file)?, "entry\n");
+        Ok(())
+    }
+
+    #[test]
+    fn debug_admission_releases_after_open_failure() -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let target = directory.path().join("not-a-file");
+        std::fs::create_dir(&target)?;
+        let dumper = DebugDumper { file_path: target };
+        let released = Cell::new(false);
+
+        dumper.append_line_with_admission("entry", || {
+            Ok::<_, std::io::Error>(AdmissionProbe(&released))
+        });
+
+        assert!(released.get());
+        Ok(())
+    }
 
     #[test]
     fn response_metadata_redacts_credential_and_redirect_values()

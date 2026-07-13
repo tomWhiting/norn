@@ -40,6 +40,7 @@ pub mod watch_exec;
 
 pub use error::ProcessError;
 pub use handle::{ProcessCompletion, ProcessHandle, ProcessStatus};
+pub(crate) use manager::{ProcessHandoff, ProcessHandoffParts};
 pub use manager::{ProcessManager, ProcessManagerGuard, ProcessNotifier, SIGNAL_EXIT_CODE};
 pub use spool::{Spool, SpoolReader, StreamTag};
 pub use watch::{Watch, WatchAlert, WatchAlertKind, WatchAttachError, WatchError};

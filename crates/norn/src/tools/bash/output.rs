@@ -10,6 +10,7 @@ use uuid::Uuid;
 use crate::error::ToolError;
 use crate::process::spool::SpoolAppender;
 use crate::process::{Spool, StreamTag};
+use crate::resource::DescriptorPermit;
 use crate::tool::context::{SessionId, ToolContext};
 use crate::tool::envelope::ToolEnvelope;
 use crate::util::{PrivateRoot, validate_private_component};
@@ -69,6 +70,10 @@ struct OutputCaptureState {
     /// teeing every subsequent line into the process manager's spool, tagged
     /// with its stream. Set by [`OutputCapture::attach_spool`].
     spool: Option<SpoolAppender>,
+    /// Launch capacity not owned by the two pipe drains. It covers redirect
+    /// storage and migration peaks, then transfers one permit to the active
+    /// spool writer when migration succeeds.
+    auxiliary_permit: Option<DescriptorPermit>,
 }
 
 impl OutputCapture {
@@ -97,6 +102,21 @@ impl OutputCapture {
             .await
     }
 
+    pub(super) async fn install_auxiliary_permit(&self, permit: DescriptorPermit) {
+        self.inner.lock().await.auxiliary_permit = Some(permit);
+    }
+
+    pub(super) async fn take_auxiliary_permit(&self) -> Result<DescriptorPermit, ToolError> {
+        self.inner
+            .lock()
+            .await
+            .auxiliary_permit
+            .take()
+            .ok_or_else(|| ToolError::ExecutionFailed {
+                reason: "shell launch admission did not retain migration capacity".to_owned(),
+            })
+    }
+
     /// Migrate this capture to a background spool (R4): seed the spool with the
     /// output captured so far, switch every subsequent line to tee into the
     /// spool, and return the pre-migration snapshot for the tool result plus the
@@ -119,6 +139,7 @@ impl OutputCapture {
     pub(super) async fn attach_spool(
         &self,
         spool: Arc<Spool>,
+        mut private_fs_permit: DescriptorPermit,
     ) -> Result<MigrationSnapshot, ToolError> {
         let mut state = self.inner.lock().await;
         let snapshot = if state.redirected {
@@ -160,9 +181,12 @@ impl OutputCapture {
                     Some(&output_path),
                 )
             })?;
-            spool.append_raw(&bytes).await.map_err(|error| {
-                output_io_error(&error, "seeding a managed-process spool", None)
-            })?;
+            private_fs_permit = spool
+                .append_raw_reserved(&bytes, private_fs_permit)
+                .await
+                .map_err(|error| {
+                    output_io_error(&error, "seeding a managed-process spool", None)
+                })?;
             CapturedOutput::Redirected {
                 output_path: state.tilde_output_path()?,
                 output_chars: state.output_chars,
@@ -171,9 +195,12 @@ impl OutputCapture {
             let stdout = std::mem::take(&mut state.stdout_inline);
             let stderr = std::mem::take(&mut state.stderr_inline);
             for buffered in [stdout.as_bytes(), stderr.as_bytes()] {
-                spool.append_raw(buffered).await.map_err(|error| {
-                    output_io_error(&error, "seeding a managed-process spool", None)
-                })?;
+                private_fs_permit = spool
+                    .append_raw_reserved(buffered, private_fs_permit)
+                    .await
+                    .map_err(|error| {
+                        output_io_error(&error, "seeding a managed-process spool", None)
+                    })?;
             }
             CapturedOutput::Inline { stdout, stderr }
         };
@@ -187,7 +214,7 @@ impl OutputCapture {
             CapturedOutput::Inline { .. } => spool.committed_len(),
             CapturedOutput::Redirected { .. } => 0,
         };
-        let appender = spool.appender().await.map_err(|error| {
+        let (appender, _surplus) = spool.appender(private_fs_permit).await.map_err(|error| {
             output_io_error(&error, "opening the migrated process-spool writer", None)
         })?;
         state.output_root = None;
@@ -202,6 +229,7 @@ impl OutputCapture {
     pub(super) async fn finalize(self: Arc<Self>) -> Result<CapturedOutput, ToolError> {
         let mut state = self.inner.lock().await;
         if !state.redirected {
+            state.auxiliary_permit = None;
             return Ok(CapturedOutput::Inline {
                 stdout: std::mem::take(&mut state.stdout_inline),
                 stderr: std::mem::take(&mut state.stderr_inline),
@@ -220,6 +248,7 @@ impl OutputCapture {
         let output_path = state.tilde_output_path()?;
         state.output_root = None;
         state.output_relative = None;
+        state.auxiliary_permit = None;
         Ok(CapturedOutput::Redirected {
             output_path,
             output_chars,
@@ -368,6 +397,7 @@ mod security_tests {
 pub(super) async fn drain_stdout(
     handle: ChildStdout,
     capture: Arc<OutputCapture>,
+    _permit: DescriptorPermit,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(handle).lines();
     while let Some(line) = reader.next_line().await? {
@@ -380,6 +410,7 @@ pub(super) async fn drain_stdout(
 pub(super) async fn drain_stderr(
     handle: ChildStderr,
     capture: Arc<OutputCapture>,
+    _permit: DescriptorPermit,
 ) -> std::io::Result<()> {
     let mut reader = BufReader::new(handle).lines();
     while let Some(line) = reader.next_line().await? {
@@ -426,8 +457,12 @@ mod tests {
             }),
         };
         let spool = Arc::new(Spool::create(dir.path().join("p1.log")).await?);
+        let private_fs_permit = crate::resource::DescriptorGovernor::global()?
+            .try_acquire(crate::resource::PRIVATE_FS_OPERATION_PEAK)?;
 
-        let Err(ToolError::ExecutionFailed { reason }) = capture.attach_spool(spool).await else {
+        let Err(ToolError::ExecutionFailed { reason }) =
+            capture.attach_spool(spool, private_fs_permit).await
+        else {
             return Err(std::io::Error::other(
                 "an unreadable redirect file did not return ExecutionFailed",
             )

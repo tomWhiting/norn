@@ -14,10 +14,10 @@ pub(crate) fn build_streaming_client(
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(connect_timeout)
         .tcp_keepalive(Duration::from_secs(30))
-        .pool_max_idle_per_host(4)
+        .pool_max_idle_per_host(0)
         .http2_keep_alive_interval(Duration::from_secs(30))
         .http2_keep_alive_timeout(Duration::from_secs(10))
-        .http2_keep_alive_while_idle(true)
+        .http2_keep_alive_while_idle(false)
         .build()
 }
 
@@ -28,6 +28,7 @@ pub(crate) fn build_bounded_client(
     reqwest::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(request_timeout)
+        .pool_max_idle_per_host(0)
         .build()
 }
 
@@ -38,6 +39,7 @@ pub(crate) fn build_blocking_bounded_client(
     reqwest::blocking::Client::builder()
         .redirect(reqwest::redirect::Policy::none())
         .timeout(request_timeout)
+        .pool_max_idle_per_host(0)
         .build()
 }
 

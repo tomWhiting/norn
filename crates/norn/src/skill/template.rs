@@ -362,6 +362,14 @@ async fn run_or_marker(command: &str, inputs: &TemplateInputs<'_>) -> String {
 /// failure marker text (already wrapped in `[skill shell command
 /// failed: …]`) ready to inline into the template output.
 async fn run_skill_shell(command: &str, shell: SkillShell, cwd: &Path) -> Result<String, String> {
+    let governor = crate::resource::DescriptorGovernor::global().map_err(|error| {
+        format!("[skill shell command failed: descriptor admission unavailable: {error}]")
+    })?;
+    let _permit = governor
+        .try_acquire(crate::resource::TWO_PIPE_SPAWN_PEAK)
+        .map_err(|error| {
+            format!("[skill shell command failed: descriptor admission failed: {error}]")
+        })?;
     let (prog, flag) = shell_argv(shell);
     tracing::info!(shell = ?shell, command = command, cwd = %cwd.display(), "skill shell exec");
 

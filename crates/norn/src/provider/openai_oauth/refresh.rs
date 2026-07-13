@@ -67,6 +67,11 @@ pub async fn refresh_auth(
     token_url: &str,
     client: &reqwest::Client,
 ) -> Result<AuthDotJson, RefreshError> {
+    let governor = crate::resource::DescriptorGovernor::global()
+        .map_err(|error| RefreshError::Transient(error.to_string()))?;
+    let _permit = governor
+        .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
+        .map_err(|error| RefreshError::Transient(error.to_string()))?;
     let tokens = auth
         .tokens
         .as_ref()

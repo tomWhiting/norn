@@ -144,6 +144,7 @@ struct StdioState {
     child: Child,
     stdin: ChildStdin,
     stdout: BufReader<ChildStdout>,
+    _permit: crate::resource::DescriptorPermit,
 }
 
 struct HttpTransport {
@@ -218,6 +219,16 @@ impl Drop for StdioTransport {
 impl Transport for HttpTransport {
     async fn rpc(&self, payload: String) -> Result<JsonRpcResponse, IntegrationError> {
         let fut = async {
+            let governor = crate::resource::DescriptorGovernor::global().map_err(|error| {
+                IntegrationError::McpError {
+                    reason: format!("MCP HTTP descriptor admission unavailable: {error}"),
+                }
+            })?;
+            let _permit = governor
+                .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
+                .map_err(|error| IntegrationError::McpError {
+                    reason: format!("MCP HTTP descriptor admission failed: {error}"),
+                })?;
             let resp = self
                 .client
                 .post(&self.url)
@@ -313,6 +324,23 @@ impl McpClient {
     pub async fn connect(config: McpServerConfig) -> Result<Self, IntegrationError> {
         let transport: Box<dyn Transport> = match &config.transport {
             McpTransport::Stdio { command, args } => {
+                let governor = crate::resource::DescriptorGovernor::global().map_err(|error| {
+                    IntegrationError::McpError {
+                        reason: format!("MCP descriptor admission unavailable: {error}"),
+                    }
+                })?;
+                let mut launch_permit = governor
+                    .try_acquire(crate::resource::TWO_PIPE_SPAWN_PEAK)
+                    .map_err(|error| IntegrationError::McpError {
+                        reason: format!("MCP descriptor admission failed: {error}"),
+                    })?;
+                let retained_permit =
+                    launch_permit
+                        .split(2)
+                        .ok_or_else(|| IntegrationError::McpError {
+                            reason: "MCP launch admission did not contain two retained pipes"
+                                .to_owned(),
+                        })?;
                 let mut cmd = Command::new(command);
                 cmd.args(args)
                     .stdin(Stdio::piped())
@@ -342,12 +370,14 @@ impl McpClient {
                         child,
                         stdin,
                         stdout: BufReader::new(stdout),
+                        _permit: retained_permit,
                     }),
                 })
             }
             McpTransport::Http { url } => {
                 let client = reqwest::Client::builder()
                     .timeout(MCP_REQUEST_TIMEOUT)
+                    .pool_max_idle_per_host(0)
                     .build()
                     .map_err(|e| IntegrationError::McpError {
                         reason: format!("failed to build HTTP client: {e}"),

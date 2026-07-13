@@ -6,6 +6,9 @@ use std::path::Path;
 /// Managed-process construction or I/O failure.
 #[derive(Clone, Debug, thiserror::Error)]
 pub enum ProcessError {
+    /// Safe active-descriptor capacity could not admit the process.
+    #[error(transparent)]
+    DescriptorAdmission(Box<crate::resource::DescriptorAdmissionError>),
     /// The process or system descriptor pool was exhausted.
     #[error(transparent)]
     DescriptorExhausted(Box<crate::resource::DescriptorExhaustion>),
@@ -39,6 +42,7 @@ impl ProcessError {
 impl From<ProcessError> for crate::error::ToolError {
     fn from(error: ProcessError) -> Self {
         match error {
+            ProcessError::DescriptorAdmission(source) => Self::DescriptorAdmission(source),
             ProcessError::DescriptorExhausted(source) => Self::DescriptorExhausted(source),
             other @ ProcessError::Io { .. } => Self::ExecutionFailed {
                 reason: other.to_string(),

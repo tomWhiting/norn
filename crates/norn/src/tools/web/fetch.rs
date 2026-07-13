@@ -62,6 +62,11 @@ const USER_AGENT: &str = "Mozilla/5.0 (compatible; Norn/1.0)";
 /// default redirect limit). Each hop is re-validated by the SSRF guard.
 const MAX_REDIRECT_HOPS: usize = 10;
 
+struct GovernedResponse {
+    response: reqwest::Response,
+    _permit: crate::resource::DescriptorPermit,
+}
+
 /// Model-supplied arguments for [`WebFetchTool`].
 #[derive(Debug, Deserialize)]
 struct WebFetchArgs {
@@ -104,7 +109,8 @@ fn build_http_client(
 ) -> Result<reqwest::Client, ToolError> {
     let mut builder = reqwest::Client::builder()
         .user_agent(USER_AGENT)
-        .redirect(reqwest::redirect::Policy::none());
+        .redirect(reqwest::redirect::Policy::none())
+        .pool_max_idle_per_host(0);
     if let Some((domain, addrs)) = pin {
         builder = builder.resolve_to_addrs(domain, addrs);
     }
@@ -145,8 +151,13 @@ impl WebFetchTool {
         &self,
         mut current: url::Url,
         timeout: Duration,
-    ) -> Result<reqwest::Response, ToolError> {
+    ) -> Result<GovernedResponse, ToolError> {
         for _hop in 0..=MAX_REDIRECT_HOPS {
+            let governor = crate::resource::DescriptorGovernor::global()
+                .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
+            let permit = governor
+                .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
+                .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
             let validation =
                 super::ssrf::validate_url_host(&current, self.allow_private_hosts).await?;
             let client = match &validation {
@@ -167,7 +178,10 @@ impl WebFetchTool {
                 })?;
 
             if !response.status().is_redirection() {
-                return Ok(response);
+                return Ok(GovernedResponse {
+                    response,
+                    _permit: permit,
+                });
             }
 
             let location = response
@@ -295,9 +309,10 @@ impl Tool for WebFetchTool {
         // archive safely.
         let artifacts = ctx.require_extension::<crate::session::SessionArtifactStore>()?;
 
-        let response = self
+        let governed = self
             .fetch_following_redirects(parsed_url, Duration::from_secs(timeout_secs))
             .await?;
+        let GovernedResponse { response, _permit } = governed;
 
         let status = response.status();
         if !status.is_success() {

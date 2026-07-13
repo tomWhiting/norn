@@ -59,6 +59,11 @@ async fn revoke_refresh_token(
     refresh_token: &str,
     http: OAuthHttpOptions,
 ) -> Result<(), LogoutError> {
+    let governor = crate::resource::DescriptorGovernor::global()
+        .map_err(|error| LogoutError::Revoke(error.to_string()))?;
+    let _permit = governor
+        .try_acquire(crate::resource::HTTP_REQUEST_PEAK)
+        .map_err(|error| LogoutError::Revoke(error.to_string()))?;
     let client = crate::provider::http_client::build_bounded_client(http.request_timeout)
         .map_err(|err| LogoutError::Revoke(err.to_string()))?;
     let response = client

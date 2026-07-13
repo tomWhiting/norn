@@ -18,6 +18,7 @@ use std::path::Path;
 
 use tokio::io::AsyncReadExt;
 
+use crate::resource::{DescriptorGovernor, PRIVATE_FS_OPERATION_PEAK};
 use crate::tool::output_budget::ToolOutputBudget;
 
 /// Number of leading bytes scanned for NUL bytes when classifying binary
@@ -100,7 +101,15 @@ pub(super) async fn scan_file(
     limit: Option<u64>,
     budget: ToolOutputBudget,
 ) -> std::io::Result<ScannedFile> {
-    let mut file = tokio::fs::File::open(path).await?;
+    let permit = DescriptorGovernor::global()
+        .and_then(|governor| governor.try_acquire(PRIVATE_FS_OPERATION_PEAK))
+        .map_err(std::io::Error::other)?;
+    let path = path.to_path_buf();
+    let (file, _permit) =
+        tokio::task::spawn_blocking(move || std::fs::File::open(path).map(|file| (file, permit)))
+            .await
+            .map_err(std::io::Error::other)??;
+    let mut file = tokio::fs::File::from_std(file);
     let mut chunk = vec![0u8; BINARY_SCAN_BYTES];
 
     // Phase 1: buffer the binary-scan prefix so NUL detection takes

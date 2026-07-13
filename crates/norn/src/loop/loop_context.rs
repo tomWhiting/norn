@@ -715,12 +715,18 @@ async fn run_prompt_command(
     working_dir: &std::path::Path,
     timeout: Duration,
 ) -> Result<String, String> {
+    let governor = crate::resource::DescriptorGovernor::global()
+        .map_err(|error| format!("prompt command descriptor admission unavailable: {error}"))?;
+    let _permit = governor
+        .try_acquire(crate::resource::TWO_PIPE_SPAWN_PEAK)
+        .map_err(|error| format!("prompt command descriptor admission failed: {error}"))?;
     let result = tokio::time::timeout(
         timeout,
         Command::new("sh")
             .arg("-c")
             .arg(command)
             .current_dir(working_dir)
+            .kill_on_drop(true)
             .output(),
     )
     .await;

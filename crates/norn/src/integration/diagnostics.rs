@@ -196,6 +196,17 @@ impl NornDiagnostic {
                     suggestion: Some("run `norn doctor` for descriptor diagnostics".to_owned()),
                 }
             }
+            ToolError::DescriptorAdmission(source) => {
+                let tool = tool_name.into();
+                Self {
+                    severity: DiagnosticSeverity::Error,
+                    code: "tool-resource-admission".to_owned(),
+                    message: format!("tool '{tool}' was not admitted: {source}"),
+                    source_tool: Some(tool),
+                    file_path: None,
+                    suggestion: Some("run `norn doctor` for descriptor diagnostics".to_owned()),
+                }
+            }
             ToolError::ToolNotFound { name } => Self {
                 severity: DiagnosticSeverity::Error,
                 code: "tool-not-found".to_owned(),

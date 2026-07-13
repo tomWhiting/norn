@@ -9,6 +9,7 @@ use diagnostics::languages::rust::crate_root_for_file;
 
 use crate::tool::lifecycle::{Advisory, AdvisorySeverity};
 
+use super::acquire_diagnostic_spawn;
 use super::findings::Findings;
 use super::infra::DiagnosticInfra;
 
@@ -19,6 +20,16 @@ pub(super) async fn run_remediation_tool(
     infra: &DiagnosticInfra,
     findings: &mut Findings<'_>,
 ) {
+    let _descriptor_permit = match acquire_diagnostic_spawn() {
+        Ok(permit) => permit,
+        Err(error) => {
+            findings.errors.push(format!(
+                "{} [remediation:{tool_name}] descriptor admission failed before subprocess invocation: {error}",
+                file_path.display()
+            ));
+            return;
+        }
+    };
     let target_path = match resolve_target_path(file_path, def.target, infra) {
         Ok(target_path) => target_path,
         Err(error) => {
@@ -60,6 +71,20 @@ pub(super) async fn run_report_tool(
     infra: &DiagnosticInfra,
     findings: &mut Findings<'_>,
 ) {
+    let _descriptor_permit = match acquire_diagnostic_spawn() {
+        Ok(permit) => permit,
+        Err(error) => {
+            findings.advisories.push(Advisory {
+                severity: AdvisorySeverity::Warning,
+                source: tool_name.to_owned(),
+                message: format!(
+                    "{} [report:{tool_name}] descriptor admission failed before subprocess invocation: {error}",
+                    file_path.display()
+                ),
+            });
+            return;
+        }
+    };
     let target_path = match resolve_target_path(file_path, def.target, infra) {
         Ok(target_path) => target_path,
         Err(error) => {

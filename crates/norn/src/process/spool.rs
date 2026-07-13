@@ -26,6 +26,7 @@ use tokio::io::AsyncWriteExt as _;
 use tokio::sync::Mutex as AsyncMutex;
 use tokio::sync::watch;
 
+use crate::resource::{DescriptorGovernor, DescriptorPermit, PRIVATE_FS_OPERATION_PEAK};
 use crate::util::{PrivateFileIdentity, PrivateRoot};
 
 /// Which standard stream a spooled line originated from.
@@ -76,6 +77,7 @@ pub struct Spool {
 pub(crate) struct SpoolAppender {
     spool: std::sync::Arc<Spool>,
     file: std::sync::Arc<AsyncMutex<ActiveFile>>,
+    _permit: std::sync::Arc<crate::resource::DescriptorPermit>,
 }
 
 #[derive(Debug)]
@@ -103,16 +105,27 @@ impl Spool {
                 "process spool path has no final component",
             )
         })?;
-        Self::create_in(parent, Path::new(file_name)).await
+        let parent = parent.to_path_buf();
+        let file_name = PathBuf::from(file_name);
+        let permit = private_fs_permit()?;
+        Self::create_in_reserved(&parent, &file_name, permit)
+            .await
+            .map(|(spool, _permit)| spool)
     }
 
-    /// Create a spool under an absolute private root and relative file name.
-    pub(crate) async fn create_in(root_path: &Path, relative: &Path) -> std::io::Result<Self> {
+    /// Create under a caller-reserved private-filesystem operation budget.
+    pub(crate) async fn create_in_reserved(
+        root_path: &Path,
+        relative: &Path,
+        permit: DescriptorPermit,
+    ) -> std::io::Result<(Self, DescriptorPermit)> {
         let root_path = root_path.to_path_buf();
         let relative = relative.to_path_buf();
-        tokio::task::spawn_blocking(move || Self::create_under_sync(&root_path, &relative))
-            .await
-            .map_err(std::io::Error::other)?
+        tokio::task::spawn_blocking(move || {
+            Self::create_under_sync(&root_path, &relative).map(|spool| (spool, permit))
+        })
+        .await
+        .map_err(std::io::Error::other)?
     }
 
     fn create_under_sync(root_path: &Path, relative: &Path) -> std::io::Result<Self> {
@@ -160,28 +173,38 @@ impl Spool {
     }
 
     /// Open one writer shared by active drains; the [`Spool`] retains none.
-    pub(crate) async fn appender(self: &std::sync::Arc<Self>) -> std::io::Result<SpoolAppender> {
+    pub(crate) async fn appender(
+        self: &std::sync::Arc<Self>,
+        permit: DescriptorPermit,
+    ) -> std::io::Result<(SpoolAppender, DescriptorPermit)> {
         let _guard = self.write_gate.lock().await;
         let committed = self.committed.load(Ordering::Acquire);
         let root_path = self.root_path.clone();
         let relative = self.relative.clone();
         let identity = self.identity;
-        let file = tokio::task::spawn_blocking(move || {
+        let (file, mut permit) = tokio::task::spawn_blocking(move || {
             let root = PrivateRoot::open(&root_path)?;
             let file = root.open_read_append(&relative)?;
             identity.verify(&file)?;
             file.set_len(committed)?;
-            Ok::<_, std::io::Error>(file)
+            Ok::<_, std::io::Error>((file, permit))
         })
         .await
         .map_err(std::io::Error::other)??;
-        Ok(SpoolAppender {
-            spool: std::sync::Arc::clone(self),
-            file: std::sync::Arc::new(AsyncMutex::new(ActiveFile {
-                file: tokio::fs::File::from_std(file),
-                needs_repair: false,
-            })),
-        })
+        let retained = permit.split(1).ok_or_else(|| {
+            std::io::Error::other("active spool admission did not retain one descriptor")
+        })?;
+        Ok((
+            SpoolAppender {
+                spool: std::sync::Arc::clone(self),
+                file: std::sync::Arc::new(AsyncMutex::new(ActiveFile {
+                    file: tokio::fs::File::from_std(file),
+                    needs_repair: false,
+                })),
+                _permit: std::sync::Arc::new(retained),
+            },
+            permit,
+        ))
     }
 
     /// Append one already-tagged, newline-terminated content chunk under
@@ -197,13 +220,24 @@ impl Spool {
     }
 
     async fn append_bytes(&self, bytes: Vec<u8>) -> std::io::Result<()> {
+        let permit = private_fs_permit()?;
+        self.append_bytes_reserved(bytes, permit)
+            .await
+            .map(|_permit| ())
+    }
+
+    async fn append_bytes_reserved(
+        &self,
+        bytes: Vec<u8>,
+        permit: DescriptorPermit,
+    ) -> std::io::Result<DescriptorPermit> {
         let _guard = self.write_gate.lock().await;
         let committed = self.committed.load(Ordering::Acquire);
         let root_path = self.root_path.clone();
         let relative = self.relative.clone();
         let identity = self.identity;
         let written = u64::try_from(bytes.len()).map_err(std::io::Error::other)?;
-        tokio::task::spawn_blocking(move || {
+        let permit = tokio::task::spawn_blocking(move || {
             let root = PrivateRoot::open(&root_path)?;
             let mut file = root.open_read_append(&relative)?;
             identity.verify(&file)?;
@@ -211,7 +245,8 @@ impl Spool {
             // committed. Restore the published boundary before appending.
             file.set_len(committed)?;
             file.write_all(&bytes)?;
-            file.flush()
+            file.flush()?;
+            Ok::<_, std::io::Error>(permit)
         })
         .await
         .map_err(std::io::Error::other)??;
@@ -226,7 +261,7 @@ impl Spool {
         // `send_replace` stores the committed length unconditionally, so a late
         // `subscribe_len()` borrows the true length at once.
         self.len_tx.send_replace(new_len);
-        Ok(())
+        Ok(permit)
     }
 
     /// Append raw bytes verbatim (no stream tag). Used to seed a spool with
@@ -242,6 +277,18 @@ impl Spool {
             return Ok(());
         }
         self.append_bytes(bytes.to_vec()).await
+    }
+
+    /// Seed through a private-filesystem reservation already held by a launch.
+    pub(crate) async fn append_raw_reserved(
+        &self,
+        bytes: &[u8],
+        permit: DescriptorPermit,
+    ) -> std::io::Result<DescriptorPermit> {
+        if bytes.is_empty() {
+            return Ok(permit);
+        }
+        self.append_bytes_reserved(bytes.to_vec(), permit).await
     }
 
     /// Read every byte appended since `cursor`, up to the current committed
@@ -285,7 +332,9 @@ impl Spool {
         let root_path = self.root_path.clone();
         let relative = self.relative.clone();
         let identity = self.identity;
+        let permit = private_fs_permit()?;
         tokio::task::spawn_blocking(move || {
+            let _permit = permit;
             let root = PrivateRoot::open(&root_path)?;
             let mut file = root.open_read(&relative)?;
             identity.verify(&file)?;
@@ -310,6 +359,12 @@ impl Spool {
     pub fn subscribe_len(&self) -> watch::Receiver<u64> {
         self.len_tx.subscribe()
     }
+}
+
+fn private_fs_permit() -> std::io::Result<DescriptorPermit> {
+    DescriptorGovernor::global()
+        .and_then(|governor| governor.try_acquire(PRIVATE_FS_OPERATION_PEAK))
+        .map_err(std::io::Error::other)
 }
 
 impl SpoolAppender {

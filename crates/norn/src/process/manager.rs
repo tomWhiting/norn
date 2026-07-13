@@ -41,6 +41,7 @@ use super::handle::{ProcessCompletion, ProcessHandle, ProcessStatus};
 use super::watch::{NewWatch, Watch, WatchAlert, WatchAttachError, WatchError, WatchRegistry};
 
 mod launch;
+pub(crate) use launch::{ProcessHandoff, ProcessHandoffParts};
 
 #[cfg(test)]
 use super::spool::StreamTag;
@@ -915,7 +916,8 @@ mod tests {
     /// incremental output, and kill all behave identically.
     #[tokio::test]
     #[serial_test::serial]
-    async fn adopt_yields_an_entry_indistinguishable_from_spawn() {
+    async fn adopt_yields_an_entry_indistinguishable_from_spawn()
+    -> Result<(), Box<dyn std::error::Error>> {
         let dir = tempfile::tempdir().unwrap();
         let _home = HomeGuard::set(dir.path());
         let mgr = manager(Some("sess"));
@@ -932,15 +934,35 @@ mod tests {
         // wired after adopt (below), mirroring what `attach_spool` does.
         let noop_out = tokio::spawn(async { Ok::<(), std::io::Error>(()) });
         let noop_err = tokio::spawn(async { Ok::<(), std::io::Error>(()) });
-        let handle = mgr
-            .adopt("echo adopted; sleep 30", child, noop_out, noop_err)
-            .await
-            .unwrap();
+        let handoff = ProcessHandoff::new(child, noop_out, noop_err);
+        let governor = crate::resource::DescriptorGovernor::global()?;
+        let private_fs_permit = governor
+            .acquire(crate::resource::PRIVATE_FS_OPERATION_PEAK)
+            .await?;
+        let (handle, private_fs_permit) = mgr
+            .adopt("echo adopted; sleep 30", handoff, private_fs_permit)
+            .await?;
         // Tee the adopted child's output into the entry's own spool, exactly as
         // a migrated command's attached capture does.
-        let appender = handle.spool().appender().await.unwrap();
-        tokio::spawn(drain_to_spool(stdout, appender.clone(), StreamTag::Stdout));
-        tokio::spawn(drain_to_spool(stderr, appender, StreamTag::Stderr));
+        let (appender, mut permits) = handle.spool().appender(private_fs_permit).await?;
+        let stdout_permit = permits
+            .split(1)
+            .ok_or_else(|| std::io::Error::other("stdout admission split failed"))?;
+        let stderr_permit = permits
+            .split(1)
+            .ok_or_else(|| std::io::Error::other("stderr admission split failed"))?;
+        tokio::spawn(drain_to_spool(
+            stdout,
+            appender.clone(),
+            StreamTag::Stdout,
+            stdout_permit,
+        ));
+        tokio::spawn(drain_to_spool(
+            stderr,
+            appender,
+            StreamTag::Stderr,
+            stderr_permit,
+        ));
 
         // Indistinguishable from a spawned sleeper: same id, Running status,
         // present in the list.
@@ -959,6 +981,7 @@ mod tests {
         assert_eq!(handle.kill().await, ProcessStatus::Killed);
         assert_eq!(handle.status(), ProcessStatus::Killed);
         mgr.shutdown();
+        Ok(())
     }
 
     /// R9 / F4 + NP-002 pre-task: a fresh manager (as session resume constructs

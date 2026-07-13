@@ -441,13 +441,9 @@ impl Tool for BashTool {
                     reason: "internal error: a command migrated without a process manager"
                         .to_owned(),
                 })?;
-                let handle = manager
-                    .adopt(
-                        &args.command,
-                        handoff.child,
-                        handoff.stdout_task,
-                        handoff.stderr_task,
-                    )
+                let private_fs_permit = capture.take_auxiliary_permit().await?;
+                let (handle, private_fs_permit) = manager
+                    .adopt(&args.command, handoff, private_fs_permit)
                     .await
                     .map_err(ToolError::from)?;
                 // Attach the spool AFTER adopt (the spool is created inside
@@ -456,7 +452,10 @@ impl Tool for BashTool {
                 // registered and supervised but its post-migration output would
                 // go nowhere — a half-migrated zombie. Rather than leave that,
                 // kill the adoptee and return a named error (F6).
-                let snapshot = match capture.attach_spool(Arc::clone(handle.spool())).await {
+                let snapshot = match capture
+                    .attach_spool(Arc::clone(handle.spool()), private_fs_permit)
+                    .await
+                {
                     Ok(snapshot) => snapshot,
                     Err(attach_error) => {
                         let final_status = handle.kill().await;

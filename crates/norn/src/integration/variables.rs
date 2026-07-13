@@ -287,8 +287,18 @@ async fn run_shell(
     command: &str,
     working_dir: Option<&crate::tool::context::SharedWorkingDir>,
 ) -> Result<String, IntegrationError> {
+    let governor = crate::resource::DescriptorGovernor::global().map_err(|error| {
+        IntegrationError::HookError {
+            reason: format!("shell variable descriptor admission unavailable: {error}"),
+        }
+    })?;
+    let _permit = governor
+        .try_acquire(crate::resource::TWO_PIPE_SPAWN_PEAK)
+        .map_err(|error| IntegrationError::HookError {
+            reason: format!("shell variable descriptor admission failed: {error}"),
+        })?;
     let mut cmd = Command::new("sh");
-    cmd.arg("-c").arg(command);
+    cmd.arg("-c").arg(command).kill_on_drop(true);
     if let Some(wd) = working_dir {
         cmd.current_dir(wd.get());
     }
