@@ -1788,12 +1788,13 @@ mod tests {
     /// NO event is appended — a durable event can never reference a spool
     /// payload that was not written through.
     #[tokio::test]
-    async fn spool_write_failure_is_typed_and_appends_no_event() {
-        let tmp = tempfile::tempdir().expect("tempdir");
+    async fn spool_write_failure_is_typed_and_appends_no_event()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let tmp = tempfile::tempdir()?;
         let (session_id, store) = open_spooled_session(tmp.path());
         // Occupy the session's sibling-directory path with a regular FILE
         // so the spool directory cannot be created underneath it.
-        std::fs::write(tmp.path().join(&session_id), b"not a directory").expect("block dir");
+        std::fs::write(tmp.path().join(&session_id), b"not a directory")?;
         let mut messages = Vec::new();
 
         let err = append_oversized(
@@ -1804,7 +1805,8 @@ mod tests {
             "tool-name-secret-must-not-escape",
         )
         .await
-        .expect_err("spool write must fail");
+        .err()
+        .ok_or_else(|| std::io::Error::other("spool write unexpectedly succeeded"))?;
         assert!(
             matches!(err, crate::error::SessionError::StorageError { .. }),
             "expected typed StorageError, got {err:?}",
@@ -1817,6 +1819,7 @@ mod tests {
             "no event may be appended when its spool payload was not written through",
         );
         assert!(messages.is_empty(), "no model-facing echo either");
+        Ok(())
     }
 
     /// Durability ordering, direction two: a sink failure AFTER the spool
