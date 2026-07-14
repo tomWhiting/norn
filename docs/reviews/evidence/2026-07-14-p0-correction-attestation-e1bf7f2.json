@@ -1,0 +1,21 @@
+{
+  "base": "41ea210",
+  "distributions": {
+    "case_count": 37,
+    "minimum_runner_observations": 750,
+    "minimum_rust_test_executions": 1250,
+    "sha256": "c07c2f9aeb620edb36e4742499bf90270f4de153f760305f739b5338b9cf7bac"
+  },
+  "errors": [],
+  "gate": {
+    "sha256": "833492dcf2db2c7873330baa1aca13ed70a573febc4796f74ce965f35ba28225"
+  },
+  "head": "e1bf7f2ab79157a3ee7f49270c6e7ad61794a077",
+  "kind": "p0_final_attestation",
+  "passed": true,
+  "policy": {
+    "sha256": "e61acb565377989891250329f6e10f9187fe46f36294f2db65d715d2680e7abe"
+  },
+  "schema_version": 2,
+  "storage_layout": "repository_target_v1"
+}

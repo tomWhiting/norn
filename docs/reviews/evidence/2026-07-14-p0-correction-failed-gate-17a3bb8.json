@@ -1,0 +1,2046 @@
+{
+  "base": "41ea210",
+  "base_commit": "41ea210d24ec0653480be3a097b15adcb1e4bfb0",
+  "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+  "cargo_config": {
+    "repository": {
+      "present": true,
+      "sha256": "b25e4a2d0a7562470f166e8082f1ff2ee01bcd01cc222935e4fcffb15febfc4f"
+    },
+    "user": {
+      "present": false,
+      "sha256": null
+    }
+  },
+  "cases": [
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "fmt",
+        "--all",
+        "--",
+        "--check"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "compiler",
+      "id": "fmt",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 1405,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stdout": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "clippy",
+        "--workspace",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "compiler",
+      "id": "strict_clippy",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 116747,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 19564,
+            "sha256": "b6464ae2e12593c3dadc8bd1a5091e1bb7aec929c3c3378e9bfc33ee3508d212"
+          },
+          "stdout": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "check",
+        "--workspace",
+        "--all-targets"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "compiler",
+      "id": "workspace_check",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 26560,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 519,
+            "sha256": "c06d1d842bb279b3db361d98867885d5a4fa5eb86dcbaaa786dc606e651e959b"
+          },
+          "stdout": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "--workspace",
+        "--all-targets",
+        "--quiet"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 1,
+      "group": "tests",
+      "id": "workspace_all_targets",
+      "minimum_tests": 1,
+      "observations": [
+        {
+          "contract_failure": "minimum_test_count",
+          "duration_ms": 155374,
+          "exit_code": 101,
+          "failed_test_identity_complete": false,
+          "failed_test_identity_groups": [
+            {
+              "declared_failed": 6,
+              "names": [
+                "tools::diagnostics_check::tests::server_path_tests::server_advise_handling_produces_advisory",
+                "tools::diagnostics_check::tests::server_path_tests::server_error_response_falls_back",
+                "tools::diagnostics_check::tests::server_path_tests::server_path_consumes_fresh_response",
+                "tools::diagnostics_check::tests::server_path_tests::server_path_falls_back_when_server_stalls",
+                "tools::diagnostics_check::tests::server_path_tests::server_results_scoped_to_modified_file",
+                "tools::search::tool::tests::results_identical_modulo_ignore_rules"
+              ],
+              "source": "summary",
+              "target": null
+            }
+          ],
+          "failed_test_names": [
+            "tools::diagnostics_check::tests::server_path_tests::server_advise_handling_produces_advisory",
+            "tools::diagnostics_check::tests::server_path_tests::server_error_response_falls_back",
+            "tools::diagnostics_check::tests::server_path_tests::server_path_consumes_fresh_response",
+            "tools::diagnostics_check::tests::server_path_tests::server_path_falls_back_when_server_stalls",
+            "tools::diagnostics_check::tests::server_path_tests::server_results_scoped_to_modified_file",
+            "tools::search::tool::tests::results_identical_modulo_ignore_rules"
+          ],
+          "passed": false,
+          "stderr": {
+            "bytes": 137,
+            "sha256": "1d30dd59fbbd5530e692b444bfe993301757a940c4ae548792d8002feec51104"
+          },
+          "stdout": {
+            "bytes": 7334,
+            "sha256": "961c212becee7e98577e4171244fe566bdc19bff759e439573f21209d1ba237c"
+          },
+          "test_counts": {
+            "failed": 6,
+            "ignored": 0,
+            "passed": 3359
+          },
+          "test_summaries": [
+            "test result: FAILED. 3359 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 49.86s"
+          ]
+        }
+      ],
+      "passed": 0,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--tests",
+        "--quiet"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 1,
+      "group": "tests",
+      "id": "norn_tests",
+      "minimum_tests": 1,
+      "observations": [
+        {
+          "contract_failure": "minimum_test_count",
+          "duration_ms": 115641,
+          "exit_code": 101,
+          "failed_test_identity_complete": false,
+          "failed_test_identity_groups": [
+            {
+              "declared_failed": 6,
+              "names": [
+                "tools::diagnostics_check::tests::server_path_tests::server_advise_handling_produces_advisory",
+                "tools::diagnostics_check::tests::server_path_tests::server_error_response_falls_back",
+                "tools::diagnostics_check::tests::server_path_tests::server_path_consumes_fresh_response",
+                "tools::diagnostics_check::tests::server_path_tests::server_path_falls_back_when_server_stalls",
+                "tools::diagnostics_check::tests::server_path_tests::server_results_scoped_to_modified_file",
+                "tools::search::tool::tests::results_identical_modulo_ignore_rules"
+              ],
+              "source": "summary",
+              "target": null
+            }
+          ],
+          "failed_test_names": [
+            "tools::diagnostics_check::tests::server_path_tests::server_advise_handling_produces_advisory",
+            "tools::diagnostics_check::tests::server_path_tests::server_error_response_falls_back",
+            "tools::diagnostics_check::tests::server_path_tests::server_path_consumes_fresh_response",
+            "tools::diagnostics_check::tests::server_path_tests::server_path_falls_back_when_server_stalls",
+            "tools::diagnostics_check::tests::server_path_tests::server_results_scoped_to_modified_file",
+            "tools::search::tool::tests::results_identical_modulo_ignore_rules"
+          ],
+          "passed": false,
+          "stderr": {
+            "bytes": 137,
+            "sha256": "d95e209140d53d5095cc2070feccc30c7e3d8830cfdbefa3372791a9453df1c6"
+          },
+          "stdout": {
+            "bytes": 7329,
+            "sha256": "cbf9b1a840415b598fc89515b868dfb66dda57e2a0a7ab97e5757f3c85230662"
+          },
+          "test_counts": {
+            "failed": 6,
+            "ignored": 0,
+            "passed": 3354
+          },
+          "test_summaries": [
+            "test result: FAILED. 3354 passed; 6 failed; 0 ignored; 0 measured; 0 filtered out; finished in 34.57s"
+          ]
+        }
+      ],
+      "passed": 0,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn-cli",
+        "--tests",
+        "--quiet"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 1,
+      "group": "tests",
+      "id": "norn_cli_tests",
+      "minimum_tests": 1,
+      "observations": [
+        {
+          "contract_failure": "minimum_test_count",
+          "duration_ms": 45909,
+          "exit_code": 101,
+          "failed_test_identity_complete": false,
+          "failed_test_identity_groups": [
+            {
+              "declared_failed": 1,
+              "names": [
+                "runtime::mcp::tests::workspace_local_server_is_still_project_controlled"
+              ],
+              "source": "summary",
+              "target": null
+            }
+          ],
+          "failed_test_names": [
+            "runtime::mcp::tests::workspace_local_server_is_still_project_controlled"
+          ],
+          "passed": false,
+          "stderr": {
+            "bytes": 54,
+            "sha256": "2c266f2f517dcdefb4910c7af12db419f26aee7ec005b7340996f92db63a097f"
+          },
+          "stdout": {
+            "bytes": 135872,
+            "sha256": "9cbafdd08d72be06208a9760132a9893dedcc96a054bc2c73ccf4dd76ba21d6c"
+          },
+          "test_counts": {
+            "failed": 1,
+            "ignored": 0,
+            "passed": 456
+          },
+          "test_summaries": [
+            "test result: FAILED. 456 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.98s"
+          ]
+        }
+      ],
+      "passed": 0,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn-tui",
+        "--tests",
+        "--quiet"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "tests",
+      "id": "norn_tui_tests",
+      "minimum_tests": 1,
+      "observations": [
+        {
+          "duration_ms": 47590,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stdout": {
+            "bytes": 991,
+            "sha256": "6d73c02431401040cc0229f287e2fdffdda717c9067bfed35fc382f3351a103a"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 697
+          },
+          "test_summaries": [
+            "test result: ok. 680 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.07s",
+            "test result: ok. 17 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 4.14s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "--workspace",
+        "--doc",
+        "--quiet"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "docs",
+      "id": "workspace_docs",
+      "minimum_tests": 1,
+      "observations": [
+        {
+          "duration_ms": 36098,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stdout": {
+            "bytes": 639,
+            "sha256": "a9dbfc3f3f5676d2aadb50f9c53ee622c8f7f9c35147896a4a60fd46575cf3e5"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 8
+          },
+          "test_summaries": [
+            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.34s",
+            "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+            "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+            "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--doc",
+        "--features",
+        "test-utils"
+      ],
+      "expected_test_names": [
+        "crates/norn/src/agent/builder.rs - agent::builder (line 14) - compile",
+        "crates/norn/src/agent/builder_setters.rs - agent::builder_setters::AgentBuilder::child_policy (line 503)",
+        "crates/norn/src/agent/child_policy.rs - agent::child_policy::ChildPolicy (line 314)",
+        "crates/norn/src/agent/handle.rs - agent::handle (line 30) - compile",
+        "crates/norn/src/provider/openai_oauth/manager.rs - provider::openai_oauth::manager::AuthManager (line 45) - compile fail",
+        "crates/norn/src/provider/openai_oauth/manager.rs - provider::openai_oauth::manager::AuthManager (line 50) - compile fail",
+        "crates/norn/src/runtime_init/base.rs - runtime_init::base::load_merged_settings (line 111) - compile fail",
+        "crates/norn/src/runtime_init/base.rs - runtime_init::base::load_merged_settings (line 115) - compile fail"
+      ],
+      "expected_tests": 8,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "docs",
+      "id": "norn_test_utils_docs",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 27024,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 196,
+            "sha256": "1e186d4a5d3408853b37dbd0e476521d4e4e1e2e332c22db1f616468fddf0fc2"
+          },
+          "stdout": {
+            "bytes": 1169,
+            "sha256": "bc65425fe2597b070d3bda4d93673adef9eba9665813e455d36cdffb1dfdd86f"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 8
+          },
+          "test_names": [
+            "crates/norn/src/agent/builder.rs - agent::builder (line 14) - compile",
+            "crates/norn/src/agent/handle.rs - agent::handle (line 30) - compile",
+            "crates/norn/src/agent/child_policy.rs - agent::child_policy::ChildPolicy (line 314)",
+            "crates/norn/src/agent/builder_setters.rs - agent::builder_setters::AgentBuilder::child_policy (line 503)",
+            "crates/norn/src/runtime_init/base.rs - runtime_init::base::load_merged_settings (line 115) - compile fail",
+            "crates/norn/src/provider/openai_oauth/manager.rs - provider::openai_oauth::manager::AuthManager (line 45) - compile fail",
+            "crates/norn/src/provider/openai_oauth/manager.rs - provider::openai_oauth::manager::AuthManager (line 50) - compile fail",
+            "crates/norn/src/runtime_init/base.rs - runtime_init::base::load_merged_settings (line 111) - compile fail"
+          ],
+          "test_summaries": [
+            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s",
+            "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "git",
+        "diff",
+        "--check",
+        "41ea210...17a3bb8eaadab46798267269a7ea8279c47d83a3"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "policy",
+      "id": "phase_diff_check",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 197,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stdout": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "<python>",
+        "-B",
+        "-I",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "docs/reviews/evidence",
+        "-p",
+        "test_p0_*.py"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [
+        "test_p0_evidence_contract.py",
+        "test_p0_evidence_paths.py",
+        "test_p0_test_output.py"
+      ],
+      "expected_tool_tests": 42,
+      "failed": 0,
+      "group": "policy",
+      "id": "evidence_tooling_self_tests",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 219,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 141,
+            "sha256": "7cd80bd5ff11119c05a92b476dc5d614a150e0dce8e36517dc11fadccab19a38"
+          },
+          "stdout": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "tool_test_count": 42
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "<python>",
+        "-B",
+        "-I",
+        "docs/reviews/evidence/run_p0_policy_evidence.py",
+        "--base",
+        "41ea210",
+        "--head",
+        "17a3bb8eaadab46798267269a7ea8279c47d83a3",
+        "--output",
+        "<policy-output>"
+      ],
+      "expected_test_names": [],
+      "expected_tests": null,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "policy",
+      "id": "full_range_policy",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 57871,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          },
+          "stdout": {
+            "bytes": 0,
+            "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+          }
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "integration::mcp_control::tests::status_and_debug_surfaces_do_not_disclose_definition_secrets",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "integration::mcp_control::tests::status_and_debug_surfaces_do_not_disclose_definition_secrets"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "integration::mcp_control::tests::status_and_debug_surfaces_do_not_disclose_definition_secrets",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 1257,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "c3b8953ef011a4f0d49dc5826b5837634576ce483b27b69c1c8837ee05275857"
+          },
+          "stdout": {
+            "bytes": 221,
+            "sha256": "ebacac5bfe205925d393655346d7a59a23402b6d3908c4cd90d8c22588cee672"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "integration::mcp_control::tests::status_and_debug_surfaces_do_not_disclose_definition_secrets"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.06s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "integration::mcp_http::tests::connection_errors_do_not_disclose_endpoint_url_secrets",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "integration::mcp_http::tests::connection_errors_do_not_disclose_endpoint_url_secrets"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "integration::mcp_http::tests::connection_errors_do_not_disclose_endpoint_url_secrets",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 554,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "10007715fbac608a56f6c7a5aa5784a13f87dcb0db0469702317c29ed0313bd3"
+          },
+          "stdout": {
+            "bytes": 212,
+            "sha256": "7958ded8068e05c03a5a6cd0cc4126dfbe550834aa5165cc9e489b18b566a3f0"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "integration::mcp_http::tests::connection_errors_do_not_disclose_endpoint_url_secrets"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.02s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "integration::mcp_http::tests::remote_error_surfaces_do_not_disclose_configured_header_secrets",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "integration::mcp_http::tests::remote_error_surfaces_do_not_disclose_configured_header_secrets"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "integration::mcp_http::tests::remote_error_surfaces_do_not_disclose_configured_header_secrets",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 524,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "bc440399eea24f0159340607bba4c7ba34de5d41ba6c58f1b72a1106c83b5190"
+          },
+          "stdout": {
+            "bytes": 221,
+            "sha256": "76baa95cacd0620721e85f5fb90458339cd0a5da202380cab649d52d4d5f439b"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "integration::mcp_http::tests::remote_error_surfaces_do_not_disclose_configured_header_secrets"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.01s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "integration::mcp_live_command::tests::inspect_renderer_redacts_definition_values",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "integration::mcp_live_command::tests::inspect_renderer_redacts_definition_values"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "integration::mcp_live_command::tests::inspect_renderer_redacts_definition_values",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 508,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "270778f5f2d80b66c9bf02f47e95d6b5b83bdcbd0dc89e10d3df048a50b82c85"
+          },
+          "stdout": {
+            "bytes": 208,
+            "sha256": "c6ca829a4d78586767d2c2a603da5e305bdc9f9f6d906ffe3428bc401290369b"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "integration::mcp_live_command::tests::inspect_renderer_redacts_definition_values"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "integration::mcp_live_command::tests::malformed_secret_input_is_not_echoed",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "integration::mcp_live_command::tests::malformed_secret_input_is_not_echoed"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "integration::mcp_live_command::tests::malformed_secret_input_is_not_echoed",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 518,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "bc440399eea24f0159340607bba4c7ba34de5d41ba6c58f1b72a1106c83b5190"
+          },
+          "stdout": {
+            "bytes": 202,
+            "sha256": "fb3da94e5310bb216f165c9d398d7b19effa39e6a6ce64cd2fad7a2761dad43f"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "integration::mcp_live_command::tests::malformed_secret_input_is_not_echoed"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "integration::mcp_stdio::tests::server_stderr_metadata_does_not_disclose_configured_secrets",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "integration::mcp_stdio::tests::server_stderr_metadata_does_not_disclose_configured_secrets"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "integration::mcp_stdio::tests::server_stderr_metadata_does_not_disclose_configured_secrets",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 731,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "42499606a9378ffb882da96c72cea9edb3e385aa1354ea52006dfdc54311fda6"
+          },
+          "stdout": {
+            "bytes": 218,
+            "sha256": "2bbc24b5af0f2423b16cc48c359738b462c11466f9dc01a5960bb63882b251eb"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "integration::mcp_stdio::tests::server_stderr_metadata_does_not_disclose_configured_secrets"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.24s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::debug::security_tests::response_metadata_redacts_credential_and_redirect_values",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::debug::security_tests::response_metadata_redacts_credential_and_redirect_values"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::debug::security_tests::response_metadata_redacts_credential_and_redirect_values",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 450,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "93dba0a9a1663e17a22219de9f33a1e7944b3c546ee2ea222bf9096ea0ebe733"
+          },
+          "stdout": {
+            "bytes": 217,
+            "sha256": "507bd3bbbb51b4e7dfb154f8cbfc5f4afd0c912742b857cbccca82e3ae49a671"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::debug::security_tests::response_metadata_redacts_credential_and_redirect_values"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::exec::tests::endpoint_path_secrets_do_not_reach_errors_or_traces",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::exec::tests::endpoint_path_secrets_do_not_reach_errors_or_traces"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::exec::tests::endpoint_path_secrets_do_not_reach_errors_or_traces",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 487,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "0e3a5c66646dbd0b633f4c81c2a16f30b3096db7a67abb621126c17de10a122e"
+          },
+          "stdout": {
+            "bytes": 202,
+            "sha256": "4dc178b18c7490809dcae0293795c05772df425d31bbc29b2f38140709c64e32"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::exec::tests::endpoint_path_secrets_do_not_reach_errors_or_traces"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::exec::tests::specialized_401_and_429_paths_never_wait_for_or_disclose_the_body",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::exec::tests::specialized_401_and_429_paths_never_wait_for_or_disclose_the_body"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::exec::tests::specialized_401_and_429_paths_never_wait_for_or_disclose_the_body",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 463,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "b9638e6a7aa66a82cc566c4e34ad79ebac10e82bc398f6fe3fa8f25fb6bfe4a1"
+          },
+          "stdout": {
+            "bytes": 216,
+            "sha256": "1d1ab294bf33544016621709e3cfc5010b41c642737262cfa1955cec4da3952d"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::exec::tests::specialized_401_and_429_paths_never_wait_for_or_disclose_the_body"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai::request::tests::tool_result_missing_call_id_returns_error",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai::request::tests::tool_result_missing_call_id_returns_error"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai::request::tests::tool_result_missing_call_id_returns_error",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 462,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "498a4d9451c2d13382e1ef708d3c861512f76e487517eabdc0f206c5be66a1a6"
+          },
+          "stdout": {
+            "bytes": 203,
+            "sha256": "af6748628a591db3d11a0e2c8fc05ff578bb13f69922c9de824b62609175ce45"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai::request::tests::tool_result_missing_call_id_returns_error"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_compatible::request::tests::missing_tool_result_id_is_hard_error",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_compatible::request::tests::missing_tool_result_id_is_hard_error"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_compatible::request::tests::missing_tool_result_id_is_hard_error",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 426,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "498a4d9451c2d13382e1ef708d3c861512f76e487517eabdc0f206c5be66a1a6"
+          },
+          "stdout": {
+            "bytes": 209,
+            "sha256": "c95123cf11ab4d524f4c5c5e00ceb2bd3897a4ff237302d88aee415193f6bbb4"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_compatible::request::tests::missing_tool_result_id_is_hard_error"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_compatible::sse::tests::malformed_chunk_does_not_disclose_provider_payload",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_compatible::sse::tests::malformed_chunk_does_not_disclose_provider_payload"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_compatible::sse::tests::malformed_chunk_does_not_disclose_provider_payload",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 424,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "45414c882aa601c9706290a422ac696bf278c8489a91affe1dac484e860b6f3c"
+          },
+          "stdout": {
+            "bytes": 219,
+            "sha256": "554a542c97c5862fb9b75042d99e79bd9dbebf38036b3e59ef89bfbfb1ace729"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_compatible::sse::tests::malformed_chunk_does_not_disclose_provider_payload"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_compatible::sse::tests::maps_stream_error_object_to_terminal_error",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_compatible::sse::tests::maps_stream_error_object_to_terminal_error"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_compatible::sse::tests::maps_stream_error_object_to_terminal_error",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 427,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "498a4d9451c2d13382e1ef708d3c861512f76e487517eabdc0f206c5be66a1a6"
+          },
+          "stdout": {
+            "bytes": 211,
+            "sha256": "0612183441eb770ea826d5ae33d2d2103b6f0473285c0ad276d0864483e296d3"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_compatible::sse::tests::maps_stream_error_object_to_terminal_error"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_compatible::sse::tests::maps_unknown_stream_error_without_disclosing_provider_text",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_compatible::sse::tests::maps_unknown_stream_error_without_disclosing_provider_text"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_compatible::sse::tests::maps_unknown_stream_error_without_disclosing_provider_text",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 419,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "45414c882aa601c9706290a422ac696bf278c8489a91affe1dac484e860b6f3c"
+          },
+          "stdout": {
+            "bytes": 227,
+            "sha256": "495560a402050c953a7629886bed6b11061bf1eaefc27f2a6360a315f0a94c45"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_compatible::sse::tests::maps_unknown_stream_error_without_disclosing_provider_text"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_compatible::sse::tests::missing_tool_name_does_not_disclose_provider_call_id",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_compatible::sse::tests::missing_tool_name_does_not_disclose_provider_call_id"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_compatible::sse::tests::missing_tool_name_does_not_disclose_provider_call_id",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 428,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "498a4d9451c2d13382e1ef708d3c861512f76e487517eabdc0f206c5be66a1a6"
+          },
+          "stdout": {
+            "bytes": 221,
+            "sha256": "ae2a316336ae8970932f1bef4396ef9c62f07bc81bcab0108bb9301d6f604295"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_compatible::sse::tests::missing_tool_name_does_not_disclose_provider_call_id"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_compatible::sse::tests::unknown_finish_reason_is_parse_error_without_disclosure",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_compatible::sse::tests::unknown_finish_reason_is_parse_error_without_disclosure"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_compatible::sse::tests::unknown_finish_reason_is_parse_error_without_disclosure",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 422,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "45414c882aa601c9706290a422ac696bf278c8489a91affe1dac484e860b6f3c"
+          },
+          "stdout": {
+            "bytes": 224,
+            "sha256": "0ab24c260475ea3d550827e7b1918e7aa76603764ef1815bc8764b5723890378"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_compatible::sse::tests::unknown_finish_reason_is_parse_error_without_disclosure"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_oauth::browser::tests::launcher_errors_do_not_disclose_authorization_url",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_oauth::browser::tests::launcher_errors_do_not_disclose_authorization_url"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_oauth::browser::tests::launcher_errors_do_not_disclose_authorization_url",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 463,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "0279a5060099b6b5b3c96a5177ad2d882b270935498c786a42f57b6286cab6cd"
+          },
+          "stdout": {
+            "bytes": 217,
+            "sha256": "9508f54dea7aa2b655eb6285412895cd3a58372dc99df61aa34f5b196e0ebb70"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_oauth::browser::tests::launcher_errors_do_not_disclose_authorization_url"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.03s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_oauth::browser::tests::macos_launcher_keeps_authorization_url_out_of_argv_and_environment",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_oauth::browser::tests::macos_launcher_keeps_authorization_url_out_of_argv_and_environment"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_oauth::browser::tests::macos_launcher_keeps_authorization_url_out_of_argv_and_environment",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 423,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "45414c882aa601c9706290a422ac696bf278c8489a91affe1dac484e860b6f3c"
+          },
+          "stdout": {
+            "bytes": 234,
+            "sha256": "38f43e0c5b48abd4402a75a2c3735bcadfbd68b7cf4d2803e98fd6da9c6f5bb2"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_oauth::browser::tests::macos_launcher_keeps_authorization_url_out_of_argv_and_environment"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_oauth::login_server::tests::classify_matching_error_callback_fails_without_disclosure",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_oauth::login_server::tests::classify_matching_error_callback_fails_without_disclosure"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_oauth::login_server::tests::classify_matching_error_callback_fails_without_disclosure",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 419,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "45414c882aa601c9706290a422ac696bf278c8489a91affe1dac484e860b6f3c"
+          },
+          "stdout": {
+            "bytes": 230,
+            "sha256": "97a120d51900c7522d069ff6a8bda909afb6d7be67a69069dfe4c45b15ddbd55"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_oauth::login_server::tests::classify_matching_error_callback_fails_without_disclosure"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_oauth::login_server::tests::matching_error_callback_fails_the_flow_with_a_400_page",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_oauth::login_server::tests::matching_error_callback_fails_the_flow_with_a_400_page"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_oauth::login_server::tests::matching_error_callback_fails_the_flow_with_a_400_page",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 441,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "498a4d9451c2d13382e1ef708d3c861512f76e487517eabdc0f206c5be66a1a6"
+          },
+          "stdout": {
+            "bytes": 227,
+            "sha256": "60da24dda4cfc4bf220b58f8a1c8398818651e38a4e4ff990501db3e77861609"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_oauth::login_server::tests::matching_error_callback_fails_the_flow_with_a_400_page"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.01s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_oauth::manager::security_tests::manager_debug_redacts_cached_credentials",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_oauth::manager::security_tests::manager_debug_redacts_cached_credentials"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_oauth::manager::security_tests::manager_debug_redacts_cached_credentials",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 426,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "498a4d9451c2d13382e1ef708d3c861512f76e487517eabdc0f206c5be66a1a6"
+          },
+          "stdout": {
+            "bytes": 217,
+            "sha256": "25c6586c8791ad20d6449cc9e9e5e99a6be286a4698dc6941d9fde74f218dda2"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_oauth::manager::security_tests::manager_debug_redacts_cached_credentials"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_oauth::pkce::security_tests::pkce_debug_redacts_verifier_and_challenge",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_oauth::pkce::security_tests::pkce_debug_redacts_verifier_and_challenge"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_oauth::pkce::security_tests::pkce_debug_redacts_verifier_and_challenge",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 442,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "0279a5060099b6b5b3c96a5177ad2d882b270935498c786a42f57b6286cab6cd"
+          },
+          "stdout": {
+            "bytes": 215,
+            "sha256": "d6b3a196ebe02abb4e675b208c08f7534176bc94206c7d7b6a918a7bcde4c01f"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_oauth::pkce::security_tests::pkce_debug_redacts_verifier_and_challenge"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "provider::openai_oauth::types::security_tests::credential_debug_is_structural_and_redacted",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "provider::openai_oauth::types::security_tests::credential_debug_is_structural_and_redacted"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "provider::openai_oauth::types::security_tests::credential_debug_is_structural_and_redacted",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 416,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "45414c882aa601c9706290a422ac696bf278c8489a91affe1dac484e860b6f3c"
+          },
+          "stdout": {
+            "bytes": 218,
+            "sha256": "e54777d9f6d453f792061dbe2b68e4a855893609bf1dc89f4dd95cd0f3ee8e82"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "provider::openai_oauth::types::security_tests::credential_debug_is_structural_and_redacted"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "r#loop::assembly::tests::fallback_warning_does_not_disclose_streaming_merge_key",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "r#loop::assembly::tests::fallback_warning_does_not_disclose_streaming_merge_key"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "r#loop::assembly::tests::fallback_warning_does_not_disclose_streaming_merge_key",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 429,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "498a4d9451c2d13382e1ef708d3c861512f76e487517eabdc0f206c5be66a1a6"
+          },
+          "stdout": {
+            "bytes": 207,
+            "sha256": "e5e5d922b197b538927b3a4cbedac898b513be816e5745bcd50783eb2697856d"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "r#loop::assembly::tests::fallback_warning_does_not_disclose_streaming_merge_key"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.00s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "r#loop::tool_dispatch::tests::spool_write_failure_is_typed_and_appends_no_event",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "r#loop::tool_dispatch::tests::spool_write_failure_is_typed_and_appends_no_event"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "non_disclosure",
+      "id": "r#loop::tool_dispatch::tests::spool_write_failure_is_typed_and_appends_no_event",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 473,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "498a4d9451c2d13382e1ef708d3c861512f76e487517eabdc0f206c5be66a1a6"
+          },
+          "stdout": {
+            "bytes": 207,
+            "sha256": "e7108046fde5fa8270fca63f18a6ed6805dc04fcd76a75cf0a23f2eafedfda27"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "r#loop::tool_dispatch::tests::spool_write_failure_is_typed_and_appends_no_event"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.04s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    },
+    {
+      "command": [
+        "cargo",
+        "+1.94.0",
+        "--locked",
+        "test",
+        "-p",
+        "norn",
+        "--lib",
+        "r#loop::tool_dispatch::batch::tests::spawned_member_panic_surfaces_structured_failure",
+        "--",
+        "--exact"
+      ],
+      "expected_test_names": [
+        "r#loop::tool_dispatch::batch::tests::spawned_member_panic_surfaces_structured_failure"
+      ],
+      "expected_tests": 1,
+      "expected_tool_test_modules": [],
+      "expected_tool_tests": null,
+      "failed": 0,
+      "group": "model_facing_non_disclosure",
+      "id": "r#loop::tool_dispatch::batch::tests::spawned_member_panic_surfaces_structured_failure",
+      "minimum_tests": 0,
+      "observations": [
+        {
+          "duration_ms": 469,
+          "exit_code": 0,
+          "passed": true,
+          "stderr": {
+            "bytes": 203,
+            "sha256": "b9638e6a7aa66a82cc566c4e34ad79ebac10e82bc398f6fe3fa8f25fb6bfe4a1"
+          },
+          "stdout": {
+            "bytes": 213,
+            "sha256": "0587f360f50fde33ac817635edc8eb6d70b19084895f13726ec4910ceafbab7f"
+          },
+          "test_counts": {
+            "failed": 0,
+            "ignored": 0,
+            "passed": 1
+          },
+          "test_names": [
+            "r#loop::tool_dispatch::batch::tests::spawned_member_panic_surfaces_structured_failure"
+          ],
+          "test_summaries": [
+            "test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 3359 filtered out; finished in 0.01s"
+          ]
+        }
+      ],
+      "passed": 1,
+      "runs": 1
+    }
+  ],
+  "environment": {
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_NET_OFFLINE": "true",
+    "CARGO_TERM_COLOR": "never",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "LANG": "C",
+    "LC_ALL": "C",
+    "NO_COLOR": "1",
+    "TERM": "dumb",
+    "TZ": "UTC",
+    "removed_ambient_variable_count": 29,
+    "sanitized_variable_names": [
+      "CARGO_HOME",
+      "CARGO_INCREMENTAL",
+      "CARGO_NET_OFFLINE",
+      "CARGO_TARGET_DIR",
+      "CARGO_TERM_COLOR",
+      "GIT_CONFIG_NOSYSTEM",
+      "HOME",
+      "LANG",
+      "LC_ALL",
+      "NO_COLOR",
+      "PATH",
+      "RUSTUP_HOME",
+      "TERM",
+      "TMPDIR",
+      "TZ"
+    ]
+  },
+  "environment_fingerprint": {
+    "executables": {
+      "ast-grep": {
+        "sha256": "231f9bf8be83554878c5806426f2c306e4fd4536e4734e75069a16501b8a623c"
+      },
+      "cargo": {
+        "sha256": "cb7151ab1c5fcd42648336a2c98020b1819b0993955c8ba3ed44494772a82bdf"
+      },
+      "filesystem_df": {
+        "sha256": "f11b52347aeea5d11f2ffaa67b6ea0cf1867ba95ada16ec75ca6da1828822d11"
+      },
+      "filesystem_mount": {
+        "sha256": "fa561ee7621b03e5a22331144f59431e6c66921280d908b10f58f24dea1bdae7"
+      },
+      "filesystem_stat": {
+        "sha256": null
+      },
+      "git": {
+        "sha256": "5bebfad20c935dda15d9f54856422e4506bade025a575e8e0e5d416b9594349a"
+      },
+      "python": {
+        "sha256": "cbf84109626aa1013bbe408fbb9590bd0f1c1548f038b2221c6b8b87de26ca43"
+      },
+      "rustc": {
+        "sha256": "4f26ad57dcb9b12f9791317a1387e3e8d6ad803d4bd20fcdc65142a91e903d45"
+      },
+      "rustup": {
+        "sha256": "aeb4105778ca1bd3c6b0e75768f581c656633cd51368fa61289b6a71696ac7e1"
+      },
+      "tokei": {
+        "sha256": "757fd86e5f7453dab07315159744cb53e873131cab8c07f28610e39327dc94be"
+      }
+    }
+  },
+  "failed": 3,
+  "final_repository_state": {
+    "head": "17a3bb8eaadab46798267269a7ea8279c47d83a3",
+    "worktree_clean": true
+  },
+  "generated_at_utc": "2026-07-14T13:33:24.659484+00:00",
+  "head": "17a3bb8eaadab46798267269a7ea8279c47d83a3",
+  "kind": "gate",
+  "logical_cpu_count": 10,
+  "passed": 35,
+  "platform": "macOS-26.3.1-arm64-arm-64bit-Mach-O",
+  "platform_system": "Darwin",
+  "policy_artifact": {
+    "head": "17a3bb8eaadab46798267269a7ea8279c47d83a3",
+    "policy_passed": true,
+    "schema_version": 2,
+    "sha256": "0074a2f5df38d6a0e0be2eb5e28e84deaf4fef5218cc21db44684c8ffa255b7a"
+  },
+  "policy_contract_passed": true,
+  "python": "3.14.3",
+  "repository_integrity_passed": true,
+  "runner_observations": 38,
+  "rust_test_executions": 7921,
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "schema_version": 3,
+  "storage_layout": "repository_target_v1",
+  "temporary_filesystem": {
+    "filesystem": "apfs"
+  },
+  "worktree_clean": true
+}
