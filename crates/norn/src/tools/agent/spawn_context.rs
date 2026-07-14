@@ -269,6 +269,15 @@ pub(crate) fn forward_shared_extensions(parent_ctx: &ToolContext, child_ctx: &mu
     if let Some(runtime) = parent_ctx.get_extension::<crate::integration::McpRuntime>() {
         child_ctx.insert_extension(runtime);
     }
+    if let Some(runtimes) = parent_ctx.get_extension::<crate::integration::McpRuntimeStore>() {
+        child_ctx.insert_extension(runtimes);
+    }
+    if let Some(generations) = parent_ctx.get_extension::<crate::tool::ToolGenerationStore>() {
+        child_ctx.insert_extension(generations);
+    }
+    if let Some(view) = parent_ctx.get_extension::<super::live_tools::McpServerView>() {
+        child_ctx.insert_extension(view);
+    }
 }
 
 /// Forward convention diagnostics into a spawned/forked child context.

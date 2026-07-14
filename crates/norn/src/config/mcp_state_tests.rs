@@ -232,7 +232,8 @@ fn state_debug_does_not_disclose_definition_secrets() -> Result<(), ConfigError>
 }
 
 #[test]
-fn session_enable_never_reclassifies_a_project_definition() -> Result<(), ConfigError> {
+fn session_enable_keeps_an_already_enabled_project_definition_unchanged() -> Result<(), ConfigError>
+{
     let mut state = McpConfigState::from_layers(
         PathBuf::from("/project"),
         [
@@ -244,7 +245,7 @@ fn session_enable_never_reclassifies_a_project_definition() -> Result<(), Config
         BTreeMap::new(),
     )?;
 
-    assert!(state.session_enable("docs").is_err());
+    assert!(!state.session_enable("docs")?);
     let effective = state
         .snapshot()?
         .get("docs")
@@ -252,5 +253,45 @@ fn session_enable_never_reclassifies_a_project_definition() -> Result<(), Config
         .ok_or_else(|| missing_server("docs", "inspect"))?;
     assert_eq!(effective.source(), McpConfigLayer::SharedProject);
     assert!(state.session_entries().is_empty());
+    Ok(())
+}
+
+#[test]
+fn session_enable_can_override_a_disabled_trusted_definition() -> Result<(), ConfigError> {
+    let mut disabled = stdio("user");
+    disabled.enabled = Some(false);
+    let mut state = McpConfigState::from_layers(
+        PathBuf::from("/project"),
+        [
+            BTreeMap::from([("docs".to_owned(), disabled)]),
+            BTreeMap::new(),
+            BTreeMap::new(),
+            BTreeMap::new(),
+        ],
+        BTreeMap::new(),
+    )?;
+
+    assert!(state.session_enable("docs")?);
+    let effective = state
+        .snapshot()?
+        .get("docs")
+        .cloned()
+        .ok_or_else(|| missing_server("docs", "inspect"))?;
+    assert_eq!(effective.source(), McpConfigLayer::User);
+    assert!(effective.enabled());
+    assert_eq!(effective.definition().command.as_deref(), Some("user"));
+    assert_eq!(
+        state.session_entries().get("docs"),
+        Some(&McpSessionEntry::EnabledInherited)
+    );
+
+    assert!(state.session_remove("docs")?);
+    let revealed = state
+        .snapshot()?
+        .get("docs")
+        .cloned()
+        .ok_or_else(|| missing_server("docs", "inspect"))?;
+    assert_eq!(revealed.source(), McpConfigLayer::User);
+    assert!(!revealed.enabled());
     Ok(())
 }

@@ -39,7 +39,7 @@ use super::fork_context::build_fork_context;
 use super::fork_launch::{ForkLaunch, launch_fork};
 use super::fork_seed::{seed_fork_events, truncate_seed_at_anchor};
 use super::handle::AgentHandles;
-use super::infra::{AgentCancellation, AgentModel, SubAgentExecutor, infra_from};
+use super::infra::{AgentCancellation, AgentModel, infra_from};
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
 use crate::agent::child_policy::{ChildLoopConfig, ChildPolicy, CoordinationEnvelope};
@@ -521,10 +521,6 @@ impl Tool for ForkTool {
         // assembly, so the fork's tool definitions and its executor gate
         // agree (the call-rejection paths stay as defence-in-depth).
         let allow_list = effective_child_tools(parent_registry, None, &fork_policy, "fork");
-        let tool_defs = crate::provider::surface::collect_function_definitions(
-            parent_registry,
-            allow_list.as_deref(),
-        );
 
         // Skill listing (parity with the root and spawn): advertise "#
         // Available Skills" on the fork's system prompt only when the parent
@@ -560,11 +556,15 @@ impl Tool for ForkTool {
         }));
         child_ctx.insert_extension(Arc::new(ParentSystemInstruction::new(parent_base.clone())));
 
-        let executor = SubAgentExecutor::new(
-            Arc::clone(parent_registry),
+        let child_tools = super::live_tools::child_tool_snapshot(
+            ctx,
+            parent_registry,
             allow_list,
+            None,
             Arc::clone(&child_ctx),
-        );
+        )?;
+        let executor = child_tools.executor;
+        let tool_defs = child_tools.definitions;
 
         // R6: inbound steering channel — the parent keeps the sender via
         // the AgentHandle for `close_agent`'s shutdown steer; capacity

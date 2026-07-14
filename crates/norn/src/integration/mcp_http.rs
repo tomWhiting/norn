@@ -1,12 +1,14 @@
 //! Streamable HTTP transport for the MCP client.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use tokio::sync::Mutex;
 
 use super::mcp_client::{JsonRpcResponse, MCP_REQUEST_TIMEOUT, Transport};
+use super::mcp_protocol::{ClientProtocolState, InboundMessage};
 use crate::error::IntegrationError;
 
 const ACCEPT: &str = "application/json, text/event-stream";
@@ -17,6 +19,7 @@ pub(super) struct HttpTransport {
     client: reqwest::Client,
     url: String,
     state: Mutex<HttpState>,
+    protocol: Arc<ClientProtocolState>,
 }
 
 #[derive(Default)]
@@ -34,6 +37,7 @@ impl HttpTransport {
     pub(super) fn new(
         url: String,
         configured_headers: &HashMap<String, String>,
+        protocol: Arc<ClientProtocolState>,
     ) -> Result<Self, IntegrationError> {
         let headers = configured_headers
             .iter()
@@ -51,6 +55,7 @@ impl HttpTransport {
             client,
             url,
             state: Mutex::new(HttpState::default()),
+            protocol,
         })
     }
 
@@ -166,36 +171,31 @@ impl HttpTransport {
         message: serde_json::Value,
         request_id: u64,
     ) -> Result<Option<JsonRpcResponse>, IntegrationError> {
-        if let Some(method) = message.get("method").and_then(serde_json::Value::as_str) {
-            if let Some(id) = message.get("id") {
-                self.answer_server_request(method, id).await?;
+        match self.protocol.inspect(&message)? {
+            InboundMessage::Consumed => Ok(None),
+            InboundMessage::Reply(reply) => {
+                self.answer_server_request(reply).await?;
+                Ok(None)
             }
-            return Ok(None);
+            InboundMessage::Response => {
+                let response: JsonRpcResponse =
+                    serde_json::from_value(message).map_err(|error| {
+                        IntegrationError::McpError {
+                            reason: format!("invalid JSON-RPC SSE response: {error}"),
+                        }
+                    })?;
+                if response.id.as_ref() == Some(&serde_json::json!(request_id)) {
+                    return Ok(Some(response));
+                }
+                Ok(None)
+            }
         }
-        let response: JsonRpcResponse =
-            serde_json::from_value(message).map_err(|error| IntegrationError::McpError {
-                reason: format!("invalid JSON-RPC SSE response: {error}"),
-            })?;
-        if response.id.as_ref() == Some(&serde_json::json!(request_id)) {
-            return Ok(Some(response));
-        }
-        Ok(None)
     }
 
     async fn answer_server_request(
         &self,
-        method: &str,
-        id: &serde_json::Value,
+        message: serde_json::Value,
     ) -> Result<(), IntegrationError> {
-        let message = if method == "ping" {
-            serde_json::json!({"jsonrpc": "2.0", "id": id, "result": {}})
-        } else {
-            serde_json::json!({
-                "jsonrpc": "2.0",
-                "id": id,
-                "error": {"code": -32601, "message": "method not supported by norn"}
-            })
-        };
         let payload =
             serde_json::to_string(&message).map_err(|error| IntegrationError::McpError {
                 reason: format!("failed to serialize MCP client response: {error}"),
@@ -337,3 +337,7 @@ mod tests;
 #[cfg(test)]
 #[path = "mcp_http_adversarial_tests.rs"]
 mod adversarial_tests;
+
+#[cfg(test)]
+#[path = "mcp_http_protocol_tests.rs"]
+mod protocol_tests;

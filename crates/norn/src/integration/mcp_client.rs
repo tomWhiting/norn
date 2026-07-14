@@ -10,21 +10,23 @@
 //! - `tools/list` — returns `{ tools: [{ name, description, inputSchema }] }`.
 //! - `tools/call` — `{ name, arguments }` → `{ content: [...], isError }`.
 
-use std::collections::HashMap;
-use std::fmt;
-use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use tokio::sync::Mutex;
 
 use crate::error::IntegrationError;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::traits::Tool;
 
+use super::mcp_protocol::{ClientProtocolState, McpRoot};
 use super::mcp_proxy::McpProxyTool;
+pub use super::mcp_types::{McpServerConfig, McpToolDef, McpTransport};
+use super::mcp_wire::{InitializeResult, JsonRpcNotification, JsonRpcRequest, ToolsListResult};
+pub(crate) use super::mcp_wire::{JsonRpcResponse, ToolCallContent, ToolsCallResult};
 
 /// Default protocol version sent in the `initialize` handshake.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
@@ -32,168 +34,7 @@ pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 /// Wall-clock budget for any single MCP request.
 pub(super) const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// Transport for reaching an MCP server.
-#[derive(Clone)]
-pub enum McpTransport {
-    /// Spawn `command` with `args` and exchange JSON-RPC over stdio.
-    Stdio {
-        /// Executable name or absolute path.
-        command: String,
-        /// Arguments passed to the executable.
-        args: Vec<String>,
-    },
-    /// Reach the server via HTTP at `url`.
-    Http {
-        /// Base URL of the MCP endpoint that accepts JSON-RPC POSTs.
-        url: String,
-    },
-}
-
-impl fmt::Debug for McpTransport {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Stdio { args, .. } => formatter
-                .debug_struct("Stdio")
-                .field("command_present", &true)
-                .field("args_count", &args.len())
-                .finish(),
-            Self::Http { .. } => formatter
-                .debug_struct("Http")
-                .field("url_present", &true)
-                .finish(),
-        }
-    }
-}
-
-/// Configuration for one MCP server connection.
-#[derive(Clone)]
-pub struct McpServerConfig {
-    /// Local logical name (used for diagnostics and proxy-tool prefixing).
-    pub name: String,
-    /// Transport used to reach the server.
-    pub transport: McpTransport,
-    /// Environment variables passed through to a stdio server.
-    pub env: HashMap<String, String>,
-    /// HTTP headers attached to every remote-transport request.
-    pub headers: HashMap<String, String>,
-    /// Working directory supplied explicitly to a stdio server.
-    pub working_dir: Option<PathBuf>,
-}
-
-impl fmt::Debug for McpServerConfig {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        formatter
-            .debug_struct("McpServerConfig")
-            .field("name", &self.name)
-            .field("transport", &self.transport)
-            .field("env_entries", &self.env.len())
-            .field("header_entries", &self.headers.len())
-            .field("working_dir_present", &self.working_dir.is_some())
-            .finish()
-    }
-}
-
-/// Tool definition discovered from an MCP server.
-#[derive(Clone, Debug, Deserialize, Serialize)]
-pub struct McpToolDef {
-    /// Tool identifier.
-    pub name: String,
-    /// Description shown to the model.
-    #[serde(default)]
-    pub description: String,
-    /// JSON Schema for the tool arguments.
-    #[serde(default = "empty_schema", rename = "inputSchema")]
-    pub input_schema: serde_json::Value,
-}
-
-fn empty_schema() -> serde_json::Value {
-    serde_json::json!({"type": "object", "properties": {}})
-}
-
-// -- JSON-RPC envelopes ----------------------------------------------------
-
-#[derive(Serialize)]
-struct JsonRpcRequest<'a, T: Serialize> {
-    jsonrpc: &'static str,
-    id: u64,
-    method: &'a str,
-    params: T,
-}
-
-#[derive(Serialize)]
-struct JsonRpcNotification<'a, T: Serialize> {
-    jsonrpc: &'static str,
-    method: &'a str,
-    params: T,
-}
-
-/// JSON-RPC 2.0 response envelope. Exposed at crate-private visibility so
-/// the [`Transport`] trait can name it.
-#[derive(Deserialize, Debug)]
-pub(crate) struct JsonRpcResponse {
-    #[serde(default)]
-    jsonrpc: Option<String>,
-    #[serde(default)]
-    pub(crate) id: Option<serde_json::Value>,
-    #[serde(default)]
-    result: Option<serde_json::Value>,
-    #[serde(default)]
-    error: Option<JsonRpcError>,
-}
-
-#[derive(Deserialize, Debug)]
-struct JsonRpcError {
-    code: i64,
-    message: String,
-}
-
-#[derive(Deserialize)]
-struct ToolsListResult {
-    #[serde(default)]
-    tools: Vec<McpToolDef>,
-    #[serde(default, rename = "nextCursor")]
-    next_cursor: Option<String>,
-}
-
-#[derive(Deserialize)]
-#[serde(rename_all = "camelCase")]
-struct InitializeResult {
-    protocol_version: String,
-    capabilities: ServerCapabilities,
-    server_info: ServerInfo,
-}
-
-#[derive(Deserialize)]
-struct ServerCapabilities {
-    #[serde(default)]
-    tools: Option<serde_json::Value>,
-}
-
-#[derive(Deserialize)]
-struct ServerInfo {
-    name: String,
-    version: String,
-}
-
-#[derive(Deserialize, Default)]
-pub(crate) struct ToolsCallResult {
-    #[serde(default)]
-    pub(crate) content: Vec<ToolCallContent>,
-    #[serde(default, rename = "isError")]
-    pub(crate) is_error: bool,
-}
-
-#[derive(Deserialize)]
-#[serde(tag = "type")]
-pub(crate) enum ToolCallContent {
-    #[serde(rename = "text")]
-    Text {
-        #[serde(default)]
-        text: String,
-    },
-    #[serde(other)]
-    Other,
-}
+static CLIENT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
 // -- Transport implementations --------------------------------------------
 
@@ -219,7 +60,10 @@ pub(crate) trait Transport: Send + Sync {
 pub struct McpClientInner {
     transport: Box<dyn Transport>,
     id_counter: Mutex<u64>,
+    context_call: Mutex<()>,
     server_name: String,
+    protocol: Arc<ClientProtocolState>,
+    instance_id: u64,
 }
 
 impl McpClientInner {
@@ -270,6 +114,17 @@ impl McpClientInner {
         })
     }
 
+    pub(crate) async fn rpc_with_roots<P: Serialize>(
+        &self,
+        roots: Vec<McpRoot>,
+        method: &str,
+        params: P,
+    ) -> Result<serde_json::Value, IntegrationError> {
+        let _context_call = self.context_call.lock().await;
+        self.set_roots_unlocked(roots).await?;
+        self.rpc(method, params).await
+    }
+
     async fn notify<P: Serialize>(&self, method: &str, params: P) -> Result<(), IntegrationError> {
         let notification = JsonRpcNotification {
             jsonrpc: "2.0",
@@ -281,6 +136,26 @@ impl McpClientInner {
                 reason: format!("serialize notification: {error}"),
             })?;
         self.transport.notify(payload).await
+    }
+
+    pub(crate) async fn set_roots(&self, roots: Vec<McpRoot>) -> Result<bool, IntegrationError> {
+        let _context_call = self.context_call.lock().await;
+        self.set_roots_unlocked(roots).await
+    }
+
+    async fn set_roots_unlocked(&self, roots: Vec<McpRoot>) -> Result<bool, IntegrationError> {
+        let previous = self.protocol.roots()?;
+        if !self.protocol.replace_roots(roots)? {
+            return Ok(false);
+        }
+        if let Err(error) = self
+            .notify("notifications/roots/list_changed", serde_json::json!({}))
+            .await
+        {
+            self.protocol.replace_roots(previous.to_vec())?;
+            return Err(error);
+        }
+        Ok(true)
     }
 }
 
@@ -301,6 +176,23 @@ impl McpClient {
     /// Returns [`IntegrationError::McpError`] on transport failures, invalid
     /// responses, or server-side errors.
     pub async fn connect(config: McpServerConfig) -> Result<Self, IntegrationError> {
+        let roots = config
+            .working_dir
+            .as_deref()
+            .map(McpRoot::from_path)
+            .transpose()?
+            .into_iter()
+            .collect();
+        Self::connect_with_roots(config, roots).await
+    }
+
+    /// Establish a connection with the initial contextual roots advertised by
+    /// `roots/list`. Roots do not grant filesystem authority.
+    pub async fn connect_with_roots(
+        config: McpServerConfig,
+        roots: Vec<McpRoot>,
+    ) -> Result<Self, IntegrationError> {
+        let protocol = Arc::new(ClientProtocolState::new(roots));
         let transport: Box<dyn Transport> = match &config.transport {
             McpTransport::Stdio { command, args } => {
                 Box::new(super::mcp_stdio::StdioTransport::spawn(
@@ -308,23 +200,28 @@ impl McpClient {
                     args,
                     &config.env,
                     config.working_dir.as_deref(),
+                    Arc::clone(&protocol),
                 )?)
             }
             McpTransport::Http { url } => Box::new(super::mcp_http::HttpTransport::new(
                 url.clone(),
                 &config.headers,
+                Arc::clone(&protocol),
             )?),
         };
 
         let inner = Arc::new(McpClientInner {
             transport,
             id_counter: Mutex::new(0),
+            context_call: Mutex::new(()),
             server_name: config.name.clone(),
+            protocol,
+            instance_id: CLIENT_INSTANCE.fetch_add(1, Ordering::Relaxed),
         });
 
         let init_params = serde_json::json!({
             "protocolVersion": MCP_PROTOCOL_VERSION,
-            "capabilities": {},
+            "capabilities": {"roots": {"listChanged": true}},
             "clientInfo": {
                 "name": "norn",
                 "version": env!("CARGO_PKG_VERSION"),
@@ -385,7 +282,10 @@ impl McpClient {
             inner: Arc::new(McpClientInner {
                 transport,
                 id_counter: Mutex::new(0),
+                context_call: Mutex::new(()),
                 server_name: name.into(),
+                protocol: Arc::new(ClientProtocolState::new(Vec::new())),
+                instance_id: CLIENT_INSTANCE.fetch_add(1, Ordering::Relaxed),
             }),
             tools: Vec::new(),
         }
@@ -407,6 +307,53 @@ impl McpClient {
     #[must_use]
     pub fn tools(&self) -> &[McpToolDef] {
         &self.tools
+    }
+
+    /// Replace the contextual roots and notify the server when they changed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an MCP transport error if the change notification cannot be
+    /// delivered. The previous local root view is restored before returning.
+    pub async fn set_roots(&self, roots: Vec<McpRoot>) -> Result<bool, IntegrationError> {
+        self.inner.set_roots(roots).await
+    }
+
+    /// Snapshot the contextual roots currently advertised to this server.
+    pub fn roots(&self) -> Result<Arc<[McpRoot]>, IntegrationError> {
+        self.inner.protocol.roots()
+    }
+
+    /// Subscribe to monotonic `notifications/tools/list_changed` revisions.
+    pub fn subscribe_tool_list_changes(&self) -> tokio::sync::watch::Receiver<u64> {
+        self.inner.protocol.subscribe_tool_list_changes()
+    }
+
+    pub(crate) fn instance_id(&self) -> u64 {
+        self.inner.instance_id
+    }
+
+    pub(crate) async fn refreshed_tools(&self) -> Result<Self, IntegrationError> {
+        let tools = tokio::time::timeout(MCP_REQUEST_TIMEOUT, self.discover_tools())
+            .await
+            .map_err(|_elapsed| IntegrationError::McpError {
+                reason: "MCP tool discovery exceeded the request deadline".to_owned(),
+            })??;
+        Ok(Self {
+            inner: Arc::clone(&self.inner),
+            tools,
+        })
+    }
+
+    #[cfg(test)]
+    pub(crate) fn notify_tool_list_changed_for_test(&self) -> Result<(), IntegrationError> {
+        self.inner
+            .protocol
+            .inspect(&serde_json::json!({
+                "jsonrpc": "2.0",
+                "method": "notifications/tools/list_changed"
+            }))
+            .map(|_message| ())
     }
 
     /// Re-fetch the tool list from the server.
@@ -547,7 +494,9 @@ fn schema_uses_envelope_key(schema: &serde_json::Value) -> bool {
     clippy::collapsible_if
 )]
 mod tests {
+    use super::super::mcp_wire::JsonRpcError;
     use super::*;
+    use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;
 
     use crate::tool::context::ToolContext;
@@ -940,7 +889,10 @@ mod tests {
                 seen_methods: StdMutex::new(Vec::new()),
             }),
             id_counter: Mutex::new(0),
+            context_call: Mutex::new(()),
             server_name: "test".to_owned(),
+            protocol: Arc::new(ClientProtocolState::new(Vec::new())),
+            instance_id: CLIENT_INSTANCE.fetch_add(1, Ordering::Relaxed),
         });
         let tool = McpProxyTool::new("test", def, inner);
         _assert_object_safe(Box::new(tool));

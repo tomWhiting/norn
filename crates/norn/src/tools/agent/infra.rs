@@ -250,9 +250,16 @@ pub struct AgentModel {
 /// [`AgentToolInfra`] therefore see the
 /// child's `agent_id` / `parent_id`, not the spawning agent's.
 pub struct SubAgentExecutor {
-    registry: Arc<ToolRegistry>,
-    available: Option<HashSet<String>>,
+    tools: SubAgentTools,
     child_context: Arc<ToolContext>,
+}
+
+enum SubAgentTools {
+    Registry {
+        registry: Arc<ToolRegistry>,
+        available: Option<HashSet<String>>,
+    },
+    Live(Arc<dyn ToolExecutor>),
 }
 
 impl SubAgentExecutor {
@@ -266,8 +273,19 @@ impl SubAgentExecutor {
         child_context: Arc<ToolContext>,
     ) -> Self {
         Self {
-            registry,
-            available: allow_list.map(|names| names.into_iter().collect()),
+            tools: SubAgentTools::Registry {
+                registry,
+                available: allow_list.map(|names| names.into_iter().collect()),
+            },
+            child_context,
+        }
+    }
+
+    /// Construct an executor over one immutable child-specific generation.
+    #[must_use]
+    pub(crate) fn from_live(tools: Arc<dyn ToolExecutor>, child_context: Arc<ToolContext>) -> Self {
+        Self {
+            tools: SubAgentTools::Live(tools),
             child_context,
         }
     }
@@ -299,7 +317,19 @@ impl ToolExecutor for SubAgentExecutor {
         call_id: &str,
         arguments: serde_json::Value,
     ) -> Result<DispatchOutcome, ToolError> {
-        if let Some(allowed) = self.available.as_ref()
+        let SubAgentTools::Registry {
+            registry,
+            available,
+        } = &self.tools
+        else {
+            if let SubAgentTools::Live(tools) = &self.tools {
+                return tools.execute_with_outcome(name, call_id, arguments).await;
+            }
+            return Err(ToolError::ToolNotFound {
+                name: name.to_owned(),
+            });
+        };
+        if let Some(allowed) = available.as_ref()
             && !allowed.contains(name)
         {
             return Err(ToolError::ToolNotFound {
@@ -307,13 +337,10 @@ impl ToolExecutor for SubAgentExecutor {
             });
         }
 
-        // Look up the trait object from the parent registry, but dispatch
-        // it through the child's context — never via `registry.execute`,
-        // which would use the parent's shared context.
-        let tool = if self.available.is_some() {
-            self.registry.get_registered(name)
+        let tool = if available.is_some() {
+            registry.get_registered(name)
         } else {
-            self.registry.get(name)
+            registry.get(name)
         }
         .ok_or_else(|| ToolError::ToolNotFound {
             name: name.to_string(),
@@ -328,6 +355,13 @@ impl ToolExecutor for SubAgentExecutor {
         };
         let ctx = self.child_context.as_ref();
         dispatch_tool_with_outcome(tool, &envelope, ctx).await
+    }
+
+    fn execution_snapshot(&self) -> Option<crate::r#loop::config::ToolExecutionSnapshot> {
+        match &self.tools {
+            SubAgentTools::Live(tools) => tools.execution_snapshot(),
+            SubAgentTools::Registry { .. } => None,
+        }
     }
 }
 

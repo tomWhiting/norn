@@ -47,6 +47,8 @@ pub enum McpSessionEntry {
     Definition(McpServerSettings),
     /// A disable tombstone over the current, dynamically resolved lower winner.
     DisabledInherited,
+    /// An enable overlay over the lower whole definition, preserving its source.
+    EnabledInherited,
     /// A disabled session-owned definition retained for later re-enablement.
     DisabledDefinition(McpServerSettings),
 }
@@ -63,6 +65,8 @@ pub enum McpLayerEntry {
     },
     /// A session tombstone over the dynamically resolved lower winner.
     DisabledInherited,
+    /// A session enable overlay over the lower whole definition.
+    EnabledInherited,
     /// A session tombstone retaining a session-owned definition.
     DisabledDefinition(McpServerSettings),
 }
@@ -73,7 +77,9 @@ impl McpLayerEntry {
     pub const fn layer(&self) -> McpConfigLayer {
         match self {
             Self::Definition { layer, .. } => *layer,
-            Self::DisabledInherited | Self::DisabledDefinition(_) => McpConfigLayer::Session,
+            Self::DisabledInherited | Self::EnabledInherited | Self::DisabledDefinition(_) => {
+                McpConfigLayer::Session
+            }
         }
     }
 }

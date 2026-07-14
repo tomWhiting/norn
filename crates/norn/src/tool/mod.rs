@@ -16,7 +16,9 @@ pub use self::failure::{ToolErrorKind, ToolErrorPayload};
 pub use self::follow_up::{
     BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction, FollowUpArgsMode,
 };
-pub use self::generation::{ToolGeneration, ToolGenerationPublishError, ToolGenerationStore};
+pub use self::generation::{
+    ToolGeneration, ToolGenerationBuildError, ToolGenerationPublishError, ToolGenerationStore,
+};
 pub use self::lifecycle::{
     Advisory, AdvisorySeverity, BlockDecision, CheckOverride, PostCheckResult, PostValidateMode,
     PostValidateOutcome, PreValidateOutcome, RuntimeOnSuccessAction, RuntimePostValidateCheck,

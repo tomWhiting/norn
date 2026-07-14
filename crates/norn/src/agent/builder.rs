@@ -600,11 +600,10 @@ impl AgentBuilder {
         let tool_runtime = Arc::new(ToolGenerationStore::new(Arc::new(
             ToolGeneration::from_registry(registry.as_ref(), 0),
         )));
-
+        let mcp_control = self.mcp.start(&working_dir, &tool_runtime, &shared)?;
         // Share the same `Arc<ActionLog>` with the loop so dispatch recording
         // and the `action_log` tool's queries observe one ledger.
         loop_context.action_log = Some(Arc::clone(&action_log));
-
         // Root registry registration (D2): opt-in and effective only
         // alongside `.agent_registry(..)`; the reservation mints the id so
         // the registered root entry and the running agent share one id.
@@ -718,6 +717,7 @@ impl AgentBuilder {
             provider: self.provider,
             registry,
             tool_runtime,
+            mcp_control,
             loop_context,
             config: config_override,
             model,

@@ -1,19 +1,81 @@
 //! MCP runtime attachment for [`AgentBuilder`](super::AgentBuilder).
 
+use std::path::Path;
 use std::sync::Arc;
 
 use super::AgentBuilder;
-use crate::error::NornError;
-use crate::integration::McpRuntime;
+use crate::config::{McpApprovalStore, McpConfigState};
+use crate::error::{ConfigError, NornError};
+use crate::integration::{
+    McpCandidateBuilder, McpControlHandle, McpRuntime, McpRuntimeCandidateBuilder, McpRuntimeStore,
+};
+use crate::tool::ToolGenerationStore;
+use crate::tool::context::ToolContext;
 use crate::tool::registry::ToolRegistry;
 
 #[derive(Default)]
 pub(super) struct McpAttachment {
     runtime: Option<Arc<McpRuntime>>,
     servers: Option<Vec<String>>,
+    state: Option<McpConfigState>,
 }
 
 impl McpAttachment {
+    pub(super) fn state(&self) -> Option<McpConfigState> {
+        self.state.clone()
+    }
+
+    pub(super) fn runtime(&self) -> Arc<McpRuntime> {
+        self.runtime
+            .as_ref()
+            .map_or_else(|| Arc::new(McpRuntime::empty()), Arc::clone)
+    }
+
+    pub(super) fn servers(&self) -> Option<Vec<String>> {
+        self.servers.clone()
+    }
+
+    pub(super) fn start(
+        &self,
+        working_dir: &Path,
+        generations: &Arc<ToolGenerationStore>,
+        context: &ToolContext,
+    ) -> Result<Option<McpControlHandle>, NornError> {
+        let Some(state) = self.state() else {
+            return Ok(None);
+        };
+        let mut builder = McpRuntimeCandidateBuilder::new(working_dir.to_path_buf());
+        if let Some(servers) = self.servers() {
+            builder = builder.with_selected_servers(servers);
+        }
+        let approvals = match McpApprovalStore::open() {
+            Ok(approvals) => Some(approvals),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "project MCP approval is unavailable; direct-scope live control remains active",
+                );
+                None
+            }
+        };
+        let runtimes = Arc::new(McpRuntimeStore::new(generations.snapshot(), self.runtime()));
+        context.insert_extension(Arc::clone(generations));
+        context.insert_extension(Arc::clone(&runtimes));
+        McpControlHandle::spawn(
+            state,
+            approvals,
+            Arc::new(builder) as Arc<dyn McpCandidateBuilder>,
+            Arc::clone(generations),
+            runtimes,
+        )
+        .map(Some)
+        .map_err(|error| {
+            NornError::Config(ConfigError::InvalidConfig {
+                reason: format!("failed to start the live MCP control plane: {error}"),
+            })
+        })
+    }
+
     pub(super) fn register_tools(&self, registry: &mut ToolRegistry) -> Result<(), NornError> {
         if let Some(runtime) = self.runtime.as_ref() {
             runtime.register_tools(registry)?;
@@ -37,6 +99,13 @@ impl AgentBuilder {
         self.mcp.runtime = Some(Arc::clone(&runtime));
         self.mcp.servers = None;
         self.extension(runtime)
+    }
+
+    /// Attach the retained layered MCP state used by live runtime control.
+    #[must_use]
+    pub fn mcp_config_state(mut self, state: McpConfigState) -> Self {
+        self.mcp.state = Some(state);
+        self
     }
 
     /// Attach a selected MCP server view to this agent while retaining the

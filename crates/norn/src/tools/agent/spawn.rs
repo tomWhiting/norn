@@ -21,7 +21,9 @@ use super::delegation::{
     resolve_spawner_policy,
 };
 use super::handle::{AgentHandles, AgentWakeRegistry, ChildBranchMetadata};
-use super::infra::{AgentCancellation, AgentModel, SubAgentExecutor, infra_from};
+#[cfg(test)]
+use super::infra::SubAgentExecutor;
+use super::infra::{AgentCancellation, AgentModel, infra_from};
 use super::lifecycle::LifecycleEmitter;
 use super::reclaim::{ReclaimHandshake, ReclaimOnResultDelivery};
 use super::spawn_context::{
@@ -40,7 +42,6 @@ use crate::r#loop::loop_context::LoopContext;
 use crate::profile::from_profile;
 use crate::profile::loader::resolve_workspace_profile_at_launch_root;
 use crate::provider::agent_event::{AgentEventSender, SubagentDescriptor, SubagentKind};
-use crate::provider::request::ToolDefinition;
 use crate::session::action_log::ActionLog;
 use crate::session::events::ChildBranchKind;
 use crate::session::{ChildBranchRequest, slugify_name_stem};
@@ -173,10 +174,11 @@ fn build_child_loop_context(
 /// these definitions against the live provider's capabilities per request,
 /// exactly like the parent's loop, so hosted-tool replacement applies
 /// identically to children.
+#[cfg(test)]
 fn build_tool_definitions(
     registry: &ToolRegistry,
     allow_list: Option<&[String]>,
-) -> Vec<ToolDefinition> {
+) -> Vec<crate::provider::request::ToolDefinition> {
     match allow_list {
         Some(allow_list) => {
             crate::provider::surface::collect_registered_function_definitions(registry, allow_list)
@@ -358,15 +360,8 @@ impl Tool for SpawnAgentTool {
             .mcp_servers
             .clone()
             .or(resolution.variant_mcp_servers.clone());
-        let base_allow_list = super::mcp_selection::apply_mcp_server_selection(
-            ctx,
-            parent_registry,
-            base_allow_list,
-            mcp_selection.as_deref(),
-        )?;
         let allow_list =
             effective_child_tools(parent_registry, base_allow_list, &child_policy, &child_role);
-        let tool_defs = build_tool_definitions(parent_registry, allow_list.as_deref());
 
         // Skill listing (parity with the root): advertise "# Available
         // Skills" on the child's system prompt only when the parent
@@ -564,11 +559,15 @@ impl Tool for SpawnAgentTool {
             &child_policy,
             coordination.child_result_capacity,
         );
-        let child_executor = SubAgentExecutor::new(
-            Arc::clone(parent_registry),
+        let child_tools = super::live_tools::child_tool_snapshot(
+            ctx,
+            parent_registry,
             allow_list,
+            mcp_selection,
             Arc::clone(&child_ctx),
-        );
+        )?;
+        let child_executor = child_tools.executor;
+        let tool_defs = child_tools.definitions;
 
         // Launch the child on its own task and register the handle so the
         // parent can observe and steer it.

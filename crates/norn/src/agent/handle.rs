@@ -70,6 +70,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::agent_loop::inbound::InboundSender;
+use crate::integration::McpControlHandle;
 use crate::provider::AgentEvent;
 
 /// Post-build snapshot of everything the builder resolved: the facts an
@@ -122,6 +123,7 @@ pub struct AgentHandle {
     pub(super) cancel: CancellationToken,
     pub(super) events: Option<broadcast::Sender<AgentEvent>>,
     pub(super) inbound: Option<InboundSender>,
+    pub(super) mcp_control: Option<McpControlHandle>,
 }
 
 impl AgentHandle {
@@ -181,6 +183,12 @@ impl AgentHandle {
     pub fn inbound_sender(&self) -> Option<InboundSender> {
         self.inbound.clone()
     }
+
+    /// Live MCP configuration and connection control for this agent.
+    #[must_use]
+    pub fn mcp_control(&self) -> Option<McpControlHandle> {
+        self.mcp_control.clone()
+    }
 }
 
 impl std::fmt::Debug for AgentHandle {
@@ -190,6 +198,7 @@ impl std::fmt::Debug for AgentHandle {
             .field("cancelled", &self.cancel.is_cancelled())
             .field("has_event_channel", &self.events.is_some())
             .field("has_inbound", &self.inbound.is_some())
+            .field("has_mcp_control", &self.mcp_control.is_some())
             .finish()
     }
 }

@@ -4,19 +4,7 @@
 //! expanded into a deterministic sequence of conversation messages. Three
 //! handler kinds cover the common shapes:
 //!
-//! - [`SlashCommandHandler::Skill`] — emits a user-role message that asks
-//!   the agent to call the `skill` tool with a given name and free-form
-//!   argument string. The argument is the slash command's remainder
-//!   verbatim (everything after the first whitespace), so callers receive
-//!   the same text the user typed without further parsing.
-//! - [`SlashCommandHandler::Tool`] — emits an assistant-role message that
-//!   makes a single tool call against the named tool with caller-supplied
-//!   JSON arguments. Useful for built-in shortcuts like `/help` that map to
-//!   a deterministic tool invocation.
-//! - [`SlashCommandHandler::Custom`] — yields control to a caller-supplied
-//!   closure that builds the expansion messages itself. The closure receives
-//!   the slash command's argument string (the remainder after the command
-//!   name) and returns the full message vec or a [`NornError`].
+//! Handlers cover skills, tools, and custom caller-owned expansion.
 //!
 //! Unknown commands and inputs that do not begin with `/` pass through
 //! unchanged so the model can react. Empty or whitespace-only commands also
@@ -64,6 +52,8 @@ pub enum BuiltinSlashKind {
     Fast,
     /// `/tools`.
     Tools,
+    /// `/mcp`.
+    Mcp,
     /// `/schema`.
     Schema,
     /// `/session`.
@@ -223,6 +213,16 @@ pub const BUILTIN_SLASH_COMMANDS: &[BuiltinSlashCommand] = &[
         help: "List available tools",
         autocomplete: "List tools available to the model",
         cli_description: "List available tools",
+        cli: true,
+        tui: true,
+    },
+    BuiltinSlashCommand {
+        kind: BuiltinSlashKind::Mcp,
+        name: "mcp",
+        usage: "/mcp <help|list|inspect|add|remove|enable|disable|approve|revoke|reload>",
+        help: "Inspect or change live MCP servers for this session",
+        autocomplete: "Manage live session MCP servers",
+        cli_description: "Manage live session MCP servers",
         cli: true,
         tui: true,
     },

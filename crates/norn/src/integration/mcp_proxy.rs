@@ -14,6 +14,7 @@ use crate::tool::scheduling::ToolEffect;
 use crate::tool::traits::{Tool, ToolOutput};
 
 use super::mcp_client::{McpClientInner, McpToolDef, ToolCallContent, ToolsCallResult};
+use super::mcp_protocol::McpRoot;
 
 /// `Tool` implementation that forwards `execute` calls to a remote MCP
 /// server.
@@ -61,17 +62,19 @@ impl Tool for McpProxyTool {
     async fn execute(
         &self,
         envelope: &ToolEnvelope,
-        _ctx: &ToolContext,
+        ctx: &ToolContext,
     ) -> Result<ToolOutput, ToolError> {
         let params = serde_json::json!({
             "name": self.def.name,
             "arguments": envelope.model_args,
         });
-        let value = self.client.rpc("tools/call", params).await.map_err(|e| {
-            ToolError::ExecutionFailed {
+        let value = self
+            .client
+            .rpc_with_roots(context_roots(ctx)?, "tools/call", params)
+            .await
+            .map_err(|e| ToolError::ExecutionFailed {
                 reason: format!("MCP call '{}' failed: {e}", self.def.name),
-            }
-        })?;
+            })?;
         let parsed: ToolsCallResult =
             serde_json::from_value(value.clone()).map_err(|error| ToolError::ExecutionFailed {
                 reason: format!(
@@ -105,6 +108,25 @@ impl Tool for McpProxyTool {
         }
         Ok(ToolOutput::success(content))
     }
+}
+
+fn context_roots(ctx: &ToolContext) -> Result<Vec<McpRoot>, ToolError> {
+    let working_dir = ctx.working_dir();
+    let mut paths = Vec::with_capacity(2);
+    if let Some(workspace_root) = ctx.workspace_root() {
+        paths.push(workspace_root.to_path_buf());
+    }
+    if paths.first().is_none_or(|root| root != &working_dir) {
+        paths.push(working_dir);
+    }
+    paths
+        .iter()
+        .map(|path| {
+            McpRoot::from_path(path).map_err(|error| ToolError::ExecutionFailed {
+                reason: format!("MCP working context is unavailable: {error}"),
+            })
+        })
+        .collect()
 }
 
 pub(crate) fn qualified_tool_name(server_name: &str, tool_name: &str) -> String {

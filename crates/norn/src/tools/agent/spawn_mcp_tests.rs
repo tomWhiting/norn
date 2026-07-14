@@ -15,7 +15,7 @@ use crate::agent::registry::{AgentRegistry, AgentStatus};
 use crate::config::types::VariantSettings;
 use crate::error::IntegrationError;
 use crate::integration::mcp_client::{JsonRpcResponse, Transport};
-use crate::integration::{McpClient, McpRuntime, McpToolDef};
+use crate::integration::{McpClient, McpRuntime, McpRuntimeStore, McpToolDef};
 use crate::provider::events::{ProviderEvent, StopReason};
 use crate::provider::mock::MockProvider;
 use crate::provider::request::ToolCallKind;
@@ -27,6 +27,7 @@ use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::registry::ToolRegistry;
 use crate::tool::traits::Tool;
+use crate::tool::{ToolGeneration, ToolGenerationStore};
 
 struct RecordingTransport {
     methods: Arc<Mutex<Vec<String>>>,
@@ -89,7 +90,7 @@ fn client(name: &str, methods: Arc<Mutex<Vec<String>>>) -> McpClient {
 
 fn parent_context(
     provider: Arc<dyn Provider>,
-    registry: Arc<ToolRegistry>,
+    registry: &Arc<ToolRegistry>,
     runtime: Arc<McpRuntime>,
 ) -> (ToolContext, Arc<AgentHandles>) {
     let agent_registry = AgentRegistry::shared();
@@ -102,7 +103,7 @@ fn parent_context(
         agent_id: Uuid::new_v4(),
         parent_id: None,
         grant: None,
-        tool_registry: Some(registry),
+        tool_registry: Some(Arc::clone(registry)),
         session: Arc::new(crate::session::SessionBinding::ephemeral_root()),
     });
     let handles = Arc::new(AgentHandles::new());
@@ -122,7 +123,12 @@ fn parent_context(
         },
         child_result_capacity: 8,
     }));
+    let generation = Arc::new(ToolGeneration::from_registry(registry, 0));
+    let generations = Arc::new(ToolGenerationStore::new(Arc::clone(&generation)));
+    let runtimes = Arc::new(McpRuntimeStore::new(generation, Arc::clone(&runtime)));
     context.insert_extension(runtime);
+    context.insert_extension(generations);
+    context.insert_extension(runtimes);
     (context, handles)
 }
 
@@ -183,7 +189,7 @@ async fn variant_child_can_widen_root_mcp_view_and_dispatch_beta()
     ]));
     let (context, handles) = parent_context(
         Arc::clone(&provider) as Arc<dyn Provider>,
-        Arc::new(registry),
+        &Arc::new(registry),
         Arc::clone(&runtime),
     );
     let mut variants = BTreeMap::new();

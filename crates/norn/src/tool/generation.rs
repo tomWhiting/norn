@@ -36,8 +36,88 @@ impl ToolGeneration {
     /// Snapshot the registry's currently available tools at `revision`.
     #[must_use]
     pub fn from_registry(registry: &ToolRegistry, revision: u64) -> Self {
-        let mut tools = registry.available_tool_arcs();
-        let context = registry.context_arc();
+        Self::assemble(
+            registry.available_tool_arcs(),
+            registry.context_arc(),
+            revision,
+        )
+    }
+
+    /// Replace every runtime-dynamic tool while preserving the stable surface.
+    ///
+    /// The new generation retains the exact context and stable tool instances
+    /// from `previous`. All model-facing projections are then rebuilt together.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a dynamic tool collides with a stable name or two
+    /// dynamic tools resolve to the same provider-facing name.
+    pub fn replacing_dynamic_tools(
+        previous: &Self,
+        dynamic_tools: Vec<Box<dyn Tool + Send + Sync>>,
+        revision: u64,
+    ) -> Result<Self, ToolGenerationBuildError> {
+        let mut tools: BTreeMap<String, Arc<dyn Tool + Send + Sync>> = previous
+            .tools
+            .iter()
+            .filter(|(_name, tool)| !tool.runtime_dynamic())
+            .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
+            .collect();
+        let mut dynamic_names = std::collections::BTreeSet::new();
+        for tool in dynamic_tools {
+            let name = tool.name().to_owned();
+            if !dynamic_names.insert(name.clone()) {
+                return Err(ToolGenerationBuildError::DuplicateDynamicName { name });
+            }
+            if tools.contains_key(&name) {
+                return Err(ToolGenerationBuildError::StableNameCollision { name });
+            }
+            tools.insert(name, Arc::from(tool));
+        }
+        Ok(Self::assemble(
+            tools,
+            Arc::clone(&previous.context),
+            revision,
+        ))
+    }
+
+    /// Derive a child-context view while retaining source tool instances.
+    pub(crate) fn child_view(
+        source: &Self,
+        dynamic_tools: Option<Vec<Box<dyn Tool + Send + Sync>>>,
+        available: Option<&std::collections::BTreeSet<String>>,
+        context: Arc<ToolContext>,
+    ) -> Result<Self, ToolGenerationBuildError> {
+        let mut tools: BTreeMap<String, Arc<dyn Tool + Send + Sync>> = source
+            .tools
+            .iter()
+            .filter(|(_name, tool)| dynamic_tools.is_none() || !tool.runtime_dynamic())
+            .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
+            .collect();
+        if let Some(dynamic_tools) = dynamic_tools {
+            let mut dynamic_names = std::collections::BTreeSet::new();
+            for tool in dynamic_tools {
+                let name = tool.name().to_owned();
+                if !dynamic_names.insert(name.clone()) {
+                    return Err(ToolGenerationBuildError::DuplicateDynamicName { name });
+                }
+                if tools.contains_key(&name) {
+                    return Err(ToolGenerationBuildError::StableNameCollision { name });
+                }
+                tools.insert(name, Arc::from(tool));
+            }
+        }
+        if let Some(available) = available {
+            tools.retain(|name, _tool| available.contains(name));
+        }
+        Ok(Self::assemble(tools, context, source.revision))
+    }
+
+    fn assemble(
+        mut tools: BTreeMap<String, Arc<dyn Tool + Send + Sync>>,
+        context: Arc<ToolContext>,
+        revision: u64,
+    ) -> Self {
         let mut catalog: Vec<ToolCatalogEntry> = tools
             .values()
             .flat_map(|tool| tool.catalog_entries())
@@ -118,6 +198,16 @@ impl ToolGeneration {
         Arc::clone(&self.dynamic_prompt_entries)
     }
 
+    /// Pin this generation as one provider-request execution lease.
+    pub(crate) fn execution_lease(generation: &Arc<Self>) -> ToolExecutionSnapshot {
+        ToolExecutionSnapshot {
+            revision: generation.revision,
+            executor: Arc::clone(generation) as Arc<dyn ToolExecutor>,
+            definitions: Arc::clone(&generation.definitions),
+            dynamic_prompt_entries: Arc::clone(&generation.dynamic_prompt_entries),
+        }
+    }
+
     /// Context shared with the source registry and every generation.
     #[must_use]
     pub fn context(&self) -> Arc<ToolContext> {
@@ -168,6 +258,23 @@ impl ToolGeneration {
             },
         ))
     }
+}
+
+/// Invalid composition of a live tool generation.
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
+pub enum ToolGenerationBuildError {
+    /// A runtime tool attempted to replace a stable tool.
+    #[error("runtime tool '{name}' collides with a stable tool")]
+    StableNameCollision {
+        /// Colliding provider-facing name.
+        name: String,
+    },
+    /// Multiple runtime tools resolved to one provider-facing name.
+    #[error("multiple runtime tools resolve to provider name '{name}'")]
+    DuplicateDynamicName {
+        /// Duplicated provider-facing name.
+        name: String,
+    },
 }
 
 #[async_trait]
@@ -262,13 +369,7 @@ impl ToolGenerationStore {
     }
 
     fn execution_lease(&self) -> ToolExecutionSnapshot {
-        let generation = self.snapshot();
-        ToolExecutionSnapshot {
-            revision: generation.revision,
-            executor: Arc::clone(&generation) as Arc<dyn ToolExecutor>,
-            definitions: Arc::clone(&generation.definitions),
-            dynamic_prompt_entries: Arc::clone(&generation.dynamic_prompt_entries),
-        }
+        ToolGeneration::execution_lease(&self.snapshot())
     }
 }
 

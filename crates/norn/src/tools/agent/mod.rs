@@ -14,6 +14,7 @@ pub mod fork_tool;
 pub mod handle;
 pub mod infra;
 pub(crate) mod lifecycle;
+mod live_tools;
 mod mcp_selection;
 pub mod reclaim;
 pub mod spawn;

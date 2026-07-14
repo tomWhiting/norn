@@ -149,6 +149,7 @@ impl McpConfigState {
             Some(McpSessionEntry::DisabledInherited | McpSessionEntry::DisabledDefinition(_)) => {
                 return Ok(false);
             }
+            Some(McpSessionEntry::EnabledInherited) => McpSessionEntry::DisabledInherited,
             None if self.highest_non_session(name).is_some() => McpSessionEntry::DisabledInherited,
             None => return Err(missing_server(name, "disable")),
         };
@@ -166,10 +167,29 @@ impl McpConfigState {
                 | McpSessionEntry::DisabledDefinition(definition),
             ) => definition.clone(),
             Some(McpSessionEntry::DisabledInherited) => {
-                self.session.remove(name);
+                let Some((_source, inherited)) = self.highest_non_session(name) else {
+                    return Err(missing_session_entry(name, "enable"));
+                };
+                if inherited.enabled.unwrap_or(true) {
+                    self.session.remove(name);
+                } else {
+                    self.session
+                        .insert(name.to_owned(), McpSessionEntry::EnabledInherited);
+                }
                 return Ok(true);
             }
-            None => return Err(missing_session_entry(name, "enable")),
+            Some(McpSessionEntry::EnabledInherited) => return Ok(false),
+            None => {
+                let Some((_source, inherited)) = self.highest_non_session(name) else {
+                    return Err(missing_session_entry(name, "enable"));
+                };
+                if inherited.enabled.unwrap_or(true) {
+                    return Ok(false);
+                }
+                self.session
+                    .insert(name.to_owned(), McpSessionEntry::EnabledInherited);
+                return Ok(true);
+            }
         };
         definition.enabled = Some(true);
         validate_one(name, &definition)?;
@@ -246,7 +266,11 @@ impl McpConfigState {
                 }
                 McpSessionEntry::DisabledInherited => self
                     .highest_non_session(name)
-                    .map(|definition| effective_disabled(name, definition))
+                    .map(|(_layer, definition)| effective_disabled(name, definition))
+                    .transpose(),
+                McpSessionEntry::EnabledInherited => self
+                    .highest_non_session(name)
+                    .map(|(layer, definition)| effective_enabled(name, layer, definition))
                     .transpose(),
             };
         }
@@ -261,12 +285,16 @@ impl McpConfigState {
         Ok(None)
     }
 
-    fn highest_non_session(&self, name: &str) -> Option<&McpServerSettings> {
+    fn highest_non_session(&self, name: &str) -> Option<(McpConfigLayer, &McpServerSettings)> {
         McpConfigLayer::PRECEDENCE
             .into_iter()
             .rev()
             .skip(1)
-            .find_map(|layer| self.definitions(layer).and_then(|values| values.get(name)))
+            .find_map(|layer| {
+                self.definitions(layer)
+                    .and_then(|values| values.get(name))
+                    .map(|definition| (layer, definition))
+            })
     }
 }
 
@@ -342,6 +370,22 @@ fn effective_disabled(
     effective(name, McpConfigLayer::Session, &disabled)
 }
 
+fn effective_enabled(
+    name: &str,
+    source: McpConfigLayer,
+    definition: &McpServerSettings,
+) -> Result<EffectiveMcpServer, ConfigError> {
+    let mut enabled = definition.clone();
+    enabled.enabled = Some(true);
+    let enabled_fingerprint = fingerprint(name, &enabled)?;
+    Ok(EffectiveMcpServer::new(
+        name.to_owned(),
+        source,
+        enabled,
+        enabled_fingerprint,
+    ))
+}
+
 fn append_session_chain(chain: &mut Vec<McpLayerEntry>, value: Option<&McpSessionEntry>) {
     match value {
         Some(McpSessionEntry::Definition(definition)) => chain.push(McpLayerEntry::Definition {
@@ -350,6 +394,9 @@ fn append_session_chain(chain: &mut Vec<McpLayerEntry>, value: Option<&McpSessio
         }),
         Some(McpSessionEntry::DisabledInherited) => {
             chain.push(McpLayerEntry::DisabledInherited);
+        }
+        Some(McpSessionEntry::EnabledInherited) => {
+            chain.push(McpLayerEntry::EnabledInherited);
         }
         Some(McpSessionEntry::DisabledDefinition(definition)) => {
             chain.push(McpLayerEntry::DisabledDefinition(definition.clone()));

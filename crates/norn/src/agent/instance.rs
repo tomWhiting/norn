@@ -18,6 +18,7 @@ use crate::agent_loop::inbound::{InboundChannel, InboundSender};
 use crate::agent_loop::loop_context::LoopContext;
 use crate::agent_loop::runner::{AgentStepRequest, run_agent_step};
 use crate::error::{ConfigError, NornError};
+use crate::integration::McpControlHandle;
 use crate::provider::request::ToolDefinition;
 use crate::provider::traits::Provider;
 use crate::provider::{AgentEvent, AgentEventSender};
@@ -34,6 +35,7 @@ pub struct Agent {
     pub(super) provider: Arc<dyn Provider>,
     pub(super) registry: Arc<ToolRegistry>,
     pub(super) tool_runtime: Arc<ToolGenerationStore>,
+    pub(super) mcp_control: Option<McpControlHandle>,
     pub(super) loop_context: LoopContext,
     pub(super) config: AgentLoopConfig,
     pub(super) model: String,
@@ -69,6 +71,8 @@ pub struct AgentParts {
     /// dispatch. Each request leases one immutable generation through its
     /// complete response/tool cycle.
     pub tool_runtime: Arc<ToolGenerationStore>,
+    /// Live MCP control surface when layered MCP state was attached.
+    pub mcp_control: Option<McpControlHandle>,
     /// The fully-populated loop context (system sections, retry policy,
     /// variables, action log, coordination receivers).
     pub loop_context: LoopContext,
@@ -153,6 +157,7 @@ impl Agent {
             provider: self.provider,
             registry: self.registry,
             tool_runtime: self.tool_runtime,
+            mcp_control: self.mcp_control,
             loop_context: self.loop_context,
             config: self.config,
             model: self.model,
@@ -181,6 +186,7 @@ impl Agent {
             cancel: self.cancel.clone(),
             events: self.events_tx.clone(),
             inbound: self.inbound_tx.clone(),
+            mcp_control: self.mcp_control.clone(),
         }
     }
 

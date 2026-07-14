@@ -5,7 +5,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use serde_json::{Value, json};
 
-use super::{ToolGeneration, ToolGenerationStore};
+use super::{ToolGeneration, ToolGenerationBuildError, ToolGenerationStore};
 use crate::error::ToolError;
 use crate::r#loop::config::ToolExecutor;
 use crate::tool::catalog::{SharedToolCatalog, ToolCatalogEntry, ToolCatalogExtras};
@@ -242,4 +242,132 @@ fn effect_indexes_are_pinned_to_their_generation() {
         ToolEffectIndex::effect_for(&second.effect_index(), "switch", &args),
         ToolEffect::RemoteMutation,
     );
+}
+
+fn boxed_stub(name: &str, effect: ToolEffect, dynamic: bool) -> Box<dyn Tool + Send + Sync> {
+    Box::new(StubTool::new(name, effect, dynamic))
+}
+
+#[test]
+fn dynamic_rebuild_removes_and_replaces_the_previous_dynamic_surface() -> TestResult {
+    let registry = registry_with_tools(&[
+        ("stable", ToolEffect::ReadOnly, false),
+        ("mcp_removed", ToolEffect::Unknown, true),
+        ("mcp_replaced", ToolEffect::ReadOnly, true),
+    ]);
+    let first = ToolGeneration::from_registry(&registry, 4);
+    let second = ToolGeneration::replacing_dynamic_tools(
+        &first,
+        vec![boxed_stub("mcp_replaced", ToolEffect::RemoteMutation, true)],
+        5,
+    )?;
+
+    assert_eq!(
+        second.names().collect::<Vec<_>>(),
+        ["mcp_replaced", "stable"]
+    );
+    assert_eq!(second.revision(), 5);
+    assert!(Arc::ptr_eq(&first.context(), &second.context()));
+    let definitions = second.definitions();
+    assert_eq!(
+        definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect::<Vec<_>>(),
+        ["mcp_replaced", "stable"]
+    );
+    let prompt_entries = second.prompt_entries();
+    assert_eq!(
+        prompt_entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        ["mcp_replaced", "stable"]
+    );
+    let dynamic_entries = second.dynamic_prompt_entries();
+    assert_eq!(
+        dynamic_entries
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        ["mcp_replaced"]
+    );
+    let catalog = second.catalog();
+    let catalog_names: Vec<&str> = catalog.iter().map(|entry| entry.name.as_str()).collect();
+    assert!(catalog_names.contains(&"mcp_replaced"));
+    assert!(!catalog_names.contains(&"mcp_removed"));
+    assert_eq!(
+        ToolEffectIndex::effect_for(&second.effect_index(), "mcp_replaced", &json!({})),
+        ToolEffect::RemoteMutation,
+    );
+    Ok(())
+}
+
+#[test]
+fn dynamic_rebuild_rejects_stable_and_duplicate_provider_names() {
+    let registry = registry_with_tools(&[("stable", ToolEffect::ReadOnly, false)]);
+    let generation = ToolGeneration::from_registry(&registry, 1);
+
+    let stable_collision = ToolGeneration::replacing_dynamic_tools(
+        &generation,
+        vec![boxed_stub("stable", ToolEffect::Unknown, true)],
+        2,
+    );
+    assert_eq!(
+        stable_collision.err(),
+        Some(ToolGenerationBuildError::StableNameCollision {
+            name: "stable".to_owned(),
+        })
+    );
+
+    let duplicate = ToolGeneration::replacing_dynamic_tools(
+        &generation,
+        vec![
+            boxed_stub("duplicate", ToolEffect::Unknown, true),
+            boxed_stub("duplicate", ToolEffect::Unknown, true),
+        ],
+        2,
+    );
+    assert_eq!(
+        duplicate.err(),
+        Some(ToolGenerationBuildError::DuplicateDynamicName {
+            name: "duplicate".to_owned(),
+        })
+    );
+}
+
+#[tokio::test]
+async fn published_dynamic_rebuild_keeps_the_old_request_lease_alive() -> TestResult {
+    let registry = registry_with_tools(&[("mcp_old", ToolEffect::Unknown, true)]);
+    let first = Arc::new(ToolGeneration::from_registry(&registry, 1));
+    let store = ToolGenerationStore::new(Arc::clone(&first));
+    let old_lease = store
+        .execution_snapshot()
+        .ok_or_else(|| missing("generation store must provide an execution snapshot"))?;
+    let second = Arc::new(ToolGeneration::replacing_dynamic_tools(
+        &first,
+        vec![boxed_stub("mcp_new", ToolEffect::Unknown, true)],
+        2,
+    )?);
+
+    store.publish(second)?;
+
+    assert_eq!(
+        old_lease
+            .executor
+            .execute("mcp_old", "old-dynamic", json!({}))
+            .await?["tool"],
+        "mcp_old",
+    );
+    assert_eq!(
+        store.execute("mcp_new", "new-dynamic", json!({})).await?["tool"],
+        "mcp_new",
+    );
+    assert!(
+        store
+            .execute("mcp_old", "removed-dynamic", json!({}))
+            .await
+            .is_err()
+    );
+    Ok(())
 }

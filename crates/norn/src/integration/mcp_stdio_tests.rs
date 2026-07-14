@@ -6,6 +6,37 @@ use super::*;
 
 #[cfg(unix)]
 #[tokio::test]
+async fn dropping_transport_returns_retained_descriptor_capacity()
+-> Result<(), Box<dyn std::error::Error>> {
+    let governor = Arc::new(crate::resource::DescriptorGovernor::with_capacity(
+        crate::resource::TWO_PIPE_SPAWN_PEAK,
+    ));
+    let transport = StdioTransport::spawn_with_governor(
+        "/bin/sh",
+        &["-c".to_owned(), "sleep 30".to_owned()],
+        &HashMap::new(),
+        None,
+        Arc::new(ClientProtocolState::new(Vec::new())),
+        &governor,
+    )?;
+
+    assert_eq!(
+        governor.available(),
+        (crate::resource::TWO_PIPE_SPAWN_PEAK - 2) as usize,
+    );
+    drop(transport);
+    tokio::time::timeout(Duration::from_secs(2), async {
+        while governor.available() != crate::resource::TWO_PIPE_SPAWN_PEAK as usize {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await?;
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[tokio::test]
 async fn cancellation_after_write_invalidates_the_channel() -> Result<(), Box<dyn std::error::Error>>
 {
     let temp = tempfile::tempdir()?;
@@ -16,6 +47,7 @@ async fn cancellation_after_write_invalidates_the_channel() -> Result<(), Box<dy
         &["-c".to_owned(), script],
         &HashMap::new(),
         Some(temp.path()),
+        Arc::new(ClientProtocolState::new(Vec::new())),
     )?);
     let pending = {
         let transport = Arc::clone(&transport);
