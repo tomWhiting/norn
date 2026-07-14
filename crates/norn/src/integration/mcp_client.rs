@@ -884,7 +884,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn server_error_propagates() {
+    async fn server_error_propagates() -> Result<(), Box<dyn std::error::Error>> {
         let transport = Box::new(ScriptedTransport {
             responses: StdMutex::new(vec![JsonRpcResponse {
                 jsonrpc: Some("2.0".to_owned()),
@@ -898,14 +898,18 @@ mod tests {
             seen_methods: StdMutex::new(Vec::new()),
         });
         let client = McpClient::from_transport("test", transport);
-        let err = client.discover_tools().await.unwrap_err();
-        match err {
-            IntegrationError::McpRemote(remote) => {
-                assert_eq!(remote.code(), -32000);
-                assert_eq!(remote.untrusted_message(), "no such tool");
-            }
-            other => panic!("expected McpRemote, got {other:?}"),
-        }
+        let error = client
+            .discover_tools()
+            .await
+            .err()
+            .ok_or("server error response unexpectedly succeeded")?;
+        let IntegrationError::McpRemote(remote) = error else {
+            return Err("server error did not retain its typed remote cause".into());
+        };
+
+        assert_eq!(remote.code(), -32000);
+        assert_eq!(remote.untrusted_message(), "no such tool");
+        Ok(())
     }
 
     #[test]
