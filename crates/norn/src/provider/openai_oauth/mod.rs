@@ -24,5 +24,3 @@ pub use options::OAuthHttpOptions;
 pub use revoke::logout_with_revoke;
 pub use storage::{AUTH_JSON_FILE, AuthCredentialsStoreMode, load_auth_dot_json};
 pub use types::{AuthDotJson, ChatGptTokens, CodexAuth, IdTokenInfo};
-
-use endpoints::{AUTHORIZE_URL, OAUTH_SCOPES, REVOKE_URL, TOKEN_URL};

@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::ToolError;
-use crate::resource::{DescriptorGovernor, PRIVATE_FS_OPERATION_PEAK};
+use crate::resource::{FilesystemOperationPermit, acquire_recursive_walk};
 use crate::tool::context::ToolContext;
 use crate::tool::envelope::ToolEnvelope;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
@@ -198,11 +198,7 @@ impl Tool for SearchTool {
 
         let glob = args.glob;
         let include_ignored = args.include_ignored;
-        let governor = DescriptorGovernor::global()
-            .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
-        let permit = governor
-            .try_acquire(PRIVATE_FS_OPERATION_PEAK)
-            .map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))?;
+        let permit = acquire_search_walk()?;
 
         // Walks, file reads, and tree-sitter parsing are synchronous and
         // potentially heavy; keep them off the async executor.
@@ -236,6 +232,10 @@ impl Tool for SearchTool {
             reason: format!("search worker task failed: {e}"),
         })?
     }
+}
+
+fn acquire_search_walk() -> Result<FilesystemOperationPermit, ToolError> {
+    acquire_recursive_walk().map_err(|error| ToolError::DescriptorAdmission(Box::new(error)))
 }
 
 /// Validate mode-specific arguments and produce the invocation plan.
@@ -322,6 +322,8 @@ mod tests {
     use std::path::Path;
     use tempfile::tempdir;
 
+    const SEARCH_ADMISSION_HELPER_CHILD: &str = "NORN_SEARCH_ADMISSION_HELPER_CHILD";
+
     fn envelope(args: Value) -> ToolEnvelope {
         ToolEnvelope {
             tool_call_id: "call-1".to_owned(),
@@ -349,6 +351,43 @@ mod tests {
     #[test]
     fn effect_is_read_only() {
         assert_eq!(SearchTool::new().effect(), ToolEffect::ReadOnly);
+    }
+
+    #[test]
+    fn search_walk_admission_reserves_recursive_peak() -> Result<(), Box<dyn std::error::Error>> {
+        const TEST_NAME: &str =
+            "tools::search::tool::tests::search_walk_admission_reserves_recursive_peak";
+        if std::env::var_os(SEARCH_ADMISSION_HELPER_CHILD).is_none() {
+            let output = std::process::Command::new(std::env::current_exe()?)
+                .args(["--exact", TEST_NAME, "--nocapture"])
+                .env(SEARCH_ADMISSION_HELPER_CHILD, "1")
+                .output()?;
+            if output.status.success() {
+                return Ok(());
+            }
+            return Err(std::io::Error::other(format!(
+                "isolated search admission helper failed with {}\nstdout:\n{}\nstderr:\n{}",
+                output.status,
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr),
+            ))
+            .into());
+        }
+
+        let governor = crate::resource::DescriptorGovernor::global()?;
+        let baseline = governor.available();
+        let expected = baseline
+            .checked_sub(crate::resource::RECURSIVE_WALK_PEAK as usize)
+            .ok_or_else(|| {
+                std::io::Error::other(format!(
+                    "isolated descriptor capacity {baseline} is below the recursive-walk peak"
+                ))
+            })?;
+        let permit = acquire_search_walk()?;
+        assert_eq!(governor.available(), expected);
+        drop(permit);
+        assert_eq!(governor.available(), baseline);
+        Ok(())
     }
 
     #[tokio::test]

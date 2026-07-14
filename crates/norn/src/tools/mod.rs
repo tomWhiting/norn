@@ -12,6 +12,7 @@ mod confinement;
 pub mod context_paths;
 pub mod conventions;
 pub mod cron;
+pub mod diagnostics;
 pub mod diagnostics_check;
 pub mod diagnostics_infra;
 pub mod edit;
@@ -55,15 +56,6 @@ pub use self::context_paths::ContextSearchPaths;
 pub use self::conventions::ConventionsConfig;
 pub use self::cron::{CRON_TOOL_NAME, CronTool};
 pub use self::follow_up::FollowUpTool;
-
-/// Public diagnostics API facade for post-validation infrastructure.
-pub mod diagnostics {
-    pub use super::diagnostics_check::{
-        DiagnosticInfra, DiagnosticStopHook, DiagnosticsPostCheck, errors_to_diagnostic_json,
-        run_diagnostics_for_trigger,
-    };
-    pub use super::diagnostics_infra::build_diagnostic_infra;
-}
 
 pub use self::lsp::{
     LspBackend, LspBackendError, LspDiagnostic, LspDiagnosticSeverity, LspHover, LspLocation,

@@ -90,8 +90,8 @@ mod platform {
     use diagnostics::server::{server_available, try_connect};
 
     use crate::tool::lifecycle::{Advisory, AdvisorySeverity};
-    use crate::tools::diagnostics_check::acquire_diagnostic_socket;
     use crate::tools::diagnostics_check::adapters::format_verdict_message;
+    use crate::tools::diagnostics_check::admission::acquire_diagnostic_socket;
     use crate::tools::diagnostics_check::findings::Findings;
     use crate::tools::diagnostics_check::infra::DiagnosticInfra;
 

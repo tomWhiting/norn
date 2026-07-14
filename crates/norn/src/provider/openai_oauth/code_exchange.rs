@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::TOKEN_URL;
+use super::endpoints::TOKEN_URL;
 use super::login_server::LoginError;
 use super::types::{AuthDotJson, ChatGptTokens, IdTokenInfo};
 

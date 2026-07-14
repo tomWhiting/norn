@@ -7,7 +7,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use chrono::{Duration, Utc};
 use tokio::sync::Mutex;
 
-use super::TOKEN_URL;
+use super::endpoints::TOKEN_URL;
 use super::jwt::parse_jwt_expiration;
 use super::options::OAuthHttpOptions;
 use super::refresh::{RefreshError, refresh_auth};

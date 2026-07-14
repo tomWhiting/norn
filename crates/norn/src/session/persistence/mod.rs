@@ -26,6 +26,7 @@
 //! session ID at every boundary — see
 //! [`io::RESERVED_SESSION_ID_STEMS`] / [`io::is_reserved_session_id`].
 
+mod admission;
 mod event_reader;
 pub mod index;
 pub mod io;
@@ -37,6 +38,7 @@ pub mod types;
 #[allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 mod tests;
 
+pub(crate) use admission::acquire_private_fs;
 pub use index::{
     append_index_entry, index_file_path, insert_index_entry_if_absent, read_index,
     remove_index_entry, resolve_latest_session_in_working_dir, resolve_session,
@@ -53,10 +55,3 @@ pub use types::{
     SESSION_FORMAT_VERSION, SessionFileHeader, SessionIndexEntry, SessionPersistError,
     SessionStatus,
 };
-
-pub(crate) fn acquire_private_fs() -> Result<crate::resource::DescriptorPermit, SessionPersistError>
-{
-    crate::resource::DescriptorGovernor::global()?
-        .try_acquire(crate::resource::PRIVATE_FS_OPERATION_PEAK)
-        .map_err(Into::into)
-}

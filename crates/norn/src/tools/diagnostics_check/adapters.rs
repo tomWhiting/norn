@@ -12,7 +12,7 @@ use diagnostics::registry::PolicyRegistry;
 
 use crate::tool::lifecycle::{Advisory, AdvisorySeverity};
 
-use super::acquire_diagnostic_spawn;
+use super::admission::acquire_diagnostic_spawn;
 use super::findings::Findings;
 use super::infra::DiagnosticInfra;
 use super::server_query::{ServerQueryOutcome, try_server_query_for_tool};

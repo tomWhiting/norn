@@ -9,7 +9,7 @@ use diagnostics::languages::rust::crate_root_for_file;
 
 use crate::tool::lifecycle::{Advisory, AdvisorySeverity};
 
-use super::acquire_diagnostic_spawn;
+use super::admission::acquire_diagnostic_spawn;
 use super::findings::Findings;
 use super::infra::DiagnosticInfra;
 

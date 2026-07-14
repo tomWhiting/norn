@@ -4,9 +4,10 @@ use std::path::Path;
 
 use serde::Serialize;
 
+use super::CLIENT_ID;
+use super::endpoints::REVOKE_URL;
 use super::options::OAuthHttpOptions;
 use super::storage::{AuthCredentialsStoreMode, delete_auth_dot_json, load_auth_dot_json};
-use super::{CLIENT_ID, REVOKE_URL};
 
 /// Errors from logout/revoke.
 #[derive(Debug, thiserror::Error)]

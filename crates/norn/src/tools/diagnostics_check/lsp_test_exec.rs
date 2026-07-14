@@ -13,7 +13,7 @@ use diagnostics::event::{DiagnosticEvent, Severity};
 
 use crate::tools::lsp::TestRunnable;
 
-use super::acquire_diagnostic_spawn;
+use super::admission::acquire_diagnostic_spawn;
 
 /// Source tool name attached to every test-derived [`DiagnosticEvent`].
 /// Used by reporters to distinguish LSP-discovered test failures from

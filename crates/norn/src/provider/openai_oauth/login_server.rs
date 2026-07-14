@@ -11,10 +11,10 @@ use std::time::Duration;
 
 use tokio::sync::oneshot;
 
+use super::endpoints::{AUTHORIZE_URL, OAUTH_SCOPES};
 use super::options::OAuthHttpOptions;
 use super::pkce;
 use super::storage::{AuthCredentialsStoreMode, save_auth_dot_json};
-use super::{AUTHORIZE_URL, OAUTH_SCOPES};
 
 const LOGIN_PORTS: [u16; 2] = [1455, 1457];
 const CALLBACK_DESCRIPTOR_WEIGHT: u32 = 2;

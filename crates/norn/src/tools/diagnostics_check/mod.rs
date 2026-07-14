@@ -5,6 +5,7 @@
 //! to keep each file under the project-wide 500-LoC clippy gate.
 
 mod adapters;
+mod admission;
 mod findings;
 mod infra;
 mod loc;
@@ -16,20 +17,6 @@ mod remediation;
 mod server_query;
 mod stop_hook;
 mod trigger;
-
-use crate::resource::{
-    DescriptorAdmissionError, DescriptorGovernor, DescriptorPermit, TWO_PIPE_SPAWN_PEAK,
-};
-
-const DIAGNOSTIC_SOCKET_WEIGHT: u32 = 1;
-
-fn acquire_diagnostic_spawn() -> Result<DescriptorPermit, DescriptorAdmissionError> {
-    DescriptorGovernor::global()?.try_acquire(TWO_PIPE_SPAWN_PEAK)
-}
-
-fn acquire_diagnostic_socket() -> Result<DescriptorPermit, DescriptorAdmissionError> {
-    DescriptorGovernor::global()?.try_acquire(DIAGNOSTIC_SOCKET_WEIGHT)
-}
 
 #[cfg(test)]
 mod tests;

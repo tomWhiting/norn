@@ -59,12 +59,12 @@ fn descriptor_admission_helpers_reserve_exact_weights() -> Result<(), Box<dyn st
                 "isolated descriptor capacity {baseline} is below the two-pipe spawn peak"
             ))
         })?;
-    let spawn = super::acquire_diagnostic_spawn()?;
+    let spawn = super::admission::acquire_diagnostic_spawn()?;
     assert_eq!(governor.available(), after_spawn);
     drop(spawn);
     assert_eq!(governor.available(), baseline);
 
-    let socket = super::acquire_diagnostic_socket()?;
+    let socket = super::admission::acquire_diagnostic_socket()?;
     assert_eq!(governor.available(), baseline.saturating_sub(1));
     drop(socket);
     assert_eq!(governor.available(), baseline);
