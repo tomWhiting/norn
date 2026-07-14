@@ -138,13 +138,18 @@ fn dropping_delegated_launcher_neither_waits_for_nor_terminates_child()
     assert!(drop_started.elapsed() < Duration::from_millis(500));
 
     let wait_started = std::time::Instant::now();
-    while !sentinel.is_file() {
+    loop {
+        match std::fs::read_to_string(&sentinel) {
+            Ok(contents) if contents == "complete" => break,
+            Ok(_partial) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error.into()),
+        }
         if wait_started.elapsed() > Duration::from_secs(3) {
             return Err(io::Error::other("delegated launcher did not complete").into());
         }
         std::thread::sleep(REAPER_POLL_INTERVAL);
     }
-    assert_eq!(std::fs::read_to_string(sentinel)?, "complete");
     assert_eq!(governor.available(), 10);
     Ok(())
 }
