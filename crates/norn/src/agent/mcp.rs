@@ -26,7 +26,7 @@ pub(super) struct AgentToolRuntime {
 }
 
 impl McpAttachment {
-    pub(super) fn assemble_runtime(
+    pub(super) fn assemble(
         &self,
         working_dir: &Path,
         registry: &ToolRegistry,

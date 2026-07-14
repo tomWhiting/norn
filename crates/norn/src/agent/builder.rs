@@ -596,7 +596,7 @@ impl AgentBuilder {
         let registry = Arc::new(registry);
         let tool_runtime = self
             .mcp
-            .assemble_runtime(&working_dir, registry.as_ref(), &shared)?;
+            .assemble(&working_dir, registry.as_ref(), &shared)?;
         // Share the same `Arc<ActionLog>` with the loop so dispatch recording
         // and the `action_log` tool's queries observe one ledger.
         loop_context.action_log = Some(Arc::clone(&action_log));
