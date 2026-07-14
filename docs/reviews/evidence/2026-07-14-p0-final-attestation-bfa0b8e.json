@@ -1,0 +1,19 @@
+{
+  "base": "41ea210",
+  "distributions": {
+    "case_count": 33,
+    "file_name": "2026-07-14-p0-final-distributions-bfa0b8e.json",
+    "minimum_runner_observations": 750,
+    "minimum_rust_test_executions": 1170,
+    "sha256": "c625f79668441f59c27a5b168a0aba1180562aac146d9965db2d428b95c37d9a"
+  },
+  "errors": [],
+  "gate": {
+    "file_name": "2026-07-14-p0-final-gate-bfa0b8e.json",
+    "sha256": "d42429d66a0e4c68fee5cb45ba09e074fcf51d40da26eecfe0ed519090e81856"
+  },
+  "head": "bfa0b8e96ec6501feb85fff5b369b82db2d11656",
+  "kind": "p0_final_attestation",
+  "passed": true,
+  "schema_version": 1
+}
