@@ -796,8 +796,9 @@ owner ruling.
 - [x] **GD-13:** correct the descriptor-admission record's revalidation order.
 - [x] **GD-14:** pin `claude_runner` to the revision whose spawn shape supports
   the descriptor proof.
-- [ ] **GD-15:** the corrected runner emits path-free, environment-name-free
-  evidence with local executable hash rebinding and exact-key attestation. Six
+- [ ] **GD-15:** the corrected runner emits path-free evidence without removed
+  ambient variable names, with local executable hash rebinding and exact-key
+  attestation. Six
   superseded schema-v2 artifacts still require the owner disposition recorded
   below before disclosure closure can be claimed.
 - [x] **GD-16:** refuse redirects for MCP HTTP and HTTP extension clients.
@@ -823,8 +824,9 @@ owner ruling.
   values never enter rendered failures. Independent fingerprint, exact-CRLF,
   and no-implicit-30-second fixtures close the accompanying test gaps.
 - [ ] Apply the owner disposition for six superseded schema-v2 artifacts that
-  retain historical local paths or ambient variable names. Removing them from
-  current `HEAD` does not purge already-pushed history.
+  retain historical local paths or ambient variable names. The active
+  correction handoff enumerates all six paths. Removing them from current
+  `HEAD` does not purge already-pushed history.
 - [x] Regenerate the complete gate, distributions, policy result, and
   attestation from the corrected exact head. All worktrees, build outputs,
   scratch data, and evidence must remain in ignored siblings under this
@@ -1795,7 +1797,7 @@ ledger prematurely.
 
 | Phase | Current implementation | Retained candidate evidence | Work still required before acceptance |
 |---|---|---|---|
-| P0 | Corrected source candidate `e1bf7f2`; focused correction handoff in this documentation package | Gate C 38/38 and 9,299 Rust tests; distributions 830/830 and 1,250 Rust tests; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; failed 35/38 precursor retained | GD-15 owner disposition; reviewer LOC/bypass and fixture-secret inspection; focused correction review and deferred seam sweep; fresh `READY` verdict |
+| P0 | Corrected source candidate `e1bf7f2`; focused correction handoff in this documentation package | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; failed 35/38 precursor retained | GD-15 owner disposition; reviewer LOC/bypass and fixture-secret inspection; focused correction review and deferred seam sweep; fresh `READY` verdict |
 | P1 | Not started | None | P0 acceptance and D0 |
 | P2 | Not started | None | P1 acceptance and D9 |
 

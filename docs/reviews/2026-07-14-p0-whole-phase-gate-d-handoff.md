@@ -1,5 +1,12 @@
 # P0 whole-phase Gate D handoff
 
+> **Historical and superseded.** The `13d661c` candidate described here was
+> rejected by the whole-phase review committed at `c6bf1e2`. Do not use this
+> document's external-build-path reproduction instructions. The active
+> correction candidate, repository-local reproduction contract, and focused
+> review scope are in
+> [`2026-07-14-p0-correction-gate-d-handoff.md`](2026-07-14-p0-correction-gate-d-handoff.md).
+
 **Date:** 2026-07-14
 **Phase base:** `41ea210d24ec0653480be3a097b15adcb1e4bfb0`
 **Final tested candidate:** `13d661c906f00e9ff54541e8362086874e98af1c`

@@ -1,11 +1,13 @@
 # P0 whole-phase correction review handoff
 
-- **Date:** 2026-07-14
+- **Campaign date:** 2026-07-14
+- **Published (Australia/Melbourne):** 2026-07-15
 - **Status:** correction candidate ready for focused independent review; P0 is not accepted
 - **Campaign base:** `41ea210`
 - **Controlling review:** `c6bf1e2` / `2026-07-14-p0-whole-phase-gate-d-review.md`
 - **Corrected source head:** `e1bf7f2ab79157a3ee7f49270c6e7ad61794a077`
 - **Correction range:** `c6bf1e2..e1bf7f2`
+- **Initial documentation/evidence package:** `7648159529370275badf76a228e11f3bd5f61330`
 **Full P0 range for the deferred seam sweep:** `41ea210..e1bf7f2`
 
 This handoff does not promote scoped reviews or machine evidence into a phase
@@ -44,10 +46,10 @@ fingerprint, and no-implicit-30-second fixtures pin the related contracts.
 
 ## Retained evidence
 
-All generated builds, scratch paths, and clean worktrees stayed beneath the
-main repository's ignored `target/` tree. The build directories were removed
-after the JSON artifacts were validated to avoid retaining roughly 14 GB of
-disposable build output.
+The final exact-head regeneration kept its builds, scratch paths, and clean
+worktree beneath the main repository's ignored `target/` tree. Its build
+directories were removed after the JSON artifacts were validated rather than
+retaining disposable build output.
 
 | Artifact | SHA-256 | Result |
 |---|---|---|
@@ -61,8 +63,8 @@ disposable build output.
 The corrected gate includes formatting, strict workspace Clippy with
 `-D warnings`, workspace check, workspace all-target tests, complete tests for
 `norn`, `norn-cli`, and `norn-tui`, doctests, exact phase diff check, 43/43
-evidence self-tests, full-range policy, 24 non-disclosure sentinels, and
-repository-integrity checks.
+evidence self-tests, full-range policy, 25 non-disclosure sentinels, one
+separately classified model-facing sentinel, and repository-integrity checks.
 
 The full-range policy reports:
 
@@ -76,7 +78,10 @@ The full-range policy reports:
 
 The first exact-head gate at `17a3bb8` is retained rather than overwritten. It
 failed three runner cases: workspace all-targets, `norn` tests, and `norn-cli`
-tests. The underlying failures were:
+tests. The JSON mechanically retains those runner identities, failed-test
+names, counts, and output digests, but not raw diagnostics. The implementer
+observed the following causes in the captured output and then reproduced each
+affected fixture directly:
 
 - five diagnostics Unix-socket fixtures exceeded macOS `SUN_LEN` because the
   repository-local evidence target name was unnecessarily long;
@@ -97,14 +102,25 @@ defect is fixed and covered at `e1bf7f2`; the failed artifact remains unchanged.
 
 GD-15 remains open pending one explicit owner disposition. Six superseded
 schema-v2 artifacts still tracked at the time of this handoff contain local
-operator paths or ambient variable names. The implementer recommends removing
-them from current `HEAD`, replacing their direct links with commit/hash-only
-historical references, and recording that pushed Git history is not purged.
-Retaining them requires explicit acceptance of that metadata disclosure.
+operator paths or ambient variable names:
 
-No other P0 owner decision remains open. The Gate A and Gate B retrospective
-exceptions are already approved in `DECISIONS-2026-07.md`; their historically
-false checkboxes remain unchecked by design.
+- `evidence/2026-07-14-p0-final-distributions-bfa0b8e.json`;
+- `evidence/2026-07-14-p0-final-gate-82e44f4.json`;
+- `evidence/2026-07-14-p0-final-gate-bfa0b8e.json`;
+- `evidence/2026-07-14-p0-toolchain-13d661c/distributions-native.json`;
+- `evidence/2026-07-14-p0-toolchain-13d661c/gate-native.json`; and
+- `evidence/2026-07-14-p0-toolchain-13d661c/gate.json`.
+
+The implementer recommends removing this exact inventory from current `HEAD`,
+replacing its direct links with commit/hash-only historical references, and
+recording that pushed Git history is not purged. Retaining it requires explicit
+acceptance of that metadata disclosure.
+
+No other P0-blocking owner disposition remains. The Gate A and Gate B
+retrospective exceptions are already approved in `DECISIONS-2026-07.md`; their
+historically false checkboxes remain unchecked by design. `RLIMIT_CORE=0`
+remains a separately held, non-P0 decision because process-level inheritance
+would also disable core dumps for user commands spawned by Norn.
 
 ## Reproduction
 
@@ -116,6 +132,9 @@ native run must be permitted to bind local Unix and loopback sockets.
 ```sh
 MAIN_REPO="$(git rev-parse --show-toplevel)"
 REVIEW_WT="$MAIN_REPO/target/worktrees/p0-correction-review"
+
+mkdir -p "$MAIN_REPO/target/worktrees"
+mkdir -p "$MAIN_REPO/target/evidence/p0-review"
 
 git worktree add --detach "$REVIEW_WT" e1bf7f2
 cd "$REVIEW_WT"
