@@ -1,9 +1,9 @@
 # P0 final candidate and evidence package
 
-**Date:** 2026-07-14  
-**Phase base:** `41ea210d24ec0653480be3a097b15adcb1e4bfb0`  
-**Tested code head:** `bfa0b8e96ec6501feb85fff5b369b82db2d11656`  
-**Evidence package commit:** `e9b02d0`  
+**Date:** 2026-07-14
+**Phase base:** `41ea210d24ec0653480be3a097b15adcb1e4bfb0`
+**Tested code head:** `bfa0b8e96ec6501feb85fff5b369b82db2d11656`
+**Evidence package commit:** `e9b02d0`
 **Status:** automated implementer Gate C complete; manual inspection, owner dispositions, and independent Gate D remain open
 
 ## Scope
