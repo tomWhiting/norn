@@ -1,0 +1,27 @@
+{
+  "reviewer": "external Gate D seat (coordinator)",
+  "purpose": "independent reproduction for 2026-07-15-p0-correction-gate-d-review.md",
+  "head": "e1bf7f2ab79157a3ee7f49270c6e7ad61794a077",
+  "correction_range": "c6bf1e2..e1bf7f2",
+  "environment": {
+    "isolation": "clean detached git worktree at head under repo target/worktrees/; legs serial and alone on host; exit codes captured to files, never piped",
+    "toolchain": "rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0, via repository rust-toolchain.toml pin",
+    "python": "3.14.3 (/opt/homebrew/bin/python3)",
+    "platform": "macOS-26.3.1-arm64"
+  },
+  "legs": [
+    { "leg": "retained correction evidence hash chain (6 artifacts)", "result": "all SHA-256 match the handoff table" },
+    { "leg": "run_p0_policy_evidence.py (41ea210..e1bf7f2)", "exit": 0, "result": "byte-identical to 2026-07-14-p0-correction-policy-e1bf7f2.json (sha256 e61acb56...); 359 changed / 65 test-only / 97 writers; 0 bypass matches; 0 over-500; 0 module-shape/thin-entrypoint violations" },
+    { "leg": "run_p0_integrated_evidence.py gate", "exit": 0, "cases_passed": 38, "cases_total": 38, "repository_integrity_passed": true, "policy_contract_passed": true, "head": "e1bf7f2" },
+    { "leg": "run_p0_integrated_evidence.py distributions --concurrency-runs 50 --other-runs 20", "exit": 0, "observations": 830, "failed": 0, "rust_test_executions": 1250 },
+    { "leg": "attest_p0_evidence.py", "exit": 0, "passed": true, "errors": 0, "head": "e1bf7f2", "worktree_clean": true }
+  ],
+  "reproduced_artifact_sha256": {
+    "policy": "e61acb565377989891250329f6e10f9187fe46f36294f2db65d715d2680e7abe",
+    "gate": "6b17d5a205d64093e53ba0b1b4dc069cb69ba7881b02afc4ec8bd08d24557742",
+    "distributions": "2cde0460bd3537ade61f497b08c357944aa885f0242563145c5eadbe268d9797",
+    "attestation": "9b74c8c47a87b454bc9761560071b11e5e00b35471198d565da31e9a49923788"
+  },
+  "note": "policy leg reproduces byte-identically; gate/distributions/attestation differ from retained artifacts only in embedded timestamps and durations, with identical pass content; attester passes at e1bf7f2 with zero errors",
+  "verdict": "READY — P0 accepted; see 2026-07-15-p0-correction-gate-d-review.md"
+}
