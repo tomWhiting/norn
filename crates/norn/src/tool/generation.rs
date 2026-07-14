@@ -339,6 +339,12 @@ impl ToolGenerationStore {
         }
     }
 
+    /// Create the initial revision from an assembled registry.
+    #[must_use]
+    pub(crate) fn from_registry(registry: &ToolRegistry) -> Self {
+        Self::new(Arc::new(ToolGeneration::from_registry(registry, 0)))
+    }
+
     /// Capture the current generation with one read-lock acquisition.
     #[must_use]
     pub fn snapshot(&self) -> Arc<ToolGeneration> {

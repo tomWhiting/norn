@@ -13,6 +13,7 @@ use std::sync::Arc;
 use parking_lot::RwLock;
 use uuid::Uuid;
 
+use crate::agent::fork::ParentSystemInstruction;
 use crate::agent::pending_messages::PendingAgentMessages;
 use crate::agent::process_delivery::ProcessMessageDelivery;
 use crate::agent::registry::AgentRegistry;
@@ -27,7 +28,22 @@ use crate::session::store::EventStore;
 use crate::skill::SkillCatalog;
 use crate::tool::context::{SessionId, ToolContext};
 use crate::tool::registry::ToolRegistry;
-use crate::tools::agent::AgentWakeRegistry;
+use crate::tools::agent::{AgentModel, AgentWakeRegistry};
+
+/// Publish the exact parent instruction, model, and effort inherited by child launches.
+pub(crate) fn publish_parent_execution_context(
+    context: &ToolContext,
+    loop_context: &LoopContext,
+    model: &str,
+) {
+    context.insert_extension(Arc::new(ParentSystemInstruction::new(
+        loop_context.base_system_instruction(),
+    )));
+    context.insert_extension(Arc::new(AgentModel {
+        model: model.to_owned(),
+        reasoning_effort: loop_context.reasoning_effort,
+    }));
+}
 
 /// Whether the `skill` tool is on a child's resolved tool surface: it must
 /// be present (and un-gated) in the shared parent registry *and* admitted

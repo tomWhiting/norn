@@ -83,10 +83,10 @@ use crate::rules::engine::RuleEngine;
 use crate::session::manager::ReplaySummary;
 use crate::session::store::EventStore;
 use crate::system_prompt::builder::ExecutionMode;
+use crate::tool::ToolGenerationStore;
 use crate::tool::context::SharedWorkingDir;
 use crate::tool::lifecycle::RuntimePostValidateCheck;
 use crate::tool::traits::Tool;
-use crate::tool::{ToolGeneration, ToolGenerationStore};
 use crate::tools::diagnostics::DiagnosticInfra;
 use crate::tools::lsp::{LspBackend, LspWorkspace};
 
@@ -589,17 +589,13 @@ impl AgentBuilder {
         // launch model rides alongside as the parent-model ground truth
         // for spawns that omit `model` (an unregistered root has no
         // agent-registry entry to read it from).
-        shared.insert_extension(Arc::new(crate::agent::fork::ParentSystemInstruction::new(
-            loop_context.base_system_instruction(),
-        )));
-        shared.insert_extension(Arc::new(crate::tools::agent::AgentModel {
-            model: model.clone(),
-            reasoning_effort: loop_context.reasoning_effort,
-        }));
+        crate::agent::arming::publish_parent_execution_context(
+            shared.as_ref(),
+            &loop_context,
+            &model,
+        );
         let registry = Arc::new(registry);
-        let tool_runtime = Arc::new(ToolGenerationStore::new(Arc::new(
-            ToolGeneration::from_registry(registry.as_ref(), 0),
-        )));
+        let tool_runtime = Arc::new(ToolGenerationStore::from_registry(registry.as_ref()));
         let mcp_control = self.mcp.start(&working_dir, &tool_runtime, &shared)?;
         // Share the same `Arc<ActionLog>` with the loop so dispatch recording
         // and the `action_log` tool's queries observe one ledger.
