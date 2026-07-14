@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-12
 **Phase base:** `41ea210`
-**Snapshot code head:** `f788823`
+**Snapshot code head:** `bfa0b8e`
 **Status:** final candidate enumeration classified; independent reconciliation pending
 **Scope:** every production or build-script filesystem-mutation candidate in
 `crates/**/*.rs`; test-only AST items and integration-test crates are excluded
@@ -14,7 +14,9 @@ syntax-aware test exclusion followed by a deliberately conservative lexical
 sweep for filesystem roots, opens, creates, directory creation, publication,
 rename, truncation, and removal. The exact raw rows, including file, line, and
 source text, are retained as `artifact_writer_candidates` in
-`docs/reviews/evidence/2026-07-14-p0-final-policy.json` at the final P0 code head.
+`docs/reviews/evidence/2026-07-14-p0-final-policy-bfa0b8e.json` at the final P0
+code head. The earlier unsuffixed artifact remains historical evidence for
+`f788823` and is not overwritten.
 
 The candidate list is not treated as type inference. It deliberately retains
 read-only opens, cleanup operations, and a semantic `SessionManager::rename`
@@ -27,9 +29,9 @@ classification for that case.
 Run from the repository root:
 
 ```sh
-python3 docs/reviews/evidence/run_p0_policy_evidence.py \
-  --base 41ea210 --head HEAD \
-  --output docs/reviews/evidence/2026-07-14-p0-final-policy.json
+python3 -B -I docs/reviews/evidence/run_p0_policy_evidence.py \
+  --base 41ea210 --head bfa0b8e \
+  --output /absolute/path/outside/the/repository/p0-policy.json
 ```
 
 ## Implicit private artifacts
@@ -77,6 +79,7 @@ so they are not implicit private artifacts.
 | File write/patch commit paths: `tools/{file_commit,patch_commit,write}.rs` | A model tool explicitly targets a workspace path already constrained by tool/workspace policy. Sibling staging, cleanup, and rename implement the requested edit. | The tool result reports the requested mutation. |
 | CLI init and upgrade output: `norn-cli/commands/init/{conventions,upgrade}.rs` | The operator invokes generation and may select an alternate output path. | No model surface. |
 | CLI structured/step output: `norn-cli/print/step_output.rs` | The operator explicitly chooses an output file. Ordinary create/write behavior is intentional. | No model surface unless the operator later supplies the file. |
+| Persistent MCP settings mutation: `config/{mcp_patch,mcp_workspace_write}.rs` | An operator explicitly requests a user, private-local, shared-project, or workspace-local MCP definition change. User/private-local documents use a descriptor-confined `PrivateRoot`, lock, exclusive sibling temporary, fsync, and atomic publication. Shared project documents require the project-authority path and use confined workspace-document replacement. | The resulting enabled definitions affect the selected MCP tool catalogue after normal provenance, approval, and refresh rules; secret values are redacted from history and inspection surfaces. |
 
 ## Build and diagnostic writers
 
@@ -102,12 +105,15 @@ so they are not implicit private artifacts.
 
 ## Coverage conclusion
 
-The final regeneration increased the conservative raw count from 88 to 92
+The historical regeneration increased the conservative raw count from 88 to 92
 while code was split and formerly retained handles became per-transaction
-opens. A file/text set comparison places every newly appearing row in an
-already classified family: session artifact/persistence, process spool, private
-line log, task storage, or explicit CLI step output. No new implicit artifact
-family is left unclassified. The exact 92 rows remain in the final JSON so the
+opens. The final `bfa0b8e` regeneration contains 97 rows. A semantic file/text
+set comparison against the 92-row snapshot reports five additions and no
+removals: the existing `SessionManager::rename` false positive only moved line,
+while the five new rows are `config/mcp_patch.rs` private-root, lock, temporary
+cleanup/create, and rename operations. They belong to the
+explicit operator-directed MCP settings family above. No new implicit artifact
+family is left unclassified. The exact 97 rows remain in the final JSON so the
 reviewer can reproduce this reconciliation rather than trust the grouping.
 
 The raw JSON enumeration plus the classifications above support the narrow P0

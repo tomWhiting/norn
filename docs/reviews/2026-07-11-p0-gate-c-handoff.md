@@ -1,5 +1,11 @@
 # P0 Gate C external-review handoff
 
+> **Superseded current-head notice (2026-07-14):** This corrected handoff is
+> retained as the historical `f788823` record reviewed by the earlier Gate D
+> rounds. The current clean-head evidence and review request are in
+> [`2026-07-14-p0-final-candidate.md`](2026-07-14-p0-final-candidate.md). Its
+> `bfa0b8e` totals and residuals replace the mutable status claims below.
+
 **Original date:** 2026-07-11
 **Corrected:** 2026-07-14
 **Phase:** P0 - credential and workspace authority containment

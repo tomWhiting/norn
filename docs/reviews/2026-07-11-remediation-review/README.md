@@ -11,11 +11,12 @@ that report reviewed. It is not a P0 phase verdict. The P0 evidence-ledger row
 must remain blank until the completed candidate passes all machine gates and
 the whole-phase Gate D reviewer returns `READY` on the final range.
 
-The final code range, completed targeted closure reviews, and Gate C evidence
-are recorded in
-[`../2026-07-11-p0-gate-c-handoff.md`](../2026-07-11-p0-gate-c-handoff.md).
-The handoff also records seven open progress items discovered during final
-checkbox reconciliation. Whole-phase Gate D remains pending.
+The final code range, completed targeted closure reviews, Gate C evidence, and
+current open acceptance items are recorded in
+[`../2026-07-14-p0-final-candidate.md`](../2026-07-14-p0-final-candidate.md).
+The earlier
+[`Gate C handoff`](../2026-07-11-p0-gate-c-handoff.md) remains historical
+evidence for its exact snapshot. Whole-phase Gate D remains pending.
 
 | Artifact | Snapshot | Current disposition |
 |---|---|---|
