@@ -653,10 +653,15 @@ retain their intended behavior where they are operator-selected.
   `norn-cli` integration surface passes; exact suite counts and commands are in
   `2026-07-14-p0-g1-correction.md`. This closes status-report finding G-1 only,
   not D1D acceptance or whole-phase Gate C.
-- [ ] Add live list/inspect/add/remove/enable/disable/reload, child-only
+- [x] Add live list/inspect/add/remove/enable/disable/reload, child-only
   connections beyond the startup pool, dynamic roots, and request-boundary
-  provider-tool refresh as a separate reviewable MCP slice. Root, variant, and
-  spawned-agent startup selection from the connected pool is implemented.
+  provider-tool refresh as a separate reviewable MCP slice. The serialized
+  controller publishes an immutable runtime/generation pair; CLI and TUI share
+  one redacted `/mcp` parser; children derive per-agent views from the complete
+  pool at each request boundary; contextual roots and calls are serialized per
+  shared client; and `tools/list_changed` rediscovery retains the prior pair on
+  failure. Watchers use weak actor senders and are aborted when their client is
+  removed. Repeat-distribution and policy evidence is retained with the slice.
 - [x] Delete or demote `session_file_path` and
   `resolved_session_file_path`; no production-compatible raw path derivation may
   remain beside the validated replacement. Both helpers are now `cfg(test)` and

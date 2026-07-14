@@ -1,0 +1,12 @@
+{
+  "iterations": 20,
+  "cases": [
+    {"filter": "pre_subscription_change_is_refreshed", "passed": 20, "failed": 0},
+    {"filter": "change_during_refresh_schedules_the_latest_revision", "passed": 20, "failed": 0},
+    {"filter": "removed_client_is_not_retained_by_its_watcher", "passed": 20, "failed": 0},
+    {"filter": "public_root_update_cannot_split_contextual_tool_call", "passed": 20, "failed": 0},
+    {"filter": "new_child_observes_replaced_pool_while_existing_child_keeps_lease", "passed": 20, "failed": 0},
+    {"filter": "dropping_transport_returns_retained_descriptor_capacity", "passed": 20, "failed": 0},
+    {"filter": "live_definition_secrets_never_reach_file_backed_history", "passed": 20, "failed": 0}
+  ]
+}
