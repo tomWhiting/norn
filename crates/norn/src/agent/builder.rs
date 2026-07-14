@@ -52,8 +52,8 @@ use crate::agent::assembly::{
     AgentConfigPresence, AgentInfraParts, ExtensionInstaller, OverlayOverrides, RuntimeOverlay,
     ToolContextParts, apply_base_to_loop_context, assemble_tool_context, collect_tool_definitions,
     effective_agent_config, install_agent_infra, install_runtime_base_extensions,
-    install_tool_catalog, populate_loop_context, resolve_base_profile, resolve_runtime_overlay,
-    resolve_working_dir, restore_session_state, validate_workspace_root,
+    populate_loop_context, resolve_base_profile, resolve_runtime_overlay, resolve_working_dir,
+    restore_session_state, validate_workspace_root,
 };
 use crate::agent::build_support::{
     compute_read_exempt_roots, resolve_coordination, resolve_root_agent_id, validate_build_inputs,
@@ -580,7 +580,6 @@ impl AgentBuilder {
                 &working_dir,
             )?;
         }
-        install_tool_catalog(&registry, shared.as_ref());
         // Every agent's context carries its OWN base system instruction
         // (R5): `fork` reads this extension to hand a fork child the
         // forker's context, so the root publishes its installed base here
@@ -589,14 +588,12 @@ impl AgentBuilder {
         // for spawns that omit `model` (an unregistered root has no
         // agent-registry entry to read it from).
         crate::agent::arming::publish_parent_execution_context(
+            &registry,
             shared.as_ref(),
             &loop_context,
             &model,
         );
-        let registry = Arc::new(registry);
-        let tool_runtime = self
-            .mcp
-            .assemble(&working_dir, registry.as_ref(), &shared)?;
+        let (registry, tool_runtime) = self.mcp.assemble(&working_dir, registry, &shared)?;
         // Share the same `Arc<ActionLog>` with the loop so dispatch recording
         // and the `action_log` tool's queries observe one ledger.
         loop_context.action_log = Some(Arc::clone(&action_log));

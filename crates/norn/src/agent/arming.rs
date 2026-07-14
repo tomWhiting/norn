@@ -32,10 +32,12 @@ use crate::tools::agent::{AgentModel, AgentWakeRegistry};
 
 /// Publish the exact parent instruction, model, and effort inherited by child launches.
 pub(crate) fn publish_parent_execution_context(
+    registry: &ToolRegistry,
     context: &ToolContext,
     loop_context: &LoopContext,
     model: &str,
 ) {
+    crate::agent::assembly::install_tool_catalog(registry, context);
     context.insert_extension(Arc::new(ParentSystemInstruction::new(
         loop_context.base_system_instruction(),
     )));

@@ -29,12 +29,13 @@ impl McpAttachment {
     pub(super) fn assemble(
         &self,
         working_dir: &Path,
-        registry: &ToolRegistry,
+        registry: ToolRegistry,
         context: &ToolContext,
-    ) -> Result<AgentToolRuntime, NornError> {
-        let tools = Arc::new(ToolGenerationStore::from_registry(registry));
+    ) -> Result<(Arc<ToolRegistry>, AgentToolRuntime), NornError> {
+        let registry = Arc::new(registry);
+        let tools = Arc::new(ToolGenerationStore::from_registry(registry.as_ref()));
         let mcp_control = self.start(working_dir, &tools, context)?;
-        Ok(AgentToolRuntime { tools, mcp_control })
+        Ok((registry, AgentToolRuntime { tools, mcp_control }))
     }
 
     pub(super) fn state(&self) -> Option<McpConfigState> {
