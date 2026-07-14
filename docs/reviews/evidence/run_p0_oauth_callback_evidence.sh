@@ -25,6 +25,7 @@ cargo_version="$(cargo --version)"
 log="$(mktemp)"
 trap 'rm -f "$log"' EXIT HUP INT TERM
 filters='provider::openai_oauth::login_server::tests::accepted_connection_waits_for_delayed_request_bytes
+provider::openai_oauth::login_server::tests::accepted_stream_is_normalized_to_blocking_mode
 provider::openai_oauth::login_server::tests::matching_error_callback_fails_the_flow_with_a_400_page
 provider::openai_oauth::login_server::tests::stray_requests_get_404_and_login_still_completes
 provider::openai_oauth::login_server::tests::wait_times_out_when_no_matching_callback_arrives'

@@ -253,11 +253,7 @@ fn wait_for_callback(
             }
             Err(error) => return Err(LoginError::Server(error.to_string())),
         };
-        // Darwin can propagate the listener's nonblocking state to accepted
-        // sockets. The request reader relies on a bounded blocking timeout.
-        stream
-            .set_nonblocking(false)
-            .map_err(|error| LoginError::Server(error.to_string()))?;
+        configure_accepted_stream(&stream)?;
         let Some(target) = read_request_target(&mut stream, remaining)? else {
             continue;
         };
@@ -295,6 +291,14 @@ fn wait_for_callback(
             }
         }
     }
+}
+
+fn configure_accepted_stream(stream: &TcpStream) -> Result<(), LoginError> {
+    // Accept flag inheritance is platform-dependent. Normalize the stream
+    // because the request reader relies on a bounded blocking timeout.
+    stream
+        .set_nonblocking(false)
+        .map_err(|error| LoginError::Server(error.to_string()))
 }
 
 struct PendingCallback {
@@ -731,6 +735,27 @@ mod tests {
             return Err(std::io::Error::other("expected callback Server error").into());
         };
         assert!(message.contains("access_denied"), "message: {message}");
+        Ok(())
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn accepted_stream_is_normalized_to_blocking_mode() -> Result<(), Box<dyn std::error::Error>> {
+        use rustix::fs::{OFlags, fcntl_getfl};
+
+        let listener = TcpListener::bind("127.0.0.1:0")?;
+        let port = listener.local_addr()?.port();
+        let connector = std::thread::spawn(move || TcpStream::connect(("127.0.0.1", port)));
+        let (stream, _peer) = listener.accept()?;
+        let client = connector
+            .join()
+            .map_err(|error| std::io::Error::other(format!("connector panicked: {error:?}")))??;
+
+        stream.set_nonblocking(true)?;
+        assert!(fcntl_getfl(&stream)?.contains(OFlags::NONBLOCK));
+        configure_accepted_stream(&stream)?;
+        assert!(!fcntl_getfl(&stream)?.contains(OFlags::NONBLOCK));
+        drop(client);
         Ok(())
     }
 
