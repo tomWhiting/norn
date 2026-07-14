@@ -982,6 +982,33 @@ Idle standalone HTTP GET notification listening, reconnect/resumption, HTTP
 session DELETE, MCP OAuth, sampling, resources, and prompts remain outside this
 slice. Whole-phase adversarial acceptance remains open.
 
+**P0 transport correction contract (2026-07-14):** the whole-phase Gate D
+correction keeps the owner-ruled usability model while making its resource and
+failure behavior explicit.
+
+- One inbound stdio JSON-RPC line, JSON HTTP body, or complete SSE wire event
+  is bounded. The default is exactly 10 MiB, factually derived from the
+  [`STDIO_DEFAULT_MAX_BUFFER_SIZE` in the official MCP TypeScript SDK v1](https://github.com/modelcontextprotocol/typescript-sdk/blob/v1.x/src/shared/stdio.ts#L2),
+  and a positive `max_inbound_message_bytes` may override it per server. SSE
+  framing is processed one event at a time; ignored fields and comments count
+  toward the wire-event limit rather than providing an unbounded side channel.
+- `request_timeout_ms` is optional and positive when present. Absence means no
+  Norn-imposed request timeout, preserving the section 1 no-default-timeout
+  ruling instead of replacing the removed 30-second constant with another
+  invented number. An explicit deadline covers the complete logical request,
+  including body parsing and SSE server-request handling, not merely socket
+  reads. Both connection controls participate independently in definition
+  fingerprints.
+- A stdio server receives the normal inherited parent environment plus its
+  configured overlay. This preserves ordinary machine-wide command usability;
+  the configuration and diagnostic surfaces still expose only key counts or
+  presence, never values.
+- Stdio stderr is drained under descriptor governance but is never retained as
+  text, bytes, a digest, a length, or a count. Failures may report only the
+  fixed categories `no content observed`, `one withheld line`, or `multiple
+  withheld lines`, together with completed/interrupted/read-error state. This
+  is useful failure shape, not recovery of the server-authored diagnostic.
+
 ## 11. P0 retrospective exceptions and pinned Rust gate (2026-07-14)
 
 **Owner ruling:** Tom approved all three dispositions in-thread on 2026-07-14.

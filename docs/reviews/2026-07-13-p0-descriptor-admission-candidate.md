@@ -29,8 +29,10 @@ explicit OS infinity sentinel is distinguished from unavailable limits. Every
 production admission is fail-fast. The only waiting API is compiled under
 `cfg(test)`.
 
-Each acquisition re-observes live limits and open count after reserving its
-weight. This deliberately double-counts already-realized governed descriptors:
+Each acquisition snapshots the live limits and open count before reserving its
+weight. The reservation decision then accounts for that snapshot and the
+already-reserved governed weight. This deliberately double-counts
+already-realized governed descriptors:
 it trades capacity for safety when the limit is lowered or foreign descriptors
 appear after initialization. Errors retain the requested weight, capacity,
 snapshot, and `norn doctor` guidance through provider, process, tool, session,
@@ -45,6 +47,7 @@ Source-derived weights:
 | Three piped standard streams | 8 | stdin + stdout + stderr = 3 |
 | Active HTTP request | 3 | response/body/stream lifetime |
 | Private filesystem transaction | 5 | operation or returned file/lock lifetime |
+| Serial `.gitignore`-aware recursive walk | 11 | walk lifetime |
 | OAuth callback listener plus accepted socket | 2 | accepted socket through final browser response |
 | Diagnostic Unix socket | 1 | query lifetime |
 | Debug append | 3 | append transaction |
@@ -52,7 +55,8 @@ Source-derived weights:
 The spawn peaks count both ends of every stdio pipe before fork and both ends of
 Rust's close-on-exec status/error pipe. The private-filesystem peak counts root,
 two simultaneously held traversal directories, source, and no-replace
-destination.
+destination. The recursive-walk peak counts `walkdir`'s source-defined maximum
+of ten simultaneously open directories plus one ignore-file handle.
 
 ## Governed inventory
 
@@ -64,11 +68,13 @@ destination.
   into each `spawn_blocking` closure and return it before splitting steady
   stdout/stderr/spool ownership. `ProcessHandoff` aborts drains and kills an
   unadopted process on every cancellation/failure edge.
-- MCP and extension stdio transports reserve the launch peak and retain their
-  two parent pipe handles. HTTP MCP/extensions, OpenAI/compatible provider
-  requests, OAuth exchange/refresh/revoke, web fetch, and web search retain an
-  HTTP permit through body or stream completion. Relevant clients disable idle
-  pooling.
+- MCP stdio transports reserve the three-pipe launch peak and retain stdin,
+  stdout, and stderr (3); the stderr reader owns its split permit until drain
+  completion. Extension stdio transports reserve the two-pipe launch peak and
+  retain stdin and stdout (2) while attaching stderr to null. HTTP
+  MCP/extensions, OpenAI/compatible provider requests, OAuth
+  exchange/refresh/revoke, web fetch, and web search retain an HTTP permit
+  through body or stream completion. Relevant clients disable idle pooling.
 - The OAuth callback server admits its listener and one accepted connection
   before bind, accepts only one socket at a time, bounds headers and read time,
   drops the listener before token exchange, and delays browser success until

@@ -1,16 +1,13 @@
 # Responses API remediation plan
 
-- **Status:** Active. P0 implementation and automated Gate C are complete at the
-  clean tested code head `13d661c`; the pinned-toolchain raw evidence chain is
-  retained in commit `564af2d`. The native-host gate is 35/35 with 9,205 Rust
-  test executions, the repeated distribution is 750/750 with 1,170 Rust test
-  executions, and the exact policy/attestation pass. A sandbox-denied 28/35
-  precursor is retained separately. The owner-approved retrospective Gate A
-  and Gate B exceptions are recorded in `DECISIONS-2026-07.md` section 11. No
-  whole-phase `READY` report is present. P0 now waits for manual secret
-  inspection of the committed review package, clean-`13d661c` source/LOC
-  reproduction, writer/permit reconciliation, and the fresh independent
-  whole-phase Gate D review. P1 and P2 have not started.
+- **Status:** Active; P0 correction round. The independent whole-phase Gate D
+  review at `c6bf1e2` returned `NOT READY` for candidate `13d661c`. The review
+  confirmed the credential-security core, then opened GD-1 through GD-18 over
+  MCP failure paths, descriptor admission, policy/evidence integrity, and
+  packaging accuracy. Corrections are in progress and are not yet a tested or
+  accepted candidate. The historical pinned-toolchain evidence remains useful
+  input but is invalidated as P0 acceptance evidence. P1 and P2 have not
+  started.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -26,6 +23,9 @@
   final code range, machine/policy evidence, failed-first-run disclosure,
   owner dispositions, residual boundaries, and reviewer packet are recorded in
   the [`whole-phase Gate D handoff`](reviews/2026-07-14-p0-whole-phase-gate-d-handoff.md).
+  The resulting
+  [`whole-phase Gate D review`](reviews/2026-07-14-p0-whole-phase-gate-d-review.md)
+  is the controlling `NOT READY` verdict for the correction round.
   The superseded [`P0 final candidate`](reviews/2026-07-14-p0-final-candidate.md)
   remains the historical `bfa0b8e` record. The
   [`historical Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md) is
@@ -212,18 +212,13 @@ never acceptance evidence for this program.
 
 Every phase must satisfy all four gates below.
 
-Gates A-C are the active-phase dashboard for the current tested P0 code head
-`13d661c`. The green automated workspace Gate C, full-range policy,
-750-observation distribution, and mechanical attestation are retained at that
-exact clean head. Manual inspection remains open at the scopes defined below.
-The later documentation-only evidence package does not relabel itself as the
-tested code head.
-Source, LOC, policy, and machine-gate reproduction must use a clean checkout at
-`13d661c`. Manual secret inspection must instead cover the final committed
-documentation package containing the retained artifacts and handoff; the
-reviewer records that packaging commit separately. The attester is expected to
-reject execution at the later packaging head because it is not the artifacts'
-tested source head.
+Gates A-C are the active-phase dashboard for the in-flight P0 correction head.
+The prior automated workspace Gate C, full-range policy, 750-observation
+distribution, and mechanical attestation remain historical evidence at
+`13d661c`; the `c6bf1e2` whole-phase review invalidated them as P0 acceptance
+evidence. Every Gate B/C completion claim below is therefore open until the
+corrections are committed and the complete battery is regenerated from one
+clean exact head under the main repository's ignored `target/` lanes.
 After P0 receives Gate D `READY` and its final evidence is entered in the
 ledger, this dashboard resets for P1; the ledger preserves P0's accepted gate
 record.
@@ -263,11 +258,11 @@ the P0 evaluation rule above.
 
 - [ ] Confirmed-defect regressions fail for the documented reason on the reviewed
   baseline; measurement/design work has its pre-registered baseline and contract.
-- [x] The production fix is complete across request, stream, persistence,
+- [ ] The production fix is complete across request, stream, persistence,
   replay, loop behavior, and user surface wherever the capability crosses them.
-- [x] Replaced paths and temporary scaffolding are deleted in the same phase.
-- [x] Changed production files satisfy the file-size and module-structure rules.
-- [x] The finding-to-test traceability table is updated.
+- [ ] Replaced paths and temporary scaffolding are deleted in the same phase.
+- [ ] Changed production files satisfy the file-size and module-structure rules.
+- [ ] The finding-to-test traceability table is updated.
 
 P0 evidence note: the candidate traceability matrix is recorded in
 `2026-07-12-p0-traceability.md` and includes the later D1D/SEC-14 row. The
@@ -281,23 +276,23 @@ historical box is not relabelled as true.
 
 ### Gate C: machine verification
 
-- [x] Phase-specific tests pass.
-- [x] Every crate touched in the round passes its complete integration surface
+- [ ] Phase-specific tests pass.
+- [ ] Every crate touched in the round passes its complete integration surface
   with `cargo test -p <crate> --tests`; a focused `--lib` run cannot substitute
   for this per-round fence. Concurrency-sensitive cases additionally use the
   distribution requirements below.
-- [x] `cargo fmt --all -- --check` passes.
-- [x] `cargo clippy --workspace --all-targets -- -D warnings` passes.
-- [x] `cargo test --workspace --all-targets` passes.
-- [x] `cargo test --workspace --doc` passes.
-- [x] `git diff --check <phase-base>...HEAD` passes. Running bare
+- [ ] `cargo fmt --all -- --check` passes.
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes.
+- [ ] `cargo test --workspace --all-targets` passes.
+- [ ] `cargo test --workspace --doc` passes.
+- [ ] `git diff --check <phase-base>...HEAD` passes. Running bare
   `git diff --check` on the required clean checkout is not evidence.
-- [x] For P0, the syntax-aware machine policy covers every changed Rust item and
+- [ ] For P0, the syntax-aware machine policy covers every changed Rust item and
   reports exact production LOC and added-line bypass matches.
 - [ ] For P0, reviewer-verified production LOC and bypass inspection covers every
   changed Rust item. From P1 onward, the syntax-aware repository policy command
   passes as a hard failure in the protected merge check.
-- [x] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
+- [ ] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
   zero campaign-added unwrap, expect, panic, suppression, ignored-test, or
   unresolved-marker uses. Later phases use their recorded phase base.
 - [ ] For P0, security reviewers manually inspect all fixtures/evidence for
@@ -351,7 +346,7 @@ to the same clean head. The full chain and failure classification are in
 
 | Phase | Status | Primary outcome |
 |---|---|---|
-| P0. Credential and workspace authority containment | [ ] Implementation and automated Gate C complete at `13d661c`; owner dispositions recorded; manual inspection and Gate D open | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
+| P0. Credential and workspace authority containment | [ ] Whole-phase review `c6bf1e2` returned `NOT READY`; correction implementation and replacement Gate C evidence are in progress | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
@@ -422,26 +417,17 @@ close the P0 findings.
 **Acceptance:** [ ] No fresh whole-phase Gate D verdict is recorded.
 **Implementation status:** the original 33 work items, F1, D1B, D1C,
 D1E structural descriptor closure, D1D startup and live control, legacy
-path-helper removal, missing transport/loop sentinels, SEC-05 compile contracts,
-the TUI-history correction, final provider/request/SSE disclosure corrections,
-and OAuth callback/browser lifecycle corrections are implemented through the
-Rust-code head `bfa0b8e`; H-1 pins the repository gate toolchain at the clean
-tested candidate `13d661c`. The current raw evidence is retained in commit
-`564af2d`. The P0-only Gate A/Gate B owner dispositions are recorded;
-independent acceptance and whole-phase Gate D remain open;
-**findings addressed by candidate:** `SEC-01` through `SEC-13`, `SEC-15`,
-`SEC-16`, `BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and
-`QUAL-01`; the D1D startup candidate now includes provenance, approval,
-zero-activation, and real-activation fixtures, while whole-phase `SEC-14`
-acceptance remains review-gated;
-**current machine evidence:** the scoped closure reviews remain valid for their
-exact historical surfaces. The `41ea210...13d661c` candidate has a retained
-35/35 native-host Gate C, 750/750 distribution, full-range policy, passing
-attestation, and an honestly retained sandbox-denied precursor. The exact chain
-is recorded in `2026-07-14-p0-whole-phase-gate-d-handoff.md`.
-**Dependencies:** D1, D1A, D1B, D1C, D1D, D1E, and the P0-only Gate A/Gate B
-dispositions are resolved; D1E/D1D independent acceptance and Gate D remain
-open.
+The historical Rust candidate runs through `13d661c`, with its raw evidence in
+`564af2d`; the P0-only Gate A/Gate B dispositions remain recorded. The fresh
+whole-phase review at `c6bf1e2` returned `NOT READY`, invalidated that candidate
+as acceptance evidence, and opened the GD-1 through GD-18 correction ledger
+below. The credential and workspace-authority core held, but MCP failure paths
+and evidence integrity require a corrected committed head, replacement Gate C
+and distribution artifacts, and focused independent review. Scoped closure
+reviews and the `41ea210...13d661c` 35/35 Gate C plus 750/750 distribution remain
+historical evidence only. D1, D1A, D1B, D1C, D1D, D1E, and the retrospective
+dispositions are resolved as design inputs; P0 implementation and acceptance
+remain open until the correction ledger and final review are complete.
 
 ### What this phase fixes
 
@@ -754,6 +740,83 @@ retain their intended behavior where they are operator-selected.
   relabelling the missing historical red runs. Independent acceptance remains
   open.
 
+### Whole-phase Gate D correction ledger
+
+The controlling review is
+[`2026-07-14-p0-whole-phase-gate-d-review.md`](reviews/2026-07-14-p0-whole-phase-gate-d-review.md),
+committed as `c6bf1e2`. Checked entries below have an implemented correction and
+focused regression or structural evidence in the working candidate. They do not
+constitute Gate C or Gate D acceptance. Open entries are incomplete or await an
+owner ruling.
+
+- [x] **GD-1:** classify private project-local MCP settings separately from
+  shared-project settings so they cannot acquire remembered approval.
+- [x] **GD-2:** charge recursive-walk descriptor weight for every search mode.
+- [x] **GD-3:** reject dead MCP clients during reuse and report liveness loss.
+- [x] **GD-4:** preserve and trace typed control-plane causes without rendering
+  untrusted remote error text or configured secret values.
+- [x] **GD-5:** retry one failed tool-list refresh through reconnection, then
+  atomically quarantine only the failed selected server if recovery fails.
+- [x] **GD-6:** impose a positive per-server inbound limit across stdio, JSON,
+  and complete SSE wire events. The exact 10 MiB default is derived from the
+  official MCP TypeScript SDK v1 rather than invented locally; streaming and
+  one-event-at-a-time fixtures cover pre-growth rejection, ignored SSE fields,
+  multi-event chunks, and exact CRLF boundaries.
+- [x] **GD-7:** remove the invented 30-second MCP timeout. A positive
+  `request_timeout_ms` is optional, absence means no Norn-imposed timeout, and
+  an explicit deadline covers the complete logical HTTP or stdio request. A
+  paused-time client fixture advances past the former 30-second value.
+- [x] **GD-8:** close the `mod.rs` production-logic policy gap, including
+  production reachability through a second path alias, with checked-in fixtures.
+- [x] **GD-9:** retain an HTTP MCP session identifier only from a successful
+  response.
+- [x] **GD-10:** retain only constant-space stderr content/completion categories
+  without raw text, lengths, counts, or hashes; bind the observation task and
+  descriptor permit to the transport lifecycle; and carry the safe summary
+  through connection errors, runtime failures, and tracing.
+- [x] **GD-11:** hydrate startup runtime statuses so live inspection and reuse
+  reflect already connected servers.
+- [x] **GD-12:** close every enumerated MCP/TUI failure path and explicitly
+  dispose of abnormal front-task cancellation after actor enqueue.
+- [x] **GD-13:** correct the descriptor-admission record's revalidation order.
+- [x] **GD-14:** pin `claude_runner` to the revision whose spawn shape supports
+  the descriptor proof.
+- [ ] **GD-15:** the corrected runner emits path-free, environment-name-free
+  evidence with local executable hash rebinding and exact-key attestation. Six
+  superseded schema-v2 artifacts still require the owner disposition recorded
+  below before disclosure closure can be claimed.
+- [x] **GD-16:** refuse redirects for MCP HTTP and HTTP extension clients.
+- [x] **GD-17:** retain structurally parsed failing-test identities, cover
+  truncated output, and run the parser tests inside Gate C.
+- [x] **GD-18:** split CLI print-error logic out of the 499-line orchestrator.
+- [x] The correction evidence runner pins the exact Python self-test module
+  inventory and test count, hashes the actual pinned `cargo`/`rustc` binaries,
+  rechecks their versions, and uses only fixed path-free failure codes.
+- [x] Retained evidence rejects embedded Unix, Windows-drive, UNC, and
+  `file://` paths; failed Rust tests are qualified by sanitized Cargo
+  package/target identity, including doctests and truncated-output handling.
+- [x] Policy reachability is grouped by file identity and covers external
+  `#[path]` aliases plus checked-in literal `include!` targets; the checked-in
+  fixture set includes production, test-only, shared, and case-alias controls.
+- [x] Evidence worktrees, Cargo targets, outputs, policy scratch, independent
+  reproduction, and the macOS `openat` reproducer resolve through the main
+  repository's ignored `target/` lanes and use the canonical paths they check.
+- [x] A read-only adversarial follow-up closed three pre-gate MCP seams: SSE
+  chunks cannot batch unbounded parsed events or hide unbounded ignored fields,
+  HTTP deadlines cover nested protocol handling, and hostile `Content-Type`
+  values never enter rendered failures. Independent fingerprint, exact-CRLF,
+  and no-implicit-30-second fixtures close the accompanying test gaps.
+- [ ] Apply the owner disposition for six superseded schema-v2 artifacts that
+  retain historical local paths or ambient variable names. Removing them from
+  current `HEAD` does not purge already-pushed history.
+- [ ] Regenerate the complete gate, distributions, policy result, and
+  attestation from the corrected exact head. All worktrees, build outputs,
+  scratch data, and evidence must remain in ignored siblings under this
+  repository's `target/` tree; external temporary directories are prohibited.
+- [ ] Obtain one focused independent correction review over these failure paths
+  and the deferred whole-diff seam sweep. Do not start P1 before it returns
+  `READY`.
+
 ### Phase-specific evidence
 
 - [x] A hostile local endpoint receives no request when selected from project
@@ -909,22 +972,16 @@ then becomes a P0 blocker:
 
 ### Review and exit gate
 
-**Current gate state:** no fresh whole-phase `READY` verdict is recorded. The
-final candidate head `13d661c` has one exact green native-host Gate C bundle
-(35/35, 9,205 Rust test executions), a 750/750 repeated distribution (1,170
-Rust test executions), a 333-file full-range policy pass, and a passing
-mechanical attestation. The sandbox-denied 28/35 precursor and the earlier
-failed 34/35 attempt at `82e44f4` are retained rather than hidden. The current
-evidence, hashes, failure classification, owner dispositions, exact final-review
-instructions, and explicit residuals are in
-[`2026-07-14-p0-whole-phase-gate-d-handoff.md`](reviews/2026-07-14-p0-whole-phase-gate-d-handoff.md).
-Three provisional reports remain archived snapshot input, and later scoped
-`READY` reviews remain valid only for their exact historical surfaces. The
-2026-07-14 round review accepted its scoped range but explicitly desk-checked
-rather than adversarially reproduced D1D, D1E, and live MCP. The owner Gate A
-and Gate B dispositions are closed; manual inspection and the fresh integrated
-Gate D verdict remain open. No scoped acceptance, implementer attestation, or
-prior lucky sample is a whole-phase verdict.
+**Current gate state:** the fresh whole-phase review returned `NOT READY` at
+`c6bf1e2`. It independently confirmed the credential-security core and rejected
+the phase on the bounded GD-1 through GD-18 correction set recorded above. Its
+own loaded Gate C run was red and exposed that the v2 evidence schema could not
+name the failing tests; quiet reruns were green, but neither observation replaces
+corrected exact-head evidence. The prior `13d661c` gate, distributions, policy
+result, and attestation remain historical input only. The correction candidate
+must produce a fresh path-free evidence chain and one focused independent
+`READY` verdict before P0 closes. No scoped acceptance, implementer attestation,
+or prior lucky sample is a whole-phase verdict.
 
 - [ ] A security reviewer threat-models every credential destination, redirect,
   automatic working-directory command, and eager working-directory file read.
