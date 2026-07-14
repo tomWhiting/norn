@@ -204,8 +204,10 @@ fn persist(
         "Unchanged"
     };
     eprintln!("{status} MCP settings at {}.", change.path().display());
-    if change.requires_project_approval() {
-        eprintln!("The effective project definition remains inactive until explicitly approved.");
+    if change.requires_remembered_approval() {
+        eprintln!(
+            "The effective shared-project definition remains inactive until explicitly approved."
+        );
     }
     Ok(())
 }

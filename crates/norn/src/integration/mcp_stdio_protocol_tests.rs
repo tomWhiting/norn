@@ -1,7 +1,9 @@
 use std::collections::HashMap;
 use std::time::Duration;
 
-use crate::integration::{McpClient, McpClientConfig, McpRoot, McpTransport};
+use crate::integration::{
+    DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES, McpClient, McpClientConfig, McpRoot, McpTransport,
+};
 
 type TestError = Box<dyn std::error::Error + Send + Sync>;
 
@@ -32,6 +34,8 @@ async fn pump_answers_roots_observes_tools_change_and_emits_root_change() -> Res
             env: HashMap::new(),
             headers: HashMap::new(),
             working_dir: Some(temp.path().to_path_buf()),
+            max_inbound_message_bytes: DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+            request_timeout_ms: None,
         },
         vec![initial],
     )

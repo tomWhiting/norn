@@ -37,6 +37,9 @@ use super::autocomplete::{PopupKeyOutcome, dismiss as dismiss_autocomplete, hand
 use super::child_results::{ChildResultRx, PendingChildPrompts, drain_ready_child_results};
 use super::dispatch::handle_agent_event;
 use super::edit::apply_edit_action;
+use super::mcp_slash::{
+    McpCommandTask, mcp_exit_is_blocked, render_completed_mcp, render_pending_mcp_exit,
+};
 use super::render::{
     redraw_all, redraw_panel, render_input, sync_input_area, with_scroll_region_cursor_async,
     write_user_message,
@@ -173,6 +176,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         root_event_sender: inputs.root_event_sender,
         root_inbound: inputs.root_inbound,
         mcp_control: inputs.mcp_control,
+        mcp_command: None,
     };
 
     // The TUI owns the child-result receiver so it can surface final
@@ -273,6 +277,7 @@ pub(super) struct RuntimeRefs {
     /// valid across store swaps.
     pub(super) root_inbound: Option<InboundChannel>,
     pub(super) mcp_control: Option<McpControlHandle>,
+    pub(super) mcp_command: Option<McpCommandTask>,
 }
 
 /// TUI-owned child-result delivery state.
@@ -335,6 +340,17 @@ async fn outer_loop(
                 }
             }
             _ = tick.tick() => {
+                if runtime
+                    .mcp_command
+                    .as_ref()
+                    .is_some_and(McpCommandTask::is_finished)
+                {
+                    guard.restore_scroll_cursor_clamped()?;
+                    render_completed_mcp(&mut runtime.mcp_command, guard).await?;
+                    guard.save_scroll_cursor()?;
+                    redraw_panel(state, guard)?;
+                    render_input(state, guard)?;
+                }
                 drain_ready_child_results(
                     state,
                     guard,
@@ -493,7 +509,13 @@ async fn handle_action(
     match action {
         InputAction::Exit => {
             if state.input_editor.is_empty() {
-                return Ok(InputOutcome::Exit);
+                if mcp_exit_is_blocked(runtime.mcp_command.as_ref()) {
+                    guard.restore_scroll_cursor_clamped()?;
+                    render_pending_mcp_exit(guard)?;
+                    guard.save_scroll_cursor()?;
+                } else {
+                    return Ok(InputOutcome::Exit);
+                }
             }
             state.input_editor.clear();
             dismiss_autocomplete(state);

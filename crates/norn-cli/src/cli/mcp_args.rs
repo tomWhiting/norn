@@ -115,7 +115,7 @@ pub enum McpPersistenceScope {
     User,
     /// Shared checked-in project settings; activation requires approval.
     Project,
-    /// Workspace-local settings; still treated as project-controlled.
+    /// Workspace-local settings; direct local configuration without approval.
     WorkspaceLocal,
     /// Trusted machine-local settings for this project under `NORN_HOME`.
     Local,

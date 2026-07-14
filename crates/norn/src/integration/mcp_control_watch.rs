@@ -66,10 +66,10 @@ async fn watch_changes(
     loop {
         let revision = *changes.borrow_and_update();
         if revision > handled {
-            if !request_refresh(&sender, name.clone(), instance_id, revision).await {
-                return;
+            match request_refresh(&sender, name.clone(), instance_id, revision).await {
+                RefreshOutcome::Applied => handled = revision,
+                RefreshOutcome::RecoveryFailed | RefreshOutcome::ControlClosed => return,
             }
-            handled = revision;
         }
         if changes.changed().await.is_err() {
             return;
@@ -77,14 +77,20 @@ async fn watch_changes(
     }
 }
 
+enum RefreshOutcome {
+    Applied,
+    RecoveryFailed,
+    ControlClosed,
+}
+
 async fn request_refresh(
     weak: &mpsc::WeakSender<Envelope>,
     name: String,
     instance_id: u64,
     revision: u64,
-) -> bool {
+) -> RefreshOutcome {
     let Some(sender) = weak.upgrade() else {
-        return false;
+        return RefreshOutcome::ControlClosed;
     };
     let (reply, result) = oneshot::channel();
     if sender
@@ -99,14 +105,17 @@ async fn request_refresh(
         .await
         .is_err()
     {
-        return false;
+        return RefreshOutcome::ControlClosed;
     }
     match result.await {
-        Ok(Ok(_response)) => true,
+        Ok(Ok(_response)) => RefreshOutcome::Applied,
         Ok(Err(error)) => {
-            tracing::warn!(%error, "MCP tool-list refresh failed; retaining the previous tools");
-            true
+            tracing::warn!(
+                %error,
+                "MCP tool-list refresh recovery failed; stopping this client watcher",
+            );
+            RefreshOutcome::RecoveryFailed
         }
-        Err(_closed) => false,
+        Err(_closed) => RefreshOutcome::ControlClosed,
     }
 }

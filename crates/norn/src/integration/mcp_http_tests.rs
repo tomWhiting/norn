@@ -1,5 +1,7 @@
 use super::*;
-use crate::integration::{McpClient, McpClientConfig, McpTransport};
+use crate::integration::{
+    DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES, McpClient, McpClientConfig, McpTransport,
+};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use wiremock::matchers::{body_partial_json, method};
@@ -59,6 +61,8 @@ async fn streamable_http_negotiates_session_and_accepts_sse()
         env: HashMap::new(),
         headers: HashMap::new(),
         working_dir: None,
+        max_inbound_message_bytes: DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+        request_timeout_ms: None,
     })
     .await?;
 
@@ -97,6 +101,8 @@ async fn connection_errors_do_not_disclose_endpoint_url_secrets() -> Result<(), 
         env: HashMap::new(),
         headers: HashMap::new(),
         working_dir: None,
+        max_inbound_message_bytes: DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+        request_timeout_ms: None,
     })
     .await
     {
@@ -117,25 +123,211 @@ async fn connection_errors_do_not_disclose_endpoint_url_secrets() -> Result<(), 
     Ok(())
 }
 
+#[tokio::test]
+async fn error_status_cannot_replace_the_http_session() -> Result<(), TestError> {
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(body_partial_json(serde_json::json!({"id": 1})))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {}
+                }))
+                .insert_header("mcp-session-id", "valid-session"),
+        )
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_partial_json(serde_json::json!({"id": 2})))
+        .respond_with(ResponseTemplate::new(401).insert_header("mcp-session-id", "hostile-session"))
+        .mount(&server)
+        .await;
+    Mock::given(method("POST"))
+        .and(body_partial_json(serde_json::json!({"id": 3})))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {}
+        })))
+        .mount(&server)
+        .await;
+    let transport = HttpTransport::new(
+        server.uri(),
+        &HashMap::new(),
+        Arc::new(ClientProtocolState::new(Vec::new())),
+        DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+        None,
+    )?;
+
+    let accepted = transport
+        .post(serde_json::json!({"jsonrpc": "2.0", "id": 1}).to_string())
+        .await?;
+    transport.response_from_http(accepted, 1).await?;
+    let rejected = transport
+        .post(serde_json::json!({"jsonrpc": "2.0", "id": 2}).to_string())
+        .await?;
+    let error = transport
+        .response_from_http(rejected, 2)
+        .await
+        .err()
+        .ok_or("error response unexpectedly succeeded")?;
+    assert!(error.to_string().contains("401"));
+    let accepted = transport
+        .post(serde_json::json!({"jsonrpc": "2.0", "id": 3}).to_string())
+        .await?;
+    transport.response_from_http(accepted, 3).await?;
+
+    let requests = server
+        .received_requests()
+        .await
+        .ok_or("wiremock request recording is unavailable")?;
+    assert_eq!(requests.len(), 3);
+    assert!(requests[0].headers.get(SESSION_HEADER).is_none());
+    for request in &requests[1..] {
+        assert_eq!(
+            request
+                .headers
+                .get(SESSION_HEADER)
+                .and_then(|value| value.to_str().ok()),
+            Some("valid-session"),
+        );
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn remote_error_surfaces_do_not_disclose_configured_header_secrets() -> Result<(), TestError>
+{
+    const SECRET: &str = "mcp-remote-error-header-secret";
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
+            "jsonrpc": "2.0",
+            "id": 1,
+            "error": {"code": -32001, "message": SECRET}
+        })))
+        .mount(&server)
+        .await;
+    let headers = HashMap::from([("authorization".to_owned(), format!("Bearer {SECRET}"))]);
+    let transport = HttpTransport::new(
+        server.uri(),
+        &headers,
+        Arc::new(ClientProtocolState::new(Vec::new())),
+        DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+        None,
+    )?;
+    let client = McpClient::from_transport("remote-error-fixture", Box::new(transport));
+
+    let error = client
+        .refreshed_tools()
+        .await
+        .err()
+        .ok_or("remote MCP error unexpectedly succeeded")?;
+    let display = error.to_string();
+    let debug = format!("{error:?}");
+    let source = std::error::Error::source(&error).ok_or("remote MCP error lost its source")?;
+    assert!(display.contains("-32001"));
+    assert!(source.to_string().contains("-32001"));
+    assert!(!display.contains(SECRET));
+    assert!(!debug.contains(SECRET));
+    assert!(!source.to_string().contains(SECRET));
+    match &error {
+        IntegrationError::McpRemote(remote) => {
+            assert_eq!(remote.code(), -32001);
+            assert_eq!(remote.untrusted_message(), SECRET);
+        }
+        _ => {
+            return Err(std::io::Error::other("expected a typed remote MCP error").into());
+        }
+    }
+    let requests = server
+        .received_requests()
+        .await
+        .ok_or("wiremock request recording is unavailable")?;
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]
+            .headers
+            .get("authorization")
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer mcp-remote-error-header-secret")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn redirects_do_not_forward_configured_authorization() -> Result<(), TestError> {
+    const AUTH_SECRET: &str = "mcp-redirect-auth-secret";
+    for status in [301_u16, 302, 303, 307, 308] {
+        let target = MockServer::start().await;
+        let origin = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(
+                ResponseTemplate::new(status).insert_header("location", target.uri().as_str()),
+            )
+            .mount(&origin)
+            .await;
+        let headers =
+            HashMap::from([("authorization".to_owned(), format!("Bearer {AUTH_SECRET}"))]);
+
+        let error = McpClient::connect(McpClientConfig {
+            name: "redirect-fixture".to_owned(),
+            transport: McpTransport::Http { url: origin.uri() },
+            env: HashMap::new(),
+            headers,
+            working_dir: None,
+            max_inbound_message_bytes: DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+            request_timeout_ms: None,
+        })
+        .await
+        .err()
+        .ok_or("MCP redirect was unexpectedly followed")?;
+        let rendered = error.to_string();
+        assert!(rendered.contains(&status.to_string()));
+        assert!(!rendered.contains(AUTH_SECRET));
+
+        let origin_requests = origin
+            .received_requests()
+            .await
+            .ok_or("origin request recording is unavailable")?;
+        assert_eq!(origin_requests.len(), 1);
+        assert_eq!(
+            origin_requests[0]
+                .headers
+                .get("authorization")
+                .and_then(|value| value.to_str().ok()),
+            Some("Bearer mcp-redirect-auth-secret"),
+        );
+        let target_requests = target
+            .received_requests()
+            .await
+            .ok_or("redirect target request recording is unavailable")?;
+        assert!(target_requests.is_empty());
+    }
+    Ok(())
+}
+
 #[test]
 fn parses_multiline_sse_data() -> Result<(), Box<dyn std::error::Error>> {
     let mut decoder = SseDecoder::default();
-    let messages = decoder.push(
-        concat!(
-            "data: {\"jsonrpc\":\"2.0\",\n",
-            "data: \"id\":1,\"result\":{}}\n\n",
-        )
-        .as_bytes(),
-    )?;
+    let mut input = concat!(
+        "data: {\"jsonrpc\":\"2.0\",\n",
+        "data: \"id\":1,\"result\":{}}\n\n",
+    )
+    .as_bytes();
+    let message = decoder.push_next(&mut input)?;
 
     assert_eq!(
-        messages,
-        [serde_json::json!({
+        message,
+        Some(serde_json::json!({
             "jsonrpc": "2.0",
             "id": 1,
             "result": {}
-        })]
+        }))
     );
+    assert!(input.is_empty());
     Ok(())
 }
 
@@ -205,11 +397,70 @@ async fn answers_ping_before_sse_response_stream_finishes() -> Result<(), TestEr
         env: HashMap::new(),
         headers: HashMap::new(),
         working_dir: None,
+        max_inbound_message_bytes: DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+        request_timeout_ms: None,
     })
     .await?;
 
     assert_eq!(client.tools().len(), 1);
     server.await??;
+    Ok(())
+}
+
+#[tokio::test]
+async fn mismatched_sse_response_id_fails_promptly_and_invalidates_client() -> Result<(), TestError>
+{
+    let listener = tokio::net::TcpListener::bind(("127.0.0.1", 0)).await?;
+    let address = listener.local_addr()?;
+    let (release_server, hold_server) = tokio::sync::oneshot::channel();
+    let server = tokio::spawn(async move {
+        let (mut list, _) = listener.accept().await?;
+        read_http_request(&mut list).await?;
+        list.write_all(
+            b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nTransfer-Encoding: chunked\r\nConnection: close\r\n\r\n",
+        )
+        .await?;
+        write_chunk(
+            &mut list,
+            b"data: {\"jsonrpc\":\"2.0\",\"id\":999,\"result\":{\"tools\":[]}}\n\n",
+        )
+        .await?;
+
+        hold_server.await?;
+        Ok::<_, TestError>(())
+    });
+    let transport = HttpTransport::new(
+        format!("http://{address}"),
+        &HashMap::new(),
+        Arc::new(ClientProtocolState::new(Vec::new())),
+        DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+        None,
+    )?;
+    let client = McpClient::from_transport("mismatched-id-fixture", Box::new(transport));
+
+    let result =
+        tokio::time::timeout(std::time::Duration::from_secs(2), client.refreshed_tools()).await;
+    let release_result = release_server.send(());
+    server.await??;
+    release_result.map_err(|()| {
+        std::io::Error::other("held-open SSE server exited before the test released it")
+    })?;
+    let error = result
+        .map_err(|_elapsed| {
+            std::io::Error::new(
+                std::io::ErrorKind::TimedOut,
+                "client silently waited after a mismatched SSE response id",
+            )
+        })?
+        .err()
+        .ok_or("mismatched SSE response id unexpectedly succeeded")?;
+
+    assert!(
+        error
+            .to_string()
+            .contains("JSON-RPC response id did not match request 1")
+    );
+    assert!(!client.is_live());
     Ok(())
 }
 

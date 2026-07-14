@@ -10,7 +10,9 @@ use crate::config::{
     EffectiveMcpServer, McpConfigLayer, McpConfigSnapshot, McpDefinitionFingerprint,
 };
 use crate::error::IntegrationError;
-use crate::integration::{McpClient, McpClientConfig, McpTransport};
+use crate::integration::{
+    DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES, McpClient, McpClientConfig, McpTransport,
+};
 use crate::tool::traits::Tool;
 
 /// Connection outcome for one effective MCP server definition.
@@ -63,6 +65,18 @@ impl McpRuntimeServerStatus {
     #[must_use]
     pub fn failure(&self) -> Option<&str> {
         self.failure.as_deref()
+    }
+
+    pub(super) fn failed_liveness(mut status: Self) -> Self {
+        status.state = McpRuntimeServerState::Failed;
+        status.failure = Some("the MCP client connection is no longer live".to_owned());
+        status
+    }
+
+    pub(super) fn failed_refresh(mut self, failure: String) -> Self {
+        self.state = McpRuntimeServerState::Failed;
+        self.failure = Some(failure);
+        self
     }
 }
 
@@ -159,7 +173,31 @@ impl McpRuntime {
                     && status.fingerprint == *server.fingerprint()
             })
             .and_then(|_status| self.clients.get(server.name()))
+            .filter(|client| client.is_live())
             .cloned()
+    }
+
+    pub(crate) fn with_config_snapshot(&self, snapshot: &McpConfigSnapshot) -> Self {
+        let mut statuses = BTreeMap::new();
+        for server in snapshot.iter() {
+            let outcome = if self.clients.contains_key(server.name()) {
+                Some((McpRuntimeServerState::Connected, None))
+            } else if let Some(reason) = self.failures.get(server.name()) {
+                Some((McpRuntimeServerState::Failed, Some(reason.clone())))
+            } else if !server.enabled() {
+                Some((McpRuntimeServerState::Disabled, None))
+            } else {
+                None
+            };
+            if let Some((state, failure)) = outcome {
+                statuses.insert(server.name().to_owned(), status(server, state, failure));
+            }
+        }
+        Self {
+            clients: self.clients.clone(),
+            failures: self.failures.clone(),
+            statuses,
+        }
     }
 }
 
@@ -333,5 +371,9 @@ fn client_config(
             .as_ref()
             .map_or_else(HashMap::new, |values| values.clone().into_iter().collect()),
         working_dir: Some(working_dir.to_path_buf()),
+        max_inbound_message_bytes: definition
+            .max_inbound_message_bytes
+            .unwrap_or(DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES),
+        request_timeout_ms: definition.request_timeout_ms,
     })
 }

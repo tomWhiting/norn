@@ -165,7 +165,13 @@ fn build_generation(
                         reason: format!("child MCP server selection failed: {error}"),
                     });
                 }
-                Err(_removed_server) => {}
+                Err(error) => {
+                    tracing::warn!(
+                        server,
+                        %error,
+                        "removing a no-longer-configured MCP server from the child tool view",
+                    );
+                }
             }
         }
         let available =
@@ -184,8 +190,8 @@ fn build_generation(
     };
     crate::tool::ToolGeneration::child_view(source.as_ref(), dynamic, available.as_ref(), context)
         .map(Arc::new)
-        .map_err(|_error| ToolError::ExecutionFailed {
-            reason: "child tool generation could not be assembled".to_owned(),
+        .map_err(|error| ToolError::ExecutionFailed {
+            reason: format!("child tool generation could not be assembled: {error}"),
         })
 }
 

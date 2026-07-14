@@ -2,6 +2,7 @@ use async_trait::async_trait;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 use super::*;
 use crate::config::mcp::fingerprint;
@@ -12,6 +13,8 @@ use crate::tool::registry::ToolRegistry;
 use tokio::sync::Mutex;
 
 struct DormantTransport;
+
+struct SwitchableTransport(Arc<AtomicBool>);
 
 impl McpRuntime {
     pub(crate) fn from_test_clients(clients: Vec<McpClient>) -> Self {
@@ -44,6 +47,31 @@ impl Transport for DormantTransport {
 
     fn supports_protocol_version(&self, _version: &str) -> bool {
         true
+    }
+}
+
+#[async_trait]
+impl Transport for SwitchableTransport {
+    async fn request(
+        &self,
+        _payload: String,
+        _request_id: u64,
+    ) -> Result<JsonRpcResponse, IntegrationError> {
+        Err(IntegrationError::McpError {
+            reason: "switchable test transport was invoked".to_owned(),
+        })
+    }
+
+    async fn notify(&self, _payload: String) -> Result<(), IntegrationError> {
+        Ok(())
+    }
+
+    fn supports_protocol_version(&self, _version: &str) -> bool {
+        true
+    }
+
+    fn is_live(&self) -> bool {
+        self.0.load(Ordering::Acquire)
     }
 }
 
@@ -271,5 +299,90 @@ async fn incremental_candidate_reuses_only_healthy_unchanged_clients()
     assert_eq!(beta.state(), McpRuntimeServerState::Failed);
     assert!(beta.failure().is_some());
     assert!(!statuses.contains_key("gone"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn dead_matching_client_is_reported_failed_and_reconnected()
+-> Result<(), Box<dyn std::error::Error>> {
+    let effective = effective("alpha", McpConfigLayer::User, definition("alpha_tool"))?;
+    let config = snapshot(vec![effective.clone()])?;
+    let live = Arc::new(AtomicBool::new(true));
+    let client =
+        McpClient::from_transport("alpha", Box::new(SwitchableTransport(Arc::clone(&live))))
+            .with_test_tools(vec![McpToolDef {
+                name: "old".to_owned(),
+                description: "stale fixture".to_owned(),
+                input_schema: serde_json::json!({"type": "object"}),
+            }]);
+    let runtime = McpRuntime::from_test_connected_servers(vec![(effective, client)]);
+
+    live.store(false, Ordering::Release);
+    let status = runtime
+        .reported_server_status("alpha")
+        .ok_or_else(|| missing_status("alpha"))?;
+    assert_eq!(status.state(), McpRuntimeServerState::Failed);
+    assert!(status.failure().is_some());
+
+    let connections = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&connections);
+    let candidate = runtime
+        .build_candidate_with(&config, Path::new("/project"), move |server| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            async move { Ok(connected_client(&server)) }
+        })
+        .await;
+    assert_eq!(connections.load(Ordering::SeqCst), 1);
+    assert_eq!(
+        candidate
+            .runtime()
+            .server_status("alpha")
+            .ok_or_else(|| missing_status("alpha reconnect"))?
+            .state(),
+        McpRuntimeServerState::Connected
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn startup_snapshot_hydration_enables_first_mutation_reuse()
+-> Result<(), Box<dyn std::error::Error>> {
+    let effective = effective("alpha", McpConfigLayer::User, definition("alpha_tool"))?;
+    let config = snapshot(vec![effective])?;
+    let config_for_client = config
+        .get("alpha")
+        .ok_or_else(|| missing_status("alpha config"))?;
+    let unannotated = McpRuntime::from_test_clients(vec![connected_client(&McpClientConfig {
+        name: config_for_client.name().to_owned(),
+        transport: McpTransport::Stdio {
+            command: "alpha_tool".to_owned(),
+            args: Vec::new(),
+        },
+        env: std::collections::HashMap::new(),
+        headers: std::collections::HashMap::new(),
+        working_dir: Some(Path::new("/project").to_path_buf()),
+        max_inbound_message_bytes: crate::integration::DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+        request_timeout_ms: None,
+    })]);
+    assert!(unannotated.server_status("alpha").is_none());
+    let hydrated = unannotated.with_config_snapshot(&config);
+    assert_eq!(
+        hydrated
+            .server_status("alpha")
+            .ok_or_else(|| missing_status("hydrated alpha"))?
+            .state(),
+        McpRuntimeServerState::Connected
+    );
+
+    let connections = Arc::new(AtomicUsize::new(0));
+    let observed = Arc::clone(&connections);
+    let candidate = hydrated
+        .build_candidate_with(&config, Path::new("/project"), move |server| {
+            observed.fetch_add(1, Ordering::SeqCst);
+            async move { Ok(connected_client(&server)) }
+        })
+        .await;
+    assert_eq!(connections.load(Ordering::SeqCst), 0);
+    assert_eq!(candidate.runtime().len(), 1);
     Ok(())
 }

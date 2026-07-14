@@ -111,6 +111,34 @@ impl McpRuntime {
         })))
     }
 
+    pub(crate) fn disconnected_after_refresh_failure(
+        &self,
+        name: &str,
+        instance_id: u64,
+        failure: String,
+    ) -> Option<(Arc<Self>, std::collections::BTreeSet<String>)> {
+        let client = self.clients.get(name)?;
+        if client.instance_id() != instance_id {
+            return None;
+        }
+        let removed_tools = client.qualified_tool_names().collect();
+        let mut clients = self.clients.clone();
+        clients.remove(name);
+        let mut failures = self.failures.clone();
+        failures.insert(name.to_owned(), failure.clone());
+        let mut statuses = self.statuses.clone();
+        let status = statuses.get(name)?.clone().failed_refresh(failure);
+        statuses.insert(name.to_owned(), status);
+        Some((
+            Arc::new(Self {
+                clients,
+                failures,
+                statuses,
+            }),
+            removed_tools,
+        ))
+    }
+
     /// Failed server names and diagnostics in deterministic order.
     pub fn failures(&self) -> impl Iterator<Item = (&str, &str)> {
         self.failures
@@ -127,6 +155,19 @@ impl McpRuntime {
     #[must_use]
     pub fn server_status(&self, name: &str) -> Option<&McpRuntimeServerStatus> {
         self.statuses.get(name)
+    }
+
+    pub(crate) fn reported_server_status(&self, name: &str) -> Option<McpRuntimeServerStatus> {
+        let status = self.statuses.get(name)?.clone();
+        let dead = status.state() == McpRuntimeServerState::Connected
+            && self
+                .clients
+                .get(name)
+                .is_none_or(|client| !client.is_live());
+        if dead {
+            return Some(McpRuntimeServerStatus::failed_liveness(status));
+        }
+        Some(status)
     }
 
     /// Provider-facing tool names belonging to a selected server subset.

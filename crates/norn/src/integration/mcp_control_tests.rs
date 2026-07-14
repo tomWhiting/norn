@@ -7,7 +7,11 @@ use parking_lot::Mutex;
 use tokio::sync::Notify;
 
 use super::*;
+use crate::config::mcp::fingerprint;
 use crate::config::{EffectiveMcpServer, McpDefinitions, McpLayerEntry, McpPersistentScope};
+use crate::error::IntegrationError;
+use crate::integration::McpClient;
+use crate::integration::mcp_client::{JsonRpcResponse, Transport};
 use crate::tool::{ToolContext, ToolGeneration, ToolGenerationStore, ToolRegistry};
 
 use super::super::mcp_runtime::McpRuntimeServerState;
@@ -32,7 +36,7 @@ impl McpCandidateBuilder for ConflictBuilder {
         let competing = Arc::new(ToolGeneration::from_registry(&registry, request.revision()));
         self.generations
             .publish(competing)
-            .map_err(|_publish_error| McpCandidateError)?;
+            .map_err(McpCandidateError::Publication)?;
         let candidate = Arc::new(ToolGeneration::from_registry(&registry, request.revision()));
         Ok(McpActivationCandidate::new(
             candidate,
@@ -49,14 +53,44 @@ struct BlockingBuilder {
 
 struct PartialOutcomeBuilder;
 
+struct LiveFixtureTransport;
+
+#[async_trait]
+impl Transport for LiveFixtureTransport {
+    async fn request(
+        &self,
+        _payload: String,
+        request_id: u64,
+    ) -> Result<JsonRpcResponse, IntegrationError> {
+        Ok(JsonRpcResponse {
+            jsonrpc: Some("2.0".to_owned()),
+            id: Some(serde_json::json!(request_id)),
+            result: Some(serde_json::json!({"tools": []})),
+            error: None,
+        })
+    }
+
+    async fn notify(&self, _payload: String) -> Result<(), IntegrationError> {
+        Ok(())
+    }
+
+    fn supports_protocol_version(&self, _version: &str) -> bool {
+        true
+    }
+}
+
+fn live_fixture_client(name: &str) -> McpClient {
+    McpClient::from_transport(name, Box::new(LiveFixtureTransport))
+}
+
 #[async_trait]
 impl McpCandidateBuilder for PartialOutcomeBuilder {
     async fn build(
         &self,
         request: McpActivationRequest,
     ) -> Result<McpActivationCandidate, McpCandidateError> {
-        let statuses = request
-            .active_servers()
+        let active_servers = request.active_servers();
+        let statuses = active_servers
             .iter()
             .cloned()
             .map(|server| {
@@ -70,7 +104,16 @@ impl McpCandidateBuilder for PartialOutcomeBuilder {
                 (server, state, failure)
             })
             .collect();
-        let runtime = Arc::new(McpRuntime::from_test_statuses(statuses));
+        let mut runtime = McpRuntime::from_test_statuses(statuses);
+        let healthy = active_servers
+            .iter()
+            .find(|server| server.name() == "healthy")
+            .ok_or_else(|| McpCandidateError::rejected("healthy fixture server was missing"))?;
+        runtime.clients.insert(
+            healthy.name().to_owned(),
+            Arc::new(live_fixture_client(healthy.name())),
+        );
+        let runtime = Arc::new(runtime);
         let registry = ToolRegistry::with_context(request.previous().context());
         let generation = Arc::new(ToolGeneration::from_registry(&registry, request.revision()));
         Ok(McpActivationCandidate::new(generation, runtime))
@@ -113,7 +156,9 @@ impl McpCandidateBuilder for RecordingBuilder {
         request: McpActivationRequest,
     ) -> Result<McpActivationCandidate, McpCandidateError> {
         if self.fail.load(Ordering::SeqCst) {
-            return Err(McpCandidateError);
+            return Err(McpCandidateError::rejected(
+                "recording fixture requested failure",
+            ));
         }
         self.activations.lock().push(
             request
@@ -124,15 +169,18 @@ impl McpCandidateBuilder for RecordingBuilder {
         );
         let registry = ToolRegistry::with_context(request.previous().context());
         let generation = Arc::new(ToolGeneration::from_registry(&registry, request.revision()));
-        let statuses = request
+        let connected = request
             .active_servers()
             .iter()
             .cloned()
-            .map(|server| (server, McpRuntimeServerState::Connected, None))
+            .map(|server| {
+                let client = live_fixture_client(server.name());
+                (server, client)
+            })
             .collect();
         Ok(McpActivationCandidate::new(
             generation,
-            Arc::new(McpRuntime::from_test_statuses(statuses)),
+            Arc::new(McpRuntime::from_test_connected_servers(connected)),
         ))
     }
 }
@@ -203,6 +251,18 @@ fn server(command: &str) -> McpServerSettings {
     }
 }
 
+fn resolved_project(
+    name: &str,
+    definition: McpServerSettings,
+) -> Result<crate::config::ResolvedMcpServer, crate::error::ConfigError> {
+    Ok(crate::config::ResolvedMcpServer {
+        name: name.to_owned(),
+        source: crate::config::McpConfigSource::Project,
+        fingerprint: fingerprint(name, &definition)?,
+        definition,
+    })
+}
+
 fn layers(user: McpDefinitions, shared: McpDefinitions) -> [McpDefinitions; 4] {
     [user, shared, BTreeMap::new(), BTreeMap::new()]
 }
@@ -255,6 +315,79 @@ async fn pending_project_server_activates_no_tools_until_exact_approval()
 }
 
 #[tokio::test]
+async fn workspace_local_state_is_direct_and_never_approval_gated()
+-> Result<(), Box<dyn std::error::Error>> {
+    let persistent = [
+        BTreeMap::new(),
+        BTreeMap::new(),
+        BTreeMap::from([("docs".to_owned(), server("workspace-server"))]),
+        BTreeMap::new(),
+    ];
+    let harness = Harness::new(persistent)?;
+
+    let initial = harness.handle.inspect("docs".to_owned()).await?;
+    assert_eq!(initial.approval, Some(McpApprovalState::NotRequired));
+    assert_eq!(
+        initial
+            .inspection
+            .effective()
+            .map(EffectiveMcpServer::source),
+        Some(McpConfigLayer::WorkspaceLocal)
+    );
+    assert_eq!(
+        harness
+            .handle
+            .approve("docs".to_owned())
+            .await
+            .as_ref()
+            .map_err(McpControlError::kind),
+        Err(McpControlErrorKind::NotSharedProject)
+    );
+
+    harness.handle.session_disable("docs".to_owned()).await?;
+    harness.handle.session_enable("docs".to_owned()).await?;
+    let active = harness.handle.inspect("docs".to_owned()).await?;
+    assert_eq!(active.approval, Some(McpApprovalState::NotRequired));
+    assert!(active.active);
+    Ok(())
+}
+
+#[tokio::test]
+async fn workspace_local_persist_activates_without_approval()
+-> Result<(), Box<dyn std::error::Error>> {
+    let harness = Harness::new(layers(BTreeMap::new(), BTreeMap::new()))?;
+
+    let result = harness
+        .handle
+        .persistent_upsert(
+            McpPersistentScope::WorkspaceLocal,
+            "docs".to_owned(),
+            server("workspace-server"),
+        )
+        .await?;
+    assert!(result.changed);
+    let status = harness.handle.inspect("docs".to_owned()).await?;
+    assert_eq!(status.approval, Some(McpApprovalState::NotRequired));
+    assert_eq!(
+        status
+            .inspection
+            .effective()
+            .map(EffectiveMcpServer::source),
+        Some(McpConfigLayer::WorkspaceLocal)
+    );
+    assert!(status.active);
+
+    let settings =
+        std::fs::read_to_string(harness.project_path().join(".norn/settings.local.json"))?;
+    let value: serde_json::Value = serde_json::from_str(&settings)?;
+    assert_eq!(
+        value.pointer("/mcp_servers/docs/command"),
+        Some(&serde_json::Value::String("workspace-server".to_owned()))
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn inherited_enable_preserves_project_approval_provenance()
 -> Result<(), Box<dyn std::error::Error>> {
     let mut definition = server("project-server");
@@ -295,6 +428,49 @@ async fn inherited_enable_preserves_project_approval_provenance()
 }
 
 #[tokio::test]
+async fn revoke_succeeds_while_a_session_tombstone_disables_the_project_server()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = tempfile::tempdir()?;
+    let project = tempfile::tempdir()?;
+    let definition = server("project-server");
+    let resolved = resolved_project("docs", definition.clone())?;
+    let state = McpConfigState::from_layers(
+        project.path().canonicalize()?,
+        layers(
+            BTreeMap::new(),
+            BTreeMap::from([("docs".to_owned(), definition)]),
+        ),
+        BTreeMap::new(),
+    )?;
+    let approvals = McpApprovalStore::at_root(home.path())?;
+    approvals.approve(project.path(), &resolved)?;
+    let registry = ToolRegistry::with_context(Arc::new(ToolContext::empty()));
+    let generations = Arc::new(ToolGenerationStore::new(Arc::new(
+        ToolGeneration::from_registry(&registry, 0),
+    )));
+    let handle = McpControlHandle::spawn(
+        state,
+        approvals,
+        Arc::new(RecordingBuilder::default()),
+        Arc::clone(&generations),
+        runtime_store(
+            generations.as_ref(),
+            Arc::new(McpRuntime::from_test_clients(Vec::new())),
+        ),
+    )?;
+
+    let disabled = handle.session_disable("docs".to_owned()).await?;
+    let revoked = handle.revoke("docs".to_owned()).await?;
+    assert!(revoked.changed);
+    assert_eq!(revoked.revision, disabled.revision);
+    assert_eq!(
+        McpApprovalStore::at_root(home.path())?.state(project.path(), &resolved)?,
+        McpApprovalState::Pending
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn failed_candidate_rolls_back_ephemeral_state_and_publication()
 -> Result<(), Box<dyn std::error::Error>> {
     let harness = Harness::new(layers(BTreeMap::new(), BTreeMap::new()))?;
@@ -304,7 +480,10 @@ async fn failed_candidate_rolls_back_ephemeral_state_and_publication()
         .handle
         .session_add("live".to_owned(), server("secret-command"))
         .await;
-    assert_eq!(error, Err(McpControlError::Candidate));
+    assert_eq!(
+        error.as_ref().map_err(McpControlError::kind),
+        Err(McpControlErrorKind::Candidate)
+    );
     assert_eq!(harness.generations.snapshot().revision(), 0);
     assert_eq!(harness.runtimes.snapshot().revision(), 0);
     assert!(
@@ -316,6 +495,23 @@ async fn failed_candidate_rolls_back_ephemeral_state_and_publication()
             .effective()
             .is_none()
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn configuration_failure_retains_its_typed_source() -> Result<(), Box<dyn std::error::Error>>
+{
+    let harness = Harness::new(layers(BTreeMap::new(), BTreeMap::new()))?;
+    let result = harness
+        .handle
+        .session_add("invalid server name".to_owned(), server("fixture"))
+        .await;
+    let error = result.err().ok_or("invalid server name was accepted")?;
+
+    assert_eq!(error.kind(), McpControlErrorKind::Configuration);
+    let source = std::error::Error::source(&error).ok_or("control error lost its source")?;
+    assert!(source.to_string().contains("invalid config"));
+    assert!(error.to_string().contains("invalid config"));
     Ok(())
 }
 
@@ -375,7 +571,10 @@ async fn failed_persistent_candidate_restores_project_document()
             server("project-server"),
         )
         .await;
-    assert_eq!(result, Err(McpControlError::Candidate));
+    assert_eq!(
+        result.as_ref().map_err(McpControlError::kind),
+        Err(McpControlErrorKind::Candidate)
+    );
     assert_eq!(harness.generations.snapshot().revision(), 0);
 
     let settings = std::fs::read_to_string(harness.project_path().join(".norn/settings.json"))?;
@@ -447,7 +646,7 @@ fn construction_without_a_tokio_runtime_returns_a_typed_error()
             Arc::new(McpRuntime::from_test_clients(Vec::new())),
         ),
     );
-    assert!(matches!(result, Err(McpControlError::Unavailable)));
+    assert!(result.is_err_and(|error| error.kind() == McpControlErrorKind::Unavailable));
     Ok(())
 }
 
@@ -526,7 +725,10 @@ async fn changed_definition_failure_restores_the_previous_project_value()
             server("new-server"),
         )
         .await;
-    assert_eq!(result, Err(McpControlError::Candidate));
+    assert_eq!(
+        result.as_ref().map_err(McpControlError::kind),
+        Err(McpControlErrorKind::Candidate)
+    );
     let settings = std::fs::read_to_string(harness.project_path().join(".norn/settings.json"))?;
     let value: serde_json::Value = serde_json::from_str(&settings)?;
     assert_eq!(
@@ -567,7 +769,10 @@ async fn publication_conflict_rolls_back_session_state() -> Result<(), Box<dyn s
     let result = handle
         .session_add("docs".to_owned(), server("server"))
         .await;
-    assert_eq!(result, Err(McpControlError::Publication));
+    assert_eq!(
+        result.as_ref().map_err(McpControlError::kind),
+        Err(McpControlErrorKind::Publication)
+    );
     assert!(
         handle
             .inspect("docs".to_owned())
@@ -584,13 +789,17 @@ async fn approval_is_compensated_when_generation_publication_conflicts()
 -> Result<(), Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
     let project = tempfile::tempdir()?;
-    let shared = BTreeMap::from([("docs".to_owned(), server("project-server"))]);
+    let previous = resolved_project("docs", server("old-server"))?;
+    let desired_definition = server("new-server");
+    let desired = resolved_project("docs", desired_definition.clone())?;
+    let shared = BTreeMap::from([("docs".to_owned(), desired_definition)]);
     let state = McpConfigState::from_layers(
         project.path().to_path_buf(),
         layers(BTreeMap::new(), shared),
         BTreeMap::new(),
     )?;
     let approvals = McpApprovalStore::at_root(home.path())?;
+    approvals.approve(project.path(), &previous)?;
     let registry = ToolRegistry::with_context(Arc::new(ToolContext::empty()));
     let generations = Arc::new(ToolGenerationStore::new(Arc::new(
         ToolGeneration::from_registry(&registry, 0),
@@ -608,13 +817,23 @@ async fn approval_is_compensated_when_generation_publication_conflicts()
         ),
     )?;
 
+    let result = handle.approve("docs".to_owned()).await;
     assert_eq!(
-        handle.approve("docs".to_owned()).await,
-        Err(McpControlError::Publication)
+        result.as_ref().map_err(McpControlError::kind),
+        Err(McpControlErrorKind::Publication)
     );
     let statuses = handle.list().await?;
     assert_eq!(statuses[0].approval, McpApprovalState::Pending);
     assert!(!statuses[0].active);
+    let restored = McpApprovalStore::at_root(home.path())?;
+    assert_eq!(
+        restored.state(project.path(), &previous)?,
+        McpApprovalState::Approved
+    );
+    assert_eq!(
+        restored.state(project.path(), &desired)?,
+        McpApprovalState::Pending
+    );
     Ok(())
 }
 

@@ -51,7 +51,9 @@ impl McpCandidateBuilder for McpRuntimeCandidateBuilder {
                 .insert(server.name().to_owned(), server.clone())
                 .is_some()
             {
-                return Err(McpCandidateError);
+                return Err(McpCandidateError::DuplicateServer {
+                    name: server.name().to_owned(),
+                });
             }
         }
         let snapshot = McpConfigSnapshot::new(servers);
@@ -64,16 +66,16 @@ impl McpCandidateBuilder for McpRuntimeCandidateBuilder {
             runtime_candidate.proxy_tools(),
             request.revision(),
         )
-        .map_err(|_generation_error| McpCandidateError)?;
+        .map_err(McpCandidateError::from)?;
         let generation = if let Some(selected) = self.selected_servers.as_ref() {
             ToolGeneration::replacing_dynamic_tools(
                 request.previous().as_ref(),
                 runtime_candidate
                     .proxy_tools_for_servers(selected)
-                    .map_err(|_integration_error| McpCandidateError)?,
+                    .map_err(McpCandidateError::from)?,
                 request.revision(),
             )
-            .map_err(|_generation_error| McpCandidateError)?
+            .map_err(McpCandidateError::from)?
         } else {
             complete_generation
         };

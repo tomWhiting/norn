@@ -42,7 +42,7 @@ pub struct ResolvedInvocation {
     /// The merged, validated settings both the provider construction and
     /// the builder's `load_runtime_base` consult.
     pub settings: NornSettings,
-    /// Canonical project root used by MCP roots and project approval.
+    /// Canonical project root used by MCP roots and shared-project approval.
     pub project_root: std::path::PathBuf,
     /// Effective MCP definitions with winning-layer provenance.
     pub mcp_servers: ResolvedMcpServers,

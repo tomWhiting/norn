@@ -11,6 +11,7 @@
 //! engines deciding retry-vs-terminal per activity) and the loop can never
 //! disagree about what is retryable.
 
+use std::fmt;
 use std::time::Duration;
 
 /// Typed retry classification of an error.
@@ -626,6 +627,39 @@ pub enum IntegrationError {
         reason: String,
     },
 
+    /// A direct MCP client configuration supplied an invalid connection bound.
+    #[error("invalid MCP client setting '{setting}': value must be positive")]
+    McpInvalidClientSetting {
+        /// Stable local setting name; never server-controlled content.
+        setting: &'static str,
+    },
+
+    /// An inbound MCP frame exceeded its configured per-message byte bound.
+    #[error("MCP {transport} inbound message exceeded the {limit_bytes}-byte limit")]
+    McpInboundMessageTooLarge {
+        /// Local transport label; never server-controlled content.
+        transport: &'static str,
+        /// Configured maximum accepted message size.
+        limit_bytes: usize,
+    },
+
+    /// An MCP request exceeded its explicitly configured deadline.
+    #[error("MCP {transport} request exceeded the configured {timeout_ms} ms deadline")]
+    McpRequestTimedOut {
+        /// Local transport label; never server-controlled content.
+        transport: &'static str,
+        /// Configured request timeout in milliseconds.
+        timeout_ms: u64,
+    },
+
+    /// A structured error returned by a remote MCP server.
+    #[error("{0}")]
+    McpRemote(
+        #[from]
+        #[source]
+        McpRemoteError,
+    ),
+
     /// An error from the Rhai scripting integration.
     #[error("Rhai error: {reason}")]
     RhaiError {
@@ -640,6 +674,57 @@ pub enum IntegrationError {
         reason: String,
     },
 }
+
+/// A JSON-RPC error returned by a remote MCP server.
+///
+/// The remote message is retained as private, non-serializable state, but is
+/// intentionally excluded from default error and debug rendering because a
+/// server can echo configured credentials into it.
+pub struct McpRemoteError {
+    code: i64,
+    message: String,
+}
+
+impl McpRemoteError {
+    pub(crate) const fn new(code: i64, message: String) -> Self {
+        Self { code, message }
+    }
+
+    /// Numeric JSON-RPC error code supplied by the server.
+    #[must_use]
+    pub const fn code(&self) -> i64 {
+        self.code
+    }
+
+    #[cfg(test)]
+    pub(crate) const fn untrusted_message(&self) -> &str {
+        self.message.as_str()
+    }
+}
+
+impl fmt::Debug for McpRemoteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("McpRemoteError")
+            .field("code", &self.code)
+            .field("message", &"[REDACTED]")
+            .finish()
+    }
+}
+
+impl fmt::Display for McpRemoteError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let code = self.code;
+        write!(formatter, "MCP server returned JSON-RPC error code {code}")?;
+        if self.message.is_empty() {
+            Ok(())
+        } else {
+            formatter.write_str(" (remote message withheld)")
+        }
+    }
+}
+
+impl std::error::Error for McpRemoteError {}
 
 /// Errors from loading or parsing a skill file.
 #[derive(Debug, thiserror::Error)]

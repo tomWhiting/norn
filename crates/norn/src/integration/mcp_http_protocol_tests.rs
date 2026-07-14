@@ -1,6 +1,8 @@
 use std::collections::HashMap;
 
-use crate::integration::{McpClient, McpClientConfig, McpRoot, McpTransport};
+use crate::integration::{
+    DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES, McpClient, McpClientConfig, McpRoot, McpTransport,
+};
 use wiremock::matchers::{body_partial_json, method};
 use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -88,6 +90,8 @@ fn config(server: &MockServer) -> McpClientConfig {
         env: HashMap::new(),
         headers: HashMap::new(),
         working_dir: None,
+        max_inbound_message_bytes: DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+        request_timeout_ms: None,
     }
 }
 

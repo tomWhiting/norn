@@ -2,13 +2,17 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use async_trait::async_trait;
 use futures_util::StreamExt;
 use tokio::sync::Mutex;
 
-use super::mcp_client::{JsonRpcResponse, MCP_REQUEST_TIMEOUT, Transport};
+use super::mcp_client::{JsonRpcResponse, Transport};
 use super::mcp_protocol::{ClientProtocolState, InboundMessage};
+use super::mcp_transport_bounds::{
+    SseDecoder, http_read_error, read_bounded_json_body, with_request_timeout,
+};
 use crate::error::IntegrationError;
 
 const ACCEPT: &str = "application/json, text/event-stream";
@@ -20,6 +24,8 @@ pub(super) struct HttpTransport {
     url: String,
     state: Mutex<HttpState>,
     protocol: Arc<ClientProtocolState>,
+    max_inbound_message_bytes: usize,
+    request_timeout_ms: Option<u64>,
 }
 
 #[derive(Default)]
@@ -38,15 +44,21 @@ impl HttpTransport {
         url: String,
         configured_headers: &HashMap<String, String>,
         protocol: Arc<ClientProtocolState>,
+        max_inbound_message_bytes: usize,
+        request_timeout_ms: Option<u64>,
     ) -> Result<Self, IntegrationError> {
         let headers = configured_headers
             .iter()
             .map(|(name, value)| parse_header(name, value))
             .collect::<Result<reqwest::header::HeaderMap, _>>()?;
-        let client = reqwest::Client::builder()
-            .timeout(MCP_REQUEST_TIMEOUT)
+        let mut builder = reqwest::Client::builder()
+            .redirect(reqwest::redirect::Policy::none())
             .pool_max_idle_per_host(0)
-            .default_headers(headers)
+            .default_headers(headers);
+        if let Some(timeout_ms) = request_timeout_ms {
+            builder = builder.timeout(Duration::from_millis(timeout_ms));
+        }
+        let client = builder
             .build()
             .map_err(|error| IntegrationError::McpError {
                 reason: format!("failed to build HTTP client: {error}"),
@@ -56,6 +68,8 @@ impl HttpTransport {
             url,
             state: Mutex::new(HttpState::default()),
             protocol,
+            max_inbound_message_bytes,
+            request_timeout_ms,
         })
     }
 
@@ -84,12 +98,9 @@ impl HttpTransport {
             request = request.header(PROTOCOL_HEADER, version);
         }
         drop(state);
-        let response = request
-            .send()
-            .await
-            .map_err(|error| IntegrationError::McpError {
-                reason: format!("MCP HTTP request failed: {}", error.without_url()),
-            })?;
+        let response = request.send().await.map_err(|error| {
+            http_read_error(error, self.request_timeout_ms, "MCP HTTP request failed")
+        })?;
         Ok(AdmittedResponse {
             response,
             _permit: permit,
@@ -108,12 +119,12 @@ impl HttpTransport {
         request_id: u64,
     ) -> Result<JsonRpcResponse, IntegrationError> {
         let response = admitted.response;
-        self.remember_session(&response).await;
         if !response.status().is_success() {
             return Err(IntegrationError::McpError {
                 reason: format!("MCP HTTP status {}", response.status()),
             });
         }
+        self.remember_session(&response).await;
         let content_type = response
             .headers()
             .get(reqwest::header::CONTENT_TYPE)
@@ -121,19 +132,19 @@ impl HttpTransport {
             .unwrap_or("application/json")
             .to_ascii_lowercase();
         if content_type.starts_with("application/json") {
-            let body = response
-                .text()
-                .await
-                .map_err(|error| IntegrationError::McpError {
-                    reason: format!("MCP HTTP body read failed: {}", error.without_url()),
-                })?;
-            return serde_json::from_str(&body).map_err(|error| IntegrationError::McpError {
+            let body = read_bounded_json_body(
+                response,
+                self.max_inbound_message_bytes,
+                self.request_timeout_ms,
+            )
+            .await?;
+            return serde_json::from_slice(&body).map_err(|error| IntegrationError::McpError {
                 reason: format!("invalid JSON-RPC response: {error}"),
             });
         }
         if !content_type.starts_with("text/event-stream") {
             return Err(IntegrationError::McpError {
-                reason: format!("unsupported MCP HTTP content type '{content_type}'"),
+                reason: "unsupported MCP HTTP content type".to_owned(),
             });
         }
         self.response_from_sse(response, request_id).await
@@ -144,22 +155,26 @@ impl HttpTransport {
         response: reqwest::Response,
         request_id: u64,
     ) -> Result<JsonRpcResponse, IntegrationError> {
-        let mut decoder = SseDecoder::default();
+        let mut decoder = SseDecoder::new(self.max_inbound_message_bytes);
         let mut stream = response.bytes_stream();
         while let Some(chunk) = stream.next().await {
-            let chunk = chunk.map_err(|error| IntegrationError::McpError {
-                reason: format!("MCP SSE body read failed: {}", error.without_url()),
+            let chunk = chunk.map_err(|error| {
+                http_read_error(error, self.request_timeout_ms, "MCP SSE body read failed")
             })?;
-            for message in decoder.push(&chunk)? {
+            let mut remaining = chunk.as_ref();
+            while !remaining.is_empty() {
+                let Some(message) = decoder.push_next(&mut remaining)? else {
+                    continue;
+                };
                 if let Some(response) = self.handle_sse_message(message, request_id).await? {
                     return Ok(response);
                 }
             }
         }
-        for message in decoder.finish()? {
-            if let Some(response) = self.handle_sse_message(message, request_id).await? {
-                return Ok(response);
-            }
+        if let Some(message) = decoder.finish()?
+            && let Some(response) = self.handle_sse_message(message, request_id).await?
+        {
+            return Ok(response);
         }
         Err(IntegrationError::McpError {
             reason: format!("MCP SSE stream ended before response {request_id}"),
@@ -187,7 +202,9 @@ impl HttpTransport {
                 if response.id.as_ref() == Some(&serde_json::json!(request_id)) {
                     return Ok(Some(response));
                 }
-                Ok(None)
+                Err(IntegrationError::McpError {
+                    reason: format!("JSON-RPC response id did not match request {request_id}"),
+                })
             }
         }
     }
@@ -228,67 +245,6 @@ fn parse_header(
     Ok((name, value))
 }
 
-#[derive(Default)]
-struct SseDecoder {
-    pending: Vec<u8>,
-    data: String,
-}
-
-impl SseDecoder {
-    fn push(&mut self, chunk: &[u8]) -> Result<Vec<serde_json::Value>, IntegrationError> {
-        self.pending.extend_from_slice(chunk);
-        let mut messages = Vec::new();
-        while let Some(newline) = self.pending.iter().position(|byte| *byte == b'\n') {
-            let mut line: Vec<_> = self.pending.drain(..=newline).collect();
-            line.pop();
-            if line.last() == Some(&b'\r') {
-                line.pop();
-            }
-            self.process_line(&line, &mut messages)?;
-        }
-        Ok(messages)
-    }
-
-    fn finish(&mut self) -> Result<Vec<serde_json::Value>, IntegrationError> {
-        let mut messages = Vec::new();
-        let final_line = std::mem::take(&mut self.pending);
-        if !final_line.is_empty() {
-            self.process_line(&final_line, &mut messages)?;
-        }
-        self.process_line(&[], &mut messages)?;
-        Ok(messages)
-    }
-
-    fn process_line(
-        &mut self,
-        line: &[u8],
-        messages: &mut Vec<serde_json::Value>,
-    ) -> Result<(), IntegrationError> {
-        if line.is_empty() {
-            if !self.data.is_empty() {
-                let message = serde_json::from_str(&self.data).map_err(|error| {
-                    IntegrationError::McpError {
-                        reason: format!("invalid JSON-RPC SSE event: {error}"),
-                    }
-                })?;
-                messages.push(message);
-                self.data.clear();
-            }
-            return Ok(());
-        }
-        let line = std::str::from_utf8(line).map_err(|error| IntegrationError::McpError {
-            reason: format!("MCP SSE event is not UTF-8: {error}"),
-        })?;
-        if let Some(value) = line.strip_prefix("data:") {
-            if !self.data.is_empty() {
-                self.data.push('\n');
-            }
-            self.data.push_str(value.trim_start());
-        }
-        Ok(())
-    }
-}
-
 #[async_trait]
 impl Transport for HttpTransport {
     async fn request(
@@ -296,29 +252,28 @@ impl Transport for HttpTransport {
         payload: String,
         request_id: u64,
     ) -> Result<JsonRpcResponse, IntegrationError> {
-        let exchange = async {
+        with_request_timeout("HTTP", self.request_timeout_ms, async {
             let response = self.post(payload).await?;
             self.response_from_http(response, request_id).await
-        };
-        tokio::time::timeout(MCP_REQUEST_TIMEOUT, exchange)
-            .await
-            .map_err(|_elapsed| IntegrationError::McpError {
-                reason: "MCP HTTP request timed out".to_owned(),
-            })?
+        })
+        .await
     }
 
     async fn notify(&self, payload: String) -> Result<(), IntegrationError> {
-        let admitted = self.post(payload).await?;
-        if admitted.response.status().is_success() {
-            Ok(())
-        } else {
-            Err(IntegrationError::McpError {
-                reason: format!(
-                    "MCP HTTP notification status {}",
-                    admitted.response.status()
-                ),
-            })
-        }
+        with_request_timeout("HTTP", self.request_timeout_ms, async {
+            let admitted = self.post(payload).await?;
+            if admitted.response.status().is_success() {
+                Ok(())
+            } else {
+                Err(IntegrationError::McpError {
+                    reason: format!(
+                        "MCP HTTP notification status {}",
+                        admitted.response.status()
+                    ),
+                })
+            }
+        })
+        .await
     }
 
     fn supports_protocol_version(&self, version: &str) -> bool {
@@ -341,3 +296,7 @@ mod adversarial_tests;
 #[cfg(test)]
 #[path = "mcp_http_protocol_tests.rs"]
 mod protocol_tests;
+
+#[cfg(test)]
+#[path = "mcp_http_bounds_tests.rs"]
+mod bounds_tests;

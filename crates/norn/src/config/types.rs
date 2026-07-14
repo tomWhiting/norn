@@ -936,6 +936,16 @@ pub struct McpServerSettings {
     /// for deterministic JSON ordering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub headers: Option<BTreeMap<String, String>>,
+
+    /// Maximum bytes accepted for one inbound JSON-RPC message or SSE event.
+    /// When absent, the client uses its 10 MiB interoperability default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_inbound_message_bytes: Option<usize>,
+
+    /// Per-request deadline in milliseconds. Absence deliberately means no
+    /// client-side timeout rather than an arbitrary fallback deadline.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub request_timeout_ms: Option<u64>,
 }
 
 impl fmt::Debug for McpServerSettings {
@@ -949,6 +959,8 @@ impl fmt::Debug for McpServerSettings {
             .field("url_present", &self.url.is_some())
             .field("env_entries", &self.env.as_ref().map(BTreeMap::len))
             .field("header_entries", &self.headers.as_ref().map(BTreeMap::len))
+            .field("max_inbound_message_bytes", &self.max_inbound_message_bytes)
+            .field("request_timeout_ms", &self.request_timeout_ms)
             .finish()
     }
 }
@@ -1251,6 +1263,8 @@ mod tests {
                     m
                 }),
                 headers: None,
+                max_inbound_message_bytes: Some(1_048_576),
+                request_timeout_ms: Some(15_000),
             },
         );
 
@@ -1468,6 +1482,14 @@ mod tests {
                 .get("fs")
                 .unwrap()
                 .command,
+        );
+        assert_eq!(
+            roundtripped
+                .mcp_servers
+                .as_ref()
+                .and_then(|servers| servers.get("fs"))
+                .map(|server| (server.max_inbound_message_bytes, server.request_timeout_ms,)),
+            Some((Some(1_048_576), Some(15_000))),
         );
         assert_eq!(
             roundtripped.skills.as_ref().unwrap().search_paths,

@@ -137,7 +137,7 @@ fn project_patch_preserves_unknown_keys_and_never_changes_approval_store()
             &upsert("docs", "server"),
         )?;
         assert!(change.changed());
-        assert!(change.requires_project_approval());
+        assert!(change.requires_remembered_approval());
         assert!(!home.path().join("mcp/project-approvals.jsonl").exists());
         let value: Value = serde_json::from_str(&std::fs::read_to_string(change.path())?)?;
         assert_eq!(value["unknown"]["kept"], true);
@@ -187,10 +187,10 @@ fn persistent_scopes_write_only_their_selected_documents() -> Result<(), Box<dyn
             private_local.path(),
             super::super::mcp_local::project_local_mcp_settings_path(&canonical)?,
         );
-        assert!(!user.requires_project_approval());
-        assert!(shared.requires_project_approval());
-        assert!(workspace_local.requires_project_approval());
-        assert!(!private_local.requires_project_approval());
+        assert!(!user.requires_remembered_approval());
+        assert!(shared.requires_remembered_approval());
+        assert!(!workspace_local.requires_remembered_approval());
+        assert!(!private_local.requires_remembered_approval());
         Ok::<(), Box<dyn std::error::Error>>(())
     })?;
     Ok(())

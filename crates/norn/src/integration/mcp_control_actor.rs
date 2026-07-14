@@ -1,5 +1,10 @@
 //! Single-owner actor implementation for the live MCP control plane.
 
+#[path = "mcp_control_approval.rs"]
+mod approval;
+#[path = "mcp_control_refresh.rs"]
+mod refresh;
+
 use std::collections::BTreeMap;
 use std::sync::Arc;
 
@@ -12,7 +17,7 @@ use super::{
 };
 use crate::config::{
     EffectiveMcpServer, McpApprovalState, McpApprovalStore, McpConfigLayer, McpConfigSnapshot,
-    McpConfigSource, McpConfigState, McpPersistentMutation, McpPersistentScope, ResolvedMcpServer,
+    McpConfigState, McpPersistentMutation, McpPersistentScope,
 };
 use crate::tool::ToolGenerationStore;
 
@@ -57,8 +62,22 @@ impl McpController {
     async fn run(mut self) {
         self.reconcile_watchers();
         while let Some(envelope) = self.receiver.recv().await {
+            let operation = envelope.command.operation();
             let result = self.handle(envelope.command).await;
-            let _ = envelope.reply.send(result);
+            if let Err(error) = result.as_ref() {
+                tracing::error!(
+                    operation,
+                    error = %error,
+                    cause = ?error,
+                    "live MCP control operation failed",
+                );
+            }
+            if envelope.reply.send(result).is_err() {
+                tracing::debug!(
+                    operation,
+                    "live MCP control requester closed before receiving its result",
+                );
+            }
         }
         self.watchers.abort_all();
     }
@@ -98,40 +117,11 @@ impl McpController {
         }
     }
 
-    async fn refresh_tools(
-        &mut self,
-        name: &str,
-        instance_id: u64,
-        revision: u64,
-    ) -> Result<McpControlResponse, McpControlError> {
-        if self
-            .applied_tool_revisions
-            .get(&instance_id)
-            .is_some_and(|applied| *applied >= revision)
-        {
-            return Ok(self.mutation_response(false));
-        }
-        let current = self.active_runtime.snapshot().runtime();
-        let Some(refreshed) = current
-            .refreshed_tools(name, instance_id)
-            .await
-            .map_err(|_refresh_error| McpControlError::Candidate)?
-        else {
-            return Ok(self.mutation_response(false));
-        };
-        let candidate = self
-            .candidate_with_runtime(&self.state, None, refreshed)
-            .await?;
-        self.publish(candidate)?;
-        self.applied_tool_revisions.insert(instance_id, revision);
-        Ok(self.mutation_response(true))
-    }
-
     fn list(&self) -> Result<Vec<McpServerStatus>, McpControlError> {
         let snapshot = self
             .state
             .snapshot()
-            .map_err(|_config_error| McpControlError::Configuration)?;
+            .map_err(McpControlError::configuration)?;
         snapshot
             .iter()
             .map(|server| self.status(server, None))
@@ -142,7 +132,7 @@ impl McpController {
         let inspection = self
             .state
             .inspect(name)
-            .map_err(|_config_error| McpControlError::Configuration)?;
+            .map_err(McpControlError::configuration)?;
         let (approval, runtime_state, failure_present, active) = match inspection.effective() {
             Some(server) => {
                 let status = self.status(server, None)?;
@@ -173,8 +163,7 @@ impl McpController {
         F: FnOnce(&mut McpConfigState) -> Result<bool, crate::error::ConfigError>,
     {
         let mut staged = self.state.clone();
-        let changed =
-            mutate(&mut staged).map_err(|_config_error| McpControlError::Configuration)?;
+        let changed = mutate(&mut staged).map_err(McpControlError::configuration)?;
         self.commit_staged(staged, changed).await
     }
 
@@ -182,7 +171,7 @@ impl McpController {
         let mut staged = self.state.clone();
         let changed = staged
             .reload_disk()
-            .map_err(|_config_error| McpControlError::Configuration)?;
+            .map_err(McpControlError::configuration)?;
         self.commit_staged(staged, changed).await
     }
 
@@ -195,75 +184,26 @@ impl McpController {
         let mut staged = self.state.clone();
         let change = staged
             .persist(scope, &mutation)
-            .map_err(|_config_error| McpControlError::Configuration)?;
+            .map_err(McpControlError::configuration)?;
         if !change.changed() {
             return Ok(self.mutation_response(false));
         }
         let candidate = match self.candidate(&staged, None).await {
             Ok(candidate) => candidate,
             Err(error) => {
-                staged
-                    .persist(scope, &previous)
-                    .map_err(|_rollback_error| McpControlError::Rollback)?;
+                if let Err(rollback) = staged.persist(scope, &previous) {
+                    return Err(McpControlError::rollback(error, rollback));
+                }
                 return Err(error);
             }
         };
-        if self.publish(candidate).is_err() {
-            staged
-                .persist(scope, &previous)
-                .map_err(|_rollback_error| McpControlError::Rollback)?;
-            return Err(McpControlError::Publication);
+        if let Err(error) = self.publish(candidate) {
+            if let Err(rollback) = staged.persist(scope, &previous) {
+                return Err(McpControlError::rollback(error, rollback));
+            }
+            return Err(error);
         }
         self.state = staged;
-        Ok(self.mutation_response(true))
-    }
-
-    async fn change_approval(
-        &mut self,
-        name: &str,
-        approve: bool,
-    ) -> Result<McpControlResponse, McpControlError> {
-        let snapshot = self
-            .state
-            .snapshot()
-            .map_err(|_config_error| McpControlError::Configuration)?;
-        let server = snapshot
-            .get(name)
-            .filter(|server| server.source().is_project_controlled())
-            .ok_or(McpControlError::NotProjectControlled)?;
-        let current = self.approval_state(server)?;
-        let desired = if approve {
-            McpApprovalState::Approved
-        } else {
-            McpApprovalState::Pending
-        };
-        if current == desired {
-            return Ok(self.mutation_response(false));
-        }
-        let candidate = self.candidate(&self.state, Some((name, desired))).await?;
-        let resolved = resolved_server(server);
-        let approvals = self.approvals.as_ref().ok_or(McpControlError::Approval)?;
-        if approve {
-            approvals
-                .approve(self.state.project_root(), &resolved)
-                .map_err(|_approval_error| McpControlError::Approval)?;
-        } else {
-            approvals
-                .revoke(self.state.project_root(), name)
-                .map_err(|_approval_error| McpControlError::Approval)?;
-        }
-        let (generation, runtime) = candidate.into_parts();
-        if self.generations.publish(Arc::clone(&generation)).is_err() {
-            let rollback = if approve {
-                approvals.revoke(self.state.project_root(), name)
-            } else {
-                approvals.approve(self.state.project_root(), &resolved)
-            };
-            rollback.map_err(|_rollback_error| McpControlError::Rollback)?;
-            return Err(McpControlError::Publication);
-        }
-        self.active_runtime.replace(generation, runtime);
-        self.reconcile_watchers();
         Ok(self.mutation_response(true))
     }
 
@@ -304,10 +244,8 @@ impl McpController {
         let revision = previous
             .revision()
             .checked_add(1)
-            .ok_or(McpControlError::Publication)?;
-        let snapshot = state
-            .snapshot()
-            .map_err(|_config_error| McpControlError::Configuration)?;
+            .ok_or_else(McpControlError::revision_overflow)?;
+        let snapshot = state.snapshot().map_err(McpControlError::configuration)?;
         let active_servers = self.active_servers(&snapshot, approval_override)?;
         let candidate = self
             .builder
@@ -318,9 +256,14 @@ impl McpController {
                 active_servers,
             })
             .await
-            .map_err(|_candidate_error| McpControlError::Candidate)?;
+            .map_err(McpControlError::candidate)?;
         if candidate.generation.revision() != revision {
-            return Err(McpControlError::Candidate);
+            return Err(McpControlError::candidate(
+                super::McpCandidateError::RevisionMismatch {
+                    expected: revision,
+                    actual: candidate.generation.revision(),
+                },
+            ));
         }
         Ok(candidate)
     }
@@ -351,8 +294,7 @@ impl McpController {
         let runtime = if eligible {
             active_runtime
                 .runtime()
-                .server_status(server.name())
-                .cloned()
+                .reported_server_status(server.name())
         } else {
             None
         };
@@ -370,33 +312,6 @@ impl McpController {
         })
     }
 
-    fn approval(
-        &self,
-        server: &EffectiveMcpServer,
-        approval_override: Option<(&str, McpApprovalState)>,
-    ) -> Result<McpApprovalState, McpControlError> {
-        approval_override
-            .filter(|(name, _)| *name == server.name())
-            .map(|(_, state)| state)
-            .map_or_else(|| self.approval_state(server), Ok)
-    }
-
-    fn approval_state(
-        &self,
-        server: &EffectiveMcpServer,
-    ) -> Result<McpApprovalState, McpControlError> {
-        if !server.source().is_project_controlled() {
-            return Ok(McpApprovalState::NotRequired);
-        }
-        self.approvals
-            .as_ref()
-            .map_or(Ok(McpApprovalState::Pending), |approvals| {
-                approvals
-                    .state(self.state.project_root(), &resolved_server(server))
-                    .map_err(|_approval_error| McpControlError::Approval)
-            })
-    }
-
     fn mutation_response(&self, changed: bool) -> McpControlResponse {
         McpControlResponse::Mutation(McpMutationResult {
             changed,
@@ -408,7 +323,7 @@ impl McpController {
         let (generation, runtime) = candidate.into_parts();
         self.generations
             .publish(Arc::clone(&generation))
-            .map_err(|_publish_error| McpControlError::Publication)?;
+            .map_err(McpControlError::publication)?;
         self.active_runtime.replace(generation, runtime);
         self.reconcile_watchers();
         Ok(())
@@ -452,21 +367,5 @@ fn persistent_restore(
             definition: definition.clone(),
         },
         None => McpPersistentMutation::Remove { name: name.clone() },
-    }
-}
-
-fn resolved_server(server: &EffectiveMcpServer) -> ResolvedMcpServer {
-    let source = match server.source() {
-        McpConfigLayer::User => McpConfigSource::User,
-        McpConfigLayer::SharedProject | McpConfigLayer::WorkspaceLocal => McpConfigSource::Project,
-        McpConfigLayer::PrivateLocal => McpConfigSource::Local,
-        McpConfigLayer::Cli => McpConfigSource::Cli,
-        McpConfigLayer::Session => McpConfigSource::Session,
-    };
-    ResolvedMcpServer {
-        name: server.name().to_owned(),
-        source,
-        definition: server.definition().clone(),
-        fingerprint: server.fingerprint().clone(),
     }
 }

@@ -33,10 +33,10 @@ impl McpConfigLayer {
         Self::Session,
     ];
 
-    /// Whether this layer is controlled by project files.
+    /// Whether this layer requires remembered approval before activation.
     #[must_use]
-    pub const fn is_project_controlled(self) -> bool {
-        matches!(self, Self::SharedProject | Self::WorkspaceLocal)
+    pub const fn requires_remembered_approval(self) -> bool {
+        matches!(self, Self::SharedProject)
     }
 }
 
@@ -193,10 +193,10 @@ pub enum McpPersistentScope {
 }
 
 impl McpPersistentScope {
-    /// Whether a persisted definition remains subject to project approval.
+    /// Whether a persisted definition requires remembered approval.
     #[must_use]
-    pub const fn requires_project_approval(self) -> bool {
-        matches!(self, Self::SharedProject | Self::WorkspaceLocal)
+    pub const fn requires_remembered_approval(self) -> bool {
+        matches!(self, Self::SharedProject)
     }
 }
 
@@ -259,10 +259,10 @@ impl McpPersistentChange {
         self.changed
     }
 
-    /// Whether the resulting layer remains subject to explicit approval.
+    /// Whether the resulting layer requires remembered approval.
     #[must_use]
-    pub const fn requires_project_approval(&self) -> bool {
-        self.scope.requires_project_approval()
+    pub const fn requires_remembered_approval(&self) -> bool {
+        self.scope.requires_remembered_approval()
     }
 }
 

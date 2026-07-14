@@ -585,7 +585,7 @@ checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
 [[package]]
 name = "claude_runner"
 version = "0.1.0"
-source = "git+https://github.com/tomWhiting/claude-runner#643a1166f06a1f42961acf442f654670fbe9da22"
+source = "git+https://github.com/tomWhiting/claude-runner?rev=643a1166f06a1f42961acf442f654670fbe9da22#643a1166f06a1f42961acf442f654670fbe9da22"
 dependencies = [
  "diffy",
  "serde",
@@ -3611,6 +3611,7 @@ dependencies = [
 name = "norn-tui"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "chrono",
  "comfy-table",
  "diffy",

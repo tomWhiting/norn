@@ -41,12 +41,12 @@ pub enum LiveMcpCommand {
         /// Logical configured server name.
         name: String,
     },
-    /// Approve the effective project-controlled definition.
+    /// Approve the effective shared-project definition.
     Approve {
         /// Logical configured server name.
         name: String,
     },
-    /// Revoke remembered approval for one project server name.
+    /// Revoke remembered approval for one shared-project server name.
     Revoke {
         /// Logical configured server name.
         name: String,
@@ -56,7 +56,7 @@ pub enum LiveMcpCommand {
 }
 
 /// Safe command parse or execution failure.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
+#[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 pub enum LiveMcpCommandError {
     /// The command does not match the documented grammar.
     #[error("invalid /mcp command; use /mcp help for session-scoped command syntax")]
@@ -273,13 +273,13 @@ pub async fn execute_live_mcp_command(
             &handle.session_disable(name).await.map_err(control)?,
         )),
         LiveMcpCommand::Approve { name } => Ok(mutation_lines(
-            "project definition approved",
-            "project approval persisted",
+            "shared-project definition approved",
+            "shared-project approval persisted",
             &handle.approve(name).await.map_err(control)?,
         )),
         LiveMcpCommand::Revoke { name } => Ok(mutation_lines(
-            "project definition approval revoked",
-            "project approval persisted",
+            "shared-project definition approval revoked",
+            "shared-project approval persisted",
             &handle.revoke(name).await.map_err(control)?,
         )),
         LiveMcpCommand::Reload => Ok(mutation_lines(
@@ -426,7 +426,7 @@ const fn runtime_label(state: Option<McpRuntimeServerState>) -> &'static str {
 /// Help text shared by CLI and TUI surfaces.
 pub const LIVE_MCP_HELP: &[&str] = &[
     "Definition add/remove/enable/disable changes are session-scoped.",
-    "Approve/revoke update the project approval ledger; reload rereads disk settings.",
+    "Approve/revoke update the shared-project approval ledger; reload rereads disk settings.",
     "Use `norn mcp` to persist definition changes.",
     "/mcp list | inspect NAME | remove NAME | enable NAME | disable NAME",
     "/mcp add NAME stdio COMMAND [ARG ...] [--env KEY=VALUE] [-- ARG ...]",

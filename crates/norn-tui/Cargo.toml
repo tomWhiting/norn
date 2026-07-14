@@ -30,6 +30,7 @@ unicode-width = "0.2"
 uuid = { workspace = true }
 
 [dev-dependencies]
+async-trait = { workspace = true }
 futures-util = { workspace = true }
 portable-pty = { workspace = true }
 tempfile = { workspace = true }

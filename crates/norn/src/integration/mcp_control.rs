@@ -15,6 +15,10 @@ use crate::tool::{ToolGeneration, ToolGenerationStore};
 use super::McpRuntimeStore;
 use super::mcp_runtime::{McpRuntime, McpRuntimeServerState};
 
+#[path = "mcp_control_error.rs"]
+mod error;
+pub use error::{McpCandidateError, McpControlError, McpControlErrorKind};
+
 #[path = "mcp_control_actor.rs"]
 mod actor;
 #[path = "mcp_control_watch.rs"]
@@ -123,11 +127,6 @@ impl fmt::Debug for McpActivationRequest {
     }
 }
 
-/// Redacted failure from an injected candidate builder.
-#[derive(Clone, Copy, Debug, thiserror::Error)]
-#[error("the MCP runtime candidate could not be built")]
-pub struct McpCandidateError;
-
 /// Builds a complete immutable generation without publishing it.
 #[async_trait]
 pub trait McpCandidateBuilder: Send + Sync {
@@ -194,35 +193,6 @@ pub enum McpControlResponse {
     Mutation(McpMutationResult),
 }
 
-/// Redacted controller failure categories.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, thiserror::Error)]
-pub enum McpControlError {
-    /// The actor is no longer available.
-    #[error("the MCP control plane is unavailable")]
-    Unavailable,
-    /// Configuration validation, loading, or persistence failed.
-    #[error("the MCP configuration operation failed")]
-    Configuration,
-    /// Approval storage could not be read or changed.
-    #[error("the MCP approval operation failed")]
-    Approval,
-    /// The requested server is not an effective project-controlled definition.
-    #[error("the MCP server is not eligible for project approval")]
-    NotProjectControlled,
-    /// Candidate construction failed; the current generation remains active.
-    #[error("the MCP runtime candidate could not be built")]
-    Candidate,
-    /// Candidate publication violated a generation invariant.
-    #[error("the MCP runtime candidate could not be published")]
-    Publication,
-    /// A compensating persistent operation failed.
-    #[error("the MCP configuration rollback failed")]
-    Rollback,
-    /// The actor returned a response variant that violates its protocol.
-    #[error("the MCP control plane returned an invalid response")]
-    Protocol,
-}
-
 /// Cloneable programmatic control surface suitable for an `AgentHandle`.
 #[derive(Clone)]
 pub struct McpControlHandle {
@@ -238,8 +208,8 @@ impl McpControlHandle {
         generations: Arc<ToolGenerationStore>,
         active_runtime: Arc<McpRuntimeStore>,
     ) -> Result<Self, McpControlError> {
-        let runtime = tokio::runtime::Handle::try_current()
-            .map_err(|_runtime_error| McpControlError::Unavailable)?;
+        let runtime =
+            tokio::runtime::Handle::try_current().map_err(McpControlError::unavailable)?;
         // The actor owns one command and permits exactly one queued successor.
         let (sender, receiver) = mpsc::channel(1);
         let weak_sender = sender.downgrade();
@@ -259,7 +229,9 @@ impl McpControlHandle {
     pub async fn list(&self) -> Result<Vec<McpServerStatus>, McpControlError> {
         match self.request(Command::List).await? {
             McpControlResponse::List(statuses) => Ok(statuses),
-            _ => Err(McpControlError::Protocol),
+            _ => Err(McpControlError::protocol(
+                "list request received a non-list response",
+            )),
         }
     }
 
@@ -267,7 +239,9 @@ impl McpControlHandle {
     pub async fn inspect(&self, name: String) -> Result<McpServerDetails, McpControlError> {
         match self.request(Command::Inspect(name)).await? {
             McpControlResponse::Inspect(details) => Ok(*details),
-            _ => Err(McpControlError::Protocol),
+            _ => Err(McpControlError::protocol(
+                "inspect request received a non-inspect response",
+            )),
         }
     }
 
@@ -375,7 +349,9 @@ impl McpControlHandle {
     async fn mutation(&self, command: Command) -> Result<McpMutationResult, McpControlError> {
         match self.request(command).await? {
             McpControlResponse::Mutation(result) => Ok(result),
-            _ => Err(McpControlError::Protocol),
+            _ => Err(McpControlError::protocol(
+                "mutation request received a non-mutation response",
+            )),
         }
     }
 
@@ -384,10 +360,8 @@ impl McpControlHandle {
         self.sender
             .send(Envelope { command, reply })
             .await
-            .map_err(|_send_error| McpControlError::Unavailable)?;
-        receiver
-            .await
-            .map_err(|_receive_error| McpControlError::Unavailable)?
+            .map_err(McpControlError::unavailable)?;
+        receiver.await.map_err(McpControlError::unavailable)?
     }
 }
 
@@ -419,6 +393,24 @@ pub(super) enum Command {
         instance_id: u64,
         revision: u64,
     },
+}
+
+impl Command {
+    pub(super) const fn operation(&self) -> &'static str {
+        match self {
+            Self::List => "list",
+            Self::Inspect(_) => "inspect",
+            Self::SessionAdd { .. } => "session_add",
+            Self::SessionRemove(_) => "session_remove",
+            Self::SessionDisable(_) => "session_disable",
+            Self::SessionEnable(_) => "session_enable",
+            Self::Persist { .. } => "persist",
+            Self::Approve(_) => "approve",
+            Self::Revoke(_) => "revoke",
+            Self::Reload => "reload",
+            Self::RefreshTools { .. } => "refresh_tools",
+        }
+    }
 }
 
 pub(super) struct Envelope {

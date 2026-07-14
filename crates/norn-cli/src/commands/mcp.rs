@@ -159,6 +159,8 @@ fn run_connect(uri: &str) -> ExitCode {
         env: HashMap::new(),
         headers: HashMap::new(),
         working_dir: None,
+        max_inbound_message_bytes: norn::integration::DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+        request_timeout_ms: None,
     };
 
     let rt = match tokio::runtime::Runtime::new() {

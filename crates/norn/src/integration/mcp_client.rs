@@ -11,44 +11,49 @@
 //! - `tools/call` — `{ name, arguments }` → `{ content: [...], isError }`.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::Duration;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
-use async_trait::async_trait;
 use serde::Serialize;
 use tokio::sync::Mutex;
 
-use crate::error::IntegrationError;
+use crate::error::{IntegrationError, McpRemoteError};
 use crate::tool::registry::ToolRegistry;
 use crate::tool::traits::Tool;
 
 use super::mcp_protocol::{ClientProtocolState, McpRoot};
 use super::mcp_proxy::McpProxyTool;
+#[cfg(test)]
+use super::mcp_types::DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES;
 pub use super::mcp_types::{McpServerConfig, McpToolDef, McpTransport};
 use super::mcp_wire::{InitializeResult, JsonRpcNotification, JsonRpcRequest, ToolsListResult};
 pub(crate) use super::mcp_wire::{JsonRpcResponse, ToolCallContent, ToolsCallResult};
 
+#[path = "mcp_client_transport.rs"]
+mod transport_support;
+pub(crate) use transport_support::Transport;
+use transport_support::{ClientRequestGuard, unusable_client_error};
+
+#[path = "mcp_client_schema.rs"]
+mod tool_schema;
+use tool_schema::validate_discovered_tools;
+
 /// Default protocol version sent in the `initialize` handshake.
 pub const MCP_PROTOCOL_VERSION: &str = "2025-11-25";
 
-/// Wall-clock budget for any single MCP request.
-pub(super) const MCP_REQUEST_TIMEOUT: Duration = Duration::from_secs(30);
-
 static CLIENT_INSTANCE: AtomicU64 = AtomicU64::new(1);
 
-// -- Transport implementations --------------------------------------------
-
-#[async_trait]
-pub(crate) trait Transport: Send + Sync {
-    async fn request(
-        &self,
-        payload: String,
-        request_id: u64,
-    ) -> Result<JsonRpcResponse, IntegrationError>;
-    async fn notify(&self, payload: String) -> Result<(), IntegrationError>;
-    fn supports_protocol_version(&self, version: &str) -> bool;
-    async fn set_protocol_version(&self, _version: &str) {}
-    async fn invalidate(&self) {}
+fn validate_client_settings(config: &McpServerConfig) -> Result<(), IntegrationError> {
+    if config.max_inbound_message_bytes == 0 {
+        return Err(IntegrationError::McpInvalidClientSetting {
+            setting: "max_inbound_message_bytes",
+        });
+    }
+    if config.request_timeout_ms == Some(0) {
+        return Err(IntegrationError::McpInvalidClientSetting {
+            setting: "request_timeout_ms",
+        });
+    }
+    Ok(())
 }
 
 // -- McpClient ------------------------------------------------------------
@@ -64,6 +69,7 @@ pub struct McpClientInner {
     server_name: String,
     protocol: Arc<ClientProtocolState>,
     instance_id: u64,
+    live: AtomicBool,
 }
 
 impl McpClientInner {
@@ -86,28 +92,33 @@ impl McpClientInner {
         let payload = serde_json::to_string(&req).map_err(|e| IntegrationError::McpError {
             reason: format!("serialize request: {e}"),
         })?;
-        let resp = self.transport.request(payload, id).await?;
+        if !self.is_live() {
+            return Err(unusable_client_error());
+        }
+        let mut request = ClientRequestGuard::new(&self.live);
+        let response = self.transport.request(payload, id).await;
+        request.finish_if(response.is_ok());
+        let resp = response?;
         if resp.jsonrpc.as_deref() != Some("2.0") {
-            self.transport.invalidate().await;
+            self.invalidate().await;
             return Err(IntegrationError::McpError {
                 reason: "MCP response did not declare JSON-RPC 2.0".to_owned(),
             });
         }
         if resp.id.as_ref() != Some(&serde_json::json!(id)) {
-            self.transport.invalidate().await;
+            self.invalidate().await;
             return Err(IntegrationError::McpError {
                 reason: format!("JSON-RPC response id did not match request {id}"),
             });
         }
         if resp.result.is_some() == resp.error.is_some() {
+            self.invalidate().await;
             return Err(IntegrationError::McpError {
                 reason: "MCP response must contain exactly one of result or error".to_owned(),
             });
         }
         if let Some(err) = resp.error {
-            return Err(IntegrationError::McpError {
-                reason: format!("server error ({}): {}", err.code, err.message),
-            });
+            return Err(McpRemoteError::new(err.code, err.message).into());
         }
         resp.result.ok_or_else(|| IntegrationError::McpError {
             reason: "missing result in JSON-RPC response".to_owned(),
@@ -135,7 +146,13 @@ impl McpClientInner {
             serde_json::to_string(&notification).map_err(|error| IntegrationError::McpError {
                 reason: format!("serialize notification: {error}"),
             })?;
-        self.transport.notify(payload).await
+        if !self.is_live() {
+            return Err(unusable_client_error());
+        }
+        let mut request = ClientRequestGuard::new(&self.live);
+        let result = self.transport.notify(payload).await;
+        request.finish_if(result.is_ok());
+        result
     }
 
     pub(crate) async fn set_roots(&self, roots: Vec<McpRoot>) -> Result<bool, IntegrationError> {
@@ -156,6 +173,15 @@ impl McpClientInner {
             return Err(error);
         }
         Ok(true)
+    }
+
+    fn is_live(&self) -> bool {
+        self.live.load(Ordering::Acquire) && self.transport.is_live()
+    }
+
+    async fn invalidate(&self) {
+        self.live.store(false, Ordering::Release);
+        self.transport.invalidate().await;
     }
 }
 
@@ -192,6 +218,7 @@ impl McpClient {
         config: McpServerConfig,
         roots: Vec<McpRoot>,
     ) -> Result<Self, IntegrationError> {
+        validate_client_settings(&config)?;
         let protocol = Arc::new(ClientProtocolState::new(roots));
         let transport: Box<dyn Transport> = match &config.transport {
             McpTransport::Stdio { command, args } => {
@@ -201,12 +228,16 @@ impl McpClient {
                     &config.env,
                     config.working_dir.as_deref(),
                     Arc::clone(&protocol),
+                    config.max_inbound_message_bytes,
+                    config.request_timeout_ms,
                 )?)
             }
             McpTransport::Http { url } => Box::new(super::mcp_http::HttpTransport::new(
                 url.clone(),
                 &config.headers,
                 Arc::clone(&protocol),
+                config.max_inbound_message_bytes,
+                config.request_timeout_ms,
             )?),
         };
 
@@ -217,6 +248,7 @@ impl McpClient {
             server_name: config.name.clone(),
             protocol,
             instance_id: CLIENT_INSTANCE.fetch_add(1, Ordering::Relaxed),
+            live: AtomicBool::new(true),
         });
 
         let init_params = serde_json::json!({
@@ -236,7 +268,7 @@ impl McpClient {
             .transport
             .supports_protocol_version(&initialized.protocol_version)
         {
-            inner.transport.invalidate().await;
+            inner.invalidate().await;
             return Err(IntegrationError::McpError {
                 reason: format!(
                     "MCP server selected unsupported protocol version '{}'",
@@ -265,11 +297,7 @@ impl McpClient {
             tools: Vec::new(),
         };
         if initialized.capabilities.tools.is_some() {
-            client.tools = tokio::time::timeout(MCP_REQUEST_TIMEOUT, client.discover_tools())
-                .await
-                .map_err(|_elapsed| IntegrationError::McpError {
-                    reason: "MCP tool discovery exceeded the request deadline".to_owned(),
-                })??;
+            client.tools = client.discover_tools().await?;
         }
         Ok(client)
     }
@@ -286,6 +314,7 @@ impl McpClient {
                 server_name: name.into(),
                 protocol: Arc::new(ClientProtocolState::new(Vec::new())),
                 instance_id: CLIENT_INSTANCE.fetch_add(1, Ordering::Relaxed),
+                live: AtomicBool::new(true),
             }),
             tools: Vec::new(),
         }
@@ -329,16 +358,14 @@ impl McpClient {
         self.inner.protocol.subscribe_tool_list_changes()
     }
 
-    pub(crate) fn instance_id(&self) -> u64 {
-        self.inner.instance_id
-    }
-
     pub(crate) async fn refreshed_tools(&self) -> Result<Self, IntegrationError> {
-        let tools = tokio::time::timeout(MCP_REQUEST_TIMEOUT, self.discover_tools())
-            .await
-            .map_err(|_elapsed| IntegrationError::McpError {
-                reason: "MCP tool discovery exceeded the request deadline".to_owned(),
-            })??;
+        let tools = match self.discover_tools().await {
+            Ok(tools) => tools,
+            Err(error) => {
+                self.inner.invalidate().await;
+                return Err(error);
+            }
+        };
         Ok(Self {
             inner: Arc::clone(&self.inner),
             tools,
@@ -427,48 +454,6 @@ impl McpClient {
     }
 }
 
-fn validate_discovered_tools(tools: &[McpToolDef]) -> Result<(), IntegrationError> {
-    let mut names = std::collections::HashSet::new();
-    for tool in tools {
-        if tool.name.trim().is_empty() {
-            return Err(IntegrationError::McpError {
-                reason: "MCP tools/list returned an empty tool name".to_owned(),
-            });
-        }
-        if !names.insert(tool.name.as_str()) {
-            return Err(IntegrationError::McpError {
-                reason: format!("MCP tools/list returned duplicate tool '{}'", tool.name),
-            });
-        }
-        if schema_uses_envelope_key(&tool.input_schema) {
-            return Err(IntegrationError::McpError {
-                reason: format!(
-                    "MCP tool '{}' uses a Norn-reserved tool envelope property",
-                    tool.name,
-                ),
-            });
-        }
-    }
-    Ok(())
-}
-
-fn schema_uses_envelope_key(schema: &serde_json::Value) -> bool {
-    let declares = |value: &serde_json::Value| {
-        value
-            .get("properties")
-            .and_then(serde_json::Value::as_object)
-            .is_some_and(|properties| {
-                properties.contains_key(crate::tool::envelope::ENVELOPE_DESCRIPTION_KEY)
-                    || properties.contains_key(crate::tool::envelope::ENVELOPE_METADATA_KEY)
-            })
-    };
-    declares(schema)
-        || schema
-            .get("oneOf")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|variants| variants.iter().any(declares))
-}
-
 #[cfg(test)]
 #[allow(
     clippy::unwrap_used,
@@ -494,6 +479,7 @@ fn schema_uses_envelope_key(schema: &serde_json::Value) -> bool {
 mod tests {
     use super::super::mcp_wire::JsonRpcError;
     use super::*;
+    use async_trait::async_trait;
     use std::collections::HashMap;
     use std::sync::Mutex as StdMutex;
 
@@ -543,6 +529,30 @@ mod tests {
     struct ScriptedTransport {
         responses: StdMutex<Vec<JsonRpcResponse>>,
         seen_methods: StdMutex<Vec<String>>,
+    }
+
+    struct CancellationTransport {
+        started: Arc<tokio::sync::Notify>,
+    }
+
+    #[async_trait]
+    impl Transport for CancellationTransport {
+        async fn request(
+            &self,
+            _payload: String,
+            _request_id: u64,
+        ) -> Result<JsonRpcResponse, IntegrationError> {
+            self.started.notify_one();
+            std::future::pending().await
+        }
+
+        async fn notify(&self, _payload: String) -> Result<(), IntegrationError> {
+            Ok(())
+        }
+
+        fn supports_protocol_version(&self, _version: &str) -> bool {
+            true
+        }
     }
 
     #[async_trait]
@@ -629,6 +639,25 @@ mod tests {
         let beta = super::super::mcp_proxy::qualified_tool_name("test", "beta");
         assert!(registry.get(&alpha).is_some());
         assert!(registry.get(&beta).is_some());
+    }
+
+    #[tokio::test]
+    async fn cancelling_an_inflight_request_marks_the_client_dead() {
+        let started = Arc::new(tokio::sync::Notify::new());
+        let client = Arc::new(McpClient::from_transport(
+            "cancelled",
+            Box::new(CancellationTransport {
+                started: Arc::clone(&started),
+            }),
+        ));
+        let task_client = Arc::clone(&client);
+        let task = tokio::spawn(async move { task_client.discover_tools().await });
+        started.notified().await;
+        task.abort();
+        let joined = task.await;
+
+        assert!(joined.is_err_and(|error| error.is_cancelled()));
+        assert!(!client.is_live());
     }
 
     #[tokio::test]
@@ -759,6 +788,8 @@ mod tests {
                 "header-secret-sentinel".to_owned(),
             )]),
             working_dir: None,
+            max_inbound_message_bytes: DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES,
+            request_timeout_ms: Some(2500),
         };
 
         let rendered = format!("{config:?}");
@@ -767,6 +798,8 @@ mod tests {
         assert!(!rendered.contains("header-secret-sentinel"));
         assert!(rendered.contains("env_entries: 1"));
         assert!(rendered.contains("header_entries: 1"));
+        assert!(rendered.contains("max_inbound_message_bytes: 10485760"));
+        assert!(rendered.contains("request_timeout_ms: Some(2500)"));
     }
 
     #[tokio::test]
@@ -867,8 +900,11 @@ mod tests {
         let client = McpClient::from_transport("test", transport);
         let err = client.discover_tools().await.unwrap_err();
         match err {
-            IntegrationError::McpError { reason } => assert!(reason.contains("no such tool")),
-            other => panic!("expected McpError, got {other:?}"),
+            IntegrationError::McpRemote(remote) => {
+                assert_eq!(remote.code(), -32000);
+                assert_eq!(remote.untrusted_message(), "no such tool");
+            }
+            other => panic!("expected McpRemote, got {other:?}"),
         }
     }
 
@@ -891,8 +927,13 @@ mod tests {
             server_name: "test".to_owned(),
             protocol: Arc::new(ClientProtocolState::new(Vec::new())),
             instance_id: CLIENT_INSTANCE.fetch_add(1, Ordering::Relaxed),
+            live: AtomicBool::new(true),
         });
         let tool = McpProxyTool::new("test", def, inner);
         _assert_object_safe(Box::new(tool));
     }
 }
+
+#[cfg(test)]
+#[path = "mcp_client_protocol_tests.rs"]
+mod protocol_tests;

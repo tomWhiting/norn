@@ -13,7 +13,7 @@ use super::{
     validate_working_directory_authority,
 };
 use crate::error::{ConfigError, NornError};
-use crate::integration::{McpClientConfig, McpTransport};
+use crate::integration::{DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES, McpClientConfig, McpTransport};
 
 /// Settings source that supplied the effective server definition.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
@@ -23,7 +23,8 @@ pub enum McpConfigSource {
     User,
     /// Shared project `.norn/settings.json`.
     Project,
-    /// Private project settings under the user-owned Norn directory.
+    /// Direct private-local settings, including `.norn/settings.local.json`
+    /// and project settings stored under the user-owned Norn directory.
     Local,
     /// Explicit command-line definition.
     Cli,
@@ -72,7 +73,7 @@ impl ResolvedMcpServer {
         self.definition.enabled.unwrap_or(true)
     }
 
-    /// Normalized definition identity used by remembered project approval.
+    /// Normalized definition identity used by remembered shared-project approval.
     #[must_use]
     pub const fn fingerprint(&self) -> &McpDefinitionFingerprint {
         &self.fingerprint
@@ -111,6 +112,11 @@ impl ResolvedMcpServer {
             env: map_to_hash(self.definition.env.as_ref()),
             headers: map_to_hash(self.definition.headers.as_ref()),
             working_dir: Some(working_dir.to_path_buf()),
+            max_inbound_message_bytes: self
+                .definition
+                .max_inbound_message_bytes
+                .unwrap_or(DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES),
+            request_timeout_ms: self.definition.request_timeout_ms,
         }))
     }
 }
@@ -246,7 +252,7 @@ fn resolve_layers(
     overlay(
         &mut effective,
         layers.local.mcp_servers.as_ref(),
-        McpConfigSource::Project,
+        McpConfigSource::Local,
     )?;
     overlay(
         &mut effective,
@@ -316,6 +322,8 @@ struct NormalizedDefinition<'a> {
     url: Option<String>,
     env: &'a BTreeMap<String, String>,
     headers: BTreeMap<String, &'a str>,
+    max_inbound_message_bytes: usize,
+    request_timeout_ms: Option<u64>,
 }
 
 pub(crate) fn fingerprint(
@@ -349,7 +357,7 @@ pub(crate) fn fingerprint(
         .map(|(key, value)| (key.to_ascii_lowercase(), value.as_str()))
         .collect();
     let normalized = NormalizedDefinition {
-        domain: "norn-mcp-definition-v1",
+        domain: "norn-mcp-definition-v2",
         name,
         enabled: definition.enabled.unwrap_or(true),
         transport,
@@ -358,6 +366,10 @@ pub(crate) fn fingerprint(
         url,
         env: definition.env.as_ref().unwrap_or(&empty_map),
         headers,
+        max_inbound_message_bytes: definition
+            .max_inbound_message_bytes
+            .unwrap_or(DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES),
+        request_timeout_ms: definition.request_timeout_ms,
     };
     let encoded = serde_json::to_vec(&normalized).map_err(|error| ConfigError::InvalidConfig {
         reason: format!("failed to normalize mcp server '{name}': {error}"),

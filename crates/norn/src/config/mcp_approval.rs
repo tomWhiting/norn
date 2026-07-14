@@ -30,6 +30,11 @@ pub struct McpApprovalStore {
     log: PrivateLineLog,
 }
 
+/// Exact remembered value used to compensate a failed live publication.
+pub(crate) struct McpApprovalSnapshot {
+    fingerprint: Option<String>,
+}
+
 impl McpApprovalStore {
     /// Open the standard `$NORN_HOME/mcp` approval ledger.
     pub fn open() -> Result<Self, ConfigError> {
@@ -96,6 +101,44 @@ impl McpApprovalStore {
             server: server.to_owned(),
             revoked_at_ms: now_ms()?,
         })
+    }
+
+    pub(crate) fn snapshot(
+        &self,
+        project_root: &Path,
+        server: &str,
+    ) -> Result<McpApprovalSnapshot, ConfigError> {
+        let key = approval_key(project_root, server)?;
+        Ok(McpApprovalSnapshot {
+            fingerprint: self.load()?.get(&key).cloned(),
+        })
+    }
+
+    pub(crate) fn restore(
+        &self,
+        project_root: &Path,
+        server: &str,
+        snapshot: McpApprovalSnapshot,
+    ) -> Result<(), ConfigError> {
+        let project = project_id(project_root)?;
+        let event = match snapshot.fingerprint {
+            Some(fingerprint) => ApprovalEvent::Approve {
+                project,
+                server: server.to_owned(),
+                fingerprint,
+                approved_at_ms: now_ms()?,
+            },
+            None => ApprovalEvent::Revoke {
+                project,
+                server: server.to_owned(),
+                revoked_at_ms: now_ms()?,
+            },
+        };
+        self.append(&event)
+    }
+
+    pub(crate) const fn snapshot_is_approved(snapshot: &McpApprovalSnapshot) -> bool {
+        snapshot.fingerprint.is_some()
     }
 
     fn load(&self) -> Result<BTreeMap<ApprovalKey, String>, ConfigError> {

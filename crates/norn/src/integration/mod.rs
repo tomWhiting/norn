@@ -20,6 +20,7 @@ pub mod mcp_runtime;
 mod mcp_runtime_store;
 pub mod mcp_server;
 mod mcp_stdio;
+mod mcp_transport_bounds;
 mod mcp_types;
 mod mcp_wire;
 pub mod rhai;
@@ -59,6 +60,7 @@ pub use mcp_proxy::McpProxyTool;
 pub use mcp_runtime::McpRuntime;
 pub use mcp_runtime_store::{McpRuntimeSnapshot, McpRuntimeStore};
 pub use mcp_server::{McpServer, McpServerConfig};
+pub use mcp_types::DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES;
 pub use rhai::{
     AgentHandle, NornRhaiContext, build_norn_engine, eval_with_args, register_norn_builtins,
 };

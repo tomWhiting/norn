@@ -272,6 +272,8 @@ fn mcp_same_name_project_fully_replaces_user_definition() {
             url: None,
             env: None,
             headers: None,
+            max_inbound_message_bytes: Some(1024),
+            request_timeout_ms: Some(1000),
         },
     );
     let mut user = NornSettings {
@@ -290,6 +292,8 @@ fn mcp_same_name_project_fully_replaces_user_definition() {
             url: Some("https://example.com".to_owned()),
             env: None,
             headers: None,
+            max_inbound_message_bytes: Some(2048),
+            request_timeout_ms: None,
         },
     );
     project_map.insert(
@@ -302,6 +306,8 @@ fn mcp_same_name_project_fully_replaces_user_definition() {
             url: None,
             env: None,
             headers: None,
+            max_inbound_message_bytes: None,
+            request_timeout_ms: None,
         },
     );
     let mut project = NornSettings {

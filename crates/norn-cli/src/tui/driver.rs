@@ -113,7 +113,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
     let mcp = connect_mcp_runtime(&resolved.project_root, &resolved.mcp_servers).await?;
     for server in &mcp.pending_project_servers {
         eprintln!(
-            "norn: MCP server '{server}' is waiting for project approval; from {} run `norn mcp approve {server}`",
+            "norn: MCP server '{server}' is waiting for shared-project approval; from {} run `norn mcp approve {server}`",
             resolved.project_root.display(),
         );
     }

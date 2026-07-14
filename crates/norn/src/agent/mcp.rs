@@ -75,7 +75,9 @@ impl McpAttachment {
                 None
             }
         };
-        let runtimes = Arc::new(McpRuntimeStore::new(generations.snapshot(), self.runtime()));
+        let snapshot = state.snapshot()?;
+        let runtime = Arc::new(self.runtime().with_config_snapshot(&snapshot));
+        let runtimes = Arc::new(McpRuntimeStore::new(generations.snapshot(), runtime));
         context.insert_extension(Arc::clone(generations));
         context.insert_extension(Arc::clone(&runtimes));
         McpControlHandle::spawn(

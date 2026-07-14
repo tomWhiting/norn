@@ -6,6 +6,12 @@ use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
 
+/// Default maximum size of one inbound MCP JSON-RPC message or SSE event.
+///
+/// This matches the 10 MiB stdio buffer limit in the official MCP TypeScript
+/// SDK v1 while remaining overridable for each server definition.
+pub const DEFAULT_MCP_MAX_INBOUND_MESSAGE_BYTES: usize = 10 * 1024 * 1024;
+
 /// Transport for reaching an MCP server.
 #[derive(Clone)]
 pub enum McpTransport {
@@ -52,6 +58,11 @@ pub struct McpServerConfig {
     pub headers: HashMap<String, String>,
     /// Working directory supplied explicitly to a stdio server.
     pub working_dir: Option<PathBuf>,
+    /// Maximum accepted bytes for one inbound JSON-RPC message or SSE event.
+    pub max_inbound_message_bytes: usize,
+    /// Optional per-request deadline in milliseconds. `None` means no
+    /// client-side timeout.
+    pub request_timeout_ms: Option<u64>,
 }
 
 impl fmt::Debug for McpServerConfig {
@@ -63,6 +74,8 @@ impl fmt::Debug for McpServerConfig {
             .field("env_entries", &self.env.len())
             .field("header_entries", &self.headers.len())
             .field("working_dir_present", &self.working_dir.is_some())
+            .field("max_inbound_message_bytes", &self.max_inbound_message_bytes)
+            .field("request_timeout_ms", &self.request_timeout_ms)
             .finish()
     }
 }

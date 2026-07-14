@@ -19,7 +19,7 @@ pub(crate) struct JsonRpcNotification<'a, T: Serialize> {
     pub(crate) params: T,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize)]
 pub(crate) struct JsonRpcResponse {
     #[serde(default)]
     pub(crate) jsonrpc: Option<String>,
@@ -31,7 +31,7 @@ pub(crate) struct JsonRpcResponse {
     pub(crate) error: Option<JsonRpcError>,
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize)]
 pub(crate) struct JsonRpcError {
     pub(crate) code: i64,
     pub(crate) message: String,

@@ -94,3 +94,71 @@ async fn built_handle_controls_live_mcp_state_without_an_initial_runtime()
     })
     .await
 }
+
+#[tokio::test]
+#[serial_test::serial]
+async fn startup_runtime_is_reported_and_reused_by_the_first_live_mutation()
+-> Result<(), Box<dyn std::error::Error>> {
+    let home = tempfile::tempdir()?;
+    let working_dir = tempfile::tempdir()?;
+    temp_env::async_with_vars([("NORN_HOME", Some(home.path().as_os_str()))], async {
+        let definition = crate::config::McpServerSettings {
+            command: Some("/definitely/not/a/real/norn-mcp-server".to_owned()),
+            ..crate::config::McpServerSettings::default()
+        };
+        let state = crate::config::McpConfigState::from_layers(
+            working_dir.path().to_path_buf(),
+            [
+                std::collections::BTreeMap::from([("alpha".to_owned(), definition)]),
+                std::collections::BTreeMap::new(),
+                std::collections::BTreeMap::new(),
+                std::collections::BTreeMap::new(),
+            ],
+            std::collections::BTreeMap::new(),
+        )?;
+        let runtime = Arc::new(runtime_with_servers(&["alpha"]));
+        let selection = crate::model_catalog::default_selection();
+        let context_window =
+            crate::model_catalog::smallest_context_window_for_model(selection.model)
+                .ok_or("catalogued test model has no context window")?;
+        let provider: Arc<dyn Provider> = Arc::new(MockProvider::new(Vec::new()));
+        let agent = AgentBuilder::new(provider)
+            .model(selection.model)
+            .context_window_limit(context_window)
+            .working_dir(working_dir.path())
+            .mcp_runtime(runtime)
+            .mcp_config_state(state)
+            .build()?;
+        let control = agent
+            .handle()
+            .mcp_control()
+            .ok_or("live MCP control was not attached")?;
+
+        let startup = control.list().await?;
+        assert_eq!(startup.len(), 1);
+        assert!(startup[0].active);
+        assert_eq!(
+            startup[0].runtime_state,
+            Some(crate::integration::mcp_runtime::McpRuntimeServerState::Connected)
+        );
+
+        control
+            .session_add(
+                "off".to_owned(),
+                crate::config::McpServerSettings {
+                    enabled: Some(false),
+                    ..crate::config::McpServerSettings::default()
+                },
+            )
+            .await?;
+        let alpha = control
+            .list()
+            .await?
+            .into_iter()
+            .find(|status| status.name == "alpha")
+            .ok_or("alpha startup server disappeared")?;
+        assert!(alpha.active);
+        Ok::<(), Box<dyn std::error::Error>>(())
+    })
+    .await
+}

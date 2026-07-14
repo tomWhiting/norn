@@ -43,6 +43,7 @@ pub use mcp::{
     McpConfigSource, McpDefinitionFingerprint, McpRuntimeOverrides, ResolvedMcpServer,
     ResolvedMcpServers, ResolvedSettings, load_resolved_settings,
 };
+pub(crate) use mcp_approval::McpApprovalSnapshot;
 pub use mcp_approval::{McpApprovalState, McpApprovalStore};
 pub use mcp_local::project_local_mcp_settings_path;
 pub use mcp_state::{McpConfigState, McpDefinitions};

@@ -172,6 +172,7 @@ impl ExtensionRegistry {
             ExtTransport::Http { .. } => {
                 let client = reqwest::Client::builder()
                     .timeout(EXTENSION_TIMEOUT)
+                    .redirect(reqwest::redirect::Policy::none())
                     .pool_max_idle_per_host(0)
                     .build()
                     .map_err(|e| IntegrationError::McpError {
@@ -320,19 +321,25 @@ impl Tool for ExtensionProxyTool {
                     }
                 };
                 let url = format!("{}/tools/{}", base, self.def.name);
-                client
+                let response = client
                     .post(url)
                     .header("Content-Type", "application/json")
                     .json(&envelope.model_args)
                     .send()
                     .await
                     .map_err(|e| ToolError::ExecutionFailed {
-                        reason: format!("extension HTTP call failed: {e}"),
-                    })?
+                        reason: format!("extension HTTP call failed: {}", e.without_url()),
+                    })?;
+                if !response.status().is_success() {
+                    return Err(ToolError::ExecutionFailed {
+                        reason: format!("extension HTTP status {}", response.status()),
+                    });
+                }
+                response
                     .text()
                     .await
                     .map_err(|e| ToolError::ExecutionFailed {
-                        reason: format!("extension HTTP read failed: {e}"),
+                        reason: format!("extension HTTP read failed: {}", e.without_url()),
                     })?
             }
             ExtensionState::Stdio { io } => {
@@ -409,6 +416,8 @@ impl Tool for ExtensionProxyTool {
 mod tests {
     use super::*;
     use tempfile::NamedTempFile;
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
 
     #[test]
     fn load_manifest_parses_well_formed_json() {
@@ -501,5 +510,61 @@ mod tests {
         registry.connect(manifest).await.unwrap();
         let tools = registry.proxy_tools().await;
         let _boxed: Box<dyn Tool + Send + Sync> = Box::new(tools.into_iter().next().unwrap());
+    }
+
+    #[tokio::test]
+    async fn http_extension_refuses_redirects() -> Result<(), Box<dyn std::error::Error>> {
+        for status in [301_u16, 302, 303, 307, 308] {
+            let target = MockServer::start().await;
+            let origin = MockServer::start().await;
+            Mock::given(method("POST"))
+                .respond_with(
+                    ResponseTemplate::new(status).insert_header("location", target.uri().as_str()),
+                )
+                .mount(&origin)
+                .await;
+            let manifest = ExtensionManifest {
+                name: "redirect-fixture".to_owned(),
+                version: "1".to_owned(),
+                tools: vec![ExtToolDef {
+                    name: "echo".to_owned(),
+                    description: "redirect fixture".to_owned(),
+                    input_schema: serde_json::json!({"type": "object"}),
+                }],
+                transport: ExtTransport::Http {
+                    base_url: origin.uri(),
+                },
+            };
+            let registry = Arc::new(ExtensionRegistry::new());
+            registry.connect(manifest).await?;
+            let tools = registry.proxy_tools().await;
+            let tool = tools
+                .first()
+                .ok_or_else(|| std::io::Error::other("extension tool was not registered"))?;
+            let envelope = ToolEnvelope {
+                tool_call_id: "redirect-call".to_owned(),
+                tool_name: "echo".to_owned(),
+                model_args: serde_json::json!({}),
+                metadata: serde_json::Value::Null,
+            };
+
+            let error = tool
+                .execute(&envelope, &ToolContext::empty())
+                .await
+                .err()
+                .ok_or("extension redirect unexpectedly succeeded")?;
+            assert!(error.to_string().contains(&status.to_string()));
+            let origin_requests = origin
+                .received_requests()
+                .await
+                .ok_or("origin request recording is unavailable")?;
+            assert_eq!(origin_requests.len(), 1);
+            let target_requests = target
+                .received_requests()
+                .await
+                .ok_or("redirect target request recording is unavailable")?;
+            assert!(target_requests.is_empty());
+        }
+        Ok(())
     }
 }

@@ -336,6 +336,35 @@ fn dynamic_rebuild_rejects_stable_and_duplicate_provider_names() {
     );
 }
 
+#[test]
+fn dynamic_removal_preserves_the_exact_prior_selected_surface() {
+    let registry = registry_with_tools(&[
+        ("stable", ToolEffect::ReadOnly, false),
+        ("mcp_selected", ToolEffect::Unknown, true),
+        ("mcp_survivor", ToolEffect::ReadOnly, true),
+    ]);
+    let first = ToolGeneration::from_registry(&registry, 7);
+    let second = ToolGeneration::removing_dynamic_tools(
+        &first,
+        &std::collections::BTreeSet::from(["mcp_selected".to_owned()]),
+        8,
+    );
+
+    assert_eq!(
+        second.names().collect::<Vec<_>>(),
+        ["mcp_survivor", "stable"]
+    );
+    assert_eq!(second.revision(), 8);
+    assert_eq!(
+        second
+            .dynamic_prompt_entries()
+            .iter()
+            .map(|entry| entry.name.as_str())
+            .collect::<Vec<_>>(),
+        ["mcp_survivor"]
+    );
+}
+
 #[tokio::test]
 async fn published_dynamic_rebuild_keeps_the_old_request_lease_alive() -> TestResult {
     let registry = registry_with_tools(&[("mcp_old", ToolEffect::Unknown, true)]);

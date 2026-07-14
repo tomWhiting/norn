@@ -1,6 +1,6 @@
 //! Immutable, atomically published tool generations.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -79,6 +79,27 @@ impl ToolGeneration {
             Arc::clone(&previous.context),
             revision,
         ))
+    }
+
+    /// Remove an explicit subset of runtime-dynamic tools from a generation.
+    ///
+    /// Every tool outside `removed` retains its exact implementation `Arc`.
+    /// Stable tools are never removed, even if their names appear in the set.
+    /// This preserves a narrowed provider view instead of reconstructing it
+    /// from a broader runtime client pool.
+    #[must_use]
+    pub(crate) fn removing_dynamic_tools(
+        previous: &Self,
+        removed: &BTreeSet<String>,
+        revision: u64,
+    ) -> Self {
+        let tools = previous
+            .tools
+            .iter()
+            .filter(|(name, tool)| !(tool.runtime_dynamic() && removed.contains(*name)))
+            .map(|(name, tool)| (name.clone(), Arc::clone(tool)))
+            .collect();
+        Self::assemble(tools, Arc::clone(&previous.context), revision)
     }
 
     /// Derive a child-context view while retaining source tool instances.

@@ -378,6 +378,16 @@ fn validate_mcp_servers(settings: &NornSettings) -> Result<(), ConfigError> {
                 ),
             });
         }
+        if def.max_inbound_message_bytes == Some(0) {
+            return Err(ConfigError::InvalidConfig {
+                reason: format!("mcp server '{name}' max_inbound_message_bytes must be positive",),
+            });
+        }
+        if def.request_timeout_ms == Some(0) {
+            return Err(ConfigError::InvalidConfig {
+                reason: format!("mcp server '{name}' request_timeout_ms must be positive"),
+            });
+        }
         if def.enabled == Some(false) && def.command.is_none() && def.url.is_none() {
             continue;
         }
@@ -584,6 +594,8 @@ mod tests {
                 url: None,
                 env: None,
                 headers: None,
+                max_inbound_message_bytes: Some(1024),
+                request_timeout_ms: Some(5000),
             },
         );
         let s = NornSettings {
@@ -1167,6 +1179,8 @@ mod tests {
                 url: None,
                 env: None,
                 headers: None,
+                max_inbound_message_bytes: None,
+                request_timeout_ms: None,
             },
         );
         let s = NornSettings {
@@ -1198,6 +1212,8 @@ mod tests {
                 url: None,
                 env: None,
                 headers: None,
+                max_inbound_message_bytes: None,
+                request_timeout_ms: None,
             },
         );
         let s = NornSettings {
@@ -1220,6 +1236,8 @@ mod tests {
                 url: Some("https://example.com".to_owned()),
                 env: None,
                 headers: None,
+                max_inbound_message_bytes: None,
+                request_timeout_ms: None,
             },
         );
         let s = NornSettings {

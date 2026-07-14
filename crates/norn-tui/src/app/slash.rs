@@ -31,7 +31,7 @@ use crate::terminal::setup::TerminalGuard;
 
 use super::dispatch::write_error_line;
 use super::event_loop::RuntimeRefs;
-use super::mcp_slash::handle_mcp;
+use super::mcp_slash::{handle_mcp, mcp_exit_is_blocked, render_pending_mcp_exit};
 use super::slash_catalog::{
     EffortCommand, SlashClass, TuiBuiltinKind, classify_slash, effort_label,
     find_tui_builtin_command, parse_effort_command, tui_builtin_commands,
@@ -86,7 +86,14 @@ pub(super) async fn try_dispatch_slash(
             handle_compact(state, runtime, guard).await?;
             Ok(Some(SlashOutcome::Continue))
         }
-        TuiBuiltinKind::Exit | TuiBuiltinKind::Quit => Ok(Some(SlashOutcome::Exit)),
+        TuiBuiltinKind::Exit | TuiBuiltinKind::Quit => {
+            if mcp_exit_is_blocked(runtime.mcp_command.as_ref()) {
+                render_pending_mcp_exit(guard)?;
+                Ok(Some(SlashOutcome::Continue))
+            } else {
+                Ok(Some(SlashOutcome::Exit))
+            }
+        }
         TuiBuiltinKind::Help => {
             handle_help(guard)?;
             Ok(Some(SlashOutcome::Continue))
@@ -112,7 +119,12 @@ pub(super) async fn try_dispatch_slash(
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Mcp => {
-            handle_mcp(arg, runtime.mcp_control.as_ref(), guard).await?;
+            handle_mcp(
+                arg,
+                runtime.mcp_control.as_ref(),
+                &mut runtime.mcp_command,
+                guard,
+            )?;
             Ok(Some(SlashOutcome::Continue))
         }
         TuiBuiltinKind::Schema
@@ -551,12 +563,14 @@ fn clear_unsupported_service_tier(
 /// the provider, with its description, as a dim block in the scroll
 /// region.
 ///
-/// Pure read against [`RuntimeRefs::tools`]. The Phase 2 closure
-/// refactor in `norn-cli` would let this share the CLI's `/tools`
-/// surface; for now the TUI renders its own static table from the
-/// same data the provider sees.
+/// Reads the live executor generation when available, falling back to the
+/// startup definitions only for static executors.
 fn handle_tools(runtime: &RuntimeRefs, guard: &mut TerminalGuard) -> Result<(), TuiError> {
-    let block = format_tools_block(&runtime.tools);
+    let live = runtime.executor.execution_snapshot();
+    let tools = live.as_ref().map_or(runtime.tools.as_slice(), |snapshot| {
+        snapshot.definitions.as_ref()
+    });
+    let block = format_tools_block(tools);
     write_to_scroll(&block, guard.terminal_mut())?;
     guard.note_scroll_newlines(&block)?;
     guard.terminal_mut().flush()?;
