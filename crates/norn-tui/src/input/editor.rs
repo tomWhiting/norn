@@ -221,6 +221,20 @@ impl InputEditor {
         Ok(Some(text))
     }
 
+    /// Submit without recording the text in prompt history.
+    ///
+    /// Used for secret-bearing local control commands that never reach the
+    /// model and must not be persisted as user prompts.
+    pub fn submit_without_history(&mut self) -> Option<String> {
+        if self.is_empty() {
+            return None;
+        }
+        let text = self.text();
+        self.reset_buffer();
+        self.history.cancel_navigation();
+        Some(text)
+    }
+
     /// Handle Ctrl+C.
     ///
     /// On an empty buffer this returns [`InputAction::Exit`] for the

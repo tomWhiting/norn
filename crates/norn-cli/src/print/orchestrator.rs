@@ -59,7 +59,7 @@ use crate::cli::BuildError;
 use crate::cli::ExitCode;
 use crate::cli::{Cli, OutputFormat, Protocol};
 use crate::commands::slash::{
-    DispatchOutcome, apply_clear_request, apply_compact_request, dispatch_input,
+    DispatchOutcome, apply_clear_request, apply_compact_request, dispatch_input_with_mcp,
 };
 use crate::config::parse_inline_or_file;
 use crate::runtime::{
@@ -355,6 +355,7 @@ pub(super) async fn assemble_print_agent(cli: &Cli) -> Result<PrintAssembly, Pri
             builder = builder.mcp_runtime(runtime);
         }
     }
+    builder = builder.mcp_config_state(resolved.mcp_state);
     let agent = builder
         .execution_mode(ExecutionMode::Headless)
         .lsp_backend(build_lsp_backend().map_err(|error| PrintError::Agent(error.to_string()))?)
@@ -484,11 +485,7 @@ async fn orchestrate_run(
         parts.session_entry.as_ref().map(|entry| entry.id.clone());
     let pre_event_count = store.len();
 
-    // Build the slash-command surface and install the merged registry
-    // on the loop context so profile-registered commands still fire
-    // inside `run_agent_step`. The CLI builtins are intercepted by the
-    // dispatcher above before reaching the loop, so their stderr side
-    // effects never double-fire.
+    // Install the merged slash registry so profile commands still run in-loop.
     let (slash_state, slash_registry) = build_slash_state_with_schema(
         cli,
         SlashStateInputs {
@@ -505,10 +502,11 @@ async fn orchestrate_run(
     .map_err(|error| PrintError::Argument(error.to_string()))?;
     parts.loop_context.slash_commands = Some(slash_registry.clone());
 
-    let outcome = match dispatch_input(&prompt, &slash_registry) {
-        Ok(out) => out,
-        Err(err) => return Err(PrintError::Agent(err.to_string())),
-    };
+    let outcome =
+        match dispatch_input_with_mcp(&prompt, &slash_registry, parts.mcp_control.as_ref()).await {
+            Ok(out) => out,
+            Err(err) => return Err(PrintError::Agent(err.to_string())),
+        };
 
     // Apply action flags raised by the closures. /compact performs a
     // real `ContextEdits::auto_compact_keeping_recent_turns` against the

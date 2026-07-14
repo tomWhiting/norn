@@ -13,6 +13,8 @@ use std::path::PathBuf;
 
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+use super::mcp_args::McpCmd;
+
 /// Norn — agent runtime CLI: interactive REPL or one-shot headless execution.
 #[derive(Parser, Debug)]
 #[command(
@@ -445,39 +447,6 @@ pub enum AuthCmd {
     Status,
 }
 
-/// MCP subcommands (NC15).
-#[derive(Subcommand, Debug)]
-pub enum McpCmd {
-    /// Run Norn as an MCP server on stdio.
-    Serve,
-    /// Test connection to an MCP server by URI.
-    Connect {
-        /// MCP server URI.
-        #[arg(value_name = "URI")]
-        uri: String,
-    },
-    /// List effective configured MCP servers and their activation state.
-    List,
-    /// Approve one or every shared-project MCP definition.
-    Approve {
-        /// Server name to approve.
-        #[arg(value_name = "NAME", required_unless_present = "all")]
-        name: Option<String>,
-        /// Approve every effective shared-project server.
-        #[arg(long, conflicts_with = "name")]
-        all: bool,
-    },
-    /// Revoke approval for one or every shared-project MCP name.
-    Revoke {
-        /// Server name to revoke.
-        #[arg(value_name = "NAME", required_unless_present = "all")]
-        name: Option<String>,
-        /// Revoke every effective shared-project server.
-        #[arg(long, conflicts_with = "name")]
-        all: bool,
-    },
-}
-
 /// Arguments for the `completion` subcommand (NC17).
 #[derive(Args, Debug)]
 pub struct CompletionArgs {
@@ -619,6 +588,62 @@ mod tests {
             })
         ));
         Ok(())
+    }
+
+    #[test]
+    fn mcp_add_parses_scoped_stdio_definition() -> Result<(), clap::Error> {
+        let cli = Cli::try_parse_from([
+            "norn",
+            "mcp",
+            "add",
+            "docs",
+            "--scope",
+            "project",
+            "--command",
+            "npx",
+            "--arg",
+            "-y",
+            "--arg",
+            "@example/docs",
+            "--env",
+            "TOKEN=secret",
+        ])?;
+        assert!(matches!(
+            cli.command,
+            Some(Command::Mcp {
+                command: McpCmd::Add {
+                    name,
+                    scope: crate::cli::McpPersistenceScope::Project,
+                    command: Some(command),
+                    args,
+                    url: None,
+                    env,
+                    ..
+                },
+            }) if name == "docs"
+                && command == "npx"
+                && args == ["-y", "@example/docs"]
+                && env == ["TOKEN=secret"]
+        ));
+        Ok(())
+    }
+
+    #[test]
+    fn mcp_add_requires_exactly_one_transport() {
+        assert!(Cli::try_parse_from(["norn", "mcp", "add", "docs"]).is_err());
+        assert!(
+            Cli::try_parse_from([
+                "norn",
+                "mcp",
+                "add",
+                "docs",
+                "--command",
+                "server",
+                "--url",
+                "https://example.test/mcp",
+            ])
+            .is_err()
+        );
     }
 
     #[test]

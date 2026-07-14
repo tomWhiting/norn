@@ -18,6 +18,7 @@
 
 use norn::agent_loop::commands::{PreprocessResult, SlashCommandRegistry, preprocess_input};
 use norn::error::NornError;
+use norn::integration::{McpControlHandle, execute_live_mcp_command, parse_live_mcp_command};
 
 use super::registry::cli_builtin_names;
 
@@ -56,6 +57,32 @@ pub fn dispatch_input(
     } else {
         Ok(DispatchOutcome::PassToAgent(input.to_owned()))
     }
+}
+
+/// Dispatch one input, executing `/mcp` asynchronously against the live agent control plane.
+///
+/// Invalid syntax and redacted control-plane failures are local operator
+/// diagnostics, matching the other interactive built-ins rather than sending
+/// the command or its secret-bearing arguments to the model.
+pub async fn dispatch_input_with_mcp(
+    input: &str,
+    registry: &SlashCommandRegistry,
+    mcp_control: Option<&McpControlHandle>,
+) -> Result<DispatchOutcome, NornError> {
+    let Some((name, arguments)) = split_command(input) else {
+        return dispatch_input(input, registry);
+    };
+    if !name.eq_ignore_ascii_case("mcp") {
+        return dispatch_input(input, registry);
+    }
+    match parse_live_mcp_command(arguments) {
+        Ok(command) => match execute_live_mcp_command(mcp_control, command).await {
+            Ok(lines) => lines.iter().for_each(|line| eprintln!("{line}")),
+            Err(error) => eprintln!("norn: {error}"),
+        },
+        Err(error) => eprintln!("norn: {error}"),
+    }
+    Ok(DispatchOutcome::HandledLocally)
 }
 
 /// Mirror of libnorn's private `split_command` helper.
@@ -129,6 +156,14 @@ mod tests {
         let registry = build_slash_registry(&state, None);
         let outcome = dispatch_input("/help", &registry).unwrap();
         assert!(matches!(outcome, DispatchOutcome::HandledLocally));
+    }
+
+    #[tokio::test]
+    async fn live_mcp_help_is_handled_without_a_control_plane() {
+        let state = SlashState::new(empty_seed());
+        let registry = build_slash_registry(&state, None);
+        let outcome = dispatch_input_with_mcp("/mcp help", &registry, None).await;
+        assert!(matches!(outcome, Ok(DispatchOutcome::HandledLocally)));
     }
 
     #[test]

@@ -1,20 +1,9 @@
 //! CLI slash-command registry construction (NC-006 R1, R2–R12).
 //!
-//! [`build_slash_registry`] merges a (currently empty by design)
-//! profile-supplied [`SlashCommandRegistry`] with the CLI
-//! built-in commands from libnorn's shared slash catalog. Profile commands
-//! are registered first; CLI builtins overwrite same-named entries
-//! second so the CLI surface always wins on collision. After both
-//! sources have been applied the function populates the
+//! [`build_slash_registry`] merges profile commands with libnorn's shared
+//! built-in catalog. Builtins win collisions, then the merged roster populates
 //! [`SlashState::command_descriptions`](super::state::SlashState::command_descriptions)
 //! snapshot used by `/help`.
-//!
-//! Every closure returns `Ok(Vec::new())` — slash commands handled
-//! locally must not emit a user message to the model. The dispatcher
-//! ([`super::dispatch::dispatch_input`]) intercepts each CLI builtin by
-//! name and never reaches
-//! [`run_agent_step`](norn::agent_loop::runner::run_agent_step) for it, so
-//! the empty-expansion behaviour is purely a defensive invariant.
 
 use std::path::Path;
 use std::sync::Arc;
@@ -131,6 +120,7 @@ fn register_cli_builtins(registry: &mut SlashCommandRegistry, state: &SlashState
         let handler = match command.kind {
             BuiltinSlashKind::Help => help_handler(state),
             BuiltinSlashKind::Tools => tools_handler(state),
+            BuiltinSlashKind::Mcp => empty_handler(),
             BuiltinSlashKind::Model => model_handler(state),
             BuiltinSlashKind::Effort => effort_handler(state),
             BuiltinSlashKind::ServiceTier => service_tier_handler(state),
@@ -153,6 +143,10 @@ fn register_custom(registry: &mut SlashCommandRegistry, name: &str, handler: Cus
         name: name.to_owned(),
         handler: SlashCommandHandler::Custom { handler },
     });
+}
+
+fn empty_handler() -> CustomSlashHandler {
+    Arc::new(|_arg| Ok(Vec::new()))
 }
 
 // -- /help ------------------------------------------------------------------

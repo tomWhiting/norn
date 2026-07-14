@@ -601,6 +601,7 @@ async fn run_fixture_app() -> Result<(), Box<dyn std::error::Error>> {
         root_event_sender,
         agent_event_rx,
         root_inbound,
+        mcp_control: None,
     })
     .await?;
     Ok(())

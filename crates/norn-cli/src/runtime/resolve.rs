@@ -16,7 +16,7 @@ use std::time::Duration;
 use norn::agent_loop::{
     effort_label, reasoning_effort_supported_for_model, unsupported_reasoning_effort_message,
 };
-use norn::config::{McpRuntimeOverrides, NornSettings, ResolvedMcpServers};
+use norn::config::{McpConfigState, McpRuntimeOverrides, NornSettings, ResolvedMcpServers};
 use norn::profile::Profile;
 use norn::runtime_init::load_resolved_settings;
 
@@ -46,6 +46,8 @@ pub struct ResolvedInvocation {
     pub project_root: std::path::PathBuf,
     /// Effective MCP definitions with winning-layer provenance.
     pub mcp_servers: ResolvedMcpServers,
+    /// Reloadable MCP configuration with every raw source layer retained.
+    pub mcp_state: McpConfigState,
     /// The resolved profile with model / tool / reasoning overrides
     /// applied, ready to move into `builder_from_cli`.
     pub profile: Profile,
@@ -101,6 +103,8 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         cli: collect_extension_servers(&cli.extension)?,
         session: std::collections::BTreeMap::new(),
     };
+    let mcp_state = McpConfigState::load(&cwd, mcp_overrides.cli.clone())
+        .map_err(|error| BuildError::Argument(error.to_string()))?;
     let resolved_settings = load_resolved_settings(&cwd, &mcp_overrides)
         .map_err(|error| BuildError::Argument(error.to_string()))?;
     let settings = resolved_settings.settings;
@@ -189,6 +193,7 @@ pub fn resolve_invocation(cli: &Cli) -> Result<ResolvedInvocation, BuildError> {
         settings,
         project_root: resolved_settings.project_root,
         mcp_servers: resolved_settings.mcp_servers,
+        mcp_state,
         profile,
         applied,
         provider_kind: provider_selection.kind,

@@ -150,6 +150,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             builder = builder.mcp_runtime(runtime);
         }
     }
+    builder = builder.mcp_config_state(resolved.mcp_state);
     let agent = builder
         .execution_mode(ExecutionMode::Interactive)
         .lsp_workspace(Arc::clone(&lsp_workspace))
@@ -278,6 +279,7 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
         root_event_sender,
         agent_event_rx,
         root_inbound: parts.inbound.take(),
+        mcp_control: parts.mcp_control.take(),
     };
     startup_trace.mark("handoff_to_tui_app");
 

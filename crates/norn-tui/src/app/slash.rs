@@ -1,13 +1,7 @@
 //! TUI-local slash command dispatch.
 //!
-//! Handles the most-used builtins (`/new`, `/clear`, `/compact`, `/exit`,
-//! `/quit`, `/help`, `/model`, `/effort`, `/service-tier`, `/fast`, `/tools`)
-//! directly in the TUI without depending on `norn-cli`'s slash machinery. The dependency direction
-//! `norn-cli → norn-tui` rules out calling
-//! `norn_cli::commands::slash::dispatch_input` from here; Phase 2 will
-//! lift that machinery into a shared layer (most likely `libnorn`) and
-//! plumb a unified registry through
-//! [`crate::app::event_loop::TuiInputs`].
+//! Handles builtins directly in the TUI while sharing semantic parsers with
+//! libnorn where commands also exist on the CLI surface.
 //!
 //! Unknown slashes and profile-registered slash commands return [`None`]
 //! from [`try_dispatch_slash`] so the event loop's `Submit` arm falls
@@ -37,6 +31,7 @@ use crate::terminal::setup::TerminalGuard;
 
 use super::dispatch::write_error_line;
 use super::event_loop::RuntimeRefs;
+use super::mcp_slash::handle_mcp;
 use super::slash_catalog::{
     EffortCommand, SlashClass, TuiBuiltinKind, classify_slash, effort_label,
     find_tui_builtin_command, parse_effort_command, tui_builtin_commands,
@@ -116,6 +111,10 @@ pub(super) async fn try_dispatch_slash(
             handle_tools(runtime, guard)?;
             Ok(Some(SlashOutcome::Continue))
         }
+        TuiBuiltinKind::Mcp => {
+            handle_mcp(arg, runtime.mcp_control.as_ref(), guard).await?;
+            Ok(Some(SlashOutcome::Continue))
+        }
         TuiBuiltinKind::Schema
         | TuiBuiltinKind::Session
         | TuiBuiltinKind::Name
@@ -125,7 +124,7 @@ pub(super) async fn try_dispatch_slash(
 
 /// Write `message` to the scroll region wrapped in dim SGR, terminated
 /// with a newline so subsequent writes start on a fresh row.
-fn write_dim_line(message: &str, guard: &mut TerminalGuard) -> Result<(), TuiError> {
+pub(super) fn write_dim_line(message: &str, guard: &mut TerminalGuard) -> Result<(), TuiError> {
     let line = format!("\x1b[2m{message}\x1b[22m\n");
     write_to_scroll(&line, guard.terminal_mut())?;
     guard.note_scroll_newlines(&line)?;
@@ -729,6 +728,7 @@ mod tests {
                 ("service-tier", TuiBuiltinKind::ServiceTier),
                 ("fast", TuiBuiltinKind::Fast),
                 ("tools", TuiBuiltinKind::Tools),
+                ("mcp", TuiBuiltinKind::Mcp),
             ],
         );
     }

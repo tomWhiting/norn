@@ -1,19 +1,7 @@
 //! TUI event loop and `ProviderEvent` dispatch.
 //!
-//! [`run_app`] is the higher-level entry point that takes [`TuiInputs`]
-//! (already-constructed runtime objects from norn-cli) and drives the
-//! main `tokio::select!` loop.
-//!
-//! Note on the brief's R9 dependency direction: the literal
-//! `run_tui(cli: &Cli) -> ExitCode` from the brief cannot live in
-//! `norn-tui` because [`norn_cli::cli::Cli`] and
-//! [`norn_cli::cli::ExitCode`] are types in the `norn-cli` crate, and
-//! `norn-cli` already depends on `norn-tui` (one direction). Putting
-//! `Cli`/`ExitCode` into `norn-tui` would be a circular dependency. The
-//! practical resolution: [`run_app`] is the highest-level primitive in
-//! `norn-tui` taking pre-built runtime objects, and the actual
-//! `&Cli → ExitCode` entry point lives in `norn-cli/src/tui/driver.rs`
-//! which dispatches into [`run_app`].
+//! [`run_app`] drives pre-built [`TuiInputs`]. CLI construction stays in
+//! `norn-cli` to preserve the one-way `norn-cli` to `norn-tui` dependency.
 
 use std::io::Write as _;
 use std::sync::Arc;
@@ -31,11 +19,14 @@ use norn::agent_loop::config::AgentLoopConfig;
 use norn::agent_loop::inbound::InboundChannel;
 use norn::agent_loop::loop_context::LoopContext;
 use norn::agent_loop::runner::ToolExecutor;
+use norn::integration::McpControlHandle;
+use norn::integration::is_live_mcp_definition_input;
 use norn::provider::request::ToolDefinition;
 use norn::provider::traits::Provider;
 use norn::session::store::EventStore;
 
 use crate::TuiError;
+use crate::input::InputEditor;
 use crate::input::history::InputHistory;
 use crate::input::keybindings::{InputAction, map_key_event};
 use crate::render::fixed_panel::StatusBar;
@@ -91,20 +82,12 @@ pub struct TuiInputs {
     /// Session identifier used as the JSONL file stem. Paired with
     /// `data_dir` to locate the persistence file.
     pub session_id: Option<String>,
-    /// Deadline applied when a TUI-constructed
-    /// [`norn::session::SessionManager`] takes the inter-process
-    /// session-index lock (the `/new` rotation's session create). The
-    /// driver resolves it from settings / `-c index_lock_deadline_ms`;
-    /// without a bound, a wedged sibling process would freeze the
-    /// running TUI inside the slash handler. Consulted only when
-    /// persistence is enabled (`data_dir` is `Some`).
+    /// Deadline for TUI-created session index locks during `/new`.
     pub index_lock_deadline: std::time::Duration,
     /// Root agent's event sender — used by `run_turn` to tag root
     /// events on the shared broadcast channel.
     pub root_event_sender: norn::provider::agent_event::AgentEventSender,
-    /// Persistent receiver for agent events from all agents (root +
-    /// children). Lives across turns so child events arriving between
-    /// turns are not lost.
+    /// Persistent receiver for root and child agent events.
     pub agent_event_rx: broadcast::Receiver<norn::provider::agent_event::AgentEvent>,
     /// The root agent's inbound channel (W3.7), created by norn-cli's
     /// `install_agent_tool_infra`, which registered the sender half in
@@ -118,6 +101,8 @@ pub struct TuiInputs {
     /// context) — child→root sends then fail with the typed `NotRouted`
     /// reason, exactly the pre-wiring behavior.
     pub root_inbound: Option<InboundChannel>,
+    /// Session-scoped live MCP control for `/mcp`.
+    pub mcp_control: Option<McpControlHandle>,
 }
 
 /// Render-tick cadence — 120 fps for tear-free panel redraws and
@@ -187,6 +172,7 @@ pub async fn run_app(inputs: TuiInputs) -> Result<(), TuiError> {
         index_lock_deadline: inputs.index_lock_deadline,
         root_event_sender: inputs.root_event_sender,
         root_inbound: inputs.root_inbound,
+        mcp_control: inputs.mcp_control,
     };
 
     // The TUI owns the child-result receiver so it can surface final
@@ -286,6 +272,7 @@ pub(super) struct RuntimeRefs {
     /// reuses the router and the root identity, so the route stays
     /// valid across store swaps.
     pub(super) root_inbound: Option<InboundChannel>,
+    pub(super) mcp_control: Option<McpControlHandle>,
 }
 
 /// TUI-owned child-result delivery state.
@@ -387,6 +374,14 @@ enum InputOutcome {
     Continue,
     /// Exit cleanly.
     Exit,
+}
+
+fn submit_input(editor: &mut InputEditor) -> std::io::Result<Option<String>> {
+    if is_live_mcp_definition_input(&editor.text()) {
+        Ok(editor.submit_without_history())
+    } else {
+        editor.submit()
+    }
 }
 
 /// Map a terminal event to the appropriate handler.
@@ -505,7 +500,7 @@ async fn handle_action(
         }
         InputAction::Submit => {
             dismiss_autocomplete(state);
-            let text = state.input_editor.submit()?.unwrap_or_default();
+            let text = submit_input(&mut state.input_editor)?.unwrap_or_default();
             if text.trim().is_empty() {
                 return Ok(InputOutcome::Continue);
             }
@@ -618,6 +613,40 @@ mod tests {
         }];
         state.autocomplete = Some(AutocompletePopup::new_slash(candidates, "", 0));
         state.fixed_panel.set_autocomplete_popup(1);
+    }
+
+    #[test]
+    fn live_definition_secrets_never_reach_file_backed_history()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let directory = tempfile::tempdir()?;
+        let history_path = directory.path().join("history.txt");
+        let mut editor = InputEditor::new(InputHistory::load_from(&history_path));
+
+        for character in "ordinary prompt".chars() {
+            editor.insert_char(character);
+        }
+        assert_eq!(
+            submit_input(&mut editor)?,
+            Some("ordinary prompt".to_owned())
+        );
+
+        let secret_inputs = [
+            "/mcp add local stdio command --env TOKEN=env-secret",
+            "/mcp add remote http https://example.test/private --header Authorization=header-secret",
+        ];
+        for input in secret_inputs {
+            for character in input.chars() {
+                editor.insert_char(character);
+            }
+            assert_eq!(submit_input(&mut editor)?, Some(input.to_owned()));
+        }
+
+        let persisted = std::fs::read_to_string(history_path)?;
+        assert!(persisted.contains("ordinary prompt"));
+        assert!(!persisted.contains("env-secret"));
+        assert!(!persisted.contains("header-secret"));
+        assert!(!persisted.contains("example.test/private"));
+        Ok(())
     }
 
     #[test]

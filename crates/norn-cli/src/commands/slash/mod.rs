@@ -23,6 +23,6 @@ pub mod registry;
 pub mod state;
 
 pub use actions::{ClearOutcome, CompactOutcome, apply_clear_request, apply_compact_request};
-pub use dispatch::{DispatchOutcome, dispatch_input};
+pub use dispatch::{DispatchOutcome, dispatch_input, dispatch_input_with_mcp};
 pub use registry::{build_slash_registry, builtin_descriptions, cli_builtin_names};
 pub use state::SlashState;

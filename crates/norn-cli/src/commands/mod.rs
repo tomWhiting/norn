@@ -10,6 +10,7 @@ pub mod completion;
 pub mod doctor;
 pub mod init;
 pub mod mcp;
+mod mcp_config;
 pub mod session;
 pub mod session_export;
 pub mod slash;
