@@ -1,0 +1,1307 @@
+{
+  "added_line_policy_matches": {
+    "allow_or_expect_attr": [],
+    "empty_cfg_any": [],
+    "expect": [],
+    "ignore_attr": [],
+    "lint_cli_suppression": [],
+    "marker": [],
+    "panic": [],
+    "todo_macro": [],
+    "unimplemented": [],
+    "unwrap": []
+  },
+  "artifact_writer_candidates": [
+    {
+      "file": "crates/norn/build.rs",
+      "line": 40,
+      "text": "fs::write(out_dir.join(\"model_catalog_generated.rs\"), generated)"
+    },
+    {
+      "file": "crates/norn/src/config/mcp_patch.rs",
+      "line": 93,
+      "text": "let root = PrivateRoot::create(parent)"
+    },
+    {
+      "file": "crates/norn/src/config/mcp_patch.rs",
+      "line": 96,
+      "text": ".open_lock(Path::new(\".mcp-settings.lock\"))"
+    },
+    {
+      "file": "crates/norn/src/config/mcp_patch.rs",
+      "line": 134,
+      "text": "&& let Err(error) = self.root.remove_file(&temporary)"
+    },
+    {
+      "file": "crates/norn/src/config/mcp_patch.rs",
+      "line": 148,
+      "text": "let mut file = self.root.create_new(temporary).map_err(|error| {"
+    },
+    {
+      "file": "crates/norn/src/config/mcp_patch.rs",
+      "line": 161,
+      "text": ".rename(temporary, &self.file_name)"
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/blocking.rs",
+      "line": 43,
+      "text": "std::fs::create_dir_all(parent).map_err(|e| {"
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/blocking.rs",
+      "line": 47,
+      "text": "std::fs::write(path.as_str(), contents.as_str())"
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/blocking.rs",
+      "line": 101,
+      "text": "std::fs::create_dir_all(parent).map_err(|e| {"
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/blocking.rs",
+      "line": 105,
+      "text": "std::fs::write(path.as_str(), pretty)"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 132,
+      "text": "let root = PrivateRoot::create(root_path)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 134,
+      "text": "root.create_dir_all(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 136,
+      "text": "let file = root.create_new(relative)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 186,
+      "text": "let root = PrivateRoot::open(&root_path)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 189,
+      "text": "file.set_len(committed)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 241,
+      "text": "let root = PrivateRoot::open(&root_path)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 246,
+      "text": "file.set_len(committed)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 338,
+      "text": "let root = PrivateRoot::open(&root_path)?;"
+    },
+    {
+      "file": "crates/norn/src/process/spool.rs",
+      "line": 380,
+      "text": "active.file.set_len(committed).await?;"
+    },
+    {
+      "file": "crates/norn/src/provider/debug.rs",
+      "line": 227,
+      "text": "root.open_append_create(&relative)"
+    },
+    {
+      "file": "crates/norn/src/provider/debug.rs",
+      "line": 247,
+      "text": "let root = PrivateRoot::create(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 58,
+      "text": "std::fs::create_dir_all(codex_home)?;"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 63,
+      "text": "let mut options = OpenOptions::new();"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 64,
+      "text": "options.create_new(true).write(true);"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 77,
+      "text": "std::fs::rename(&tmp_path, &path)?;"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 82,
+      "text": "&& let Err(cleanup_err) = std::fs::remove_file(&tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/provider/openai_oauth/storage.rs",
+      "line": 98,
+      "text": "match std::fs::remove_file(path) {"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 54,
+      "text": "drop(PrivateRoot::create(parent)?);"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 72,
+      "text": "let root = PrivateRoot::open(&self.parent)?;"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 101,
+      "text": "let root = PrivateRoot::open(&self.parent)?;"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 110,
+      "text": "let mut file = root.open_append_create(&self.relative)?;"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 119,
+      "text": "let lock = root.open_lock(&self.lock_relative)?;"
+    },
+    {
+      "file": "crates/norn/src/resource/private_line_log.rs",
+      "line": 157,
+      "text": "file.set_len(u64::try_from(complete_len).map_err(io::Error::other)?)"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 37,
+      "text": "let data_root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 43,
+      "text": "data_root.create_dir_all(&store.artifacts_relative_dir())?;"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 65,
+      "text": "let data_root = PrivateRoot::open(&self.data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 66,
+      "text": "data_root.create_dir_all(&fetched_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/artifacts.rs",
+      "line": 70,
+      "text": "let mut file = data_root.create_new(&relative)?;"
+    },
+    {
+      "file": "crates/norn/src/session/branch.rs",
+      "line": 430,
+      "text": "let root = PrivateRoot::create(brancher.manager.data_dir())?;"
+    },
+    {
+      "file": "crates/norn/src/session/branch.rs",
+      "line": 527,
+      "text": "let root = PrivateRoot::create(brancher.manager.data_dir())?;"
+    },
+    {
+      "file": "crates/norn/src/session/manager.rs",
+      "line": 579,
+      "text": "let root = PrivateRoot::open(&self.data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/manager.rs",
+      "line": 580,
+      "text": "if let Err(error) = root.remove_file(&relative)"
+    },
+    {
+      "file": "crates/norn/src/session/manager.rs",
+      "line": 609,
+      "text": "if let Err(error) = root.remove_dir_all(children_dir)"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/event_reader.rs",
+      "line": 46,
+      "text": "let root = match PrivateRoot::open(data_dir) {"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 49,
+      "text": "let root = match PrivateRoot::open(data_dir) {"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 111,
+      "text": "let root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 130,
+      "text": "if let Err(err) = root.rename(tmp_path, final_path) {"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 142,
+      "text": "if let Err(cleanup_error) = root.remove_file(tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 159,
+      "text": "let file = root.create_new(tmp_path)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/index.rs",
+      "line": 304,
+      "text": "let file = root.open_append_create(Path::new(INDEX_FILE_NAME))?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 219,
+      "text": "let root = PrivateRoot::create(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 232,
+      "text": "root.create_dir_all(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 266,
+      "text": "let root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 292,
+      "text": "let root = PrivateRoot::open(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 308,
+      "text": "let root = PrivateRoot::open(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 350,
+      "text": "let mut tmp = root.create_new(&tmp_path)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 356,
+      "text": "let link_result = write_result.and_then(|()| root.publish_new(&tmp_path, path));"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 362,
+      "text": "if let Err(error) = root.remove_file(&tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/io.rs",
+      "line": 461,
+      "text": "let root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/lock.rs",
+      "line": 143,
+      "text": "let root = PrivateRoot::create(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/persistence/lock.rs",
+      "line": 144,
+      "text": "let file = root.open_lock(Path::new(INDEX_LOCK_FILE))?;"
+    },
+    {
+      "file": "crates/norn/src/session/spool.rs",
+      "line": 124,
+      "text": "let root = PrivateRoot::create(&self.data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/spool.rs",
+      "line": 127,
+      "text": "root.create_dir_all(&dir)?;"
+    },
+    {
+      "file": "crates/norn/src/session/spool.rs",
+      "line": 130,
+      "text": "let mut file = root.create_new(&path)?;"
+    },
+    {
+      "file": "crates/norn/src/session/spool.rs",
+      "line": 169,
+      "text": "let root = PrivateRoot::open(data_dir)?;"
+    },
+    {
+      "file": "crates/norn/src/system_prompt/environment.rs",
+      "line": 185,
+      "text": "let mut options = std::fs::OpenOptions::new();"
+    },
+    {
+      "file": "crates/norn/src/tools/bash/output.rs",
+      "line": 322,
+      "text": "let root = Arc::new(PrivateRoot::create(&norn_home)?);"
+    },
+    {
+      "file": "crates/norn/src/tools/bash/output.rs",
+      "line": 327,
+      "text": "root.create_dir_all(parent)?;"
+    },
+    {
+      "file": "crates/norn/src/tools/bash/output.rs",
+      "line": 330,
+      "text": "let mut log_file = File::from_std(root.create_new(&output_relative)?);"
+    },
+    {
+      "file": "crates/norn/src/tools/file_commit.rs",
+      "line": 45,
+      "text": "if let Err(cleanup) = tokio::fs::remove_file(&tmp).await"
+    },
+    {
+      "file": "crates/norn/src/tools/file_commit.rs",
+      "line": 125,
+      "text": "let mut file = tokio::fs::File::create(tmp).await?;"
+    },
+    {
+      "file": "crates/norn/src/tools/file_commit.rs",
+      "line": 140,
+      "text": "tokio::fs::rename(tmp, path).await"
+    },
+    {
+      "file": "crates/norn/src/tools/patch_commit.rs",
+      "line": 66,
+      "text": "PatchBlockKind::Create => tokio::fs::remove_file(&s.path)"
+    },
+    {
+      "file": "crates/norn/src/tools/patch_commit.rs",
+      "line": 143,
+      "text": "&& let Err(e) = tokio::fs::create_dir_all(parent).await"
+    },
+    {
+      "file": "crates/norn/src/tools/patch_commit.rs",
+      "line": 168,
+      "text": "if let Err(e) = tokio::fs::remove_file(&staged.path).await {"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 15,
+      "text": "PrivateRoot::create(&self.root_dir)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 20,
+      "text": "PrivateRoot::open(&self.root_dir).map_err(|error| private_io_error(&self.root_dir, &error))"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 24,
+      "text": "let root = match PrivateRoot::open(&self.root_dir) {"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 82,
+      "text": "root.create_dir_all(&group)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 88,
+      "text": "if let Err(cleanup_error) = root.remove_file(&tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 110,
+      "text": "let root = match PrivateRoot::open(&self.root_dir) {"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 159,
+      "text": "let root = match PrivateRoot::open(&self.root_dir) {"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 197,
+      "text": ".create_new(tmp_path)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 210,
+      "text": "root.rename(tmp_path, final_path)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 212,
+      "text": "root.publish_new(tmp_path, final_path)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 232,
+      "text": "match root.create_new(&relative) {"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 257,
+      "text": ".remove_file(&self.relative)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk/storage.rs",
+      "line": 271,
+      "text": "&& let Err(error) = self.root.remove_file(&self.relative)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 281,
+      "text": "root.create_dir_all(&self.group_relative()?)"
+    },
+    {
+      "file": "crates/norn/src/tools/task/disk.rs",
+      "line": 317,
+      "text": "root.create_dir_all(Path::new(validated))"
+    },
+    {
+      "file": "crates/norn/src/tools/write.rs",
+      "line": 253,
+      "text": "&& let Err(e) = tokio::fs::create_dir_all(parent).await"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/doctor.rs",
+      "line": 181,
+      "text": "let result = std::fs::File::create(&scratch).map(|_| ());"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/doctor.rs",
+      "line": 184,
+      "text": "let _ = std::fs::remove_file(&scratch);"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/init/conventions.rs",
+      "line": 124,
+      "text": "if let Err(err) = std::fs::write(&target, rendered) {"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/init/upgrade.rs",
+      "line": 94,
+      "text": "std::fs::write(&target, rendered).map_err(|source| UpgradeError::Write {"
+    },
+    {
+      "file": "crates/norn-cli/src/commands/slash/registry.rs",
+      "line": 472,
+      "text": "if let Err(err) = manager.rename(session_id, Some(name.to_owned())) {"
+    },
+    {
+      "file": "crates/norn-cli/src/print/step_output.rs",
+      "line": 24,
+      "text": "let file = std::fs::File::create(path)?;"
+    }
+  ],
+  "base": "271ab46",
+  "changed_rust_file_count": 66,
+  "files": [
+    {
+      "file": "crates/norn/src/tools/skill.rs",
+      "physical_lines": 1368,
+      "production_code_lines": 490,
+      "removed_test_ranges": [
+        {
+          "end": 48440,
+          "start": 19915
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/session/action_log.rs",
+      "physical_lines": 1791,
+      "production_code_lines": 451,
+      "removed_test_ranges": [
+        {
+          "end": 67976,
+          "start": 30781
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/agent_ops.rs",
+      "physical_lines": 1644,
+      "production_code_lines": 446,
+      "removed_test_ranges": [
+        {
+          "end": 69170,
+          "start": 28243
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/hooks/shell.rs",
+      "physical_lines": 833,
+      "production_code_lines": 432,
+      "removed_test_ranges": [
+        {
+          "end": 32038,
+          "start": 23308
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/edit.rs",
+      "physical_lines": 1047,
+      "production_code_lines": 430,
+      "removed_test_ranges": [
+        {
+          "end": 39315,
+          "start": 20722
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/agent/fork_tool.rs",
+      "physical_lines": 4223,
+      "production_code_lines": 424,
+      "removed_test_ranges": [
+        {
+          "end": 174794,
+          "start": 32244
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/action_log.rs",
+      "physical_lines": 1950,
+      "production_code_lines": 406,
+      "removed_test_ranges": [
+        {
+          "end": 77101,
+          "start": 25037
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/agent/spawn.rs",
+      "physical_lines": 7004,
+      "production_code_lines": 403,
+      "removed_test_ranges": [
+        {
+          "end": 1049,
+          "start": 1001
+        },
+        {
+          "end": 8233,
+          "start": 7818
+        },
+        {
+          "end": 282870,
+          "start": 30604
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/claude/adapter.rs",
+      "physical_lines": 646,
+      "production_code_lines": 395,
+      "removed_test_ranges": [
+        {
+          "end": 23823,
+          "start": 18208
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/openai/sse.rs",
+      "physical_lines": 1872,
+      "production_code_lines": 374,
+      "removed_test_ranges": [
+        {
+          "end": 1918,
+          "start": 1708
+        },
+        {
+          "end": 75128,
+          "start": 23513
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/session/context_edit.rs",
+      "physical_lines": 1407,
+      "production_code_lines": 372,
+      "removed_test_ranges": [
+        {
+          "end": 54476,
+          "start": 26437
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tool/registry.rs",
+      "physical_lines": 1727,
+      "production_code_lines": 359,
+      "removed_test_ranges": [
+        {
+          "end": 66003,
+          "start": 20332
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/agent/registry.rs",
+      "physical_lines": 1663,
+      "production_code_lines": 356,
+      "removed_test_ranges": [
+        {
+          "end": 65585,
+          "start": 29678
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/agent/fork.rs",
+      "physical_lines": 1136,
+      "production_code_lines": 353,
+      "removed_test_ranges": [
+        {
+          "end": 42664,
+          "start": 20703
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/mcp_client.rs",
+      "physical_lines": 898,
+      "production_code_lines": 348,
+      "removed_test_ranges": [
+        {
+          "end": 10751,
+          "start": 10207
+        },
+        {
+          "end": 10894,
+          "start": 10757
+        },
+        {
+          "end": 12866,
+          "start": 12529
+        },
+        {
+          "end": 32901,
+          "start": 17001
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/web/fetch.rs",
+      "physical_lines": 1078,
+      "production_code_lines": 312,
+      "removed_test_ranges": [
+        {
+          "end": 1918,
+          "start": 1860
+        },
+        {
+          "end": 1985,
+          "start": 1919
+        },
+        {
+          "end": 41211,
+          "start": 16492
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/extensions.rs",
+      "physical_lines": 505,
+      "production_code_lines": 293,
+      "removed_test_ranges": [
+        {
+          "end": 18598,
+          "start": 14220
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/patch.rs",
+      "physical_lines": 1570,
+      "production_code_lines": 289,
+      "removed_test_ranges": [
+        {
+          "end": 59691,
+          "start": 15585
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/web/search.rs",
+      "physical_lines": 565,
+      "production_code_lines": 289,
+      "removed_test_ranges": [
+        {
+          "end": 19103,
+          "start": 11659
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/openai/request.rs",
+      "physical_lines": 1350,
+      "production_code_lines": 287,
+      "removed_test_ranges": [
+        {
+          "end": 53995,
+          "start": 17015
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/task/tool.rs",
+      "physical_lines": 389,
+      "production_code_lines": 286,
+      "removed_test_ranges": [
+        {
+          "end": 13023,
+          "start": 12316
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/loop/iteration.rs",
+      "physical_lines": 1283,
+      "production_code_lines": 284,
+      "removed_test_ranges": [
+        {
+          "end": 47068,
+          "start": 19613
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/write.rs",
+      "physical_lines": 887,
+      "production_code_lines": 283,
+      "removed_test_ranges": [
+        {
+          "end": 30838,
+          "start": 12740
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/hooks/traits.rs",
+      "physical_lines": 834,
+      "production_code_lines": 279,
+      "removed_test_ranges": [
+        {
+          "end": 29110,
+          "start": 16207
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tool/context.rs",
+      "physical_lines": 768,
+      "production_code_lines": 260,
+      "removed_test_ranges": [
+        {
+          "end": 29194,
+          "start": 19461
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/variables.rs",
+      "physical_lines": 622,
+      "production_code_lines": 254,
+      "removed_test_ranges": [
+        {
+          "end": 22809,
+          "start": 13438
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/read.rs",
+      "physical_lines": 781,
+      "production_code_lines": 244,
+      "removed_test_ranges": [
+        {
+          "end": 28941,
+          "start": 10940
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/search/tool.rs",
+      "physical_lines": 1424,
+      "production_code_lines": 232,
+      "removed_test_ranges": [
+        {
+          "end": 54032,
+          "start": 11420
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/diagnostics.rs",
+      "physical_lines": 475,
+      "production_code_lines": 225,
+      "removed_test_ranges": [
+        {
+          "end": 18059,
+          "start": 11301
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/lsp/tool.rs",
+      "physical_lines": 760,
+      "production_code_lines": 198,
+      "removed_test_ranges": [
+        {
+          "end": 26074,
+          "start": 8157
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/rules/parser.rs",
+      "physical_lines": 629,
+      "production_code_lines": 190,
+      "removed_test_ranges": [
+        {
+          "end": 19381,
+          "start": 8832
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/ast.rs",
+      "physical_lines": 400,
+      "production_code_lines": 190,
+      "removed_test_ranges": [
+        {
+          "end": 13287,
+          "start": 9098
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/session/events.rs",
+      "physical_lines": 948,
+      "production_code_lines": 188,
+      "removed_test_ranges": [
+        {
+          "end": 36471,
+          "start": 17572
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tool/risk.rs",
+      "physical_lines": 479,
+      "production_code_lines": 188,
+      "removed_test_ranges": [
+        {
+          "end": 16406,
+          "start": 8711
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/tool_search.rs",
+      "physical_lines": 585,
+      "production_code_lines": 185,
+      "removed_test_ranges": [
+        {
+          "end": 20352,
+          "start": 8637
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/request.rs",
+      "physical_lines": 546,
+      "production_code_lines": 178,
+      "removed_test_ranges": [
+        {
+          "end": 15953,
+          "start": 14000
+        },
+        {
+          "end": 20309,
+          "start": 15955
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/mcp_server.rs",
+      "physical_lines": 449,
+      "production_code_lines": 177,
+      "removed_test_ranges": [
+        {
+          "end": 14882,
+          "start": 8018
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/rules/engine.rs",
+      "physical_lines": 537,
+      "production_code_lines": 157,
+      "removed_test_ranges": [
+        {
+          "end": 20467,
+          "start": 8936
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/skill/types.rs",
+      "physical_lines": 463,
+      "production_code_lines": 156,
+      "removed_test_ranges": [
+        {
+          "end": 15889,
+          "start": 10151
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/loop/assembly.rs",
+      "physical_lines": 713,
+      "production_code_lines": 155,
+      "removed_test_ranges": [
+        {
+          "end": 27975,
+          "start": 10676
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/openai/provider.rs",
+      "physical_lines": 860,
+      "production_code_lines": 155,
+      "removed_test_ranges": [
+        {
+          "end": 5907,
+          "start": 5581
+        },
+        {
+          "end": 23822,
+          "start": 9940
+        },
+        {
+          "end": 30845,
+          "start": 23824
+        },
+        {
+          "end": 34064,
+          "start": 30847
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/session/store.rs",
+      "physical_lines": 740,
+      "production_code_lines": 155,
+      "removed_test_ranges": [
+        {
+          "end": 177,
+          "start": 124
+        },
+        {
+          "end": 210,
+          "start": 178
+        },
+        {
+          "end": 27344,
+          "start": 12776
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/claude/wrapped.rs",
+      "physical_lines": 315,
+      "production_code_lines": 152,
+      "removed_test_ranges": [
+        {
+          "end": 12532,
+          "start": 8282
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tool/traits.rs",
+      "physical_lines": 512,
+      "production_code_lines": 146,
+      "removed_test_ranges": [
+        {
+          "end": 19319,
+          "start": 12347
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/rhai/blocking.rs",
+      "physical_lines": 250,
+      "production_code_lines": 115,
+      "removed_test_ranges": [
+        {
+          "end": 9753,
+          "start": 5482
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/rules/types.rs",
+      "physical_lines": 300,
+      "production_code_lines": 106,
+      "removed_test_ranges": [
+        {
+          "end": 10171,
+          "start": 7161
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/openai/tools.rs",
+      "physical_lines": 281,
+      "production_code_lines": 99,
+      "removed_test_ranges": [
+        {
+          "end": 10042,
+          "start": 3702
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/agent/goals.rs",
+      "physical_lines": 393,
+      "production_code_lines": 97,
+      "removed_test_ranges": [
+        {
+          "end": 14769,
+          "start": 6696
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/openai/rate_limiter.rs",
+      "physical_lines": 323,
+      "production_code_lines": 94,
+      "removed_test_ranges": [
+        {
+          "end": 3859,
+          "start": 3743
+        },
+        {
+          "end": 4244,
+          "start": 4122
+        },
+        {
+          "end": 11447,
+          "start": 6413
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/loop/schema.rs",
+      "physical_lines": 298,
+      "production_code_lines": 88,
+      "removed_test_ranges": [
+        {
+          "end": 11597,
+          "start": 5828
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/mock.rs",
+      "physical_lines": 221,
+      "production_code_lines": 81,
+      "removed_test_ranges": [
+        {
+          "end": 7142,
+          "start": 3707
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/loop/event_schemas.rs",
+      "physical_lines": 235,
+      "production_code_lines": 76,
+      "removed_test_ranges": [
+        {
+          "end": 7182,
+          "start": 3565
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/openai/execute.rs",
+      "physical_lines": 1463,
+      "production_code_lines": 71,
+      "removed_test_ranges": [
+        {
+          "end": 58621,
+          "start": 5318
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/loop/context.rs",
+      "physical_lines": 495,
+      "production_code_lines": 69,
+      "removed_test_ranges": [
+        {
+          "end": 18676,
+          "start": 4313
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/rules/triggers.rs",
+      "physical_lines": 306,
+      "production_code_lines": 64,
+      "removed_test_ranges": [
+        {
+          "end": 10245,
+          "start": 3490
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/hooks/output.rs",
+      "physical_lines": 237,
+      "production_code_lines": 49,
+      "removed_test_ranges": [
+        {
+          "end": 9100,
+          "start": 4639
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/hooks/config.rs",
+      "physical_lines": 220,
+      "production_code_lines": 38,
+      "removed_test_ranges": [
+        {
+          "end": 8440,
+          "start": 4437
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/hooks/new_traits.rs",
+      "physical_lines": 433,
+      "production_code_lines": 36,
+      "removed_test_ranges": [
+        {
+          "end": 15627,
+          "start": 3339
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/hooks/input.rs",
+      "physical_lines": 360,
+      "production_code_lines": 32,
+      "removed_test_ranges": [
+        {
+          "end": 13588,
+          "start": 5717
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/usage.rs",
+      "physical_lines": 121,
+      "production_code_lines": 32,
+      "removed_test_ranges": [
+        {
+          "end": 3797,
+          "start": 1784
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/integration/hooks/matchers.rs",
+      "physical_lines": 198,
+      "production_code_lines": 30,
+      "removed_test_ranges": [
+        {
+          "end": 7030,
+          "start": 3230
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/rules/lifecycle.rs",
+      "physical_lines": 118,
+      "production_code_lines": 25,
+      "removed_test_ranges": [
+        {
+          "end": 3546,
+          "start": 1303
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/provider/traits.rs",
+      "physical_lines": 64,
+      "production_code_lines": 13,
+      "removed_test_ranges": [
+        {
+          "end": 1971,
+          "start": 1196
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/agent/coord/test_support.rs",
+      "physical_lines": 162,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 5581,
+          "start": 0
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/bash/tests.rs",
+      "physical_lines": 1248,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 46713,
+          "start": 0
+        }
+      ]
+    },
+    {
+      "file": "crates/norn/src/tools/bash/tests_follow_up.rs",
+      "physical_lines": 246,
+      "production_code_lines": 0,
+      "removed_test_ranges": [
+        {
+          "end": 8578,
+          "start": 0
+        }
+      ]
+    }
+  ],
+  "head": "d391f0c03bd37c0f9173b90624473c7c010a06cd",
+  "method": {
+    "added_line_policy": "scan added Rust lines for prohibited calls, attributes, lint flags, and debt markers in comments; todo! and unimplemented! are separate rules, while string fixtures containing marker words are not debt",
+    "artifact_candidates": "repository-wide production/build-script lexical sweep for filesystem roots, opens, creates, mutations, publication, and removal; the retained candidate list is intentionally conservative and requires the adjacent manual ownership/lifetime classification",
+    "cfg_policy": "remove AST items whose cfg cannot be true with test=false",
+    "counter": "tokei 14.0.0 compiled with serialization support: json, cbor, yaml",
+    "parser": "ast-grep 0.42.0",
+    "rule": "docs/reviews/evidence/p0-rust-items.yml"
+  },
+  "over_500": [],
+  "test_only_file_count": 3,
+  "thin_entrypoint_violations": []
+}
