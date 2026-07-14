@@ -14,9 +14,19 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use crate::error::NornError;
-use crate::provider::request::{
-    AssistantToolCall, Message, MessageRole, ReasoningEffort, ServiceTier,
+use crate::provider::request::{AssistantToolCall, Message, MessageRole};
+
+#[path = "command_options.rs"]
+mod command_options;
+pub use command_options::{
+    EffortCommand, ServiceTierCommand, effort_label, parse_effort_command,
+    parse_service_tier_command, reasoning_effort_supported_for_model,
+    service_tier_supported_for_model, unsupported_reasoning_effort_message,
+    unsupported_service_tier_message,
 };
+
+#[cfg(test)]
+use crate::provider::request::ReasoningEffort;
 
 /// UI surface a built-in slash command is available on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -284,90 +294,6 @@ pub fn find_builtin_slash_command(
     name: &str,
 ) -> Option<&'static BuiltinSlashCommand> {
     builtin_slash_commands(surface).find(|command| command.name == name)
-}
-
-/// Parsed reasoning-effort slash command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum EffortCommand {
-    /// Set a concrete effort value.
-    Set(ReasoningEffort),
-    /// Clear the override.
-    Clear,
-}
-
-/// Parse `/effort` and `/reasoning-effort` arguments.
-#[must_use]
-pub fn parse_effort_command(value: &str) -> Option<EffortCommand> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "none" => Some(EffortCommand::Set(ReasoningEffort::None)),
-        "low" => Some(EffortCommand::Set(ReasoningEffort::Low)),
-        "medium" => Some(EffortCommand::Set(ReasoningEffort::Medium)),
-        "high" => Some(EffortCommand::Set(ReasoningEffort::High)),
-        "xhigh" => Some(EffortCommand::Set(ReasoningEffort::XHigh)),
-        "max" => Some(EffortCommand::Set(ReasoningEffort::Max)),
-        "default" | "off" | "clear" => Some(EffortCommand::Clear),
-        _ => None,
-    }
-}
-
-/// Display label for a reasoning-effort value.
-#[must_use]
-pub fn effort_label(effort: ReasoningEffort) -> &'static str {
-    effort.as_str()
-}
-
-/// Parsed `/service-tier` command.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ServiceTierCommand {
-    /// Set `service_tier=fast`.
-    Fast,
-    /// Clear the override.
-    Clear,
-}
-
-/// Parse `/service-tier` arguments.
-#[must_use]
-pub fn parse_service_tier_command(value: &str) -> Option<ServiceTierCommand> {
-    match value.trim().to_ascii_lowercase().as_str() {
-        "fast" => Some(ServiceTierCommand::Fast),
-        "none" | "off" | "default" => Some(ServiceTierCommand::Clear),
-        _ => None,
-    }
-}
-
-/// Whether `tier` is present for `model` in the generated model catalog.
-#[must_use]
-pub fn service_tier_supported_for_model(model: &str, tier: ServiceTier) -> bool {
-    crate::model_catalog::find_service_tier(
-        crate::model_catalog::DEFAULT_PROVIDER,
-        crate::model_catalog::DEFAULT_BACKEND,
-        model,
-        tier.as_str(),
-    )
-    .is_some()
-}
-
-/// Whether `effort` is declared for `model` in the generated model catalog.
-#[must_use]
-pub fn reasoning_effort_supported_for_model(model: &str, effort: ReasoningEffort) -> bool {
-    crate::model_catalog::find_model(
-        crate::model_catalog::DEFAULT_PROVIDER,
-        crate::model_catalog::DEFAULT_BACKEND,
-        model,
-    )
-    .is_some_and(|entry| entry.supported_reasoning_efforts.contains(&effort.as_str()))
-}
-
-/// Standard unsupported-reasoning-effort diagnostic.
-#[must_use]
-pub fn unsupported_reasoning_effort_message(model: &str, effort: &str) -> String {
-    format!("norn: reasoning effort '{effort}' is not supported for model '{model}'")
-}
-
-/// Standard unsupported-service-tier diagnostic.
-#[must_use]
-pub fn unsupported_service_tier_message(model: &str, tier: &str) -> String {
-    format!("norn: service tier '{tier}' is not supported for model '{model}'")
 }
 
 /// Closure shape used by [`SlashCommandHandler::Custom`].
