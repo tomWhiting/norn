@@ -7,9 +7,10 @@ from pathlib import Path
 from typing import Final
 
 import p0_evidence_support as support
+from p0_evidence_paths import RepositoryTargetLayout
 
 
-POLICY_SCHEMA_VERSION: Final = 1
+POLICY_SCHEMA_VERSION: Final = 2
 POLICY_MATCH_CATEGORIES: Final = frozenset(
     {
         "allow_or_expect_attr",
@@ -30,6 +31,7 @@ POLICY_METHOD_FIELDS: Final = frozenset(
         "artifact_candidates",
         "cfg_policy",
         "counter",
+        "module_shape_policy",
         "parser",
         "rule",
     }
@@ -49,7 +51,12 @@ def independently_reproduces(
 ) -> bool:
     try:
         retained = support.strict_json_loads(path.read_bytes())
-        with tempfile.TemporaryDirectory(prefix="norn-p0-policy-reproduction-") as temp:
+        layout = RepositoryTargetLayout.discover(root)
+        scratch_parent = layout.target_root / "evidence"
+        scratch_parent.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(
+            prefix="norn-p0-policy-reproduction-", dir=scratch_parent
+        ) as temp:
             reproduced_path = Path(temp) / "policy.json"
             result = subprocess.run(
                 (
@@ -83,8 +90,10 @@ def bind_policy_artifact(
     try:
         raw = path.read_bytes()
         policy = support.strict_json_loads(raw)
-    except (OSError, UnicodeDecodeError, ValueError) as error:
-        return {"error": str(error)}, False
+    except OSError:
+        return {"error": "policy_read_failed"}, False
+    except (UnicodeDecodeError, ValueError):
+        return {"error": "policy_decode_failed"}, False
     try:
         changed = subprocess.run(
             (
@@ -100,8 +109,10 @@ def bind_policy_artifact(
             capture_output=True,
             text=True,
         ).stdout.splitlines()
-    except (OSError, subprocess.CalledProcessError) as error:
-        return {"error": str(error)}, False
+    except OSError:
+        return {"error": "policy_git_execution_failed"}, False
+    except subprocess.CalledProcessError:
+        return {"error": "policy_git_diff_failed"}, False
     added_line_matches = policy.get("added_line_policy_matches")
     files = policy.get("files")
     method = policy.get("method")
@@ -119,6 +130,7 @@ def bind_policy_artifact(
         and policy.get("policy_passed") is True
         and policy.get("over_500") == []
         and policy.get("thin_entrypoint_violations") == []
+        and policy.get("module_shape_violations") == []
         and isinstance(added_line_matches, dict)
         and set(added_line_matches) == POLICY_MATCH_CATEGORIES
         and all(not matches for matches in added_line_matches.values())

@@ -4,16 +4,58 @@ from __future__ import annotations
 
 import datetime as dt
 import hashlib
-import json
 import os
 import platform
-import re
-import shutil
 import subprocess
 import sys
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Final
+
+from p0_evidence_disclosure import string_has_absolute_path
+from p0_evidence_io import checked_output, sha256_file
+from p0_evidence_io import strict_json_loads as _strict_json_loads
+from p0_evidence_paths import STORAGE_LAYOUT
+import p0_evidence_toolchain as toolchain_support
+from p0_test_output import (
+    exact_unittest_count,
+    failure_identity_report,
+    test_counts,
+    test_names,
+    test_summary_lines,
+)
+
+
+EXECUTABLE_NAMES: Final = toolchain_support.EXECUTABLE_NAMES
+PATH_FREE_ENVIRONMENT_CONTROLS: Final = {
+    "CARGO_INCREMENTAL": "0",
+    "CARGO_NET_OFFLINE": "true",
+    "CARGO_TERM_COLOR": "never",
+    "GIT_CONFIG_NOSYSTEM": "1",
+    "LANG": "C",
+    "LC_ALL": "C",
+    "NO_COLOR": "1",
+    "TERM": "dumb",
+    "TZ": "UTC",
+}
+SANITIZED_VARIABLE_NAMES: Final = (
+    "CARGO_HOME",
+    "CARGO_INCREMENTAL",
+    "CARGO_NET_OFFLINE",
+    "CARGO_TARGET_DIR",
+    "CARGO_TERM_COLOR",
+    "GIT_CONFIG_NOSYSTEM",
+    "HOME",
+    "LANG",
+    "LC_ALL",
+    "NO_COLOR",
+    "PATH",
+    "RUSTUP_HOME",
+    "TERM",
+    "TMPDIR",
+    "TZ",
+)
 
 
 @dataclass(frozen=True)
@@ -25,48 +67,13 @@ class Case:
     expected_tests: int | None = None
     minimum_tests: int = 0
     expected_test_names: tuple[str, ...] = ()
+    expected_tool_tests: int | None = None
+    expected_tool_test_modules: tuple[str, ...] = ()
+    recorded_command: tuple[str, ...] | None = None
 
 
 def strict_json_loads(raw: bytes) -> object:
-    def reject_constant(value: str) -> object:
-        raise ValueError(f"non-finite JSON number is forbidden: {value}")
-
-    def reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict[str, object]:
-        result = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate JSON key is forbidden: {key}")
-            result[key] = value
-        return result
-
-    return json.loads(
-        raw,
-        parse_constant=reject_constant,
-        object_pairs_hook=reject_duplicate_keys,
-    )
-
-
-def checked_output(
-    root: Path,
-    *command: str,
-    environment: dict[str, str] | None = None,
-) -> str:
-    result = subprocess.run(
-        command,
-        cwd=root,
-        check=True,
-        capture_output=True,
-        text=True,
-        env=environment,
-    )
-    return result.stdout.strip()
-
-
-def require_external_path(root: Path, path: Path, label: str) -> None:
-    resolved_root = root.resolve()
-    resolved_path = path.resolve()
-    if resolved_path == resolved_root or resolved_root in resolved_path.parents:
-        raise RuntimeError(f"{label} must be outside the evidence worktree")
+    return _strict_json_loads(raw)
 
 
 def prepare_fresh_target_dir(target_dir: Path) -> None:
@@ -80,7 +87,7 @@ def prepare_fresh_target_dir(target_dir: Path) -> None:
     resolved.mkdir(parents=True, mode=0o700)
 
 
-def evidence_environment(target_dir: Path) -> tuple[dict[str, str], list[str]]:
+def evidence_environment(target_dir: Path) -> tuple[dict[str, str], int]:
     source = os.environ
     resolved_target = target_dir.resolve()
     sterile_home = resolved_target / "evidence-home"
@@ -96,93 +103,53 @@ def evidence_environment(target_dir: Path) -> tuple[dict[str, str], list[str]]:
     ).expanduser()
     environment = {
         "CARGO_HOME": str(cargo_home.resolve()),
-        "CARGO_INCREMENTAL": "0",
-        "CARGO_NET_OFFLINE": "true",
+        "CARGO_INCREMENTAL": PATH_FREE_ENVIRONMENT_CONTROLS["CARGO_INCREMENTAL"],
+        "CARGO_NET_OFFLINE": PATH_FREE_ENVIRONMENT_CONTROLS["CARGO_NET_OFFLINE"],
         "CARGO_TARGET_DIR": str(resolved_target),
-        "CARGO_TERM_COLOR": "never",
-        "GIT_CONFIG_NOSYSTEM": "1",
+        "CARGO_TERM_COLOR": PATH_FREE_ENVIRONMENT_CONTROLS["CARGO_TERM_COLOR"],
+        "GIT_CONFIG_NOSYSTEM": PATH_FREE_ENVIRONMENT_CONTROLS["GIT_CONFIG_NOSYSTEM"],
         "HOME": str(sterile_home),
-        "LANG": "C",
-        "LC_ALL": "C",
-        "NO_COLOR": "1",
+        "LANG": PATH_FREE_ENVIRONMENT_CONTROLS["LANG"],
+        "LC_ALL": PATH_FREE_ENVIRONMENT_CONTROLS["LC_ALL"],
+        "NO_COLOR": PATH_FREE_ENVIRONMENT_CONTROLS["NO_COLOR"],
         "PATH": source.get("PATH", os.defpath),
         "RUSTUP_HOME": str(rustup_home.resolve()),
-        "TERM": "dumb",
+        "TERM": PATH_FREE_ENVIRONMENT_CONTROLS["TERM"],
         "TMPDIR": str(temporary_root),
-        "TZ": "UTC",
+        "TZ": PATH_FREE_ENVIRONMENT_CONTROLS["TZ"],
     }
-    return environment, sorted(set(source) - set(environment))
+    if tuple(sorted(environment)) != SANITIZED_VARIABLE_NAMES:
+        raise RuntimeError("sanitized evidence environment inventory changed")
+    return environment, len(set(source) - set(environment))
 
 
 def repository_state(
     root: Path,
     environment: dict[str, str] | None = None,
-) -> dict[str, str]:
+) -> dict[str, object]:
+    status = checked_output(
+        root,
+        "git",
+        "-c",
+        "status.showUntrackedFiles=all",
+        "status",
+        "--porcelain=v1",
+        "--untracked-files=all",
+        "--ignore-submodules=none",
+        environment=environment,
+    )
     return {
         "head": checked_output(
             root, "git", "rev-parse", "HEAD", environment=environment
         ),
-        "worktree_status": checked_output(
-            root,
-            "git",
-            "-c",
-            "status.showUntrackedFiles=all",
-            "status",
-            "--porcelain=v1",
-            "--untracked-files=all",
-            "--ignore-submodules=none",
-            environment=environment,
-        ),
+        "worktree_clean": not bool(status),
     }
 
 
-def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as source:
-        for block in iter(lambda: source.read(64 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def environment_fingerprint(environment: dict[str, str]) -> dict[str, object]:
-    values = {
-        name: hashlib.sha256(value.encode()).hexdigest()
-        for name, value in sorted(environment.items())
-    }
-    path = environment.get("PATH")
-    executables = {}
-    for name in ("ast-grep", "cargo", "df", "git", "mount", "rustc", "stat", "tokei"):
-        executable = shutil.which(name, path=path)
-        resolved = Path(executable).resolve() if executable is not None else None
-        executables[name] = {
-            "path": executable,
-            "resolved_path": str(resolved) if resolved is not None else None,
-            "sha256": sha256_file(resolved)
-            if resolved is not None and resolved.is_file()
-            else None,
-        }
-    python = Path(sys.executable).resolve()
-    executables["python"] = {
-        "path": sys.executable,
-        "resolved_path": str(python),
-        "sha256": sha256_file(python),
-    }
-    system_commands = (
-        (
-            ("filesystem_df", Path("/bin/df")),
-            ("filesystem_mount", Path("/sbin/mount")),
-        )
-        if platform.system() == "Darwin"
-        else (("filesystem_stat", Path("/usr/bin/stat")),)
-    )
-    for label, executable in system_commands:
-        resolved = executable.resolve()
-        executables[label] = {
-            "path": str(executable),
-            "resolved_path": str(resolved),
-            "sha256": sha256_file(resolved),
-        }
-    return {"variables": values, "executables": executables}
+def environment_fingerprint(
+    environment: dict[str, str], toolchain: str
+) -> dict[str, object]:
+    return toolchain_support.environment_fingerprint(environment, toolchain)
 
 
 def cargo_config_fingerprints(
@@ -204,7 +171,12 @@ def cargo_config_fingerprints(
 
 
 def temporary_filesystem(environment: dict[str, str]) -> dict[str, str]:
-    path = Path(environment.get("TMPDIR", "/tmp")).resolve()
+    temporary = environment.get("TMPDIR")
+    if temporary is None:
+        raise RuntimeError(
+            "the evidence environment must define its repository-local TMPDIR"
+        )
+    path = Path(temporary).resolve()
     if platform.system() == "Darwin":
         mount_point = (
             checked_output(
@@ -226,7 +198,6 @@ def temporary_filesystem(environment: dict[str, str]) -> dict[str, str]:
             raise RuntimeError("could not identify the temporary filesystem mount")
         filesystem = matching[0].split(marker, 1)[1].split(",", 1)[0].rstrip(")")
     elif platform.system() == "Linux":
-        mount_point = "unrecorded"
         filesystem = checked_output(
             path,
             "/usr/bin/stat",
@@ -237,21 +208,20 @@ def temporary_filesystem(environment: dict[str, str]) -> dict[str, str]:
             environment=environment,
         )
     else:
-        mount_point = "unrecorded"
         filesystem = "unrecorded"
-    return {"path": str(path), "mount_point": mount_point, "filesystem": filesystem}
+    return {"filesystem": filesystem}
 
 
 def metadata(
     root: Path,
     environment: dict[str, str],
-    removed_environment: list[str],
+    removed_environment_count: int,
     mode: str,
     base: str,
     toolchain: str,
 ) -> dict[str, object]:
     state = repository_state(root, environment)
-    if state["worktree_status"]:
+    if state["worktree_clean"] is not True:
         raise RuntimeError("P0 evidence requires a clean worktree")
     subprocess.run(
         ("git", "merge-base", "--is-ancestor", base, state["head"]),
@@ -259,18 +229,9 @@ def metadata(
         check=True,
         env=environment,
     )
-    rustc = checked_output(
-        root, "rustc", f"+{toolchain}", "--version", environment=environment
-    )
-    cargo = checked_output(
-        root, "cargo", f"+{toolchain}", "--version", environment=environment
-    )
-    if not rustc.startswith(f"rustc {toolchain} "):
-        raise RuntimeError(f"unexpected rustc toolchain: {rustc}")
-    if not cargo.startswith(f"cargo {toolchain} "):
-        raise RuntimeError(f"unexpected cargo toolchain: {cargo}")
+    versions = toolchain_support.pinned_versions(root, environment, toolchain)
     return {
-        "schema_version": 2,
+        "schema_version": 3,
         "kind": mode,
         "generated_at_utc": dt.datetime.now(dt.UTC).isoformat(),
         "base": base,
@@ -281,20 +242,18 @@ def metadata(
         "platform_system": platform.system(),
         "platform": platform.platform(),
         "python": platform.python_version(),
-        "rustc": rustc,
-        "cargo": cargo,
+        "rustc": versions["rustc"],
+        "cargo": versions["cargo"],
         "environment": {
-            "CARGO_INCREMENTAL": environment["CARGO_INCREMENTAL"],
-            "CARGO_NET_OFFLINE": environment["CARGO_NET_OFFLINE"],
-            "CARGO_TARGET_DIR": environment["CARGO_TARGET_DIR"],
-            "CARGO_TERM_COLOR": environment["CARGO_TERM_COLOR"],
+            **PATH_FREE_ENVIRONMENT_CONTROLS,
             "sanitized_variable_names": sorted(environment),
-            "removed_ambient_variables": removed_environment,
+            "removed_ambient_variable_count": removed_environment_count,
         },
-        "environment_fingerprint": environment_fingerprint(environment),
+        "environment_fingerprint": environment_fingerprint(environment, toolchain),
         "cargo_config": cargo_config_fingerprints(root, environment),
         "temporary_filesystem": temporary_filesystem(environment),
         "logical_cpu_count": os.cpu_count(),
+        "storage_layout": STORAGE_LAYOUT,
     }
 
 
@@ -313,35 +272,18 @@ def output_digest(output: str) -> dict[str, object]:
     }
 
 
-def test_summary_lines(stdout: str, stderr: str) -> list[str]:
-    return [
-        line.strip()
-        for line in (*stdout.splitlines(), *stderr.splitlines())
-        if line.strip().startswith("test result:")
-    ]
+def case_contract_command(case: Case) -> list[str]:
+    """Return the explicitly path-free command retained in evidence."""
+    command = list(case.recorded_command or case.command)
+    if any(argument_has_absolute_path(argument) for argument in command):
+        raise RuntimeError(
+            f"case {case.case_id} has an absolute recorded command argument"
+        )
+    return command
 
 
-def test_counts(summaries: list[str]) -> dict[str, int]:
-    counts = {"passed": 0, "failed": 0, "ignored": 0}
-    pattern = re.compile(
-        r"test result: .*? (?P<passed>\d+) passed; (?P<failed>\d+) failed; "
-        r"(?P<ignored>\d+) ignored;"
-    )
-    for summary in summaries:
-        match = pattern.search(summary)
-        if match is not None:
-            for name in counts:
-                counts[name] += int(match.group(name))
-    return counts
-
-
-def test_names(stdout: str, stderr: str) -> list[str]:
-    pattern = re.compile(r"^test (?P<name>.+) \.\.\. (?:ok|FAILED|ignored)$")
-    return [
-        match.group("name")
-        for line in (*stdout.splitlines(), *stderr.splitlines())
-        if (match := pattern.match(line.strip())) is not None
-    ]
+def argument_has_absolute_path(argument: str) -> bool:
+    return string_has_absolute_path(argument)
 
 
 def run_once(root: Path, environment: dict[str, str], case: Case) -> dict[str, object]:
@@ -362,28 +304,49 @@ def run_once(root: Path, environment: dict[str, str], case: Case) -> dict[str, o
     summaries = test_summary_lines(result.stdout, result.stderr)
     counts = test_counts(summaries)
     names = test_names(result.stdout, result.stderr)
+    tool_test_count = exact_unittest_count(result.stdout, result.stderr)
+    failure_report = failure_identity_report(result.stdout, result.stderr)
     if summaries:
         record["test_summaries"] = summaries
         record["test_counts"] = counts
     if names:
         record["test_names"] = names
-    contract_failure = None
+    if case.expected_tool_tests is not None:
+        record["tool_test_count"] = tool_test_count
+    if counts["failed"] > 0 or failure_report.groups:
+        record["failed_test_names"] = list(failure_report.names)
+        record["failed_test_identity_groups"] = [
+            group.as_record() for group in failure_report.groups
+        ]
+        record["failed_test_identity_complete"] = (
+            failure_report.complete
+            and bool(summaries)
+            and len(failure_report.names) == counts["failed"]
+        )
+    contract_failure: str | None = None
     if case.expected_tests is not None and counts != {
         "passed": case.expected_tests,
         "failed": 0,
         "ignored": 0,
     }:
-        contract_failure = (
-            f"expected exactly {case.expected_tests} passing tests, observed {counts}"
-        )
-    elif case.minimum_tests > 0 and counts["passed"] < case.minimum_tests:
-        contract_failure = (
-            f"expected at least {case.minimum_tests} passing tests, observed {counts}"
-        )
+        contract_failure = "exact_test_count"
+    elif case.minimum_tests > 0 and (
+        counts["passed"] < case.minimum_tests
+        or counts["failed"] != 0
+        or counts["ignored"] != 0
+    ):
+        contract_failure = "minimum_test_count"
     if case.expected_test_names and tuple(sorted(names)) != tuple(
         sorted(case.expected_test_names)
     ):
-        contract_failure = f"expected test identities {case.expected_test_names}, observed {tuple(names)}"
+        contract_failure = "exact_test_identity"
+    if (
+        case.expected_tool_tests is not None
+        and tool_test_count != case.expected_tool_tests
+    ):
+        contract_failure = "exact_tool_test_count"
+    if failure_report.groups and counts["failed"] == 0 and contract_failure is None:
+        contract_failure = "unexpected_failure_identity"
     if contract_failure is not None:
         record["contract_failure"] = contract_failure
     record["passed"] = result.returncode == 0 and contract_failure is None
@@ -407,11 +370,13 @@ def run_cases(
             {
                 "id": case.case_id,
                 "group": case.group,
-                "command": list(case.command),
+                "command": case_contract_command(case),
                 "runs": case.runs,
                 "expected_tests": case.expected_tests,
                 "minimum_tests": case.minimum_tests,
                 "expected_test_names": list(case.expected_test_names),
+                "expected_tool_tests": case.expected_tool_tests,
+                "expected_tool_test_modules": list(case.expected_tool_test_modules),
                 "passed": sum(bool(run["passed"]) for run in runs),
                 "failed": sum(not bool(run["passed"]) for run in runs),
                 "observations": runs,

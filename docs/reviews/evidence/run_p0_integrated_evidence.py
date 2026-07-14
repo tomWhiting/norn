@@ -3,7 +3,6 @@
 
 from __future__ import annotations
 
-import argparse
 import importlib
 import json
 import sys
@@ -13,15 +12,21 @@ from typing import Final
 sys.dont_write_bytecode = True
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 manifest = importlib.import_module("p0_evidence_manifest")
+cli = importlib.import_module("p0_evidence_cli")
+gate_case_support = importlib.import_module("p0_evidence_gate_cases")
 policy_contract = importlib.import_module("p0_evidence_policy")
+paths = importlib.import_module("p0_evidence_paths")
+run_support = importlib.import_module("p0_evidence_run_support")
 support = importlib.import_module("p0_evidence_support")
 Case = support.Case
 evidence_environment = support.evidence_environment
 metadata = support.metadata
 prepare_fresh_target_dir = support.prepare_fresh_target_dir
 repository_state = support.repository_state
-require_external_path = support.require_external_path
 run_cases = support.run_cases
+rust_test_executions = run_support.rust_test_executions
+validate_distribution_inventory = run_support.validate_distribution_inventory
+write_result = run_support.write_result
 
 
 BASE: Final = "41ea210"
@@ -35,51 +40,6 @@ def cargo(*args: str) -> tuple[str, ...]:
     return ("cargo", f"+{TOOLCHAIN}", "--locked", *args)
 
 
-def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument(
-        "--target-dir",
-        required=True,
-        type=Path,
-        help="Cargo target directory outside the clean evidence checkout",
-    )
-    parser.add_argument("--output", required=True, type=Path)
-    subparsers = parser.add_subparsers(dest="mode", required=True)
-
-    gate = subparsers.add_parser(
-        "gate", help="run compiler, test, non-disclosure, and policy evidence"
-    )
-    gate.add_argument("--policy-output", required=True, type=Path)
-
-    distributions = subparsers.add_parser(
-        "distributions",
-        help="run the prescribed concurrency and sensitive-seam distributions",
-    )
-    distributions.add_argument(
-        "--concurrency-runs", type=minimum_concurrency_runs, default=50
-    )
-    distributions.add_argument("--other-runs", type=minimum_runs, default=20)
-    return parser.parse_args()
-
-
-def minimum_runs(value: str) -> int:
-    parsed = int(value)
-    if parsed < MINIMUM_REPEATED_RUNS:
-        raise argparse.ArgumentTypeError(
-            f"value must be at least {MINIMUM_REPEATED_RUNS}"
-        )
-    return parsed
-
-
-def minimum_concurrency_runs(value: str) -> int:
-    parsed = int(value)
-    if parsed < MINIMUM_CONCURRENCY_RUNS:
-        raise argparse.ArgumentTypeError(
-            f"value must be at least {MINIMUM_CONCURRENCY_RUNS}"
-        )
-    return parsed
-
-
 def repository_root() -> Path:
     return Path(__file__).resolve().parents[3]
 
@@ -87,97 +47,9 @@ def repository_root() -> Path:
 def gate_cases(
     policy_output: Path, head: str, python_executable: str | None = None
 ) -> list[Case]:
-    python = python_executable if python_executable is not None else sys.executable
-    cases = [
-        Case("fmt", "compiler", cargo("fmt", "--all", "--", "--check")),
-        Case(
-            "strict_clippy",
-            "compiler",
-            cargo("clippy", "--workspace", "--all-targets", "--", "-D", "warnings"),
-        ),
-        Case(
-            "workspace_check",
-            "compiler",
-            cargo("check", "--workspace", "--all-targets"),
-        ),
-        Case(
-            "workspace_all_targets",
-            "tests",
-            cargo("test", "--workspace", "--all-targets", "--quiet"),
-            minimum_tests=1,
-        ),
-        Case(
-            "norn_tests",
-            "tests",
-            cargo("test", "-p", "norn", "--tests", "--quiet"),
-            minimum_tests=1,
-        ),
-        Case(
-            "norn_cli_tests",
-            "tests",
-            cargo("test", "-p", "norn-cli", "--tests", "--quiet"),
-            minimum_tests=1,
-        ),
-        Case(
-            "norn_tui_tests",
-            "tests",
-            cargo("test", "-p", "norn-tui", "--tests", "--quiet"),
-            minimum_tests=1,
-        ),
-        Case(
-            "workspace_docs",
-            "docs",
-            cargo("test", "--workspace", "--doc", "--quiet"),
-            minimum_tests=1,
-        ),
-        Case(
-            "norn_test_utils_docs",
-            "docs",
-            cargo("test", "-p", "norn", "--doc", "--features", "test-utils"),
-            expected_tests=8,
-            expected_test_names=manifest.DOCTEST_NAMES,
-        ),
-        Case(
-            "phase_diff_check", "policy", ("git", "diff", "--check", f"{BASE}...{head}")
-        ),
-        Case(
-            "full_range_policy",
-            "policy",
-            (
-                python,
-                "-B",
-                "-I",
-                "docs/reviews/evidence/run_p0_policy_evidence.py",
-                "--base",
-                BASE,
-                "--head",
-                head,
-                "--output",
-                str(policy_output.resolve()),
-            ),
-        ),
-    ]
-    for name in manifest.SECRET_SENTINELS:
-        cases.append(
-            Case(
-                name,
-                "non_disclosure",
-                cargo("test", "-p", "norn", "--lib", name, "--", "--exact"),
-                expected_tests=1,
-                expected_test_names=(name,),
-            )
-        )
-    for name in manifest.MODEL_FACING_SENTINELS:
-        cases.append(
-            Case(
-                name,
-                "model_facing_non_disclosure",
-                cargo("test", "-p", "norn", "--lib", name, "--", "--exact"),
-                expected_tests=1,
-                expected_test_names=(name,),
-            )
-        )
-    return cases
+    return gate_case_support.gate_cases(
+        policy_output, head, cargo, BASE, python_executable
+    )
 
 
 def distribution_cases(concurrency_runs: int, other_runs: int) -> list[Case]:
@@ -316,8 +188,11 @@ def distribution_cases(concurrency_runs: int, other_runs: int) -> list[Case]:
             (
                 "integration::mcp_control::refresh_tests::pre_subscription_change_is_refreshed",
                 "integration::mcp_control::refresh_tests::change_during_refresh_schedules_the_latest_revision",
+                "integration::mcp_control::refresh_tests::failed_refresh_reconnects_without_another_server_revision",
+                "integration::mcp_control::refresh_tests::failed_refresh_and_reconnect_publish_an_honest_disconnected_surface",
                 "integration::mcp_control::refresh_tests::removed_client_is_not_retained_by_its_watcher",
                 "integration::mcp_context_call_tests::public_root_update_cannot_split_contextual_tool_call",
+                "integration::mcp_stdio::tests::inherited_stderr_descendant_cannot_retain_transport_capacity",
                 "tools::agent::live_tools::tests::new_child_observes_replaced_pool_while_existing_child_keeps_lease",
                 "integration::mcp_stdio::tests::dropping_transport_returns_retained_descriptor_capacity",
             ),
@@ -341,6 +216,26 @@ def distribution_cases(concurrency_runs: int, other_runs: int) -> list[Case]:
             expected_tests=1,
             expected_test_names=(
                 "app::event_loop::tests::live_definition_secrets_never_reach_file_backed_history",
+            ),
+        )
+    )
+    cases.append(
+        Case(
+            "dropped_ui_waiter_does_not_cancel_an_enqueued_mutation",
+            "mcp_live",
+            cargo(
+                "test",
+                "-p",
+                "norn-tui",
+                "--lib",
+                "app::mcp_slash::tests::dropped_ui_waiter_does_not_cancel_an_enqueued_mutation",
+                "--",
+                "--exact",
+            ),
+            other_runs,
+            expected_tests=1,
+            expected_test_names=(
+                "app::mcp_slash::tests::dropped_ui_waiter_does_not_cancel_an_enqueued_mutation",
             ),
         )
     )
@@ -376,62 +271,19 @@ def repeated_norn_cases(group: str, names: tuple[str, ...], runs: int) -> list[C
     ]
 
 
-def validate_distribution_inventory(
-    cases: list[Case], concurrency_runs: int, other_runs: int
-) -> None:
-    if len({case.case_id for case in cases}) != len(cases):
-        raise RuntimeError("P0 distribution case identifiers must be unique")
-    actual = []
-    for case in cases:
-        profile = "concurrency" if case.group == "macos_concurrency" else "other"
-        expected_runs = concurrency_runs if profile == "concurrency" else other_runs
-        if case.runs != expected_runs:
-            raise RuntimeError(
-                f"unexpected run count for distribution case {case.case_id}"
-            )
-        actual.append(
-            (
-                case.case_id,
-                case.group,
-                profile,
-                case.expected_tests,
-                case.expected_test_names,
-            )
-        )
-    if tuple(actual) != manifest.DISTRIBUTION_INVENTORY:
-        raise RuntimeError("P0 distribution identity inventory changed")
-
-
-def write_result(path: Path, result: dict[str, object]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(result, indent=2, sort_keys=True) + "\n")
-
-
-def rust_test_executions(records: list[dict[str, object]]) -> int:
-    total = 0
-    for record in records:
-        for observation in record["observations"]:
-            total += sum(observation.get("test_counts", {}).values())
-    return total
-
-
 def main() -> int:
-    args = parse_args()
+    args = cli.parse_runner_args(MINIMUM_REPEATED_RUNS, MINIMUM_CONCURRENCY_RUNS)
     root = repository_root()
-    require_external_path(root, args.target_dir, "Cargo target directory")
-    require_external_path(root, args.output, "evidence output")
-    require_external_path(args.target_dir, args.output, "evidence output")
-    if args.mode == "gate":
-        require_external_path(root, args.policy_output, "policy output")
-        require_external_path(args.target_dir, args.policy_output, "policy output")
-        if args.output.resolve() == args.policy_output.resolve():
-            raise RuntimeError("evidence and policy outputs must be distinct")
-    prepare_fresh_target_dir(args.target_dir)
-    environment, removed_environment = evidence_environment(args.target_dir)
+    requested_policy = args.policy_output if args.mode == "gate" else None
+    validated = paths.validate_runner_paths(
+        root, args.target_dir, args.output, requested_policy
+    )
+    prepare_fresh_target_dir(validated.target_dir)
+    environment, removed_environment_count = evidence_environment(validated.target_dir)
     result = metadata(
         root,
         environment,
-        removed_environment,
+        removed_environment_count,
         args.mode,
         BASE,
         TOOLCHAIN,
@@ -439,7 +291,11 @@ def main() -> int:
     if args.mode == "distributions":
         support.require_macos_apfs_distribution_host(result)
     if args.mode == "gate":
-        cases = gate_cases(args.policy_output, str(result["head"]))
+        if validated.policy_output is None:
+            raise RuntimeError("gate mode requires a validated policy output")
+        cases = gate_cases(validated.policy_output, str(result["head"]))
+        if tuple(case.case_id for case in cases) != manifest.GATE_CASE_IDS:
+            raise RuntimeError("P0 Gate C identity inventory changed")
     else:
         cases = distribution_cases(args.concurrency_runs, args.other_runs)
         validate_distribution_inventory(cases, args.concurrency_runs, args.other_runs)
@@ -454,7 +310,7 @@ def main() -> int:
     final_state = repository_state(root, environment)
     integrity_passed = final_state == {
         "head": result["head"],
-        "worktree_status": result["worktree_status"],
+        "worktree_clean": True,
     }
     result["cases"] = records
     result["passed"] = sum(record["passed"] for record in records)
@@ -463,14 +319,15 @@ def main() -> int:
     result["rust_test_executions"] = rust_test_executions(records)
     if args.mode == "gate":
         policy_artifact, policy_contract_passed = policy_contract.bind_policy_artifact(
-            args.policy_output, root, str(result["head"]), BASE
+            validated.policy_output, root, str(result["head"]), BASE
         )
+        policy_artifact.pop("file_name", None)
         result["policy_artifact"] = policy_artifact
         result["policy_contract_passed"] = policy_contract_passed
         integrity_passed = integrity_passed and policy_contract_passed
     result["final_repository_state"] = final_state
     result["repository_integrity_passed"] = integrity_passed
-    write_result(args.output, result)
+    write_result(validated.output, result)
     print(json.dumps(result, indent=2, sort_keys=True))
     return 1 if result["failed"] or not integrity_passed else 0
 

@@ -3,6 +3,15 @@
 from typing import Final
 
 
+EVIDENCE_SELF_TEST_MODULES: Final = (
+    "test_p0_evidence_contract.py",
+    "test_p0_evidence_paths.py",
+    "test_p0_test_output.py",
+)
+# Updated deliberately whenever the pinned module inventory changes.
+EVIDENCE_SELF_TEST_COUNT: Final = 42
+
+
 DOCTEST_NAMES: Final = (
     "crates/norn/src/agent/builder.rs - agent::builder (line 14) - compile",
     "crates/norn/src/agent/builder_setters.rs - agent::builder_setters::AgentBuilder::child_policy (line 503)",
@@ -37,8 +46,10 @@ PTY_TEST_NAMES: Final = (
 SECRET_SENTINELS: Final = (
     "integration::mcp_control::tests::status_and_debug_surfaces_do_not_disclose_definition_secrets",
     "integration::mcp_http::tests::connection_errors_do_not_disclose_endpoint_url_secrets",
+    "integration::mcp_http::tests::remote_error_surfaces_do_not_disclose_configured_header_secrets",
     "integration::mcp_live_command::tests::inspect_renderer_redacts_definition_values",
     "integration::mcp_live_command::tests::malformed_secret_input_is_not_echoed",
+    "integration::mcp_stdio::tests::server_stderr_metadata_does_not_disclose_configured_secrets",
     "provider::debug::security_tests::response_metadata_redacts_credential_and_redirect_values",
     "provider::exec::tests::endpoint_path_secrets_do_not_reach_errors_or_traces",
     "provider::exec::tests::specialized_401_and_429_paths_never_wait_for_or_disclose_the_body",
@@ -75,6 +86,7 @@ GATE_CASE_IDS: Final = (
     "workspace_docs",
     "norn_test_utils_docs",
     "phase_diff_check",
+    "evidence_tooling_self_tests",
     "full_range_policy",
     *SECRET_SENTINELS,
     *MODEL_FACING_SENTINELS,
@@ -169,8 +181,11 @@ DISTRIBUTION_INVENTORY: Final = (
         for name in (
             "integration::mcp_control::refresh_tests::pre_subscription_change_is_refreshed",
             "integration::mcp_control::refresh_tests::change_during_refresh_schedules_the_latest_revision",
+            "integration::mcp_control::refresh_tests::failed_refresh_reconnects_without_another_server_revision",
+            "integration::mcp_control::refresh_tests::failed_refresh_and_reconnect_publish_an_honest_disconnected_surface",
             "integration::mcp_control::refresh_tests::removed_client_is_not_retained_by_its_watcher",
             "integration::mcp_context_call_tests::public_root_update_cannot_split_contextual_tool_call",
+            "integration::mcp_stdio::tests::inherited_stderr_descendant_cannot_retain_transport_capacity",
             "tools::agent::live_tools::tests::new_child_observes_replaced_pool_while_existing_child_keeps_lease",
             "integration::mcp_stdio::tests::dropping_transport_returns_retained_descriptor_capacity",
         )
@@ -182,6 +197,15 @@ DISTRIBUTION_INVENTORY: Final = (
         1,
         (
             "app::event_loop::tests::live_definition_secrets_never_reach_file_backed_history",
+        ),
+    ),
+    (
+        "dropped_ui_waiter_does_not_cancel_an_enqueued_mutation",
+        "mcp_live",
+        "other",
+        1,
+        (
+            "app::mcp_slash::tests::dropped_ui_waiter_does_not_cancel_an_enqueued_mutation",
         ),
     ),
     *(

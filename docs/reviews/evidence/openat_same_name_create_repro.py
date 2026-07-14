@@ -27,6 +27,8 @@ import tempfile
 import threading
 from pathlib import Path
 
+from p0_evidence_paths import RepositoryTargetLayout
+
 
 def positive_integer(value: str) -> int:
     parsed = int(value)
@@ -130,11 +132,12 @@ def run_trial(
                         "target_exists": path.exists(),
                     }
                     return
-        except BaseException as error:  # Preserve unexpected worker failures in evidence.
+        # Preserve only path-free structure for unexpected worker failures.
+        except BaseException as error:
             results[worker_id] = {
                 "outcome": "worker_error",
                 "error_type": type(error).__name__,
-                "error": str(error),
+                "errno": error.errno if isinstance(error, OSError) else None,
                 "retries": retries,
             }
         finally:
@@ -160,7 +163,12 @@ def run_trial(
 def main() -> int:
     args = parse_args()
     all_results: list[dict[str, object]] = []
-    with tempfile.TemporaryDirectory(prefix="norn-openat-repro-") as temp:
+    repo = Path(__file__).resolve().parents[3]
+    scratch_parent = RepositoryTargetLayout.locate(repo).target_root / "evidence"
+    scratch_parent.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(
+        prefix="norn-openat-repro-", dir=scratch_parent
+    ) as temp:
         root = Path(temp)
         for trial in range(args.trials):
             all_results.extend(run_trial(root, trial, args))
@@ -188,7 +196,8 @@ def main() -> int:
         "enoent_with_target_observed": sum(
             1
             for result in all_results
-            if result.get("errno_name") == "ENOENT" and result.get("target_exists") is True
+            if result.get("errno_name") == "ENOENT"
+            and result.get("target_exists") is True
         ),
         "worker_errors": [
             result for result in all_results if result["outcome"] == "worker_error"

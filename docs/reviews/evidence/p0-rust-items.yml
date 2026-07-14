@@ -12,6 +12,8 @@ rule:
     - kind: function_signature_item
     - kind: impl_item
     - kind: let_declaration
+    - kind: macro_definition
+    - kind: macro_invocation
     - kind: mod_item
     - kind: static_item
     - kind: struct_item
