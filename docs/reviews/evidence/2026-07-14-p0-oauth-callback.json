@@ -1,0 +1,15 @@
+{
+  "head": "6e3109c0df6510b04af68868f268a4227b579929",
+  "worktree_clean": true,
+  "platform": "Darwin 25.3.0 arm64",
+  "rustc": "rustc 1.94.0 (4a4ef493e 2026-03-02)",
+  "cargo": "cargo 1.94.0 (85eff7c80 2026-01-15)",
+  "iterations": 20,
+  "cases": [
+    {"filter": "provider::openai_oauth::login_server::tests::accepted_connection_waits_for_delayed_request_bytes", "passed": 20, "failed": 0},
+    {"filter": "provider::openai_oauth::login_server::tests::accepted_stream_is_normalized_to_blocking_mode", "passed": 20, "failed": 0},
+    {"filter": "provider::openai_oauth::login_server::tests::matching_error_callback_fails_the_flow_with_a_400_page", "passed": 20, "failed": 0},
+    {"filter": "provider::openai_oauth::login_server::tests::stray_requests_get_404_and_login_still_completes", "passed": 20, "failed": 0},
+    {"filter": "provider::openai_oauth::login_server::tests::wait_times_out_when_no_matching_callback_arrives", "passed": 20, "failed": 0}
+  ]
+}
