@@ -182,6 +182,18 @@ test crate::tests::fails ... FAILED
             },
         )
 
+    def test_backtick_rerun_hint_on_stderr_binds_stdout_summary(self) -> None:
+        stdout = failed_block("crate::tests::fails").split("error:", 1)[0]
+        stderr = "error: test failed, to rerun pass `-p norn --lib`\n"
+
+        report = failure_identity_report(stdout, stderr)
+
+        self.assertTrue(report.complete)
+        self.assertEqual(
+            report.groups[0].as_record()["target"],
+            {"package": "norn", "kind": "lib", "name": None},
+        )
+
     def test_doctest_rerun_hint_binds_the_doc_target(self) -> None:
         output = failed_block("crate::docs::fails").replace(
             "error: test failed, to rerun pass '-p norn --lib'",

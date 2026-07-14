@@ -35,7 +35,8 @@ DOCTEST_NAME = re.compile(
     r"(?: - compile(?: fail)?)?$"
 )
 RERUN_HINT = re.compile(
-    r"^error: (?:test|doctest) failed, to rerun pass '(?P<command>[^']+)'$"
+    r"^error: (?:test|doctest) failed, to rerun pass "
+    r"(?P<quote>['`])(?P<command>[^'`]+)(?P=quote)$"
 )
 TARGET_VALUE = re.compile(r"^[A-Za-z0-9_.-]+$")
 
