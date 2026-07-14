@@ -70,7 +70,8 @@ cargo fmt --check
 
 ## Requirements
 
-- Rust 1.85+ (edition 2024)
+- Rust 1.94.0 via `rust-toolchain.toml` (edition 2024). This is the supported
+  repository toolchain; no lower minimum Rust version is currently claimed.
 
 ## License
 
