@@ -1,0 +1,19 @@
+{
+  "base": "41ea210",
+  "distributions": {
+    "case_count": 33,
+    "file_name": "distributions-native.json",
+    "minimum_runner_observations": 750,
+    "minimum_rust_test_executions": 1170,
+    "sha256": "0153db4715a8b5cc72181a9c1deb7988312ce75ac508d8359fed297f155b4c14"
+  },
+  "errors": [],
+  "gate": {
+    "file_name": "gate-native.json",
+    "sha256": "b75fae12d37c8414b4ed1a83234054294cb1b094e80f16cb3e200946ca3b69d1"
+  },
+  "head": "13d661c906f00e9ff54541e8362086874e98af1c",
+  "kind": "p0_final_attestation",
+  "passed": true,
+  "schema_version": 1
+}
