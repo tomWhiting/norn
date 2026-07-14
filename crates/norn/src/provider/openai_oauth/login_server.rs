@@ -253,6 +253,11 @@ fn wait_for_callback(
             }
             Err(error) => return Err(LoginError::Server(error.to_string())),
         };
+        // Darwin can propagate the listener's nonblocking state to accepted
+        // sockets. The request reader relies on a bounded blocking timeout.
+        stream
+            .set_nonblocking(false)
+            .map_err(|error| LoginError::Server(error.to_string()))?;
         let Some(target) = read_request_target(&mut stream, remaining)? else {
             continue;
         };
@@ -682,6 +687,43 @@ mod tests {
             "a failed genuine callback must get the failure page: {response}"
         );
 
+        let result = waiter
+            .join()
+            .map_err(|error| std::io::Error::other(format!("waiter thread panicked: {error:?}")))?;
+        let Err(LoginError::Server(message)) = result else {
+            return Err(std::io::Error::other("expected callback Server error").into());
+        };
+        assert!(message.contains("access_denied"), "message: {message}");
+        Ok(())
+    }
+
+    #[test]
+    fn accepted_connection_waits_for_delayed_request_bytes()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let (listener, port, listener_permit, accepted_permit) = test_server()?;
+
+        let waiter = std::thread::spawn(move || {
+            wait_for_callback(
+                listener,
+                listener_permit,
+                accepted_permit,
+                "expected-state",
+                Duration::from_secs(2),
+            )
+        });
+
+        let mut socket = std::net::TcpStream::connect(("127.0.0.1", port))?;
+        std::thread::sleep(Duration::from_millis(100));
+        socket.write_all(
+            b"GET /auth/callback?error=access_denied&state=expected-state HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n",
+        )?;
+        let mut response = String::new();
+        socket.read_to_string(&mut response)?;
+
+        assert!(
+            response.starts_with("HTTP/1.1 400"),
+            "a delayed genuine callback must get the failure page: {response}"
+        );
         let result = waiter
             .join()
             .map_err(|error| std::io::Error::other(format!("waiter thread panicked: {error:?}")))?;
