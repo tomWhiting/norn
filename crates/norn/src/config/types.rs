@@ -901,7 +901,7 @@ pub struct VariantSettings {
 /// representable: subprocess servers populate [`Self::command`]/[`Self::args`]
 /// and remote servers populate [`Self::url`]/[`Self::headers`]. Validation
 /// of the combination lives in NC-003 / the MCP cluster (NG4).
-#[derive(Clone, Default, Serialize, Deserialize)]
+#[derive(Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct McpServerSettings {
     /// Whether this definition is active. `false` masks lower-precedence

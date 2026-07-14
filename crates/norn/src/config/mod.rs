@@ -27,6 +27,10 @@ pub mod loader;
 pub mod mcp;
 pub mod mcp_approval;
 mod mcp_local;
+mod mcp_patch;
+pub mod mcp_state;
+mod mcp_state_types;
+mod mcp_workspace_write;
 pub(crate) mod merge;
 pub mod paths;
 pub mod permissions;
@@ -41,6 +45,11 @@ pub use mcp::{
 };
 pub use mcp_approval::{McpApprovalState, McpApprovalStore};
 pub use mcp_local::project_local_mcp_settings_path;
+pub use mcp_state::{McpConfigState, McpDefinitions};
+pub use mcp_state_types::{
+    EffectiveMcpServer, McpConfigLayer, McpConfigSnapshot, McpLayerEntry, McpPersistentChange,
+    McpPersistentMutation, McpPersistentScope, McpServerInspection, McpSessionEntry,
+};
 pub(crate) use merge::merge_settings;
 pub use permissions::{PermissionDecision, PermissionPolicy};
 pub(crate) use provider_security::validate_working_directory_authority;

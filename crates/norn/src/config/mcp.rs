@@ -297,7 +297,7 @@ fn map_to_hash(values: Option<&BTreeMap<String, String>>) -> HashMap<String, Str
         .collect()
 }
 
-fn validate_one(name: &str, definition: &McpServerSettings) -> Result<(), ConfigError> {
+pub(crate) fn validate_one(name: &str, definition: &McpServerSettings) -> Result<(), ConfigError> {
     let settings = NornSettings {
         mcp_servers: Some(BTreeMap::from([(name.to_owned(), definition.clone())])),
         ..NornSettings::default()
@@ -318,7 +318,7 @@ struct NormalizedDefinition<'a> {
     headers: BTreeMap<String, &'a str>,
 }
 
-fn fingerprint(
+pub(crate) fn fingerprint(
     name: &str,
     definition: &McpServerSettings,
 ) -> Result<McpDefinitionFingerprint, ConfigError> {
