@@ -12,6 +12,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::agent::handle::{AgentHandle, ResolvedAgentInfo};
+use crate::agent::mcp::AgentToolRuntime;
 use crate::agent::output::RunOutcome;
 use crate::agent_loop::config::{AgentLoopConfig, ToolExecutor};
 use crate::agent_loop::inbound::{InboundChannel, InboundSender};
@@ -34,8 +35,7 @@ use crate::tool::registry::ToolRegistry;
 pub struct Agent {
     pub(super) provider: Arc<dyn Provider>,
     pub(super) registry: Arc<ToolRegistry>,
-    pub(super) tool_runtime: Arc<ToolGenerationStore>,
-    pub(super) mcp_control: Option<McpControlHandle>,
+    pub(super) tool_runtime: AgentToolRuntime,
     pub(super) loop_context: LoopContext,
     pub(super) config: AgentLoopConfig,
     pub(super) model: String,
@@ -153,11 +153,12 @@ impl Agent {
     /// [`Agent::run`] would have executed against.
     #[must_use]
     pub fn into_parts(self) -> AgentParts {
+        let AgentToolRuntime { tools, mcp_control } = self.tool_runtime;
         AgentParts {
             provider: self.provider,
             registry: self.registry,
-            tool_runtime: self.tool_runtime,
-            mcp_control: self.mcp_control,
+            tool_runtime: tools,
+            mcp_control,
             loop_context: self.loop_context,
             config: self.config,
             model: self.model,
@@ -186,7 +187,7 @@ impl Agent {
             cancel: self.cancel.clone(),
             events: self.events_tx.clone(),
             inbound: self.inbound_tx.clone(),
-            mcp_control: self.mcp_control.clone(),
+            mcp_control: self.tool_runtime.mcp_control.clone(),
         }
     }
 
@@ -272,7 +273,7 @@ impl Agent {
         // (`ToolExecutor::owned_handle`) and can spawn each batch member
         // on its own task for true parallelism.
         let executor: Arc<dyn ToolExecutor> =
-            Arc::clone(&self.tool_runtime) as Arc<dyn ToolExecutor>;
+            Arc::clone(&self.tool_runtime.tools) as Arc<dyn ToolExecutor>;
         let result = run_agent_step(AgentStepRequest {
             provider: self.provider.as_ref(),
             executor: &executor,

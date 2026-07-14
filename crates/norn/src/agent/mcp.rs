@@ -20,7 +20,23 @@ pub(super) struct McpAttachment {
     state: Option<McpConfigState>,
 }
 
+pub(super) struct AgentToolRuntime {
+    pub(super) tools: Arc<ToolGenerationStore>,
+    pub(super) mcp_control: Option<McpControlHandle>,
+}
+
 impl McpAttachment {
+    pub(super) fn assemble_runtime(
+        &self,
+        working_dir: &Path,
+        registry: &ToolRegistry,
+        context: &ToolContext,
+    ) -> Result<AgentToolRuntime, NornError> {
+        let tools = Arc::new(ToolGenerationStore::from_registry(registry));
+        let mcp_control = self.start(working_dir, &tools, context)?;
+        Ok(AgentToolRuntime { tools, mcp_control })
+    }
+
     pub(super) fn state(&self) -> Option<McpConfigState> {
         self.state.clone()
     }

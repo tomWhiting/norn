@@ -83,7 +83,6 @@ use crate::rules::engine::RuleEngine;
 use crate::session::manager::ReplaySummary;
 use crate::session::store::EventStore;
 use crate::system_prompt::builder::ExecutionMode;
-use crate::tool::ToolGenerationStore;
 use crate::tool::context::SharedWorkingDir;
 use crate::tool::lifecycle::RuntimePostValidateCheck;
 use crate::tool::traits::Tool;
@@ -595,8 +594,9 @@ impl AgentBuilder {
             &model,
         );
         let registry = Arc::new(registry);
-        let tool_runtime = Arc::new(ToolGenerationStore::from_registry(registry.as_ref()));
-        let mcp_control = self.mcp.start(&working_dir, &tool_runtime, &shared)?;
+        let tool_runtime = self
+            .mcp
+            .assemble_runtime(&working_dir, registry.as_ref(), &shared)?;
         // Share the same `Arc<ActionLog>` with the loop so dispatch recording
         // and the `action_log` tool's queries observe one ledger.
         loop_context.action_log = Some(Arc::clone(&action_log));
@@ -713,7 +713,6 @@ impl AgentBuilder {
             provider: self.provider,
             registry,
             tool_runtime,
-            mcp_control,
             loop_context,
             config: config_override,
             model,
