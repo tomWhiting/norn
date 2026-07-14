@@ -1,12 +1,15 @@
 # Responses API remediation plan
 
-- **Status:** Active; P0 accepted, P1 entry pending. The focused independent
+- **Status:** Active; P0 accepted, P1 Gate A complete and Gate B foundation
+  next. The focused independent
   correction review committed at `7ce29d7` returned `READY` for source head
   `e1bf7f2` and the full `41ea210..e1bf7f2` seam sweep. It independently
   reproduced Gate C 38/38, distributions 830/830, the full-range policy, and
-  zero-error attestation, and closed GD-1 through GD-18. P1 has not started and
-  remains blocked at Gate A on D0, the CI/required-check owner decision. P2 has
-  not started.
+  zero-error attestation, and closed GD-1 through GD-18. P1 uses `2917c8e` as
+  its prospective base. The owner has deferred D0 remote merge enforcement to
+  P1 exit; checked-in local enforcement and retained evidence remain mandatory,
+  and no remote-protection claim is permitted while D0 is open. P2 has not
+  started.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -218,37 +221,49 @@ files contain large inline test modules.
 `CONVENTIONS.toml` currently reports the 500-LOC and bypass rules as advisory
 and counts whole files differently from the policy above. Phase 1 must replace
 the disagreement with one shared, failing, syntax-aware implementation used by
-post-mutation checks and the protected merge gate. Advisory output alone is
-never acceptance evidence for this program.
+staged prepublication enforcement, post-mutation/completion feedback, a
+checked-in local clean-checkout gate, and the eventual D0-selected remote
+enforcement mechanism. Advisory output alone is never acceptance evidence for
+this program.
 
 ## Universal phase gate
 
 Every phase must satisfy all four gates below.
 
-Gates A-D below preserve the final accepted P0 dashboard until the separate P1
-Gate A entry commit records its prospective base and resets the dashboard.
+Gates A-D below are the active P1 dashboard. P1's prospective base is
+`2917c8e`; none of P0's checked gates or retrospective exceptions carries into
+this phase.
 The prior automated workspace Gate C, full-range policy, 750-observation
 distribution, and mechanical attestation remain historical evidence at
 `13d661c`; the `c6bf1e2` whole-phase review invalidated them as P0 acceptance
 evidence. Replacement machine evidence has now been generated from clean exact
 source head `e1bf7f2` under the main repository's ignored `target/` lanes.
-Machine-verifiable Gate C claims and the independent reviewer checks are marked
-below. The final evidence is entered in the ledger. P1 receives none of P0's
-retrospective exceptions and must satisfy every gate prospectively.
+The P0 machine and reviewer results remain historical evidence in its ledger
+row. Every P1 Gate B-D item below has been reset and must be satisfied against
+the P1 base.
 
 ### Gate A: entry and design
 
 - [x] All dependency phases are complete.
 - [x] The exact phase-base commit is recorded before implementation so every
   diff, LOC, lint, and added-line audit has one reproducible comparison range.
-  P0's campaign base is `41ea210`; each later phase records its own accepted
-  predecessor commit in the evidence ledger.
-- [ ] The phase's owner decisions are recorded before implementation.
-- [ ] Its finding IDs, invariants, production touch points, and defect-regression
+  P1's phase base is the accepted P0 closure commit `2917c8e`.
+- [x] The phase's owner decisions are recorded before implementation. The D0
+  entry disposition permits local P1 work while remote enforcement remains an
+  explicit exit blocker; it does not waive any local gate or evidence.
+- [x] Its finding IDs, invariants, production touch points, and defect-regression
   or measurement/design evidence method are agreed by the implementer and
   domain reviewer.
+  Ratified artifacts are the
+  [`P1 Gate A contract`](reviews/2026-07-15-p1-gate-a-contract.md),
+  [`repository-policy contract`](reviews/2026-07-15-p1-policy-contract.md), and
+  [62-row evidence preregistration](reviews/evidence/p1/finding-traceability.jsonl).
+  The independent
+  [`Gate A review`](reviews/2026-07-15-p1-gate-a-review.md) returned `READY` on
+  2026-07-15 without making an implementation or test claim.
 - [x] Any live credential use, external call, or billable experiment has
-  separate owner approval before it runs.
+  separate owner approval before it runs. P1 permits official documentation
+  retrieval but no live provider request or credential experiment.
 
 P0 retrospective note: the base plan at `41ea210` still recorded D1 as open,
 and no durable artifact proves that the implementer and domain reviewer agreed
@@ -271,11 +286,11 @@ the P0 evaluation rule above.
 
 - [ ] Confirmed-defect regressions fail for the documented reason on the reviewed
   baseline; measurement/design work has its pre-registered baseline and contract.
-- [x] The production fix is complete across request, stream, persistence,
+- [ ] The production fix is complete across request, stream, persistence,
   replay, loop behavior, and user surface wherever the capability crosses them.
-- [x] Replaced paths and temporary scaffolding are deleted in the same phase.
-- [x] Changed production files satisfy the file-size and module-structure rules.
-- [x] The finding-to-test traceability table is updated.
+- [ ] Replaced paths and temporary scaffolding are deleted in the same phase.
+- [ ] Changed production files satisfy the file-size and module-structure rules.
+- [ ] The finding-to-test traceability table is updated.
 
 P0 evidence note: the candidate traceability matrix is recorded in
 `2026-07-12-p0-traceability.md` and includes the later D1D/SEC-14 row. The
@@ -289,27 +304,29 @@ historical box is not relabelled as true.
 
 ### Gate C: machine verification
 
-- [x] Phase-specific tests pass.
-- [x] Every crate touched in the round passes its complete integration surface
+- [ ] Phase-specific tests pass.
+- [ ] Every crate touched in the round passes its complete integration surface
   with `cargo test -p <crate> --tests`; a focused `--lib` run cannot substitute
   for this per-round fence. Concurrency-sensitive cases additionally use the
   distribution requirements below.
-- [x] `cargo fmt --all -- --check` passes.
-- [x] `cargo clippy --workspace --all-targets -- -D warnings` passes.
-- [x] `cargo test --workspace --all-targets` passes.
-- [x] `cargo test --workspace --doc` passes.
-- [x] `git diff --check <phase-base>...HEAD` passes. Running bare
+- [ ] `cargo fmt --all -- --check` passes.
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes.
+- [ ] `cargo test --workspace --all-targets` passes.
+- [ ] `cargo test --workspace --doc` passes.
+- [ ] `git diff --check <phase-base>...HEAD` passes. Running bare
   `git diff --check` on the required clean checkout is not evidence.
-- [x] For P0, the syntax-aware machine policy covers every changed Rust item and
-  reports exact production LOC and added-line bypass matches.
-- [x] For P0, reviewer-verified production LOC and bypass inspection covers every
-  changed Rust item. From P1 onward, the syntax-aware repository policy command
-  passes as a hard failure in the protected merge check.
-- [x] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
-  zero campaign-added unwrap, expect, panic, suppression, ignored-test, or
-  unresolved-marker uses. Later phases use their recorded phase base.
-- [x] For P0, security reviewers manually inspect all fixtures/evidence for
-  secrets. From P1 onward, the checked-in evidence-redaction validator passes;
+- [ ] The syntax-aware repository policy command covers every relevant Rust item,
+  reports exact production LOC and module/entrypoint shape, enforces the legacy
+  baseline, and fails on prohibited additions.
+- [ ] The same policy semantics run as a non-downgradable staged hard failure
+  before first-party mutation publication, in post-mutation/completion feedback,
+  and in the checked-in local clean-checkout gate. Remote enforcement is not
+  claimed while D0 remains open.
+- [ ] A `git diff --no-ext-diff 2917c8e...HEAD` added-line audit reports zero
+  campaign-added unwrap, expect, panic, suppression, ignored-test, or
+  unresolved-marker uses.
+- [ ] The checked-in evidence-redaction validator passes across every P1 fixture
+  and retained evidence artifact;
   no credential, real account identifier, private prompt content, reusable turn
   state, or raw cache key is present.
 
@@ -354,17 +371,17 @@ artifacts to the same clean head with zero errors.
 
 ### Gate D: independent review
 
-- [x] The domain reviewer inspects the implementation, tests, and raw evidence.
-- [x] A fresh rigorous Fable-model reviewer receives the source review, this plan,
+- [ ] The domain reviewer inspects the implementation, tests, and raw evidence.
+- [ ] A fresh rigorous Fable-model reviewer receives the source review, this plan,
   the diff, relevant official-source revision, and evidence bundle.
-- [x] Reviewers rerun the relevant tests and policy gates rather than trusting
+- [ ] Reviewers rerun the relevant tests and policy gates rather than trusting
   pasted output.
-- [x] All phase-owned findings, regressions introduced by the phase, and
+- [ ] All phase-owned findings, regressions introduced by the phase, and
   defects in the phase's claimed outcome are fixed and rechecked by the same
   reviewer.
-- [x] Final verdict is `READY` for the complete phase outcome, with no
+- [ ] Final verdict is `READY` for the complete phase outcome, with no
   unresolved phase-owned or newly unowned item at any severity.
-- [x] Commit, commands, test counts, policy report, reviewer, date, and verdict
+- [ ] Commit, commands, test counts, policy report, reviewer, date, and verdict
   are entered in the evidence ledger.
 
 ## Phase roadmap
@@ -372,7 +389,7 @@ artifacts to the same clean head with zero errors.
 | Phase | Status | Primary outcome |
 |---|---|---|
 | P0. Credential and workspace authority containment | [x] Accepted by focused Gate D review `7ce29d7` on 2026-07-15 | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
-| P1. Contract and enforcement baseline | [ ] | The program has executable contracts and protected quality gates. |
+| P1. Contract and enforcement baseline | [ ] Gate A complete at base `2917c8e`; Gate B foundation next; D0 remote enforcement deferred to exit | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
 | P4. Streaming and replay conformance | [ ] | Supported events/items are complete, reconciled, and fail closed. |
@@ -399,11 +416,13 @@ artifacts to the same clean head with zero errors.
 
 ## Owner decision register
 
-The relevant phase cannot pass Gate A while its decision is open.
+An open owner decision blocks Gate A unless the owner explicitly records an
+entry disposition that defers it to phase exit. A deferred decision still
+blocks phase acceptance and cannot be represented as implemented evidence.
 
 | ID | Required decision | Due | Status / record |
 |---|---|---|---|
-| D0 | CI/merge-gate platform and required-check wiring. P1 remains blocked until a checked-in clean-checkout gate is protected. | P1 | [ ] Open |
+| D0 | Remote CI/merge-enforcement platform and required-check wiring. The checked-in local gate is phase work, not a substitute for remote enforcement. | P1 exit | [ ] Open for P1 exit. On 2026-07-15 the owner declined GitHub Actions for now and authorized P1 to proceed locally. No GitHub Actions workflow or remote-protection claim may be introduced under that ruling. P1 must build and retain evidence from one deterministic local clean-checkout gate, then revisit D0 before `READY` to select another remote mechanism, approve GitHub Actions later, or make a new explicit enforcement decision. |
 | D1 | Exact compiled OAuth authority/path allowlist, redirect, workspace filesystem/command, and private-artifact policy. Custom trusted-proxy and repository-command consent are out of P0 scope. | P0 | [x] Decided 2026-07-10 and refined by the P0 threat model and provisional review round: accept no override or normalized `https://chatgpt.com[:443]/backend-api/codex[/]`, discard accepted input in favor of the compiled URL, and follow no redirects on credential-bearing clients. Both CWD layers are untrusted even when gitignored. Direct/raw provider authority, backend-selecting aliases, command-bearing hooks/rules, workspace skill shell, convention process categories, and model-selected profile prompt commands are rejected before use. One immutable launch root uses no-follow workspace reads/enumeration on supported descriptor-capable Unix targets; repository symlinks are unsupported, and Redox, ESP-IDF, and non-Unix workspace input fail closed. Debug-dump and private-artifact hardening are implemented on the same supported target class, including descriptor-pinned ancestor traversal, foreground and process spools, task storage, and removal of relative sensitive-data fallbacks; unsupported targets fail before artifact I/O. Pre-existing private-artifact links/non-regular entries are rejected, and read-only reopen hardens traversed legacy directories and regular files. Under a concurrent same-UID final-name replacement, the portable invariant is descriptor confinement: the replacement is never followed, no outside target is read/written/deleted, and the operation either fails or affects only the raced entry inside the pinned private root; POSIX does not provide portable strict rejection/serializability against that actor. Response headers remain fully redacted under D1, and redirect refusal follows the structural policy in `DECISIONS-2026-07.md` section 7. Custom API-key endpoints require HTTPS except loopback HTTP. No trusted proxy or implicit project-command consent is admitted. The final review and phase gates passed at `7ce29d7`. |
 | D1A | Non-disclosing representation for unknown provider terminal discriminators: equality semantics, keying, identifier lifetime, output size, and deterministic test control. | P0 | [x] Decided 2026-07-11: known values retain typed mappings; an unknown exact byte sequence is represented only by its terminal category and a domain-separated full HMAC-SHA-256 tag under an OS-random process-lifetime key. The key and raw value are never persisted or logged. A deterministic key seam is crate-private and compiled only under `cfg(test)`; production exposes no public, configuration, or environment override. OS-random initialization failure is a typed fail-closed diagnostic error, never a fixed-key fallback. Tags support equality only within one process and are not cross-run fingerprints. Raw value and byte length are not exposed. |
 | D1B | Location and access policy for fetched and other session-derived artifacts. | P0 | [x] Decided 2026-07-11: fetched documents are private session-owned artifacts beneath the trusted user-level Norn session store, never workspace files. P0 establishes a typed active-session artifact scope and migrates new fetch writes without pre-empting P3 transcript-format, historical-reference, fork-copy, or broad storage-migration decisions. Generic model file access may read/search only the active artifact subtree; it does not gain authority over credentials, indexes, raw child transcripts, or other sessions. |
@@ -1020,8 +1039,10 @@ seams, closed GD-1 through GD-18, and returned `READY`; P0 is accepted.
 
 ## P1. Contract and enforcement baseline
 
-**Status:** [ ] Gate A not started; **findings supported:** all; **dependency
-state:** P0 accepted, D0 open and blocking entry.
+**Status:** [ ] Gate A complete and independently `READY` at phase base
+`2917c8e`; Gate B foundation not yet implemented; **findings supported:** all;
+**dependency state:** P0 accepted. D0 remote enforcement is owner-deferred to
+P1 exit and still blocks acceptance, not local implementation.
 
 ### What this phase fixes
 
@@ -1037,25 +1058,29 @@ quality checks.
 
 The team has one approved backend/state matrix, a sanitized fixture corpus, a
 finding-to-evidence map, a shared syntax-aware production policy checker, and a
-protected clean-checkout merge gate. Existing post-mutation checks use the same
-policy semantics. Later phases fail mechanically when they add/worsen debt or
-violate campaign rules. No provider behavior changes in this phase.
+deterministic checked-in clean-checkout gate. Staged mutation enforcement,
+post-mutation/completion feedback, and the repository command use the same
+policy semantics. D0 selects the remote enforcement mechanism before P1
+acceptance. Later phases fail mechanically when they add/worsen debt or violate
+campaign rules. No provider behavior changes in this phase.
 
 ### Work checklist
 
-- [ ] Ratify this plan and the source review's finding IDs and severity.
-- [ ] Record the public Responses documentation revision and official Codex
+- [x] Ratify this plan and the source review's finding IDs and severity.
+- [x] Record the public Responses documentation revision and official Codex
   source commit used as the conformance contract.
 - [ ] Build sanitized fixtures for text, multiple assistant phases, encrypted
   reasoning, function/custom calls, refusal, hosted search and annotations,
   compaction, unknown reasoning parts/items, interleaved and duplicate call
   completion, malformed terminal data, `end_turn`, turn-state headers/metadata,
   failures, rate limits, incomplete streams, and cache usage.
-- [ ] Add a traceability record mapping each confirmed defect to a regression
+- [x] Add a traceability preregistration mapping each confirmed defect to a
+  planned regression
   and each unproven/design finding to its baseline and pre-registered contract.
-- [ ] Add one syntax-aware policy implementation used by both post-mutation
-  checks and a repository command that fails on LOC, entrypoint/module shape,
-  bypass, ignored-test, and unresolved-marker violations.
+- [ ] Add one syntax-aware policy implementation used by staged first-party
+  mutation checks, post-mutation/completion feedback, and a repository command
+  that fails on LOC, entrypoint/module shape, bypass, ignored-test, and
+  unresolved-marker violations.
 - [ ] Update or replace the contradictory `CONVENTIONS.toml` LOC/bypass path so
   there are not two authorities with different test-code semantics.
 - [ ] Add policy fixtures, including inline `#[cfg(test)]` code, changed
@@ -1066,10 +1091,13 @@ violate campaign rules. No provider behavior changes in this phase.
 - [ ] Create an explicit legacy baseline containing file, verified production
   LOC, owner, due phase/remediation record, and baseline identity. The checker
   fails on a new entry, growth, production edits, or an overdue entry. A touched
-  entry is removed only after the file is at or below 500 production LOC.
+  active exception resolves only after the file is at or below 500 production
+  LOC; its immutable origin record remains as audit history.
 - [ ] Add a checked-in evidence-redaction validator for fixtures and evidence.
 - [ ] Wire every Gate C command, the policy checker, and the redaction validator
-  into the D0-selected protected merge check running from a clean checkout.
+  into one checked-in local gate running from a clean checkout. The eventual
+  D0-selected remote mechanism must invoke that same entrypoint without weaker
+  flags or omitted legs.
 - [ ] Record toolchain, baseline commit, test counts, exact gate commands, and
   full verification results.
 
@@ -1080,12 +1108,13 @@ violate campaign rules. No provider behavior changes in this phase.
 - [ ] Redaction-validator negative fixtures prove credentials, account IDs,
   private prompt text, reusable turn state, and raw cache keys fail the gate.
 - [ ] Policy-checker tests prove violations return non-zero, inline test items
-  are excluded from production LOC, and an unchanged baseline entry may remain
-  only until its recorded due phase.
+  are excluded from production LOC, and an unchanged active baseline exception
+  may remain only before its recorded due phase.
 - [ ] The checker catches every prohibited bypass form and a logic-bearing
   `mod.rs` fixture, and post-mutation feedback reports the same result.
-- [ ] The protected check runs all Gate C commands on a clean checkout and is
-  required rather than advisory.
+- [ ] The local gate runs all Gate C commands from a clean checkout and fails
+  rather than advises. Before P1 acceptance, D0 records how the same entrypoint
+  is enforced remotely or supplies a new explicit owner decision.
 - [ ] Baseline commands pass. A pre-existing failure is fixed, not waived.
 
 ### Review and exit gate
@@ -1093,7 +1122,8 @@ violate campaign rules. No provider behavior changes in this phase.
 - [ ] Security/auth, request/state, and streaming/item domain reviewers approve
   the fixture coverage for their original review areas.
 - [ ] A fresh Fable architecture reviewer returns `READY` on the contract,
-  shared policy implementation, protected check, and phase ordering.
+  shared policy implementation, local gate, D0 exit disposition, and phase
+  ordering.
 - [ ] Universal Gates A-D pass and P1 evidence is recorded.
 
 ## P2. OAuth lifecycle correctness
@@ -1336,7 +1366,8 @@ authoritative completed item can become executable.
   implementation requires decomposition. Split it by parser, item assembly,
   reconciliation, and terminal mapping where required by LOC or cohesion.
 - [ ] Maintain separate checked manifests for the pinned public taxonomy
-  (52 stream events and 28 output-item variants at review time) and Codex-specific
+  (53 stream events and 28 output-item variants at the 2026-07-15 P1 contract
+  retrieval) and Codex-specific
   events/items/headers. Each name is handled, allowlisted lifecycle-only, or
   typed unsupported, and a taxonomy change fails the manifest check.
 - [ ] Key deltas by item ID, output index, and content index.
@@ -1806,13 +1837,13 @@ ledger prematurely.
 | Phase | Current implementation | Retained candidate evidence | Work still required before acceptance |
 |---|---|---|---|
 | P0 | Accepted source head `e1bf7f2`; packaging through `1096628`; final review `7ce29d7` | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; independent reproduction, deferred seam sweep, and acceptance supplement complete | None; accepted 2026-07-15 |
-| P1 | Not started | None | D0 owner decision and prospective Gate A entry |
+| P1 | Gate A complete at base `2917c8e`; Gate B foundation not yet implemented | Ratified public/Codex and repository-policy contracts; exact 62-row preregistration; independent Gate A `READY` | Implement and independently review the executable foundation, complete and verify P1, then resolve D0 before acceptance |
 | P2 | Not started | None | P1 acceptance and D9 |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
 | P0 | `41ea210` | Source range `41ea210..e1bf7f2`; evidence/docs `d06e4fc`, `7648159`, `c029de5`, `1096628` | [`P0 traceability`](reviews/2026-07-12-p0-traceability.md); Gate C 38/38; distributions 830/830; attestation pass; independent reproduction in `7ce29d7`; [`acceptance supplement`](reviews/2026-07-15-p0-acceptance-supplement.md) | 359 changed Rust files; 65 test-only; 97 writers; zero bypass, over-500, module-shape, or thin-entrypoint violations | External domain seats A-C, whole-diff seam seat, and three read-only supplement seats, 2026-07-15 | [`READY`](reviews/2026-07-15-p0-correction-gate-d-review.md), `7ce29d7` | [x] Accepted |
-| P1 | | | | | | | [ ] |
+| P1 | `2917c8e` | | | | | | [ ] |
 | P2 | | | | | | | [ ] |
 | P3 | | | | | | | [ ] |
 | P4 | | | | | | | [ ] |
@@ -1834,8 +1865,8 @@ ledger prematurely.
   gates pass from the final clean checkout.
 - [ ] All changed production files are at or below 500 production LOC and all
   changed entrypoints are at or below 200 production LOC.
-- [ ] Every Responses-program entry in the P1 legacy LOC baseline is removed;
-  unrelated entries have not grown, changed production behavior, or passed their
-  recorded due point.
+- [ ] Every Responses-program active exception in the P1 legacy LOC baseline is
+  resolved; immutable origin records remain, and unrelated entries have not
+  grown, changed production behavior, or reached their recorded due point.
 - [ ] Final independent Fable verdict is `READY`.
 - [ ] Owner release approval is recorded.

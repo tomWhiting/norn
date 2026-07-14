@@ -1079,3 +1079,25 @@ is `e1bf7f2`; evidence and documentation packaging runs through `1096628`.
 - The three historically false P0 Gate A/B timing and baseline boxes remain
   unchecked under the section 11 P0-only exceptions. Acceptance does not
   rewrite those historical facts or create an exception for P1.
+
+## 14. P1 entry while remote merge enforcement is deferred (2026-07-15)
+
+**Owner ruling:** Tom does not want GitHub Actions introduced at this time and
+authorized P1 to proceed without selecting another remote CI platform first.
+This is a sequencing decision, not a quality-gate waiver.
+
+- P1 uses accepted P0 closure commit `2917c8e` as its prospective phase base.
+- D0 no longer blocks P1 research or local implementation. It remains open and
+  blocks P1 acceptance until the owner selects a remote enforcement mechanism,
+  approves GitHub Actions later, or records a new explicit enforcement ruling.
+- P1 must still produce one deterministic checked-in clean-checkout gate that
+  runs the strict phase commands, shared syntax-aware policy, and evidence
+  redaction validator. Post-mutation checks must use the same policy semantics.
+- Every interim P1 candidate must run that local gate with retained evidence.
+  No document, review, or status surface may describe the branch as remotely
+  protected while D0 remains open.
+- No GitHub Actions workflow is added under this ruling. A later D0-selected
+  system must call the same checked-in gate without weaker flags or omitted
+  legs.
+- P1 performs no live provider request, credential use, or billable experiment.
+  Retrieval of public official documentation and schemas is permitted.
