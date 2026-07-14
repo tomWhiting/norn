@@ -10,6 +10,18 @@
 - **Documentation/evidence packaging:** `7648159`, `c029de5`, `1096628`
 - **Full P0 range (seam sweep):** `41ea210..e1bf7f2`
 
+> **Post-publication traceability correction:** the original `7ce29d7` review
+> text mislabeled the failure/TUI cluster as GD-13 and the `claude_runner` pin
+> as GD-16. The corrected labels below are GD-12 and GD-14 respectively; GD-11
+> owns startup status hydration, GD-13 owns the admission-record ordering
+> correction, and GD-16 owns redirect refusal. This editorial correction does
+> not change evidence or verdict. Generic local interpreter paths in this review
+> and the two reviewer-battery records were also replaced by path-free toolchain
+> descriptions; no username, credential, or result changed. The later
+> [`P0 acceptance evidence supplement`](2026-07-15-p0-acceptance-supplement.md)
+> makes three exhaustive manual inspections explicit; it does not replace or
+> expand this verdict.
+
 ## Verdict: READY — P0 accepted
 
 Every GD-1 through GD-18 finding from the controlling review is closed and
@@ -28,8 +40,9 @@ re-confirmed here, not promoted from prior scoped rounds.
 
 Clean detached worktree at `e1bf7f2` under the main repository's ignored
 `target/worktrees/`, native toolchain `rustc 1.94.0`, Python
-`/opt/homebrew/bin/python3` (3.14.3), macOS-26.3.1-arm64. Legs run serially,
-alone on the host (no overlapping Cargo processes — the controlling round's
+3.14.3 from the explicitly selected native interpreter,
+macOS-26.3.1-arm64. Legs run serially, alone on the host (no overlapping Cargo
+processes — the controlling round's
 load-contention error was not repeated). Exit codes captured to files, never
 piped.
 
@@ -89,9 +102,9 @@ writer inventory (methodology GAP, not an unreconciled writer — see below).
   text/bytes/digest retained; failures report only the fixed
   `no content observed` / `one withheld line` / `multiple withheld lines`
   categories plus completion state.
-- GD-9 session-id rebind, GD-13 cluster (live_tools swallowed arm, HTTP
-  id-mismatch drop, TUI stale `/tools` + freeze, empty startup statuses) — all
-  PROVEN.
+- GD-9 session-id rebind and the GD-12 failure/TUI cluster (`live_tools`
+  swallowed arm, HTTP id-mismatch drop, TUI stale `/tools` + freeze) — PROVEN.
+  GD-11 owns the separately proven startup-status hydration path below.
 - `17a3bb8` remote-error fixture — PROVEN: the `panic!`/`unwrap_err` is genuinely
   removed (replaced with `Err`-returning `let-else`), same assertions retained.
 
@@ -111,12 +124,15 @@ writer inventory (methodology GAP, not an unreconciled writer — see below).
   sweep clean.
 - **GD-18** orchestrator split — PROVEN. `print/orchestrator.rs` 433 production
   LOC; `PrintError` moved verbatim to `print/error.rs` (68 LOC); real boundary.
-- **GD-16** `claude_runner` pin — PROVEN. `Cargo.toml` rev
+- **GD-14** `claude_runner` pin — PROVEN. `Cargo.toml` rev
   `643a1166f06a1f42961acf442f654670fbe9da22`; `Cargo.lock` agrees.
 - **GD-11** startup status hydration — PROVEN. `with_config_snapshot` hydrates
   statuses + fingerprints at adoption; the first mutation reuses rather than
   respawning; `mcp list` reports real state.
 - **GD-12** revoke-blocked-while-disabled and rollback over-revoke — PROVEN.
+- **GD-13** descriptor-admission record order — PROVEN. The candidate record
+  now states that live limits and the open count are snapshotted before the
+  weighted reservation, matching `DescriptorGovernor::try_acquire`.
 - **GD-10** stderr drain — PROVEN. `Stdio::piped()` + governed drain; the
   `Stdio::null()` discard is gone.
 - **D1E** descriptor-permit lifecycle — PROVEN. Weights exact (TWO_PIPE=7,

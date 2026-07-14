@@ -3,7 +3,8 @@
 **Date:** 2026-07-12
 **Phase base:** `41ea210`
 **Snapshot code head:** `bfa0b8e`
-**Status:** candidate matrix and machine Gate C complete; independent acceptance remains open
+**Status:** historical candidate matrix plus correction appendix; P0 accepted by
+independent Gate D review `7ce29d7` on 2026-07-15
 **Source review:** `docs/reviews/2026-07-10-responses-api-implementation-review.md`
 
 ## Evidence rule
@@ -71,6 +72,11 @@ Before this record supports a P0 closure claim:
 4. Obtain the fresh independent whole-P0 Gate D verdict. This record does not
    substitute for that review.
 
+All four requirements were completed by the focused independent review
+[`2026-07-15-p0-correction-gate-d-review.md`](2026-07-15-p0-correction-gate-d-review.md),
+which returned `READY`. The historical table states above remain unchanged as
+snapshot evidence rather than being retroactively relabelled.
+
 ## 2026-07-14 correction appendix
 
 The tables above remain the historical `bfa0b8e` snapshot. The controlling
@@ -86,7 +92,7 @@ traceability without rewriting the earlier snapshot.
 | `GD-3` through `GD-5`, `GD-9`, `GD-11`, `GD-12`, `GD-16` | `3d5ff8c`; MCP liveness, reconnect/quarantine, typed control errors, successful-session retention, startup hydration, actor/TUI failure paths, cancellation, and no-redirect fixtures under `integration/mcp_*`, `config/mcp_*`, and `norn-tui/app/mcp_slash.rs`. | Implemented; Gate C pass and 20-run sensitive-seam distributions. |
 | `GD-6`, `GD-7`, `GD-10` | `3d5ff8c`; `mcp_transport_bounds*`, HTTP/stdio bound and deadline fixtures, safe constant-space stderr categories, environment-overlay tests, exact CRLF boundaries, and the paused-time no-implicit-30-second client fixture. | Implemented; Gate C pass and 20-run sensitive-seam distributions. |
 | `GD-8` | `e4542ad`; checked-in production, test-only, shared, path-alias, case-alias, and literal-include module-reachability fixtures plus 43 evidence self-tests. | Implemented; full-range policy pass. |
-| `GD-15` | `e4542ad`; path-free schema-v3 gate/distribution evidence, path-free schema-v2 policy/attestation evidence, fixed sanitized environment-name inventory, executable hashes, embedded-path rejection, and exact-key attestation. `DECISIONS-2026-07.md` section 12 and the active correction handoff preserve the exact historical commit/hash inventory for the six removed schema-v2 reports. | Resolved: replacement artifacts pass and the owner-approved current-head deletion is applied; independent review remains open. |
+| `GD-15` | `e4542ad`; path-free schema-v3 gate/distribution evidence, path-free schema-v2 policy/attestation evidence, fixed sanitized environment-name inventory, executable hashes, embedded-path rejection, and exact-key attestation. `DECISIONS-2026-07.md` section 12 and the active correction handoff preserve the exact historical commit/hash inventory for the six removed schema-v2 reports. | Resolved and independently accepted at `7ce29d7`: replacement artifacts pass and the owner-approved current-head deletion is applied. |
 | `GD-17` | `e4542ad` and `e1bf7f2`; strict failure-name parsing, package/target qualification, truncation handling, and Cargo 1.94 backtick rerun hints split across stdout/stderr. | Implemented; 43/43 evidence self-tests and Gate C pass. |
 
 The first correction gate at `17a3bb8` is retained as 35/38 rather than
@@ -106,6 +112,23 @@ source expectation. The corrected exact-head evidence is:
   pass with zero errors, binding the gate, distributions, and policy to one
   clean exact head.
 
-This appendix is implementation traceability, not acceptance. GD-15 is resolved;
-the focused independent review in
-`2026-07-14-p0-correction-gate-d-handoff.md` remains open.
+This appendix is implementation traceability, not the verdict itself. The
+focused independent review in
+`2026-07-15-p0-correction-gate-d-review.md` returned `READY` and accepted P0.
+
+## 2026-07-15 final closure
+
+The final review independently closes all P0-owned source-review groups:
+`SEC-01` through `SEC-16`, `SEC-08A`, `BACKEND-01`, `BACKEND-02`, `NF-1`,
+`NF-2`, `NF-4`, and `QUAL-01`. It also verifies GD-1 through GD-18, the D1E
+permit lifecycle, the complete D1D startup/live-control matrix, and the deferred
+whole-diff seam sweep. The separate
+[`P0 acceptance evidence supplement`](2026-07-15-p0-acceptance-supplement.md)
+records the subsequent exhaustive manual LOC/bypass, writer-family, and
+fixture/evidence inspections without attributing them retroactively to the
+signed review.
+
+The P0-only Gate A and Gate B exceptions remain exactly as recorded: later
+evidence did not manufacture the missing historical timing or baseline runs.
+The accepted verdict relies on the explicit section 11 exceptions rather than
+retroactively checking those three false historical statements.

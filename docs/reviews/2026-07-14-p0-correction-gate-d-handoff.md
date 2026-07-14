@@ -1,8 +1,13 @@
 # P0 whole-phase correction review handoff
 
+> **Completed:** the focused review is committed as `7ce29d7` in
+> [`2026-07-15-p0-correction-gate-d-review.md`](2026-07-15-p0-correction-gate-d-review.md).
+> It returned `READY` and accepted P0. This handoff remains the historical
+> reviewer contract.
+
 - **Campaign date:** 2026-07-14
 - **Published (Australia/Melbourne):** 2026-07-15
-- **Status:** correction candidate ready for focused independent review; P0 is not accepted
+- **Status:** completed; final focused review returned `READY`
 - **Campaign base:** `41ea210`
 - **Controlling review:** `c6bf1e2` / `2026-07-14-p0-whole-phase-gate-d-review.md`
 - **Corrected source head:** `e1bf7f2ab79157a3ee7f49270c6e7ad61794a077`
@@ -199,6 +204,6 @@ The focused reviewer must:
    path-free replacement evidence are reflected in current `HEAD`.
 9. Return one focused whole-phase verdict: `READY` or `NOT READY`.
 
-P1 must not start until the focused review returns `READY`. Gate D, P0
-acceptance, the final evidence-ledger row, and the P0 roadmap checkbox remain
-open until that verdict is recorded.
+The focused review at `7ce29d7` returned `READY`. Gate D, P0 acceptance, the
+final evidence-ledger row, and the P0 roadmap status are recorded as complete in
+the remediation plan.

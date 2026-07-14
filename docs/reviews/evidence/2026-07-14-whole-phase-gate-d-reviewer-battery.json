@@ -6,7 +6,7 @@
   "environment": {
     "isolation": "clean detached git worktree at head; exit codes captured to files, never piped",
     "toolchain": "rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0, via repository rust-toolchain.toml pin",
-    "python": "3.14.3 (/opt/homebrew/bin/python3; note: ~/.local/bin/python3 on this machine is a broken Linux-x86_64 uv build)",
+    "python": "3.14.3 (explicit native interpreter; path and shadowed incompatible binary omitted)",
     "platform": "macOS-26.3.1-arm64"
   },
   "legs": [

@@ -3,9 +3,11 @@
 **Date:** 2026-07-12
 **Phase base:** `41ea210`
 **Snapshot code head:** `bfa0b8e`
-**Status:** final candidate enumeration classified; independent reconciliation pending
-**Scope:** every production or build-script filesystem-mutation candidate in
-`crates/**/*.rs`; test-only AST items and integration-test crates are excluded
+**Status:** final candidate enumeration classified and independently reconciled
+on 2026-07-15
+**Scope:** every policy-selected production or build-script filesystem-mutation
+seed candidate in `crates/**/*.rs`; test-only AST items and integration-test
+crates are excluded
 
 ## Evidence method
 
@@ -17,6 +19,15 @@ source text, are retained as `artifact_writer_candidates` in
 `docs/reviews/evidence/2026-07-14-p0-final-policy-bfa0b8e.json` at the final P0
 code head. The earlier unsuffixed artifact remains historical evidence for
 `f788823` and is not overwritten.
+
+The lexical rows discover writer roots, openers, publication operations, and
+artifact families; they are not an exhaustive list of every mutation statement
+performed through an already-inventoried handle. A broader independent AST
+sweep also covered standard/Tokio filesystem mutations, handle writes/syncs,
+and Rustix `mkdirat`/`openat`/`renameat`/`unlinkat`/`linkat`/`fchmod`. Extra
+statements such as `set_permissions`, `write_all`, and `sync_all` all resolve to
+families classified below. P1 owns making that broader methodology one checked-
+in reproducible policy rather than overstating the P0 seed regex.
 
 The candidate list is not treated as type inference. It deliberately retains
 read-only opens, cleanup operations, and a semantic `SessionManager::rename`
@@ -31,7 +42,7 @@ Run from the repository root:
 ```sh
 python3 -B -I docs/reviews/evidence/run_p0_policy_evidence.py \
   --base 41ea210 --head bfa0b8e \
-  --output /absolute/path/outside/the/repository/p0-policy.json
+  --output target/evidence/p0-policy.json
 ```
 
 ## Implicit private artifacts
@@ -86,7 +97,7 @@ so they are not implicit private artifacts.
 | Candidate family | Classification |
 |---|---|
 | Generated model catalog: `crates/norn/build.rs` | Cargo build-time output under Cargo-provided `OUT_DIR`. It is neither runtime user data nor model-readable. The aliased `fs::write` is retained in the raw inventory to prove build scripts were swept. |
-| Doctor permission scratch: `norn-cli/commands/doctor.rs` | Empty, short-lived file deliberately created in the current directory to diagnose workspace writability and immediately removed. It contains no prompt, credential, response, or tool output and is not a retained artifact. Failure/cleanup is reported by doctor. |
+| Doctor permission scratch: `norn-cli/commands/doctor.rs` | Empty, short-lived file deliberately created in the current directory to diagnose workspace writability and then removed on a best-effort basis. It contains no prompt, credential, response, or tool output and is not a retained artifact. Creation/writability failure is reported; scratch cleanup failure is intentionally ignored. |
 
 ## Non-writer and cleanup candidates
 
@@ -123,3 +134,9 @@ store owned by P2, or not an implicit artifact at all. This conclusion does
 not claim that all storage has the final session-centric layout, that the
 foreign OAuth transaction is correct, or that user-requested workspace/output
 writes should be private.
+
+The 2026-07-15 independent supplement reproduced 97 unique rows across 27 files
+with zero source mismatch and assigned every row exactly once: 67
+implicit-private, 6 shared OAuth, 19 explicit user/operator-directed, 3
+build/diagnostic, and 2 semantic false positives. The canonical row-list hash
+is `3d9bbeea6193e2dbc08007f64f1810406d997b7f652d6d0d113e71f3082c76ba`.

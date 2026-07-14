@@ -980,7 +980,7 @@ request-boundary generation/runtime publication, contextual roots, per-agent
 views, provider-visible tool refresh, and bounded watcher/descriptor release.
 Idle standalone HTTP GET notification listening, reconnect/resumption, HTTP
 session DELETE, MCP OAuth, sampling, resources, and prompts remain outside this
-slice. Whole-phase adversarial acceptance remains open.
+slice. Whole-phase adversarial acceptance subsequently passed at `7ce29d7`.
 
 **P0 transport correction contract (2026-07-14):** the whole-phase Gate D
 correction keeps the owner-ruled usability model while making its resource and
@@ -1060,3 +1060,22 @@ schema v2.
 - Current acceptance claims use only the path-free schema-v3 gate/distribution
   artifacts and path-free schema-v2 policy/attestation artifacts at source head
   `e1bf7f2`.
+
+## 13. P0 acceptance and final review dispositions (2026-07-15)
+
+**Owner record:** Tom confirmed P0 is accepted after the focused independent
+Gate D review committed at `7ce29d7` returned `READY`. The accepted source head
+is `e1bf7f2`; evidence and documentation packaging runs through `1096628`.
+
+- The review independently reproduced Gate C 38/38, distributions 830/830, the
+  full-range policy, and zero-error attestation, and completed the deferred
+  whole-diff seam sweep. GD-1 through GD-18 are closed.
+- SS-1 confirms, rather than changes, section 10: an MCP server explicitly put
+  in `.norn/settings.local.json` by the operator starts without a second
+  approval prompt. Rejecting a git-tracked local file remains optional
+  hardening and is not adopted as a P0 or P1 requirement.
+- The pre-existing invented `EXTENSION_TIMEOUT = 30s` is non-gating for P0 and
+  is assigned to P6's transport configurability work so it is not lost.
+- The three historically false P0 Gate A/B timing and baseline boxes remain
+  unchecked under the section 11 P0-only exceptions. Acceptance does not
+  rewrite those historical facts or create an exception for P1.
