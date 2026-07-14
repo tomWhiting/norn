@@ -70,3 +70,42 @@ Before this record supports a P0 closure claim:
    historical proof.
 4. Obtain the fresh independent whole-P0 Gate D verdict. This record does not
    substitute for that review.
+
+## 2026-07-14 correction appendix
+
+The tables above remain the historical `bfa0b8e` snapshot. The controlling
+whole-phase review at `c6bf1e2` returned `NOT READY` and opened GD-1 through
+GD-18. The active corrected source head is
+`e1bf7f2ab79157a3ee7f49270c6e7ad61794a077`; this appendix records the new
+traceability without rewriting the earlier snapshot.
+
+| Correction findings | Implementation and regression evidence | State at corrected Gate C |
+|---|---|---|
+| `GD-1` | `3d5ff8c`; private `settings.local.json` provenance in config/runtime fixtures, including `workspace_local_server_is_direct_and_not_approval_gated`. | Implemented; Gate C pass. |
+| `GD-2`, `GD-13`, `GD-14`, `GD-18` | `08108db`; recursive search admission tests, corrected descriptor-admission record, pinned `claude_runner` spawn shape, and the `print/error.rs` module split. Full-range policy checks LOC, entrypoint shape, and dependency/source structure. | Implemented; policy and Gate C pass. |
+| `GD-3` through `GD-5`, `GD-9`, `GD-11`, `GD-12`, `GD-16` | `3d5ff8c`; MCP liveness, reconnect/quarantine, typed control errors, successful-session retention, startup hydration, actor/TUI failure paths, cancellation, and no-redirect fixtures under `integration/mcp_*`, `config/mcp_*`, and `norn-tui/app/mcp_slash.rs`. | Implemented; Gate C pass and 20-run sensitive-seam distributions. |
+| `GD-6`, `GD-7`, `GD-10` | `3d5ff8c`; `mcp_transport_bounds*`, HTTP/stdio bound and deadline fixtures, safe constant-space stderr categories, environment-overlay tests, exact CRLF boundaries, and the paused-time no-implicit-30-second client fixture. | Implemented; Gate C pass and 20-run sensitive-seam distributions. |
+| `GD-8` | `e4542ad`; checked-in production, test-only, shared, path-alias, case-alias, and literal-include module-reachability fixtures plus 43 evidence self-tests. | Implemented; full-range policy pass. |
+| `GD-15` | `e4542ad`; schema-v3 path-free evidence, fixed sanitized environment-name inventory, executable hashes, embedded-path rejection, and exact-key attestation. | New artifacts pass; closure awaits owner disposition of six superseded schema-v2 artifacts. |
+| `GD-17` | `e4542ad` and `e1bf7f2`; strict failure-name parsing, package/target qualification, truncation handling, and Cargo 1.94 backtick rerun hints split across stdout/stderr. | Implemented; 43/43 evidence self-tests and Gate C pass. |
+
+The first correction gate at `17a3bb8` is retained as 35/38 rather than
+overwritten. It exposed a repository-local target-path length assumption, a
+search fixture that matched the outer `/target/` ancestor, and a stale MCP
+source expectation. The corrected exact-head evidence is:
+
+- [`policy-e1bf7f2`](evidence/2026-07-14-p0-correction-policy-e1bf7f2.json):
+  359 changed Rust files, 65 test-only files, 97 writer candidates, and zero
+  prohibited additions, over-500 production files, module-shape violations, or
+  thin-entrypoint violations;
+- [`Gate C e1bf7f2`](evidence/2026-07-14-p0-correction-gate-e1bf7f2.json):
+  38/38 cases and 9,299 Rust test executions;
+- [`distributions e1bf7f2`](evidence/2026-07-14-p0-correction-distributions-e1bf7f2.json):
+  830/830 observations and 1,250 Rust test executions; and
+- [`attestation e1bf7f2`](evidence/2026-07-14-p0-correction-attestation-e1bf7f2.json):
+  pass with zero errors, binding the gate, distributions, and policy to one
+  clean exact head.
+
+This appendix is implementation traceability, not acceptance. GD-15 and the
+focused independent review in
+`2026-07-14-p0-correction-gate-d-handoff.md` remain open.

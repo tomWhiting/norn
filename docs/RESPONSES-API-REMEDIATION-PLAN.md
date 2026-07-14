@@ -1,13 +1,14 @@
 # Responses API remediation plan
 
-- **Status:** Active; P0 correction round. The independent whole-phase Gate D
-  review at `c6bf1e2` returned `NOT READY` for candidate `13d661c`. The review
-  confirmed the credential-security core, then opened GD-1 through GD-18 over
-  MCP failure paths, descriptor admission, policy/evidence integrity, and
-  packaging accuracy. Corrections are in progress and are not yet a tested or
-  accepted candidate. The historical pinned-toolchain evidence remains useful
-  input but is invalidated as P0 acceptance evidence. P1 and P2 have not
-  started.
+- **Status:** Active; P0 focused correction review pending. The independent
+  whole-phase Gate D review at `c6bf1e2` returned `NOT READY` for candidate
+  `13d661c` and opened GD-1 through GD-18. The corrected source candidate is
+  `e1bf7f2`: Gate C passed 38/38 cases with 9,299 Rust test executions, the
+  repeated suite passed 830/830 observations with 1,250 Rust test executions,
+  the full-range policy passed, and the mechanical attestation passed. GD-15
+  still awaits the owner's disposition of six superseded disclosure-bearing
+  artifacts, and one focused independent correction review must return
+  `READY` before P0 is accepted. P1 and P2 have not started.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -26,6 +27,8 @@
   The resulting
   [`whole-phase Gate D review`](reviews/2026-07-14-p0-whole-phase-gate-d-review.md)
   is the controlling `NOT READY` verdict for the correction round.
+  The replacement exact-head evidence and focused review scope are recorded in
+  the [`P0 correction handoff`](reviews/2026-07-14-p0-correction-gate-d-handoff.md).
   The superseded [`P0 final candidate`](reviews/2026-07-14-p0-final-candidate.md)
   remains the historical `bfa0b8e` record. The
   [`historical Gate C handoff`](reviews/2026-07-11-p0-gate-c-handoff.md) is
@@ -212,13 +215,14 @@ never acceptance evidence for this program.
 
 Every phase must satisfy all four gates below.
 
-Gates A-C are the active-phase dashboard for the in-flight P0 correction head.
+Gates A-C are the active-phase dashboard for the P0 correction candidate.
 The prior automated workspace Gate C, full-range policy, 750-observation
 distribution, and mechanical attestation remain historical evidence at
 `13d661c`; the `c6bf1e2` whole-phase review invalidated them as P0 acceptance
-evidence. Every Gate B/C completion claim below is therefore open until the
-corrections are committed and the complete battery is regenerated from one
-clean exact head under the main repository's ignored `target/` lanes.
+evidence. Replacement machine evidence has now been generated from clean exact
+source head `e1bf7f2` under the main repository's ignored `target/` lanes.
+Machine-verifiable Gate C claims are checked below; reviewer-only inspection and
+all Gate D acceptance claims remain open.
 After P0 receives Gate D `READY` and its final evidence is entered in the
 ledger, this dashboard resets for P1; the ledger preserves P0's accepted gate
 record.
@@ -276,23 +280,23 @@ historical box is not relabelled as true.
 
 ### Gate C: machine verification
 
-- [ ] Phase-specific tests pass.
-- [ ] Every crate touched in the round passes its complete integration surface
+- [x] Phase-specific tests pass.
+- [x] Every crate touched in the round passes its complete integration surface
   with `cargo test -p <crate> --tests`; a focused `--lib` run cannot substitute
   for this per-round fence. Concurrency-sensitive cases additionally use the
   distribution requirements below.
-- [ ] `cargo fmt --all -- --check` passes.
-- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes.
-- [ ] `cargo test --workspace --all-targets` passes.
-- [ ] `cargo test --workspace --doc` passes.
-- [ ] `git diff --check <phase-base>...HEAD` passes. Running bare
+- [x] `cargo fmt --all -- --check` passes.
+- [x] `cargo clippy --workspace --all-targets -- -D warnings` passes.
+- [x] `cargo test --workspace --all-targets` passes.
+- [x] `cargo test --workspace --doc` passes.
+- [x] `git diff --check <phase-base>...HEAD` passes. Running bare
   `git diff --check` on the required clean checkout is not evidence.
-- [ ] For P0, the syntax-aware machine policy covers every changed Rust item and
+- [x] For P0, the syntax-aware machine policy covers every changed Rust item and
   reports exact production LOC and added-line bypass matches.
 - [ ] For P0, reviewer-verified production LOC and bypass inspection covers every
   changed Rust item. From P1 onward, the syntax-aware repository policy command
   passes as a hard failure in the protected merge check.
-- [ ] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
+- [x] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
   zero campaign-added unwrap, expect, panic, suppression, ignored-test, or
   unresolved-marker uses. Later phases use their recorded phase base.
 - [ ] For P0, security reviewers manually inspect all fixtures/evidence for
@@ -327,6 +331,18 @@ attested 750/750 distribution and unchanged 333-file/97-writer policy are bound
 to the same clean head. The full chain and failure classification are in
 `2026-07-14-p0-whole-phase-gate-d-handoff.md`.
 
+The correction chain supersedes those results for the active candidate. Its
+first exact-head attempt at `17a3bb8` passed 35/38 runner cases and exposed two
+test-fixture assumptions plus one stale provenance expectation; that artifact
+also demonstrated that Cargo 1.94 backtick rerun hints were not yet qualified
+by package/target. The corrected source head `e1bf7f2` passed 38/38 Gate C cases
+and 9,299 Rust test executions. Its repeated suite passed 830/830 observations
+and 1,250 Rust test executions. The full-range policy covers 359 changed Rust
+files, 65 test-only files, and 97 writer candidates with zero prohibited
+additions, over-500 production files, module-shape violations, or
+thin-entrypoint violations. The mechanical attestation binds all three
+artifacts to the same clean head with zero errors.
+
 ### Gate D: independent review
 
 - [ ] The domain reviewer inspects the implementation, tests, and raw evidence.
@@ -346,7 +362,7 @@ to the same clean head. The full chain and failure classification are in
 
 | Phase | Status | Primary outcome |
 |---|---|---|
-| P0. Credential and workspace authority containment | [ ] Whole-phase review `c6bf1e2` returned `NOT READY`; correction implementation and replacement Gate C evidence are in progress | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
+| P0. Credential and workspace authority containment | [ ] Correction source `e1bf7f2` and replacement machine evidence are complete; GD-15 owner disposition and focused independent `READY` review remain | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
@@ -416,18 +432,17 @@ close the P0 findings.
 
 **Acceptance:** [ ] No fresh whole-phase Gate D verdict is recorded.
 **Implementation status:** the original 33 work items, F1, D1B, D1C,
-D1E structural descriptor closure, D1D startup and live control, legacy
+D1E structural descriptor closure, D1D startup and live control, and the GD-1
+through GD-18 correction implementation are complete at source head `e1bf7f2`.
 The historical Rust candidate runs through `13d661c`, with its raw evidence in
 `564af2d`; the P0-only Gate A/Gate B dispositions remain recorded. The fresh
-whole-phase review at `c6bf1e2` returned `NOT READY`, invalidated that candidate
-as acceptance evidence, and opened the GD-1 through GD-18 correction ledger
-below. The credential and workspace-authority core held, but MCP failure paths
-and evidence integrity require a corrected committed head, replacement Gate C
-and distribution artifacts, and focused independent review. Scoped closure
-reviews and the `41ea210...13d661c` 35/35 Gate C plus 750/750 distribution remain
-historical evidence only. D1, D1A, D1B, D1C, D1D, D1E, and the retrospective
-dispositions are resolved as design inputs; P0 implementation and acceptance
-remain open until the correction ledger and final review are complete.
+whole-phase review at `c6bf1e2` returned `NOT READY` and invalidated that earlier
+candidate as acceptance evidence. Replacement Gate C, distribution, policy,
+and attestation artifacts now pass at `e1bf7f2`. GD-15 remains open only for
+the owner's disposition of six superseded artifacts, and focused independent
+review remains required. D1, D1A, D1B, D1C, D1D, D1E, and the retrospective
+dispositions are resolved as design inputs; P0 acceptance remains open until
+the correction ledger and final review are complete.
 
 ### What this phase fixes
 
@@ -787,7 +802,8 @@ owner ruling.
   below before disclosure closure can be claimed.
 - [x] **GD-16:** refuse redirects for MCP HTTP and HTTP extension clients.
 - [x] **GD-17:** retain structurally parsed failing-test identities, cover
-  truncated output, and run the parser tests inside Gate C.
+  truncated output and Cargo 1.94 backtick rerun hints across split stdout and
+  stderr, and run the parser tests inside Gate C.
 - [x] **GD-18:** split CLI print-error logic out of the 499-line orchestrator.
 - [x] The correction evidence runner pins the exact Python self-test module
   inventory and test count, hashes the actual pinned `cargo`/`rustc` binaries,
@@ -809,10 +825,12 @@ owner ruling.
 - [ ] Apply the owner disposition for six superseded schema-v2 artifacts that
   retain historical local paths or ambient variable names. Removing them from
   current `HEAD` does not purge already-pushed history.
-- [ ] Regenerate the complete gate, distributions, policy result, and
+- [x] Regenerate the complete gate, distributions, policy result, and
   attestation from the corrected exact head. All worktrees, build outputs,
   scratch data, and evidence must remain in ignored siblings under this
   repository's `target/` tree; external temporary directories are prohibited.
+  Source head `e1bf7f2` passed Gate C 38/38, distributions 830/830, the
+  359-file policy, and mechanical attestation with zero errors.
 - [ ] Obtain one focused independent correction review over these failure paths
   and the deferred whole-diff seam sweep. Do not start P1 before it returns
   `READY`.
@@ -978,10 +996,12 @@ the phase on the bounded GD-1 through GD-18 correction set recorded above. Its
 own loaded Gate C run was red and exposed that the v2 evidence schema could not
 name the failing tests; quiet reruns were green, but neither observation replaces
 corrected exact-head evidence. The prior `13d661c` gate, distributions, policy
-result, and attestation remain historical input only. The correction candidate
-must produce a fresh path-free evidence chain and one focused independent
-`READY` verdict before P0 closes. No scoped acceptance, implementer attestation,
-or prior lucky sample is a whole-phase verdict.
+result, and attestation remain historical input only. Source head `e1bf7f2` now
+has a fresh path-free evidence chain: Gate C 38/38, distributions 830/830,
+full-range policy pass, and zero-error attestation. GD-15's historical-artifact
+disposition and one focused independent `READY` verdict remain before P0 can
+close. No scoped acceptance, implementer attestation, or machine pass is a
+whole-phase verdict.
 
 - [ ] A security reviewer threat-models every credential destination, redirect,
   automatic working-directory command, and eager working-directory file read.
@@ -1775,7 +1795,7 @@ ledger prematurely.
 
 | Phase | Current implementation | Retained candidate evidence | Work still required before acceptance |
 |---|---|---|---|
-| P0 | Final tested candidate `13d661c`; raw evidence package `564af2d`; owner dispositions and handoff in this documentation package | Native-host Gate C 35/35 and 9,205 Rust tests; distributions 750/750 and 1,170 Rust tests; 333-file/97-writer policy pass; mechanical attestation pass; sandbox-denied 28/35 and historical 34/35 precursors retained | Packaging-head secret inspection; clean-`13d661c` LOC/policy reproduction; writer and permit reconciliation; independent D1D/D1E/live-MCP reproduction; fresh whole-phase Gate D verdict |
+| P0 | Corrected source candidate `e1bf7f2`; focused correction handoff in this documentation package | Gate C 38/38 and 9,299 Rust tests; distributions 830/830 and 1,250 Rust tests; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; failed 35/38 precursor retained | GD-15 owner disposition; reviewer LOC/bypass and fixture-secret inspection; focused correction review and deferred seam sweep; fresh `READY` verdict |
 | P1 | Not started | None | P0 acceptance and D0 |
 | P2 | Not started | None | P1 acceptance and D9 |
 
