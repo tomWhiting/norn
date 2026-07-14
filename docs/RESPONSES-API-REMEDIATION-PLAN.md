@@ -1,19 +1,16 @@
 # Responses API remediation plan
 
-- **Status:** Active; the original P0 candidate received whole-phase Gate D
-  `NOT READY` in the
-  [`P0 Gate D review`](reviews/2026-07-11-p0-gate-d-review.md). The review
-  reproduced a P0-introduced concurrent `openat(O_CREAT)` availability failure,
-  invalidated the unqualified Gate C test-pass claim, found fetched content
-  outside the private-artifact inventory, and required a corrective closure
-  round. The prior scoped `READY` reviews and passing commands remain historical
-  evidence for their exact snapshots; they are not evidence that the integrated
-  candidate is ready. The corrective code candidate is committed through
-  `f788823`; its final machine Gate C rerun is green, with retained full-range
-  policy/inventory and repeated-test distributions. Independent reproduction,
-  owner disposition of the retrospective Gate A/Gate B evidence gaps, and a
-  fresh whole-phase Gate D verdict remain open. P0 remains unaccepted, and P1
-  and P2 have not started.
+- **Status:** Active. P0 implementation is committed through the live-MCP code
+  head `edd936a`, followed by the stable-Clippy cleanup at `d391f0c` and the
+  evidence-packaging head `5217507`. The original whole-phase Gate D verdict is
+  still `NOT READY`; no later whole-phase `READY` report is present in the
+  repository. The corrective candidate through `f788823` has a green retained
+  full-workspace Gate C bundle. The later live-MCP and stable-toolchain slices
+  each have green touched-crate gates and syntax-aware no-bypass/LOC evidence,
+  but the combined `41ea210..5217507` candidate still needs one fresh integrated
+  Gate C run, independent reproduction, owner disposition of the retrospective
+  Gate A/Gate B evidence gaps, and a fresh whole-phase Gate D verdict. P0 is
+  implemented but unaccepted; P1 and P2 have not started.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -210,11 +207,14 @@ never acceptance evidence for this program.
 
 Every phase must satisfy all four gates below.
 
-Gates A-C are the active-phase dashboard. The marks below apply to the P0
-corrective code candidate at `f788823` and the Gate D review committed at
-`5c22ba6`. After P0 receives Gate D `READY` and its final evidence is
-entered in the ledger, this dashboard resets for P1; the ledger preserves P0's
-accepted gate record. Gate D remains open until the whole-phase verdict.
+Gates A-C are the active-phase dashboard for the current P0 head `5217507`.
+The complete green workspace Gate C bundle at `f788823` remains historical
+evidence for that snapshot. Later live-MCP and stable-toolchain slices have
+green touched-crate gates, but the integrated workspace, doc, full-range policy,
+and independent-review rows below are open until rerun at the current head.
+After P0 receives Gate D `READY` and its final evidence is entered in the
+ledger, this dashboard resets for P1; the ledger preserves P0's accepted gate
+record.
 
 ### Gate A: entry and design
 
@@ -250,12 +250,13 @@ later phases must satisfy both requirements prospectively.
   replay, loop behavior, and user surface wherever the capability crosses them.
 - [x] Replaced paths and temporary scaffolding are deleted in the same phase.
 - [x] Changed production files satisfy the file-size and module-structure rules.
-- [ ] The finding-to-test traceability table is updated.
+- [x] The finding-to-test traceability table is updated.
 
-P0 evidence note: the candidate regressions pass, but there is no durable matrix
-showing each confirmed regression failing for the documented reason on
-`41ea210`, and no finding-to-specific-test traceability table has yet been
-recorded. Passing candidate tests do not retroactively prove either claim.
+P0 evidence note: the candidate traceability matrix is recorded in
+`2026-07-12-p0-traceability.md` and includes the later D1D/SEC-14 row. The
+historical audit still cannot prove each confirmed regression failed for the
+documented reason on `41ea210`; passing candidate tests do not retroactively
+prove that claim.
 
 ### Gate C: machine verification
 
@@ -265,18 +266,18 @@ recorded. Passing candidate tests do not retroactively prove either claim.
   for this per-round fence. Concurrency-sensitive cases additionally use the
   distribution requirements below.
 - [x] `cargo fmt --all --check` passes.
-- [x] `cargo clippy --workspace --all-targets -- -D warnings` passes.
-- [x] `cargo test --workspace --all-targets` passes.
-- [x] `cargo test --workspace --doc` passes.
-- [x] `git diff --check <phase-base>...HEAD` passes. Running bare
+- [ ] `cargo clippy --workspace --all-targets -- -D warnings` passes.
+- [ ] `cargo test --workspace --all-targets` passes.
+- [ ] `cargo test --workspace --doc` passes.
+- [ ] `git diff --check <phase-base>...HEAD` passes. Running bare
   `git diff --check` on the required clean checkout is not evidence.
-- [x] For P0, reviewer-verified production LOC and bypass inspection covers every
+- [ ] For P0, reviewer-verified production LOC and bypass inspection covers every
   changed Rust item. From P1 onward, the syntax-aware repository policy command
   passes as a hard failure in the protected merge check.
-- [x] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
+- [ ] For P0, a `git diff --no-ext-diff 41ea210...HEAD` added-line audit reports
   zero campaign-added unwrap, expect, panic, suppression, ignored-test, or
   unresolved-marker uses. Later phases use their recorded phase base.
-- [x] For P0, security reviewers manually inspect all fixtures/evidence for
+- [ ] For P0, security reviewers manually inspect all fixtures/evidence for
   secrets. From P1 onward, the checked-in evidence-redaction validator passes;
   no credential, real account identifier, private prompt content, reusable turn
   state, or raw cache key is present.
@@ -286,7 +287,10 @@ failed 6/10 isolated reviewer runs and 19/20 subsequent independent repetitions.
 The original single passing workspace invocation remains a historical
 observation, not stability evidence. The corrective candidate records 50/50 for
 each of the three macOS-sensitive concurrency regressions, 20/20 complete D1E,
-MCP, prior-correction, and PTY distributions, and one complete green Gate C run.
+startup MCP, prior-correction, and PTY distributions, and one complete green
+Gate C run at `f788823`. The later live-MCP slice adds seven 20/20 distributions
+and a green touched-crate all-target run; these do not substitute for the open
+integrated workspace rows above.
 The first final workspace attempt is also retained honestly: it exposed PTY
 allocation and resize-harness nondeterminism, which was corrected before the
 green rerun. Any `all`, `every`, or `complete` coverage claim still requires the
@@ -311,7 +315,7 @@ exact mechanically generated inventory it quantifies.
 
 | Phase | Status | Primary outcome |
 |---|---|---|
-| P0. Credential and workspace authority containment | [ ] | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
+| P0. Credential and workspace authority containment | [ ] Implementation complete at `5217507`; integrated Gate C and Gate D open | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
@@ -348,8 +352,8 @@ The relevant phase cannot pass Gate A while its decision is open.
 | D1A | Non-disclosing representation for unknown provider terminal discriminators: equality semantics, keying, identifier lifetime, output size, and deterministic test control. | P0 | [x] Decided 2026-07-11: known values retain typed mappings; an unknown exact byte sequence is represented only by its terminal category and a domain-separated full HMAC-SHA-256 tag under an OS-random process-lifetime key. The key and raw value are never persisted or logged. A deterministic key seam is crate-private and compiled only under `cfg(test)`; production exposes no public, configuration, or environment override. OS-random initialization failure is a typed fail-closed diagnostic error, never a fixed-key fallback. Tags support equality only within one process and are not cross-run fingerprints. Raw value and byte length are not exposed. |
 | D1B | Location and access policy for fetched and other session-derived artifacts. | P0 | [x] Decided 2026-07-11: fetched documents are private session-owned artifacts beneath the trusted user-level Norn session store, never workspace files. P0 establishes a typed active-session artifact scope and migrates new fetch writes without pre-empting P3 transcript-format, historical-reference, fork-copy, or broad storage-migration decisions. Generic model file access may read/search only the active artifact subtree; it does not gain authority over credentials, indexes, raw child transcripts, or other sessions. |
 | D1C | File-descriptor exhaustion mitigation introduced by descriptor-pinned private storage and persistent agent sinks. | P0 | [x] Mandatory per the 2026-07-11 post-review owner ruling: the official CLI raises its soft `RLIMIT_NOFILE` only to a finite OS-provided ceiling, reports inherited/effective limits and a labelled descriptor snapshot through `doctor`, and preserves typed `EMFILE` versus `ENFILE` diagnostics across the P0 private/session/process boundary. Library embedders do not receive an implicit process-global mutation. Structural descriptor sharing or lazy reopen remains an explicitly owned follow-up rather than being misrepresented as solved by a higher limit. `RLIMIT_CORE=0` remains a separate open decision because it also affects spawned user commands. |
-| D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [ ] Integrated candidate at `f788823` awaits independent acceptance: idle session/history/process retention and eager spool-root probing are removed; cancellation-safe adoption owns process groups until spool attachment commits; and the process-wide fail-fast authority covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback, read/search, Rhai, debug, ordinary one-shot configuration, discovery, task, and write/edit/patch families. The former arbitrary transient headroom is replaced by exact observer reserve and typed filesystem/subprocess/HTTP permits. Chiron remains pinned to the published W8-to-W3 lease revision. Retained integrated evidence records all six descriptor/cancellation/task cases 20/20, but permit-lifetime and 92-row inventory reconciliation remain reviewer work. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
-| D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Owner decision confirmed by Tom on 2026-07-13 and attributed in `DECISIONS-2026-07.md` section 10. The surface is retained. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption and approval are the first implementation slice; live add/remove/enable/disable/reload plus provider-visible tool refresh are the second. |
+| D1E | Structural descriptor closure after the owner rejected residual Norn-owned `EMFILE` risk. | P0 | [x] Decided and implemented through `edd936a`; independent acceptance remains open. Idle session/history/process retention and eager spool-root probing are removed; cancellation-safe adoption owns process groups until spool attachment commits; and the process-wide fail-fast authority covers active/scalable process, spool, session, diagnostic, persistent stdio, LSP, HTTP, OAuth callback, read/search, Rhai, debug, ordinary one-shot configuration, discovery, task, and write/edit/patch families. The former arbitrary transient headroom is replaced by exact observer reserve and typed filesystem/subprocess/HTTP permits. Retained evidence records the six D1E cases 20/20 plus live stdio transport descriptor release 20/20. Permit-lifetime and inventory reconciliation remain reviewer work. This item does not claim that Norn can prevent unrelated embedder or operating-system-wide exhaustion. |
+| D1D | Complete `NornSettings.mcp_servers` as the layered MCP client surface: user, shared project, private project-local, per-agent, CLI, and live-session scopes with remembered shared-project approval and dynamic tool-catalogue refresh. | P0 | [x] Owner decision confirmed by Tom on 2026-07-13 and attributed in `DECISIONS-2026-07.md` section 10. The surface is retained and implemented through `edd936a`. Precedence is `session > CLI > local > project > user`; same-name entries replace wholesale. Only shared checked-in project definitions require definition-bound remembered approval; user-owned private, CLI, and live-session input is direct operator configuration. Root, variant, and spawned agents select views from the connected pool without treating MCP roots as confinement. Startup consumption, live add/remove/enable/disable/reload, contextual roots, and provider-visible tool refresh are implemented; independent acceptance remains open. |
 | D2 | Existing session policy: explicit version rejection or an offline one-shot migration. Record format versioning, crash atomicity, idempotency, backup/recovery, old-binary behavior, and treatment of irrecoverably lossy history. | P3 | [ ] Open |
 | D3 | Threaded-state policy: decide replaceable Developer context and whether/how local compaction may reset an anchor without losing stored reasoning. Select a genuinely replaceable surface, lossless replay contract, fresh-thread transition, or disable threading/local replay. | P5 | [ ] Open |
 | D4 | Single retry owner and existing configured attempt/budget semantics for HTTP and in-stream failures. | P6 | [ ] Open |
@@ -379,13 +383,15 @@ close the P0 findings.
 
 ## P0. Credential and workspace authority containment
 
-**Acceptance:** [ ] Gate D `NOT READY`; corrective candidate awaits fresh review;
-**implementation status:** original 33 work items plus F1, D1B, D1C, legacy
+**Acceptance:** [ ] Gate D remains `NOT READY`; no fresh whole-phase verdict is
+recorded. **Implementation status:** the original 33 work items, F1, D1B, D1C,
+D1E structural descriptor closure, D1D startup and live control, legacy
 path-helper removal, missing transport/loop sentinels, SEC-05 compile contracts,
-and the TUI-history artifact correction are implemented; D1E structural
-descriptor closure and the D1D startup-consumption candidate are implemented
-through `f788823`; live mutation remains a separate unclaimed MCP slice;
-historical baseline evidence disposition and whole-phase Gate D remain open;
+and the TUI-history artifact correction are implemented. P0 production work is
+committed through `edd936a`; stable-toolchain lint compatibility is committed at
+`d391f0c`, and the current evidence-packaging head is `5217507`. Historical
+baseline evidence disposition, a fresh integrated Gate C run, independent
+acceptance, and whole-phase Gate D remain open;
 **findings addressed by candidate:** `SEC-01` through `SEC-13`, `SEC-15`,
 `SEC-16`, `BACKEND-01`, `BACKEND-02`, `SEC-08A`, `NF-1`, `NF-2`, `NF-4`, and
 `QUAL-01`; the D1D startup candidate now includes provenance, approval,
@@ -395,9 +401,13 @@ acceptance remains review-gated;
 surfaces. The integrated correction range `8c66c12..f788823`, full P0 policy
 inventory, exact gate commands, failed-first-run disclosure, and repeated
 distributions are recorded in
-`2026-07-14-p0-d1d-d1e-correction-candidate.md`. **Dependencies:** D1, D1A,
-D1B, D1C, and the D1D design resolved; D1E review, D1D startup review, live MCP
-mutation, and the P0-only retrospective Gate A/Gate B dispositions remain open.
+`2026-07-14-p0-d1d-d1e-correction-candidate.md`. The live-MCP range
+`6e6d8db..edd936a`, seven 20/20 distributions, and 90-file policy report are in
+`2026-07-14-p0-mcp-live-candidate.md`. Stable-toolchain reconciliation is in
+`2026-07-14-stable-toolchain-reconciliation.md`. **Dependencies:** D1, D1A,
+D1B, D1C, and D1D are resolved; D1E/D1D independent acceptance, the P0-only
+retrospective Gate A/Gate B dispositions, integrated Gate C, and Gate D remain
+open.
 
 ### What this phase fixes
 
@@ -606,8 +616,8 @@ retain their intended behavior where they are operator-selected.
   and do not claim coverage beyond the inventory. Implementation, retained
   descriptor inventory, focused tests, and the non-goals are recorded in the
   [`D1C correction record`](reviews/2026-07-12-p0-nofile-correction.md).
-- [ ] Complete D1E structural descriptor closure under the stricter 2026-07-13
-  owner ruling.
+- [x] Implement D1E structural descriptor closure under the stricter 2026-07-13
+  owner ruling. Independent acceptance remains a separate unchecked item below.
   - [x] Remove descriptor retention from idle session sinks, session artifact
     stores, completed-process spools/managers, and finalized foreground output;
     verify lazy reopens against their originally bound inode before mutation.
@@ -740,13 +750,15 @@ retain their intended behavior where they are operator-selected.
 - [x] Project/local provider-options, profile API-shape, and same-name collision
   fixtures prove no untrusted value reaches backend, environment, process, or
   network consumers.
-- [ ] Complete independent acceptance of the MCP fixture matrix. The candidate
-  proves five-scope precedence, definition-bound approval/revocation, no process
-  activation while project approval is pending, a real private-local stdio
-  handshake without approval, independent failure isolation, protocol-version
-  negotiation, server ping handling, HTTP session/version headers, and JSON/SSE
-  POST handling. Approved-project activation and end-to-end root/spawn selection
-  remain explicit test gaps; live mutation is a later slice.
+- [ ] Complete independent acceptance of the MCP fixture matrix. The startup
+  candidate proves five-scope precedence, definition-bound approval/revocation,
+  approved-project activation, zero activation while approval is pending,
+  private-local stdio, independent failure isolation, protocol negotiation,
+  ping, HTTP session/version headers, JSON/SSE POST, and end-to-end root/spawn
+  selection. The live candidate adds serialized mutations, per-agent child
+  views, contextual roots, catalogue refresh, watcher release, and descriptor
+  release. The implementation gaps named by the earlier checklist are closed;
+  independent adversarial reproduction and whole-phase acceptance are not.
 - [x] URL tests cover HTTP, userinfo, case, trailing dots, default/non-default
   ports, lookalike hosts, path variants, redirects, and canonical URLs.
 - [x] Capability/payload snapshots prove explicit and implicit canonical Codex
@@ -813,31 +825,38 @@ then becomes a P0 blocker:
 - Public `Scanner`, `scan_rule_dirs`, and `discover_skills` convenience APIs are
   trusted-input-only. Secure runtime assembly uses launch-root-aware paths; an
   embedder must not pass repository-controlled roots through the legacy APIs.
-- MCP startup clients are now active with source provenance. Only shared
+- MCP clients are active with source provenance and live mutation. Only shared
   checked-in project definitions require remembered approval; user-owned
-  private, CLI, and future live-session scopes are direct operator input. Live
-  mutation, dynamic roots, HTTP GET/reconnect/delete behavior, and catalogue
-  refresh remain unimplemented rather than dormant.
+  private, CLI, and live-session scopes are direct operator input. Dynamic
+  contextual roots and active-SSE catalogue refresh are implemented. Idle
+  standalone HTTP GET notification listening, reconnect/resumption, HTTP
+  session DELETE, MCP OAuth, sampling, resources, and prompts remain outside
+  this slice and are not claimed.
 - Redox, ESP-IDF, and non-Unix workspace input deliberately fail closed. This
   protects the trust boundary but is a release compatibility limitation until
   equivalent no-follow filesystem primitives are implemented and reviewed.
 
 ### Review and exit gate
 
-**Current gate state:** Gate D returned `NOT READY`; the corrective code
-candidate is implemented through `f788823` and the final machine Gate C rerun is
-green. D1D startup and D1E structural admission await scoped external
-acceptance; the MCP live-mutation slice remains open. The owner Gate A and Gate
-B exceptions and fresh integrated Gate D remain open. The
+**Current gate state:** Gate D returned `NOT READY`. The corrective candidate
+through `f788823` has a green full-workspace Gate C bundle. D1D live control and
+D1E transport/descriptor release are implemented through `edd936a`; their
+touched-crate all-target gate, seven 20/20 distributions, and policy report are
+retained in `2026-07-14-p0-mcp-live-candidate.md`. Stable-Clippy reconciliation
+through `d391f0c` also has green touched-crate all-target and policy evidence.
+Those later slices have not received independent acceptance and have not been
+covered by one fresh full-workspace/full-range Gate C run. The owner Gate A and
+Gate B exceptions and fresh integrated Gate D therefore remain open. The
 external status review at `51b83ea` accepted F-1 through F-3 and identified the
 stale D1D integration test as G-1; G-1 is corrected in
 `2026-07-14-p0-g1-correction.md`, without changing the open D1D/D1E acceptance
 gates. A later final all-target attempt failed in the PTY integration surface;
 that failure, its deterministic harness correction, a 20/20 complete PTY-suite
 distribution, and the subsequent green workspace rerun are retained in
-`2026-07-14-p0-d1d-d1e-correction-candidate.md`. Three provisional reports review frozen snapshot
-`7d121c9`; they are archived review input, not Gate D evidence for the final P0
-candidate. Subsequent targeted credential/config, transport/streaming, and
+`2026-07-14-p0-d1d-d1e-correction-candidate.md`. Three provisional reports
+review frozen snapshot `7d121c9`; they are archived review input, not Gate D
+evidence for the current P0 candidate at `5217507`. Subsequent targeted
+credential/config, transport/streaming, and
 private-artifact closure reviewers each report `READY` on their exact historical
 surfaces. The original code range through `ebb82c8` and its single passing
 workspace test run/manual audits are recorded in the
@@ -1632,6 +1651,17 @@ depend on implementer assertion or terminal history.
 
 Populate only the `Phase base` cell at Gate A. Update the remaining cells only
 after the phase's final fix-round review.
+
+### Current candidate snapshot
+
+This progress snapshot is not acceptance evidence and does not populate the
+ledger prematurely.
+
+| Phase | Current implementation | Retained candidate evidence | Work still required before acceptance |
+|---|---|---|---|
+| P0 | Production implementation through `edd936a`; stable-Clippy cleanup `d391f0c`; documentation/evidence head `5217507` | Full-workspace Gate C at historical snapshot `f788823`; live-MCP touched-crate gates and seven 20/20 distributions; stable-toolchain touched-crate and policy evidence | Fresh integrated Gate C and full-range policy review at `5217507`; independent D1D/D1E acceptance; owner Gate A/B dispositions; fresh whole-phase Gate D verdict |
+| P1 | Not started | None | P0 acceptance and D0 |
+| P2 | Not started | None | P1 acceptance and D9 |
 
 | Phase | Phase base | Implementation commit(s) | Finding evidence and full-gate results | LOC/bypass policy report | Domain reviewer | Fable verdict | Status |
 |---|---|---|---|---|---|---|---|
