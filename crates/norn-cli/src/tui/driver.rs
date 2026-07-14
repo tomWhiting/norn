@@ -11,7 +11,6 @@
 use std::sync::Arc;
 
 use norn::agent::registry::AgentRegistry;
-use norn::agent_loop::runner::driver_executor;
 use norn::system_prompt::ExecutionMode;
 use norn::tools::lsp::{LspBackend, WorkspaceLspBackend, build_lsp_workspace};
 
@@ -252,10 +251,11 @@ async fn drive(cli: &Cli) -> Result<ExitCode, Box<dyn std::error::Error>> {
             .into());
     };
 
-    // `driver_executor` coerces the registry to `Arc<dyn ToolExecutor>`; the
-    // TUI event loop hands it to `run_agent_step` by reference so concurrent
-    // tool batches get an owned handle (see `driver_executor` docs).
-    let executor = driver_executor(&parts.registry);
+    // The live tool runtime supplies an immutable generation lease per
+    // provider request. Passing the Arc as a trait object also preserves the
+    // owned executor handles used by concurrent tool batches.
+    let executor: Arc<dyn norn::agent_loop::config::ToolExecutor> =
+        Arc::clone(&parts.tool_runtime) as Arc<dyn norn::agent_loop::config::ToolExecutor>;
     let tui_inputs = TuiInputs {
         provider: Arc::clone(&parts.provider),
         executor,

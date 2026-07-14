@@ -24,7 +24,7 @@ use crate::provider::traits::Provider;
 use crate::rules::types::RuleInjection;
 use crate::tool::envelope::split_envelope_fields;
 use crate::tool::failure::{ToolErrorKind, ToolErrorPayload};
-use crate::tool::scheduling::{ExecutionStep, SchedulingPlan, ToolEffect, ToolEffectIndex};
+use crate::tool::scheduling::{ExecutionStep, SchedulingPlan, ToolEffect};
 
 use super::gating::{
     CallEnv, CallPlan, PreparedCall, finish_blocked_call, finish_executed_call, prepare_tool_call,
@@ -59,7 +59,8 @@ pub(in crate::r#loop) struct PlannedBatchRequest<'a> {
 /// Execute a batch of tool calls per an effect-based [`SchedulingPlan`].
 ///
 /// Each call's effect is resolved through the executor's
-/// [`ToolEffectIndex`] (via `Tool::effect_for_args`); when the executor
+/// [`ToolEffectIndex`](crate::tool::scheduling::ToolEffectIndex) (via
+/// `Tool::effect_for_args`); when the executor
 /// exposes no index every call is `Unknown` and the batch runs fully
 /// serialized, preserving the historical behaviour. Concurrent steps
 /// gate every call (permissions + pre-tool hooks) sequentially in call
@@ -91,7 +92,7 @@ pub(in crate::r#loop) async fn execute_planned_tool_batch(
         permissions: permission_policy(executor),
     };
 
-    let index = effect_index(executor);
+    let index = executor.effect_index();
     let call_effects: Vec<(String, ToolEffect)> = tool_indices
         .iter()
         .map(|&idx| {
@@ -327,16 +328,6 @@ fn permission_policy(executor: &dyn ToolExecutor) -> Option<Arc<PermissionPolicy
     executor
         .shared_context()?
         .get_extension::<PermissionPolicy>()
-}
-
-/// Resolve the registry-maintained effect index from the executor's
-/// shared context. Absent (e.g. mock executors), every call classifies
-/// as [`ToolEffect::Unknown`] and the batch runs fully serialized —
-/// the pre-scheduling behaviour.
-fn effect_index(executor: &dyn ToolExecutor) -> Option<Arc<ToolEffectIndex>> {
-    executor
-        .shared_context()?
-        .get_extension::<ToolEffectIndex>()
 }
 
 /// Parse a tool call's raw argument string and return the model-supplied

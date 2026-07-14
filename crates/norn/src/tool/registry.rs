@@ -20,7 +20,7 @@
 //!    failures return the tool's own output (which carries the errors in its
 //!    payload) so the model can react.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -189,6 +189,23 @@ impl ToolRegistry {
             .collect();
         names.sort_unstable();
         names.into_iter()
+    }
+
+    /// Clone the currently available implementations into a deterministic
+    /// snapshot suitable for an immutable tool generation.
+    pub(crate) fn available_tool_arcs(&self) -> BTreeMap<String, Arc<dyn Tool + Send + Sync>> {
+        self.names()
+            .filter_map(|name| {
+                self.tools
+                    .get(name)
+                    .map(|tool| (name.to_owned(), Arc::clone(tool)))
+            })
+            .collect()
+    }
+
+    /// Clone the context shared by every tool in this registry.
+    pub(crate) fn context_arc(&self) -> Arc<ToolContext> {
+        Arc::clone(&self.context)
     }
 
     /// Returns the number of currently-available tools.

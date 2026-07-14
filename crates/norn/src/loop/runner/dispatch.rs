@@ -177,7 +177,12 @@ impl StepMachine<'_> {
     ) -> Result<StepFlow, NornError> {
         self.run_tool_batch(response, tool_calls).await?;
 
-        inject_post_tool_batch_notifications(self.executor, false).await;
+        let static_executor = self.executor;
+        let leased_executor = self.cycle_executor();
+        let executor = leased_executor.as_ref().map_or(static_executor, |leased| {
+            leased as &dyn crate::r#loop::config::ToolExecutor
+        });
+        inject_post_tool_batch_notifications(executor, false).await;
 
         drain_post_batch_inbound(
             self.store,
@@ -347,9 +352,14 @@ impl StepMachine<'_> {
         tool_indices: Vec<usize>,
     ) -> Result<(), NornError> {
         let failure_watermark = self.store.len();
+        let static_executor = self.executor;
+        let leased_executor = self.cycle_executor();
+        let executor = leased_executor.as_ref().map_or(static_executor, |leased| {
+            leased as &dyn crate::r#loop::config::ToolExecutor
+        });
         let before = execute_tool_batch(ToolBatchRequest {
             provider: None,
-            executor: self.executor,
+            executor,
             store: self.store,
             messages: &mut self.messages,
             response,

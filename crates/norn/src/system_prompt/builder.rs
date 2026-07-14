@@ -158,6 +158,10 @@ fn write_tools_section(out: &mut String, tools: &[ToolPromptEntry]) {
     out.push_str("\n\n");
     out.push_str(sections::TOOL_ENVELOPE_GUIDANCE);
 
+    write_grouped_tool_entries(out, tools);
+}
+
+fn write_grouped_tool_entries(out: &mut String, tools: &[ToolPromptEntry]) {
     let grouped = group_by_category(tools);
     for (category, entries) in &grouped {
         let _ = write!(out, "\n\n## {}", category_heading(*category));
@@ -172,6 +176,29 @@ fn write_tools_section(out: &mut String, tools: &[ToolPromptEntry]) {
             }
         }
     }
+}
+
+/// Render the model-facing tool guidance for a dynamic tool generation.
+///
+/// The returned section uses the same wording and grouping as the static
+/// system prompt, but omits the leading blank lines used when appending to
+/// that prompt. Callers can therefore publish runtime tools in a managed
+/// developer section without duplicating the rendering contract.
+#[must_use]
+pub fn build_tool_prompt_section(tools: &[ToolPromptEntry]) -> Option<String> {
+    if tools.is_empty() {
+        return None;
+    }
+    let mut section = format!(
+        "# Live Session Tools\n\nThis request generation adds {} runtime tools. \
+         They are available in addition to the stable tools described in the \
+         system instruction.",
+        tools.len()
+    );
+    section.push_str("\n\n");
+    section.push_str(sections::TOOL_ENVELOPE_GUIDANCE);
+    write_grouped_tool_entries(&mut section, tools);
+    Some(section)
 }
 
 fn write_safety(out: &mut String) {
@@ -368,6 +395,25 @@ mod tests {
         assert!(prompt.contains("## Shell"));
         assert!(prompt.contains("**read**: Read a file."));
         assert!(prompt.contains("**write**: Write a file. Use for new files."));
+    }
+
+    #[test]
+    fn dynamic_tool_section_is_additive_and_self_describing()
+    -> Result<(), Box<dyn std::error::Error>> {
+        let entries = vec![entry(
+            "mcp_docs_search",
+            ToolCategory::Search,
+            "Search the live documentation server.",
+            None,
+        )];
+        let Some(section) = build_tool_prompt_section(&entries) else {
+            return Err(std::io::Error::other("dynamic tool section was omitted").into());
+        };
+
+        assert!(section.starts_with("# Live Session Tools"));
+        assert!(section.contains("in addition to the stable tools"));
+        assert!(section.contains("mcp_docs_search"));
+        Ok(())
     }
 
     #[test]

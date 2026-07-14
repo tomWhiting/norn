@@ -11,7 +11,10 @@ use crate::r#loop::inflight_compaction::{
 };
 use crate::provider::agent_event::AgentUsageEstimate;
 use crate::provider::request::ProviderRequest;
-use crate::provider::surface::{ResolvedToolSurface, hosted_tools_prompt_section};
+use crate::provider::surface::{
+    ResolvedToolSurface, hosted_tools_prompt_section, reframe_prompt_entries,
+};
+use crate::system_prompt::builder::build_tool_prompt_section;
 
 use super::machine::{StepFlow, StepMachine, StepState};
 
@@ -21,6 +24,26 @@ impl StepMachine<'_> {
         // Rules cleared at the top of each iteration so re-firings produce
         // fresh dynamic sections rather than accumulating duplicates.
         self.loop_context.clear_dynamic_sections();
+
+        // Capture one coherent executable/model-facing generation at the
+        // request boundary. The snapshot remains installed until dispatch of
+        // this response completes; only the next request build may replace it.
+        self.tool_snapshot = self.executor.execution_snapshot();
+        self.all_tools = self.tool_snapshot.as_ref().map_or_else(
+            || self.static_tools.clone(),
+            |snapshot| snapshot.definitions.as_ref().to_vec(),
+        );
+        self.all_tools.extend(self.schema_tool.iter().cloned());
+
+        if let Some(snapshot) = self.tool_snapshot.as_ref() {
+            let entries = reframe_prompt_entries(
+                snapshot.dynamic_prompt_entries.as_ref().to_vec(),
+                self.provider.capabilities(),
+            );
+            if let Some(section) = build_tool_prompt_section(&entries) {
+                self.loop_context.append_system_section(section);
+            }
+        }
 
         // NX-005 R6: re-stat the always-on NORN.md layers between
         // `clear_dynamic_sections` and `evaluate_prompt_commands`. When

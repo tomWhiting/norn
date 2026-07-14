@@ -59,16 +59,20 @@ impl<'a> StepMachine<'a> {
         // inline size of every tool result this step persists; resolved once
         // because the executor's shared context is fixed for the step.
         let inline_char_limit = installed_inline_char_limit(executor);
-        let mut all_tools: Vec<ToolDefinition> = tools.to_vec();
-        if let Some(schema) = output_schema {
+        let static_tools: Vec<ToolDefinition> = tools.to_vec();
+        let schema_tool = if let Some(schema) = output_schema {
             // Backstop for every schema source (embedder config, fork, rhai;
             // spawn_agent also rejects at its argument boundary): a schema
             // declaring a reserved envelope key would be unsatisfiable or
             // silently lossy after the pre-validation envelope split — refuse
             // it typed before the loop spends a single provider call.
             check_reserved_envelope_keys(schema).map_err(NornError::Schema)?;
-            all_tools.push(build_schema_tool(&config.schema_tool_name, schema));
-        }
+            Some(build_schema_tool(&config.schema_tool_name, schema))
+        } else {
+            None
+        };
+        let mut all_tools = static_tools.clone();
+        all_tools.extend(schema_tool.iter().cloned());
 
         // NH-006 R3: UserPromptHook fires before an operator prompt enters the
         // agent loop, ahead of slash-command expansion and the initial
@@ -206,6 +210,9 @@ impl<'a> StepMachine<'a> {
             timeout_state,
             inline_char_limit,
             all_tools,
+            static_tools,
+            schema_tool,
+            tool_snapshot: None,
             messages,
             conversation_state,
             dev_message,

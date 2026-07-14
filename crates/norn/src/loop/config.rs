@@ -10,9 +10,30 @@ use std::time::Duration;
 use serde_json::Value;
 
 use crate::error::ToolError;
+use crate::provider::request::ToolDefinition;
 use crate::provider::usage::Usage;
+use crate::system_prompt::builder::ToolPromptEntry;
 use crate::tool::context::ToolContext;
 use crate::tool::follow_up::FollowUpAction;
+use crate::tool::scheduling::ToolEffectIndex;
+
+/// One immutable model-facing and executable tool generation.
+///
+/// The loop captures this immediately before building a provider request and
+/// retains it until that response and all of its tool calls have finished.
+/// A later iteration may therefore observe a newer generation without making
+/// an in-flight response dispatch against definitions it was never shown.
+#[derive(Clone)]
+pub struct ToolExecutionSnapshot {
+    /// Monotonic generation identifier used for diagnostics and tests.
+    pub revision: u64,
+    /// Executor containing exactly the tools in this generation.
+    pub executor: Arc<dyn ToolExecutor>,
+    /// Function definitions advertised for this generation.
+    pub definitions: Arc<[ToolDefinition]>,
+    /// Runtime-only tools whose guidance belongs in the managed prompt tail.
+    pub dynamic_prompt_entries: Arc<[ToolPromptEntry]>,
+}
 
 /// Which deterministic provider stop cut a response off before the model
 /// finished its turn.
@@ -100,6 +121,24 @@ pub trait ToolExecutor: Send + Sync {
         None
     }
 
+    /// Return the scheduling metadata owned by this executor generation.
+    ///
+    /// Static executors retain the historical shared-context lookup. Dynamic
+    /// generation executors override this so an old request lease cannot see
+    /// a newer generation's scheduling index through a shared context.
+    fn effect_index(&self) -> Option<Arc<ToolEffectIndex>> {
+        self.shared_context()?.get_extension::<ToolEffectIndex>()
+    }
+
+    /// Capture the current immutable tool generation, when this executor is
+    /// backed by a live generation store.
+    ///
+    /// Borrow-only static executors return `None`; the runner then keeps using
+    /// the caller-supplied definitions and this executor exactly as before.
+    fn execution_snapshot(&self) -> Option<ToolExecutionSnapshot> {
+        None
+    }
+
     /// Returns an owned, reference-counted handle to this executor, when
     /// one is available.
     ///
@@ -145,6 +184,14 @@ impl ToolExecutor for Arc<dyn ToolExecutor> {
 
     fn shared_context(&self) -> Option<Arc<ToolContext>> {
         self.as_ref().shared_context()
+    }
+
+    fn effect_index(&self) -> Option<Arc<ToolEffectIndex>> {
+        self.as_ref().effect_index()
+    }
+
+    fn execution_snapshot(&self) -> Option<ToolExecutionSnapshot> {
+        self.as_ref().execution_snapshot()
     }
 
     fn owned_handle(&self) -> Option<Arc<dyn ToolExecutor>> {

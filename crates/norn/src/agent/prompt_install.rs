@@ -43,6 +43,10 @@ pub(crate) struct SystemPromptInstall<'a> {
 /// Build the Norn base system prompt from the gated registry and layer it
 /// over the profile instructions (or the caller's `system_prompt` override)
 /// into `loop_context.system_sections[0]`.
+///
+/// Runtime-dynamic tools are deliberately omitted from this cache-stable
+/// prefix. The request-boundary tool lease publishes their generation-bound
+/// guidance through the managed developer tail instead.
 pub(crate) fn install_system_prompt(
     loop_context: &mut LoopContext,
     install: SystemPromptInstall<'_>,
@@ -93,6 +97,9 @@ fn collect_tool_prompt_entries(registry: &ToolRegistry) -> Vec<ToolPromptEntry> 
     let mut entries = Vec::with_capacity(names.len());
     for name in names {
         if let Some(tool) = registry.get(&name) {
+            if tool.runtime_dynamic() {
+                continue;
+            }
             entries.push(ToolPromptEntry {
                 name: tool.name().to_owned(),
                 category: tool.category(),

@@ -40,7 +40,7 @@ use std::sync::atomic::Ordering;
 use norn::agent::AgentParts;
 use norn::agent::registry::AgentRegistry;
 use norn::agent_loop::config::AgentStepResult;
-use norn::agent_loop::runner::{AgentStepRequest, driver_executor, run_agent_step};
+use norn::agent_loop::runner::{AgentStepRequest, run_agent_step};
 use norn::error::{NornError, ProviderError};
 use norn::session::events::SessionEvent;
 use norn::session::store::EventStore;
@@ -638,15 +638,11 @@ async fn orchestrate_run(
             &parts.cancel,
         );
 
-        // `driver_executor` coerces the registry to `Arc<dyn ToolExecutor>`,
-        // passed below as `&Arc<dyn ToolExecutor>` (not `&*registry`) so the
-        // loop's concurrent batch steps get an owned handle
-        // (`ToolExecutor::owned_handle` via the blanket `Arc<dyn
-        // ToolExecutor>` impl) and can spawn each batch member on its own
-        // task for true parallelism — mirroring `Agent::run`
-        // (`agent/instance.rs`), so the library and CLI drivers share
-        // identical concurrent-batch semantics after assembly unification.
-        let executor = driver_executor(&parts.registry);
+        // Capture immutable tool generations through the live runtime while
+        // retaining the Arc-owned executor path required by concurrent
+        // batches. `Agent::run`, print, driven, and TUI now share this path.
+        let executor: Arc<dyn norn::agent_loop::config::ToolExecutor> =
+            Arc::clone(&parts.tool_runtime) as Arc<dyn norn::agent_loop::config::ToolExecutor>;
         let result = run_agent_step(AgentStepRequest {
             provider: parts.provider.as_ref(),
             executor: &executor,

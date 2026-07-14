@@ -16,6 +16,7 @@ pub use self::failure::{ToolErrorKind, ToolErrorPayload};
 pub use self::follow_up::{
     BeforeContentSource, Confidence, ExpiryCondition, FollowUpAction, FollowUpArgsMode,
 };
+pub use self::generation::{ToolGeneration, ToolGenerationPublishError, ToolGenerationStore};
 pub use self::lifecycle::{
     Advisory, AdvisorySeverity, BlockDecision, CheckOverride, PostCheckResult, PostValidateMode,
     PostValidateOutcome, PreValidateOutcome, RuntimeOnSuccessAction, RuntimePostValidateCheck,
@@ -34,6 +35,7 @@ pub mod envelope;
 pub mod failure;
 
 pub mod follow_up;
+pub mod generation;
 pub mod lifecycle;
 pub mod output_budget;
 mod post_validation_feedback;

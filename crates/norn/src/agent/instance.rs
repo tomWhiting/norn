@@ -24,6 +24,7 @@ use crate::provider::{AgentEvent, AgentEventSender};
 use crate::session::SessionIndexEntry;
 use crate::session::manager::ReplaySummary;
 use crate::session::store::EventStore;
+use crate::tool::ToolGenerationStore;
 use crate::tool::registry::ToolRegistry;
 
 /// A fully-assembled, single-use agent. Not [`Clone`]: it owns the session
@@ -32,6 +33,7 @@ use crate::tool::registry::ToolRegistry;
 pub struct Agent {
     pub(super) provider: Arc<dyn Provider>,
     pub(super) registry: Arc<ToolRegistry>,
+    pub(super) tool_runtime: Arc<ToolGenerationStore>,
     pub(super) loop_context: LoopContext,
     pub(super) config: AgentLoopConfig,
     pub(super) model: String,
@@ -63,6 +65,10 @@ pub struct AgentParts {
     /// The gated tool registry, published with the assembled tool
     /// context; the same `Arc` spawn/fork children dispatch through.
     pub registry: Arc<ToolRegistry>,
+    /// Atomically published tool generations used for provider requests and
+    /// dispatch. Each request leases one immutable generation through its
+    /// complete response/tool cycle.
+    pub tool_runtime: Arc<ToolGenerationStore>,
     /// The fully-populated loop context (system sections, retry policy,
     /// variables, action log, coordination receivers).
     pub loop_context: LoopContext,
@@ -146,6 +152,7 @@ impl Agent {
         AgentParts {
             provider: self.provider,
             registry: self.registry,
+            tool_runtime: self.tool_runtime,
             loop_context: self.loop_context,
             config: self.config,
             model: self.model,
@@ -258,7 +265,8 @@ impl Agent {
         // loop's concurrent batch steps get an owned handle
         // (`ToolExecutor::owned_handle`) and can spawn each batch member
         // on its own task for true parallelism.
-        let executor: Arc<dyn ToolExecutor> = Arc::clone(&self.registry) as Arc<dyn ToolExecutor>;
+        let executor: Arc<dyn ToolExecutor> =
+            Arc::clone(&self.tool_runtime) as Arc<dyn ToolExecutor>;
         let result = run_agent_step(AgentStepRequest {
             provider: self.provider.as_ref(),
             executor: &executor,

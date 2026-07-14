@@ -26,13 +26,16 @@ mod setup;
 mod stop;
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tool_lease_tests;
 
 pub use entry::{
     AgentMessageStepRequest, AgentStepRequest, run_agent_step, run_agent_step_from_messages,
 };
 
 pub use crate::r#loop::config::{
-    AgentLoopConfig, AgentStepResult, ToolExecutor, TruncationKind, driver_executor,
+    AgentLoopConfig, AgentStepResult, ToolExecutionSnapshot, ToolExecutor, TruncationKind,
+    driver_executor,
 };
 
 #[cfg(any(test, feature = "test-utils"))]

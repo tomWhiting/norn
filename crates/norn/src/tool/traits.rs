@@ -232,6 +232,16 @@ pub trait Tool: Send + Sync {
         None
     }
 
+    /// Whether this tool can appear or disappear while an agent is running.
+    ///
+    /// Runtime-dynamic tools are omitted from the stable tool section of the
+    /// system prompt and projected from the active tool generation instead.
+    /// Native tools are stable by default; adapters for live external tool
+    /// sources override this marker.
+    fn runtime_dynamic(&self) -> bool {
+        false
+    }
+
     /// Default post-validate mode for this tool.
     ///
     /// `Gate` for tools that modify existing valid files (`Edit`, `ApplyPatch`).

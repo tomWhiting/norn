@@ -9,13 +9,17 @@
 //! [`StepMachine::run`] loops over the transitions until a phase finishes
 //! the step with an [`AgentStepResult`].
 
+use std::sync::Arc;
+
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
 use crate::error::NornError;
 use crate::r#loop::assembly::AssembledResponse;
 use crate::r#loop::compaction::{CompactionState, SharedTimeoutState};
-use crate::r#loop::config::{AgentLoopConfig, AgentStepResult, ToolExecutor};
+use crate::r#loop::config::{
+    AgentLoopConfig, AgentStepResult, ToolExecutionSnapshot, ToolExecutor,
+};
 use crate::r#loop::conversation_state::ConversationRequestState;
 use crate::r#loop::delivery::{drain_child_results, flush_active_inputs};
 use crate::r#loop::dev_context::ManagedDevMessage;
@@ -83,6 +87,12 @@ pub(super) struct StepMachine<'a> {
     pub(super) inline_char_limit: usize,
     /// Advertised tools including the synthesized schema tool.
     pub(super) all_tools: Vec<ToolDefinition>,
+    /// Caller-supplied tools used when the executor has no live generations.
+    pub(super) static_tools: Vec<ToolDefinition>,
+    /// Synthesized output-schema tool, advertised but never dispatched.
+    pub(super) schema_tool: Option<ToolDefinition>,
+    /// Generation leased for the current provider request and its response.
+    pub(super) tool_snapshot: Option<ToolExecutionSnapshot>,
 
     // -- Conversation state --
     pub(super) messages: Vec<Message>,
@@ -121,6 +131,16 @@ pub(super) struct StepMachine<'a> {
 }
 
 impl StepMachine<'_> {
+    /// Executor leased alongside the current provider request.
+    ///
+    /// Before the first request, and for static executors that do not expose
+    /// generations, this is the caller-supplied executor.
+    pub(super) fn cycle_executor(&self) -> Option<Arc<dyn ToolExecutor>> {
+        self.tool_snapshot
+            .as_ref()
+            .map(|snapshot| Arc::clone(&snapshot.executor))
+    }
+
     /// Drive the state machine until a phase finishes the step.
     ///
     /// # Errors

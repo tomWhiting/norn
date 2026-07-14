@@ -39,14 +39,55 @@ use crate::tool::traits::{Tool, ToolCategory, ToolOutput};
 /// Default result count when the caller does not specify `max_results`.
 const DEFAULT_MAX_RESULTS: usize = 10;
 
-/// Performs BM25 search over the catalog.
-pub struct ToolSearchTool;
+/// Stable registry name for tool discovery.
+pub const TOOL_SEARCH_TOOL_NAME: &str = "tool_search";
+
+/// Performs BM25 search over the tool catalog.
+pub struct ToolSearchTool {
+    bound_catalog: Option<Arc<[ToolCatalogEntry]>>,
+}
+
+enum SearchCatalog {
+    Bound(Arc<[ToolCatalogEntry]>),
+    Shared(Arc<SharedToolCatalog>),
+}
+
+impl AsRef<[ToolCatalogEntry]> for SearchCatalog {
+    fn as_ref(&self) -> &[ToolCatalogEntry] {
+        match self {
+            Self::Bound(catalog) => catalog,
+            Self::Shared(catalog) => catalog.0.as_ref(),
+        }
+    }
+}
 
 impl ToolSearchTool {
     /// Constructs the tool.
     #[must_use]
     pub fn new() -> Self {
-        Self
+        Self {
+            bound_catalog: None,
+        }
+    }
+
+    /// Construct a search tool permanently bound to one immutable catalog.
+    ///
+    /// Tool generations use this form so an in-flight request cannot observe
+    /// a catalog published by a newer generation through the shared context.
+    #[must_use]
+    pub fn with_bound_catalog(catalog: Arc<[ToolCatalogEntry]>) -> Self {
+        Self {
+            bound_catalog: Some(catalog),
+        }
+    }
+
+    fn catalog(&self, ctx: &ToolContext) -> Result<SearchCatalog, ToolError> {
+        match &self.bound_catalog {
+            Some(catalog) => Ok(SearchCatalog::Bound(Arc::clone(catalog))),
+            None => ctx
+                .require_extension::<SharedToolCatalog>()
+                .map(SearchCatalog::Shared),
+        }
     }
 }
 
@@ -105,7 +146,7 @@ fn format_result(entry: &ToolCatalogEntry, score: f32) -> serde_json::Value {
 #[async_trait]
 impl Tool for ToolSearchTool {
     fn name(&self) -> &'static str {
-        "tool_search"
+        TOOL_SEARCH_TOOL_NAME
     }
 
     fn description(&self) -> &'static str {
@@ -154,7 +195,7 @@ impl Tool for ToolSearchTool {
                     reason: format!("invalid arguments: {e}"),
                 }
             })?;
-        let catalog: Arc<SharedToolCatalog> = ctx.require_extension::<SharedToolCatalog>()?;
+        let catalog = self.catalog(ctx)?;
 
         let limit = args
             .max_results
@@ -172,7 +213,7 @@ impl Tool for ToolSearchTool {
             .map_or_else(ProviderCapabilities::default, |provider| {
                 provider.0.capabilities()
             });
-        let entries = reframe_catalog_entries(catalog.0.as_ref(), capabilities);
+        let entries = reframe_catalog_entries(catalog.as_ref(), capabilities);
         if entries.is_empty() {
             return Ok(ToolOutput::success(
                 serde_json::json!({ "results": Vec::<serde_json::Value>::new() }),

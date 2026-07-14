@@ -48,6 +48,7 @@ use super::tools::{
 use crate::system_prompt::builder::ToolPromptEntry;
 use crate::tool::catalog::ToolCatalogEntry;
 use crate::tool::registry::ToolRegistry;
+use crate::tool::traits::Tool;
 use crate::tool::wrap_schema_with_envelope;
 use crate::tools::web::WEB_SEARCH_TOOL_NAME;
 
@@ -291,14 +292,22 @@ pub fn collect_function_definitions(
     registry
         .names()
         .filter(|name| allow_set.as_ref().is_none_or(|set| set.contains(name)))
-        .filter_map(|name| {
-            registry.get(name).map(|tool| ToolDefinition {
-                name: tool.name().to_owned(),
-                description: tool.description().to_owned(),
-                parameters: wrap_schema_with_envelope(tool.input_schema()),
-            })
-        })
+        .filter_map(|name| registry.get(name).map(function_definition_for_tool))
         .collect()
+}
+
+/// Project one concrete tool into its provider function definition.
+///
+/// Generation snapshots use the same envelope-wrapped projection as the
+/// registry and child-agent paths, preventing schema drift between live and
+/// startup tool surfaces.
+#[must_use]
+pub fn function_definition_for_tool(tool: &(dyn Tool + Send + Sync)) -> ToolDefinition {
+    ToolDefinition {
+        name: tool.name().to_owned(),
+        description: tool.description().to_owned(),
+        parameters: wrap_schema_with_envelope(tool.input_schema()),
+    }
 }
 
 /// Project an explicit child view from physically registered, non-denied
@@ -311,11 +320,9 @@ pub(crate) fn collect_registered_function_definitions(
     names
         .into_iter()
         .filter_map(|name| {
-            registry.get_registered(name).map(|tool| ToolDefinition {
-                name: tool.name().to_owned(),
-                description: tool.description().to_owned(),
-                parameters: wrap_schema_with_envelope(tool.input_schema()),
-            })
+            registry
+                .get_registered(name)
+                .map(function_definition_for_tool)
         })
         .collect()
 }

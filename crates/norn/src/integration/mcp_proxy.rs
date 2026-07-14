@@ -54,6 +54,10 @@ impl Tool for McpProxyTool {
         ToolEffect::Unknown
     }
 
+    fn runtime_dynamic(&self) -> bool {
+        true
+    }
+
     async fn execute(
         &self,
         envelope: &ToolEnvelope,
