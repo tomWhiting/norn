@@ -37,13 +37,13 @@ async fn pending_project_server_causes_no_process_activation()
 
 #[tokio::test]
 #[serial_test::serial]
-async fn workspace_local_server_is_still_project_controlled()
+async fn workspace_local_server_is_direct_and_not_approval_gated()
 -> Result<(), Box<dyn std::error::Error>> {
     let home = tempfile::tempdir()?;
     let project = tempfile::tempdir()?;
     let config_dir = project.path().join(".norn");
     std::fs::create_dir_all(&config_dir)?;
-    let marker = project.path().join("workspace-local-must-not-run");
+    let marker = project.path().join("workspace-local-ran");
     std::fs::write(
         config_dir.join("settings.local.json"),
         serde_json::to_vec(&serde_json::json!({
@@ -62,10 +62,11 @@ async fn workspace_local_server_is_still_project_controlled()
             .mcp_servers
             .get("workspace_local")
             .ok_or("workspace-local server was not resolved")?;
-        assert_eq!(server.source(), norn::config::McpConfigSource::Project);
+        assert_eq!(server.source(), norn::config::McpConfigSource::Local);
         let startup = connect_mcp_runtime(&resolved.project_root, &resolved.mcp_servers).await?;
-        assert_eq!(startup.pending_project_servers, ["workspace_local"]);
-        assert!(!marker.exists());
+        assert!(startup.pending_project_servers.is_empty());
+        assert_eq!(startup.failed_servers.len(), 1);
+        assert!(marker.exists());
         Ok::<_, Box<dyn std::error::Error>>(())
     })
     .await

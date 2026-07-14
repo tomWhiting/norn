@@ -1255,7 +1255,11 @@ mod tests {
         // be exactly the default run -- nothing else may differ.
         let all_minus_ignored: Vec<String> = all_paths
             .iter()
-            .filter(|p| !p.contains("/target/") && !p.ends_with(".hidden.txt"))
+            .filter(|path| {
+                let fixture_relative = std::path::Path::new(path).strip_prefix(dir.path()).ok();
+                !fixture_relative.is_some_and(|relative| relative.starts_with("target"))
+                    && !path.ends_with(".hidden.txt")
+            })
             .cloned()
             .collect();
         assert_eq!(all_minus_ignored, default_paths);
