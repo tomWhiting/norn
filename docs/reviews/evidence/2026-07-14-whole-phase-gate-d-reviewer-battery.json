@@ -1,0 +1,30 @@
+{
+  "reviewer": "external Gate D seat (coordinator)",
+  "purpose": "independent reproduction for 2026-07-14-p0-whole-phase-gate-d-review.md",
+  "head": "13d661c906f00e9ff54541e8362086874e98af1c",
+  "packaging_commit_reviewed": "f4cb7db",
+  "environment": {
+    "isolation": "clean detached git worktree at head; exit codes captured to files, never piped",
+    "toolchain": "rustc 1.94.0 (4a4ef493e 2026-03-02), cargo 1.94.0, via repository rust-toolchain.toml pin",
+    "python": "3.14.3 (/opt/homebrew/bin/python3; note: ~/.local/bin/python3 on this machine is a broken Linux-x86_64 uv build)",
+    "platform": "macOS-26.3.1-arm64"
+  },
+  "legs": [
+    { "leg": "retained evidence hash chain (6 artifacts, 2026-07-14-p0-toolchain-13d661c/)", "result": "all SHA-256 match handoff table" },
+    { "leg": "13d661c content check", "result": "rust-toolchain.toml pin + README MSRV-claim removal only; no Rust source" },
+    { "leg": "DECISIONS-2026-07.md section 11", "result": "three owner dispositions present, attributed, P0-scoped" },
+    { "leg": "run_p0_integrated_evidence.py gate", "exit": 1, "passed_cases": 33, "failed_cases": 2,
+      "failures": [
+        { "id": "workspace_all_targets", "test_counts": { "passed": 3316, "failed": 5 } },
+        { "id": "norn_tests", "test_counts": { "passed": 3311, "failed": 5 } }
+      ],
+      "note": "gate ran concurrently with five review agents saturating the same host (coordinator scheduling error); failing test identities not retained by evidence schema (review finding GD-17)" },
+    { "leg": "quiet rerun: cargo +1.94.0 --locked test -p norn --tests", "exit": 0, "passed": 3316, "failed": 0 },
+    { "leg": "quiet rerun: cargo +1.94.0 --locked test --workspace --all-targets", "exit": 0, "passed": 4624, "failed": 0, "suites": 24 },
+    { "leg": "run_p0_integrated_evidence.py distributions --concurrency-runs 50 --other-runs 20", "exit": 0, "observations": 750, "failed": 0, "rust_test_executions": 1170 },
+    { "leg": "attest_p0_evidence.py on this reviewer's bundle", "exit": 1, "passed": false,
+      "note": "correctly failed with 4 errors naming exactly the two red gate cases — refusal machinery working as designed" }
+  ],
+  "gate_failure_classification": "HYPOTHESIS: load contention from concurrent review agents; supported by green quiet reruns at same head/toolchain/target, green 750/750 distributions, and prior-round green 4624/0 battery on identical Rust source; cannot be CONFIRMED because failing test identities are not retained (GD-17)",
+  "verdict": "NOT READY — see 2026-07-14-p0-whole-phase-gate-d-review.md"
+}
