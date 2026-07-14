@@ -32,14 +32,25 @@ packaging commit.
 
 ## Retained evidence chain
 
+Three schema-v2 gate/distribution reports in this historical chain were removed
+from current `HEAD` under `DECISIONS-2026-07.md` section 12 because they retained
+local operator paths or ambient variable names. Their filenames are deliberately
+not linked below. Each remains retrievable from package commit `e9b02d0` at its
+original `docs/reviews/evidence/` path, and its recorded SHA-256 preserves exact
+content identity. The safe policy and attestation artifacts remain linked.
+
 | Artifact | SHA-256 | Result |
 |---|---|---|
-| [`2026-07-14-p0-final-gate-82e44f4.json`](evidence/2026-07-14-p0-final-gate-82e44f4.json) | `95e126ba12e558d049c91791289ffa2f2622abc57a7f9cc4c20ef71263541b6d` | Failed first final gate: 34/35 runner cases |
+| `2026-07-14-p0-final-gate-82e44f4.json` (historical at `e9b02d0`) | `95e126ba12e558d049c91791289ffa2f2622abc57a7f9cc4c20ef71263541b6d` | Failed first final gate: 34/35 runner cases |
 | [`2026-07-14-p0-final-policy-82e44f4.json`](evidence/2026-07-14-p0-final-policy-82e44f4.json) | `fd07a1696119a838b26b78c4b1f4b61327b35ecc999d73a27f20db4359757ef6` | Policy pass at the failed-gate code head |
-| [`2026-07-14-p0-final-gate-bfa0b8e.json`](evidence/2026-07-14-p0-final-gate-bfa0b8e.json) | `d42429d66a0e4c68fee5cb45ba09e074fcf51d40da26eecfe0ed519090e81856` | 35/35 runner cases; 9,205 Rust test executions |
+| `2026-07-14-p0-final-gate-bfa0b8e.json` (historical at `e9b02d0`) | `d42429d66a0e4c68fee5cb45ba09e074fcf51d40da26eecfe0ed519090e81856` | 35/35 runner cases; 9,205 Rust test executions |
 | [`2026-07-14-p0-final-policy-bfa0b8e.json`](evidence/2026-07-14-p0-final-policy-bfa0b8e.json) | `2a15da2134979b32a8c95dc87d4a6c182c627369fc39ae921387d241feff6dc2` | Full-range policy pass |
-| [`2026-07-14-p0-final-distributions-bfa0b8e.json`](evidence/2026-07-14-p0-final-distributions-bfa0b8e.json) | `c625f79668441f59c27a5b168a0aba1180562aac146d9965db2d428b95c37d9a` | 750/750 observations; 1,170 Rust test executions |
+| `2026-07-14-p0-final-distributions-bfa0b8e.json` (historical at `e9b02d0`) | `c625f79668441f59c27a5b168a0aba1180562aac146d9965db2d428b95c37d9a` | 750/750 observations; 1,170 Rust test executions |
 | [`2026-07-14-p0-final-attestation-bfa0b8e.json`](evidence/2026-07-14-p0-final-attestation-bfa0b8e.json) | `83c4621413ba756081e0ee649b35e7173e9451307d0cd16674afa0e264a05422` | Pass; no attestation errors |
+
+The retained attestation is safe hash/name metadata for that historical bundle;
+it is not a claim that all of its referenced operands still exist at current
+`HEAD`. Removing files from current `HEAD` does not rewrite pushed Git history.
 
 The attester rejects duplicate/non-finite JSON, unexpected commands, test
 identities, counts, run profiles, pass fields, tool identities, and artifact

@@ -5,10 +5,10 @@
   `13d661c` and opened GD-1 through GD-18. The corrected source candidate is
   `e1bf7f2`: Gate C passed 38/38 cases with 9,299 Rust test executions, the
   repeated suite passed 830/830 observations with 1,250 Rust test executions,
-  the full-range policy passed, and the mechanical attestation passed. GD-15
-  still awaits the owner's disposition of six superseded disclosure-bearing
-  artifacts, and one focused independent correction review must return
-  `READY` before P0 is accepted. P1 and P2 have not started.
+  the full-range policy passed, and the mechanical attestation passed. The
+  owner-approved GD-15 historical-artifact disposition is applied. One focused
+  independent correction review must return `READY` before P0 is accepted. P1
+  and P2 have not started.
 - **Baseline:** `main` at `263cc4f466b3` on 2026-07-10
 - **Scope:** OpenAI Responses, ChatGPT/Codex OAuth and explicit named accounts,
   working-directory authority, prompt caching, streaming, conversation state,
@@ -262,11 +262,11 @@ the P0 evaluation rule above.
 
 - [ ] Confirmed-defect regressions fail for the documented reason on the reviewed
   baseline; measurement/design work has its pre-registered baseline and contract.
-- [ ] The production fix is complete across request, stream, persistence,
+- [x] The production fix is complete across request, stream, persistence,
   replay, loop behavior, and user surface wherever the capability crosses them.
-- [ ] Replaced paths and temporary scaffolding are deleted in the same phase.
-- [ ] Changed production files satisfy the file-size and module-structure rules.
-- [ ] The finding-to-test traceability table is updated.
+- [x] Replaced paths and temporary scaffolding are deleted in the same phase.
+- [x] Changed production files satisfy the file-size and module-structure rules.
+- [x] The finding-to-test traceability table is updated.
 
 P0 evidence note: the candidate traceability matrix is recorded in
 `2026-07-12-p0-traceability.md` and includes the later D1D/SEC-14 row. The
@@ -362,7 +362,7 @@ artifacts to the same clean head with zero errors.
 
 | Phase | Status | Primary outcome |
 |---|---|---|
-| P0. Credential and workspace authority containment | [ ] Correction source `e1bf7f2` and replacement machine evidence are complete; GD-15 owner disposition and focused independent `READY` review remain | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
+| P0. Credential and workspace authority containment | [ ] Correction source `e1bf7f2`, replacement machine evidence, and GD-15 disposition are complete; focused independent `READY` review remains | Repository data cannot select credential/backend/process authority, escape the immutable workspace root, or create non-private artifacts. |
 | P1. Contract and enforcement baseline | [ ] | The program has executable contracts and protected quality gates. |
 | P2. OAuth lifecycle correctness | [ ] | Login, refresh, storage, and logout fail safely; named-account selection is either evidence-backed or explicitly unsupported. |
 | P3. Canonical ordered transcript | [ ] | Responses items survive stream, persistence, resume, and replay in order. |
@@ -438,9 +438,9 @@ The historical Rust candidate runs through `13d661c`, with its raw evidence in
 `564af2d`; the P0-only Gate A/Gate B dispositions remain recorded. The fresh
 whole-phase review at `c6bf1e2` returned `NOT READY` and invalidated that earlier
 candidate as acceptance evidence. Replacement Gate C, distribution, policy,
-and attestation artifacts now pass at `e1bf7f2`. GD-15 remains open only for
-the owner's disposition of six superseded artifacts, and focused independent
-review remains required. D1, D1A, D1B, D1C, D1D, D1E, and the retrospective
+and attestation artifacts now pass at `e1bf7f2`. The owner-approved GD-15
+current-head deletion and historical provenance record are complete; focused
+independent review remains required. D1, D1A, D1B, D1C, D1D, D1E, and the retrospective
 dispositions are resolved as design inputs; P0 acceptance remains open until
 the correction ledger and final review are complete.
 
@@ -796,11 +796,11 @@ owner ruling.
 - [x] **GD-13:** correct the descriptor-admission record's revalidation order.
 - [x] **GD-14:** pin `claude_runner` to the revision whose spawn shape supports
   the descriptor proof.
-- [ ] **GD-15:** the corrected runner emits path-free evidence without removed
+- [x] **GD-15:** the corrected runner emits path-free evidence without removed
   ambient variable names, with local executable hash rebinding and exact-key
-  attestation. Six
-  superseded schema-v2 artifacts still require the owner disposition recorded
-  below before disclosure closure can be claimed.
+  attestation. Under `DECISIONS-2026-07.md` section 12, the six superseded
+  schema-v2 reports are removed from current `HEAD` and preserved as immutable
+  historical commit/hash references in the active correction handoff.
 - [x] **GD-16:** refuse redirects for MCP HTTP and HTTP extension clients.
 - [x] **GD-17:** retain structurally parsed failing-test identities, cover
   truncated output and Cargo 1.94 backtick rerun hints across split stdout and
@@ -823,10 +823,10 @@ owner ruling.
   HTTP deadlines cover nested protocol handling, and hostile `Content-Type`
   values never enter rendered failures. Independent fingerprint, exact-CRLF,
   and no-implicit-30-second fixtures close the accompanying test gaps.
-- [ ] Apply the owner disposition for six superseded schema-v2 artifacts that
+- [x] Apply the owner disposition for six superseded schema-v2 artifacts that
   retain historical local paths or ambient variable names. The active
-  correction handoff enumerates all six paths. Removing them from current
-  `HEAD` does not purge already-pushed history.
+  correction handoff enumerates all six paths, introducing commits, and hashes.
+  They are deleted from current `HEAD`; already-pushed history is not purged.
 - [x] Regenerate the complete gate, distributions, policy result, and
   attestation from the corrected exact head. All worktrees, build outputs,
   scratch data, and evidence must remain in ignored siblings under this
@@ -1001,8 +1001,8 @@ corrected exact-head evidence. The prior `13d661c` gate, distributions, policy
 result, and attestation remain historical input only. Source head `e1bf7f2` now
 has a fresh path-free evidence chain: Gate C 38/38, distributions 830/830,
 full-range policy pass, and zero-error attestation. GD-15's historical-artifact
-disposition and one focused independent `READY` verdict remain before P0 can
-close. No scoped acceptance, implementer attestation, or machine pass is a
+disposition is complete; one focused independent `READY` verdict remains before
+P0 can close. No scoped acceptance, implementer attestation, or machine pass is a
 whole-phase verdict.
 
 - [ ] A security reviewer threat-models every credential destination, redirect,
@@ -1797,7 +1797,7 @@ ledger prematurely.
 
 | Phase | Current implementation | Retained candidate evidence | Work still required before acceptance |
 |---|---|---|---|
-| P0 | Corrected source candidate `e1bf7f2`; focused correction handoff in this documentation package | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; failed 35/38 precursor retained | GD-15 owner disposition; reviewer LOC/bypass and fixture-secret inspection; focused correction review and deferred seam sweep; fresh `READY` verdict |
+| P0 | Corrected source candidate `e1bf7f2`; focused correction handoff in this documentation package | Gate C 38/38 and 9,299 Rust test executions; distributions 830/830 and 1,250 Rust test executions; 359-file/65-test-only/97-writer policy pass; mechanical attestation pass; failed 35/38 precursor retained; GD-15 disposition applied | Reviewer LOC/bypass and fixture-secret inspection; focused correction review and deferred seam sweep; fresh `READY` verdict |
 | P1 | Not started | None | P0 acceptance and D0 |
 | P2 | Not started | None | P1 acceptance and D9 |
 

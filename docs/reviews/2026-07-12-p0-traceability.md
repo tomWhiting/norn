@@ -86,7 +86,7 @@ traceability without rewriting the earlier snapshot.
 | `GD-3` through `GD-5`, `GD-9`, `GD-11`, `GD-12`, `GD-16` | `3d5ff8c`; MCP liveness, reconnect/quarantine, typed control errors, successful-session retention, startup hydration, actor/TUI failure paths, cancellation, and no-redirect fixtures under `integration/mcp_*`, `config/mcp_*`, and `norn-tui/app/mcp_slash.rs`. | Implemented; Gate C pass and 20-run sensitive-seam distributions. |
 | `GD-6`, `GD-7`, `GD-10` | `3d5ff8c`; `mcp_transport_bounds*`, HTTP/stdio bound and deadline fixtures, safe constant-space stderr categories, environment-overlay tests, exact CRLF boundaries, and the paused-time no-implicit-30-second client fixture. | Implemented; Gate C pass and 20-run sensitive-seam distributions. |
 | `GD-8` | `e4542ad`; checked-in production, test-only, shared, path-alias, case-alias, and literal-include module-reachability fixtures plus 43 evidence self-tests. | Implemented; full-range policy pass. |
-| `GD-15` | `e4542ad`; schema-v3 path-free evidence, fixed sanitized environment-name inventory, executable hashes, embedded-path rejection, and exact-key attestation. | New artifacts pass; closure awaits owner disposition of the six superseded schema-v2 artifacts explicitly enumerated in `2026-07-14-p0-correction-gate-d-handoff.md`. |
+| `GD-15` | `e4542ad`; path-free schema-v3 gate/distribution evidence, path-free schema-v2 policy/attestation evidence, fixed sanitized environment-name inventory, executable hashes, embedded-path rejection, and exact-key attestation. `DECISIONS-2026-07.md` section 12 and the active correction handoff preserve the exact historical commit/hash inventory for the six removed schema-v2 reports. | Resolved: replacement artifacts pass and the owner-approved current-head deletion is applied; independent review remains open. |
 | `GD-17` | `e4542ad` and `e1bf7f2`; strict failure-name parsing, package/target qualification, truncation handling, and Cargo 1.94 backtick rerun hints split across stdout/stderr. | Implemented; 43/43 evidence self-tests and Gate C pass. |
 
 The first correction gate at `17a3bb8` is retained as 35/38 rather than
@@ -106,6 +106,6 @@ source expectation. The corrected exact-head evidence is:
   pass with zero errors, binding the gate, distributions, and policy to one
   clean exact head.
 
-This appendix is implementation traceability, not acceptance. GD-15 and the
-focused independent review in
-`2026-07-14-p0-correction-gate-d-handoff.md` remain open.
+This appendix is implementation traceability, not acceptance. GD-15 is resolved;
+the focused independent review in
+`2026-07-14-p0-correction-gate-d-handoff.md` remains open.

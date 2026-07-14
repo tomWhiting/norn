@@ -1033,3 +1033,30 @@ failure behavior explicit.
   commands no longer inherit a floating local `stable` alias. Toolchain
   upgrades are explicit reviewed changes. No lower minimum Rust version is
   claimed until one is separately proven and encoded.
+
+## 12. P0 historical evidence disclosure disposition (2026-07-15)
+
+**Owner ruling:** Tom approved deletion of the exact six superseded schema-v2
+evidence reports below from current `HEAD`. They contain local username/path and
+tool-location metadata, removed ambient-variable names, fixed sanitized build
+values, and value hashes, but no values of the removed ambient variables and no
+credentials. The path-free correction bundle replaces them as current machine
+evidence: gate and distributions use schema v3; policy and attestation use
+schema v2.
+
+| Artifact removed from current `HEAD` | Introducing package | SHA-256 |
+|---|---|---|
+| `docs/reviews/evidence/2026-07-14-p0-final-distributions-bfa0b8e.json` | `e9b02d0` | `c625f79668441f59c27a5b168a0aba1180562aac146d9965db2d428b95c37d9a` |
+| `docs/reviews/evidence/2026-07-14-p0-final-gate-82e44f4.json` | `e9b02d0` | `95e126ba12e558d049c91791289ffa2f2622abc57a7f9cc4c20ef71263541b6d` |
+| `docs/reviews/evidence/2026-07-14-p0-final-gate-bfa0b8e.json` | `e9b02d0` | `d42429d66a0e4c68fee5cb45ba09e074fcf51d40da26eecfe0ed519090e81856` |
+| `docs/reviews/evidence/2026-07-14-p0-toolchain-13d661c/distributions-native.json` | `564af2d` | `0153db4715a8b5cc72181a9c1deb7988312ce75ac508d8359fed297f155b4c14` |
+| `docs/reviews/evidence/2026-07-14-p0-toolchain-13d661c/gate-native.json` | `564af2d` | `b75fae12d37c8414b4ed1a83234054294cb1b094e80f16cb3e200946ca3b69d1` |
+| `docs/reviews/evidence/2026-07-14-p0-toolchain-13d661c/gate.json` | `564af2d` | `878165a0fccce565cf318dda939a24cec823618d8071dcd737f821692509d911` |
+
+- Historical documents retain the plain filenames, introducing commits, and
+  content hashes, but do not link to absent current-head files.
+- The files remain retrievable from their introducing commits. This disposition
+  does not rewrite or purge already-pushed Git history.
+- Current acceptance claims use only the path-free schema-v3 gate/distribution
+  artifacts and path-free schema-v2 policy/attestation artifacts at source head
+  `e1bf7f2`.

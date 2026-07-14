@@ -41,17 +41,25 @@ Tom approved the exact decisions recorded in `DECISIONS-2026-07.md` section 11:
 
 ## Retained evidence chain
 
-All files remain byte-for-byte under one directory so their internal basenames
-remain exact.
+Three schema-v2 gate/distribution reports in this superseded chain were removed
+from current `HEAD` under `DECISIONS-2026-07.md` section 12 because they retained
+local operator paths or ambient variable names. Their filenames are deliberately
+not linked below. Each remains retrievable from package commit `564af2d` at its
+original path, with the recorded SHA-256 preserving exact content identity. Safe
+policy and attestation artifacts remain linked.
 
 | Artifact | SHA-256 | Result |
 |---|---|---|
-| [`gate.json`](evidence/2026-07-14-p0-toolchain-13d661c/gate.json) | `878165a0fccce565cf318dda939a24cec823618d8071dcd737f821692509d911` | Sandboxed precursor: 28/35 |
+| `gate.json` (historical at `564af2d`) | `878165a0fccce565cf318dda939a24cec823618d8071dcd737f821692509d911` | Sandboxed precursor: 28/35 |
 | [`policy.json`](evidence/2026-07-14-p0-toolchain-13d661c/policy.json) | `1b87da66daf353d424eb13c638eacc9e3cfbf372dccdb70c4020f449773b8325` | Policy pass paired with sandboxed precursor |
-| [`gate-native.json`](evidence/2026-07-14-p0-toolchain-13d661c/gate-native.json) | `b75fae12d37c8414b4ed1a83234054294cb1b094e80f16cb3e200946ca3b69d1` | Native-host Gate C: 35/35, 9,205 Rust tests |
+| `gate-native.json` (historical at `564af2d`) | `b75fae12d37c8414b4ed1a83234054294cb1b094e80f16cb3e200946ca3b69d1` | Native-host Gate C: 35/35, 9,205 Rust test executions |
 | [`policy-native.json`](evidence/2026-07-14-p0-toolchain-13d661c/policy-native.json) | `1b87da66daf353d424eb13c638eacc9e3cfbf372dccdb70c4020f449773b8325` | Full-range policy pass |
-| [`distributions-native.json`](evidence/2026-07-14-p0-toolchain-13d661c/distributions-native.json) | `0153db4715a8b5cc72181a9c1deb7988312ce75ac508d8359fed297f155b4c14` | 750/750 observations, 1,170 Rust tests |
+| `distributions-native.json` (historical at `564af2d`) | `0153db4715a8b5cc72181a9c1deb7988312ce75ac508d8359fed297f155b4c14` | 750/750 observations, 1,170 Rust test executions |
 | [`attestation-native.json`](evidence/2026-07-14-p0-toolchain-13d661c/attestation-native.json) | `19ba8818a0b82367271dfb0ef4ac80e3e1577f84502999bd37f474cf16d2cc9f` | Pass, zero errors |
+
+The retained attestation is safe hash/name metadata for that historical bundle;
+it is not a claim that all referenced operands remain at current `HEAD`.
+Removing files from current `HEAD` does not rewrite pushed Git history.
 
 The native workspace battery contains 4,624 passing tests and no failures. The
 policy covers 333 changed Rust files, including 62 test-only files, and reports

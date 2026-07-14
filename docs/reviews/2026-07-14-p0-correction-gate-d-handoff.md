@@ -98,23 +98,28 @@ failed artifact retains the test names, but its target identities are marked
 incomplete because its parser predated Cargo 1.94 backtick support. That parser
 defect is fixed and covered at `e1bf7f2`; the failed artifact remains unchanged.
 
-## Open owner item
+## Owner disposition
 
-GD-15 remains open pending one explicit owner disposition. Six superseded
-schema-v2 artifacts still tracked at the time of this handoff contain local
-operator paths or ambient variable names:
+Tom approved removal of the six superseded schema-v2 artifacts from current
+`HEAD` on 2026-07-15, as recorded in `DECISIONS-2026-07.md` section 12. They
+contained local operator paths, ambient variable names, fixed sanitized build
+values, and value hashes, but no values of the removed ambient variables and no
+credentials. The immutable historical inventory is:
 
-- `evidence/2026-07-14-p0-final-distributions-bfa0b8e.json`;
-- `evidence/2026-07-14-p0-final-gate-82e44f4.json`;
-- `evidence/2026-07-14-p0-final-gate-bfa0b8e.json`;
-- `evidence/2026-07-14-p0-toolchain-13d661c/distributions-native.json`;
-- `evidence/2026-07-14-p0-toolchain-13d661c/gate-native.json`; and
-- `evidence/2026-07-14-p0-toolchain-13d661c/gate.json`.
+| Artifact removed from current `HEAD` | Historical package | SHA-256 |
+|---|---|---|
+| `evidence/2026-07-14-p0-final-distributions-bfa0b8e.json` | `e9b02d0` | `c625f79668441f59c27a5b168a0aba1180562aac146d9965db2d428b95c37d9a` |
+| `evidence/2026-07-14-p0-final-gate-82e44f4.json` | `e9b02d0` | `95e126ba12e558d049c91791289ffa2f2622abc57a7f9cc4c20ef71263541b6d` |
+| `evidence/2026-07-14-p0-final-gate-bfa0b8e.json` | `e9b02d0` | `d42429d66a0e4c68fee5cb45ba09e074fcf51d40da26eecfe0ed519090e81856` |
+| `evidence/2026-07-14-p0-toolchain-13d661c/distributions-native.json` | `564af2d` | `0153db4715a8b5cc72181a9c1deb7988312ce75ac508d8359fed297f155b4c14` |
+| `evidence/2026-07-14-p0-toolchain-13d661c/gate-native.json` | `564af2d` | `b75fae12d37c8414b4ed1a83234054294cb1b094e80f16cb3e200946ca3b69d1` |
+| `evidence/2026-07-14-p0-toolchain-13d661c/gate.json` | `564af2d` | `878165a0fccce565cf318dda939a24cec823618d8071dcd737f821692509d911` |
 
-The implementer recommends removing this exact inventory from current `HEAD`,
-replacing its direct links with commit/hash-only historical references, and
-recording that pushed Git history is not purged. Retaining it requires explicit
-acceptance of that metadata disclosure.
+Direct links in the historical handoffs are replaced by commit/hash references.
+The path-free schema-v3 gate/distribution artifacts and path-free schema-v2
+policy/attestation artifacts above remain the current machine evidence.
+This current-head deletion does not purge the files from pushed Git history;
+the package commits preserve reviewer retrieval and exact content provenance.
 
 No other P0-blocking owner disposition remains. The Gate A and Gate B
 retrospective exceptions are already approved in `DECISIONS-2026-07.md`; their
@@ -190,8 +195,8 @@ The focused reviewer must:
 7. Complete the whole-diff seam sweep that the controlling review explicitly
    deferred, using `41ea210..e1bf7f2` and the pinned official Codex source
    inputs from the historical whole-phase handoff.
-8. Confirm the owner-approved GD-15 disposition is reflected in current
-   `HEAD` before issuing a verdict.
+8. Confirm the completed GD-15 deletion, historical commit/hash provenance, and
+   path-free replacement evidence are reflected in current `HEAD`.
 9. Return one focused whole-phase verdict: `READY` or `NOT READY`.
 
 P1 must not start until the focused review returns `READY`. Gate D, P0
