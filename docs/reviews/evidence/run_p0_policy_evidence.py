@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
 """Generate syntax-aware P0 production-LOC and added-line policy evidence."""
 
-from __future__ import annotations
-
 import argparse
+import importlib
 import itertools
 import json
 import re
@@ -11,6 +10,11 @@ import subprocess
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
+import sys
+
+sys.dont_write_bytecode = True
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+rust_literals = importlib.import_module("p0_rust_literals")
 
 
 CFG_PATTERN = "#[cfg($$$COND)]"
@@ -24,9 +28,7 @@ FORBIDDEN = {
     "ignore_attr": re.compile(r"#\s*\[\s*ignore(?:\s|\]|\()"),
     "empty_cfg_any": re.compile(r"#\s*\[\s*cfg\s*\(\s*any\s*\(\s*\)"),
     "lint_cli_suppression": re.compile(r"(?:^|\s)-A(?:\s|clippy::|warnings)"),
-    "marker": re.compile(
-        r"(?:^|\s)(?://+|/\*+|\*+)\s*[^\n]*\b(?:TODO|FIXME|HACK)\b"
-    ),
+    "marker": re.compile(r"(?:^|\s)(?://+|/\*+|\*+)\s*[^\n]*\b(?:TODO|FIXME|HACK)\b"),
 }
 ARTIFACT_WRITER = re.compile(
     r"(?:PrivateRoot::(?:create|open)|"
@@ -65,7 +67,9 @@ def ast_command(*args: str, cwd: Path) -> str:
         stderr=subprocess.PIPE,
     )
     if result.returncode not in {0, 1}:
-        raise RuntimeError(result.stderr.strip() or f"ast-grep exited {result.returncode}")
+        raise RuntimeError(
+            result.stderr.strip() or f"ast-grep exited {result.returncode}"
+        )
     return result.stdout
 
 
@@ -77,7 +81,7 @@ class Token:
 
 def cfg_tokens(expression: str) -> list[Token]:
     pattern = re.compile(
-        r'\s*(?:(?P<ident>[A-Za-z_][A-Za-z0-9_-]*)|'
+        r"\s*(?:(?P<ident>[A-Za-z_][A-Za-z0-9_-]*)|"
         r'(?P<string>"(?:\\.|[^"\\])*")|(?P<punct>[(),=]))'
     )
     tokens: list[Token] = []
@@ -147,7 +151,7 @@ def combine_cfg(name: str, arguments: list[set[bool]]) -> set[bool]:
 
 def cfg_expression(attribute: str) -> str:
     prefix = "#[cfg("
-    if not attribute.startswith(prefix) or not attribute.endswith(")]" ):
+    if not attribute.startswith(prefix) or not attribute.endswith(")]"):
         raise ValueError(f"not a cfg attribute: {attribute!r}")
     return attribute[len(prefix) : -2]
 
@@ -187,9 +191,13 @@ def byte_range(match: dict) -> tuple[int, int]:
     return offsets["start"], offsets["end"]
 
 
-def test_only_ranges(repo: Path, rule: Path, source: Path) -> tuple[list[tuple[int, int]], list[Path]]:
+def test_only_ranges(
+    repo: Path, rule: Path, source: Path
+) -> tuple[list[tuple[int, int]], list[Path]]:
     data = source.read_bytes()
-    items = sorted((byte_range(item), item["text"]) for item in ast_matches(repo, rule, source))
+    items = sorted(
+        (byte_range(item), item["text"]) for item in ast_matches(repo, rule, source)
+    )
     ranges: list[tuple[int, int]] = []
     modules: list[Path] = []
     for attribute in cfg_matches(repo, source):
@@ -207,7 +215,9 @@ def test_only_ranges(repo: Path, rule: Path, source: Path) -> tuple[list[tuple[i
                 f"{source}: non-attribute text between cfg(test) and item: {residue!r}"
             )
         ranges.append((attr_start, item_end))
-        if re.fullmatch(r"(?:pub(?:\([^)]*\))?\s+)?mod\s+[A-Za-z_][A-Za-z0-9_]*\s*;", item_text):
+        if re.fullmatch(
+            r"(?:pub(?:\([^)]*\))?\s+)?mod\s+[A-Za-z_][A-Za-z0-9_]*\s*;", item_text
+        ):
             attributes = data[attr_start:item_start].decode("utf-8")
             modules.append(resolve_module_file(source, attributes, item_text))
     return merge_ranges(ranges), modules
@@ -274,11 +284,7 @@ def discover_test_only_files(repo: Path, rule: Path) -> set[Path]:
     for source in sorted(repo.glob("crates/**/*.rs")):
         _ranges, modules = test_only_ranges(repo, rule, source)
         discovered.update(modules)
-    return {
-        path
-        for path in discovered
-        if not is_crate_build_target(repo, path)
-    }
+    return {path for path in discovered if not is_crate_build_target(repo, path)}
 
 
 def is_crate_build_target(repo: Path, path: Path) -> bool:
@@ -295,7 +301,9 @@ def tokei_counts(root: Path, repo: Path) -> dict[str, int]:
     payload = json.loads(raw)
     reports = payload.get("Rust", {}).get("reports", [])
     return {
-        str(Path(report["name"]).resolve().relative_to(root.resolve())): report["stats"]["code"]
+        str(Path(report["name"]).resolve().relative_to(root.resolve())): report[
+            "stats"
+        ]["code"]
         for report in reports
     }
 
@@ -315,10 +323,12 @@ def added_line_evidence(repo: Path, base: str, head: str) -> dict[str, list[dict
     )
     matches = {name: [] for name in FORBIDDEN}
     current_file = ""
+    masked_lines: list[str] | None = None
     new_line = 0
     for line in raw.splitlines():
         if line.startswith("+++ b/"):
             current_file = line[6:]
+            masked_lines = rust_literals.policy_lines(repo, current_file)
             continue
         hunk = re.match(r"@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
         if hunk:
@@ -326,10 +336,17 @@ def added_line_evidence(repo: Path, base: str, head: str) -> dict[str, list[dict
             continue
         if line.startswith("+") and not line.startswith("+++"):
             content = line[1:]
+            scanned = (
+                masked_lines[new_line - 1] if masked_lines is not None else content
+            )
             for name, pattern in FORBIDDEN.items():
-                if pattern.search(content):
+                if pattern.search(scanned):
                     matches[name].append(
-                        {"file": current_file, "line": new_line, "text": content.strip()}
+                        {
+                            "file": current_file,
+                            "line": new_line,
+                            "text": content.strip(),
+                        }
                     )
             new_line += 1
         elif line.startswith(" "):
@@ -371,7 +388,7 @@ def artifact_writer_candidates(
     return candidates
 
 
-def main() -> None:
+def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", default="41ea210")
     parser.add_argument("--head", default="HEAD")
@@ -391,7 +408,11 @@ def main() -> None:
             destination = stripped_root / relative
             destination.parent.mkdir(parents=True, exist_ok=True)
             path_parts = relative.parts
-            integration_test = len(path_parts) >= 3 and path_parts[0] == "crates" and "tests" in path_parts[2:]
+            integration_test = (
+                len(path_parts) >= 3
+                and path_parts[0] == "crates"
+                and "tests" in path_parts[2:]
+            )
             if source.resolve() in test_only_files or integration_test:
                 ranges = [(0, len(source.read_bytes()))]
             else:
@@ -401,8 +422,12 @@ def main() -> None:
             records.append(
                 {
                     "file": str(relative),
-                    "physical_lines": len(source.read_text(encoding="utf-8").splitlines()),
-                    "removed_test_ranges": [{"start": start, "end": end} for start, end in ranges],
+                    "physical_lines": len(
+                        source.read_text(encoding="utf-8").splitlines()
+                    ),
+                    "removed_test_ranges": [
+                        {"start": start, "end": end} for start, end in ranges
+                    ],
                 }
             )
         counts = tokei_counts(stripped_root, repo)
@@ -410,14 +435,21 @@ def main() -> None:
     for record in records:
         record["production_code_lines"] = counts.get(record["file"], 0)
     records.sort(key=lambda record: (-record["production_code_lines"], record["file"]))
-    over_limit = [record["file"] for record in records if record["production_code_lines"] > 500]
+    over_limit = [
+        record["file"] for record in records if record["production_code_lines"] > 500
+    ]
     thin_entrypoint_violations = [
         record["file"]
         for record in records
         if Path(record["file"]).name in {"lib.rs", "main.rs"}
         and record["production_code_lines"] > 200
     ]
+    added_line_matches = added_line_evidence(repo, args.base, args.head)
+    policy_passed = not (
+        over_limit or thin_entrypoint_violations or any(added_line_matches.values())
+    )
     evidence = {
+        "schema_version": 1,
         "base": args.base,
         "head": command("git", "rev-parse", args.head, cwd=repo).strip(),
         "method": {
@@ -438,11 +470,14 @@ def main() -> None:
             ),
         },
         "changed_rust_file_count": len(records),
-        "test_only_file_count": sum(record["production_code_lines"] == 0 for record in records),
+        "test_only_file_count": sum(
+            record["production_code_lines"] == 0 for record in records
+        ),
         "over_500": over_limit,
         "thin_entrypoint_violations": thin_entrypoint_violations,
         "files": records,
-        "added_line_policy_matches": added_line_evidence(repo, args.base, args.head),
+        "added_line_policy_matches": added_line_matches,
+        "policy_passed": policy_passed,
         "artifact_writer_candidates": artifact_writer_candidates(
             repo,
             rule,
@@ -456,7 +491,8 @@ def main() -> None:
         output.write_text(rendered, encoding="utf-8")
     else:
         print(rendered, end="")
+    return 0 if policy_passed else 1
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
